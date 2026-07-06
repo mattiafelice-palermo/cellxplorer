@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Local app data and generated caches
+.test-cellxplorer/
+data/
+cache/
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.log
+
+# Local tools and binary/data imports
+*.exe
+*.nda
+*.ndax
+_internal/
+
+# Local assistant/tooling state
+.claude/
+.agents/
+.codex/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
