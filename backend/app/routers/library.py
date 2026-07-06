@@ -49,6 +49,8 @@ def ensure_cell_caches(db: Session, cell: Cell) -> None:
     for test in cell.tests:
         for link in test.file_links:
             sf = link.file
+            if sf.parse_status == "parsing":
+                continue
             if source_file_needs_cache(sf) and Path(sf.path).exists():
                 scanner.parse_file(db, sf)
 
@@ -169,6 +171,7 @@ def cell_dict(db: Session, cell: Cell) -> dict:
         **totals,
         "has_offline": "offline" in statuses,
         "has_changed": "changed" in statuses,
+        "has_parsing": "parsing" in statuses,
         "created_at": cell.created_at.isoformat(),
     }
 

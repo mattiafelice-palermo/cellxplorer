@@ -4,11 +4,15 @@ import os
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.db import Base
 from app.models import Cell, SourceFile, Test, TestFile
 from app.routers import files
 from app.routers import library
@@ -16,6 +20,15 @@ from app.services import parsing
 
 
 class ImportFlowTests(unittest.TestCase):
+    def make_session(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
     def test_import_filename_allows_only_neware_files(self):
         self.assertTrue(files.import_filename_allowed("formation.ndax"))
         self.assertTrue(files.import_filename_allowed("cycling.NDA"))
@@ -252,6 +265,85 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(FakeExecutor.calls, [("init", 2), ("map", 2)])
         self.assertEqual(results["a.ndax"]["rows"], 10)
         self.assertEqual(results["b.ndax"]["parser_version"], "parser-test")
+
+    def test_create_imported_cells_starts_cache_jobs_after_committing_import(self):
+        db = self.make_session()
+        path = ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax"
+        started = []
+        original_start = files.start_import_cache_jobs
+        files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
+        try:
+            result = files.create_imported_cells(
+                files.ImportCellsRequest(
+                    cells=[
+                        files.ImportCellDraft(
+                            staged_name="large.ndax",
+                            source_path=str(path),
+                            filename=path.name,
+                            cell_name="Async import cell",
+                            test_name="Imported file",
+                        )
+                    ]
+                ),
+                db=db,
+            )
+        finally:
+            files.start_import_cache_jobs = original_start
+
+        self.assertEqual(result["created"][0]["cell_name"], "Async import cell")
+        self.assertTrue(result["parsing_started"])
+        self.assertEqual(len(started), 1)
+        source_file = db.query(SourceFile).filter(SourceFile.filename == path.name).one()
+        self.assertEqual(source_file.parse_status, "parsing")
+        self.assertEqual(started[0][0], {"large.ndax": source_file.id})
+
+    def test_ensure_cell_caches_does_not_parse_files_already_parsing(self):
+        db = self.make_session()
+        cell = Cell(name="Parsing cell")
+        source = SourceFile(
+            hash="hash-parsing",
+            path=str(ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax"),
+            filename="AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsing",
+        )
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [TestFile(file=source, position=0)]
+        db.add(cell)
+        db.flush()
+
+        calls = []
+        original_parse = library.scanner.parse_file
+        library.scanner.parse_file = lambda *_: calls.append("parse")
+        try:
+            library.ensure_cell_caches(db, cell)
+        finally:
+            library.scanner.parse_file = original_parse
+
+        self.assertEqual(calls, [])
+
+    def test_cell_dict_reports_parsing_sources(self):
+        db = self.make_session()
+        cell = Cell(name="Parsing cell")
+        source = SourceFile(
+            hash="hash-parsing",
+            path="C:/data/parsing.ndax",
+            filename="parsing.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsing",
+        )
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [TestFile(file=source, position=0)]
+        db.add(cell)
+        db.flush()
+
+        payload = library.cell_dict(db, cell)
+
+        self.assertTrue(payload["has_parsing"])
 
 
 class FakeQuery:

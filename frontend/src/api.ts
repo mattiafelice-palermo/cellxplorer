@@ -118,6 +118,7 @@ export interface CellSummary {
   total_discharge_capacity_mah: number | null;
   has_offline: boolean;
   has_changed: boolean;
+  has_parsing: boolean;
   created_at: string;
 }
 

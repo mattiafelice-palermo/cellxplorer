@@ -9,6 +9,7 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Modal,
   Paper,
   ScrollArea,
@@ -67,6 +68,10 @@ function formatCapacity(value: number | null | undefined) {
   return value === null || value === undefined ? "—" : `${value.toFixed(1)} mAh`;
 }
 
+function cellsUrl(search: string) {
+  return `/api/cells${search ? `?search=${encodeURIComponent(search)}` : ""}`;
+}
+
 export function LibraryPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -82,7 +87,9 @@ export function LibraryPage() {
 
   const cells = useQuery({
     queryKey: ["cells", search],
-    queryFn: () => get<CellSummary[]>(`/api/cells${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    queryFn: () => get<CellSummary[]>(cellsUrl(search)),
+    refetchInterval: (query) =>
+      query.state.data?.some((cell) => cell.has_parsing) ? 2000 : false,
   });
 
   const detail = useQuery({
@@ -203,7 +210,7 @@ export function LibraryPage() {
       }>("/api/cells/check-sources", {
         cell_ids: cellIds.length ? cellIds : null,
       }),
-    onSuccess: (result) => {
+    onSuccess: async (result, checkedCellIds) => {
       notifications.show({
         message: `Checked ${result.checked} source file${result.checked === 1 ? "" : "s"} (${result.changed} changed, ${result.offline} offline).`,
         color: result.changed || result.offline ? "orange" : "teal",
@@ -218,6 +225,15 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["cell"] });
       qc.invalidateQueries({ queryKey: ["files"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
+      const refreshed = await qc.fetchQuery({
+        queryKey: ["cells", search],
+        queryFn: () => get<CellSummary[]>(cellsUrl(search)),
+      });
+      const checkedScope = new Set(checkedCellIds);
+      const changedIds = refreshed
+        .filter((cell) => cell.has_changed && (checkedScope.size === 0 || checkedScope.has(cell.id)))
+        .map((cell) => cell.id);
+      setSelectedCellIds(new Set(changedIds));
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -287,11 +303,11 @@ export function LibraryPage() {
     const rows = cells.data ?? [];
     return {
       cells: rows.length,
-      files: rows.reduce((sum, cell) => sum + cell.n_files, 0),
-      cycles: rows.reduce((sum, cell) => sum + cell.total_cycles, 0),
-      charge: rows.reduce((sum, cell) => sum + (cell.total_charge_capacity_mah ?? 0), 0),
-      discharge: rows.reduce((sum, cell) => sum + (cell.total_discharge_capacity_mah ?? 0), 0),
-      warnings: rows.filter((cell) => cell.has_changed || cell.has_offline).length,
+      active: rows.filter((cell) => cell.cycling_status !== "complete").length,
+      complete: rows.filter((cell) => cell.cycling_status === "complete").length,
+      parsing: rows.filter((cell) => cell.has_parsing).length,
+      needUpdate: rows.filter((cell) => cell.has_changed).length,
+      offline: rows.filter((cell) => cell.has_offline).length,
     };
   }, [cells.data]);
 
@@ -308,6 +324,18 @@ export function LibraryPage() {
     selectedCellIds.size > 0
       ? selectedCells.filter((cell) => cell.has_changed).length
       : changedCells.length;
+  const selectedAllComplete =
+    selectedCells.length > 0 && selectedCells.every((cell) => cell.cycling_status === "complete");
+  const selectedAnyComplete = selectedCells.some((cell) => cell.cycling_status === "complete");
+  const nextStatus: "active" | "complete" = selectedAllComplete ? "active" : "complete";
+  const statusButtonLabel =
+    selectedCells.length === 0
+      ? "Set status"
+      : selectedAllComplete
+        ? "Mark active"
+        : selectedAnyComplete
+          ? "Mark complete"
+          : "Mark complete";
   const allVisibleSelected =
     (cells.data?.length ?? 0) > 0 && (cells.data ?? []).every((cell) => selectedCellIds.has(cell.id));
   const groupsByCellId = useMemo(() => {
@@ -345,154 +373,111 @@ export function LibraryPage() {
             Flat repository of imported cells, cached cycling data, and source-file status.
           </Text>
         </div>
-        <Group gap="xs" justify="end">
-          <ImportCellsLauncher
-            targetFolderId={null}
-            onSaved={() => {
-              qc.invalidateQueries({ queryKey: ["cells"] });
-              qc.invalidateQueries({ queryKey: ["replicate-groups"] });
-              qc.invalidateQueries({ queryKey: ["tree"] });
-            }}
-          >
-            {({ open, loading }) => (
-              <Button
-                size="sm"
-                leftSection={<IconUpload size={15} />}
-                loading={loading}
-                onClick={open}
-              >
-              Load cell files
-            </Button>
-            )}
-          </ImportCellsLauncher>
-          <Button
-            variant="default"
-            size="sm"
-            leftSection={<IconRefresh size={15} />}
-            loading={checkSources.isPending}
-            disabled={(cells.data ?? []).length === 0}
-            onClick={() => checkSources.mutate(selectedIds)}
-          >
-            Check sources
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            leftSection={<IconRefresh size={15} />}
-            loading={updateChangedSources.isPending}
-            disabled={changedCellsInScope === 0}
-            onClick={() => updateChangedSources.mutate(selectedIds)}
-          >
-            Update changed{changedCellsInScope ? ` (${changedCellsInScope})` : ""}
-          </Button>
-          {selectedCellIds.size > 0 && (
-            <>
-              <Button
-                variant="default"
-                size="sm"
-                leftSection={<IconLayersIntersect size={15} />}
-                disabled={selectedCellIds.size < 2}
-                onClick={() => {
-                  setGroupName(
-                    selectedCells.length > 0
-                      ? `${selectedCells[0].name} replicates`
-                      : "Replicate group"
-                  );
-                  setGroupDialogOpen(true);
-                }}
-              >
-                Group as replicates
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                leftSection={<IconLayersIntersect size={15} />}
-                disabled={(replicateGroups.data ?? []).length === 0}
-                onClick={() => {
-                  setTargetGroupId(null);
-                  setAddToGroupDialogOpen(true);
-                }}
-              >
-                Add to replicate
-              </Button>
-              <Button
-                variant="subtle"
-                size="sm"
-                leftSection={<IconUnlink size={15} />}
-                loading={ungroupReplicates.isPending}
-                onClick={() => ungroupReplicates.mutate({ cell_ids: selectedIds })}
-              >
-                Separate
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                leftSection={<IconCircleCheck size={15} />}
-                loading={setCellStatus.isPending}
-                onClick={() =>
-                  setCellStatus.mutate({ cellIds: selectedIds, cyclingStatus: "complete" })
-                }
-              >
-                Mark complete
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                leftSection={<IconPlayerPlay size={15} />}
-                loading={setCellStatus.isPending}
-                onClick={() =>
-                  setCellStatus.mutate({ cellIds: selectedIds, cyclingStatus: "active" })
-                }
-              >
-                Mark active
-              </Button>
-            </>
-          )}
-          <TextInput
-            leftSection={<IconSearch size={15} />}
-            placeholder="Search cells"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-        </Group>
       </Group>
 
-      <Group grow>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">Cells</Text>
-          <Text fw={700}>{totals.cells}</Text>
-        </Paper>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">
-            Files
-          </Text>
-          <Text fw={700}>{totals.files}</Text>
-        </Paper>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">
-            Cached cycles
-          </Text>
-          <Text fw={700}>{totals.cycles}</Text>
-        </Paper>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">
-            Total charge
-          </Text>
-          <Text fw={700}>{formatCapacity(totals.charge)}</Text>
-        </Paper>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">
-            Total discharge
-          </Text>
-          <Text fw={700}>{formatCapacity(totals.discharge)}</Text>
-        </Paper>
-        <Paper withBorder p="md">
-          <Text size="xs" c="dimmed">
-            Warnings
-          </Text>
-          <Text fw={700}>{totals.warnings}</Text>
-        </Paper>
+      <Group gap="xs" justify="end" align="center">
+        <ImportCellsLauncher
+          targetFolderId={null}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ["cells"] });
+            qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+            qc.invalidateQueries({ queryKey: ["tree"] });
+          }}
+        >
+          {({ open, loading }) => (
+            <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
+              Load cell files
+            </Button>
+          )}
+        </ImportCellsLauncher>
+        <Button
+          variant="default"
+          size="sm"
+          leftSection={<IconRefresh size={15} />}
+          loading={checkSources.isPending}
+          disabled={(cells.data ?? []).length === 0}
+          onClick={() => checkSources.mutate(selectedIds)}
+        >
+          Check sources
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          leftSection={<IconRefresh size={15} />}
+          loading={updateChangedSources.isPending}
+          disabled={changedCellsInScope === 0}
+          onClick={() => updateChangedSources.mutate(selectedIds)}
+        >
+          Update changed{changedCellsInScope ? ` (${changedCellsInScope})` : ""}
+        </Button>
+        <Menu withinPortal position="bottom-end">
+          <Menu.Target>
+            <Button
+              variant="default"
+              size="sm"
+              rightSection={<IconChevronDown size={14} />}
+              leftSection={<IconLayersIntersect size={15} />}
+            >
+              Replicate
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<IconLayersIntersect size={14} />}
+              disabled={selectedCellIds.size < 2}
+              onClick={() => {
+                setGroupName(
+                  selectedCells.length > 0
+                    ? `${selectedCells[0].name} replicates`
+                    : "Replicate group"
+                );
+                setGroupDialogOpen(true);
+              }}
+            >
+              Group selected as replicate
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconLayersIntersect size={14} />}
+              disabled={selectedCellIds.size === 0 || (replicateGroups.data ?? []).length === 0}
+              onClick={() => {
+                setTargetGroupId(null);
+                setAddToGroupDialogOpen(true);
+              }}
+            >
+              Add selected to replicate
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+        <Button
+          variant="default"
+          size="sm"
+          leftSection={nextStatus === "complete" ? <IconCircleCheck size={15} /> : <IconPlayerPlay size={15} />}
+          loading={setCellStatus.isPending}
+          disabled={selectedCellIds.size === 0}
+          onClick={() => setCellStatus.mutate({ cellIds: selectedIds, cyclingStatus: nextStatus })}
+        >
+          {statusButtonLabel}
+        </Button>
+        <TextInput
+          leftSection={<IconSearch size={15} />}
+          placeholder="Search cells"
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+        />
       </Group>
+
+      <Stack gap="xs">
+        <Group justify="space-between" align="center">
+          <Group gap={8}>
+            <IconDatabase size={18} color="var(--mantine-color-teal-6)" />
+            <Title order={4}>Cells</Title>
+          </Group>
+          {selectedCellIds.size > 0 && (
+            <Badge color="teal" variant="light">
+              {selectedCellIds.size} selected
+            </Badge>
+          )}
+        </Group>
 
       {cells.isLoading ? (
         <Center h={360}>
@@ -591,6 +576,11 @@ export function LibraryPage() {
                             complete
                           </Badge>
                         )}
+                        {cell.has_parsing && (
+                          <Badge color="blue" variant="light">
+                            parsing
+                          </Badge>
+                        )}
                         {cell.has_changed && (
                           <Badge color="orange" variant="light">
                             changed
@@ -642,17 +632,36 @@ export function LibraryPage() {
                 );
                 })}
               </Table.Tbody>
+              <Table.Tfoot>
+                <Table.Tr>
+                  <Table.Td colSpan={10}>
+                    <Group gap="xs" justify="space-between">
+                      <Text size="xs" c="dimmed">
+                        {totals.cells} cell{totals.cells === 1 ? "" : "s"} - {totals.active} active -{" "}
+                        {totals.complete} complete - {totals.parsing} parsing - {totals.needUpdate} need update
+                        {totals.offline ? ` - ${totals.offline} offline` : ""}
+                      </Text>
+                      {selectedCellIds.size > 0 && (
+                        <Text size="xs" c="teal">
+                          {selectedCellIds.size} selected
+                        </Text>
+                      )}
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              </Table.Tfoot>
             </Table>
           </ScrollArea>
         </Paper>
       )}
+      </Stack>
 
       {((replicateGroups.data?.length ?? 0) > 0 || replicateSearch) && (
-        <Paper withBorder p="sm">
-          <Group justify="space-between" mb="xs">
+        <Stack gap="xs" mt="xl">
+          <Group justify="space-between" align="center">
             <Group gap={6}>
               <IconLayersIntersect size={16} color="var(--mantine-color-teal-6)" />
-              <Text fw={700}>Replicate groups</Text>
+              <Title order={4}>Replicate groups</Title>
             </Group>
             <TextInput
               size="xs"
@@ -662,6 +671,7 @@ export function LibraryPage() {
               onChange={(event) => setReplicateSearch(event.currentTarget.value)}
             />
           </Group>
+          <Paper withBorder p="sm">
           <ScrollArea type="auto">
             <Table highlightOnHover>
               <Table.Thead>
@@ -736,7 +746,8 @@ export function LibraryPage() {
               </Table.Tbody>
             </Table>
           </ScrollArea>
-        </Paper>
+          </Paper>
+        </Stack>
       )}
 
       <Modal

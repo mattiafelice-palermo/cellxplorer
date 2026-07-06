@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import uuid
 from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION, IMPORT_DIR
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import (
     Cell,
     CellMetadata,
@@ -281,6 +282,56 @@ def build_import_caches_parallel(
         }
 
 
+def apply_import_cache_results(
+    db: Session,
+    source_file_ids_by_staged_name: dict[str, int],
+    cache_results: dict[str, dict],
+) -> None:
+    for staged_name, result in cache_results.items():
+        source_file_id = source_file_ids_by_staged_name.get(staged_name)
+        if source_file_id is None:
+            continue
+        sf = db.get(SourceFile, source_file_id)
+        if sf is None:
+            continue
+        if result.get("ok"):
+            sf.parse_status = "parsed"
+            sf.parse_error = None
+            sf.parser_version = result["parser_version"]
+            sf.row_count = result["rows"]
+            sf.cycle_count = result["cycles"]
+        else:
+            sf.parse_status = "error"
+            sf.parse_error = result.get("error") or "Cache build failed"
+    db.commit()
+
+
+def run_import_cache_jobs(
+    source_file_ids_by_staged_name: dict[str, int],
+    cache_jobs: list[dict],
+) -> None:
+    db = SessionLocal()
+    try:
+        cache_results = build_import_caches_parallel(cache_jobs)
+        apply_import_cache_results(db, source_file_ids_by_staged_name, cache_results)
+    finally:
+        db.close()
+
+
+def start_import_cache_jobs(
+    source_file_ids_by_staged_name: dict[str, int],
+    cache_jobs: list[dict],
+) -> None:
+    if not cache_jobs:
+        return
+    thread = threading.Thread(
+        target=run_import_cache_jobs,
+        args=(dict(source_file_ids_by_staged_name), list(cache_jobs)),
+        daemon=True,
+    )
+    thread.start()
+
+
 def _json_safe_scalar(value):
     if value is None:
         return None
@@ -544,7 +595,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
     created = []
     created_cell_ids = []
     cell_ids_by_staged_name: dict[str, int] = {}
-    source_files_by_staged_name: dict[str, SourceFile] = {}
+    source_file_ids_by_staged_name: dict[str, int] = {}
     cache_jobs: list[dict] = []
     for draft in req.cells:
         name = draft.cell_name.strip()
@@ -631,7 +682,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
 
         sf.parse_status = "parsing"
         db.flush()
-        source_files_by_staged_name[draft.staged_name] = sf
+        source_file_ids_by_staged_name[draft.staged_name] = sf.id
         cache_jobs.append(
             {
                 "staged_name": draft.staged_name,
@@ -651,19 +702,6 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         )
         created_cell_ids.append(cell.id)
         cell_ids_by_staged_name[draft.staged_name] = cell.id
-
-    cache_results = build_import_caches_parallel(cache_jobs)
-    for staged_name, result in cache_results.items():
-        sf = source_files_by_staged_name[staged_name]
-        if result.get("ok"):
-            sf.parse_status = "parsed"
-            sf.parse_error = None
-            sf.parser_version = result["parser_version"]
-            sf.row_count = result["rows"]
-            sf.cycle_count = result["cycles"]
-        else:
-            sf.parse_status = "error"
-            sf.parse_error = result.get("error") or "Cache build failed"
 
     replicate_groups = []
     for planned_group in replicate_plan["groups"]:
@@ -692,10 +730,12 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             db.add(FolderReplicateGroup(folder_id=folder_id, group_id=group.id, position=position + 1))
         replicate_groups.append({"id": group.id, "name": group.name, "cell_ids": group_cell_ids})
     db.commit()
+    start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
     return {
         "created": created,
         "replicate_group": replicate_groups[0] if len(replicate_groups) == 1 else None,
         "replicate_groups": replicate_groups,
+        "parsing_started": bool(cache_jobs),
     }
 
 
