@@ -25,6 +25,8 @@ DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
 # Version of our derived per-cycle calculation code. Bump when the
 # calculation in services/calc.py changes meaning.
-CALC_VERSION = "1.0.0"
+# 1.1.0: vectorized per_cycle; mean charge/discharge voltages can differ
+#        from 1.0.0 in the 7th decimal (float32 summation order).
+CALC_VERSION = "1.1.0"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

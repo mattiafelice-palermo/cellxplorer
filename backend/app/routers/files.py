@@ -241,9 +241,15 @@ def capacity_preview_from_cycles(cycles) -> dict:
 
 
 def build_capacity_preview(path: Path) -> tuple[dict | None, str | None]:
+    """Preview via the versioned cache: one parse per file content, ever.
+    The preview responds as soon as the parse finishes; the Parquet caches
+    are written behind it on a background thread, so the import confirm
+    (and any later work on this file) reuses them instead of re-parsing."""
     try:
-        raw = parsing.parse_timeseries(path)
-        cycles = calc.per_cycle(raw)
+        file_hash = parsing.compute_hash(path)
+        cycles = cache.build_write_behind(file_hash, path)
+        if cycles is None:
+            raise RuntimeError("cycle cache could not be built")
         return capacity_preview_from_cycles(cycles), None
     except Exception as exc:
         return None, str(exc)
@@ -269,6 +275,10 @@ def build_import_caches_parallel(
 ) -> dict[str, dict]:
     if not jobs:
         return {}
+    # worker processes can't see this process's write-behind threads, so
+    # settle any in-flight cache writes before dispatching
+    for job in jobs:
+        cache.wait_for_pending(job["hash"])
     worker_count = import_cache_worker_count(len(jobs), max_workers=max_workers)
     if worker_count == 1:
         return {
@@ -557,7 +567,15 @@ def raw_import_file_data(req: ImportRawDataRequest):
     if not source_path.exists():
         raise HTTPException(404, "Source file is missing")
     try:
-        raw = parsing.parse_timeseries(source_path)
+        # served from the hash-keyed raw cache; the parse happens at most
+        # once per file content, not once per page view
+        file_hash = parsing.compute_hash(source_path)
+        cache.build(file_hash, source_path)
+        raw = cache.load_raw(file_hash, parsing.PARSER_VERSION)
+        if raw is None:
+            raise RuntimeError("raw cache could not be built")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, f"Raw data could not be loaded: {exc}") from exc
     return raw_table_from_frame(raw, offset=req.offset, limit=req.limit)

@@ -36,38 +36,61 @@ QUANTITIES = {
 
 
 def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
-    """Collapse a raw time-series into one row per cycle."""
+    """Collapse a raw time-series into one row per cycle.
+
+    Fully vectorized: whole-frame groupby aggregations, no per-cycle Python
+    loop. Efficiency ratios follow the original semantics: NaN when the
+    charge-side value is 0 (or NaN, which propagates).
+    """
     if df.empty or "cycle" not in df.columns:
         return pd.DataFrame(columns=CYCLE_COLUMNS)
 
-    is_chg = df["status"].str.contains("Chg", case=False) & ~df["status"].str.contains(
-        "DChg", case=False
-    ) if "status" in df.columns else pd.Series(False, index=df.index)
-    is_dchg = df["status"].str.contains("DChg", case=False) if "status" in df.columns else pd.Series(
-        False, index=df.index
+    grouped = df.groupby("cycle", sort=True)
+    index = grouped.size().index
+
+    def group_max(col: str) -> np.ndarray:
+        if col in df.columns:
+            return grouped[col].max().to_numpy(dtype="float64")
+        return np.full(len(index), np.nan)
+
+    def masked_voltage_mean(mask: pd.Series) -> np.ndarray:
+        if "voltage_v" not in df.columns:
+            return np.full(len(index), np.nan)
+        means = df.loc[mask].groupby("cycle")["voltage_v"].mean()
+        return means.reindex(index).to_numpy(dtype="float64")
+
+    if "status" in df.columns:
+        has_chg = df["status"].str.contains("Chg", case=False)
+        has_dchg = df["status"].str.contains("DChg", case=False)
+        is_chg, is_dchg = has_chg & ~has_dchg, has_dchg
+    else:
+        is_chg = is_dchg = pd.Series(False, index=df.index)
+
+    chg_cap = group_max("charge_capacity_mah")
+    dchg_cap = group_max("discharge_capacity_mah")
+    chg_e = group_max("charge_energy_mwh")
+    dchg_e = group_max("discharge_energy_mwh")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ce = np.where(chg_cap != 0, dchg_cap / chg_cap * 100.0, np.nan)
+        ee = np.where(chg_e != 0, dchg_e / chg_e * 100.0, np.nan)
+
+    if "timestamp" in df.columns:
+        start_ts = grouped["timestamp"].min().to_numpy()
+    else:
+        start_ts = np.full(len(index), np.datetime64("NaT", "s"))
+
+    out = pd.DataFrame(
+        {
+            "cycle": index.to_numpy().astype("int64"),
+            "charge_capacity_mah": chg_cap,
+            "discharge_capacity_mah": dchg_cap,
+            "coulombic_efficiency_pct": ce,
+            "charge_energy_mwh": chg_e,
+            "discharge_energy_mwh": dchg_e,
+            "energy_efficiency_pct": ee,
+            "mean_charge_voltage_v": masked_voltage_mean(is_chg),
+            "mean_discharge_voltage_v": masked_voltage_mean(is_dchg),
+            "start_timestamp": start_ts,
+        }
     )
-
-    rows = []
-    for cyc, g in df.groupby("cycle", sort=True):
-        chg_cap = float(g["charge_capacity_mah"].max()) if "charge_capacity_mah" in g else np.nan
-        dchg_cap = float(g["discharge_capacity_mah"].max()) if "discharge_capacity_mah" in g else np.nan
-        chg_e = float(g["charge_energy_mwh"].max()) if "charge_energy_mwh" in g else np.nan
-        dchg_e = float(g["discharge_energy_mwh"].max()) if "discharge_energy_mwh" in g else np.nan
-
-        gc = g[is_chg.reindex(g.index, fill_value=False)]
-        gd = g[is_dchg.reindex(g.index, fill_value=False)]
-        rows.append(
-            {
-                "cycle": int(cyc),
-                "charge_capacity_mah": chg_cap,
-                "discharge_capacity_mah": dchg_cap,
-                "coulombic_efficiency_pct": (dchg_cap / chg_cap * 100.0) if chg_cap else np.nan,
-                "charge_energy_mwh": chg_e,
-                "discharge_energy_mwh": dchg_e,
-                "energy_efficiency_pct": (dchg_e / chg_e * 100.0) if chg_e else np.nan,
-                "mean_charge_voltage_v": float(gc["voltage_v"].mean()) if len(gc) else np.nan,
-                "mean_discharge_voltage_v": float(gd["voltage_v"].mean()) if len(gd) else np.nan,
-                "start_timestamp": g["timestamp"].min() if "timestamp" in g else pd.NaT,
-            }
-        )
-    return pd.DataFrame(rows, columns=CYCLE_COLUMNS)
+    return out[CYCLE_COLUMNS]

@@ -7,15 +7,23 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import NewareNDA
 import pandas as pd
 
+from . import fast_neware
+
 logger = logging.getLogger(__name__)
 
 PARSER_VERSION: str = NewareNDA.version.__version__
+
+# Vectorized fast paths for NewareNDA — verified output-identical (see
+# tests/test_fast_neware.py), so the cache parser version stays the same.
+if os.environ.get("CELLXPLORER_FAST_NDAX", "1") != "0":
+    fast_neware.install()
 
 # canonical column names for the raw time-series cache
 RAW_COLUMNS = {

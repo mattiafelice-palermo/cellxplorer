@@ -9,7 +9,10 @@ Layout:  CACHE_DIR/<hash[:2]>/<hash>/raw__p<parser>.parquet
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
+import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +21,37 @@ from ..config import CACHE_DIR, CALC_VERSION
 from . import calc, parsing
 
 logger = logging.getLogger(__name__)
+
+# background (write-behind) cache writes, keyed by file hash — see
+# build_write_behind(). Everything that reads or rebuilds a cache waits on
+# any in-flight write for that hash first.
+_pending_lock = threading.Lock()
+_pending: dict[str, threading.Thread] = {}
+
+
+def _wait_for_pending(file_hash: str) -> None:
+    with _pending_lock:
+        thread = _pending.get(file_hash)
+    if thread is not None:
+        thread.join()
+
+
+def wait_for_pending(file_hash: str) -> None:
+    """Block until any in-flight background cache write for this hash is
+    done. Needed before handing work to OTHER processes (which cannot see
+    this process's write threads); in-process readers wait automatically."""
+    _wait_for_pending(file_hash)
+
+
+def _write_atomic(df: pd.DataFrame, path: Path) -> None:
+    """Write parquet via temp file + os.replace so concurrent readers never
+    see a partially written cache."""
+    tmp = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _safe(v: str) -> str:
@@ -44,21 +78,73 @@ def has_cycles(file_hash: str, parser_version: str, calc_version: str) -> bool:
     return cycles_path(file_hash, parser_version, calc_version).exists()
 
 
-def build(file_hash: str, source_path: str | Path) -> dict:
+def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     """Parse source file and (re)build raw + cycles caches at the CURRENT
-    parser/calc versions. Returns {rows, cycles, parser_version, calc_version}."""
+    parser/calc versions. Returns {rows, cycles, parser_version, calc_version}.
+
+    Idempotent: identical content (hash) at identical versions yields
+    identical caches, so if both files already exist the parse is skipped
+    (row/cycle counts come from Parquet metadata). Pass force=True to
+    rebuild regardless, e.g. if a cache file is suspected corrupt."""
+    _wait_for_pending(file_hash)
+    rp, cp = raw_path(file_hash), cycles_path(file_hash)
+    if not force and rp.exists() and cp.exists():
+        import pyarrow.parquet as pq
+
+        return {
+            "rows": pq.read_metadata(rp).num_rows,
+            "cycles": pq.read_metadata(cp).num_rows,
+            "parser_version": parsing.PARSER_VERSION,
+            "calc_version": CALC_VERSION,
+            "cached": True,
+        }
+
     raw = parsing.parse_timeseries(source_path)
     d = _dir(file_hash)
     d.mkdir(parents=True, exist_ok=True)
-    raw.to_parquet(raw_path(file_hash), index=False)
+    _write_atomic(raw, rp)
     cycles = calc.per_cycle(raw)
-    cycles.to_parquet(cycles_path(file_hash), index=False)
+    _write_atomic(cycles, cp)
     return {
         "rows": len(raw),
         "cycles": len(cycles),
         "parser_version": parsing.PARSER_VERSION,
         "calc_version": CALC_VERSION,
+        "cached": False,
     }
+
+
+def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
+    """Parse now, return the per-cycle frame immediately, and write the
+    raw + cycles Parquet caches on a background thread.
+
+    This is the preview path: the caller gets plottable data as soon as the
+    parse finishes instead of also waiting ~0.5–1s for cache writes. Any
+    later build()/load for the same hash joins the in-flight write first,
+    so the caches are always complete before they are read."""
+    _wait_for_pending(file_hash)
+    if raw_path(file_hash).exists() and cycles_path(file_hash).exists():
+        return load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
+
+    raw = parsing.parse_timeseries(source_path)
+    cycles = calc.per_cycle(raw)
+
+    def _write() -> None:
+        try:
+            _dir(file_hash).mkdir(parents=True, exist_ok=True)
+            _write_atomic(raw, raw_path(file_hash))
+            _write_atomic(cycles, cycles_path(file_hash))
+        except Exception:
+            logger.exception("background cache write failed for %s", file_hash)
+        finally:
+            with _pending_lock:
+                _pending.pop(file_hash, None)
+
+    thread = threading.Thread(target=_write, daemon=True, name=f"cache-write-{file_hash[:8]}")
+    with _pending_lock:
+        _pending[file_hash] = thread
+    thread.start()
+    return cycles
 
 
 def load_cycles(
@@ -67,18 +153,20 @@ def load_cycles(
     """Load per-cycle cache at EXACT versions (reproducibility). If the
     cycles file is missing but a raw cache at that parser version exists and
     calc_version is current, derive and store it."""
+    _wait_for_pending(file_hash)
     p = cycles_path(file_hash, parser_version, calc_version)
     if p.exists():
         return pd.read_parquet(p)
     rp = raw_path(file_hash, parser_version)
     if rp.exists() and calc_version == CALC_VERSION:
         cycles = calc.per_cycle(pd.read_parquet(rp))
-        cycles.to_parquet(p, index=False)
+        _write_atomic(cycles, p)
         return cycles
     return None
 
 
 def load_raw(file_hash: str, parser_version: str) -> pd.DataFrame | None:
+    _wait_for_pending(file_hash)
     p = raw_path(file_hash, parser_version)
     return pd.read_parquet(p) if p.exists() else None
 
