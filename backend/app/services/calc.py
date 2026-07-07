@@ -19,10 +19,13 @@ CYCLE_COLUMNS = [
     "energy_efficiency_pct",
     "mean_charge_voltage_v",
     "mean_discharge_voltage_v",
+    "cycle_duration_h",
+    "charge_time_h",
+    "discharge_time_h",
     "start_timestamp",
 ]
 
-# user-selectable quantities for analyses
+# user-selectable quantities for analyses (cached per-cycle columns)
 QUANTITIES = {
     "discharge_capacity": ("discharge_capacity_mah", "Discharge capacity (mAh)"),
     "charge_capacity": ("charge_capacity_mah", "Charge capacity (mAh)"),
@@ -32,6 +35,9 @@ QUANTITIES = {
     "energy_efficiency": ("energy_efficiency_pct", "Energy efficiency (%)"),
     "mean_charge_voltage": ("mean_charge_voltage_v", "Mean charge voltage (V)"),
     "mean_discharge_voltage": ("mean_discharge_voltage_v", "Mean discharge voltage (V)"),
+    "cycle_duration": ("cycle_duration_h", "Cycle duration (h)"),
+    "charge_time": ("charge_time_h", "Charge time (h)"),
+    "discharge_time": ("discharge_time_h", "Discharge time (h)"),
 }
 
 
@@ -76,8 +82,30 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
 
     if "timestamp" in df.columns:
         start_ts = grouped["timestamp"].min().to_numpy()
+        cycle_duration = (
+            (grouped["timestamp"].max() - grouped["timestamp"].min())
+            .dt.total_seconds()
+            .to_numpy(dtype="float64")
+            / 3600.0
+        )
     else:
         start_ts = np.full(len(index), np.datetime64("NaT", "s"))
+        cycle_duration = np.full(len(index), np.nan)
+
+    def masked_step_time(mask: pd.Series) -> np.ndarray:
+        """Duration spent in the masked steps per cycle, in hours.
+
+        Neware's Time column resets at each step start, so max(time_s) per
+        (cycle, step) is that step's duration; summing over the cycle's
+        masked steps excludes rests/pauses between phases."""
+        if "time_s" not in df.columns or "step" not in df.columns:
+            return np.full(len(index), np.nan)
+        sub = df.loc[mask, ["cycle", "step", "time_s"]]
+        if sub.empty:
+            return np.full(len(index), np.nan)
+        per_step = sub.groupby(["cycle", "step"], sort=False)["time_s"].max()
+        per_cycle = per_step.groupby(level="cycle").sum() / 3600.0
+        return per_cycle.reindex(index).to_numpy(dtype="float64")
 
     out = pd.DataFrame(
         {
@@ -90,6 +118,9 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
             "energy_efficiency_pct": ee,
             "mean_charge_voltage_v": masked_voltage_mean(is_chg),
             "mean_discharge_voltage_v": masked_voltage_mean(is_dchg),
+            "cycle_duration_h": cycle_duration,
+            "charge_time_h": masked_step_time(is_chg),
+            "discharge_time_h": masked_step_time(is_dchg),
             "start_timestamp": start_ts,
         }
     )

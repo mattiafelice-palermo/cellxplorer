@@ -226,11 +226,12 @@ export interface CollectionInfo {
   n_analyses: number;
 }
 
+// ------------------------------------------------- analyses (spec v4)
+
 export interface SelectionEntry {
-  kind: "cell" | "group";
+  kind: "cell" | "replicate_group";
   ref_id: number;
   label_override?: string | null;
-  color?: string | null;
 }
 
 export interface Exclusion {
@@ -239,50 +240,68 @@ export interface Exclusion {
   excluded_at?: string;
 }
 
+export type AnalysisTabKey =
+  | "time_capacity"
+  | "cycles"
+  | "polarization"
+  | "crate"
+  | "chargeability"
+  | "dcir"
+  | "recap"
+  | "settings";
+
+export interface SavedAnalysisPlot {
+  id: string;
+  tab: AnalysisTabKey;
+  name: string;
+  subtitle: string;
+  description: string | null;
+  selection: {
+    entries: SelectionEntry[];
+    exclusions: Exclusion[];
+  };
+  computation: AnalysisSpec["computation"];
+  aggregation: AnalysisSpec["aggregation"];
+  presentation: AnalysisSpec["presentation"];
+  created_at: string;
+  modified_at: string;
+}
+
 export interface AnalysisSpec {
   spec_version: number;
+  type: string; // "cycling" for now; protocol-specific types come later
   title: string;
   created_at: string;
   modified_at: string;
   selection: {
     entries: SelectionEntry[];
     exclusions: Exclusion[];
-    refresh_suggestion: { query: RefreshQuery; last_applied_at?: string | null } | null;
   };
   computation: {
-    quantity: string;
-    x_axis: string;
     cycle_range: { start: number | null; end: number | null };
-    cycle_alignment: string;
-    filters: { kind: string; params: Record<string, unknown> }[];
-    normalization: { kind: string; params: Record<string, unknown> };
+    exclude_check_cycles_every_n: number;
+    retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
+    formation_cycles: number;
   };
   aggregation: {
-    mode: "group_mean" | "none";
+    mode: "replicate_mean" | "none";
     dispersion: "std" | "sem" | "minmax" | "percentile";
     min_n_for_band: number;
-    fade_low_n: boolean;
   };
   presentation: {
+    quantity: string;
+    ce_overlay: boolean;
     show_individual_cells: boolean;
-    series_style: Record<string, { color?: string }>;
-    axis_labels: { x: string | null; y: string | null };
     legend: boolean;
   };
-}
-
-export interface RefreshQuery {
-  name_contains?: string;
-  tags_all?: string[];
-  metadata?: Record<string, string>;
+  saved_plots?: SavedAnalysisPlot[];
 }
 
 export interface AnalysisSummary {
   id: number;
   title: string;
-  filed_in: { node_type: "project" | "folder"; node_id: number; name: string } | null;
-  tags: string[];
-  collections: { id: number; name: string }[];
+  type: string;
+  folder: { id: number; name: string } | null;
   n_entries: number;
   n_exclusions: number;
   quantity: string | null;
@@ -316,46 +335,78 @@ export interface Badge {
   removed_cell_ids?: number[];
 }
 
+export interface CellMetrics {
+  n_cycles: number;
+  max_discharge_capacity_mah?: number | null;
+  mean_discharge_capacity_mah?: number | null;
+  first_cycle_ce_pct?: number | null;
+  mean_ce_pct?: number | null;
+  mean_ee_pct?: number | null;
+  mean_ve_pct?: number | null;
+  last_cycle?: number;
+  retention_last_pct?: number | null;
+  discharge_loss_mah_per_cycle?: number | null;
+  charge_loss_mah_per_cycle?: number | null;
+  discharge_loss_pct_per_cycle?: number | null;
+  cycles_to_80_pct?: number | null;
+  total_duration_h?: number | null;
+  mean_cycle_duration_h?: number | null;
+  mean_charge_time_h?: number | null;
+  mean_discharge_time_h?: number | null;
+}
+
 export interface CellSeries {
   cell_id: number;
   cell_name: string;
   label: string;
   group_id: number | null;
   group_name: string | null;
-  color: string | null;
   excluded: boolean;
   exclusion_reason: string | null;
   archived: boolean;
   x: number[];
-  y: (number | null)[];
+  quantities: Record<string, (number | null)[]>;
+  metrics: CellMetrics;
+  retention_reference_mah: number | null;
+  segments: { file_hash: string; segment: number; cycle_start: number; cycle_end: number }[];
 }
 
 export interface AggregateSeries {
   group_id: number;
   group_name: string;
-  color: string | null;
   x: number[];
-  mean: (number | null)[];
-  band_low: (number | null)[];
-  band_high: (number | null)[];
-  n: number[];
+  quantities: Record<
+    string,
+    { mean: (number | null)[]; band_low: (number | null)[]; band_high: (number | null)[]; n: number[] }
+  >;
   max_n: number;
   dispersion: string;
   min_n_for_band: number;
 }
 
+export interface GroupMetrics {
+  group_id: number;
+  group_name: string;
+  metrics: Record<string, { mean: number; sd: number | null; n: number } | number>;
+}
+
+export interface QuantityInfo {
+  key: string;
+  column: string;
+  label: string;
+}
+
 export interface ComputeResult {
   computed_at: string;
+  type: string;
   parser_version: string;
   calc_version: string;
   current_parser_version: string;
   current_calc_version: string;
-  quantity: string;
-  quantity_label: string;
-  y_label: string;
-  normalized: boolean;
+  quantities: QuantityInfo[];
   cell_series: CellSeries[];
   aggregates: AggregateSeries[];
+  group_metrics: GroupMetrics[];
   badges: Badge[];
   sources: Provenance["sources"];
 }

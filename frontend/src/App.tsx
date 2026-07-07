@@ -14,6 +14,7 @@ import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { getDebugEvents } from "./debug";
 import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
+import { AnalysisPage } from "./pages/AnalysisPage";
 import { InboxPage } from "./pages/InboxPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -71,7 +72,7 @@ export default function App() {
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/analyses" element={<AnalysesIndexPage />} />
-          <Route path="/analyses/:analysisId" element={<AnalysesIndexPage />} />
+          <Route path="/analyses/:analysisId" element={<AnalysisPage />} />
         </Routes>
       </AppShell.Main>
 

@@ -28,7 +28,7 @@ from ..models import (
     Test,
     TestFile,
 )
-from ..services import analysis as analysis_svc
+from ..services import analysis_engine as analysis_svc
 from ..services import cache, parsing, scanner, stitch
 from .files import file_dict
 

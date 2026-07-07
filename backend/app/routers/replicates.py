@@ -19,7 +19,7 @@ from ..models import (
     ReplicateGroup,
     ReplicateGroupCell,
 )
-from ..services import analysis as analysis_svc
+from ..services import analysis_engine as analysis_svc
 from ..services import cache, parsing, scanner, stitch
 from .library import cell_capacity_totals
 
