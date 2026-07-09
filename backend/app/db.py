@@ -38,6 +38,15 @@ def ensure_runtime_schema() -> None:
                 "ALTER TABLE cells "
                 "ADD COLUMN cycling_status VARCHAR(20) NOT NULL DEFAULT 'active'"
             )
+        source_columns = {
+            row[1]
+            for row in conn.exec_driver_sql("PRAGMA table_info(source_files)").fetchall()
+        }
+        if source_columns and "nominal_capacity_mah" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files "
+                "ADD COLUMN nominal_capacity_mah FLOAT"
+            )
 
 
 def get_db():

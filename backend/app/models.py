@@ -56,6 +56,7 @@ class SourceFile(Base):
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
     active_mass_mg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    nominal_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     header_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # lifecycle

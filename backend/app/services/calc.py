@@ -19,6 +19,10 @@ CYCLE_COLUMNS = [
     "energy_efficiency_pct",
     "mean_charge_voltage_v",
     "mean_discharge_voltage_v",
+    "first_charge_voltage_v",
+    "last_charge_voltage_v",
+    "first_discharge_voltage_v",
+    "last_discharge_voltage_v",
     "cycle_duration_h",
     "charge_time_h",
     "discharge_time_h",
@@ -64,6 +68,16 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
             return np.full(len(index), np.nan)
         means = df.loc[mask].groupby("cycle")["voltage_v"].mean()
         return means.reindex(index).to_numpy(dtype="float64")
+
+    def masked_voltage_endpoint(mask: pd.Series, which: str) -> np.ndarray:
+        if "voltage_v" not in df.columns:
+            return np.full(len(index), np.nan)
+        sub = df.loc[mask, ["cycle", "voltage_v"]].dropna(subset=["voltage_v"])
+        if sub.empty:
+            return np.full(len(index), np.nan)
+        grouped_voltage = sub.groupby("cycle", sort=True)["voltage_v"]
+        values = grouped_voltage.first() if which == "first" else grouped_voltage.last()
+        return values.reindex(index).to_numpy(dtype="float64")
 
     if "status" in df.columns:
         has_chg = df["status"].str.contains("Chg", case=False)
@@ -118,6 +132,10 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
             "energy_efficiency_pct": ee,
             "mean_charge_voltage_v": masked_voltage_mean(is_chg),
             "mean_discharge_voltage_v": masked_voltage_mean(is_dchg),
+            "first_charge_voltage_v": masked_voltage_endpoint(is_chg, "first"),
+            "last_charge_voltage_v": masked_voltage_endpoint(is_chg, "last"),
+            "first_discharge_voltage_v": masked_voltage_endpoint(is_dchg, "first"),
+            "last_discharge_voltage_v": masked_voltage_endpoint(is_dchg, "last"),
             "cycle_duration_h": cycle_duration,
             "charge_time_h": masked_step_time(is_chg),
             "discharge_time_h": masked_step_time(is_dchg),

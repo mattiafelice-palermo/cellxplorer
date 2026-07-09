@@ -88,6 +88,7 @@ def _inspect_import_path(
         "channel": meta.get("channel"),
         "start_time": meta.get("start_time"),
         "active_mass_mg": meta.get("active_mass_mg"),
+        "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
         "nda_version": meta.get("nda_version"),
         "metadata": preview_meta,
         "raw_metadata": _raw_metadata_preview(meta.get("raw") or {}),
@@ -100,11 +101,18 @@ def _inspect_import_path(
 
 def _metadata_preview(meta: dict) -> dict[str, str]:
     fields = {
+        "start_step_id": meta.get("start_step_id"),
+        "part_number": meta.get("part_number"),
+        "builder": meta.get("builder"),
         "barcode": meta.get("barcode"),
         "channel": meta.get("channel"),
         "device_info": meta.get("device_info"),
         "start_time": meta.get("start_time"),
-        "active_mass_mg": meta.get("active_mass_mg"),
+        "active_material_mg": meta.get("active_mass_mg"),
+        "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
+        "voltage_upper_v": meta.get("voltage_upper_v"),
+        "voltage_lower_v": meta.get("voltage_lower_v"),
+        "record_interval_s": meta.get("record_interval_s"),
         "nda_version": meta.get("nda_version"),
         "remarks": meta.get("remarks"),
     }
@@ -113,6 +121,22 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
 
 def _raw_metadata_preview(raw: dict, limit: int = 80) -> dict[str, str]:
     return dict(list((raw or {}).items())[:limit])
+
+
+def full_cell_metadata_from_header(meta: dict, draft_metadata: dict[str, str] | None = None) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    metadata.update(_metadata_preview(meta))
+    for key, value in (meta.get("raw") or {}).items():
+        k = f"raw.{key}".strip()
+        v = str(value).strip()
+        if k and v:
+            metadata[k] = v
+    for key, value in (draft_metadata or {}).items():
+        k = key.strip()
+        v = str(value).strip()
+        if k and v:
+            metadata[k] = v
+    return metadata
 
 
 def _source_file_match_payload(sf: SourceFile, kind: str, matched_on: list[str]) -> dict:
@@ -390,6 +414,7 @@ def file_dict(sf: SourceFile) -> dict:
         "remarks": sf.remarks,
         "start_time": sf.start_time,
         "active_mass_mg": sf.active_mass_mg,
+        "nominal_capacity_mah": sf.nominal_capacity_mah,
         "location_status": sf.location_status,
         "parse_status": sf.parse_status,
         "parse_error": sf.parse_error,
@@ -653,6 +678,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
                 remarks=meta.get("remarks"),
                 start_time=meta.get("start_time"),
                 active_mass_mg=meta.get("active_mass_mg"),
+                nominal_capacity_mah=meta.get("nominal_capacity_mah"),
                 header_meta=meta.get("raw") or None,
                 location_status="online",
                 parse_status="unparsed",
@@ -663,13 +689,25 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             sf = existing
             sf.path = str(source_path)
             sf.filename = draft.filename
+            sf.size = source_path.stat().st_size
+            sf.ext = Path(draft.filename).suffix.lower().lstrip(".")
+            sf.nda_version = meta.get("nda_version")
+            sf.device_info = meta.get("device_info")
+            sf.channel = meta.get("channel")
+            sf.barcode = meta.get("barcode")
+            sf.remarks = meta.get("remarks")
+            sf.start_time = meta.get("start_time")
+            sf.active_mass_mg = meta.get("active_mass_mg")
+            sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
+            sf.header_meta = meta.get("raw") or None
             sf.location_status = "online"
 
         cell = Cell(name=name, description=(draft.description or "").strip() or None)
         db.add(cell)
         db.flush()
 
-        for key, value in draft.metadata.items():
+        imported_metadata = full_cell_metadata_from_header(meta, draft.metadata)
+        for key, value in imported_metadata.items():
             k = key.strip()
             v = str(value).strip()
             if k and v:

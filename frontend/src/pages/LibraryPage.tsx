@@ -78,6 +78,7 @@ export function LibraryPage() {
   const [replicateSearch, setReplicateSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedCellIds, setSelectedCellIds] = useState<Set<number>>(new Set());
+  const [lastSelectedCellId, setLastSelectedCellId] = useState<number | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [addToGroupDialogOpen, setAddToGroupDialogOpen] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
@@ -127,6 +128,32 @@ export function LibraryPage() {
       });
       qc.invalidateQueries({ queryKey: ["cells"] });
       qc.invalidateQueries({ queryKey: ["cell", cell.id] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      qc.invalidateQueries({ queryKey: ["files"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const removeCells = useMutation({
+    mutationFn: (cellIds: number[]) =>
+      post<{
+        ok: boolean;
+        deleted_cell_ids: number[];
+        deleted_replicate_group_ids: number[];
+        missing_cell_ids: number[];
+      }>("/api/cells/delete", { cell_ids: cellIds }),
+    onSuccess: (result) => {
+      notifications.show({
+        message: `Removed ${result.deleted_cell_ids.length} cell${result.deleted_cell_ids.length === 1 ? "" : "s"} from the library`,
+        color: "teal",
+      });
+      if (selectedId !== null && result.deleted_cell_ids.includes(selectedId)) setSelectedId(null);
+      setSelectedCellIds(new Set());
+      setLastSelectedCellId(null);
+      qc.invalidateQueries({ queryKey: ["cells"] });
+      qc.invalidateQueries({ queryKey: ["cell"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
@@ -299,6 +326,26 @@ export function LibraryPage() {
     }
   };
 
+  const confirmRemoveSelected = () => {
+    if (selectedCells.length === 0) return;
+    const selected = new Set(selectedIds);
+    const emptiedGroups = (replicateGroups.data ?? []).filter(
+      (group) => group.cell_ids.length > 0 && group.cell_ids.every((cellId) => selected.has(cellId))
+    );
+    const suffix = emptiedGroups.length
+      ? `\n\nThis will also remove empty replicate group${emptiedGroups.length === 1 ? "" : "s"}: ${emptiedGroups
+          .map((group) => group.name)
+          .join(", ")}.`
+      : "";
+    if (
+      window.confirm(
+        `Remove ${selectedCells.length} selected cell${selectedCells.length === 1 ? "" : "s"} from the library?${suffix}`
+      )
+    ) {
+      removeCells.mutate(selectedIds);
+    }
+  };
+
   const totals = useMemo(() => {
     const rows = cells.data ?? [];
     return {
@@ -355,13 +402,28 @@ export function LibraryPage() {
     [replicateGroups.data]
   );
 
-  const toggleCellSelection = (cellId: number) => {
+  const toggleCellSelection = (cellId: number, range = false) => {
+    const visible = cells.data ?? [];
     setSelectedCellIds((current) => {
       const next = new Set(current);
+      if (range && lastSelectedCellId !== null) {
+        const from = visible.findIndex((cell) => cell.id === lastSelectedCellId);
+        const to = visible.findIndex((cell) => cell.id === cellId);
+        if (from >= 0 && to >= 0) {
+          const [start, end] = from < to ? [from, to] : [to, from];
+          const shouldSelect = !next.has(cellId);
+          visible.slice(start, end + 1).forEach((cell) => {
+            if (shouldSelect) next.add(cell.id);
+            else next.delete(cell.id);
+          });
+          return next;
+        }
+      }
       if (next.has(cellId)) next.delete(cellId);
       else next.add(cellId);
       return next;
     });
+    setLastSelectedCellId(cellId);
   };
 
   return (
@@ -458,6 +520,17 @@ export function LibraryPage() {
         >
           {statusButtonLabel}
         </Button>
+        <Button
+          variant="default"
+          color="red"
+          size="sm"
+          leftSection={<IconTrash size={15} />}
+          loading={removeCells.isPending}
+          disabled={selectedCellIds.size === 0}
+          onClick={confirmRemoveSelected}
+        >
+          Remove selected
+        </Button>
         <TextInput
           leftSection={<IconSearch size={15} />}
           placeholder="Search cells"
@@ -510,11 +583,14 @@ export function LibraryPage() {
                       checked={allVisibleSelected}
                       indeterminate={selectedCellIds.size > 0 && !allVisibleSelected}
                       onChange={(event) =>
-                        setSelectedCellIds(
-                          event.currentTarget.checked
-                            ? new Set((cells.data ?? []).map((cell) => cell.id))
-                            : new Set()
-                        )
+                        {
+                          setSelectedCellIds(
+                            event.currentTarget.checked
+                              ? new Set((cells.data ?? []).map((cell) => cell.id))
+                              : new Set()
+                          );
+                          setLastSelectedCellId(null);
+                        }
                       }
                     />
                   </Table.Th>
@@ -538,7 +614,9 @@ export function LibraryPage() {
                       <Checkbox
                         aria-label={`Select ${cell.name}`}
                         checked={selectedCellIds.has(cell.id)}
-                        onChange={() => toggleCellSelection(cell.id)}
+                        onChange={(event) =>
+                          toggleCellSelection(cell.id, (event.nativeEvent as MouseEvent).shiftKey)
+                        }
                       />
                     </Table.Td>
                     <Table.Td>
@@ -621,7 +699,7 @@ export function LibraryPage() {
                         variant="subtle"
                         color="red"
                         leftSection={<IconTrash size={14} />}
-                        loading={removeCell.isPending}
+                        loading={removeCell.isPending || removeCells.isPending}
                         onClick={() => confirmRemove(cell)}
                       >
                         Remove

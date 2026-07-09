@@ -134,6 +134,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
         remarks=meta.get("remarks"),
         start_time=meta.get("start_time"),
         active_mass_mg=meta.get("active_mass_mg"),
+        nominal_capacity_mah=meta.get("nominal_capacity_mah"),
         header_meta=meta.get("raw") or None,
         location_status="online",
         parse_status="unparsed",
@@ -191,6 +192,7 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     sf.remarks = meta.get("remarks")
     sf.start_time = meta.get("start_time")
     sf.active_mass_mg = meta.get("active_mass_mg")
+    sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None
     sf.location_status = "online"
     sf.parse_status = "parsing"

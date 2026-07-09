@@ -141,6 +141,15 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     return result
 
 
+@router.post("/analyses/{analysis_id}/time-capacity")
+def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
+    a = db.get(Analysis, analysis_id)
+    if a is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or a.spec
+    return engine.compute_time_capacity(db, spec, a.provenance, use_current_versions=req.recompute)
+
+
 @router.post("/analyses/{analysis_id}/duplicate")
 def duplicate_analysis(analysis_id: int, db: Session = Depends(get_db)):
     """Duplicate-and-recompute workflow: change the copy, keep the record."""

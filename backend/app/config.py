@@ -28,6 +28,8 @@ DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
 # 1.1.0: vectorized per_cycle; mean charge/discharge voltages can differ
 #        from 1.0.0 in the 7th decimal (float32 summation order).
 # 1.2.0: added cycle_duration_h, charge_time_h, discharge_time_h.
-CALC_VERSION = "1.2.0"
+# 1.3.0: added charge/discharge first/last voltage endpoints and
+#        render-time polarization.
+CALC_VERSION = "1.3.0"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

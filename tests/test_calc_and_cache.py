@@ -45,6 +45,13 @@ class PerCycleTests(unittest.TestCase):
         np.testing.assert_allclose(out["mean_discharge_voltage_v"], [3.1, 3.0])
         self.assertEqual(out["start_timestamp"].iloc[0], pd.Timestamp("2026-01-01 00:00"))
 
+    def test_charge_and_discharge_voltage_endpoints(self):
+        out = calc.per_cycle(raw_frame())
+        np.testing.assert_allclose(out["first_charge_voltage_v"], [3.0, 3.5])
+        np.testing.assert_allclose(out["last_charge_voltage_v"], [3.4, 3.5])
+        np.testing.assert_allclose(out["first_discharge_voltage_v"], [3.1, 3.0])
+        np.testing.assert_allclose(out["last_discharge_voltage_v"], [3.1, 3.0])
+
     def test_zero_charge_capacity_gives_nan_efficiency(self):
         df = raw_frame(charge_capacity_mah=[0.0] * 5, charge_energy_mwh=[0.0] * 5)
         out = calc.per_cycle(df)

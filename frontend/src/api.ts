@@ -1,4 +1,4 @@
-// Typed API client for the Cellxplorer backend.
+// Typed API client for the CellXplorer backend.
 import { addDebugEvent, describeRequestBody } from "./debug";
 
 export class ApiError extends Error {
@@ -27,15 +27,31 @@ function errorMessage(detail: unknown, fallback: string): string {
   return fallback;
 }
 
+function apiUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const host = window.location.hostname;
+  const isLocalhost = host === "127.0.0.1" || host === "localhost";
+  const isViteDev = Boolean(
+    (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV,
+  );
+  const servedByBackend =
+    isLocalhost && window.location.port === "8642";
+  const servedByVite =
+    isViteDev && isLocalhost && window.location.port !== "8642";
+  if (servedByBackend || servedByVite) return url;
+  return `http://127.0.0.1:8642${url}`;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const targetUrl = apiUrl(url);
   const isFormData = options?.body instanceof FormData;
   const method = options?.method ?? "GET";
   addDebugEvent("api:request", {
     method,
-    url,
+    url: targetUrl,
     body: describeRequestBody(options?.body),
   });
-  const res = await fetch(url, {
+  const res = await fetch(targetUrl, {
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(options?.headers ?? {}),
@@ -55,10 +71,10 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
-    addDebugEvent("api:error", { method, url, status: res.status, detail, body });
+    addDebugEvent("api:error", { method, url: targetUrl, status: res.status, detail, body });
     throw new ApiError(res.status, detail);
   }
-  addDebugEvent("api:response", { method, url, status: res.status });
+  addDebugEvent("api:response", { method, url: targetUrl, status: res.status });
   return res.json();
 }
 
@@ -89,6 +105,7 @@ export interface SourceFile {
   remarks: string | null;
   start_time: string | null;
   active_mass_mg: number | null;
+  nominal_capacity_mah: number | null;
   location_status: "online" | "offline" | "changed";
   parse_status: "unparsed" | "parsing" | "parsed" | "error";
   parse_error: string | null;
@@ -267,6 +284,87 @@ export interface SavedAnalysisPlot {
   modified_at: string;
 }
 
+export type PlotPaletteKey =
+  | "app"
+  | "pastel"
+  | "publication"
+  | "presentation"
+  | "okabe_ito"
+  | "tableau"
+  | "viridis"
+  | "monochrome"
+  | "custom";
+
+export type PlotExportFormat = "png" | "svg" | "pdf";
+export type PlotAspectRatioKey =
+  | "view"
+  | "square"
+  | "four_three"
+  | "sixteen_nine"
+  | "a4_portrait"
+  | "a4_landscape"
+  | "custom";
+
+export interface PlotAxisStyle {
+  mode: "auto" | "manual";
+  min: number | null;
+  max: number | null;
+  dtick: number | null;
+}
+
+export interface PlotAxisScope {
+  x_title?: string | null;
+  y_title?: string | null;
+  y2_title?: string | null;
+  x_axis?: Partial<PlotAxisStyle>;
+  y_axis?: Partial<PlotAxisStyle>;
+  y2_axis?: Partial<PlotAxisStyle>;
+}
+
+export interface PlotStyle {
+  palette: PlotPaletteKey;
+  custom_colors: Record<string, string>;
+  line_width: number;
+  line_dash: "solid" | "dot" | "dash" | "longdash";
+  marker_mode: "none" | "points" | "lines_points";
+  marker_size: number;
+  individual_opacity: number;
+  band_opacity: number;
+  show_grid: boolean;
+  show_zero_line: boolean; // y axis only — an x zero line is meaningless on cycle plots
+  show_frame: boolean;
+  plot_bgcolor: string;
+  paper_bgcolor: string;
+  frame_color: string;
+  frame_width: number;
+  x_title: string | null;
+  y_title: string | null;
+  y2_title: string | null; // CE overlay axis
+  x_axis: PlotAxisStyle;
+  y_axis: PlotAxisStyle;
+  y2_axis: PlotAxisStyle;
+  axis_scopes?: Partial<Record<AnalysisTabKey, PlotAxisScope>>;
+  tick_font_size: number;
+  axis_title_size: number;
+  legend_font_size: number;
+  tick_marks: "none" | "outside" | "inside";
+  tick_length: number;
+  tick_width: number;
+  /** CE overlay trace styling (cycles tab right axis). */
+  ce_line_width: number;
+  ce_line_dash: "solid" | "dot" | "dash" | "longdash";
+  ce_opacity: number;
+  legend_position: "bottom" | "right" | "top" | "inside";
+  export_settings_version: number;
+  export_format: PlotExportFormat;
+  export_aspect_ratio: PlotAspectRatioKey;
+  export_ppi: number;
+  export_width: number;
+  export_height: number;
+  export_scale: number;
+  export_include_title: boolean;
+}
+
 export interface AnalysisSpec {
   spec_version: number;
   type: string; // "cycling" for now; protocol-specific types come later
@@ -282,6 +380,28 @@ export interface AnalysisSpec {
     exclude_check_cycles_every_n: number;
     retention_reference: { mode: "max_first_n" | "cycle"; n: number; cycle: number | null };
     formation_cycles: number;
+    polarization: {
+      method:
+        | "mean"
+        | "first_first"
+        | "last_last"
+        | "last_charge_first_discharge"
+        | "first_charge_last_discharge";
+      direction: "charge_minus_discharge" | "discharge_minus_charge";
+    };
+    time_capacity?: {
+      x_axis: "time" | "capacity_mah" | "capacity_mah_g";
+      time_unit: "s" | "min" | "h";
+      display_mode: "consecutive" | "overlap_reset" | "overlap_mirror";
+      stacked: boolean;
+      current_left: "current_ma" | "current_density" | "c_rate";
+      current_right: "none" | "current_ma" | "current_density" | "c_rate";
+      electrode_area_cm2: number | null;
+      cycle_start: number | null;
+      cycle_end: number | null;
+      cycles: number[];
+      max_points_per_cell: number;
+    };
   };
   aggregation: {
     mode: "replicate_mean" | "none";
@@ -290,9 +410,14 @@ export interface AnalysisSpec {
   };
   presentation: {
     quantity: string;
+    normalize_by_mass?: boolean;
     ce_overlay: boolean;
     show_individual_cells: boolean;
     legend: boolean;
+    /** Legacy single style shared by all tabs; superseded by plot_styles. */
+    plot_style?: PlotStyle;
+    /** One fully independent style per plot tab. */
+    plot_styles?: Partial<Record<AnalysisTabKey, Partial<PlotStyle>>>;
   };
   saved_plots?: SavedAnalysisPlot[];
 }
@@ -368,6 +493,7 @@ export interface CellSeries {
   quantities: Record<string, (number | null)[]>;
   metrics: CellMetrics;
   retention_reference_mah: number | null;
+  active_mass_mg: number | null;
   segments: { file_hash: string; segment: number; cycle_start: number; cycle_end: number }[];
 }
 
@@ -411,6 +537,37 @@ export interface ComputeResult {
   sources: Provenance["sources"];
 }
 
+export interface TimeCapacityTrace {
+  cell_id: number;
+  cell_name: string;
+  label: string;
+  group_id: number | null;
+  group_name: string | null;
+  excluded: boolean;
+  active_mass_mg: number | null;
+  nominal_capacity_mah: number | null;
+  cycle: (number | null)[];
+  time_s: (number | null)[];
+  capacity_mah: (number | null)[];
+  capacity_mah_g: (number | null)[];
+  voltage_v: (number | null)[];
+  current_ma: (number | null)[];
+  phase: string[];
+  status: (string | null)[];
+}
+
+export interface TimeCapacityResult {
+  computed_at: string;
+  type: string;
+  parser_version: string;
+  calc_version: string;
+  current_parser_version: string;
+  current_calc_version: string;
+  settings: NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
+  cell_traces: TimeCapacityTrace[];
+  badges: Badge[];
+}
+
 export interface ScanJob {
   id: number;
   kind: string;
@@ -444,6 +601,7 @@ export interface ImportPreview {
   channel: string | null;
   start_time: string | null;
   active_mass_mg: number | null;
+  nominal_capacity_mah: number | null;
   nda_version: string | null;
   metadata: Record<string, string>;
   raw_metadata: Record<string, string>;

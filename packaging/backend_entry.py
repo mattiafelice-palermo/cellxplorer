@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import multiprocessing
+import os
+import sys
+import traceback
+import logging
+from pathlib import Path
+
+import uvicorn
+
+
+def _ensure_source_backend_on_path() -> None:
+    if getattr(sys, "frozen", False):
+        return
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "backend"))
+
+
+def _crash_log_path() -> Path:
+    data_override = os.environ.get("CELLXPLORER_DATA")
+    if data_override:
+        base = Path(data_override)
+    else:
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Cellxplorer"
+    return base / "logs" / "backend-crash.log"
+
+
+def _write_crash_log() -> None:
+    try:
+        path = _crash_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(traceback.format_exc(), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _configure_logging() -> None:
+    try:
+        log_path = _crash_log_path().parent / "backend.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            filename=log_path,
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+    except Exception:
+        logging.basicConfig(level=logging.CRITICAL)
+
+
+def main() -> int:
+    multiprocessing.freeze_support()
+    try:
+        _configure_logging()
+        _ensure_source_backend_on_path()
+        from app.main import app
+
+        if os.environ.get("CELLXPLORER_BACKEND_SMOKE") == "1":
+            return 0
+
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=8642,
+            log_level="info",
+            log_config=None,
+            access_log=False,
+        )
+        return 0
+    except Exception:
+        _write_crash_log()
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

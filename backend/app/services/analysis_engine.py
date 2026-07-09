@@ -18,6 +18,7 @@ from __future__ import annotations
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -33,12 +34,37 @@ SPEC_VERSION = 5
 # derived ones computed here at render time
 DERIVED_QUANTITIES = {
     "voltaic_efficiency": ("voltaic_efficiency_pct", "Voltaic efficiency (%)"),
+    "polarization": ("polarization_v", "Polarization ΔV (V)"),
+    "polarization_pct": ("polarization_pct", "Polarization ΔV/V (%)"),
     "capacity_retention": ("capacity_retention_pct", "Capacity retention / SoH (%)"),
     "discharge_capacity_loss": ("discharge_capacity_loss_mah", "Discharge capacity loss (mAh/cycle)"),
     "charge_capacity_loss": ("charge_capacity_loss_mah", "Charge capacity loss (mAh/cycle)"),
 }
 
-ALL_QUANTITIES: dict[str, tuple[str, str]] = {**calc.QUANTITIES, **DERIVED_QUANTITIES}
+SPECIFIC_QUANTITIES = {
+    "discharge_capacity_specific": ("discharge_capacity_mah_g", "Discharge capacity (mAh/g)"),
+    "charge_capacity_specific": ("charge_capacity_mah_g", "Charge capacity (mAh/g)"),
+    "discharge_energy_specific": ("discharge_energy_mwh_g", "Discharge energy (mWh/g)"),
+    "charge_energy_specific": ("charge_energy_mwh_g", "Charge energy (mWh/g)"),
+    "discharge_capacity_loss_specific": (
+        "discharge_capacity_loss_mah_g_cycle",
+        "Discharge capacity loss (mAh/g/cycle)",
+    ),
+    "charge_capacity_loss_specific": (
+        "charge_capacity_loss_mah_g_cycle",
+        "Charge capacity loss (mAh/g/cycle)",
+    ),
+}
+
+ALL_QUANTITIES: dict[str, tuple[str, str]] = {
+    **calc.QUANTITIES,
+    **DERIVED_QUANTITIES,
+    **SPECIFIC_QUANTITIES,
+}
+SELECTABLE_QUANTITIES: dict[str, tuple[str, str]] = {
+    **calc.QUANTITIES,
+    **DERIVED_QUANTITIES,
+}
 
 
 def now_iso() -> str:
@@ -62,6 +88,10 @@ def default_spec(title: str) -> dict:
             "retention_reference": {"mode": "max_first_n", "n": 5, "cycle": None},
             # cycles treated as formation and excluded from steady-state means
             "formation_cycles": 3,
+            "polarization": {
+                "method": "mean",
+                "direction": "charge_minus_discharge",
+            },
         },
         "aggregation": {"mode": "replicate_mean", "dispersion": "std", "min_n_for_band": 2},
         "presentation": {
@@ -151,7 +181,84 @@ def _retention_reference(frame: pd.DataFrame, computation: dict) -> float:
     return float(first_n.max()) if len(first_n) else float("nan")
 
 
-def add_derived_columns(frame: pd.DataFrame, computation: dict) -> tuple[pd.DataFrame, float]:
+POLARIZATION_METHOD_COLUMNS = {
+    "mean": ("mean_charge_voltage_v", "mean_discharge_voltage_v"),
+    "first_first": ("first_charge_voltage_v", "first_discharge_voltage_v"),
+    "last_last": ("last_charge_voltage_v", "last_discharge_voltage_v"),
+    "last_charge_first_discharge": ("last_charge_voltage_v", "first_discharge_voltage_v"),
+    "first_charge_last_discharge": ("first_charge_voltage_v", "last_discharge_voltage_v"),
+}
+
+
+def _metadata_float(value: object) -> float | None:
+    if value is None:
+        return None
+    match = re.search(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", str(value))
+    if not match:
+        return None
+    try:
+        number = float(match.group(0))
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
+def cell_active_mass_mg(cell: Cell) -> float | None:
+    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    for key in ("active_material_mg", "active_mass_mg"):
+        value = _metadata_float(metadata.get(key))
+        if value is not None:
+            return value
+    source_values: list[float] = []
+    for test in cell.tests:
+        for link in test.file_links:
+            value = _metadata_float(link.file.active_mass_mg)
+            if value is not None:
+                source_values.append(value)
+    return source_values[0] if source_values else None
+
+
+def cell_nominal_capacity_mah(cell: Cell) -> float | None:
+    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    for key in ("nominal_capacity_mah", "nominal_capacity"):
+        value = _metadata_float(metadata.get(key))
+        if value is not None:
+            return value
+    source_values: list[float] = []
+    for test in cell.tests:
+        for link in test.file_links:
+            value = _metadata_float(link.file.nominal_capacity_mah)
+            if value is not None:
+                source_values.append(value)
+    return source_values[0] if source_values else None
+
+
+def _polarization_values(frame: pd.DataFrame, computation: dict) -> tuple[np.ndarray, np.ndarray]:
+    cfg = computation.get("polarization") or {}
+    method = cfg.get("method") or "mean"
+    charge_col, discharge_col = POLARIZATION_METHOD_COLUMNS.get(
+        method, POLARIZATION_METHOD_COLUMNS["mean"]
+    )
+    charge = frame.get(charge_col)
+    discharge = frame.get(discharge_col)
+    if charge is None or discharge is None:
+        empty = np.full(len(frame), np.nan)
+        return empty, empty.copy()
+    charge_v = charge.to_numpy(dtype="float64")
+    discharge_v = discharge.to_numpy(dtype="float64")
+    delta = charge_v - discharge_v
+    denominator = discharge_v
+    if cfg.get("direction") == "discharge_minus_charge":
+        delta = -delta
+        denominator = charge_v
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pct = np.where(denominator != 0, delta / denominator * 100.0, np.nan)
+    return delta, pct
+
+
+def add_derived_columns(
+    frame: pd.DataFrame, computation: dict, active_mass_mg: float | None = None
+) -> tuple[pd.DataFrame, float]:
     """Add render-time derived columns; returns (frame, retention_ref)."""
     frame = frame.copy()
     ref = _retention_reference(frame, computation)
@@ -166,6 +273,9 @@ def add_derived_columns(frame: pd.DataFrame, computation: dict) -> tuple[pd.Data
     else:
         ve = np.full(len(frame), np.nan)
     frame["voltaic_efficiency_pct"] = ve
+    polarization_v, polarization_pct = _polarization_values(frame, computation)
+    frame["polarization_v"] = polarization_v
+    frame["polarization_pct"] = polarization_pct
 
     dchg = frame.get("discharge_capacity_mah")
     if dchg is not None and ref and not np.isnan(ref):
@@ -180,6 +290,20 @@ def add_derived_columns(frame: pd.DataFrame, computation: dict) -> tuple[pd.Data
         col = frame.get(src)
         # positive value = capacity lost versus the previous cycle
         frame[dst] = -col.diff().to_numpy(dtype="float64") if col is not None else np.nan
+    active_mass_g = active_mass_mg / 1000.0 if active_mass_mg and active_mass_mg > 0 else None
+    for src, dst in (
+        ("discharge_capacity_mah", "discharge_capacity_mah_g"),
+        ("charge_capacity_mah", "charge_capacity_mah_g"),
+        ("discharge_energy_mwh", "discharge_energy_mwh_g"),
+        ("charge_energy_mwh", "charge_energy_mwh_g"),
+        ("discharge_capacity_loss_mah", "discharge_capacity_loss_mah_g_cycle"),
+        ("charge_capacity_loss_mah", "charge_capacity_loss_mah_g_cycle"),
+    ):
+        col = frame.get(src)
+        if active_mass_g and col is not None:
+            frame[dst] = col.to_numpy(dtype="float64") / active_mass_g
+        else:
+            frame[dst] = np.nan
     return frame, ref
 
 
@@ -195,10 +319,119 @@ def apply_filters(frame: pd.DataFrame, computation: dict) -> pd.DataFrame:
     return frame
 
 
+def time_capacity_settings(computation: dict) -> dict:
+    cfg = computation.get("time_capacity") or {}
+    current_options = {"current_ma", "current_density", "c_rate"}
+    current_left = cfg.get("current_left") if cfg.get("current_left") in current_options else "current_ma"
+    current_right = cfg.get("current_right") if cfg.get("current_right") in current_options | {"none"} else "none"
+    return {
+        "cycle_start": cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
+        "cycle_end": cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
+        "cycles": [int(c) for c in cfg.get("cycles", []) if c is not None],
+        "x_axis": cfg.get("x_axis") or "time",
+        "time_unit": cfg.get("time_unit") or "min",
+        "display_mode": cfg.get("display_mode") or "consecutive",
+        "stacked": bool(cfg.get("stacked", False)),
+        "current_left": current_left,
+        "current_right": current_right,
+        "electrode_area_cm2": _metadata_float(cfg.get("electrode_area_cm2")),
+        "max_points_per_cell": int(cfg.get("max_points_per_cell") or 4000),
+    }
+
+
 def _jsonsafe(arr) -> list:
     out = []
     for v in np.asarray(arr, dtype="float64"):
         out.append(None if np.isnan(v) else float(v))
+    return out
+
+
+def _jsonsafe_int(arr) -> list:
+    out = []
+    for v in np.asarray(arr, dtype="float64"):
+        out.append(None if np.isnan(v) else int(v))
+    return out
+
+
+def _textsafe(series: pd.Series) -> list[str | None]:
+    out: list[str | None] = []
+    for v in series:
+        out.append(None if pd.isna(v) else str(v))
+    return out
+
+
+def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
+    """Charge/discharge/rest per row, vectorized (runs on full raw frames)."""
+    n = len(frame)
+    if "status" in frame.columns:
+        status = frame["status"].astype(str).str.lower()
+        has_dchg = status.str.contains("dchg") | status.str.contains("discharge")
+        has_chg = status.str.contains("chg") | status.str.contains("charge")
+    else:
+        has_dchg = pd.Series(False, index=frame.index)
+        has_chg = pd.Series(False, index=frame.index)
+    if "current_ma" in frame.columns:
+        cur = frame["current_ma"].to_numpy(dtype="float64")
+    else:
+        cur = np.full(n, np.nan)
+    with np.errstate(invalid="ignore"):
+        is_dchg = has_dchg.to_numpy() | (cur < 0)
+        is_chg = ~is_dchg & (has_chg.to_numpy() | (cur > 0))
+    return np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest").tolist()
+
+
+def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
+    """Half-cycle capacity per row, continuous across Neware step resets.
+
+    Neware's capacity counters restart at each step boundary — e.g. at the
+    CC→CV transition the charge capacity drops from ~2.6 mAh back to 0 and
+    re-accumulates during the CV hold. Plotted against capacity that drew a
+    flat line at the cutoff voltage starting from x=0. Within each
+    contiguous (cycle, phase) run we therefore accumulate an offset at every
+    reset so capacity is cumulative for the whole half-cycle."""
+    n = len(frame)
+    charge = (
+        frame["charge_capacity_mah"].to_numpy(dtype="float64")
+        if "charge_capacity_mah" in frame.columns
+        else np.full(n, np.nan)
+    )
+    discharge = (
+        frame["discharge_capacity_mah"].to_numpy(dtype="float64")
+        if "discharge_capacity_mah" in frame.columns
+        else np.full(n, np.nan)
+    )
+    phase_arr = np.asarray(phases)
+    with np.errstate(invalid="ignore"):
+        best = np.where(
+            np.isnan(charge), discharge, np.where(np.isnan(discharge), charge, np.maximum(charge, discharge))
+        )
+    raw_cap = np.where(
+        (phase_arr == "discharge") & ~np.isnan(discharge),
+        discharge,
+        np.where((phase_arr == "charge") & ~np.isnan(charge), charge, best),
+    )
+
+    cycles = (
+        frame["cycle"].to_numpy() if "cycle" in frame.columns else np.zeros(n, dtype="int64")
+    )
+    out = raw_cap.copy()
+    carry = 0.0
+    prev_val = np.nan
+    prev_key: tuple | None = None
+    for i in range(n):
+        key = (cycles[i], phase_arr[i])
+        val = raw_cap[i]
+        if key != prev_key:
+            carry = 0.0
+            prev_val = np.nan
+            prev_key = key
+        if not np.isnan(val):
+            # a step reset drops the counter to (near) zero; small noisy
+            # decreases are left alone
+            if not np.isnan(prev_val) and val < prev_val and val < prev_val * 0.5:
+                carry += prev_val
+            prev_val = val
+            out[i] = val + carry
     return out
 
 
@@ -422,13 +655,14 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
                  "detail": "Cell is archived (soft-deleted); still rendering from cache."})
 
         excluded = cell.id in excl
+        active_mass_mg = cell_active_mass_mg(cell)
         if stitched.empty:
             x: list[int] = []
             quantities = {c: [] for c in quantity_cols}
             metrics = {"n_cycles": 0}
             ref = None
         else:
-            derived, ref_val = add_derived_columns(stitched, computation)
+            derived, ref_val = add_derived_columns(stitched, computation, active_mass_mg)
             filtered = apply_filters(derived, computation).sort_values("cycle")
             x = [int(v) for v in filtered["cycle"]]
             quantities = {
@@ -445,6 +679,7 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
              "excluded": excluded, "exclusion_reason": excl.get(cell.id, {}).get("reason"),
              "archived": cell.archived, "x": x, "quantities": quantities,
              "metrics": metrics, "retention_reference_mah": ref,
+             "active_mass_mg": active_mass_mg,
              "segments": segments})
         sources.append(
             {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
@@ -515,13 +750,150 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
         "current_calc_version": CALC_VERSION,
         "quantities": [
             {"key": key, "column": col, "label": label}
-            for key, (col, label) in ALL_QUANTITIES.items()
+            for key, (col, label) in SELECTABLE_QUANTITIES.items()
         ],
         "cell_series": cell_series,
         "aggregates": aggregates,
         "group_metrics": group_metrics,
         "badges": badges,
         "sources": sources,
+    }
+
+
+def _stitch_raw(
+    ordered_hashes: list[str], parser_version: str
+) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    frames: list[pd.DataFrame] = []
+    segments: list[dict] = []
+    missing: list[str] = []
+    offset = 0
+    for i, h in enumerate(ordered_hashes):
+        df = cache.load_raw(h, parser_version)
+        if df is None:
+            missing.append(h)
+            continue
+        df = df.copy()
+        if len(df) and "cycle" in df.columns:
+            first, last = int(df["cycle"].min()), int(df["cycle"].max())
+            df["cycle"] = df["cycle"] - first + 1 + offset
+            segments.append(
+                {
+                    "file_hash": h,
+                    "segment": i,
+                    "cycle_start": offset + 1,
+                    "cycle_end": offset + (last - first + 1),
+                }
+            )
+            offset += last - first + 1
+        df["segment"] = i
+        df["source_hash"] = h
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame(), segments, missing
+    return pd.concat(frames, ignore_index=True), segments, missing
+
+
+def compute_time_capacity(
+    db: Session, spec: dict, provenance: dict | None, use_current_versions: bool = False
+) -> dict:
+    parser_version = parsing.PARSER_VERSION
+    calc_version = CALC_VERSION
+    if provenance and not use_current_versions:
+        parser_version = provenance.get("parser_version") or parser_version
+        calc_version = provenance.get("calc_version") or calc_version
+
+    computation = spec.get("computation", {})
+    settings = time_capacity_settings(computation)
+    excl = {e["cell_id"]: e for e in spec.get("selection", {}).get("exclusions", [])}
+    units, missing_refs = resolve_selection(db, spec)
+
+    from . import scanner
+
+    at_current = parser_version == parsing.PARSER_VERSION
+    traces: list[dict] = []
+    badges: list[dict] = []
+
+    for unit in units:
+        cell: Cell = unit["cell"]
+        hashes, files = cell_ordered_hashes(db, cell)
+        if at_current:
+            for f in files:
+                if not cache.raw_path(f.hash, parser_version).exists() and Path(f.path).exists():
+                    scanner.parse_file(db, f)
+
+        raw, segments, missing = _stitch_raw(hashes, parser_version)
+        for h in missing:
+            badges.append(
+                {
+                    "kind": "cache_missing",
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "detail": f"No raw cache at parser {parser_version} for file {h[:12]}...",
+                }
+            )
+        if raw.empty or "cycle" not in raw.columns:
+            continue
+
+        if settings["cycles"]:
+            raw = raw[raw["cycle"].isin(settings["cycles"])]
+        else:
+            if settings["cycle_start"] is not None:
+                raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+            if settings["cycle_end"] is not None:
+                raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+
+        raw = raw.sort_values(["cycle", "segment", "record_index"] if "record_index" in raw.columns else ["cycle", "segment"])
+        max_points = max(100, settings["max_points_per_cell"])
+        if len(raw) > max_points:
+            raw = raw.iloc[np.unique(np.linspace(0, len(raw) - 1, max_points).astype(int))]
+
+        phases = _phase_from_raw(raw)
+        capacity = _phase_capacity(raw, phases)
+        active_mass_mg = cell_active_mass_mg(cell)
+        nominal_capacity_mah = cell_nominal_capacity_mah(cell)
+        active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
+        capacity_g = capacity / active_mass_g if active_mass_g and active_mass_g > 0 else np.full(len(raw), np.nan)
+
+        traces.append(
+            {
+                "cell_id": cell.id,
+                "cell_name": cell.name,
+                "label": unit["label"],
+                "group_id": unit["group_id"],
+                "group_name": unit["group_name"],
+                "excluded": cell.id in excl,
+                "active_mass_mg": active_mass_mg,
+                "nominal_capacity_mah": nominal_capacity_mah,
+                "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
+                "time_s": _jsonsafe(raw["time_s"].to_numpy()) if "time_s" in raw.columns else [None] * len(raw),
+                "capacity_mah": _jsonsafe(capacity),
+                "capacity_mah_g": _jsonsafe(capacity_g),
+                "voltage_v": _jsonsafe(raw["voltage_v"].to_numpy()) if "voltage_v" in raw.columns else [None] * len(raw),
+                "current_ma": _jsonsafe(raw["current_ma"].to_numpy()) if "current_ma" in raw.columns else [None] * len(raw),
+                "phase": phases,
+                "status": _textsafe(raw["status"]) if "status" in raw.columns else [None] * len(raw),
+                "segments": segments,
+            }
+        )
+
+    for miss in missing_refs:
+        badges.append(
+            {
+                "kind": "missing_reference",
+                "detail": f"Selection references {miss['kind']} #{miss['ref_id']}, which no longer exists.",
+            }
+        )
+
+    return {
+        "computed_at": now_iso(),
+        "type": spec.get("type", "cycling"),
+        "parser_version": parser_version,
+        "calc_version": calc_version,
+        "current_parser_version": parsing.PARSER_VERSION,
+        "current_calc_version": CALC_VERSION,
+        "settings": settings,
+        "cell_traces": traces,
+        "badges": badges,
     }
 
 

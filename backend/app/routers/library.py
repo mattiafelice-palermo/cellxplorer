@@ -102,6 +102,34 @@ def delete_cell_from_library(db: Session, cell: Cell) -> dict:
     return {"deleted_cell_id": cell_id, "deleted_replicate_group_ids": deleted_groups}
 
 
+def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
+    unique_ids = list(dict.fromkeys(int(cell_id) for cell_id in cell_ids))
+    if not unique_ids:
+        return {
+            "deleted_cell_ids": [],
+            "deleted_replicate_group_ids": [],
+            "missing_cell_ids": [],
+        }
+    cells = {
+        cell.id: cell
+        for cell in db.query(Cell).filter(Cell.id.in_(unique_ids)).all()
+    }
+    deleted_cell_ids: list[int] = []
+    deleted_group_ids: list[int] = []
+    for cell_id in unique_ids:
+        cell = cells.get(cell_id)
+        if cell is None:
+            continue
+        result = delete_cell_from_library(db, cell)
+        deleted_cell_ids.append(result["deleted_cell_id"])
+        deleted_group_ids.extend(result["deleted_replicate_group_ids"])
+    return {
+        "deleted_cell_ids": deleted_cell_ids,
+        "deleted_replicate_group_ids": list(dict.fromkeys(deleted_group_ids)),
+        "missing_cell_ids": [cell_id for cell_id in unique_ids if cell_id not in cells],
+    }
+
+
 def _finite_sum(values) -> float | None:
     total = 0.0
     found = False
@@ -271,6 +299,10 @@ class CellSourceUpdateRequest(BaseModel):
     include_complete: bool = False
 
 
+class CellDeleteRequest(BaseModel):
+    cell_ids: list[int]
+
+
 def _cell_source_files(
     db: Session,
     cell_ids: list[int] | None = None,
@@ -413,6 +445,15 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
         "skipped_complete": skipped_complete,
         "errors": errors,
     }
+
+
+@router.post("/cells/delete")
+def delete_cells(req: CellDeleteRequest, db: Session = Depends(get_db)):
+    result = delete_cells_from_library(db, req.cell_ids)
+    if not result["deleted_cell_ids"] and result["missing_cell_ids"]:
+        raise HTTPException(404, "No selected cells were found")
+    db.commit()
+    return {"ok": True, **result}
 
 
 @router.delete("/cells/{cell_id}")

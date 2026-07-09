@@ -83,6 +83,82 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(meta["remarks"], "actual-cell-remark")
 
+    def test_header_metadata_extracts_neware_test_information_units(self):
+        original = parsing.NewareNDA.read_metadata
+        parsing.NewareNDA.read_metadata = lambda _: {
+            "Step": {
+                "Head_Info": {
+                    "Start_Step": {"Value": "1"},
+                    "PN": {"Value": "2026-03-17 14-04-28"},
+                    "Creator": {"Value": "CY"},
+                    "Remark": {"Value": "NG_20260317_LFP_LP_MoL_530_FM+CY"},
+                    "SCQ": {"Value": "333770"},
+                    "MultCap": {"Value": "185040"},
+                },
+                "Step_Info": {
+                    "Step1": {
+                        "Record": {"Main": {"Time": {"Value": "1000"}}},
+                        "Protect": {
+                            "Main": {
+                                "Volt": {
+                                    "Upper": {"Value": "38500"},
+                                    "Lower": {"Value": "27500"},
+                                }
+                            }
+                        },
+                    }
+                },
+            }
+        }
+        try:
+            meta = parsing.read_header_metadata("fake.ndax")
+        finally:
+            parsing.NewareNDA.read_metadata = original
+
+        self.assertEqual(meta["start_step_id"], "1")
+        self.assertEqual(meta["part_number"], "2026-03-17 14-04-28")
+        self.assertEqual(meta["builder"], "CY")
+        self.assertAlmostEqual(meta["active_mass_mg"], 333.77, places=6)
+        self.assertAlmostEqual(meta["active_material_mg"], 333.77, places=6)
+        self.assertAlmostEqual(meta["nominal_capacity_mah"], 51.4, places=6)
+        self.assertAlmostEqual(meta["voltage_upper_v"], 3.85, places=6)
+        self.assertAlmostEqual(meta["voltage_lower_v"], 2.75, places=6)
+        self.assertAlmostEqual(meta["record_interval_s"], 1.0, places=6)
+
+    def test_metadata_preview_includes_normalized_capacity_fields(self):
+        preview = files._metadata_preview(
+            {
+                "active_mass_mg": 333.77,
+                "nominal_capacity_mah": 51.4,
+                "builder": "CY",
+                "part_number": "P-1",
+                "voltage_upper_v": 3.85,
+                "voltage_lower_v": 2.75,
+            }
+        )
+
+        self.assertEqual(preview["active_material_mg"], "333.77")
+        self.assertEqual(preview["nominal_capacity_mah"], "51.4")
+        self.assertEqual(preview["builder"], "CY")
+        self.assertEqual(preview["part_number"], "P-1")
+
+    def test_imported_cell_metadata_keeps_full_flattened_header(self):
+        meta = {
+            "active_mass_mg": 333.77,
+            "builder": "CY",
+            "raw": {
+                "Step.Head_Info.Creator.Value": "CY",
+                "Step.User_Info.Custom.Field": "all metadata survives",
+            },
+        }
+        metadata = files.full_cell_metadata_from_header(meta, {"operator_note": "checked"})
+
+        self.assertEqual(metadata["active_material_mg"], "333.77")
+        self.assertEqual(metadata["builder"], "CY")
+        self.assertEqual(metadata["raw.Step.Head_Info.Creator.Value"], "CY")
+        self.assertEqual(metadata["raw.Step.User_Info.Custom.Field"], "all metadata survives")
+        self.assertEqual(metadata["operator_note"], "checked")
+
     def test_raw_table_from_frame_returns_json_safe_page(self):
         raw = pd.DataFrame(
             {

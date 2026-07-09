@@ -215,6 +215,35 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertIsNone(sf.test_link)
         self.assertIsNotNone(db.get(SourceFile, sf.id))
 
+    def test_delete_cells_from_library_removes_many_and_empty_groups(self):
+        db = self.make_session()
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        cell_c = Cell(name="C")
+        group = ReplicateGroup(name="Rep")
+        folder = Folder(name="Folder")
+        db.add_all([cell_a, cell_b, cell_c, group, folder])
+        db.flush()
+        db.add_all(
+            [
+                ReplicateGroupCell(group_id=group.id, cell_id=cell_a.id, position=0),
+                ReplicateGroupCell(group_id=group.id, cell_id=cell_b.id, position=1),
+                FolderCell(folder_id=folder.id, cell_id=cell_a.id, position=0),
+                FolderCell(folder_id=folder.id, cell_id=cell_b.id, position=1),
+            ]
+        )
+        db.flush()
+
+        result = library.delete_cells_from_library(db, [cell_a.id, cell_b.id])
+        db.flush()
+
+        self.assertEqual(result["deleted_cell_ids"], [cell_a.id, cell_b.id])
+        self.assertEqual(result["deleted_replicate_group_ids"], [group.id])
+        self.assertIsNone(db.get(Cell, cell_a.id))
+        self.assertIsNone(db.get(Cell, cell_b.id))
+        self.assertIsNotNone(db.get(Cell, cell_c.id))
+        self.assertEqual(db.query(FolderCell).count(), 0)
+
     def test_import_cleanup_removes_archived_cell_blocking_existing_source(self):
         db = self.make_session()
         cell = Cell(name="Archived A", archived=True)

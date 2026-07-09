@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -14,7 +15,13 @@ from .services import calc, parsing
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Cellxplorer", version="1.0.0")
+app = FastAPI(title="CellXplorer", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(engine)
 ensure_runtime_schema()

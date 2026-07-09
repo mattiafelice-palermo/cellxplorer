@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +85,7 @@ def read_header_metadata(path: str | Path) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
     Returns {raw: <flattened dict>, barcode, remarks, device_info, channel,
-    start_time, active_mass_mg, nda_version}.
+    start_time, active_mass_mg, nominal_capacity_mah, nda_version}.
     """
     path = Path(path)
     try:
@@ -111,19 +112,63 @@ def read_header_metadata(path: str | Path) -> dict:
                     return val
         return None
 
+    def find_suffix(suffix: str) -> str | None:
+        suffix_low = suffix.lower()
+        for key, val in flat.items():
+            if key.lower().endswith(suffix_low):
+                return val
+        return None
+
+    def find_all_suffix(suffix: str) -> list[str]:
+        suffix_low = suffix.lower()
+        return [val for key, val in flat.items() if key.lower().endswith(suffix_low)]
+
+    def as_float(value: str | None) -> float | None:
+        if value is None:
+            return None
+        match = re.search(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", str(value))
+        if not match:
+            return None
+        try:
+            return float(match.group(0))
+        except ValueError:
+            return None
+
+    def scaled(value: str | None, factor: float) -> float | None:
+        number = as_float(value)
+        return None if number is None else number / factor
+
+    def scaled_values(values: list[str], factor: float) -> list[float]:
+        out: list[float] = []
+        for value in values:
+            scaled_value = scaled(value, factor)
+            if scaled_value is not None:
+                out.append(scaled_value)
+        return out
+
     result["barcode"] = find("barcode")
     result["remarks"] = find_path("head_info.remark.value") or find("remarks", "remark")
     result["nda_version"] = find("nda_version", "bts_version", "version")
     result["start_time"] = find("starttime", "start_time", "startime")
+    result["start_step_id"] = find_suffix("head_info.start_step.value")
+    result["part_number"] = find_suffix("head_info.pn.value")
+    result["builder"] = find_suffix("head_info.creator.value")
     dev = find("devtype", "device", "devicetype")
     dev_id = find("devid", "deviceid")
     unit = find("unitid")
     chl = find("chlid", "channel", "chl")
     result["device_info"] = " ".join(x for x in (dev, dev_id and f"#{dev_id}") if x) or None
     result["channel"] = "-".join(x for x in (unit, chl) if x) or None
-    mass = find("active_mass_mg", "activemass")
-    try:
-        result["active_mass_mg"] = float(mass) if mass else None
-    except ValueError:
-        result["active_mass_mg"] = None
+    mass = as_float(find("active_mass_mg", "activemass"))
+    if mass is None:
+        mass = scaled(find_suffix("head_info.scq.value"), 1000.0)
+    result["active_mass_mg"] = mass
+    result["active_material_mg"] = mass
+    result["nominal_capacity_mah"] = scaled(find_suffix("head_info.multcap.value"), 3600.0)
+    uppers = scaled_values(find_all_suffix("protect.main.volt.upper.value"), 10000.0)
+    lowers = scaled_values(find_all_suffix("protect.main.volt.lower.value"), 10000.0)
+    result["voltage_upper_v"] = uppers[0] if uppers else None
+    result["voltage_lower_v"] = lowers[0] if lowers else None
+    record_times = scaled_values(find_all_suffix("record.main.time.value"), 1000.0)
+    result["record_interval_s"] = record_times[0] if record_times else None
     return result

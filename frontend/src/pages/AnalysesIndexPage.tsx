@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Group,
+  Select,
   Stack,
   Table,
   Text,
@@ -19,7 +20,55 @@ import { IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { AnalysisFull, AnalysisSummary, del, get, post } from "../api";
+import { AnalysisFull, AnalysisSummary, del, FolderNode, get, post, Tree } from "../api";
+
+function flattenFolders(nodes: FolderNode[], depth = 0): { value: string; label: string }[] {
+  return nodes.flatMap((node) => [
+    { value: String(node.id), label: `${"  ".repeat(depth)}${node.name}` },
+    ...flattenFolders(node.children, depth + 1),
+  ]);
+}
+
+function AnalysisCreateForm({
+  folders,
+  loading,
+  onSubmit,
+}: {
+  folders: { value: string; label: string }[];
+  loading: boolean;
+  onSubmit: (payload: { title: string; folder_id: number | null }) => void;
+}) {
+  const [title, setTitle] = useState("Untitled analysis");
+  const [folder, setFolder] = useState<string | null>("none");
+  const submit = () => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    onSubmit({ title: trimmed, folder_id: folder && folder !== "none" ? Number(folder) : null });
+  };
+  return (
+    <Stack>
+      <TextInput
+        label="Title"
+        value={title}
+        onChange={(event) => setTitle(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") submit();
+        }}
+        data-autofocus
+      />
+      <Select
+        label="Folder"
+        data={[{ value: "none", label: "No folder" }, ...folders]}
+        value={folder}
+        onChange={setFolder}
+        searchable
+      />
+      <Button disabled={!title.trim()} loading={loading} onClick={submit}>
+        Create analysis
+      </Button>
+    </Stack>
+  );
+}
 
 export function AnalysesIndexPage() {
   const navigate = useNavigate();
@@ -31,11 +80,16 @@ export function AnalysesIndexPage() {
     queryFn: () =>
       get<AnalysisSummary[]>(`/api/analyses${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   });
+  const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
+  const folderOptions = flattenFolders(tree.data?.folders ?? []);
 
   const create = useMutation({
-    mutationFn: () => post<AnalysisFull>("/api/analyses", { title: "Untitled analysis" }),
+    mutationFn: (body: { title: string; folder_id: number | null }) =>
+      post<AnalysisFull>("/api/analyses", body),
     onSuccess: (a) => {
       qc.invalidateQueries({ queryKey: ["analyses"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      modals.closeAll();
       navigate(`/analyses/${a.id}`);
     },
     onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
@@ -52,7 +106,22 @@ export function AnalysesIndexPage() {
     <Stack>
       <Group justify="space-between">
         <Title order={3}>Analyses</Title>
-        <Button leftSection={<IconPlus size={16} />} onClick={() => create.mutate()} loading={create.isPending}>
+        <Button
+          leftSection={<IconPlus size={16} />}
+          onClick={() =>
+            modals.open({
+              title: "New analysis",
+              children: (
+                <AnalysisCreateForm
+                  folders={folderOptions}
+                  loading={create.isPending}
+                  onSubmit={(payload) => create.mutate(payload)}
+                />
+              ),
+            })
+          }
+          loading={create.isPending}
+        >
           New analysis
         </Button>
       </Group>

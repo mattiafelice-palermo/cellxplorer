@@ -23,9 +23,14 @@ cache/
 
 # Local tools and binary/data imports
 *.exe
+*.msi
+*.spec
 *.nda
 *.ndax
 _internal/
+build/
+dist/
+src-tauri/target/
 
 # Local assistant/tooling state
 .claude/

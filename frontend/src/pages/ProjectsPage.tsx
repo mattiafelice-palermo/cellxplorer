@@ -14,6 +14,7 @@ import {
   Select,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
   TextInput,
@@ -38,7 +39,8 @@ import {
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
-import { DragEvent, MouseEvent, useEffect, useMemo, useState } from "react";
+import { DragEvent, MouseEvent, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 
 import {
   AnalysisFull,
@@ -116,6 +118,14 @@ function collectFolderIds(nodes: FolderNode[]): number[] {
   return nodes.flatMap((node) => [node.id, ...collectFolderIds(node.children)]);
 }
 
+function collectFiledReferences(nodes: FolderNode[], cellIds: Set<number>, groupIds: Set<number>) {
+  nodes.forEach((node) => {
+    node.cells.forEach((cell) => cellIds.add(cell.id));
+    node.replicate_groups.forEach((group) => groupIds.add(group.id));
+    collectFiledReferences(node.children, cellIds, groupIds);
+  });
+}
+
 function visibleTreeItems(nodes: FolderNode[], expanded: Set<number>): TreeItem[] {
   return nodes.flatMap((folder) => {
     const folderItem: TreeItem = {
@@ -176,22 +186,20 @@ function AddReferencesModal({
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<"cells" | "replicate_groups">("cells");
+  const [branchOnly, setBranchOnly] = useState(true);
   const [selectedCells, setSelectedCells] = useState<number[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
   const cells = useQuery({
-    queryKey: ["cells", search],
-    queryFn: () =>
-      get<CellSummary[]>(`/api/cells${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    queryKey: ["cells", "project-picker"],
+    queryFn: () => get<CellSummary[]>("/api/cells"),
     enabled: opened && mode === "cells",
   });
   const replicateGroups = useQuery({
-    queryKey: ["replicate-groups", search],
-    queryFn: () =>
-      get<ReplicateGroupSummary[]>(
-        `/api/replicate-groups${search ? `?search=${encodeURIComponent(search)}` : ""}`
-      ),
+    queryKey: ["replicate-groups", "project-picker"],
+    queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),
     enabled: opened && mode === "replicate_groups",
   });
+  const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree"), enabled: opened });
   const add = useMutation({
     mutationFn: async () => {
       if (selectedCells.length) {
@@ -212,11 +220,98 @@ function AddReferencesModal({
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
 
-  const cellCandidates = (cells.data ?? []).filter((cell) => !existingCells.includes(cell.id));
-  const groupCandidates = (replicateGroups.data ?? []).filter(
-    (group) => !existingGroups.includes(group.id)
+  const needle = search.trim().toLowerCase();
+  const matches = (value: string) => !needle || value.toLowerCase().includes(needle);
+  const visibleFolders = branchOnly && folder ? [folder] : tree.data?.folders ?? [];
+  const filedCellIds = new Set<number>();
+  const filedGroupIds = new Set<number>();
+  collectFiledReferences(tree.data?.folders ?? [], filedCellIds, filedGroupIds);
+  const unfiledCells = (cells.data ?? []).filter(
+    (cell) => !filedCellIds.has(cell.id) && !existingCells.includes(cell.id) && matches(cell.name)
+  );
+  const unfiledGroups = (replicateGroups.data ?? []).filter(
+    (group) => !filedGroupIds.has(group.id) && !existingGroups.includes(group.id) && matches(group.name)
   );
   const selectedCount = mode === "cells" ? selectedCells.length : selectedGroups.length;
+  const renderFolderRows = (node: FolderNode, depth: number): ReactNode[] => {
+    const rows: ReactNode[] = [
+      <Table.Tr key={`folder-${node.id}`}>
+        <Table.Td colSpan={2}>
+          <Group gap={6} pl={depth * 16}>
+            <IconFolder size={14} color="var(--mantine-color-teal-6)" />
+            <Text size="xs" fw={700} c="dimmed">
+              {node.name}
+            </Text>
+          </Group>
+        </Table.Td>
+      </Table.Tr>,
+    ];
+    if (mode === "cells") {
+      node.cells
+        .filter((cell) => !existingCells.includes(cell.id) && matches(cell.name))
+        .forEach((cell) =>
+          rows.push(
+            <Table.Tr
+              key={`cell-${node.id}-${cell.id}`}
+              bg={selectedCells.includes(cell.id) ? "teal.0" : undefined}
+              style={{ cursor: "pointer" }}
+              onClick={() =>
+                setSelectedCells((current) =>
+                  current.includes(cell.id)
+                    ? current.filter((id) => id !== cell.id)
+                    : [...current, cell.id]
+                )
+              }
+            >
+              <Table.Td>
+                <Group gap={6} pl={(depth + 1) * 16}>
+                  <IconDatabase size={14} color="var(--mantine-color-gray-6)" />
+                  <Text size="sm" fw={600} truncate>
+                    {cell.name}
+                  </Text>
+                </Group>
+              </Table.Td>
+              <Table.Td w={34}>
+                <Checkbox checked={selectedCells.includes(cell.id)} readOnly />
+              </Table.Td>
+            </Table.Tr>
+          )
+        );
+    } else {
+      node.replicate_groups
+        .filter((group) => !existingGroups.includes(group.id) && matches(group.name))
+        .forEach((group) =>
+          rows.push(
+            <Table.Tr
+              key={`group-${node.id}-${group.id}`}
+              bg={selectedGroups.includes(group.id) ? "teal.0" : undefined}
+              style={{ cursor: "pointer" }}
+              onClick={() =>
+                setSelectedGroups((current) =>
+                  current.includes(group.id)
+                    ? current.filter((id) => id !== group.id)
+                    : [...current, group.id]
+                )
+              }
+            >
+              <Table.Td>
+                <Group gap={6} pl={(depth + 1) * 16}>
+                  <IconLayersIntersect size={14} color="var(--mantine-color-teal-6)" />
+                  <Text size="sm" fw={600} truncate>
+                    {group.name}
+                  </Text>
+                </Group>
+              </Table.Td>
+              <Table.Td w={34}>
+                <Checkbox checked={selectedGroups.includes(group.id)} readOnly />
+              </Table.Td>
+            </Table.Tr>
+          )
+        );
+    }
+    node.children.forEach((child) => rows.push(...renderFolderRows(child, depth + 1)));
+    return rows;
+  };
 
   return (
     <Modal opened={opened} onClose={onClose} title="Add cell/replicate" size="lg">
@@ -236,6 +331,13 @@ function AddReferencesModal({
             { value: "replicate_groups", label: "Replicates" },
           ]}
         />
+        <Switch
+          size="sm"
+          label="Current branch only"
+          checked={branchOnly}
+          disabled={!folder}
+          onChange={(event) => setBranchOnly(event.currentTarget.checked)}
+        />
         <TextInput
           leftSection={<IconSearch size={15} />}
           placeholder={mode === "cells" ? "Search cells" : "Search replicate groups"}
@@ -245,7 +347,20 @@ function AddReferencesModal({
         <ScrollArea h={360} type="auto">
           <Table highlightOnHover>
             <Table.Tbody>
-              {mode === "cells" && cellCandidates.map((cell) => (
+              {visibleFolders.flatMap((node) => renderFolderRows(node, 0))}
+              {!branchOnly && (
+                <Table.Tr>
+                  <Table.Td colSpan={2}>
+                    <Group gap={6}>
+                      <IconFolder size={14} color="var(--mantine-color-gray-6)" />
+                      <Text size="xs" fw={700} c="dimmed">
+                        Outside folders
+                      </Text>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              )}
+              {!branchOnly && mode === "cells" && unfiledCells.map((cell) => (
                 <Table.Tr
                   key={cell.id}
                   bg={selectedCells.includes(cell.id) ? "teal.0" : undefined}
@@ -259,17 +374,7 @@ function AddReferencesModal({
                   }
                 >
                   <Table.Td w={34}>
-                    <Checkbox
-                      checked={selectedCells.includes(cell.id)}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        setSelectedCells(
-                          event.currentTarget.checked
-                            ? [...selectedCells, cell.id]
-                            : selectedCells.filter((id) => id !== cell.id)
-                        )
-                      }
-                    />
+                    <Checkbox checked={selectedCells.includes(cell.id)} readOnly />
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" fw={600}>
@@ -281,7 +386,7 @@ function AddReferencesModal({
                   </Table.Td>
                 </Table.Tr>
               ))}
-              {mode === "replicate_groups" && groupCandidates.map((group) => (
+              {!branchOnly && mode === "replicate_groups" && unfiledGroups.map((group) => (
                 <Table.Tr
                   key={group.id}
                   bg={selectedGroups.includes(group.id) ? "teal.0" : undefined}
@@ -295,17 +400,7 @@ function AddReferencesModal({
                   }
                 >
                   <Table.Td w={34}>
-                    <Checkbox
-                      checked={selectedGroups.includes(group.id)}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) =>
-                        setSelectedGroups(
-                          event.currentTarget.checked
-                            ? [...selectedGroups, group.id]
-                            : selectedGroups.filter((id) => id !== group.id)
-                        )
-                      }
-                    />
+                    <Checkbox checked={selectedGroups.includes(group.id)} readOnly />
                   </Table.Td>
                   <Table.Td>
                     <Group gap={6}>
@@ -335,6 +430,7 @@ function AddReferencesModal({
 
 export function ProjectsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<number>>(new Set());
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -504,16 +600,12 @@ export function ProjectsPage() {
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
   const createAnalysis = useMutation({
-    mutationFn: () =>
-      post<AnalysisFull>("/api/analyses", {
-        title: `${selectedFolder?.name ?? "Folder"} analysis`,
-        folder_id: selectedFolderId,
-      }),
+    mutationFn: (body: { title: string; folder_id: number | null }) =>
+      post<AnalysisFull>("/api/analyses", body),
     onSuccess: (analysis) => {
       invalidateTree();
-      setPreview({ kind: "analysis", id: analysis.id, title: analysis.title });
-      setPreviewOpen(true);
-      notifications.show({ message: "Analysis placeholder created", color: "teal" });
+      modals.closeAll();
+      navigate(`/analyses/${analysis.id}`);
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -528,6 +620,20 @@ export function ProjectsPage() {
     modals.open({
       title,
       children: <DestinationForm folders={folderOptions} onSubmit={onSubmit} />,
+    });
+
+  const openCreateAnalysis = () =>
+    modals.open({
+      title: "New analysis",
+      children: (
+        <AnalysisCreateForm
+          folders={folderOptions}
+          defaultFolderId={selectedFolderId}
+          defaultTitle={`${selectedFolder?.name ?? "Untitled"} analysis`}
+          loading={createAnalysis.isPending}
+          onSubmit={(payload) => createAnalysis.mutate(payload)}
+        />
+      ),
     });
 
   const startRename = (folder: FolderNode) => {
@@ -773,9 +879,8 @@ export function ProjectsPage() {
             )}
           </ImportCellsLauncher>
           <Button
-            disabled={!selectedFolder}
             leftSection={<IconChartLine size={15} />}
-            onClick={() => createAnalysis.mutate()}
+            onClick={openCreateAnalysis}
           >
             New analysis
           </Button>
@@ -1044,6 +1149,11 @@ export function ProjectsPage() {
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
         onContextMenu={(event) => handleContextMenu(event, item)}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          setSelectedFolderId(folder.id);
+          selectPreview({ kind: "replicate_group", id: group.id, title: group.name });
+        }}
         style={{
           marginLeft: depth * 18,
           borderRadius: 6,
@@ -1098,6 +1208,11 @@ export function ProjectsPage() {
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
         onContextMenu={(event) => handleContextMenu(event, item)}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          setSelectedFolderId(folder.id);
+          selectPreview({ kind: "cell", id: cell.id });
+        }}
         style={{
           marginLeft: depth * 18,
           borderRadius: 6,
@@ -1157,6 +1272,10 @@ export function ProjectsPage() {
         wrap="nowrap"
         p={6}
         onContextMenu={(event) => handleContextMenu(event, item)}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          navigate(`/analyses/${analysis.id}`);
+        }}
         style={{
           marginLeft: depth * 18,
           borderRadius: 6,
@@ -1243,6 +1362,54 @@ function DestinationForm({
   );
 }
 
+function AnalysisCreateForm({
+  folders,
+  defaultFolderId,
+  defaultTitle,
+  loading,
+  onSubmit,
+}: {
+  folders: { value: string; label: string }[];
+  defaultFolderId: number | null;
+  defaultTitle: string;
+  loading: boolean;
+  onSubmit: (payload: { title: string; folder_id: number | null }) => void;
+}) {
+  const [title, setTitle] = useState(defaultTitle);
+  const [folder, setFolder] = useState<string | null>(
+    defaultFolderId === null ? "none" : String(defaultFolderId)
+  );
+  const folderData = [{ value: "none", label: "No folder" }, ...folders];
+  const submit = () => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    onSubmit({ title: trimmed, folder_id: folder && folder !== "none" ? Number(folder) : null });
+  };
+  return (
+    <Stack>
+      <TextInput
+        label="Title"
+        value={title}
+        onChange={(event) => setTitle(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") submit();
+        }}
+        data-autofocus
+      />
+      <Select
+        label="Folder"
+        data={folderData}
+        value={folder}
+        onChange={setFolder}
+        searchable
+      />
+      <Button disabled={!title.trim()} loading={loading} onClick={submit}>
+        Create analysis
+      </Button>
+    </Stack>
+  );
+}
+
 function PreviewPanel({
   selection,
   selectedCell,
@@ -1312,6 +1479,7 @@ function PreviewPanel({
         ["barcode", file.barcode],
         ["remarks", file.remarks],
         ["active_mass_mg", file.active_mass_mg],
+        ["nominal_capacity_mah", file.nominal_capacity_mah],
         ["parser_version", file.parser_version],
       ]
         .filter(([, value]) => value !== null && value !== undefined && value !== "")
