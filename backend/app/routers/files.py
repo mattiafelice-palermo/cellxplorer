@@ -33,6 +33,7 @@ from ..models import (
     TestFile,
 )
 from ..services import cache, calc, parsing, scanner
+from ..services.activity_log import record_activity
 
 router = APIRouter(prefix="/api", tags=["files"])
 
@@ -110,8 +111,10 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
         "start_time": meta.get("start_time"),
         "active_material_mg": meta.get("active_mass_mg"),
         "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
-        "voltage_upper_v": meta.get("voltage_upper_v"),
-        "voltage_lower_v": meta.get("voltage_lower_v"),
+        "charge_cutoff_v": meta.get("charge_cutoff_v"),
+        "discharge_cutoff_v": meta.get("discharge_cutoff_v"),
+        "protection_voltage_upper_v": meta.get("protection_voltage_upper_v"),
+        "protection_voltage_lower_v": meta.get("protection_voltage_lower_v"),
         "record_interval_s": meta.get("record_interval_s"),
         "nda_version": meta.get("nda_version"),
         "remarks": meta.get("remarks"),
@@ -785,6 +788,22 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             )
             db.add(FolderReplicateGroup(folder_id=folder_id, group_id=group.id, position=position + 1))
         replicate_groups.append({"id": group.id, "name": group.name, "cell_ids": group_cell_ids})
+    record_activity(
+        db,
+        category="import",
+        action="import_cells",
+        message=(
+            f"Imported {len(created_cell_ids)} cells"
+            + (f" and {len(replicate_groups)} replicate groups" if replicate_groups else "")
+        ),
+        details={
+            "cell_ids": created_cell_ids,
+            "source_file_ids": list(source_file_ids_by_staged_name.values()),
+            "replicate_group_ids": [group["id"] for group in replicate_groups],
+            "folder_ids": target_folder_ids,
+            "parsing_started": bool(cache_jobs),
+        },
+    )
     db.commit()
     start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
     return {

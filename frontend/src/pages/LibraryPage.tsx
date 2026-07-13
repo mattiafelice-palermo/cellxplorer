@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -18,6 +19,7 @@ import {
   Table,
   Text,
   TextInput,
+  Textarea,
   Title,
   Tooltip,
 } from "@mantine/core";
@@ -28,14 +30,17 @@ import {
   IconChevronRight,
   IconCircleCheck,
   IconDatabase,
+  IconDeviceFloppy,
   IconEye,
   IconLayersIntersect,
   IconPlayerPlay,
+  IconPencil,
   IconRefresh,
   IconSearch,
   IconTrash,
   IconUnlink,
   IconUpload,
+  IconX,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
@@ -44,12 +49,13 @@ import {
   CellSummary,
   del,
   get,
+  patch,
   post,
   ReplicateGroupPreview,
   ReplicateGroupSummary,
   SourceFile,
 } from "../api";
-import { CellQuickPlot } from "../components/CellQuickPlot";
+import { CellDetailTabs } from "../components/CellDetailTabs";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { ImportCellsLauncher } from "./InboxPage";
 
@@ -85,6 +91,10 @@ export function LibraryPage() {
   const [groupName, setGroupName] = useState("");
   const [previewGroupId, setPreviewGroupId] = useState<number | null>(null);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<number>>(new Set());
+  const [editingCell, setEditingCell] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   const cells = useQuery({
     queryKey: ["cells", search],
@@ -205,6 +215,7 @@ export function LibraryPage() {
     onSuccess: () => {
       notifications.show({ message: "Replicate grouping removed", color: "teal" });
       setSelectedCellIds(new Set());
+      setSelectedGroupIds(new Set());
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
     },
@@ -221,6 +232,30 @@ export function LibraryPage() {
       if (selectedId !== null) qc.invalidateQueries({ queryKey: ["cell-cycles", selectedId] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const editCell = useMutation({
+    mutationFn: (body: { id: number; name: string; description: string }) =>
+      patch<CellSummary>(`/api/cells/${body.id}`, {
+        name: body.name,
+        description: body.description,
+      }),
+    onSuccess: (updated) => {
+      notifications.show({ message: `Saved changes to ${updated.name}`, color: "teal" });
+      qc.setQueryData<CellDetail>(["cell", updated.id], (current) =>
+        current ? { ...current, ...updated } : current
+      );
+      setEditingCell(false);
+      setEditName(updated.name);
+      setEditDescription(updated.description ?? "");
+      qc.invalidateQueries({ queryKey: ["cells"] });
+      qc.invalidateQueries({ queryKey: ["cell", updated.id] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["analysis"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -324,6 +359,31 @@ export function LibraryPage() {
     if (window.confirm(`Remove ${cell.name} from the library?${suffix}`)) {
       removeCell.mutate(cell);
     }
+  };
+
+  const startEditingCell = (cell: CellSummary | CellDetail) => {
+    setMetadataOpen(false);
+    setSelectedId(cell.id);
+    setEditName(cell.name);
+    setEditDescription(cell.description ?? "");
+    setEditingCell(true);
+  };
+
+  const stopEditingCell = () => {
+    setEditingCell(false);
+    if (detail.data) {
+      setEditName(detail.data.name);
+      setEditDescription(detail.data.description ?? "");
+    }
+  };
+
+  const saveCellEdit = () => {
+    if (selectedId === null || !editName.trim()) return;
+    editCell.mutate({
+      id: selectedId,
+      name: editName.trim(),
+      description: editDescription,
+    });
   };
 
   const confirmRemoveSelected = () => {
@@ -629,13 +689,7 @@ export function LibraryPage() {
                       {cellGroups.length > 0 && (
                         <Group gap={4} mt={4}>
                           {cellGroups.map((group) => (
-                            <Badge
-                              key={group.id}
-                              size="xs"
-                              color="teal"
-                              variant="light"
-                              leftSection={<IconLayersIntersect size={10} />}
-                            >
+                            <Badge key={group.id} size="xs" color="teal" variant="light">
                               {group.name}
                             </Badge>
                           ))}
@@ -683,6 +737,15 @@ export function LibraryPage() {
                     </Table.Td>
                     <Table.Td>
                       <Group gap="xs" justify="end">
+                      <Tooltip label="Edit cell details">
+                        <ActionIcon
+                          variant="default"
+                          aria-label={`Edit ${cell.name}`}
+                          onClick={() => startEditingCell(cell)}
+                        >
+                          <IconPencil size={15} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Button
                         size="xs"
                         variant="default"
@@ -741,19 +804,58 @@ export function LibraryPage() {
               <IconLayersIntersect size={16} color="var(--mantine-color-teal-6)" />
               <Title order={4}>Replicate groups</Title>
             </Group>
-            <TextInput
-              size="xs"
-              leftSection={<IconSearch size={14} />}
-              placeholder="Search replicates"
-              value={replicateSearch}
-              onChange={(event) => setReplicateSearch(event.currentTarget.value)}
-            />
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="subtle"
+                color="red"
+                leftSection={<IconUnlink size={14} />}
+                disabled={selectedGroupIds.size === 0}
+                loading={ungroupReplicates.isPending}
+                onClick={() =>
+                  ungroupReplicates.mutate(
+                    { group_ids: [...selectedGroupIds] },
+                    { onSuccess: () => setSelectedGroupIds(new Set()) }
+                  )
+                }
+              >
+                Separate selected{selectedGroupIds.size > 0 ? ` (${selectedGroupIds.size})` : ""}
+              </Button>
+              <TextInput
+                size="xs"
+                leftSection={<IconSearch size={14} />}
+                placeholder="Search replicates"
+                value={replicateSearch}
+                onChange={(event) => setReplicateSearch(event.currentTarget.value)}
+              />
+            </Group>
           </Group>
           <Paper withBorder p="sm">
           <ScrollArea type="auto">
             <Table highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th w={36}>
+                    <Checkbox
+                      size="xs"
+                      aria-label="Select all replicate groups"
+                      checked={
+                        (replicateGroups.data ?? []).length > 0 &&
+                        (replicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
+                      }
+                      indeterminate={
+                        selectedGroupIds.size > 0 &&
+                        !(replicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
+                      }
+                      onChange={(event) =>
+                        setSelectedGroupIds(
+                          event.currentTarget.checked
+                            ? new Set((replicateGroups.data ?? []).map((g) => g.id))
+                            : new Set()
+                        )
+                      }
+                    />
+                  </Table.Th>
                   <Table.Th>Replicate group</Table.Th>
                   <Table.Th>Cells</Table.Th>
                   <Table.Th>Avg charge</Table.Th>
@@ -766,17 +868,29 @@ export function LibraryPage() {
                 {(replicateGroups.data ?? []).map((group) => (
                   <Table.Tr key={group.id}>
                     <Table.Td>
-                      <Group gap={6}>
-                        <IconLayersIntersect size={16} color="var(--mantine-color-teal-6)" />
-                        <div>
-                          <Text fw={700}>{group.name}</Text>
-                          {group.description && (
-                            <Text size="xs" c="dimmed" lineClamp={1}>
-                              {group.description}
-                            </Text>
-                          )}
-                        </div>
-                      </Group>
+                      <Checkbox
+                        size="xs"
+                        aria-label={`Select ${group.name}`}
+                        checked={selectedGroupIds.has(group.id)}
+                        onChange={(event) =>
+                          setSelectedGroupIds((current) => {
+                            const next = new Set(current);
+                            if (event.currentTarget.checked) next.add(group.id);
+                            else next.delete(group.id);
+                            return next;
+                          })
+                        }
+                      />
+                    </Table.Td>
+                    <Table.Td>
+                      <div>
+                        <Text fw={700}>{group.name}</Text>
+                        {group.description && (
+                          <Text size="xs" c="dimmed" lineClamp={1}>
+                            {group.description}
+                          </Text>
+                        )}
+                      </div>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm">{group.cells.map((cell) => cell.name).join(", ")}</Text>
@@ -814,7 +928,7 @@ export function LibraryPage() {
                 ))}
                 {(replicateGroups.data ?? []).length === 0 && (
                   <Table.Tr>
-                    <Table.Td colSpan={6}>
+                    <Table.Td colSpan={7}>
                       <Text size="sm" c="dimmed">
                         No replicate groups match this search.
                       </Text>
@@ -923,6 +1037,7 @@ export function LibraryPage() {
         opened={selectedId !== null}
         onClose={() => {
           setMetadataOpen(false);
+          setEditingCell(false);
           setSelectedId(null);
         }}
         title={detail.data?.name ?? "Cell"}
@@ -968,136 +1083,82 @@ export function LibraryPage() {
             </Group>
 
             <Group justify="end">
-              <Button
-                variant="subtle"
-                color="red"
-                leftSection={<IconTrash size={15} />}
-                loading={removeCell.isPending}
-                onClick={() => confirmRemove(detail.data!)}
-              >
-                Remove from library
-              </Button>
+              {editingCell ? (
+                <>
+                  <Button
+                    variant="default"
+                    leftSection={<IconX size={15} />}
+                    disabled={editCell.isPending}
+                    onClick={stopEditingCell}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    leftSection={<IconDeviceFloppy size={15} />}
+                    loading={editCell.isPending}
+                    disabled={!editName.trim()}
+                    onClick={saveCellEdit}
+                  >
+                    Save changes
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="default"
+                    leftSection={<IconPencil size={15} />}
+                    onClick={() => startEditingCell(detail.data!)}
+                  >
+                    Edit details
+                  </Button>
+                  <Button
+                    variant="subtle"
+                    color="red"
+                    leftSection={<IconTrash size={15} />}
+                    loading={removeCell.isPending}
+                    onClick={() => confirmRemove(detail.data!)}
+                  >
+                    Remove from library
+                  </Button>
+                </>
+              )}
             </Group>
 
-            {detail.data.description && <Alert color="gray">{detail.data.description}</Alert>}
+            {editingCell ? (
+              <Stack gap="sm">
+                <Divider label="Editable details" labelPosition="left" />
+                <TextInput
+                  label="Cell name"
+                  value={editName}
+                  onChange={(event) => setEditName(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") saveCellEdit();
+                  }}
+                  error={!editName.trim() ? "Cell name is required" : undefined}
+                  data-autofocus
+                />
+                <Textarea
+                  label="Cell notes"
+                  description="User notes only. File metadata and cycling data remain read-only."
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) saveCellEdit();
+                  }}
+                  autosize
+                  minRows={3}
+                  maxRows={7}
+                />
+              </Stack>
+            ) : (
+              detail.data.description && <Alert color="gray">{detail.data.description}</Alert>
+            )}
 
-            <Paper withBorder p="sm">
-              <CellQuickPlot cellId={detail.data.id} cellName={detail.data.name} />
-            </Paper>
-
-            <Divider label="Metadata" labelPosition="left" />
-            <Button
-              variant="subtle"
-              size="xs"
-              leftSection={
-                metadataOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />
-              }
-              onClick={() => setMetadataOpen((current) => !current)}
-            >
-              {metadataOpen
-                ? "Hide metadata"
-                : `Show metadata (${Object.keys(detail.data.metadata).length})`}
-            </Button>
-            <Collapse in={metadataOpen}>
-              {Object.keys(detail.data.metadata).length ? (
-                <Table withTableBorder>
-                  <Table.Tbody>
-                    {Object.entries(detail.data.metadata).map(([key, value]) => (
-                      <Table.Tr key={key}>
-                        <Table.Td w="35%">
-                          <Text size="xs" c="dimmed">
-                            {key}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="xs">{value}</Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              ) : (
-                <Alert color="gray">No cell metadata stored.</Alert>
-              )}
-            </Collapse>
-
-            <Divider label="Tests and files" labelPosition="left" />
-            <Stack gap="xs">
-              {detail.data.tests.map((test) => (
-                <Paper key={test.id} withBorder p="sm">
-                  <Stack gap="xs">
-                    <Text fw={700}>{test.name}</Text>
-                    {test.description && (
-                      <Text size="sm" c="dimmed">
-                        {test.description}
-                      </Text>
-                    )}
-                    <Table>
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th>File</Table.Th>
-                          <Table.Th>Rows</Table.Th>
-                          <Table.Th>Cycles</Table.Th>
-                          <Table.Th>Source</Table.Th>
-                          <Table.Th>Parse</Table.Th>
-                          <Table.Th>Hash</Table.Th>
-                          <Table.Th>Actions</Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {test.files.map((file) => (
-                          <Table.Tr key={file.id}>
-                            <Table.Td>
-                              <Text size="sm" fw={600}>
-                                {file.filename}
-                              </Text>
-                              <Text size="xs" c="dimmed" lineClamp={1}>
-                                {file.path}
-                              </Text>
-                            </Table.Td>
-                            <Table.Td>{file.row_count ?? "-"}</Table.Td>
-                            <Table.Td>{file.cycle_count ?? "-"}</Table.Td>
-                            <Table.Td>
-                              <Badge color={statusColor(file.location_status)} variant="light">
-                                {file.location_status}
-                              </Badge>
-                            </Table.Td>
-                            <Table.Td>
-                              <Badge color={statusColor(file.parse_status)} variant="light">
-                                {file.parse_status}
-                              </Badge>
-                            </Table.Td>
-                            <Table.Td>
-                              <Code fz={10}>{file.hash.slice(0, 12)}...</Code>
-                            </Table.Td>
-                            <Table.Td>
-                              <Tooltip
-                                label={
-                                  file.location_status === "changed"
-                                    ? "Read the updated source file and rebuild the cache"
-                                    : "Available when the source checksum changes"
-                                }
-                              >
-                                <Button
-                                  size="xs"
-                                  variant="default"
-                                  leftSection={<IconRefresh size={14} />}
-                                  disabled={file.location_status !== "changed"}
-                                  loading={updateSource.isPending}
-                                  onClick={() => updateSource.mutate(file)}
-                                >
-                                  Update
-                                </Button>
-                              </Tooltip>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                  </Stack>
-                </Paper>
-              ))}
-            </Stack>
+            <CellDetailTabs
+              cell={detail.data}
+              onUpdateFile={(file) => updateSource.mutate(file)}
+              updating={updateSource.isPending}
+            />
           </Stack>
         ) : null}
       </Modal>

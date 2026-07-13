@@ -28,7 +28,7 @@ from ..config import CALC_VERSION
 from ..models import Cell, ReplicateGroup, SourceFile
 from . import cache, calc, parsing, stitch
 
-SPEC_VERSION = 5
+SPEC_VERSION = 6
 
 # quantities served to the client: every cached per-cycle column plus
 # derived ones computed here at render time
@@ -54,6 +54,7 @@ SPECIFIC_QUANTITIES = {
         "charge_capacity_loss_mah_g_cycle",
         "Charge capacity loss (mAh/g/cycle)",
     ),
+    "cv_charge_capacity_specific": ("cv_charge_capacity_mah_g", "CV charge capacity (mAh/g)"),
 }
 
 ALL_QUANTITIES: dict[str, tuple[str, str]] = {
@@ -79,7 +80,7 @@ def default_spec(title: str) -> dict:
         "title": title,
         "created_at": now,
         "modified_at": now,
-        "selection": {"entries": [], "exclusions": []},
+        "selection": {"entries": [], "exclusions": [], "hidden_replicate_group_ids": []},
         "computation": {
             "cycle_range": {"start": 1, "end": None},
             "exclude_check_cycles_every_n": 0,
@@ -141,7 +142,8 @@ def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:
             seen.add(key)
             units.append(
                 {"cell": cell, "group_id": None, "group_name": None,
-                 "label": label_override or cell.name}
+                 "label": label_override or cell.name,
+                 "entry_kind": kind, "entry_ref_id": ref_id}
             )
         elif kind == "replicate_group":
             group = db.get(ReplicateGroup, ref_id)
@@ -158,9 +160,25 @@ def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:
                 seen.add(key)
                 units.append(
                     {"cell": cell, "group_id": group.id,
-                     "group_name": label_override or group.name, "label": cell.name}
+                     "group_name": label_override or group.name, "label": cell.name,
+                     "entry_kind": kind, "entry_ref_id": ref_id}
                 )
     return units, missing
+
+
+def exclusion_for_unit(exclusions: list[dict], unit: dict) -> dict | None:
+    """Return a matching visibility exclusion, including legacy cell-wide entries."""
+    for exclusion in exclusions:
+        if exclusion.get("cell_id") != unit["cell"].id:
+            continue
+        entry_kind = exclusion.get("entry_kind")
+        entry_ref_id = exclusion.get("entry_ref_id")
+        if entry_kind is not None and entry_kind != unit["entry_kind"]:
+            continue
+        if entry_ref_id is not None and entry_ref_id != unit["entry_ref_id"]:
+            continue
+        return exclusion
+    return None
 
 
 # ------------------------------------------------------ per-cell quantities
@@ -298,6 +316,7 @@ def add_derived_columns(
         ("charge_energy_mwh", "charge_energy_mwh_g"),
         ("discharge_capacity_loss_mah", "discharge_capacity_loss_mah_g_cycle"),
         ("charge_capacity_loss_mah", "charge_capacity_loss_mah_g_cycle"),
+        ("cv_charge_capacity_mah", "cv_charge_capacity_mah_g"),
     ):
         col = frame.get(src)
         if active_mass_g and col is not None:
@@ -335,6 +354,11 @@ def time_capacity_settings(computation: dict) -> dict:
         "current_left": current_left,
         "current_right": current_right,
         "electrode_area_cm2": _metadata_float(cfg.get("electrode_area_cm2")),
+        "view": cfg.get("view") if cfg.get("view") in {"voltage_current", "dqdv", "dvdq"} else "voltage_current",
+        "derivative_phase": cfg.get("derivative_phase") if cfg.get("derivative_phase") in {"both", "charge", "discharge"} else "both",
+        "derivative_specific": bool(cfg.get("derivative_specific", False)),
+        "derivative_absolute_discharge": bool(cfg.get("derivative_absolute_discharge", True)),
+        "smoothing_window": max(1, min(101, int(cfg.get("smoothing_window") or 7))),
         "max_points_per_cell": int(cfg.get("max_points_per_cell") or 4000),
     }
 
@@ -378,6 +402,26 @@ def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
         is_dchg = has_dchg.to_numpy() | (cur < 0)
         is_chg = ~is_dchg & (has_chg.to_numpy() | (cur > 0))
     return np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest").tolist()
+
+
+def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
+    """Make time_s monotonic across Neware step resets (vectorized).
+
+    The raw Time column restarts at 0 at every step boundary (CC→CV, new
+    cycle, file boundary). Plotted directly — especially in overlap mode,
+    which offsets x per half-cycle — a CV hold re-drew from x=0 as a flat
+    line at the cutoff voltage. Each drop adds the pre-drop value as a
+    running offset, turning per-step time into cumulative elapsed time."""
+    if "time_s" not in frame.columns or len(frame) < 2:
+        return frame
+    t = frame["time_s"].to_numpy(dtype="float64")
+    d = np.diff(t)
+    resets = np.flatnonzero(~np.isnan(d) & (d < 0))
+    if len(resets) == 0:
+        return frame
+    offsets = np.zeros(len(t))
+    offsets[resets + 1] = t[resets]
+    return frame.assign(time_s=t + np.cumsum(offsets))
 
 
 def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
@@ -433,6 +477,78 @@ def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
             prev_val = val
             out[i] = val + carry
     return out
+
+
+def _derivative_curve(
+    frame: pd.DataFrame,
+    phases: list[str],
+    capacity_mah: np.ndarray,
+    capacity_mah_g: np.ndarray,
+    settings: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return x/y arrays for ICA (dQ/dV) or DVA (dV/dQ)."""
+    n = len(frame)
+    x_out = np.full(n, np.nan)
+    y_out = np.full(n, np.nan)
+    mode = settings.get("view")
+    if mode not in {"dqdv", "dvdq"} or "voltage_v" not in frame.columns:
+        return x_out, y_out
+    capacity = capacity_mah_g if settings.get("derivative_specific") else capacity_mah
+    voltage = frame["voltage_v"].to_numpy(dtype="float64")
+    cycles = frame["cycle"].to_numpy() if "cycle" in frame.columns else np.zeros(n)
+    segments = frame["segment"].to_numpy() if "segment" in frame.columns else np.zeros(n)
+    phase_arr = np.asarray(phases)
+    window = int(settings.get("smoothing_window") or 1)
+    if window % 2 == 0:
+        window += 1
+    selected_phase = settings.get("derivative_phase") or "both"
+
+    start = 0
+    while start < n:
+        key = (cycles[start], segments[start], phase_arr[start])
+        end = start + 1
+        while end < n and (cycles[end], segments[end], phase_arr[end]) == key:
+            end += 1
+        phase = phase_arr[start]
+        if phase in {"charge", "discharge"} and (selected_phase == "both" or selected_phase == phase):
+            q = capacity[start:end]
+            v = voltage[start:end]
+            finite = np.isfinite(q) & np.isfinite(v)
+            if finite.sum() >= 2:
+                min_periods = min(window, 3, int(finite.sum()))
+                q_s = pd.Series(q).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
+                v_s = pd.Series(v).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
+                dq = np.gradient(q_s)
+                dv = np.gradient(v_s)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    derivative = np.divide(dq, dv) if mode == "dqdv" else np.divide(dv, dq)
+                denominator = dv if mode == "dqdv" else dq
+                derivative[np.abs(denominator) < 1e-10] = np.nan
+                derivative[~np.isfinite(derivative)] = np.nan
+                # Explicit CV-only steps have dV ~= 0 by design and therefore
+                # no finite ICA/DVA interpretation. Combined CCCV steps cannot
+                # be split from status alone, so reject values far beyond the
+                # local Q/V scale rather than allowing a near-zero denominator
+                # to dominate the plot axis.
+                if "status" in frame.columns:
+                    step_status = frame["status"].iloc[start:end].astype(str).str.lower()
+                    explicit_cv = step_status.str.contains("cv") & ~step_status.str.contains("cccv")
+                    derivative[explicit_cv.to_numpy()] = np.nan
+                q_finite = q_s[np.isfinite(q_s)]
+                v_finite = v_s[np.isfinite(v_s)]
+                if len(q_finite) >= 2 and len(v_finite) >= 2:
+                    q_span = float(np.nanpercentile(q_finite, 95) - np.nanpercentile(q_finite, 5))
+                    v_span = float(np.nanpercentile(v_finite, 95) - np.nanpercentile(v_finite, 5))
+                    scale = q_span / max(v_span, 1e-9) if mode == "dqdv" else v_span / max(q_span, 1e-9)
+                    if scale > 0 and np.isfinite(scale):
+                        derivative[np.abs(derivative) > scale * 50.0] = np.nan
+                if phase == "discharge" and settings.get("derivative_absolute_discharge", True):
+                    derivative = np.abs(derivative)
+                x_values = v_s if mode == "dqdv" else q_s
+                x_out[start:end] = x_values
+                y_out[start:end] = derivative
+        start = end
+    return x_out, y_out
 
 
 def _linfit_slope(x: np.ndarray, y: np.ndarray) -> float | None:
@@ -517,6 +633,23 @@ def cell_metrics(
     m["mean_cycle_duration_h"] = fmean(steady, "cycle_duration_h")
     m["mean_charge_time_h"] = fmean(steady, "charge_time_h")
     m["mean_discharge_time_h"] = fmean(steady, "discharge_time_h")
+    cv_reached = filtered.get("cv_reached")
+    if cv_reached is not None:
+        reached = cv_reached.fillna(0) > 0
+        reached_frame = filtered.loc[reached]
+        m["cv_reached_cycles"] = int(reached.sum())
+        m["cv_reached_pct"] = float(reached.mean() * 100.0) if len(reached) else None
+        events = filtered.get("cv_charge_event_count")
+        m["cv_charge_event_count"] = int(events.fillna(0).sum()) if events is not None else int(reached.sum())
+        m["mean_cv_charge_time_h"] = fmean(reached_frame, "cv_charge_time_h")
+        m["median_cv_charge_time_h"] = (
+            fval(reached_frame["cv_charge_time_h"].median()) if len(reached_frame) else None
+        )
+        m["mean_cv_charge_capacity_mah"] = fmean(reached_frame, "cv_charge_capacity_mah")
+        m["median_cv_charge_capacity_mah"] = (
+            fval(reached_frame["cv_charge_capacity_mah"].median()) if len(reached_frame) else None
+        )
+        m["mean_cv_charge_fraction_pct"] = fmean(reached_frame, "cv_charge_fraction_pct")
     return m
 
 
@@ -600,7 +733,9 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
 
     computation = spec.get("computation", {})
     aggregation = spec.get("aggregation", {})
-    excl = {e["cell_id"]: e for e in spec.get("selection", {}).get("exclusions", [])}
+    selection = spec.get("selection", {})
+    exclusions = selection.get("exclusions", [])
+    hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
     units, missing_refs = resolve_selection(db, spec)
 
     quantity_cols = [col for col, _ in ALL_QUANTITIES.values()]
@@ -654,7 +789,9 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
                 {"kind": "cell_archived", "cell_id": cell.id, "cell_name": cell.name,
                  "detail": "Cell is archived (soft-deleted); still rendering from cache."})
 
-        excluded = cell.id in excl
+        exclusion = exclusion_for_unit(exclusions, unit)
+        group_hidden = unit["group_id"] in hidden_group_ids
+        excluded = exclusion is not None or group_hidden
         active_mass_mg = cell_active_mass_mg(cell)
         if stitched.empty:
             x: list[int] = []
@@ -676,7 +813,8 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
         cell_series.append(
             {"cell_id": cell.id, "cell_name": cell.name, "label": unit["label"],
              "group_id": unit["group_id"], "group_name": unit["group_name"],
-             "excluded": excluded, "exclusion_reason": excl.get(cell.id, {}).get("reason"),
+             "excluded": excluded,
+             "exclusion_reason": "Replicate hidden" if group_hidden else (exclusion or {}).get("reason"),
              "archived": cell.archived, "x": x, "quantities": quantities,
              "metrics": metrics, "retention_reference_mah": ref,
              "active_mass_mg": active_mass_mg,
@@ -804,7 +942,9 @@ def compute_time_capacity(
 
     computation = spec.get("computation", {})
     settings = time_capacity_settings(computation)
-    excl = {e["cell_id"]: e for e in spec.get("selection", {}).get("exclusions", [])}
+    selection = spec.get("selection", {})
+    exclusions = selection.get("exclusions", [])
+    hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
     units, missing_refs = resolve_selection(db, spec)
 
     from . import scanner
@@ -843,17 +983,29 @@ def compute_time_capacity(
                 raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
 
         raw = raw.sort_values(["cycle", "segment", "record_index"] if "record_index" in raw.columns else ["cycle", "segment"])
-        max_points = max(100, settings["max_points_per_cell"])
-        if len(raw) > max_points:
-            raw = raw.iloc[np.unique(np.linspace(0, len(raw) - 1, max_points).astype(int))]
-
+        raw = _continuous_time(raw)
         phases = _phase_from_raw(raw)
         capacity = _phase_capacity(raw, phases)
         active_mass_mg = cell_active_mass_mg(cell)
         nominal_capacity_mah = cell_nominal_capacity_mah(cell)
         active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
         capacity_g = capacity / active_mass_g if active_mass_g and active_mass_g > 0 else np.full(len(raw), np.nan)
+        derivative_x, derivative_y = _derivative_curve(
+            raw, phases, capacity, capacity_g, settings
+        )
 
+        max_points = max(100, settings["max_points_per_cell"])
+        if len(raw) > max_points:
+            take = np.unique(np.linspace(0, len(raw) - 1, max_points).astype(int))
+            raw = raw.iloc[take]
+            phases = np.asarray(phases)[take].tolist()
+            capacity = capacity[take]
+            capacity_g = capacity_g[take]
+            derivative_x = derivative_x[take]
+            derivative_y = derivative_y[take]
+
+        exclusion = exclusion_for_unit(exclusions, unit)
+        group_hidden = unit["group_id"] in hidden_group_ids
         traces.append(
             {
                 "cell_id": cell.id,
@@ -861,7 +1013,7 @@ def compute_time_capacity(
                 "label": unit["label"],
                 "group_id": unit["group_id"],
                 "group_name": unit["group_name"],
-                "excluded": cell.id in excl,
+                "excluded": exclusion is not None or group_hidden,
                 "active_mass_mg": active_mass_mg,
                 "nominal_capacity_mah": nominal_capacity_mah,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
@@ -872,6 +1024,8 @@ def compute_time_capacity(
                 "current_ma": _jsonsafe(raw["current_ma"].to_numpy()) if "current_ma" in raw.columns else [None] * len(raw),
                 "phase": phases,
                 "status": _textsafe(raw["status"]) if "status" in raw.columns else [None] * len(raw),
+                "derivative_x": _jsonsafe(derivative_x),
+                "derivative_y": _jsonsafe(derivative_y),
                 "segments": segments,
             }
         )

@@ -1,0 +1,50 @@
+.protocolFlow {
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: 6px;
+  background: #fbfbf8;
+  padding: 14px;
+}
+
+.protocolFlow[data-repeated="true"] {
+  border-color: var(--mantine-color-gray-3);
+  background: #fbfbf8;
+  box-shadow: inset 5px 0 0 var(--mantine-color-teal-5);
+  padding-left: 18px;
+}
+
+.stepNode {
+  flex: 0 0 184px;
+  width: 184px;
+  min-height: 116px;
+  padding: 10px 11px;
+  text-align: left;
+  background: var(--mantine-color-white);
+  border: 1px solid var(--mantine-color-gray-3);
+  border-top: 3px solid var(--mantine-color-gray-5);
+  border-radius: 6px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.stepNode[data-direction="charge"] {
+  border-top-color: var(--mantine-color-teal-6);
+}
+
+.stepNode[data-direction="discharge"] {
+  border-top-color: var(--mantine-color-blue-6);
+}
+
+.stepNode:hover {
+  border-color: var(--mantine-color-teal-4);
+  box-shadow: var(--mantine-shadow-xs);
+  transform: translateY(-1px);
+}
+
+.stepNode:focus-visible {
+  outline: 2px solid var(--mantine-color-teal-5);
+  outline-offset: 2px;
+}
+
+.flowArrow {
+  flex: 0 0 auto;
+  color: var(--mantine-color-gray-5);
+}

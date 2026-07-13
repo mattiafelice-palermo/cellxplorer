@@ -99,7 +99,9 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
             "cached": True,
         }
 
-    raw = parsing.parse_timeseries(source_path)
+    # A calculation-version bump does not require rereading the binary file:
+    # reuse the parser-versioned raw cache and derive only the new cycle cache.
+    raw = pd.read_parquet(rp) if rp.exists() and not force else parsing.parse_timeseries(source_path)
     d = _dir(file_hash)
     d.mkdir(parents=True, exist_ok=True)
     _write_atomic(raw, rp)

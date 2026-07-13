@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import CALC_VERSION, FRONTEND_DIST
 from .db import Base, engine, ensure_runtime_schema
 from . import models  # noqa: F401 — register tables
-from .routers import analyses, files, library, replicates, tree
+from .routers import activity, analyses, files, library, replicates, tree
 from .services import calc, parsing
 
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +31,7 @@ app.include_router(library.router)
 app.include_router(tree.router)
 app.include_router(analyses.router)
 app.include_router(replicates.router)
+app.include_router(activity.router)
 
 
 @app.get("/api/health")
@@ -53,9 +54,17 @@ def meta():
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
+    # index.html must never be cached: it references content-hashed bundles
+    # that stop existing after a rebuild, and a cached shell then 404s on
+    # its own script (blank page until a hard reload). Hashed assets under
+    # /assets are immutable and safe to cache.
+    _NO_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
+
     @app.get("/{full_path:path}")
     def spa(full_path: str):
         target = FRONTEND_DIST / full_path
         if full_path and target.is_file():
+            if target.suffix in (".html", ""):
+                return FileResponse(target, headers=_NO_CACHE)
             return FileResponse(target)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=_NO_CACHE)

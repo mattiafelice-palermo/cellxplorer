@@ -167,8 +167,19 @@ def read_header_metadata(path: str | Path) -> dict:
     result["nominal_capacity_mah"] = scaled(find_suffix("head_info.multcap.value"), 3600.0)
     uppers = scaled_values(find_all_suffix("protect.main.volt.upper.value"), 10000.0)
     lowers = scaled_values(find_all_suffix("protect.main.volt.lower.value"), 10000.0)
-    result["voltage_upper_v"] = uppers[0] if uppers else None
-    result["voltage_lower_v"] = lowers[0] if lowers else None
+    result["protection_voltage_upper_v"] = uppers[0] if uppers else None
+    result["protection_voltage_lower_v"] = lowers[0] if lowers else None
+    # Compatibility aliases for existing imports/API consumers. These values
+    # are protection limits, not the operational charge/discharge cutoffs.
+    result["voltage_upper_v"] = result["protection_voltage_upper_v"]
+    result["voltage_lower_v"] = result["protection_voltage_lower_v"]
+    from .protocol import reconstruct_protocol
+
+    protocol = reconstruct_protocol(flat, result["nominal_capacity_mah"])
+    charge_cutoffs = protocol["summary"]["charge_cutoffs"]
+    discharge_cutoffs = protocol["summary"]["discharge_cutoffs"]
+    result["charge_cutoff_v"] = charge_cutoffs[0]["voltage_v"] if charge_cutoffs else None
+    result["discharge_cutoff_v"] = discharge_cutoffs[0]["voltage_v"] if discharge_cutoffs else None
     record_times = scaled_values(find_all_suffix("record.main.time.value"), 1000.0)
     result["record_interval_s"] = record_times[0] if record_times else None
     return result

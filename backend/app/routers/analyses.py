@@ -28,7 +28,10 @@ def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
         "type": a.spec.get("type", "cycling"),
         "folder": {"id": folder.id, "name": folder.name} if folder else None,
         "n_entries": len(a.spec.get("selection", {}).get("entries", [])),
-        "n_exclusions": len(a.spec.get("selection", {}).get("exclusions", [])),
+        "n_exclusions": (
+            len(a.spec.get("selection", {}).get("exclusions", []))
+            + len(a.spec.get("selection", {}).get("hidden_replicate_group_ids", []))
+        ),
         "quantity": a.spec.get("presentation", {}).get("quantity"),
         "has_provenance": a.provenance is not None,
         "computed_at": (a.provenance or {}).get("computed_at"),

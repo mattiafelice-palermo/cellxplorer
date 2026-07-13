@@ -126,6 +126,40 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIsNone(lows[-1])
         self.assertIsNotNone(lows[5])
 
+    def test_scoped_exclusion_does_not_hide_same_cell_in_other_context(self):
+        cell_id = self.cells["c1"].id
+        spec = self.spec_with([
+            {"kind": "replicate_group", "ref_id": self.group.id},
+            {"kind": "cell", "ref_id": cell_id},
+        ])
+        spec["selection"]["exclusions"] = [{
+            "cell_id": cell_id,
+            "entry_kind": "replicate_group",
+            "entry_ref_id": self.group.id,
+        }]
+
+        result = engine.compute(self.db, spec, None)
+
+        grouped = next(series for series in result["cell_series"] if series["cell_id"] == cell_id and series["group_id"] is not None)
+        standalone = next(series for series in result["cell_series"] if series["cell_id"] == cell_id and series["group_id"] is None)
+        self.assertTrue(grouped["excluded"])
+        self.assertFalse(standalone["excluded"])
+
+    def test_hidden_replicate_does_not_hide_standalone_copy(self):
+        cell_id = self.cells["c1"].id
+        spec = self.spec_with([
+            {"kind": "replicate_group", "ref_id": self.group.id},
+            {"kind": "cell", "ref_id": cell_id},
+        ])
+        spec["selection"]["hidden_replicate_group_ids"] = [self.group.id]
+
+        result = engine.compute(self.db, spec, None)
+
+        self.assertTrue(all(series["excluded"] for series in result["cell_series"] if series["group_id"] == self.group.id))
+        standalone = next(series for series in result["cell_series"] if series["group_id"] is None)
+        self.assertFalse(standalone["excluded"])
+        self.assertEqual(result["aggregates"], [])
+
     def test_derived_quantities(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         res = engine.compute(self.db, spec, None)
@@ -256,6 +290,39 @@ class AnalysisEngineTests(unittest.TestCase):
         np.testing.assert_allclose(cap[:4], [1.0, 2.6, 2.65, 2.75])
         # discharge is its own run and unaffected
         np.testing.assert_allclose(cap[4:], [0.5, 1.0, 2.0, 2.7])
+
+    def test_continuous_time_offsets_step_resets(self):
+        frame = pd.DataFrame({
+            "time_s": [0.0, 100.0, 200.0, 0.0, 50.0, 0.0, 30.0],
+        })
+        out = engine._continuous_time(frame)
+        np.testing.assert_allclose(
+            out["time_s"].to_numpy(), [0, 100, 200, 200, 250, 250, 280]
+        )
+
+    def test_time_capacity_time_is_monotonic(self):
+        # synth raw data has per-step time resets; the trace must not
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        res = engine.compute_time_capacity(self.db, spec, None)
+        t = [v for v in res["cell_traces"][0]["time_s"] if v is not None]
+        self.assertGreater(len(t), 2)
+        self.assertTrue(all(b >= a for a, b in zip(t, t[1:])), "time_s must be monotonic")
+
+    def test_time_capacity_derivative_trace(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "view": "dvdq",
+            "derivative_phase": "both",
+            "derivative_specific": False,
+            "derivative_absolute_discharge": True,
+            "smoothing_window": 1,
+            "cycles": [2],
+        }
+        res = engine.compute_time_capacity(self.db, spec, None)
+        trace = res["cell_traces"][0]
+        self.assertEqual(len(trace["derivative_x"]), len(trace["voltage_v"]))
+        self.assertEqual(len(trace["derivative_y"]), len(trace["voltage_v"]))
+        self.assertTrue(any(value is not None for value in trace["derivative_y"]))
 
     def test_phase_capacity_ignores_minor_noise_decrease(self):
         frame = pd.DataFrame({

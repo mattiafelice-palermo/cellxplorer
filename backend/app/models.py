@@ -354,3 +354,26 @@ class Analysis(Base):
 
     tag_links: Mapped[list[AnalysisTag]] = relationship(cascade="all, delete-orphan")
     collection_links: Mapped[list[AnalysisCollection]] = relationship(cascade="all, delete-orphan")
+
+
+# --------------------------------------------------------------- activity
+
+
+class ActivityEvent(Base):
+    """Durable user-facing activity log.
+
+    This is intentionally small: it records important workspace/data events,
+    not every compute or UI request.
+    """
+
+    __tablename__ = "activity_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category: Mapped[str] = mapped_column(String(50), index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(20), default="info", index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

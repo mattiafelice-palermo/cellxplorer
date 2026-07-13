@@ -1,4 +1,4 @@
-# Windows packaging spike
+# Windows packaging
 
 This repository can be packaged as a native Windows app with Tauri:
 
@@ -18,26 +18,43 @@ move to `%LOCALAPPDATA%\Cellxplorer` and be protected by schema migrations and a
 - PyInstaller
 - Windows installer toolchain required by Tauri for MSI/NSIS
 
-## Spike command
+## Build command
 
 ```powershell
+npm.cmd install
+
 cd frontend
-.\node_modules\.bin\tsc.cmd -b
-npx.cmd vite build
+npm.cmd run build
 cd ..
 
-pip install pyinstaller
-python -m PyInstaller --noconfirm --onefile --noconsole --disable-windowed-traceback --paths backend --name cellxplorer-backend packaging/backend_entry.py
+npm.cmd run build:backend
 New-Item -ItemType Directory -Force src-tauri\binaries
-Copy-Item dist\cellxplorer-backend.exe src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe
+Copy-Item dist\cellxplorer-backend.exe src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe -Force
 
-npm.cmd install
 npm.cmd run tauri:build
 ```
 
+## Agent build note
+
+When running the frontend build from a managed Codex sandbox, Vite/esbuild can fail while resolving
+`frontend/vite.config.ts` with errors like:
+
+```text
+Cannot read directory "../../..": Access is denied.
+Could not resolve "...\frontend\vite.config.ts"
+```
+
+This is a sandbox path-resolution issue, not a project build failure. Rerun the same frontend build
+command with elevated sandbox permission, then continue with the normal packaging sequence.
+
 Expected output, once the toolchain is installed:
 
-- `src-tauri/target/release/bundle/nsis/Cellxplorer_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`
+
+The app icon is sourced from `CellXplorer_X_teal_flat_transparent.ico`.
+The Tauri bundle uses `src-tauri/icons/icon.ico`, and the runtime window/taskbar icon
+uses `src-tauri/icons/icon-256.rgba`. If the root `.ico` is replaced, regenerate both
+of those files before rebuilding.
 
 MSI is possible, but the default target is NSIS because WiX validation can fail on
 machines where the Windows Installer service is not available to the build process.

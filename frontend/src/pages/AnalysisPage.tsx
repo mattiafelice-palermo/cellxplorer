@@ -1,5 +1,5 @@
-// Analysis editor. Saved plots snapshot their exact samples and view state,
-// while the current workspace stays fluid for quick plotting.
+// Analysis editor. An analysis owns the sample set; saved plots store reusable
+// views of that set: settings plus hidden/shown sample state.
 import {
   Accordion,
   ActionIcon,
@@ -49,6 +49,7 @@ import {
   IconEyeOff,
   IconFolder,
   IconGauge,
+  IconInfoCircle,
   IconLayersIntersect,
   IconPlus,
   IconRefresh,
@@ -94,8 +95,19 @@ import {
   TimeCapacityTrace,
   Tree,
 } from "../api";
+import {
+  plotViewSignature,
+  savedPlotPreviewSignature,
+  savedPlotSelectionFromSpec,
+  specForSavedPlotView,
+} from "../analysisPlotPolicy";
 import Plot from "../components/Plot";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
+import {
+  getCycleQuantityExplainer,
+  getTimeCapacityExplainer,
+  type PlotExplainer,
+} from "../plotExplainers";
 
 const PALETTE = [
   "#12b886",
@@ -160,6 +172,7 @@ const CAPACITY_LIKE_KEYS = new Set([
   "charge_capacity",
   "discharge_capacity_specific",
   "charge_capacity_specific",
+  "cv_charge_capacity",
 ]);
 
 const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }> = {
@@ -174,6 +187,10 @@ const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }>
   charge_capacity_loss: {
     column: "charge_capacity_loss_mah_g_cycle",
     label: "Charge capacity loss (mAh/g/cycle)",
+  },
+  cv_charge_capacity: {
+    column: "cv_charge_capacity_mah_g",
+    label: "CV charge capacity (mAh/g)",
   },
 };
 
@@ -243,6 +260,11 @@ const DEFAULT_TIME_CAPACITY: TimeCapacityConfig = {
   current_left: "current_ma",
   current_right: "none",
   electrode_area_cm2: null,
+  view: "voltage_current",
+  derivative_phase: "both",
+  derivative_specific: false,
+  derivative_absolute_discharge: true,
+  smoothing_window: 7,
   cycle_start: 1,
   cycle_end: 3,
   cycles: [],
@@ -339,6 +361,14 @@ const METRIC_COLUMNS: { key: keyof CellMetrics; label: string; digits: number }[
   { key: "mean_cycle_duration_h", label: "Cycle h", digits: 2 },
   { key: "mean_charge_time_h", label: "Chg h", digits: 2 },
   { key: "mean_discharge_time_h", label: "Dchg h", digits: 2 },
+  { key: "cv_reached_cycles", label: "Cycles reaching CV", digits: 0 },
+  { key: "cv_reached_pct", label: "Cycles reaching CV (%)", digits: 1 },
+  { key: "cv_charge_event_count", label: "CV step count", digits: 0 },
+  { key: "mean_cv_charge_time_h", label: "Mean CV h", digits: 3 },
+  { key: "median_cv_charge_time_h", label: "Median CV h", digits: 3 },
+  { key: "mean_cv_charge_capacity_mah", label: "Mean CV Q (mAh)", digits: 3 },
+  { key: "median_cv_charge_capacity_mah", label: "Median CV Q (mAh)", digits: 3 },
+  { key: "mean_cv_charge_fraction_pct", label: "Mean CV Q (%)", digits: 2 },
 ];
 
 const FALLBACK_QUANTITY_LABELS: Record<string, string> = {
@@ -359,6 +389,11 @@ const FALLBACK_QUANTITY_LABELS: Record<string, string> = {
   cycle_duration: "Cycle duration (h)",
   charge_time: "Charge time (h)",
   discharge_time: "Discharge time (h)",
+  cv_charge_time: "CV charge time (h)",
+  cv_charge_capacity: "CV charge capacity (mAh)",
+  cv_charge_fraction: "CV charge fraction (%)",
+  cv_charge_events: "CV charge events",
+  cv_reached: "CV reached",
   voltaic_efficiency: "Voltaic efficiency (%)",
   capacity_retention: "Capacity retention / SoH (%)",
   discharge_capacity_loss: "Discharge capacity loss (mAh/cycle)",
@@ -416,6 +451,12 @@ function resolvedQuantity(result: ComputeResult | undefined, spec: AnalysisSpec)
 function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
   if (tab === "time_capacity") {
     const cfg = timeCapacityConfig(spec);
+    if (cfg.view === "dqdv") {
+      return `${cfg.derivative_specific ? "Specific " : ""}incremental capacity dQ/dV vs voltage`;
+    }
+    if (cfg.view === "dvdq") {
+      return `Differential voltage dV/dQ vs ${cfg.derivative_specific ? "specific " : ""}capacity`;
+    }
     const axis =
       cfg.x_axis === "capacity_mah_g"
         ? "specific capacity (mAh/g)"
@@ -516,6 +557,18 @@ function writeScopedStyle(spec: AnalysisSpec, scope: AnalysisTabKey, fn: (style:
     ...(spec.presentation.plot_styles ?? {}),
     [scope]: next,
   };
+}
+
+// A manual axis range is tied to the scale it was set for. When the plotted
+// quantity (cycles y) or the x semantics (time/capacity x) change, drop it
+// back to auto — otherwise the new data can sit entirely outside the pinned
+// window and the plot looks empty.
+function resetManualAxis(spec: AnalysisSpec, scope: AnalysisTabKey, axis: "x_axis" | "y_axis"): void {
+  const style = currentPlotStyle(spec, scope);
+  if (style[axis].mode !== "manual") return;
+  writeScopedStyle(spec, scope, (next) => {
+    next[axis] = { ...next[axis], mode: "auto", min: null, max: null };
+  });
 }
 
 function hexToRgba(color: string, alpha: number): string {
@@ -753,16 +806,18 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
     presentation.quantity = legacyNormalized;
     presentation.normalize_by_mass = true;
   }
-  return {
+  const normalizedPlot = {
     ...plot,
+    selection: {
+      entries: [],
+      exclusions: clone(plot.selection?.exclusions ?? []),
+      hidden_replicate_group_ids: clone(plot.selection?.hidden_replicate_group_ids ?? []),
+    },
     presentation,
-    subtitle: plot.subtitle || plotSubtitle(plot.tab, undefined, {
-      ...base,
-      selection: clone(plot.selection),
-      computation: clone(plot.computation),
-      aggregation: clone(plot.aggregation),
-      presentation: clone(presentation),
-    }),
+  };
+  return {
+    ...normalizedPlot,
+    subtitle: plot.subtitle || plotSubtitle(plot.tab, undefined, specForSavedPlotView(base, normalizedPlot)),
   };
 }
 
@@ -771,6 +826,7 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
   spec.selection = {
     entries: spec.selection?.entries ?? [],
     exclusions: spec.selection?.exclusions ?? [],
+    hidden_replicate_group_ids: spec.selection?.hidden_replicate_group_ids ?? [],
   };
   spec.computation = {
     ...DEFAULT_COMPUTATION,
@@ -808,21 +864,11 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
 }
 
 function specForSavedPlot(base: AnalysisSpec, plot: SavedAnalysisPlot): AnalysisSpec {
-  const next = normalizeSpec(base);
-  next.selection = clone(plot.selection);
-  next.computation = clone(plot.computation);
-  next.aggregation = clone(plot.aggregation);
-  next.presentation = clone(plot.presentation);
-  return next;
+  return specForSavedPlotView(normalizeSpec(base), plot);
 }
 
 function snapshotSignature(spec: AnalysisSpec): string {
-  return JSON.stringify({
-    selection: spec.selection,
-    computation: spec.computation,
-    aggregation: spec.aggregation,
-    presentation: spec.presentation,
-  });
+  return plotViewSignature(spec);
 }
 
 function findMatchingSavedPlot(spec: AnalysisSpec, tab: AnalysisTabKey): SavedAnalysisPlot | null {
@@ -858,7 +904,7 @@ function savedPlotFromSpec(
     name: name.trim() || "Untitled plot",
     subtitle,
     description: description?.trim() || null,
-    selection: clone(spec.selection),
+    selection: savedPlotSelectionFromSpec(spec),
     computation: clone(spec.computation),
     aggregation: clone(spec.aggregation),
     presentation: clone(spec.presentation),
@@ -1694,6 +1740,44 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
     return colorFor.get(key)!;
   };
 
+  if (cfg.view !== "voltage_current") {
+    for (const trace of result.cell_traces) {
+      if (trace.excluded) continue;
+      const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
+      const color = pick(seriesKey);
+      const baseName = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+      let start = 0;
+      while (start < trace.derivative_x.length) {
+        const cycle = trace.cycle[start];
+        const phase = trace.phase[start];
+        let end = start + 1;
+        while (end < trace.derivative_x.length && trace.cycle[end] === cycle && trace.phase[end] === phase) end += 1;
+        const x = trace.derivative_x.slice(start, end);
+        const y = trace.derivative_y.slice(start, end);
+        if (hasFinitePoint(x) && hasFinitePoint(y)) {
+          const showlegend = !legendShown.has(seriesKey);
+          legendShown.add(seriesKey);
+          out.push({
+            x,
+            y,
+            name: baseName,
+            legendgroup: seriesKey,
+            showlegend,
+            line: { color, width: style.line_width, dash: phase === "discharge" ? "dash" : style.line_dash },
+            marker: { color, size: style.marker_size },
+            mode: plotMode(style),
+            type: "scatter",
+            connectgaps: false,
+            customdata: Array(x.length).fill(`${phase}, cycle ${cycle ?? "?"}`),
+            hovertemplate: "%{y:.5g}<br>%{x:.5g}<br>%{customdata}<extra>%{fullData.name}</extra>",
+          } as Plotly.Data);
+        }
+        start = end;
+      }
+    }
+    return out;
+  }
+
   for (const trace of result.cell_traces) {
     if (trace.excluded) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
@@ -1785,6 +1869,25 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
     ...ticks,
   };
   const titleFont = { size: style.axis_title_size };
+  if (cfg.view !== "voltage_current") {
+    const specific = cfg.derivative_specific;
+    const xTitle = cfg.view === "dqdv" ? "Voltage (V)" : specific ? "Specific capacity (mAh/g)" : "Capacity (mAh)";
+    const yTitle =
+      cfg.view === "dqdv"
+        ? specific ? "dQ/dV (mAh/g/V)" : "dQ/dV (mAh/V)"
+        : specific ? "dV/dQ (V/(mAh/g))" : "dV/dQ (V/mAh)";
+    return {
+      height: 560,
+      margin: { l: 78, r: style.legend_position === "right" ? 140 : 28, t: 20, b: 86 },
+      paper_bgcolor: style.paper_bgcolor,
+      plot_bgcolor: style.plot_bgcolor,
+      font: { size: style.tick_font_size },
+      showlegend: spec.presentation.legend,
+      legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
+      xaxis: { ...baseAxis, title: { text: style.x_title ?? xTitle, font: titleFont }, ...axisLayout(style.x_axis) },
+      yaxis: { ...baseAxis, title: { text: style.y_title ?? yTitle, font: titleFont }, ...axisLayout(style.y_axis) },
+    };
+  }
   return {
     height: cfg.stacked ? 620 : 560,
     margin: { l: 70, r: rightMargin, t: 20, b: 86 },
@@ -1809,8 +1912,14 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
       anchor: "y",
       showticklabels: !cfg.stacked,
       ticks: cfg.stacked ? "" : baseAxis.ticks,
-      showgrid: cfg.stacked ? false : style.show_grid,
+      // same vertical grid as the bottom subplot so the gridlines run
+      // contiguously through both (they align because the axes match)
+      showgrid: style.show_grid,
       zeroline: cfg.stacked ? false : style.show_zero_line,
+      // in stacked mode all per-axis frame lines are OFF; one rect shape
+      // draws a single contiguous border around both subplots instead
+      // (per-axis mirrors drew a spurious line at the subplot boundary
+      // and left the top edge open)
       showline: cfg.stacked ? false : style.show_frame,
       mirror: cfg.stacked ? false : style.show_frame,
       ...(cfg.stacked ? { matches: "x2" as const } : {}),
@@ -1820,6 +1929,7 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
       ...baseAxis,
       title: { text: style.y_title ?? "Voltage (V)", font: titleFont },
       domain: cfg.stacked ? [0.39, 1] : [0, 1],
+      ...(cfg.stacked ? { showline: false, mirror: false } : {}),
       ...axisLayout(style.y_axis),
     },
     ...(cfg.stacked
@@ -1829,6 +1939,8 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
             title: { text: style.x_title ?? xTitle, font: titleFont },
             domain: [0, 1],
             anchor: "y2",
+            showline: false,
+            mirror: false,
             ...axisLayout(style.x_axis),
           },
           yaxis2: {
@@ -1836,6 +1948,8 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
             title: { text: style.y2_title ?? leftCurrentLabel, font: titleFont },
             domain: [0, 0.39],
             anchor: "x2",
+            showline: false,
+            mirror: false,
             ...axisLayout(style.y2_axis),
           },
           ...(hasRightCurrent
@@ -1847,8 +1961,28 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
                   side: "right" as const,
                   anchor: "x2",
                   showgrid: false,
+                  showline: false,
+                  mirror: false,
                   ...axisLayout(style.y2_axis),
                 },
+              }
+            : {}),
+          ...(style.show_frame
+            ? {
+                shapes: [
+                  {
+                    type: "rect" as const,
+                    xref: "paper" as const,
+                    yref: "paper" as const,
+                    x0: 0,
+                    x1: 1,
+                    y0: 0,
+                    y1: 1,
+                    line: { color: style.frame_color, width: style.frame_width },
+                    fillcolor: "rgba(0,0,0,0)",
+                    layer: "above" as const,
+                  },
+                ],
               }
             : {}),
         }
@@ -1866,8 +2000,9 @@ function SavedPlotPreview({
   plot: SavedAnalysisPlot;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
+  const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const preview = useQuery({
-    queryKey: ["saved-plot-preview", analysisId, plot.id, JSON.stringify(plot)],
+    queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature],
     queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, { spec: previewSpec }),
     staleTime: 5 * 60_000,
   });
@@ -1942,8 +2077,9 @@ function SavedTimeCapacityPreview({
   plot: SavedAnalysisPlot;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
+  const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const preview = useQuery({
-    queryKey: ["saved-time-preview", analysisId, plot.id, JSON.stringify(plot)],
+    queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature],
     queryFn: () => post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, { spec: previewSpec }),
     staleTime: 5 * 60_000,
   });
@@ -2085,6 +2221,54 @@ function MetricsTable({ result }: { result: ComputeResult | undefined }) {
   );
 }
 
+type VisibilityContext = Pick<SelectionEntry, "kind" | "ref_id">;
+
+function exclusionAppliesToContext(
+  exclusion: AnalysisSpec["selection"]["exclusions"][number],
+  cellId: number,
+  context: VisibilityContext
+) {
+  return (
+    exclusion.cell_id === cellId &&
+    (exclusion.entry_kind == null || exclusion.entry_kind === context.kind) &&
+    (exclusion.entry_ref_id == null || exclusion.entry_ref_id === context.ref_id)
+  );
+}
+
+function isExactContextExclusion(
+  exclusion: AnalysisSpec["selection"]["exclusions"][number],
+  cellId: number,
+  context: VisibilityContext
+) {
+  return (
+    exclusion.cell_id === cellId &&
+    exclusion.entry_kind === context.kind &&
+    exclusion.entry_ref_id === context.ref_id
+  );
+}
+
+function selectionContextsForCell(
+  entries: SelectionEntry[],
+  groups: ReplicateGroupSummary[],
+  cellId: number
+): VisibilityContext[] {
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const contexts: VisibilityContext[] = [];
+  for (const entry of entries) {
+    if (entry.kind === "cell" && entry.ref_id === cellId) contexts.push(entry);
+    if (
+      entry.kind === "replicate_group" &&
+      groupById.get(entry.ref_id)?.cells.some((cell) => cell.id === cellId)
+    ) {
+      contexts.push(entry);
+    }
+  }
+  return contexts.filter(
+    (context, index) =>
+      contexts.findIndex((candidate) => candidate.kind === context.kind && candidate.ref_id === context.ref_id) === index
+  );
+}
+
 function SamplePanel({
   spec,
   groups,
@@ -2092,15 +2276,17 @@ function SamplePanel({
   onAdd,
   onRemoveEntry,
   onToggleCell,
+  onToggleReplicate,
 }: {
   spec: AnalysisSpec;
   groups: ReplicateGroupSummary[];
   cells: CellSummary[];
   onAdd: () => void;
   onRemoveEntry: (index: number) => void;
-  onToggleCell: (cellId: number) => void;
+  onToggleCell: (cellId: number, context: VisibilityContext) => void;
+  onToggleReplicate: (groupId: number) => void;
 }) {
-  const hidden = new Set(spec.selection.exclusions.map((e) => e.cell_id));
+  const hiddenGroups = new Set(spec.selection.hidden_replicate_group_ids ?? []);
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const cellById = new Map(cells.map((c) => [c.id, c]));
 
@@ -2108,7 +2294,7 @@ function SamplePanel({
     <Paper p="sm" withBorder>
       <Group justify="space-between" mb="xs">
         <Text fw={700} size="sm">
-          Plot samples
+          Analysis samples
         </Text>
         <Button size="compact-xs" leftSection={<IconPlus size={12} />} onClick={onAdd}>
           Add
@@ -2123,42 +2309,61 @@ function SamplePanel({
           {spec.selection.entries.map((entry, index) => {
             if (entry.kind === "replicate_group") {
               const group = groupById.get(entry.ref_id);
+              const groupHidden = hiddenGroups.has(entry.ref_id);
               return (
                 <Box key={`${entry.kind}-${entry.ref_id}-${index}`}>
                   <Group justify="space-between" gap={6} wrap="nowrap">
                     <Box style={{ minWidth: 0 }}>
-                      <Text size="sm" fw={700} truncate>
+                      <Text size="sm" fw={700} c={groupHidden ? "dimmed" : undefined} truncate>
                         {group?.name ?? `replicate #${entry.ref_id}`}
                       </Text>
                       <Text size="10px" c="dimmed" tt="uppercase">
                         Replicate
                       </Text>
                     </Box>
-                    <Tooltip label="Remove replicate from this plot">
-                      <ActionIcon
-                        size="sm"
-                        variant="subtle"
-                        color="red"
-                        onClick={() => onRemoveEntry(index)}
-                      >
-                        <IconX size={14} />
-                      </ActionIcon>
-                    </Tooltip>
+                    <Group gap={2} wrap="nowrap">
+                      <Tooltip label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}>
+                        <ActionIcon
+                          size="sm"
+                          variant="subtle"
+                          color={groupHidden ? "gray" : "teal"}
+                          onClick={() => onToggleReplicate(entry.ref_id)}
+                          aria-label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}
+                        >
+                          {groupHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Remove replicate from this analysis">
+                        <ActionIcon
+                          size="sm"
+                          variant="subtle"
+                          color="red"
+                          onClick={() => onRemoveEntry(index)}
+                        >
+                          <IconX size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
                   </Group>
                   <Stack gap={2} mt={4} pl="md">
                     {(group?.cells ?? []).map((cell) => {
-                      const isHidden = hidden.has(cell.id);
+                      const context = { kind: "replicate_group" as const, ref_id: entry.ref_id };
+                      const isHidden = spec.selection.exclusions.some((exclusion) =>
+                        exclusionAppliesToContext(exclusion, cell.id, context)
+                      );
                       return (
                         <Group key={cell.id} justify="space-between" gap={6} wrap="nowrap">
-                          <Text size="xs" c={isHidden ? "dimmed" : undefined} truncate>
+                          <Text size="xs" c={groupHidden || isHidden ? "dimmed" : undefined} truncate>
                             {cell.name}
                           </Text>
-                          <Tooltip label={isHidden ? "Show in plot" : "Hide from plot"}>
+                          <Tooltip label={groupHidden ? "Show the replicate before changing member visibility" : isHidden ? "Show in plot" : "Hide from plot"}>
                             <ActionIcon
                               size="xs"
                               variant="subtle"
                               color={isHidden ? "gray" : "teal"}
-                              onClick={() => onToggleCell(cell.id)}
+                              disabled={groupHidden}
+                              onClick={() => onToggleCell(cell.id, context)}
+                              aria-label={`${isHidden ? "Show" : "Hide"} ${cell.name} in replicate ${group?.name ?? entry.ref_id}`}
                             >
                               {isHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
                             </ActionIcon>
@@ -2171,7 +2376,10 @@ function SamplePanel({
               );
             }
             const cell = cellById.get(entry.ref_id);
-            const isHidden = hidden.has(entry.ref_id);
+            const context = { kind: "cell" as const, ref_id: entry.ref_id };
+            const isHidden = spec.selection.exclusions.some((exclusion) =>
+              exclusionAppliesToContext(exclusion, entry.ref_id, context)
+            );
             return (
               <Group key={`${entry.kind}-${entry.ref_id}-${index}`} justify="space-between" gap={6} wrap="nowrap">
                 <Box style={{ minWidth: 0 }}>
@@ -2188,12 +2396,13 @@ function SamplePanel({
                       size="sm"
                       variant="subtle"
                       color={isHidden ? "gray" : "teal"}
-                      onClick={() => onToggleCell(entry.ref_id)}
+                      onClick={() => onToggleCell(entry.ref_id, context)}
+                      aria-label={`${isHidden ? "Show" : "Hide"} standalone cell ${cell?.name ?? entry.ref_id}`}
                     >
                       {isHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                     </ActionIcon>
                   </Tooltip>
-                  <Tooltip label="Remove cell from this plot">
+                  <Tooltip label="Remove cell from this analysis">
                     <ActionIcon
                       size="sm"
                       variant="subtle"
@@ -2249,6 +2458,9 @@ function CycleSettings({
                   update((s) => {
                     s.presentation.quantity = v;
                     if (!isMassNormalizableQuantity(v)) s.presentation.normalize_by_mass = false;
+                    // a manual y-range was set for the OLD quantity's scale;
+                    // keeping it would render the new quantity off-screen
+                    resetManualAxis(s, "cycles", "y_axis");
                   })
                 }
               />
@@ -2257,7 +2469,11 @@ function CycleSettings({
                   label="Normalize by g"
                   checked={Boolean(spec.presentation.normalize_by_mass)}
                   onChange={(e) =>
-                    update((s) => void (s.presentation.normalize_by_mass = e.currentTarget.checked))
+                    update((s) => {
+                      s.presentation.normalize_by_mass = e.currentTarget.checked;
+                      // mAh ↔ mAh/g changes the y scale entirely
+                      resetManualAxis(s, "cycles", "y_axis");
+                    })
                   }
                 />
               )}
@@ -2466,6 +2682,27 @@ function TimeCapacitySettings({
           <Accordion.Panel>
             <Stack gap="xs">
               <Select
+                label="Plot"
+                data={[
+                  { value: "voltage_current", label: "Voltage / current" },
+                  { value: "dqdv", label: "Incremental capacity (dQ/dV)" },
+                  { value: "dvdq", label: "Differential voltage (dV/dQ)" },
+                ]}
+                value={cfg.view}
+                onChange={(value) =>
+                  value &&
+                  update((s) => {
+                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    next.view = value as TimeCapacityConfig["view"];
+                    s.computation.time_capacity = next;
+                    resetManualAxis(s, "time_capacity", "x_axis");
+                    resetManualAxis(s, "time_capacity", "y_axis");
+                  })
+                }
+              />
+              {cfg.view === "voltage_current" ? (
+                <>
+              <Select
                 label="X axis"
                 data={[
                   { value: "time", label: "Time" },
@@ -2475,9 +2712,13 @@ function TimeCapacitySettings({
                 value={cfg.x_axis}
                 onChange={(value) =>
                   value &&
-                  updateTime(
-                    (next) => void (next.x_axis = value as TimeCapacityConfig["x_axis"])
-                  )
+                  update((s) => {
+                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    next.x_axis = value as TimeCapacityConfig["x_axis"];
+                    s.computation.time_capacity = next;
+                    // manual x-range belongs to the previous x quantity's scale
+                    resetManualAxis(s, "time_capacity", "x_axis");
+                  })
                 }
               />
               {cfg.x_axis === "time" && (
@@ -2491,9 +2732,12 @@ function TimeCapacitySettings({
                   value={cfg.time_unit}
                   onChange={(value) =>
                     value &&
-                    updateTime(
-                      (next) => void (next.time_unit = value as TimeCapacityConfig["time_unit"])
-                    )
+                    update((s) => {
+                      const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                      next.time_unit = value as TimeCapacityConfig["time_unit"];
+                      s.computation.time_capacity = next;
+                      resetManualAxis(s, "time_capacity", "x_axis");
+                    })
                   }
                 />
               )}
@@ -2507,10 +2751,12 @@ function TimeCapacitySettings({
                 value={cfg.display_mode}
                 onChange={(value) =>
                   value &&
-                  updateTime(
-                    (next) =>
-                      void (next.display_mode = value as TimeCapacityConfig["display_mode"])
-                  )
+                  update((s) => {
+                    const next = { ...DEFAULT_TIME_CAPACITY, ...(s.computation.time_capacity ?? {}) };
+                    next.display_mode = value as TimeCapacityConfig["display_mode"];
+                    s.computation.time_capacity = next;
+                    resetManualAxis(s, "time_capacity", "x_axis");
+                  })
                 }
               />
               <Switch
@@ -2551,6 +2797,54 @@ function TimeCapacitySettings({
                       }
                     />
                   )}
+                </>
+              )}
+                </>
+              ) : (
+                <>
+                  <SegmentedControl
+                    fullWidth
+                    data={[
+                      { value: "both", label: "Both" },
+                      { value: "charge", label: "Charge" },
+                      { value: "discharge", label: "Discharge" },
+                    ]}
+                    value={cfg.derivative_phase}
+                    onChange={(value) =>
+                      updateTime((next) =>
+                        void (next.derivative_phase = value as TimeCapacityConfig["derivative_phase"])
+                      )
+                    }
+                  />
+                  <Switch
+                    label="Normalize capacity by g"
+                    checked={cfg.derivative_specific}
+                    onChange={(event) =>
+                      updateTime((next) => void (next.derivative_specific = event.currentTarget.checked))
+                    }
+                  />
+                  <Switch
+                    label="Absolute discharge derivative"
+                    checked={cfg.derivative_absolute_discharge}
+                    onChange={(event) =>
+                      updateTime(
+                        (next) => void (next.derivative_absolute_discharge = event.currentTarget.checked)
+                      )
+                    }
+                  />
+                  <DebouncedNumberInput
+                    label="Smoothing window (points)"
+                    min={1}
+                    max={101}
+                    step={2}
+                    value={cfg.smoothing_window}
+                    onCommit={(value) =>
+                      updateTime((next) => {
+                        const window = Math.max(1, Math.min(101, Math.round(value ?? 7)));
+                        next.smoothing_window = window % 2 === 0 ? window + 1 : window;
+                      })
+                    }
+                  />
                 </>
               )}
             </Stack>
@@ -3216,9 +3510,66 @@ function PlotStylePanel({
   );
 }
 
+function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
+  if (!explainer) return null;
+  return (
+    <Popover withinPortal position="bottom-end" shadow="md" width={360}>
+      <Popover.Target>
+        <Tooltip label="How this plot is calculated">
+          <ActionIcon size={30} variant="subtle" color="teal" aria-label="Plot explainer">
+            <IconInfoCircle size={18} />
+          </ActionIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <div>
+            <Text fw={800}>{explainer.title}</Text>
+            <Text size="sm" c="dimmed">
+              {explainer.formula}
+            </Text>
+            {explainer.secondaryFormula && (
+              <Text size="sm" c="dimmed" mt={4}>
+                {explainer.secondaryFormula}
+              </Text>
+            )}
+          </div>
+          {explainer.requires.length > 0 && (
+            <div>
+              <Text size="xs" fw={800} tt="uppercase" c="dimmed" mb={4}>
+                Requires
+              </Text>
+              <Group gap={6}>
+                {explainer.requires.map((item) => (
+                  <Badge key={item} size="sm" variant="light" color="teal">
+                    {item}
+                  </Badge>
+                ))}
+              </Group>
+            </div>
+          )}
+          {explainer.notes.length > 0 && (
+            <Stack gap={4}>
+              <Text size="xs" fw={800} tt="uppercase" c="dimmed">
+                Notes
+              </Text>
+              {explainer.notes.map((note) => (
+                <Text key={note} size="sm">
+                  {note}
+                </Text>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
 function PlotHeader({
   plotName,
   subtitle,
+  explainer,
   onExport,
   style,
   updateStyle,
@@ -3227,6 +3578,7 @@ function PlotHeader({
 }: {
   plotName: string;
   subtitle: string;
+  explainer?: PlotExplainer;
   onExport?: (format: PlotExportFormat) => void;
   style?: PlotStyle;
   updateStyle?: (fn: (style: PlotStyle) => void) => void;
@@ -3275,87 +3627,90 @@ function PlotHeader({
           {subtitle}
         </Text>
       </div>
-      {onExport && (
-        <Button.Group>
-          <Button
-            size="xs"
-            variant="default"
-            leftSection={<IconDownload size={14} />}
-            disabled={!canExport}
-            onClick={() => onExport(selectedFormat)}
-          >
-            {selectedFormat.toUpperCase()}
-          </Button>
-          <Popover withinPortal position="bottom-end" shadow="md" width={320}>
-            <Popover.Target>
-              <ActionIcon size={30} variant="default" disabled={!canExport} aria-label="Export settings">
-                <IconChevronDown size={16} />
-              </ActionIcon>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <Stack gap="xs">
-                <Select
-                  label="Format"
-                  data={EXPORT_FORMAT_OPTIONS}
-                  value={selectedFormat}
-                  comboboxProps={{ withinPortal: false }}
-                  onChange={(value) =>
-                    value && setExportStyle((next) => void (next.export_format = value as PlotExportFormat))
-                  }
-                />
-                <Select
-                  label="Aspect ratio"
-                  data={ASPECT_RATIO_OPTIONS}
-                  value={exportStyle.export_aspect_ratio}
-                  comboboxProps={{ withinPortal: false }}
-                  onChange={(value) => value && setAspect(value as PlotAspectRatioKey)}
-                />
-                <Group grow>
-                  <NumberInput
-                    label="Output width px"
-                    min={320}
-                    step={100}
-                    value={exportWidthValue}
-                    onChange={(value) => typeof value === "number" && setExportWidth(value)}
-                  />
-                  <NumberInput
-                    label="Output height px"
-                    min={240}
-                    step={100}
-                    disabled={exportStyle.export_aspect_ratio !== "custom"}
-                    value={exportHeightValue}
+      <Group gap="xs" align="start">
+        <PlotExplainerButton explainer={explainer} />
+        {onExport && (
+          <Button.Group>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconDownload size={14} />}
+              disabled={!canExport}
+              onClick={() => onExport(selectedFormat)}
+            >
+              {selectedFormat.toUpperCase()}
+            </Button>
+            <Popover withinPortal position="bottom-end" shadow="md" width={320}>
+              <Popover.Target>
+                <ActionIcon size={30} variant="default" disabled={!canExport} aria-label="Export settings">
+                  <IconChevronDown size={16} />
+                </ActionIcon>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <Select
+                    label="Format"
+                    data={EXPORT_FORMAT_OPTIONS}
+                    value={selectedFormat}
+                    comboboxProps={{ withinPortal: false }}
                     onChange={(value) =>
-                      typeof value === "number" &&
-                      setExportStyle((next) => void (next.export_height = value))
+                      value && setExportStyle((next) => void (next.export_format = value as PlotExportFormat))
                     }
                   />
-                </Group>
-                <NumberInput
-                  label="PPI"
-                  description={selectedFormat === "svg" ? "Ignored for SVG (vector)" : undefined}
-                  min={36}
-                  max={1200}
-                  step={24}
-                  value={exportStyle.export_ppi}
-                  onChange={(value) =>
-                    setExportStyle((next) => void (next.export_ppi = typeof value === "number" ? value : 96))
-                  }
-                />
-                <Switch
-                  label="Include title in figure"
-                  checked={exportStyle.export_include_title}
-                  onChange={(event) =>
-                    setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
-                  }
-                />
-                <Button fullWidth leftSection={<IconDownload size={14} />} onClick={() => onExport(selectedFormat)}>
-                  Download {selectedFormat.toUpperCase()}
-                </Button>
-              </Stack>
-            </Popover.Dropdown>
-          </Popover>
-        </Button.Group>
-      )}
+                  <Select
+                    label="Aspect ratio"
+                    data={ASPECT_RATIO_OPTIONS}
+                    value={exportStyle.export_aspect_ratio}
+                    comboboxProps={{ withinPortal: false }}
+                    onChange={(value) => value && setAspect(value as PlotAspectRatioKey)}
+                  />
+                  <Group grow>
+                    <NumberInput
+                      label="Output width px"
+                      min={320}
+                      step={100}
+                      value={exportWidthValue}
+                      onChange={(value) => typeof value === "number" && setExportWidth(value)}
+                    />
+                    <NumberInput
+                      label="Output height px"
+                      min={240}
+                      step={100}
+                      disabled={exportStyle.export_aspect_ratio !== "custom"}
+                      value={exportHeightValue}
+                      onChange={(value) =>
+                        typeof value === "number" &&
+                        setExportStyle((next) => void (next.export_height = value))
+                      }
+                    />
+                  </Group>
+                  <NumberInput
+                    label="PPI"
+                    description={selectedFormat === "svg" ? "Ignored for SVG (vector)" : undefined}
+                    min={36}
+                    max={1200}
+                    step={24}
+                    value={exportStyle.export_ppi}
+                    onChange={(value) =>
+                      setExportStyle((next) => void (next.export_ppi = typeof value === "number" ? value : 96))
+                    }
+                  />
+                  <Switch
+                    label="Include title in figure"
+                    checked={exportStyle.export_include_title}
+                    onChange={(event) =>
+                      setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
+                    }
+                  />
+                  <Button fullWidth leftSection={<IconDownload size={14} />} onClick={() => onExport(selectedFormat)}>
+                    Download {selectedFormat.toUpperCase()}
+                  </Button>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          </Button.Group>
+        )}
+      </Group>
     </Group>
   );
 }
@@ -3444,6 +3799,9 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
 type ZoomMemory = {
   onRelayout: (event: Readonly<Plotly.PlotRelayoutEvent>) => void;
   apply: (layout: Partial<Plotly.Layout>) => Partial<Plotly.Layout>;
+  /** Attach to the plot wrapper's onPointerDownCapture so only relayouts
+   *  triggered by real pointer interaction are ever recorded. */
+  armOnPointerDown: () => void;
 };
 
 function useZoomMemory(signature: string, enabled = true): ZoomMemory {
@@ -3452,21 +3810,37 @@ function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     x?: [number, number];
     y?: [number, number];
   } | null>(null);
+  // Plotly also emits relayout events with range keys on PROGRAMMATIC paths
+  // (an autosize echo after Plots.resize once recorded the plain autorange
+  // as if it were a zoom; every later rebuild then pinned it and other
+  // quantities rendered "empty"). Only pointer-armed events are recorded.
+  const armed = useRef(false);
+  // Omitting previously injected ranges from the next layout is NOT enough
+  // to bring autorange back (plotly keeps the last explicit range), so
+  // withdrawal must set autorange:true exactly once.
+  const injected = useRef(false);
+
+  const armOnPointerDown = () => {
+    armed.current = true;
+  };
 
   const onRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     if (!enabled) return;
     const ev = event as Record<string, unknown>;
     if (ev["xaxis.autorange"] === true || ev["yaxis.autorange"] === true) {
-      stored.current = null; // double-click reset
+      stored.current = null; // double-click / modebar autoscale
+      armed.current = false;
       return;
     }
+    if (!armed.current) return; // programmatic echo — never record
     const xr0 = ev["xaxis.range[0]"];
     const xr1 = ev["xaxis.range[1]"];
     const yr0 = ev["yaxis.range[0]"];
     const yr1 = ev["yaxis.range[1]"];
     const hasX = typeof xr0 === "number" && typeof xr1 === "number";
     const hasY = typeof yr0 === "number" && typeof yr1 === "number";
-    if (!hasX && !hasY) return; // resize/autosize events etc.
+    if (!hasX && !hasY) return;
+    armed.current = false;
     const prev = stored.current?.signature === signature ? stored.current : null;
     stored.current = {
       signature,
@@ -3476,19 +3850,33 @@ function useZoomMemory(signature: string, enabled = true): ZoomMemory {
   };
 
   const apply = (layout: Partial<Plotly.Layout>): Partial<Plotly.Layout> => {
+    if (!enabled) return layout;
     const mem = stored.current;
-    if (!enabled || !mem || mem.signature !== signature) return layout;
-    const out = { ...layout } as Record<string, unknown>;
-    if (mem.x) out.xaxis = { ...(layout.xaxis ?? {}), range: [...mem.x], autorange: false };
-    if (mem.y) out.yaxis = { ...(layout.yaxis ?? {}), range: [...mem.y], autorange: false };
-    return out as Partial<Plotly.Layout>;
+    if (mem && mem.signature === signature) {
+      const out = { ...layout } as Record<string, unknown>;
+      if (mem.x) out.xaxis = { ...(layout.xaxis ?? {}), range: [...mem.x], autorange: false };
+      if (mem.y) out.yaxis = { ...(layout.yaxis ?? {}), range: [...mem.y], autorange: false };
+      injected.current = true;
+      return out as Partial<Plotly.Layout>;
+    }
+    if (injected.current) {
+      // the previous build carried injected ranges — restore autorange once
+      injected.current = false;
+      stored.current = null;
+      const out = { ...layout } as Record<string, unknown>;
+      out.xaxis = { ...(layout.xaxis ?? {}), autorange: true };
+      out.yaxis = { ...(layout.yaxis ?? {}), autorange: true };
+      return out as Partial<Plotly.Layout>;
+    }
+    return layout;
   };
 
-  return { onRelayout, apply };
+  return { onRelayout, apply, armOnPointerDown };
 }
 
 function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const frameRef = useRef<number | null>(null);
 
   const sync = () => {
@@ -3496,7 +3884,7 @@ function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
       const gd = plotDivRef.current;
-      const box = containerRef.current;
+      const box = boxRef.current;
       if (!gd || !box || !gd.isConnected) return;
       const target = Math.round(box.clientWidth);
       if (target < 10) return; // hidden/degenerate — never resize into 0
@@ -3511,18 +3899,34 @@ function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
     });
   };
 
-  useEffect(() => {
-    const box = containerRef.current;
-    if (!box) return;
-    const observer = new ResizeObserver(() => sync());
-    observer.observe(box);
-    return () => {
+  // Callback ref, NOT a mount-time effect: the plot container only renders
+  // once data arrives, so an effect that ran at mount observed nothing and
+  // window resizes were never seen. This attaches the ResizeObserver the
+  // moment the container element actually appears (and re-attaches after
+  // remounts), so window/panel/tab-driven size changes all reach the plot.
+  const containerRef = (node: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    boxRef.current = node;
+    if (node) {
+      const observer = new ResizeObserver(() => sync());
+      observer.observe(node);
+      observerRef.current = observer;
+      sync();
+    }
+  };
+
+  useEffect(
+    () => () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
-      observer.disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    },
+    []
+  );
 
   return { containerRef, sync };
 }
@@ -3555,6 +3959,9 @@ function CyclePlotCard({
     () =>
       JSON.stringify({
         quantity: spec.presentation.quantity,
+        // normalize swaps the plotted column (mAh ↔ mAh/g) at render time,
+        // so it MUST invalidate the trace/layout memos
+        normalize: spec.presentation.normalize_by_mass ?? false,
         ce: spec.presentation.ce_overlay,
         individual: spec.presentation.show_individual_cells,
         legend: spec.presentation.legend,
@@ -3574,6 +3981,10 @@ function CyclePlotCard({
     [result, viewSignature]
   );
   const style = currentPlotStyle(spec, "cycles");
+  const explainer = getCycleQuantityExplainer(
+    spec.presentation.quantity ?? "discharge_capacity",
+    Boolean(spec.presentation.normalize_by_mass)
+  );
   const rememberPlotDiv = (graphDiv: unknown) => {
     const element = graphDiv as HTMLElement;
     plotDivRef.current = element;
@@ -3655,6 +4066,7 @@ function CyclePlotCard({
         <PlotHeader
           plotName={plotName}
           subtitle={subtitle}
+          explainer={explainer}
           onExport={exportPlot}
           style={style}
           updateStyle={updatePlotStyle}
@@ -3671,6 +4083,7 @@ function CyclePlotCard({
         ) : (
           <Box
             ref={containerRef}
+            onPointerDownCapture={zoom.armOnPointerDown}
             style={{ width: "100%", minWidth: 0, opacity: updating ? 0.42 : 1, transition: "opacity 160ms ease" }}
           >
             <Plot
@@ -3732,6 +4145,13 @@ function TimeCapacityPlotCard({
         start: cfg.cycle_start,
         end: cfg.cycle_end,
         points: cfg.max_points_per_cell,
+        derivative: cfg.view === "voltage_current" ? null : {
+          view: cfg.view,
+          phase: cfg.derivative_phase,
+          specific: cfg.derivative_specific,
+          absoluteDischarge: cfg.derivative_absolute_discharge,
+          smoothing: cfg.smoothing_window,
+        },
       }),
     [spec.selection, cfg.cycles, cfg.cycle_start, cfg.cycle_end, cfg.max_points_per_cell]
   );
@@ -3757,14 +4177,21 @@ function TimeCapacityPlotCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [timeResult.data, viewSignature]
   );
-  const zoomSignature = `${timeResult.data?.computed_at ?? "no-data"}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
-  const zoom = useZoomMemory(zoomSignature, !cfg.stacked);
+  const zoomSignature = `${timeResult.data?.computed_at ?? "no-data"}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
+  const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
     () => zoom.apply(timeCapacityLayout(timeResult.data, spec)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [timeResult.data, viewSignature]
   );
   const style = currentPlotStyle(spec, "time_capacity");
+  const explainer = getTimeCapacityExplainer(
+    cfg.x_axis,
+    cfg.stacked ? (cfg.current_right !== "none" ? cfg.current_right : cfg.current_left) : "none",
+    cfg.view,
+    cfg.derivative_specific,
+    cfg.smoothing_window
+  );
   const rememberPlotDiv = (graphDiv: unknown) => {
     const element = graphDiv as HTMLElement;
     plotDivRef.current = element;
@@ -3841,6 +4268,7 @@ function TimeCapacityPlotCard({
         <PlotHeader
           plotName={plotName}
           subtitle={subtitle}
+          explainer={explainer}
           onExport={exportPlot}
           style={style}
           updateStyle={updatePlotStyle}
@@ -3863,6 +4291,7 @@ function TimeCapacityPlotCard({
         ) : (
           <Box
             ref={containerRef}
+            onPointerDownCapture={zoom.armOnPointerDown}
             style={{
               width: "100%",
               minWidth: 0,
@@ -4332,16 +4761,77 @@ export function AnalysisPage() {
   const folderOptions = flattenFolders(treeQuery.data);
   const plotUpdating = Boolean(compute.isFetching && rendered && activeTab === "cycles");
 
-  const toggleCellVisibility = (cellId: number) => {
+  const toggleCellVisibility = (cellId: number, context: VisibilityContext) => {
+    const groups = groupsQuery.data ?? [];
     update((s) => {
-      const has = s.selection.exclusions.some((e) => e.cell_id === cellId);
-      if (has) s.selection.exclusions = s.selection.exclusions.filter((e) => e.cell_id !== cellId);
-      else {
+      const isHidden = s.selection.exclusions.some((exclusion) =>
+        exclusionAppliesToContext(exclusion, cellId, context)
+      );
+      if (!isHidden) {
         s.selection.exclusions.push({
           cell_id: cellId,
+          entry_kind: context.kind,
+          entry_ref_id: context.ref_id,
           reason: null,
           excluded_at: new Date().toISOString(),
         });
+        return;
+      }
+
+      const hadLegacyExclusion = s.selection.exclusions.some(
+        (exclusion) =>
+          exclusion.cell_id === cellId &&
+          exclusion.entry_kind == null &&
+          exclusion.entry_ref_id == null
+      );
+      s.selection.exclusions = s.selection.exclusions.filter((exclusion) => {
+        const legacy =
+          exclusion.cell_id === cellId &&
+          exclusion.entry_kind == null &&
+          exclusion.entry_ref_id == null;
+        return !legacy && !isExactContextExclusion(exclusion, cellId, context);
+      });
+
+      // Legacy plots hid a cell everywhere. Showing one occurrence converts
+      // the other occurrences to explicit scoped exclusions.
+      if (hadLegacyExclusion) {
+        for (const other of selectionContextsForCell(s.selection.entries, groups, cellId)) {
+          if (other.kind === context.kind && other.ref_id === context.ref_id) continue;
+          if (!s.selection.exclusions.some((exclusion) => isExactContextExclusion(exclusion, cellId, other))) {
+            s.selection.exclusions.push({
+              cell_id: cellId,
+              entry_kind: other.kind,
+              entry_ref_id: other.ref_id,
+              reason: null,
+              excluded_at: new Date().toISOString(),
+            });
+          }
+        }
+      }
+    });
+  };
+
+  const toggleReplicateVisibility = (groupId: number) => {
+    update((s) => {
+      const hidden = s.selection.hidden_replicate_group_ids ?? [];
+      s.selection.hidden_replicate_group_ids = hidden.includes(groupId)
+        ? hidden.filter((id) => id !== groupId)
+        : [...hidden, groupId];
+    });
+  };
+
+  const removeAnalysisEntry = (index: number) => {
+    update((s) => {
+      const [removed] = s.selection.entries.splice(index, 1);
+      if (!removed) return;
+      s.selection.exclusions = s.selection.exclusions.filter(
+        (exclusion) =>
+          exclusion.entry_kind !== removed.kind || exclusion.entry_ref_id !== removed.ref_id
+      );
+      if (removed.kind === "replicate_group") {
+        s.selection.hidden_replicate_group_ids = (
+          s.selection.hidden_replicate_group_ids ?? []
+        ).filter((id) => id !== removed.ref_id);
       }
     });
   };
@@ -4427,8 +4917,9 @@ export function AnalysisPage() {
         groups={groupsQuery.data ?? []}
         cells={cellsQuery.data ?? []}
         onAdd={() => setAddOpen(true)}
-        onRemoveEntry={(index) => update((s) => void s.selection.entries.splice(index, 1))}
+        onRemoveEntry={removeAnalysisEntry}
         onToggleCell={toggleCellVisibility}
+        onToggleReplicate={toggleReplicateVisibility}
       />
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
       {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}

@@ -29,7 +29,8 @@ from ..models import (
     TestFile,
 )
 from ..services import analysis_engine as analysis_svc
-from ..services import cache, parsing, scanner, stitch
+from ..services.activity_log import record_activity
+from ..services import cache, parsing, protocol, scanner, stitch
 from .files import file_dict
 
 router = APIRouter(prefix="/api", tags=["library"])
@@ -263,6 +264,36 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
     return d
 
 
+@router.get("/cells/{cell_id}/protocol")
+def get_cell_protocol(cell_id: int, db: Session = Depends(get_db)):
+    cell = db.get(Cell, cell_id)
+    if cell is None:
+        raise HTTPException(404, "No such cell")
+    return {
+        "cell_id": cell.id,
+        "cell_name": cell.name,
+        "tests": [
+            {
+                "id": test.id,
+                "name": test.name,
+                "files": [
+                    {
+                        "id": link.file.id,
+                        "filename": link.file.filename,
+                        "path": link.file.path,
+                        "protocol": protocol.reconstruct_protocol(
+                            link.file.header_meta,
+                            link.file.nominal_capacity_mah,
+                        ),
+                    }
+                    for link in sorted(test.file_links, key=lambda item: item.position)
+                ],
+            }
+            for test in sorted(cell.tests, key=lambda item: item.id)
+        ],
+    }
+
+
 class CellUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -274,12 +305,45 @@ def update_cell(cell_id: int, req: CellUpdate, db: Session = Depends(get_db)):
     cell = db.get(Cell, cell_id)
     if cell is None:
         raise HTTPException(404, "No such cell")
+    changed_fields: list[str] = []
+    previous_name = cell.name
     if req.name is not None:
-        cell.name = req.name.strip()
+        name = req.name.strip()
+        if not name:
+            raise HTTPException(400, "Cell name is required")
+        duplicate = (
+            db.query(Cell)
+            .filter(Cell.name == name, Cell.id != cell.id)
+            .first()
+        )
+        if duplicate is not None:
+            raise HTTPException(409, "A cell with that name already exists")
+        if name != cell.name:
+            cell.name = name
+            changed_fields.append("name")
     if req.description is not None:
-        cell.description = req.description
+        description = req.description.strip() or None
+        if description != cell.description:
+            cell.description = description
+            changed_fields.append("notes")
     if req.archived is not None:
-        cell.archived = req.archived  # soft delete only — analyses keep working
+        if req.archived != cell.archived:
+            cell.archived = req.archived  # soft delete only — analyses keep working
+            changed_fields.append("archived")
+    if changed_fields:
+        record_activity(
+            db,
+            category="cell",
+            action="edit_cell",
+            message=f"Edited cell {cell.name}",
+            entity_type="cell",
+            entity_id=cell.id,
+            details={
+                "changed_fields": changed_fields,
+                "previous_name": previous_name if "name" in changed_fields else None,
+                "name": cell.name,
+            },
+        )
     db.commit()
     return cell_dict(db, cell)
 
@@ -389,6 +453,25 @@ def check_cell_sources(
             counts[status] += 1
         if status == "changed":
             changed_file_ids.append(sf.id)
+    severity = "warning" if counts["changed"] or counts["offline"] else "info"
+    record_activity(
+        db,
+        category="source",
+        action="check_sources",
+        message=(
+            f"Checked {len(results)} source files: "
+            f"{counts['changed']} changed, {counts['offline']} offline"
+        ),
+        severity=severity,
+        details={
+            "checked": len(results),
+            "skipped_complete": skipped_complete,
+            "changed": counts["changed"],
+            "offline": counts["offline"],
+            "online": counts["online"],
+            "changed_file_ids": changed_file_ids,
+        },
+    )
     db.commit()
     return {
         "checked": len(results),
@@ -409,6 +492,13 @@ def set_cells_status(req: CellStatusRequest, db: Session = Depends(get_db)):
         db.query(Cell)
         .filter(Cell.id.in_(unique_ids), Cell.archived == False)  # noqa: E712
         .update({Cell.cycling_status: req.cycling_status}, synchronize_session="fetch")
+    )
+    record_activity(
+        db,
+        category="cell",
+        action="set_status",
+        message=f"Marked {updated} cells as {req.cycling_status}",
+        details={"cell_ids": unique_ids, "cycling_status": req.cycling_status, "updated": updated},
     )
     db.commit()
     return {"updated": updated, "cycling_status": req.cycling_status}
@@ -439,6 +529,20 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
             updated.append(updated_sf.id)
         except ValueError as exc:
             errors.append({"file_id": sf.id, "filename": sf.filename, "error": str(exc)})
+    record_activity(
+        db,
+        category="source",
+        action="update_changed_sources",
+        message=f"Updated {len(updated)} changed source files",
+        severity="warning" if errors else "info",
+        details={
+            "updated_file_ids": updated,
+            "updated": len(updated),
+            "skipped_complete": skipped_complete,
+            "errors": errors,
+        },
+    )
+    db.commit()
     return {
         "updated": len(updated),
         "updated_file_ids": updated,
@@ -452,6 +556,14 @@ def delete_cells(req: CellDeleteRequest, db: Session = Depends(get_db)):
     result = delete_cells_from_library(db, req.cell_ids)
     if not result["deleted_cell_ids"] and result["missing_cell_ids"]:
         raise HTTPException(404, "No selected cells were found")
+    record_activity(
+        db,
+        category="cell",
+        action="delete_cells",
+        message=f"Removed {len(result['deleted_cell_ids'])} cells from the database",
+        severity="warning",
+        details=result,
+    )
     db.commit()
     return {"ok": True, **result}
 
@@ -462,6 +574,16 @@ def delete_cell(cell_id: int, db: Session = Depends(get_db)):
     if cell is None:
         raise HTTPException(404, "No such cell")
     result = delete_cell_from_library(db, cell)
+    record_activity(
+        db,
+        category="cell",
+        action="delete_cells",
+        message="Removed 1 cell from the database",
+        severity="warning",
+        entity_type="cell",
+        entity_id=cell_id,
+        details=result,
+    )
     db.commit()
     return {"ok": True, **result}
 

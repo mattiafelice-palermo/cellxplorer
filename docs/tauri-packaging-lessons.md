@@ -1,6 +1,6 @@
 # Tauri packaging lessons for future agents
 
-This document records the packaging spike and the issues encountered while turning Cellxplorer
+This document records the packaging spike and the issues encountered while turning CellXplorer
 into a Windows desktop app with Tauri. Read this before changing the packaging setup.
 
 ## Current packaging architecture
@@ -9,7 +9,7 @@ into a Windows desktop app with Tauri. Read this before changing the packaging s
 - The Python/FastAPI backend is frozen with PyInstaller as a Tauri sidecar executable.
 - Tauri bundles the frontend and the backend sidecar into a Windows installer.
 - The default successful installer target is NSIS:
-  `src-tauri/target/release/bundle/nsis/Cellxplorer_0.1.0_x64-setup.exe`.
+  `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`.
 - MSI generation reached WiX linking, but WiX ICE validation failed in this environment because
   the Windows Installer service was not accessible to the build process. NSIS is the clean default.
 
@@ -36,9 +36,10 @@ call them directly from there to diagnose.
 Use these steps when testing packaging:
 
 ```powershell
+npm.cmd install
+
 cd frontend
-.\node_modules\.bin\tsc.cmd -b
-npx.cmd vite build
+npm.cmd run build
 cd ..
 
 npm.cmd run build:backend
@@ -50,6 +51,19 @@ npm.cmd run tauri:build
 
 `npm.cmd run tauri:build` currently expects the frontend and backend sidecar to already be built.
 
+## Codex sandbox frontend build issue
+
+In the managed Codex sandbox, `npm.cmd run build` from `frontend` can fail before Vite loads its
+config:
+
+```text
+Cannot read directory "../../..": Access is denied.
+Could not resolve "C:\Users\matti\Documents\Cellxplorer\frontend\vite.config.ts"
+```
+
+This has been observed as a sandbox path-resolution boundary, not as a broken Vite config. Rerun the
+same command with elevated sandbox permission, then continue the documented build sequence.
+
 ## Important Tauri sidecar details
 
 - Tauri sidecars belong in `src-tauri/binaries`.
@@ -59,8 +73,17 @@ npm.cmd run tauri:build
   `"externalBin": ["binaries/cellxplorer-backend"]`.
 - The Rust sidecar process handle must be stored as `Mutex<Option<CommandChild>>` because
   `CommandChild::kill(self)` consumes the child.
-- Tauri requires an `.ico` file for Windows bundling. A placeholder exists at
-  `src-tauri/icons/icon.ico`; replace it with a real Cellxplorer icon later.
+- Tauri requires an `.ico` file for Windows bundling. The current source icon is
+  `CellXplorer_X_teal_flat_transparent.ico`; copy it to `src-tauri/icons/icon.ico`.
+- The runtime window/taskbar icon is set from `src-tauri/icons/icon-256.rgba` in
+  `src-tauri/src/main.rs`. If the `.ico` changes, regenerate this 256x256 RGBA file
+  from the same source icon before rebuilding.
+- The visible in-app header icon and favicon are `frontend/public/app-icon.png`.
+  Regenerate that PNG from the same source icon when changing branding.
+- The generated NSIS shortcut originally had `IconLocation = ,0`, so Windows inferred
+  the icon from the target executable and cached it inconsistently across Start/taskbar.
+  `src-tauri/nsis-hooks.nsh` rewrites Start/Desktop shortcuts after install with an explicit
+  icon location: `$INSTDIR\cellxplorer.exe,0`.
 
 ## PyInstaller backend entrypoint
 
@@ -159,7 +182,7 @@ stored in Tauri-managed app logs. This will make "it launches but X fails" bug r
 The packaging spike successfully produced:
 
 - `src-tauri/target/release/cellxplorer.exe`
-- `src-tauri/target/release/bundle/nsis/Cellxplorer_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`
 
 The first installed-app smoke test showed the Tauri shell launched and the backend health endpoint
 responded, but the frontend initially failed to load the cell database because it used relative API

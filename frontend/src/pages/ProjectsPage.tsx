@@ -55,7 +55,7 @@ import {
   ReplicateGroupSummary,
   Tree,
 } from "../api";
-import { CellQuickPlot } from "../components/CellQuickPlot";
+import { CellDetailTabs } from "../components/CellDetailTabs";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { ImportCellsLauncher } from "./InboxPage";
 
@@ -442,7 +442,6 @@ export function ProjectsPage() {
   const [previewWidth, setPreviewWidth] = useState(390);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [preview, setPreview] = useState<PreviewSelection>(null);
-  const [metadataOpen, setMetadataOpen] = useState(false);
   const [dropTargetFolderId, setDropTargetFolderId] = useState<number | null>(null);
 
   const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
@@ -667,7 +666,6 @@ export function ProjectsPage() {
   const selectPreview = (next: PreviewSelection) => {
     setPreview(next);
     setPreviewOpen(true);
-    setMetadataOpen(false);
   };
 
   const toggleFolder = (folderId: number) => {
@@ -940,8 +938,6 @@ export function ProjectsPage() {
               selection={preview}
               selectedCell={selectedCellDetail.data}
               replicatePreview={selectedReplicatePreview.data}
-              metadataOpen={metadataOpen}
-              onMetadataOpen={setMetadataOpen}
               onClose={() => setPreviewOpen(false)}
             />
           </Paper>
@@ -1414,15 +1410,11 @@ function PreviewPanel({
   selection,
   selectedCell,
   replicatePreview,
-  metadataOpen,
-  onMetadataOpen,
   onClose,
 }: {
   selection: PreviewSelection;
   selectedCell?: CellDetail;
   replicatePreview?: ReplicateGroupPreview;
-  metadataOpen: boolean;
-  onMetadataOpen: (open: boolean) => void;
   onClose: () => void;
 }) {
   if (!selection) {
@@ -1466,28 +1458,6 @@ function PreviewPanel({
     return <Alert color="gray">Loading cell preview.</Alert>;
   }
 
-  const sourceMetadata = selectedCell.tests.flatMap((test) =>
-    test.files.flatMap((file, index) =>
-      [
-        ["file", file.filename],
-        ["path", file.path],
-        ["hash", file.hash],
-        ["channel", file.channel],
-        ["device_info", file.device_info],
-        ["start_time", file.start_time],
-        ["nda_version", file.nda_version],
-        ["barcode", file.barcode],
-        ["remarks", file.remarks],
-        ["active_mass_mg", file.active_mass_mg],
-        ["nominal_capacity_mah", file.nominal_capacity_mah],
-        ["parser_version", file.parser_version],
-      ]
-        .filter(([, value]) => value !== null && value !== undefined && value !== "")
-        .map(([key, value]) => [`${test.name} / file ${index + 1} / ${key}`, String(value)])
-    )
-  );
-  const metadataRows = [...Object.entries(selectedCell.metadata), ...sourceMetadata];
-
   return (
     <Stack>
       <Group justify="space-between" align="start">
@@ -1505,34 +1475,7 @@ function PreviewPanel({
           <IconChevronRight size={16} />
         </ActionIcon>
       </Group>
-      <CellQuickPlot cellId={selectedCell.id} cellName={selectedCell.name} />
-      <Divider label="Metadata" labelPosition="left" />
-      <Button
-        variant="subtle"
-        size="xs"
-        leftSection={metadataOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-        onClick={() => onMetadataOpen(!metadataOpen)}
-      >
-        {metadataOpen ? "Hide metadata" : `Show metadata (${metadataRows.length})`}
-      </Button>
-      <Collapse in={metadataOpen}>
-        <Table withTableBorder>
-          <Table.Tbody>
-            {metadataRows.map(([key, value]) => (
-              <Table.Tr key={key}>
-                <Table.Td>
-                  <Text size="xs" c="dimmed">
-                    {key}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs">{value}</Text>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      </Collapse>
+      <CellDetailTabs cell={selectedCell} />
     </Stack>
   );
 }

@@ -30,6 +30,7 @@ DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
 # 1.2.0: added cycle_duration_h, charge_time_h, discharge_time_h.
 # 1.3.0: added charge/discharge first/last voltage endpoints and
 #        render-time polarization.
-CALC_VERSION = "1.3.0"
+# 1.4.0: added CV-charge time, capacity, fraction, and event counts.
+CALC_VERSION = "1.4.0"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

@@ -80,6 +80,47 @@ class PerCycleTests(unittest.TestCase):
         out = calc.per_cycle(df)
         self.assertTrue(out["mean_charge_voltage_v"].isna().all())
 
+    def test_explicit_cv_charge_metrics(self):
+        df = pd.DataFrame(
+            {
+                "cycle": [1] * 6,
+                "step": [1, 1, 2, 2, 2, 3],
+                "status": ["CC_Chg", "CC_Chg", "CV_Chg", "CV_Chg", "CV_Chg", "CC_DChg"],
+                "time_s": [0, 100, 0, 60, 120, 0],
+                "voltage_v": [3.5, 4.2, 4.2, 4.2, 4.2, 3.8],
+                "current_ma": [2, 2, 1.5, 1.0, 0.5, -2],
+                "charge_capacity_mah": [0, 1.0, 0, 0.2, 0.3, 1.3],
+                "discharge_capacity_mah": [0, 0, 0, 0, 0, 1.2],
+                "charge_energy_mwh": [0, 3.5, 0, 0.8, 1.2, 4.7],
+                "discharge_energy_mwh": [0, 0, 0, 0, 0, 4.2],
+            }
+        )
+        out = calc.per_cycle(df)
+        self.assertAlmostEqual(out.loc[0, "cv_charge_time_h"], 120 / 3600)
+        self.assertAlmostEqual(out.loc[0, "cv_charge_capacity_mah"], 0.3)
+        self.assertAlmostEqual(out.loc[0, "cv_charge_fraction_pct"], 0.3 / 1.3 * 100)
+        self.assertEqual(out.loc[0, "cv_charge_event_count"], 1)
+        self.assertEqual(out.loc[0, "cv_reached"], 1)
+
+    def test_combined_cccv_requires_plateau_and_taper(self):
+        df = pd.DataFrame(
+            {
+                "cycle": [1] * 5,
+                "step": [1] * 5,
+                "status": ["CCCV_Chg"] * 5,
+                "time_s": [0, 60, 120, 180, 240],
+                "voltage_v": [3.5, 4.0, 4.199, 4.2, 4.2],
+                "current_ma": [2, 2, 2, 1.5, 0.5],
+                "charge_capacity_mah": [0, 0.5, 1.0, 1.2, 1.3],
+                "discharge_capacity_mah": [0] * 5,
+                "charge_energy_mwh": [0, 1, 2, 3, 4],
+                "discharge_energy_mwh": [0] * 5,
+            }
+        )
+        out = calc.per_cycle(df)
+        self.assertEqual(out.loc[0, "cv_reached"], 1)
+        self.assertGreater(out.loc[0, "cv_charge_capacity_mah"], 0)
+
 
 class CacheBuildIdempotencyTests(unittest.TestCase):
     HASH = "deadbeef" + "0" * 56

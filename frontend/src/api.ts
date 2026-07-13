@@ -143,6 +143,62 @@ export interface CellDetail extends CellSummary {
   tests: { id: number; name: string; description: string | null; files: SourceFile[] }[];
 }
 
+export interface ProtocolStep {
+  number: number;
+  type_id: number;
+  type: string;
+  direction: "charge" | "discharge" | "rest" | "control" | "other";
+  current_ma: number | null;
+  c_rate: number | null;
+  c_rate_source: "explicit" | "inferred" | null;
+  target_voltage_v: number | null;
+  stop_voltage_v: number | null;
+  stop_current_ma: number | null;
+  stop_c_rate: number | null;
+  stop_c_rate_source: "inferred" | null;
+  time_limit_s: number | null;
+  record_interval_s: number | null;
+  record_voltage_delta_v: number | null;
+  protection_upper_v: number | null;
+  protection_lower_v: number | null;
+  loop_start_step: number | null;
+  loop_count: number | null;
+  summary: string;
+}
+
+export interface FileProtocol {
+  n_steps: number;
+  n_executable_steps: number;
+  steps: ProtocolStep[];
+  groups: {
+    kind: "sequence" | "repeated_block";
+    label: string;
+    start_step: number;
+    end_step: number;
+    repeat_count: number;
+    control_step: number | null;
+    step_numbers: number[];
+    summary: string;
+  }[];
+  summary: {
+    charge_cutoffs: { voltage_v: number; step_count: number }[];
+    discharge_cutoffs: { voltage_v: number; step_count: number }[];
+    protection_windows: { lower_v: number | null; upper_v: number | null }[];
+    record_intervals_s: number[];
+  };
+  warnings: string[];
+}
+
+export interface CellProtocol {
+  cell_id: number;
+  cell_name: string;
+  tests: {
+    id: number;
+    name: string;
+    files: { id: number; filename: string; path: string; protocol: FileProtocol }[];
+  }[];
+}
+
 export interface ReplicateGroupSummary {
   id: number;
   name: string;
@@ -253,6 +309,9 @@ export interface SelectionEntry {
 
 export interface Exclusion {
   cell_id: number;
+  /** Missing on legacy entries, which apply to every occurrence of the cell. */
+  entry_kind?: SelectionEntry["kind"] | null;
+  entry_ref_id?: number | null;
   reason?: string | null;
   excluded_at?: string;
 }
@@ -273,9 +332,11 @@ export interface SavedAnalysisPlot {
   name: string;
   subtitle: string;
   description: string | null;
+  /** Saved plots store visibility only; analysis-level sample entries remain global. */
   selection: {
     entries: SelectionEntry[];
     exclusions: Exclusion[];
+    hidden_replicate_group_ids?: number[];
   };
   computation: AnalysisSpec["computation"];
   aggregation: AnalysisSpec["aggregation"];
@@ -374,6 +435,7 @@ export interface AnalysisSpec {
   selection: {
     entries: SelectionEntry[];
     exclusions: Exclusion[];
+    hidden_replicate_group_ids?: number[];
   };
   computation: {
     cycle_range: { start: number | null; end: number | null };
@@ -397,6 +459,11 @@ export interface AnalysisSpec {
       current_left: "current_ma" | "current_density" | "c_rate";
       current_right: "none" | "current_ma" | "current_density" | "c_rate";
       electrode_area_cm2: number | null;
+      view: "voltage_current" | "dqdv" | "dvdq";
+      derivative_phase: "both" | "charge" | "discharge";
+      derivative_specific: boolean;
+      derivative_absolute_discharge: boolean;
+      smoothing_window: number;
       cycle_start: number | null;
       cycle_end: number | null;
       cycles: number[];
@@ -478,6 +545,14 @@ export interface CellMetrics {
   mean_cycle_duration_h?: number | null;
   mean_charge_time_h?: number | null;
   mean_discharge_time_h?: number | null;
+  cv_reached_cycles?: number | null;
+  cv_reached_pct?: number | null;
+  cv_charge_event_count?: number | null;
+  mean_cv_charge_time_h?: number | null;
+  median_cv_charge_time_h?: number | null;
+  mean_cv_charge_capacity_mah?: number | null;
+  median_cv_charge_capacity_mah?: number | null;
+  mean_cv_charge_fraction_pct?: number | null;
 }
 
 export interface CellSeries {
@@ -554,6 +629,8 @@ export interface TimeCapacityTrace {
   current_ma: (number | null)[];
   phase: string[];
   status: (string | null)[];
+  derivative_x: (number | null)[];
+  derivative_y: (number | null)[];
 }
 
 export interface TimeCapacityResult {
@@ -580,6 +657,18 @@ export interface ScanJob {
   changed: number;
   errors: string[];
   started_at: string;
+}
+
+export interface ActivityEvent {
+  id: number;
+  category: string;
+  action: string;
+  message: string;
+  severity: "info" | "warning" | "error" | string;
+  entity_type: string | null;
+  entity_id: number | null;
+  details: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface Meta {

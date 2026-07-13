@@ -26,6 +26,11 @@ CYCLE_COLUMNS = [
     "cycle_duration_h",
     "charge_time_h",
     "discharge_time_h",
+    "cv_charge_time_h",
+    "cv_charge_capacity_mah",
+    "cv_charge_fraction_pct",
+    "cv_charge_event_count",
+    "cv_reached",
     "start_timestamp",
 ]
 
@@ -42,7 +47,86 @@ QUANTITIES = {
     "cycle_duration": ("cycle_duration_h", "Cycle duration (h)"),
     "charge_time": ("charge_time_h", "Charge time (h)"),
     "discharge_time": ("discharge_time_h", "Discharge time (h)"),
+    "cv_charge_time": ("cv_charge_time_h", "CV charge time (h)"),
+    "cv_charge_capacity": ("cv_charge_capacity_mah", "CV charge capacity (mAh)"),
+    "cv_charge_fraction": ("cv_charge_fraction_pct", "CV charge fraction (%)"),
+    "cv_charge_events": ("cv_charge_event_count", "CV charge events"),
+    "cv_reached": ("cv_reached", "CV reached"),
 }
+
+
+def _cv_charge_by_cycle(df: pd.DataFrame, cycle_index: pd.Index) -> tuple[np.ndarray, ...]:
+    """Measure charge transferred and time spent in CV per cycle.
+
+    Explicit CV_Chg steps are direct. A combined CCCV_Chg step is considered
+    to have reached CV only when at least two records sit at the terminal
+    voltage plateau and the absolute current measurably tapers.
+    """
+    zeros = np.zeros(len(cycle_index), dtype="float64")
+    if not {"cycle", "status"}.issubset(df.columns):
+        return zeros.copy(), zeros.copy(), zeros.copy()
+    work = df.copy()
+    status = work["status"].astype(str).str.lower()
+    charge_cv = status.str.contains("cv_chg") | status.str.contains("cv charge")
+    if not charge_cv.any():
+        return zeros.copy(), zeros.copy(), zeros.copy()
+    step_key = "step" if "step" in work.columns else "step_index" if "step_index" in work.columns else None
+    if step_key is None:
+        work["__step"] = 0
+        step_key = "__step"
+    order_cols = [col for col in ("record_index", "time_s") if col in work.columns]
+    if order_cols:
+        work = work.sort_values(["cycle", step_key, *order_cols])
+
+    cycle_time: dict[int, float] = {}
+    cycle_capacity: dict[int, float] = {}
+    cycle_events: dict[int, int] = {}
+    for (cycle, _), group in work.loc[charge_cv].groupby(["cycle", step_key], sort=False):
+        group_status = group["status"].astype(str).str.lower()
+        combined = group_status.str.contains("cccv").any()
+        region = group
+        if combined:
+            if "voltage_v" not in group.columns or "current_ma" not in group.columns:
+                continue
+            voltage = group["voltage_v"].to_numpy(dtype="float64")
+            current = np.abs(group["current_ma"].to_numpy(dtype="float64"))
+            finite_v = voltage[np.isfinite(voltage)]
+            finite_i = current[np.isfinite(current)]
+            if len(finite_v) < 2 or len(finite_i) < 2:
+                continue
+            target = float(np.nanmax(finite_v))
+            tolerance = max(0.002, abs(target) * 0.0005)
+            positions = np.flatnonzero(np.isfinite(voltage) & (voltage >= target - tolerance))
+            if len(positions) < 2:
+                continue
+            initial_current = float(np.nanmedian(finite_i[: min(5, len(finite_i))]))
+            plateau_current = current[positions]
+            taper = initial_current > 0 and np.nanmin(plateau_current) <= initial_current * 0.98
+            if not taper:
+                continue
+            region = group.iloc[positions[0] : positions[-1] + 1]
+
+        duration_h = 0.0
+        if "time_s" in region.columns:
+            times = region["time_s"].to_numpy(dtype="float64")
+            finite = times[np.isfinite(times)]
+            if len(finite):
+                duration_h = max(0.0, float(finite.max() - finite.min())) / 3600.0
+        capacity_mah = 0.0
+        if "charge_capacity_mah" in region.columns:
+            capacities = region["charge_capacity_mah"].to_numpy(dtype="float64")
+            finite = capacities[np.isfinite(capacities)]
+            if len(finite):
+                capacity_mah = float(finite.max()) if not combined else max(0.0, float(finite.max() - finite.min()))
+        cycle_id = int(cycle)
+        cycle_time[cycle_id] = cycle_time.get(cycle_id, 0.0) + duration_h
+        cycle_capacity[cycle_id] = cycle_capacity.get(cycle_id, 0.0) + capacity_mah
+        cycle_events[cycle_id] = cycle_events.get(cycle_id, 0) + 1
+
+    times = np.array([cycle_time.get(int(cycle), 0.0) for cycle in cycle_index], dtype="float64")
+    capacities = np.array([cycle_capacity.get(int(cycle), 0.0) for cycle in cycle_index], dtype="float64")
+    events = np.array([cycle_events.get(int(cycle), 0) for cycle in cycle_index], dtype="float64")
+    return times, capacities, events
 
 
 def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
@@ -90,9 +174,11 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
     dchg_cap = group_max("discharge_capacity_mah")
     chg_e = group_max("charge_energy_mwh")
     dchg_e = group_max("discharge_energy_mwh")
+    cv_time, cv_capacity, cv_events = _cv_charge_by_cycle(df, index)
     with np.errstate(divide="ignore", invalid="ignore"):
         ce = np.where(chg_cap != 0, dchg_cap / chg_cap * 100.0, np.nan)
         ee = np.where(chg_e != 0, dchg_e / chg_e * 100.0, np.nan)
+        cv_fraction = np.where(chg_cap != 0, cv_capacity / chg_cap * 100.0, np.nan)
 
     if "timestamp" in df.columns:
         start_ts = grouped["timestamp"].min().to_numpy()
@@ -139,6 +225,11 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
             "cycle_duration_h": cycle_duration,
             "charge_time_h": masked_step_time(is_chg),
             "discharge_time_h": masked_step_time(is_dchg),
+            "cv_charge_time_h": cv_time,
+            "cv_charge_capacity_mah": cv_capacity,
+            "cv_charge_fraction_pct": cv_fraction,
+            "cv_charge_event_count": cv_events,
+            "cv_reached": (cv_events > 0).astype("float64"),
             "start_timestamp": start_ts,
         }
     )

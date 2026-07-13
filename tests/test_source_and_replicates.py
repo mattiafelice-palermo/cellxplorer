@@ -14,7 +14,7 @@ os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
+from app.models import ActivityEvent, Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
 from app.services import cache, parsing, scanner
 from app.routers import files, library, replicates
 
@@ -398,6 +398,11 @@ class SourceAndReplicateTests(unittest.TestCase):
             self.assertEqual(result["changed"], 1)
             self.assertEqual(active_file.location_status, "changed")
             self.assertEqual(complete_file.location_status, "online")
+            event = db.query(ActivityEvent).filter(ActivityEvent.action == "check_sources").one()
+            self.assertEqual(event.category, "source")
+            self.assertEqual(event.severity, "warning")
+            self.assertEqual(event.details["changed"], 1)
+            self.assertEqual(event.details["skipped_complete"], 1)
 
     def test_set_cells_status_marks_selected_cells(self):
         db = self.make_session()
@@ -414,6 +419,8 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(result["updated"], 2)
         self.assertEqual(cell_a.cycling_status, "complete")
         self.assertEqual(cell_b.cycling_status, "complete")
+        event = db.query(ActivityEvent).filter(ActivityEvent.action == "set_status").one()
+        self.assertEqual(event.message, "Marked 2 cells as complete")
 
 
 if __name__ == "__main__":

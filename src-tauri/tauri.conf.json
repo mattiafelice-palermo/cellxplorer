@@ -28,7 +28,9 @@
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,
-        "installerIcon": null,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "nsis-hooks.nsh",
         "installMode": "perMachine"
       },
       "wix": {
