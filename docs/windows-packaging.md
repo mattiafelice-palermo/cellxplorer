@@ -49,7 +49,7 @@ command with elevated sandbox permission, then continue with the normal packagin
 
 Expected output, once the toolchain is installed:
 
-- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.1_x64-setup.exe`
 
 The app icon is sourced from `CellXplorer_X_teal_flat_transparent.ico`.
 The Tauri bundle uses `src-tauri/icons/icon.ico`, and the runtime window/taskbar icon

@@ -415,7 +415,31 @@ export interface PlotStyle {
   ce_line_width: number;
   ce_line_dash: "solid" | "dot" | "dash" | "longdash";
   ce_opacity: number;
+  /** Legacy single-field position; superseded by legend_mode/side/custom. */
   legend_position: "bottom" | "right" | "top" | "inside";
+  legend_mode: "outside" | "inside" | "custom";
+  legend_side: "top" | "bottom" | "left" | "right";
+  legend_inside_position:
+    | "top_left"
+    | "top_center"
+    | "top_right"
+    | "center_left"
+    | "center"
+    | "center_right"
+    | "bottom_left"
+    | "bottom_center"
+    | "bottom_right"
+    | "custom";
+  legend_orientation: "h" | "v";
+  /** Width allocated to each horizontal legend entry; 0 lets Plotly size it. */
+  legend_entry_width: number;
+  /** Paper coordinates (0..1) of the legend center when legend_mode=custom. */
+  legend_custom_x: number;
+  legend_custom_y: number;
+  /** Data (CSV/XLSX) export preferences. */
+  data_export_format: "csv" | "xlsx";
+  data_decimal_separator: "point" | "comma";
+  data_delimiter: "comma" | "semicolon" | "tab";
   export_settings_version: number;
   export_format: PlotExportFormat;
   export_aspect_ratio: PlotAspectRatioKey;

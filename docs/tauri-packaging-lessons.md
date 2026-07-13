@@ -9,7 +9,7 @@ into a Windows desktop app with Tauri. Read this before changing the packaging s
 - The Python/FastAPI backend is frozen with PyInstaller as a Tauri sidecar executable.
 - Tauri bundles the frontend and the backend sidecar into a Windows installer.
 - The default successful installer target is NSIS:
-  `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`.
+  `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.1_x64-setup.exe`.
 - MSI generation reached WiX linking, but WiX ICE validation failed in this environment because
   the Windows Installer service was not accessible to the build process. NSIS is the clean default.
 
@@ -182,7 +182,7 @@ stored in Tauri-managed app logs. This will make "it launches but X fails" bug r
 The packaging spike successfully produced:
 
 - `src-tauri/target/release/cellxplorer.exe`
-- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.1_x64-setup.exe`
 
 The first installed-app smoke test showed the Tauri shell launched and the backend health endpoint
 responded, but the frontend initially failed to load the cell database because it used relative API

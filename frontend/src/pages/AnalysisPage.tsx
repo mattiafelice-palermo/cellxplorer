@@ -162,6 +162,22 @@ const EXPORT_FORMAT_OPTIONS: { value: PlotExportFormat; label: string }[] = [
   { value: "pdf", label: "PDF" },
 ];
 
+const LEGEND_INSIDE_POSITION_OPTIONS: {
+  value: PlotStyle["legend_inside_position"];
+  label: string;
+}[] = [
+  { value: "top_left", label: "Top left" },
+  { value: "top_center", label: "Top center" },
+  { value: "top_right", label: "Top right" },
+  { value: "center_left", label: "Center left" },
+  { value: "center", label: "Center" },
+  { value: "center_right", label: "Center right" },
+  { value: "bottom_left", label: "Bottom left" },
+  { value: "bottom_center", label: "Bottom center" },
+  { value: "bottom_right", label: "Bottom right" },
+  { value: "custom", label: "Custom (dragged)" },
+];
+
 const COLOR_SWATCHES = Array.from(
   new Set(Object.entries(PLOT_PALETTES).filter(([key]) => key !== "custom").flatMap(([, colors]) => colors))
 );
@@ -326,12 +342,22 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   ce_line_dash: "dot",
   ce_opacity: 0.7,
   legend_position: "bottom",
-  export_settings_version: 2,
+  legend_mode: "outside",
+  legend_side: "bottom",
+  legend_inside_position: "bottom_center",
+  legend_orientation: "h",
+  legend_entry_width: 0,
+  legend_custom_x: 0.5,
+  legend_custom_y: 0.5,
+  data_export_format: "csv",
+  data_decimal_separator: "point",
+  data_delimiter: "comma",
+  export_settings_version: 3,
   export_format: "png",
   export_aspect_ratio: "view",
-  export_ppi: 96,
-  export_width: 900,
-  export_height: 560,
+  export_ppi: 300,
+  export_width: 2000,
+  export_height: 1250,
   export_scale: 1,
   export_include_title: false,
 };
@@ -503,6 +529,29 @@ function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
     y2_axis: y2Axis,
     axis_scopes: axisScopes,
   };
+  // migrate the legacy single-field legend position to mode + side
+  if (style && !style.legend_mode && style.legend_position) {
+    if (style.legend_position === "inside") {
+      normalized.legend_mode = "inside";
+      normalized.legend_side = "left";
+    } else {
+      normalized.legend_mode = "outside";
+      normalized.legend_side = style.legend_position;
+    }
+  }
+  if (style?.legend_mode === "custom") {
+    normalized.legend_mode = "inside";
+    normalized.legend_inside_position = "custom";
+  } else if (style?.legend_mode === "inside" && !style.legend_inside_position) {
+    normalized.legend_inside_position =
+      style.legend_side === "top"
+        ? "top_center"
+        : style.legend_side === "left"
+          ? "center_left"
+          : style.legend_side === "right"
+            ? "center_right"
+            : "bottom_center";
+  }
   if (legacyExportSettings) {
     normalized.export_format = DEFAULT_PLOT_STYLE.export_format;
     normalized.export_aspect_ratio = DEFAULT_PLOT_STYLE.export_aspect_ratio;
@@ -632,20 +681,86 @@ function tickLayout(style: PlotStyle) {
   };
 }
 
+const INSIDE_LEGEND_CHROME = {
+  bgcolor: "rgba(255, 255, 255, 0.82)",
+  bordercolor: "#dee2e6",
+  borderwidth: 1,
+} as const;
+
 function legendLayout(style: PlotStyle): Partial<Plotly.Layout["legend"]> {
-  if (style.legend_position === "right") return { orientation: "v", x: 1.02, y: 1 };
-  if (style.legend_position === "top") return { orientation: "h", x: 0, y: 1.13 };
-  if (style.legend_position === "inside") {
+  const horizontalSizing =
+    style.legend_entry_width > 0
+      ? { entrywidth: style.legend_entry_width, entrywidthmode: "pixels" as const }
+      : {};
+  if (style.legend_mode === "custom" || style.legend_inside_position === "custom") {
     return {
-      orientation: "v",
-      x: 0.02,
-      y: 0.98,
-      bgcolor: "rgba(255, 255, 255, 0.82)",
-      bordercolor: "#dee2e6",
-      borderwidth: 1,
+      orientation: style.legend_orientation,
+      x: style.legend_custom_x,
+      y: style.legend_custom_y,
+      xanchor: "center",
+      yanchor: "middle",
+      ...(style.legend_orientation === "h" ? horizontalSizing : {}),
+      ...INSIDE_LEGEND_CHROME,
     };
   }
-  return { orientation: "h", y: -0.22 };
+  if (style.legend_mode === "inside") {
+    const position = style.legend_inside_position ?? "bottom_center";
+    const [vertical, horizontal] = position === "center"
+      ? ["center", "center"]
+      : position.split("_");
+    const x = horizontal === "left" ? 0.01 : horizontal === "right" ? 0.99 : 0.5;
+    const y = vertical === "top" ? 0.99 : vertical === "bottom" ? 0.01 : 0.5;
+    const xanchor = horizontal === "left" ? "left" : horizontal === "right" ? "right" : "center";
+    const yanchor = vertical === "top" ? "top" : vertical === "bottom" ? "bottom" : "middle";
+    const orientation = horizontal === "center" ? "h" : "v";
+    return {
+      orientation,
+      x,
+      xanchor,
+      y,
+      yanchor,
+      ...(orientation === "h" ? horizontalSizing : {}),
+      ...INSIDE_LEGEND_CHROME,
+    };
+  }
+  // outside
+  switch (style.legend_side) {
+    case "right":
+      return { orientation: "v", x: 1.02, xanchor: "left", y: 1, yanchor: "top" };
+    case "left":
+      return { orientation: "v", x: -0.08, xanchor: "right", y: 1, yanchor: "top" };
+    case "top":
+      return { orientation: "h", x: 0, y: 1.13, ...horizontalSizing };
+    default: // bottom
+      return { orientation: "h", x: 0.5, xanchor: "center", y: -0.22, ...horizontalSizing };
+  }
+}
+
+// Extra plot margins each legend placement needs so it never overlaps axes.
+// A hidden legend reserves nothing — the plot reclaims the full area.
+function legendMargins(style: PlotStyle, visible: boolean): { l: number; r: number; t: number; b: number } {
+  if (!visible || style.legend_mode !== "outside") return { l: 0, r: 0, t: 0, b: 0 };
+  switch (style.legend_side) {
+    case "right":
+      return { l: 0, r: 116, t: 0, b: 0 };
+    case "left":
+      return { l: 150, r: 0, t: 0, b: 0 };
+    case "top":
+      return { l: 0, r: 0, t: 36, b: 0 };
+    default: // bottom
+      return { l: 0, r: 0, t: 0, b: 54 };
+  }
+}
+
+function draggedLegendPoint(event: Readonly<Plotly.PlotRelayoutEvent>): { x: number; y: number } | null {
+  const values = event as unknown as Record<string, unknown>;
+  const x = typeof values["legend.x"] === "number" ? values["legend.x"] : null;
+  const y = typeof values["legend.y"] === "number" ? values["legend.y"] : null;
+  if (x === null || y === null) return null;
+  return {
+    x: Math.min(1, Math.max(0, x)),
+    y: Math.min(1, Math.max(0, y)),
+  };
 }
 
 function slugFilename(value: string): string {
@@ -673,6 +788,81 @@ function blobFromDataUrl(dataUrl: string, fallbackType: string): Blob {
     ? bytesFromDataUrl(dataUrl)
     : new TextEncoder().encode(decodeURIComponent(payload));
   return new Blob([bytes as BlobPart], { type: mime });
+}
+
+// ------------------------------------------------------ data export (CSV/XLSX)
+
+type DataColumn = { header: string; values: (number | null)[] };
+
+// Export exactly what is plotted: one x/y column pair per visible trace
+// (works for any tab — traces need not share an x grid). Dispersion bands
+// (fill traces) are skipped.
+function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.Layout>): DataColumn[] {
+  const axisTitle = (axis: unknown): string =>
+    String((axis as { title?: { text?: string } })?.title?.text ?? "");
+  const columns: DataColumn[] = [];
+  for (const raw of traces) {
+    const t = raw as Record<string, unknown>;
+    if (t.fill === "toself") continue;
+    const xs = (t.x as (number | null)[]) ?? [];
+    const ys = (t.y as (number | null)[]) ?? [];
+    if (!ys.length) continue;
+    const name = String(t.name ?? "series");
+    const layoutRec = layout as Record<string, unknown>;
+    const yKey = t.yaxis === "y3" ? "yaxis3" : t.yaxis === "y2" ? "yaxis2" : "yaxis";
+    const xKey = t.xaxis === "x2" ? "xaxis2" : "xaxis";
+    const xLabel = axisTitle(layoutRec[xKey]) || "x";
+    const yLabel = axisTitle(layoutRec[yKey]) || "y";
+    columns.push({ header: `${name} | ${xLabel}`, values: xs });
+    columns.push({ header: `${name} | ${yLabel}`, values: ys });
+  }
+  return columns;
+}
+
+function buildDelimitedText(
+  columns: DataColumn[],
+  decimal: PlotStyle["data_decimal_separator"],
+  delimiter: PlotStyle["data_delimiter"]
+): string {
+  const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
+  const formatNumber = (v: number | null | undefined) => {
+    if (v === null || v === undefined || Number.isNaN(v)) return "";
+    const s = String(v);
+    return decimal === "comma" ? s.replace(".", ",") : s;
+  };
+  const quote = (s: string) =>
+    s.includes(sep) || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+  const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
+  const lines = [columns.map((c) => quote(c.header)).join(sep)];
+  for (let i = 0; i < rowCount; i += 1) {
+    lines.push(columns.map((c) => formatNumber(c.values[i])).join(sep));
+  }
+  // BOM so Excel detects UTF-8
+  return "﻿" + lines.join("\r\n");
+}
+
+async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
+  if (columns.length === 0) return;
+  if (style.data_export_format === "xlsx") {
+    const XLSX = await import("xlsx");
+    const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
+    const aoa: (string | number | null)[][] = [columns.map((c) => c.header)];
+    for (let i = 0; i < rowCount; i += 1) {
+      aoa.push(
+        columns.map((c) => {
+          const v = c.values[i];
+          return v === null || v === undefined || Number.isNaN(v) ? null : v;
+        })
+      );
+    }
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Data");
+    XLSX.writeFile(book, `${baseName}.xlsx`);
+    return;
+  }
+  const text = buildDelimitedText(columns, style.data_decimal_separator, style.data_delimiter);
+  downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${baseName}.csv`);
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -734,18 +924,26 @@ function svgElementFromDataUrl(dataUrl: string): SVGSVGElement {
 }
 
 // Render a Plotly SVG into a real vector PDF (no rasterization) via
-// jsPDF + svg2pdf. Page size in points is derived from the export pixel
-// size and PPI so the physical dimensions match the raster exports.
+// jsPDF + svg2pdf. PDF is vector, so it uses a physical page size rather
+// than borrowing the raster-only PPI setting.
 async function makeVectorPdf(
   svgDataUrl: string,
-  pixelWidth: number,
-  pixelHeight: number,
-  ppi: number
+  ratio: number,
+  aspect: PlotAspectRatioKey
 ): Promise<Blob> {
   const [{ jsPDF }] = await Promise.all([import("jspdf"), import("svg2pdf.js")]);
   const svg = svgElementFromDataUrl(svgDataUrl);
-  const pageWidth = (pixelWidth * 72) / ppi;
-  const pageHeight = (pixelHeight * 72) / ppi;
+  const a4Long = 841.89;
+  const a4Short = 595.28;
+  const defaultLongEdge = 720;
+  const [pageWidth, pageHeight] =
+    aspect === "a4_landscape"
+      ? [a4Long, a4Short]
+      : aspect === "a4_portrait"
+        ? [a4Short, a4Long]
+        : ratio >= 1
+          ? [defaultLongEdge, defaultLongEdge / ratio]
+          : [defaultLongEdge * ratio, defaultLongEdge];
   const pdf = new jsPDF({
     orientation: pageWidth >= pageHeight ? "landscape" : "portrait",
     unit: "pt",
@@ -1856,7 +2054,8 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
   const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
   const hasRightCurrent = hasRightCurrentValues(result, spec);
-  const rightMargin = hasRightCurrent ? 84 : style.legend_position === "right" ? 140 : 28;
+  const lm = legendMargins(style, spec.presentation.legend);
+  const rightMargin = Math.max(hasRightCurrent ? 84 : 28, lm.r ? lm.r + 24 : 0);
   const ticks = tickLayout(style);
   const baseAxis = {
     showgrid: style.show_grid,
@@ -1878,7 +2077,12 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
         : specific ? "dV/dQ (V/(mAh/g))" : "dV/dQ (V/mAh)";
     return {
       height: 560,
-      margin: { l: 78, r: style.legend_position === "right" ? 140 : 28, t: 20, b: 86 },
+      margin: {
+        l: 78 + lm.l,
+        r: Math.max(28, lm.r ? lm.r + 24 : 0),
+        t: 20 + lm.t,
+        b: 58 + lm.b,
+      },
       paper_bgcolor: style.paper_bgcolor,
       plot_bgcolor: style.plot_bgcolor,
       font: { size: style.tick_font_size },
@@ -1890,7 +2094,7 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
   }
   return {
     height: cfg.stacked ? 620 : 560,
-    margin: { l: 70, r: rightMargin, t: 20, b: 86 },
+    margin: { l: 70 + lm.l, r: rightMargin, t: 20 + lm.t, b: 58 + lm.b },
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
@@ -2981,7 +3185,7 @@ function PlotStylePanel({
         style={{ width: 42, flexShrink: 0, display: "flex", alignItems: "center", flexDirection: "column" }}
       >
         <Tooltip label="Show plot style">
-          <ActionIcon variant="subtle" onClick={onToggle} mt={4}>
+          <ActionIcon variant="subtle" onClick={onToggle} mt={4} aria-label="Show plot style">
             <IconChevronLeft size={16} />
           </ActionIcon>
         </Tooltip>
@@ -3008,7 +3212,7 @@ function PlotStylePanel({
           Plot style
         </Text>
         <Tooltip label="Hide plot style">
-          <ActionIcon variant="subtle" onClick={onToggle}>
+          <ActionIcon variant="subtle" onClick={onToggle} aria-label="Hide plot style">
             <IconChevronRight size={16} />
           </ActionIcon>
         </Tooltip>
@@ -3482,26 +3686,101 @@ function PlotStylePanel({
           <Accordion.Panel>
             <Stack gap="xs">
               <Switch
-                label="Legend"
+                label="Show legend"
                 checked={spec.presentation.legend}
                 onChange={(event) =>
                   update((s) => void (s.presentation.legend = event.currentTarget.checked))
                 }
               />
-              <Select
-                label="Position"
-                data={[
-                  { value: "bottom", label: "Bottom" },
-                  { value: "right", label: "Right" },
-                  { value: "top", label: "Top" },
-                  { value: "inside", label: "Inside" },
-                ]}
-                value={style.legend_position}
-                onChange={(value) =>
-                  value &&
-                  setStyle((next) => void (next.legend_position = value as PlotStyle["legend_position"]))
-                }
-              />
+              {spec.presentation.legend && (
+                <>
+                  <SegmentedControl
+                    size="xs"
+                    fullWidth
+                    radius={4}
+                    data={[
+                      { value: "outside", label: "Outside" },
+                      { value: "inside", label: "Inside" },
+                    ]}
+                    value={style.legend_mode === "outside" ? "outside" : "inside"}
+                    styles={{
+                      root: { padding: 3 },
+                      indicator: { boxShadow: "none", border: "1px solid var(--mantine-color-gray-3)" },
+                      label: { paddingBlock: 6 },
+                    }}
+                    onChange={(value) =>
+                      setStyle((next) => {
+                        next.legend_mode = value as "outside" | "inside";
+                        if (value === "inside" && next.legend_inside_position === "custom") {
+                          next.legend_custom_x = Math.min(1, Math.max(0, next.legend_custom_x));
+                          next.legend_custom_y = Math.min(1, Math.max(0, next.legend_custom_y));
+                        }
+                      })
+                    }
+                  />
+                  {style.legend_mode === "outside" ? (
+                    <Select
+                      label="Side"
+                      data={[
+                        { value: "bottom", label: "Bottom" },
+                        { value: "top", label: "Top" },
+                        { value: "left", label: "Left" },
+                        { value: "right", label: "Right" },
+                      ]}
+                      value={style.legend_side}
+                      onChange={(value) =>
+                        value &&
+                        setStyle((next) => void (next.legend_side = value as PlotStyle["legend_side"]))
+                      }
+                    />
+                  ) : (
+                    <>
+                      <Select
+                        label="Position"
+                        data={LEGEND_INSIDE_POSITION_OPTIONS}
+                        value={style.legend_inside_position}
+                        onChange={(value) =>
+                          value &&
+                          setStyle((next) => {
+                            next.legend_mode = "inside";
+                            next.legend_inside_position = value as PlotStyle["legend_inside_position"];
+                          })
+                        }
+                      />
+                      <SegmentedControl
+                        size="xs"
+                        fullWidth
+                        radius={4}
+                        data={[
+                          { value: "h", label: "Horizontal" },
+                          { value: "v", label: "Vertical" },
+                        ]}
+                        value={style.legend_orientation}
+                        onChange={(value) =>
+                          setStyle((next) => void (next.legend_orientation = value as "h" | "v"))
+                        }
+                      />
+                      <Text size="10px" c="dimmed">
+                        Drag the legend directly on the plot for a custom position. The dragged position is saved with the plot.
+                      </Text>
+                    </>
+                  )}
+                  {((style.legend_mode === "outside" && ["top", "bottom"].includes(style.legend_side)) ||
+                    (style.legend_mode !== "outside" && style.legend_orientation === "h")) && (
+                    <DebouncedNumberInput
+                      label="Legend entry width (px)"
+                      description="Use 0 for automatic sizing. Wider entries flow onto additional rows sooner."
+                      min={0}
+                      max={600}
+                      step={20}
+                      value={style.legend_entry_width}
+                      onCommit={(value) =>
+                        setStyle((next) => void (next.legend_entry_width = Math.max(0, value ?? 0)))
+                      }
+                    />
+                  )}
+                </>
+              )}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -3571,6 +3850,8 @@ function PlotHeader({
   subtitle,
   explainer,
   onExport,
+  onDataExport,
+  getExportPreview,
   style,
   updateStyle,
   viewSize,
@@ -3580,6 +3861,8 @@ function PlotHeader({
   subtitle: string;
   explainer?: PlotExplainer;
   onExport?: (format: PlotExportFormat) => void;
+  onDataExport?: () => void;
+  getExportPreview?: () => Promise<string | null>;
   style?: PlotStyle;
   updateStyle?: (fn: (style: PlotStyle) => void) => void;
   viewSize?: { width: number; height: number } | null;
@@ -3587,6 +3870,8 @@ function PlotHeader({
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
   const selectedFormat = exportStyle.export_format ?? "png";
+  const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const ratio =
     exportStyle.export_aspect_ratio === "custom"
       ? Math.max(0.1, exportStyle.export_width / exportStyle.export_height)
@@ -3599,6 +3884,9 @@ function PlotHeader({
     exportStyle.export_aspect_ratio === "custom"
       ? exportStyle.export_height
       : Math.max(240, Math.round(exportWidthValue / ratio));
+  const ppi = Math.max(36, exportStyle.export_ppi || DEFAULT_PLOT_STYLE.export_ppi);
+  const printWidthCm = (exportWidthValue / ppi) * 2.54;
+  const printHeightCm = (exportHeightValue / ppi) * 2.54;
   const setExportStyle = (fn: (style: PlotStyle) => void) => updateStyle?.(fn);
   const setAspect = (value: PlotAspectRatioKey) => {
     setExportStyle((next) => {
@@ -3617,6 +3905,33 @@ function PlotHeader({
     });
   };
 
+  // live thumbnail of the actual export output (same figure, scaled down),
+  // regenerated while the popover is open and settings change
+  useEffect(() => {
+    if (!exportPopoverOpen || !getExportPreview) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getExportPreview()
+        .then((url) => {
+          if (!cancelled) setPreviewUrl(url);
+        })
+        .catch(() => {
+          if (!cancelled) setPreviewUrl(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    exportPopoverOpen,
+    exportStyle.export_aspect_ratio,
+    exportStyle.export_width,
+    exportStyle.export_height,
+    exportStyle.export_include_title,
+  ]);
+
   return (
     <Group justify="space-between" mb="xs" align="start">
       <div>
@@ -3629,6 +3944,91 @@ function PlotHeader({
       </div>
       <Group gap="xs" align="start">
         <PlotExplainerButton explainer={explainer} />
+        {onDataExport && style && (
+          <Button.Group>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconTable size={14} />}
+              disabled={!canExport}
+              onClick={onDataExport}
+            >
+              {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+            </Button>
+            <Popover withinPortal position="bottom-end" shadow="md" width={280}>
+              <Popover.Target>
+                <Button size="xs" variant="default" px={6} disabled={!canExport} aria-label="Data export settings">
+                  <IconChevronDown size={14} />
+                </Button>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <Select
+                    label="Format"
+                    data={[
+                      { value: "csv", label: "CSV (text)" },
+                      { value: "xlsx", label: "Excel (.xlsx)" },
+                    ]}
+                    value={exportStyle.data_export_format}
+                    comboboxProps={{ withinPortal: false }}
+                    onChange={(value) =>
+                      value &&
+                      setExportStyle(
+                        (next) => void (next.data_export_format = value as PlotStyle["data_export_format"])
+                      )
+                    }
+                  />
+                  {exportStyle.data_export_format === "csv" && (
+                    <>
+                      <Select
+                        label="Decimal separator"
+                        data={[
+                          { value: "point", label: "Point (3.14)" },
+                          { value: "comma", label: "Comma (3,14)" },
+                        ]}
+                        value={exportStyle.data_decimal_separator}
+                        comboboxProps={{ withinPortal: false }}
+                        onChange={(value) =>
+                          value &&
+                          setExportStyle((next) => {
+                            next.data_decimal_separator = value as PlotStyle["data_decimal_separator"];
+                            // comma decimals cannot share the comma delimiter
+                            if (value === "comma" && next.data_delimiter === "comma") {
+                              next.data_delimiter = "semicolon";
+                            }
+                          })
+                        }
+                      />
+                      <Select
+                        label="Column separator"
+                        data={[
+                          { value: "comma", label: "Comma  ," , disabled: exportStyle.data_decimal_separator === "comma" },
+                          { value: "semicolon", label: "Semicolon  ;" },
+                          { value: "tab", label: "Tab" },
+                        ]}
+                        value={exportStyle.data_delimiter}
+                        comboboxProps={{ withinPortal: false }}
+                        onChange={(value) =>
+                          value &&
+                          setExportStyle(
+                            (next) => void (next.data_delimiter = value as PlotStyle["data_delimiter"])
+                          )
+                        }
+                      />
+                    </>
+                  )}
+                  <Text size="10px" c="dimmed">
+                    Exports the plotted series as x/y column pairs per trace (dispersion bands
+                    excluded). Excel files keep full numeric precision.
+                  </Text>
+                  <Button fullWidth leftSection={<IconTable size={14} />} onClick={onDataExport}>
+                    Download {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
+                  </Button>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          </Button.Group>
+        )}
         {onExport && (
           <Button.Group>
             <Button
@@ -3640,72 +4040,153 @@ function PlotHeader({
             >
               {selectedFormat.toUpperCase()}
             </Button>
-            <Popover withinPortal position="bottom-end" shadow="md" width={320}>
+            <Popover
+              withinPortal
+              position="bottom-end"
+              shadow="md"
+              width="min(760px, calc(100vw - 24px))"
+              opened={exportPopoverOpen}
+              onChange={setExportPopoverOpen}
+            >
               <Popover.Target>
-                <ActionIcon size={30} variant="default" disabled={!canExport} aria-label="Export settings">
-                  <IconChevronDown size={16} />
-                </ActionIcon>
+                <Button
+                  size="xs"
+                  variant="default"
+                  px={6}
+                  disabled={!canExport}
+                  aria-label="Export settings"
+                  onClick={() => setExportPopoverOpen((open) => !open)}
+                >
+                  <IconChevronDown size={14} />
+                </Button>
               </Popover.Target>
               <Popover.Dropdown>
-                <Stack gap="xs">
-                  <Select
-                    label="Format"
-                    data={EXPORT_FORMAT_OPTIONS}
-                    value={selectedFormat}
-                    comboboxProps={{ withinPortal: false }}
-                    onChange={(value) =>
-                      value && setExportStyle((next) => void (next.export_format = value as PlotExportFormat))
-                    }
-                  />
-                  <Select
-                    label="Aspect ratio"
-                    data={ASPECT_RATIO_OPTIONS}
-                    value={exportStyle.export_aspect_ratio}
-                    comboboxProps={{ withinPortal: false }}
-                    onChange={(value) => value && setAspect(value as PlotAspectRatioKey)}
-                  />
-                  <Group grow>
-                    <NumberInput
-                      label="Output width px"
-                      min={320}
-                      step={100}
-                      value={exportWidthValue}
-                      onChange={(value) => typeof value === "number" && setExportWidth(value)}
-                    />
-                    <NumberInput
-                      label="Output height px"
-                      min={240}
-                      step={100}
-                      disabled={exportStyle.export_aspect_ratio !== "custom"}
-                      value={exportHeightValue}
-                      onChange={(value) =>
-                        typeof value === "number" &&
-                        setExportStyle((next) => void (next.export_height = value))
-                      }
-                    />
-                  </Group>
-                  <NumberInput
-                    label="PPI"
-                    description={selectedFormat === "svg" ? "Ignored for SVG (vector)" : undefined}
-                    min={36}
-                    max={1200}
-                    step={24}
-                    value={exportStyle.export_ppi}
-                    onChange={(value) =>
-                      setExportStyle((next) => void (next.export_ppi = typeof value === "number" ? value : 96))
-                    }
-                  />
-                  <Switch
-                    label="Include title in figure"
-                    checked={exportStyle.export_include_title}
-                    onChange={(event) =>
-                      setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
-                    }
-                  />
-                  <Button fullWidth leftSection={<IconDownload size={14} />} onClick={() => onExport(selectedFormat)}>
-                    Download {selectedFormat.toUpperCase()}
-                  </Button>
-                </Stack>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: getExportPreview
+                      ? "repeat(auto-fit, minmax(min(300px, 100%), 1fr))"
+                      : "1fr",
+                    gap: 16,
+                    alignItems: "start",
+                  }}
+                >
+                  {getExportPreview && (
+                    <Stack gap={6}>
+                      <Text size="xs" fw={600} c="dimmed">
+                        {selectedFormat === "png"
+                          ? `Preview | ${Math.round(exportWidthValue)} x ${Math.round(exportHeightValue)} px`
+                          : "Preview | Vector output"}
+                      </Text>
+                      <div
+                        style={{
+                          border: "1px solid var(--mantine-color-gray-3)",
+                          borderRadius: 4,
+                          padding: 2,
+                          background:
+                            "repeating-conic-gradient(#f1f3f5 0% 25%, #ffffff 0% 50%) 50% / 12px 12px",
+                          minHeight: 220,
+                          height: 300,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {previewUrl ? (
+                          <img
+                            src={previewUrl}
+                            alt="Export preview"
+                            style={{
+                              maxWidth: "100%",
+                              maxHeight: "100%",
+                              width: "auto",
+                              height: "auto",
+                              display: "block",
+                            }}
+                          />
+                        ) : (
+                          <Loader size={16} />
+                        )}
+                      </div>
+                      <Text size="10px" c="dimmed">
+                        This uses the selected aspect ratio and figure styling. The downloaded file keeps the full resolution.
+                      </Text>
+                    </Stack>
+                  )}
+                    <Stack gap="xs">
+                      <Select
+                        label="Format"
+                        data={EXPORT_FORMAT_OPTIONS}
+                        value={selectedFormat}
+                        comboboxProps={{ withinPortal: false }}
+                        onChange={(value) =>
+                          value && setExportStyle((next) => void (next.export_format = value as PlotExportFormat))
+                        }
+                      />
+                      <Select
+                        label="Aspect ratio"
+                        data={ASPECT_RATIO_OPTIONS}
+                        value={exportStyle.export_aspect_ratio}
+                        comboboxProps={{ withinPortal: false }}
+                        onChange={(value) => value && setAspect(value as PlotAspectRatioKey)}
+                      />
+                      {selectedFormat === "png" ? (
+                        <>
+                          <Group grow align="start">
+                            <DebouncedNumberInput
+                              label="Width (px)"
+                              min={320}
+                              step={100}
+                              value={exportWidthValue}
+                              onCommit={(value) => value !== null && setExportWidth(value)}
+                            />
+                            <DebouncedNumberInput
+                              label="Height (px)"
+                              min={240}
+                              step={100}
+                              disabled={exportStyle.export_aspect_ratio !== "custom"}
+                              value={exportHeightValue}
+                              onCommit={(value) =>
+                                value !== null && setExportStyle((next) => void (next.export_height = value))
+                              }
+                            />
+                          </Group>
+                          <DebouncedNumberInput
+                            label="Print density (PPI)"
+                            description="Sets physical print size; it does not change the pixel dimensions above."
+                            min={36}
+                            max={1200}
+                            step={24}
+                            value={exportStyle.export_ppi}
+                            onCommit={(value) =>
+                              setExportStyle(
+                                (next) => void (next.export_ppi = value ?? DEFAULT_PLOT_STYLE.export_ppi)
+                              )
+                            }
+                          />
+                          <Text size="10px" c="dimmed">
+                            Print size at {Math.round(ppi)} PPI: {printWidthCm.toFixed(1)} x {printHeightCm.toFixed(1)} cm
+                          </Text>
+                        </>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          {selectedFormat.toUpperCase()} is vector-based, so it has no pixel resolution or PPI setting.
+                          It can be resized without losing sharpness.
+                        </Text>
+                      )}
+                      <Switch
+                        label="Include title in figure"
+                        checked={exportStyle.export_include_title}
+                        onChange={(event) =>
+                          setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
+                        }
+                      />
+                      <Button fullWidth leftSection={<IconDownload size={14} />} onClick={() => onExport(selectedFormat)}>
+                        Download {selectedFormat.toUpperCase()}
+                      </Button>
+                    </Stack>
+                </div>
               </Popover.Dropdown>
             </Popover>
           </Button.Group>
@@ -3720,8 +4201,9 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const quantityInfo = resolvedQuantity(result, spec);
   const showCeOverlay = (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
-  const rightMargin = style.legend_position === "right" ? 140 : showCeOverlay ? 64 : 24;
-  const topMargin = style.legend_position === "top" ? 56 : 20;
+  const lm = legendMargins(style, spec.presentation.legend);
+  const rightMargin = Math.max(showCeOverlay ? 64 : 24, lm.r ? lm.r + 24 : 0);
+  const topMargin = 20 + lm.t;
   const ticks = tickLayout(style);
   const axisBase = {
     showgrid: style.show_grid,
@@ -3737,7 +4219,7 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
 
   return {
     height: 500,
-    margin: { l: 66, r: rightMargin, t: topMargin, b: 58 },
+    margin: { l: 66 + lm.l, r: rightMargin, t: topMargin, b: 58 + lm.b },
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
@@ -3997,6 +4479,53 @@ function CyclePlotCard({
   const updatePlotStyle = (fn: (style: PlotStyle) => void) => {
     update((s) => writeScopedStyle(s, "cycles", fn));
   };
+  const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
+    zoom.onRelayout(event);
+    if (style.legend_mode === "outside") return;
+    const point = draggedLegendPoint(event);
+    if (!point) return;
+    updatePlotStyle((next) => {
+      next.legend_mode = "inside";
+      next.legend_inside_position = "custom";
+      next.legend_custom_x = point.x;
+      next.legend_custom_y = point.y;
+    });
+  };
+
+  const buildExportFigure = (plan: { layoutWidth: number; layoutHeight: number }) => {
+    const exportLayout: Partial<Plotly.Layout> = {
+      ...layout,
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+      autosize: false,
+    };
+    if (style.export_include_title) {
+      exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
+      exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
+    }
+    return { data: traces, layout: exportLayout };
+  };
+
+  // faithful mini-render of the export output for the settings popover
+  const getExportPreview = async (): Promise<string | null> => {
+    if (!plotDivRef.current || traces.length === 0) return null;
+    const plan = resolveExportPlan(style, plotDivRef.current);
+    const toImage = (
+      PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
+    ).toImage;
+    return toImage(buildExportFigure(plan), {
+      format: "png",
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+      scale: Math.min(1, 420 / plan.layoutWidth),
+    });
+  };
+
+  const handleDataExport = () => {
+    downloadDataExport(tracesToColumns(traces, layout), style, `${slugFilename(plotName)}-data`).catch(
+      (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
+    );
+  };
 
   const exportPlot = async (format: PlotExportFormat) => {
     if (!plotDivRef.current || !result) return;
@@ -4006,17 +4535,7 @@ function CyclePlotCard({
       const filename = slugFilename(plotName);
       // Render off the live figure with an export-only layout (exact size,
       // optional in-figure title) so the on-screen plot is never disturbed.
-      const exportLayout: Partial<Plotly.Layout> = {
-        ...layout,
-        width: plan.layoutWidth,
-        height: plan.layoutHeight,
-        autosize: false,
-      };
-      if (style.export_include_title) {
-        exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
-        exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
-      }
-      const figure = { data: traces, layout: exportLayout };
+      const figure = buildExportFigure(plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -4028,7 +4547,11 @@ function CyclePlotCard({
           height: plan.layoutHeight,
         });
         downloadBlob(
-          await makeVectorPdf(svgUrl, plan.pixelWidth, plan.pixelHeight, ppi),
+          await makeVectorPdf(
+            svgUrl,
+            plan.pixelWidth / plan.pixelHeight,
+            style.export_aspect_ratio
+          ),
           `${filename}.pdf`
         );
         return;
@@ -4068,6 +4591,8 @@ function CyclePlotCard({
           subtitle={subtitle}
           explainer={explainer}
           onExport={exportPlot}
+          onDataExport={handleDataExport}
+          getExportPreview={getExportPreview}
           style={style}
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
@@ -4089,9 +4614,12 @@ function CyclePlotCard({
             <Plot
               data={traces}
               layout={layout}
-              config={{ displaylogo: false }}
+              config={{
+                displaylogo: false,
+                edits: { legendPosition: style.legend_mode !== "outside" },
+              }}
               style={{ width: "100%" }}
-              onRelayout={zoom.onRelayout}
+              onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
@@ -4204,6 +4732,53 @@ function TimeCapacityPlotCard({
   const updatePlotStyle = (fn: (style: PlotStyle) => void) => {
     update((s) => writeScopedStyle(s, "time_capacity", fn));
   };
+  const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
+    zoom.onRelayout(event);
+    if (style.legend_mode === "outside") return;
+    const point = draggedLegendPoint(event);
+    if (!point) return;
+    updatePlotStyle((next) => {
+      next.legend_mode = "inside";
+      next.legend_inside_position = "custom";
+      next.legend_custom_x = point.x;
+      next.legend_custom_y = point.y;
+    });
+  };
+
+  const buildExportFigure = (plan: { layoutWidth: number; layoutHeight: number }) => {
+    const exportLayout: Partial<Plotly.Layout> = {
+      ...layout,
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+      autosize: false,
+    };
+    if (style.export_include_title) {
+      exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
+      exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
+    }
+    return { data: traces, layout: exportLayout };
+  };
+
+  // faithful mini-render of the export output for the settings popover
+  const getExportPreview = async (): Promise<string | null> => {
+    if (!plotDivRef.current || traces.length === 0) return null;
+    const plan = resolveExportPlan(style, plotDivRef.current);
+    const toImage = (
+      PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
+    ).toImage;
+    return toImage(buildExportFigure(plan), {
+      format: "png",
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+      scale: Math.min(1, 420 / plan.layoutWidth),
+    });
+  };
+
+  const handleDataExport = () => {
+    downloadDataExport(tracesToColumns(traces, layout), style, `${slugFilename(plotName)}-data`).catch(
+      (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
+    );
+  };
 
   const exportPlot = async (format: PlotExportFormat) => {
     if (!plotDivRef.current || !timeResult.data) return;
@@ -4211,17 +4786,7 @@ function TimeCapacityPlotCard({
       const plan = resolveExportPlan(style, plotDivRef.current);
       const ppi = Math.max(36, style.export_ppi ?? 96);
       const filename = slugFilename(plotName);
-      const exportLayout: Partial<Plotly.Layout> = {
-        ...layout,
-        width: plan.layoutWidth,
-        height: plan.layoutHeight,
-        autosize: false,
-      };
-      if (style.export_include_title) {
-        exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
-        exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
-      }
-      const figure = { data: traces, layout: exportLayout };
+      const figure = buildExportFigure(plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -4232,7 +4797,14 @@ function TimeCapacityPlotCard({
           width: plan.layoutWidth,
           height: plan.layoutHeight,
         });
-        downloadBlob(await makeVectorPdf(svgUrl, plan.pixelWidth, plan.pixelHeight, ppi), `${filename}.pdf`);
+        downloadBlob(
+          await makeVectorPdf(
+            svgUrl,
+            plan.pixelWidth / plan.pixelHeight,
+            style.export_aspect_ratio
+          ),
+          `${filename}.pdf`
+        );
         return;
       }
       const dataUrl = await toImage(figure, {
@@ -4270,6 +4842,8 @@ function TimeCapacityPlotCard({
           subtitle={subtitle}
           explainer={explainer}
           onExport={exportPlot}
+          onDataExport={handleDataExport}
+          getExportPreview={getExportPreview}
           style={style}
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
@@ -4306,9 +4880,12 @@ function TimeCapacityPlotCard({
               key={cfg.stacked ? "tc-stacked" : "tc-flat"}
               data={traces}
               layout={layout}
-              config={{ displaylogo: false }}
+              config={{
+                displaylogo: false,
+                edits: { legendPosition: style.legend_mode !== "outside" },
+              }}
               style={{ width: "100%" }}
-              onRelayout={zoom.onRelayout}
+              onRelayout={handlePlotRelayout}
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
