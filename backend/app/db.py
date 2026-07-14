@@ -47,6 +47,36 @@ def ensure_runtime_schema() -> None:
                 "ALTER TABLE source_files "
                 "ADD COLUMN nominal_capacity_mah FLOAT"
             )
+        if source_columns and "total_charge_capacity_mah" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files "
+                "ADD COLUMN total_charge_capacity_mah FLOAT"
+            )
+        if source_columns and "total_discharge_capacity_mah" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files "
+                "ADD COLUMN total_discharge_capacity_mah FLOAT"
+            )
+        if source_columns and "capacity_summary_status" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files "
+                "ADD COLUMN capacity_summary_status VARCHAR(20) "
+                "NOT NULL DEFAULT 'pending'"
+            )
+        activity_columns = {
+            row[1]
+            for row in conn.exec_driver_sql("PRAGMA table_info(activity_events)").fetchall()
+        }
+        if activity_columns and "started_at" not in activity_columns:
+            conn.exec_driver_sql("ALTER TABLE activity_events ADD COLUMN started_at DATETIME")
+            conn.exec_driver_sql(
+                "UPDATE activity_events SET started_at = created_at WHERE started_at IS NULL"
+            )
+        if activity_columns and "finished_at" not in activity_columns:
+            conn.exec_driver_sql("ALTER TABLE activity_events ADD COLUMN finished_at DATETIME")
+            conn.exec_driver_sql(
+                "UPDATE activity_events SET finished_at = created_at WHERE finished_at IS NULL"
+            )
 
 
 def get_db():

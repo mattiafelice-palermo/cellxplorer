@@ -71,6 +71,8 @@ fn finish_window_branding(window: &tauri::WebviewWindow) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let sidecar = app.shell().sidecar("cellxplorer-backend")?;

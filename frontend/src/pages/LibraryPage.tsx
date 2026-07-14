@@ -42,7 +42,7 @@ import {
   IconUpload,
   IconX,
 } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CellDetail,
@@ -53,6 +53,7 @@ import {
   post,
   ReplicateGroupPreview,
   ReplicateGroupSummary,
+  SourceCheckJob,
   SourceFile,
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
@@ -72,6 +73,30 @@ function formatDate(value: string) {
 
 function formatCapacity(value: number | null | undefined) {
   return value === null || value === undefined ? "—" : `${value.toFixed(1)} mAh`;
+}
+
+function CapacityValue({
+  value,
+  pending,
+  failed = false,
+}: {
+  value: number | null | undefined;
+  pending: boolean;
+  failed?: boolean;
+}) {
+  if (failed) {
+    return (
+      <Tooltip label="The cached cycling data could not be summarized. Open Activity for details.">
+        <Text component="span" size="sm" c="red">Unavailable</Text>
+      </Tooltip>
+    );
+  }
+  if (!pending) return <>{formatCapacity(value)}</>;
+  return (
+    <Tooltip label="Being calculated from the cached cycling data. No partial value is shown.">
+      <Text component="span" size="sm" c="dimmed" fs="italic">Calculating...</Text>
+    </Tooltip>
+  );
 }
 
 function cellsUrl(search: string) {
@@ -95,12 +120,21 @@ export function LibraryPage() {
   const [editingCell, setEditingCell] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const handledSourceCheckJob = useRef<number | null>(null);
 
   const cells = useQuery({
     queryKey: ["cells", search],
     queryFn: () => get<CellSummary[]>(cellsUrl(search)),
     refetchInterval: (query) =>
-      query.state.data?.some((cell) => cell.has_parsing) ? 2000 : false,
+      query.state.data?.some((cell) => cell.has_parsing || cell.has_summary_pending)
+        ? 2000
+        : false,
+  });
+
+  const sourceCheckJob = useQuery({
+    queryKey: ["source-check-job"],
+    queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 600 : false),
   });
 
   const detail = useQuery({
@@ -262,55 +296,53 @@ export function LibraryPage() {
 
   const checkSources = useMutation({
     mutationFn: (cellIds: number[]) =>
-      post<{
-        checked: number;
-        skipped_complete: number;
-        changed: number;
-        offline: number;
-        online: number;
-        changed_file_ids: number[];
-      }>("/api/cells/check-sources", {
+      post<SourceCheckJob>("/api/cells/check-sources/jobs", {
         cell_ids: cellIds.length ? cellIds : null,
       }),
-    onSuccess: async (result, checkedCellIds) => {
+    onSuccess: (job) => {
+      qc.setQueryData(["source-check-job"], job);
+      qc.invalidateQueries({ queryKey: ["background-jobs"] });
       notifications.show({
-        message: `Checked ${result.checked} source file${result.checked === 1 ? "" : "s"} (${result.changed} changed, ${result.offline} offline).`,
-        color: result.changed || result.offline ? "orange" : "teal",
+        message: `Checking ${job.total} source file${job.total === 1 ? "" : "s"} with ${job.workers} worker${job.workers === 1 ? "" : "s"}.`,
+        color: "teal",
       });
-      if (result.skipped_complete) {
-        notifications.show({
-          message: `Skipped ${result.skipped_complete} completed cell${result.skipped_complete === 1 ? "" : "s"}.`,
-          color: "gray",
-        });
-      }
-      qc.invalidateQueries({ queryKey: ["cells"] });
-      qc.invalidateQueries({ queryKey: ["cell"] });
-      qc.invalidateQueries({ queryKey: ["files"] });
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      const refreshed = await qc.fetchQuery({
-        queryKey: ["cells", search],
-        queryFn: () => get<CellSummary[]>(cellsUrl(search)),
-      });
-      const checkedScope = new Set(checkedCellIds);
-      const changedIds = refreshed
-        .filter((cell) => cell.has_changed && (checkedScope.size === 0 || checkedScope.has(cell.id)))
-        .map((cell) => cell.id);
-      setSelectedCellIds(new Set(changedIds));
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
+
+  useEffect(() => {
+    const job = sourceCheckJob.data;
+    if (!job || job.status !== "completed" || handledSourceCheckJob.current === job.id) return;
+    handledSourceCheckJob.current = job.id;
+    const checkedScope = new Set(job.requested_cell_ids);
+    void qc
+      .fetchQuery({
+        queryKey: ["cells", search],
+        queryFn: () => get<CellSummary[]>(cellsUrl(search)),
+      })
+      .then((refreshed) => {
+        const changedIds = refreshed
+          .filter(
+            (cell) =>
+              cell.has_changed && (checkedScope.size === 0 || checkedScope.has(cell.id))
+          )
+          .map((cell) => cell.id);
+        setSelectedCellIds(new Set(changedIds));
+      });
+  }, [qc, search, sourceCheckJob.data]);
 
   const updateChangedSources = useMutation({
     mutationFn: (cellIds: number[]) =>
       post<{
         updated: number;
         updated_file_ids: number[];
+        ready_cell_ids: number[];
         skipped_complete: number;
         errors: { file_id: number; filename: string; error: string }[];
       }>("/api/cells/update-changed-sources", {
         cell_ids: cellIds.length ? cellIds : null,
       }),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       notifications.show({
         message: `Updated ${result.updated} changed source file${result.updated === 1 ? "" : "s"}.`,
         color: result.errors.length ? "orange" : "teal",
@@ -318,13 +350,26 @@ export function LibraryPage() {
       result.errors.forEach((error) =>
         notifications.show({ message: `${error.filename}: ${error.error}`, color: "red" })
       );
-      qc.invalidateQueries({ queryKey: ["cells"] });
-      qc.invalidateQueries({ queryKey: ["cell"] });
-      qc.invalidateQueries({ queryKey: ["cell-cycles"] });
-      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
-      qc.invalidateQueries({ queryKey: ["replicate-preview"] });
-      qc.invalidateQueries({ queryKey: ["files"] });
-      qc.invalidateQueries({ queryKey: ["tree"] });
+      const ready = new Set(result.ready_cell_ids);
+      qc.setQueriesData<CellSummary[]>({ queryKey: ["cells"] }, (current) =>
+        current?.map((cell) =>
+          ready.has(cell.id) ? { ...cell, has_changed: false, has_offline: false } : cell
+        )
+      );
+      setSelectedCellIds((current) => {
+        const next = new Set(current);
+        result.ready_cell_ids.forEach((cellId) => next.delete(cellId));
+        return next;
+      });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["cells"] }),
+        qc.invalidateQueries({ queryKey: ["cell"] }),
+        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
+        qc.invalidateQueries({ queryKey: ["files"] }),
+        qc.invalidateQueries({ queryKey: ["tree"] }),
+      ]);
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -516,8 +561,8 @@ export function LibraryPage() {
           variant="default"
           size="sm"
           leftSection={<IconRefresh size={15} />}
-          loading={checkSources.isPending}
-          disabled={(cells.data ?? []).length === 0}
+          loading={checkSources.isPending || sourceCheckJob.data?.status === "running"}
+          disabled={(cells.data ?? []).length === 0 || sourceCheckJob.data?.status === "running"}
           onClick={() => checkSources.mutate(selectedIds)}
         >
           Check sources
@@ -699,8 +744,12 @@ export function LibraryPage() {
                     <Table.Td>{cell.n_tests}</Table.Td>
                     <Table.Td>{cell.n_files}</Table.Td>
                     <Table.Td>{cell.total_cycles}</Table.Td>
-                    <Table.Td>{formatCapacity(cell.total_charge_capacity_mah)}</Table.Td>
-                    <Table.Td>{formatCapacity(cell.total_discharge_capacity_mah)}</Table.Td>
+                    <Table.Td>
+                      <CapacityValue value={cell.total_charge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
+                    </Table.Td>
+                    <Table.Td>
+                      <CapacityValue value={cell.total_discharge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
+                    </Table.Td>
                     <Table.Td>
                       <Group gap={4}>
                         {cell.cycling_status === "complete" && (
@@ -713,6 +762,16 @@ export function LibraryPage() {
                             parsing
                           </Badge>
                         )}
+                        {cell.has_summary_pending && (
+                          <Badge color="gray" variant="light">
+                            calculating
+                          </Badge>
+                        )}
+                        {cell.has_summary_error && (
+                          <Badge color="red" variant="light">
+                            summary failed
+                          </Badge>
+                        )}
                         {cell.has_changed && (
                           <Badge color="orange" variant="light">
                             changed
@@ -723,7 +782,12 @@ export function LibraryPage() {
                             offline
                           </Badge>
                         )}
-                        {!cell.has_changed && !cell.has_offline && cell.cycling_status !== "complete" && (
+                        {!cell.has_changed &&
+                          !cell.has_offline &&
+                          !cell.has_parsing &&
+                          !cell.has_summary_pending &&
+                          !cell.has_summary_error &&
+                          cell.cycling_status !== "complete" && (
                           <Badge color="teal" variant="light">
                             ready
                           </Badge>
@@ -1059,8 +1123,8 @@ export function LibraryPage() {
                   {detail.data.total_cycles} cached cycles
                 </Text>
                 <Text size="xs" c="dimmed">
-                  Total charge {formatCapacity(detail.data.total_charge_capacity_mah)} - total
-                  discharge {formatCapacity(detail.data.total_discharge_capacity_mah)}
+                  Total charge <CapacityValue value={detail.data.total_charge_capacity_mah} pending={detail.data.has_summary_pending} failed={detail.data.has_summary_error} /> - total
+                  discharge <CapacityValue value={detail.data.total_discharge_capacity_mah} pending={detail.data.has_summary_pending} failed={detail.data.has_summary_error} />
                 </Text>
               </div>
               <Group gap={4}>

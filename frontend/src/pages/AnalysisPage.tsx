@@ -102,6 +102,7 @@ import {
   specForSavedPlotView,
 } from "../analysisPlotPolicy";
 import Plot from "../components/Plot";
+import { saveDownload } from "../downloads";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
 import {
   getCycleQuantityExplainer,
@@ -858,22 +859,24 @@ async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseN
     const sheet = XLSX.utils.aoa_to_sheet(aoa);
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Data");
-    XLSX.writeFile(book, `${baseName}.xlsx`);
+    const bytes = XLSX.write(book, { bookType: "xlsx", type: "array" });
+    await downloadBlob(
+      new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+      `${baseName}.xlsx`
+    );
     return;
   }
   const text = buildDelimitedText(columns, style.data_decimal_separator, style.data_delimiter);
-  downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${baseName}.csv`);
+  await downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${baseName}.csv`);
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+async function downloadBlob(blob: Blob, filename: string): Promise<void> {
+  const result = await saveDownload(blob, filename);
+  if (result.usedDefaultFolder && result.path) {
+    notifications.show({ message: `Saved to ${result.path}`, color: "teal" });
+  }
 }
 
 function crc32(bytes: Uint8Array): number {
@@ -4546,7 +4549,7 @@ function CyclePlotCard({
           width: plan.layoutWidth,
           height: plan.layoutHeight,
         });
-        downloadBlob(
+        await downloadBlob(
           await makeVectorPdf(
             svgUrl,
             plan.pixelWidth / plan.pixelHeight,
@@ -4563,7 +4566,7 @@ function CyclePlotCard({
         scale: plan.scale,
       });
       const blob = format === "png" ? pngWithPpi(dataUrl, ppi) : blobFromDataUrl(dataUrl, "image/svg+xml");
-      downloadBlob(blob, `${filename}.${format}`);
+      await downloadBlob(blob, `${filename}.${format}`);
     } catch (e) {
       notifications.show({
         message: e instanceof Error ? e.message : "Plot export failed.",
@@ -4797,7 +4800,7 @@ function TimeCapacityPlotCard({
           width: plan.layoutWidth,
           height: plan.layoutHeight,
         });
-        downloadBlob(
+        await downloadBlob(
           await makeVectorPdf(
             svgUrl,
             plan.pixelWidth / plan.pixelHeight,
@@ -4814,7 +4817,7 @@ function TimeCapacityPlotCard({
         scale: plan.scale,
       });
       const blob = format === "png" ? pngWithPpi(dataUrl, ppi) : blobFromDataUrl(dataUrl, "image/svg+xml");
-      downloadBlob(blob, `${filename}.${format}`);
+      await downloadBlob(blob, `${filename}.${format}`);
     } catch (e) {
       notifications.show({
         message: e instanceof Error ? e.message : "Plot export failed.",

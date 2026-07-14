@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -28,6 +29,8 @@ class ActivityLogTests(unittest.TestCase):
 
     def test_record_activity_persists_json_details_and_lists_newest_first(self):
         db = self.make_session()
+        started_at = datetime(2026, 7, 14, 10, 0, tzinfo=timezone.utc)
+        finished_at = started_at + timedelta(seconds=12)
 
         older = record_activity(
             db,
@@ -46,6 +49,8 @@ class ActivityLogTests(unittest.TestCase):
             message="Checked 3 source files",
             severity="warning",
             details={"changed": 1},
+            started_at=started_at,
+            finished_at=finished_at,
         )
         db.commit()
 
@@ -54,6 +59,8 @@ class ActivityLogTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in rows], [newer.id, older.id])
         self.assertEqual(rows[0]["severity"], "warning")
         self.assertEqual(rows[0]["details"], {"changed": 1})
+        self.assertEqual(rows[0]["started_at"], started_at.isoformat())
+        self.assertEqual(rows[0]["finished_at"], finished_at.isoformat())
         self.assertEqual(rows[1]["entity_type"], "cell")
         self.assertEqual(rows[1]["entity_id"], 10)
 

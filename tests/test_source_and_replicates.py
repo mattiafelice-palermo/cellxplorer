@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import ActivityEvent, Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
-from app.services import cache, parsing, scanner
+from app.services import background_jobs, cache, parsing, scanner
 from app.routers import files, library, replicates
 
 
@@ -311,7 +311,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(result["skipped_cell_ids"], [cell_a.id])
         self.assertEqual(result["cell_ids"], [cell_a.id, cell_b.id, cell_c.id])
 
-    def test_cell_capacity_totals_sum_cached_cycle_capacities(self):
+    def test_cell_capacity_totals_use_persisted_source_summaries(self):
         cell = Cell(name="A")
         sf = SourceFile(
             hash="hash-a",
@@ -322,17 +322,14 @@ class SourceAndReplicateTests(unittest.TestCase):
             location_status="online",
             parse_status="parsed",
             parser_version=parsing.PARSER_VERSION,
+            total_charge_capacity_mah=7.0,
+            total_discharge_capacity_mah=6.0,
+            capacity_summary_status="ready",
         )
         test = Test(cell=cell, name="Imported file")
         test.file_links = [TestFile(file=sf, position=0)]
         original = library.cache.load_cycles
-        library.cache.load_cycles = lambda *_: pd.DataFrame(
-            {
-                "cycle": [1, 2],
-                "charge_capacity_mah": [3.0, 4.0],
-                "discharge_capacity_mah": [2.5, 3.5],
-            }
-        )
+        library.cache.load_cycles = lambda *_: self.fail("library totals read the cycle cache")
         try:
             totals = library.cell_capacity_totals(cell)
         finally:
@@ -340,6 +337,50 @@ class SourceAndReplicateTests(unittest.TestCase):
 
         self.assertEqual(totals["total_charge_capacity_mah"], 7.0)
         self.assertEqual(totals["total_discharge_capacity_mah"], 6.0)
+
+    def test_listing_cells_does_not_touch_sources_or_cycle_caches(self):
+        db = self.make_session()
+        cell = Cell(name="Fast library row", cycling_status="active")
+        source = SourceFile(
+            hash="hash-fast-row",
+            path="C:/data/large.ndax",
+            filename="large.ndax",
+            size=10_000_000,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            row_count=100_000,
+            cycle_count=250,
+            total_charge_capacity_mah=25.0,
+            total_discharge_capacity_mah=24.0,
+            capacity_summary_status="ready",
+        )
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [TestFile(file=source, position=0)]
+        db.add(cell)
+        db.commit()
+
+        originals = (
+            library.cache.load_cycles,
+            library.scanner.check_location,
+            library.scanner.parse_file,
+        )
+        library.cache.load_cycles = lambda *_: self.fail("cycle cache was read")
+        library.scanner.check_location = lambda *_: self.fail("source file was checked")
+        library.scanner.parse_file = lambda *_: self.fail("source file was parsed")
+        try:
+            payload = library.list_cells(db=db)
+        finally:
+            (
+                library.cache.load_cycles,
+                library.scanner.check_location,
+                library.scanner.parse_file,
+            ) = originals
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["total_cycles"], 250)
+        self.assertEqual(payload[0]["total_charge_capacity_mah"], 25.0)
 
     def test_cell_source_check_skips_completed_cells_and_marks_changed_active_sources(self):
         db = self.make_session()
@@ -403,6 +444,96 @@ class SourceAndReplicateTests(unittest.TestCase):
             self.assertEqual(event.severity, "warning")
             self.assertEqual(event.details["changed"], 1)
             self.assertEqual(event.details["skipped_complete"], 1)
+
+    def test_source_check_job_exposes_files_and_parallel_worker_count_immediately(self):
+        db = self.make_session()
+        cell = Cell(name="Active", cycling_status="active")
+        source = SourceFile(
+            hash="old-hash",
+            path="C:/data/active.ndax",
+            filename="active.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Imported file")
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        db.flush()
+
+        class DeferredThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        original_thread = library.threading.Thread
+        live_jobs = []
+        try:
+            background_jobs.clear_jobs()
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+                library._next_source_check_job_id = 1
+            library.threading.Thread = DeferredThread
+            job = library.start_source_check_job(db, cell_ids=[cell.id])
+            live_jobs = background_jobs.list_jobs()
+        finally:
+            library.threading.Thread = original_thread
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+            background_jobs.clear_jobs()
+
+        self.assertEqual(job["status"], "running")
+        self.assertEqual(job["total"], 1)
+        self.assertEqual(job["workers"], 1)
+        self.assertEqual(job["requested_cell_ids"], [cell.id])
+        self.assertEqual(job["files"][0]["filename"], "active.ndax")
+        self.assertEqual(job["files"][0]["status"], "queued")
+        self.assertEqual(live_jobs[0]["kind"], "source_check")
+        self.assertEqual(live_jobs[0]["items"][0]["label"], "active.ndax")
+
+    def test_update_changed_sources_returns_cells_that_are_ready(self):
+        db = self.make_session()
+        cell = Cell(name="Active", cycling_status="active")
+        source = SourceFile(
+            hash="old-hash",
+            path="C:/data/active.ndax",
+            filename="active.ndax",
+            size=10,
+            ext="ndax",
+            location_status="changed",
+            parse_status="parsed",
+        )
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Imported file")
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        db.flush()
+
+        original_update = scanner.update_source_from_path
+        scanner.update_source_from_path = lambda session, sf: (
+            setattr(sf, "location_status", "online") or sf
+        )
+        try:
+            result = library.update_changed_cell_sources(
+                library.CellSourceUpdateRequest(cell_ids=[cell.id]),
+                db=db,
+            )
+        finally:
+            scanner.update_source_from_path = original_update
+
+        self.assertEqual(result["updated_file_ids"], [source.id])
+        self.assertEqual(result["ready_cell_ids"], [cell.id])
+        self.assertEqual(source.location_status, "online")
 
     def test_set_cells_status_marks_selected_cells(self):
         db = self.make_session()

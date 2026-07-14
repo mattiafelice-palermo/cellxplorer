@@ -89,6 +89,49 @@ export const patch = <T>(url: string, body: unknown) =>
   request<T>(url, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T>(url: string) => request<T>(url, { method: "DELETE" });
 
+export interface DownloadSettings {
+  download_mode: "ask" | "folder";
+  download_folder: string | null;
+}
+
+export interface SavedDownload {
+  saved: boolean;
+  filename: string;
+  path: string;
+}
+
+export type SourceCheckFileStatus =
+  | "queued"
+  | "checking"
+  | "online"
+  | "changed"
+  | "offline"
+  | "error";
+
+export interface SourceCheckJob {
+  id: number;
+  status: "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  online: number;
+  changed: number;
+  offline: number;
+  errors: number;
+  skipped_complete: number;
+  changed_file_ids: number[];
+  requested_cell_ids: number[];
+  workers: number;
+  files: {
+    file_id: number;
+    filename: string;
+    status: SourceCheckFileStatus;
+    error: string | null;
+  }[];
+  started_at: string;
+  completed_at: string | null;
+  error: string | null;
+}
+
 // ------------------------------------------------------------------ types
 
 export interface SourceFile {
@@ -136,6 +179,8 @@ export interface CellSummary {
   has_offline: boolean;
   has_changed: boolean;
   has_parsing: boolean;
+  has_summary_pending: boolean;
+  has_summary_error: boolean;
   created_at: string;
 }
 
@@ -692,7 +737,32 @@ export interface ActivityEvent {
   entity_type: string | null;
   entity_id: number | null;
   details: Record<string, unknown>;
+  started_at: string;
+  finished_at: string;
   created_at: string;
+}
+
+export interface BackgroundJobItem {
+  id: string;
+  label: string;
+  status: "queued" | "processing" | "ready" | "changed" | "offline" | "failed" | string;
+  detail: string | null;
+  error: string | null;
+}
+
+export interface BackgroundJob {
+  id: number;
+  kind: "capacity_summary" | "source_check" | "import_cache" | string;
+  title: string;
+  description: string;
+  status: "running" | "completed" | "failed";
+  total: number;
+  completed: number;
+  counters: Record<string, number>;
+  items: BackgroundJobItem[];
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
 }
 
 export interface Meta {

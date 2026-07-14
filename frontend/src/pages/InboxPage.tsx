@@ -311,6 +311,7 @@ function ImportModal({
       qc.invalidateQueries({ queryKey: ["files"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["background-jobs"] });
       onSaved();
     },
     onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),

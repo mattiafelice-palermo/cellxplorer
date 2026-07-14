@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ProcessPoolExecutor
+import threading
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..config import CALC_VERSION
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import (
     Cell,
     CellMetadata,
@@ -29,11 +32,17 @@ from ..models import (
     TestFile,
 )
 from ..services import analysis_engine as analysis_svc
+from ..services import background_jobs
 from ..services.activity_log import record_activity
 from ..services import cache, parsing, protocol, scanner, stitch
 from .files import file_dict
 
 router = APIRouter(prefix="/api", tags=["library"])
+
+_source_check_job_lock = threading.Lock()
+_source_check_jobs: dict[int, dict] = {}
+_latest_source_check_job_id: int | None = None
+_next_source_check_job_id = 1
 
 
 def source_file_needs_cache(sf: SourceFile) -> bool:
@@ -148,38 +157,40 @@ def _finite_sum(values) -> float | None:
 
 
 def cell_capacity_totals(cell: Cell) -> dict:
-    charge_values = []
-    discharge_values = []
+    source_files = []
     for test in cell.tests:
         for link in test.file_links:
-            sf = link.file
-            parser_version = sf.parser_version or parsing.PARSER_VERSION
-            cycles = cache.load_cycles(sf.hash, parser_version, CALC_VERSION)
-            if cycles is None:
-                continue
-            if "charge_capacity_mah" in cycles:
-                charge_values.extend(cycles["charge_capacity_mah"].dropna().tolist())
-            if "discharge_capacity_mah" in cycles:
-                discharge_values.extend(cycles["discharge_capacity_mah"].dropna().tolist())
+            source_files.append(link.file)
+    if any(sf.capacity_summary_status != "ready" for sf in source_files):
+        return {
+            "total_charge_capacity_mah": None,
+            "total_discharge_capacity_mah": None,
+        }
     return {
-        "total_charge_capacity_mah": _finite_sum(charge_values),
-        "total_discharge_capacity_mah": _finite_sum(discharge_values),
+        "total_charge_capacity_mah": _finite_sum(
+            sf.total_charge_capacity_mah for sf in source_files
+        ),
+        "total_discharge_capacity_mah": _finite_sum(
+            sf.total_discharge_capacity_mah for sf in source_files
+        ),
     }
 
 
-def cell_dict(db: Session, cell: Cell) -> dict:
-    ensure_cell_caches(db, cell)
-    tags = (
-        db.query(Tag.name).join(CellTag, CellTag.tag_id == Tag.id).filter(CellTag.cell_id == cell.id).all()
-    )
+def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> dict:
+    if tag_names is None:
+        tags = (
+            db.query(Tag.name)
+            .join(CellTag, CellTag.tag_id == Tag.id)
+            .filter(CellTag.cell_id == cell.id)
+            .all()
+        )
+        tag_names = [row[0] for row in tags]
     meta = {m.key: m.value for m in cell.metadata_entries}
     n_files = sum(len(t.file_links) for t in cell.tests)
     cycles = 0
     statuses = set()
     for t in cell.tests:
         for l in t.file_links:
-            if cell.cycling_status != "complete":
-                scanner.check_location(db, l.file)
             cycles += l.file.cycle_count or 0
             statuses.add(l.file.location_status)
             statuses.add(l.file.parse_status)
@@ -192,7 +203,7 @@ def cell_dict(db: Session, cell: Cell) -> dict:
         "description": cell.description,
         "archived": cell.archived,
         "cycling_status": cell.cycling_status,
-        "tags": sorted(t[0] for t in tags),
+        "tags": sorted(tag_names),
         "metadata": meta,
         "n_tests": len(cell.tests),
         "n_files": n_files,
@@ -201,6 +212,18 @@ def cell_dict(db: Session, cell: Cell) -> dict:
         "has_offline": "offline" in statuses,
         "has_changed": "changed" in statuses,
         "has_parsing": "parsing" in statuses,
+        "has_summary_pending": any(
+            link.file.parse_status == "parsed"
+            and link.file.capacity_summary_status == "pending"
+            for test in cell.tests
+            for link in test.file_links
+        ),
+        "has_summary_error": any(
+            link.file.parse_status == "parsed"
+            and link.file.capacity_summary_status == "error"
+            for test in cell.tests
+            for link in test.file_links
+        ),
         "created_at": cell.created_at.isoformat(),
     }
 
@@ -228,7 +251,27 @@ def list_cells(
     if project_id is not None:
         sub = db.query(ProjectCell.cell_id).filter(ProjectCell.project_id == project_id).scalar_subquery()
         q = q.filter(Cell.id.in_(sub))
-    return [cell_dict(db, c) for c in q.order_by(Cell.name).all()]
+    cells = (
+        q.options(
+            selectinload(Cell.metadata_entries),
+            selectinload(Cell.tests)
+            .selectinload(Test.file_links)
+            .selectinload(TestFile.file),
+        )
+        .order_by(Cell.name)
+        .all()
+    )
+    tags_by_cell: dict[int, list[str]] = {cell.id: [] for cell in cells}
+    if cells:
+        tag_rows = (
+            db.query(CellTag.cell_id, Tag.name)
+            .join(Tag, CellTag.tag_id == Tag.id)
+            .filter(CellTag.cell_id.in_(tags_by_cell))
+            .all()
+        )
+        for cell_id, tag_name in tag_rows:
+            tags_by_cell[cell_id].append(tag_name)
+    return [cell_dict(db, cell, tags_by_cell[cell.id]) for cell in cells]
 
 
 class CellCreate(BaseModel):
@@ -420,6 +463,276 @@ def cell_source_check_worker_count(n_jobs: int, max_workers: int | None = None) 
     return max(1, min(n_jobs, available))
 
 
+def _source_check_job_snapshot(job_id: int) -> dict | None:
+    with _source_check_job_lock:
+        job = _source_check_jobs.get(job_id)
+        return deepcopy(job) if job else None
+
+
+def _update_source_check_job(job_id: int, **values) -> None:
+    with _source_check_job_lock:
+        if job_id in _source_check_jobs:
+            _source_check_jobs[job_id].update(values)
+
+
+def _update_source_check_file(job_id: int, file_id: int, **values) -> None:
+    background_job_id = None
+    with _source_check_job_lock:
+        job = _source_check_jobs.get(job_id)
+        if not job:
+            return
+        background_job_id = job.get("background_job_id")
+        for row in job["files"]:
+            if row["file_id"] == file_id:
+                row.update(values)
+                break
+    if background_job_id is not None:
+        status = values.get("status")
+        background_jobs.update_item(
+            background_job_id,
+            file_id,
+            status="processing" if status == "checking" else status,
+        )
+
+
+def _record_source_check_result(job_id: int, db: Session, source_job: dict, result: dict) -> None:
+    status = result.get("location_status", "error")
+    sf = db.get(SourceFile, source_job["id"])
+    if sf is not None and status in {"online", "changed", "offline"}:
+        sf.location_status = status
+        db.commit()
+
+    background_job_id = None
+    with _source_check_job_lock:
+        job = _source_check_jobs[job_id]
+        background_job_id = job.get("background_job_id")
+        job["completed"] += 1
+        if status in {"online", "changed", "offline"}:
+            job[status] += 1
+        else:
+            job["errors"] += 1
+        if status == "changed":
+            job["changed_file_ids"].append(source_job["id"])
+        for row in job["files"]:
+            if row["file_id"] == source_job["id"]:
+                row["status"] = status
+                if result.get("error"):
+                    row["error"] = result["error"]
+                break
+    if background_job_id is not None:
+        display_status = "ready" if status == "online" else "failed" if status == "error" else status
+        background_jobs.record_result(
+            background_job_id,
+            source_job["id"],
+            status=display_status,
+            detail="Source matches the registered checksum" if status == "online" else None,
+            error=result.get("error"),
+            counter="failed" if status == "error" else status,
+        )
+
+
+def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> None:
+    db = SessionLocal()
+    try:
+        if not jobs:
+            _update_source_check_job(
+                job_id,
+                status="completed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            snapshot = _source_check_job_snapshot(job_id)
+            if snapshot and snapshot.get("background_job_id") is not None:
+                background_jobs.update_job(
+                    snapshot["background_job_id"],
+                    status="completed",
+                    description="No active source files needed checking",
+                )
+        elif worker_count == 1:
+            for source_job in jobs:
+                _update_source_check_file(job_id, source_job["id"], status="checking")
+                try:
+                    result = _source_check_worker(source_job)
+                except Exception as exc:  # keep the remaining files moving
+                    result = {
+                        "id": source_job["id"],
+                        "location_status": "error",
+                        "error": str(exc),
+                    }
+                _record_source_check_result(job_id, db, source_job, result)
+        else:
+            pending = iter(jobs)
+            with ProcessPoolExecutor(max_workers=worker_count) as executor:
+                futures: dict = {}
+
+                def submit_next() -> bool:
+                    try:
+                        source_job = next(pending)
+                    except StopIteration:
+                        return False
+                    _update_source_check_file(job_id, source_job["id"], status="checking")
+                    futures[executor.submit(_source_check_worker, source_job)] = source_job
+                    return True
+
+                for _ in range(worker_count):
+                    if not submit_next():
+                        break
+                while futures:
+                    done, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        source_job = futures.pop(future)
+                        try:
+                            result = future.result()
+                        except Exception as exc:  # one broken file must not stop the batch
+                            result = {
+                                "id": source_job["id"],
+                                "location_status": "error",
+                                "error": str(exc),
+                            }
+                        _record_source_check_result(job_id, db, source_job, result)
+                        submit_next()
+
+        snapshot = _source_check_job_snapshot(job_id)
+        if snapshot and snapshot["status"] == "running":
+            _update_source_check_job(
+                job_id,
+                status="completed",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+            snapshot = _source_check_job_snapshot(job_id)
+        if snapshot and snapshot.get("background_job_id") is not None:
+            background_jobs.update_job(
+                snapshot["background_job_id"],
+                status="completed",
+                description=(
+                    f"Checked {snapshot['completed']} source files: "
+                    f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                ),
+            )
+        if snapshot:
+            severity = "warning" if snapshot["changed"] or snapshot["offline"] or snapshot["errors"] else "info"
+            record_activity(
+                db,
+                category="source",
+                action="check_sources",
+                message=(
+                    f"Checked {snapshot['completed']} source files: "
+                    f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                ),
+                severity=severity,
+                details={
+                    "checked": snapshot["completed"],
+                    "skipped_complete": snapshot["skipped_complete"],
+                    "changed": snapshot["changed"],
+                    "offline": snapshot["offline"],
+                    "online": snapshot["online"],
+                    "errors": snapshot["errors"],
+                    "changed_file_ids": snapshot["changed_file_ids"],
+                    "workers": snapshot["workers"],
+                },
+                started_at=datetime.fromisoformat(snapshot["started_at"]),
+                finished_at=datetime.fromisoformat(
+                    snapshot["completed_at"] or datetime.now(timezone.utc).isoformat()
+                ),
+            )
+            db.commit()
+    except Exception as exc:
+        _update_source_check_job(
+            job_id,
+            status="failed",
+            error=str(exc),
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        snapshot = _source_check_job_snapshot(job_id)
+        if snapshot and snapshot.get("background_job_id") is not None:
+            background_jobs.update_job(
+                snapshot["background_job_id"],
+                status="failed",
+                error=str(exc),
+            )
+    finally:
+        db.close()
+
+
+def start_source_check_job(
+    db: Session,
+    cell_ids: list[int] | None = None,
+    include_complete: bool = False,
+) -> dict:
+    global _latest_source_check_job_id, _next_source_check_job_id
+    with _source_check_job_lock:
+        if _latest_source_check_job_id is not None:
+            current = _source_check_jobs.get(_latest_source_check_job_id)
+            if current and current["status"] == "running":
+                return deepcopy(current)
+
+    source_files, skipped_complete = _cell_source_files(
+        db,
+        cell_ids=cell_ids,
+        include_complete=include_complete,
+    )
+    jobs = [
+        {
+            "id": sf.id,
+            "path": sf.path,
+            "hash": sf.hash,
+            "filename": sf.filename,
+        }
+        for sf in source_files
+    ]
+    worker_count = cell_source_check_worker_count(len(jobs))
+    now = datetime.now(timezone.utc).isoformat()
+    background_job_id = background_jobs.create_job(
+        kind="source_check",
+        title="Checking sources",
+        description=f"Checking checksums for {len(jobs)} source files",
+        total=len(jobs),
+        items=[{"id": source_job["id"], "label": source_job["filename"]} for source_job in jobs],
+    )
+    with _source_check_job_lock:
+        job_id = _next_source_check_job_id
+        _next_source_check_job_id += 1
+        job = {
+            "id": job_id,
+            "status": "running",
+            "total": len(jobs),
+            "completed": 0,
+            "online": 0,
+            "changed": 0,
+            "offline": 0,
+            "errors": 0,
+            "skipped_complete": skipped_complete,
+            "changed_file_ids": [],
+            "requested_cell_ids": list(dict.fromkeys(cell_ids or [])),
+            "workers": worker_count,
+            "files": [
+                {
+                    "file_id": source_job["id"],
+                    "filename": source_job["filename"],
+                    "status": "queued",
+                    "error": None,
+                }
+                for source_job in jobs
+            ],
+            "started_at": now,
+            "completed_at": None,
+            "error": None,
+            "background_job_id": background_job_id,
+        }
+        _source_check_jobs[job_id] = job
+        _latest_source_check_job_id = job_id
+        old_ids = sorted(_source_check_jobs)[:-20]
+        for old_id in old_ids:
+            _source_check_jobs.pop(old_id, None)
+
+    threading.Thread(
+        target=_run_source_check_job,
+        args=(job_id, jobs, worker_count),
+        daemon=True,
+        name=f"source-check-{job_id}",
+    ).start()
+    return _source_check_job_snapshot(job_id) or job
+
+
 def check_cell_sources(
     db: Session,
     cell_ids: list[int] | None = None,
@@ -427,6 +740,7 @@ def check_cell_sources(
     executor_cls=ProcessPoolExecutor,
     max_workers: int | None = None,
 ) -> dict:
+    started_at = datetime.now(timezone.utc)
     source_files, skipped_complete = _cell_source_files(
         db,
         cell_ids=cell_ids,
@@ -471,6 +785,8 @@ def check_cell_sources(
             "online": counts["online"],
             "changed_file_ids": changed_file_ids,
         },
+        started_at=started_at,
+        finished_at=datetime.now(timezone.utc),
     )
     db.commit()
     return {
@@ -513,6 +829,30 @@ def check_cells_sources(req: CellSourceCheckRequest, db: Session = Depends(get_d
     )
 
 
+@router.post("/cells/check-sources/jobs")
+def create_source_check_job(req: CellSourceCheckRequest, db: Session = Depends(get_db)):
+    return start_source_check_job(
+        db,
+        cell_ids=req.cell_ids,
+        include_complete=req.include_complete,
+    )
+
+
+@router.get("/source-check-jobs/latest")
+def latest_source_check_job():
+    with _source_check_job_lock:
+        job_id = _latest_source_check_job_id
+    return _source_check_job_snapshot(job_id) if job_id is not None else None
+
+
+@router.get("/source-check-jobs/{job_id}")
+def source_check_job(job_id: int):
+    job = _source_check_job_snapshot(job_id)
+    if job is None:
+        raise HTTPException(404, "No such source-check job")
+    return job
+
+
 @router.post("/cells/update-changed-sources")
 def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depends(get_db)):
     source_files, skipped_complete = _cell_source_files(
@@ -522,11 +862,14 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
         changed_only=True,
     )
     updated = []
+    ready_cell_ids: set[int] = set()
     errors = []
     for sf in source_files:
         try:
             updated_sf = scanner.update_source_from_path(db, sf)
             updated.append(updated_sf.id)
+            if updated_sf.test_link and updated_sf.test_link.test:
+                ready_cell_ids.add(updated_sf.test_link.test.cell_id)
         except ValueError as exc:
             errors.append({"file_id": sf.id, "filename": sf.filename, "error": str(exc)})
     record_activity(
@@ -537,6 +880,7 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
         severity="warning" if errors else "info",
         details={
             "updated_file_ids": updated,
+            "ready_cell_ids": sorted(ready_cell_ids),
             "updated": len(updated),
             "skipped_complete": skipped_complete,
             "errors": errors,
@@ -546,6 +890,7 @@ def update_changed_cell_sources(req: CellSourceUpdateRequest, db: Session = Depe
     return {
         "updated": len(updated),
         "updated_file_ids": updated,
+        "ready_cell_ids": sorted(ready_cell_ids),
         "skipped_complete": skipped_complete,
         "errors": errors,
     }

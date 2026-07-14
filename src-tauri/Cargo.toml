@@ -1,6 +1,6 @@
 [package]
 name = "cellxplorer"
-version = "0.1.1"
+version = "0.2.0"
 description = "CellXplorer desktop app"
 authors = ["CellXplorer"]
 edition = "2021"
@@ -10,4 +10,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"

@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from .config import CALC_VERSION, FRONTEND_DIST
 from .db import Base, engine, ensure_runtime_schema
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, files, library, replicates, tree
-from .services import calc, parsing
+from .routers import activity, analyses, files, library, replicates, settings, tree
+from .services import calc, parsing, scanner
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,6 +25,7 @@ app.add_middleware(
 
 Base.metadata.create_all(engine)
 ensure_runtime_schema()
+app.add_event_handler("startup", scanner.start_capacity_summary_backfill)
 
 app.include_router(files.router)
 app.include_router(library.router)
@@ -32,6 +33,7 @@ app.include_router(tree.router)
 app.include_router(analyses.router)
 app.include_router(replicates.router)
 app.include_router(activity.router)
+app.include_router(settings.router)
 
 
 @app.get("/api/health")

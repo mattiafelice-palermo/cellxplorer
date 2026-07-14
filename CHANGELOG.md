@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 - 2026-07-14
+
+- Added a Settings workspace with persistent download-location preferences for browser and
+  Windows desktop use.
+- Added visible background-job progress, detailed source-check status, and a durable activity
+  history with start and finish times.
+- Parallelized source checks and made changed-file updates immediately return cells to a ready
+  state.
+- Improved large cell-library loading by deferring cache-derived totals and exposing their
+  calculation status instead of blocking page rendering.
+- Refined application scaling, segmented controls, header alignment, and analysis export behavior.
+
 ## 0.1.1 - 2026-07-13
 
 - Added richer analysis plot legend controls, including outside/inside placement, side selection,

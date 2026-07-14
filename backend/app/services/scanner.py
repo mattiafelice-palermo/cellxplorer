@@ -18,13 +18,101 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import SourceFile
-from . import cache, parsing
+from . import background_jobs, cache, parsing
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _jobs: dict[int, dict] = {}
 _next_id = 1
+_capacity_backfill_lock = threading.Lock()
+_capacity_backfill_running = False
+
+
+def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
+    sf.total_charge_capacity_mah = info.get("total_charge_capacity_mah")
+    sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
+    sf.capacity_summary_status = "ready"
+
+
+def start_capacity_summary_backfill() -> None:
+    """Populate totals added to older databases without blocking app startup."""
+    global _capacity_backfill_running
+    with _capacity_backfill_lock:
+        if _capacity_backfill_running:
+            return
+        _capacity_backfill_running = True
+    threading.Thread(
+        target=_run_capacity_summary_backfill,
+        daemon=True,
+        name="capacity-summary-backfill",
+    ).start()
+
+
+def _run_capacity_summary_backfill() -> None:
+    global _capacity_backfill_running
+    db = SessionLocal()
+    job_id: int | None = None
+    try:
+        sources = (
+            db.query(SourceFile)
+            .filter(
+                SourceFile.parse_status == "parsed",
+                SourceFile.capacity_summary_status != "ready",
+            )
+            .all()
+        )
+        if not sources:
+            return
+        job_id = background_jobs.create_job(
+            kind="capacity_summary",
+            title="Capacity totals",
+            description=f"Calculating cached capacity totals for {len(sources)} cells",
+            total=len(sources),
+            items=[{"id": sf.id, "label": sf.filename} for sf in sources],
+        )
+        for sf in sources:
+            background_jobs.update_item(job_id, sf.id, status="processing")
+            try:
+                cycles = cache.load_cycles(
+                    sf.hash,
+                    sf.parser_version or parsing.PARSER_VERSION,
+                    cache.CALC_VERSION,
+                )
+                if cycles is None:
+                    raise FileNotFoundError("Per-cycle cache is unavailable")
+                apply_capacity_summary(sf, cache.capacity_totals(cycles))
+                background_jobs.record_result(
+                    job_id,
+                    sf.id,
+                    status="ready",
+                    detail="Capacity totals ready",
+                    counter="ready",
+                )
+            except Exception as exc:
+                sf.capacity_summary_status = "error"
+                logger.exception("capacity summary backfill failed for %s", sf.filename)
+                background_jobs.record_result(
+                    job_id,
+                    sf.id,
+                    status="failed",
+                    error=str(exc),
+                    counter="failed",
+                )
+            db.commit()
+        background_jobs.update_job(
+            job_id,
+            status="completed",
+            description=f"Calculated capacity totals for {len(sources)} cells",
+        )
+    except Exception as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="failed", error=str(exc))
+        logger.exception("capacity summary backfill failed")
+    finally:
+        db.close()
+        with _capacity_backfill_lock:
+            _capacity_backfill_running = False
 
 
 def get_job(job_id: int) -> dict | None:
@@ -151,6 +239,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
     sf.parse_status = "parsing"
+    sf.capacity_summary_status = "pending"
     db.commit()
     try:
         info = cache.build(sf.hash, sf.path)
@@ -159,9 +248,11 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
         sf.parser_version = info["parser_version"]
         sf.row_count = info["rows"]
         sf.cycle_count = info["cycles"]
+        apply_capacity_summary(sf, info)
     except Exception as exc:
         sf.parse_status = "error"
         sf.parse_error = str(exc)
+        sf.capacity_summary_status = "error"
         logger.error("parse failed for %s\n%s", sf.path, traceback.format_exc())
     db.commit()
     return sf
@@ -197,6 +288,7 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     sf.location_status = "online"
     sf.parse_status = "parsing"
     sf.parse_error = None
+    sf.capacity_summary_status = "pending"
     db.commit()
 
     try:
@@ -206,10 +298,15 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
         sf.parser_version = info["parser_version"]
         sf.row_count = info["rows"]
         sf.cycle_count = info["cycles"]
+        apply_capacity_summary(sf, info)
     except Exception as exc:
         sf.parse_status = "error"
         sf.parse_error = str(exc)
+        sf.capacity_summary_status = "error"
         logger.error("update parse failed for %s\n%s", sf.path, traceback.format_exc())
+    # The current bytes have been adopted even if rebuilding their cache
+    # failed; another source check must not be needed to clear "changed".
+    sf.location_status = "online"
     db.commit()
     return sf
 

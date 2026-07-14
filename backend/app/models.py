@@ -68,6 +68,11 @@ class SourceFile(Base):
     parser_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cycle_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_charge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_discharge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # pending | ready | error. Capacity totals are persisted so library reads
+    # never need to open the per-cycle Parquet cache.
+    capacity_summary_status: Mapped[str] = mapped_column(String(20), default="pending")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -376,4 +381,21 @@ class ActivityEvent(Base):
     entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# --------------------------------------------------------------- settings
+
+
+class AppSetting(Base):
+    """Small persistent application preferences stored by key."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow
+    )

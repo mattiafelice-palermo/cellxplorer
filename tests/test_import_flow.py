@@ -332,15 +332,20 @@ class ImportFlowTests(unittest.TestCase):
             {"staged_name": "b.ndax", "hash": "hash-b", "path": "C:/data/b.ndax"},
         ]
 
+        reported = []
         results = files.build_import_caches_parallel(
             jobs,
             executor_cls=FakeExecutor,
             max_workers=8,
+            progress_callback=lambda job, result: reported.append(
+                (job["staged_name"], result["staged_name"])
+            ),
         )
 
         self.assertEqual(FakeExecutor.calls, [("init", 2), ("map", 2)])
         self.assertEqual(results["a.ndax"]["rows"], 10)
         self.assertEqual(results["b.ndax"]["parser_version"], "parser-test")
+        self.assertEqual(reported, [("a.ndax", "a.ndax"), ("b.ndax", "b.ndax")])
 
     def test_create_imported_cells_starts_cache_jobs_after_committing_import(self):
         db = self.make_session()

@@ -78,6 +78,22 @@ def has_cycles(file_hash: str, parser_version: str, calc_version: str) -> bool:
     return cycles_path(file_hash, parser_version, calc_version).exists()
 
 
+def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
+    """Return the same aggregate capacities shown in the cell library."""
+
+    def _sum(column: str) -> float | None:
+        if cycles is None or column not in cycles.columns:
+            return None
+        values = pd.to_numeric(cycles[column], errors="coerce")
+        total = values.sum(min_count=1)
+        return None if pd.isna(total) else round(float(total), 6)
+
+    return {
+        "total_charge_capacity_mah": _sum("charge_capacity_mah"),
+        "total_discharge_capacity_mah": _sum("discharge_capacity_mah"),
+    }
+
+
 def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     """Parse source file and (re)build raw + cycles caches at the CURRENT
     parser/calc versions. Returns {rows, cycles, parser_version, calc_version}.
@@ -91,12 +107,19 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     if not force and rp.exists() and cp.exists():
         import pyarrow.parquet as pq
 
+        cycle_columns = [
+            column
+            for column in ("charge_capacity_mah", "discharge_capacity_mah")
+            if column in pq.read_schema(cp).names
+        ]
+        totals = capacity_totals(pd.read_parquet(cp, columns=cycle_columns))
         return {
             "rows": pq.read_metadata(rp).num_rows,
             "cycles": pq.read_metadata(cp).num_rows,
             "parser_version": parsing.PARSER_VERSION,
             "calc_version": CALC_VERSION,
             "cached": True,
+            **totals,
         }
 
     # A calculation-version bump does not require rereading the binary file:
@@ -113,6 +136,7 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
         "parser_version": parsing.PARSER_VERSION,
         "calc_version": CALC_VERSION,
         "cached": False,
+        **capacity_totals(cycles),
     }
 
 

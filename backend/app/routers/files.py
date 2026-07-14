@@ -32,7 +32,7 @@ from ..models import (
     Test,
     TestFile,
 )
-from ..services import cache, calc, parsing, scanner
+from ..services import background_jobs, cache, calc, parsing, scanner
 from ..services.activity_log import record_activity
 
 router = APIRouter(prefix="/api", tags=["files"])
@@ -299,6 +299,7 @@ def build_import_caches_parallel(
     jobs: list[dict],
     executor_cls=ProcessPoolExecutor,
     max_workers: int | None = None,
+    progress_callback=None,
 ) -> dict[str, dict]:
     if not jobs:
         return {}
@@ -308,15 +309,24 @@ def build_import_caches_parallel(
         cache.wait_for_pending(job["hash"])
     worker_count = import_cache_worker_count(len(jobs), max_workers=max_workers)
     if worker_count == 1:
-        return {
-            result["staged_name"]: result
-            for result in (_build_import_cache_worker(job) for job in jobs)
-        }
+        results = {}
+        for job in jobs:
+            result = _build_import_cache_worker(job)
+            results[result["staged_name"]] = result
+            if progress_callback:
+                progress_callback(job, result)
+        return results
     with executor_cls(max_workers=worker_count) as executor:
-        return {
-            job["staged_name"]: {**result, "staged_name": result.get("staged_name", job["staged_name"])}
-            for job, result in zip(jobs, executor.map(_build_import_cache_worker, jobs))
-        }
+        results = {}
+        for job, result in zip(jobs, executor.map(_build_import_cache_worker, jobs)):
+            normalized = {
+                **result,
+                "staged_name": result.get("staged_name", job["staged_name"]),
+            }
+            results[job["staged_name"]] = normalized
+            if progress_callback:
+                progress_callback(job, normalized)
+        return results
 
 
 def apply_import_cache_results(
@@ -337,20 +347,54 @@ def apply_import_cache_results(
             sf.parser_version = result["parser_version"]
             sf.row_count = result["rows"]
             sf.cycle_count = result["cycles"]
+            scanner.apply_capacity_summary(sf, result)
         else:
             sf.parse_status = "error"
             sf.parse_error = result.get("error") or "Cache build failed"
+            sf.capacity_summary_status = "error"
     db.commit()
 
 
 def run_import_cache_jobs(
     source_file_ids_by_staged_name: dict[str, int],
     cache_jobs: list[dict],
+    background_job_id: int,
 ) -> None:
     db = SessionLocal()
     try:
-        cache_results = build_import_caches_parallel(cache_jobs)
+        for cache_job in cache_jobs:
+            background_jobs.update_item(
+                background_job_id,
+                cache_job["staged_name"],
+                status="processing",
+            )
+
+        def report_progress(cache_job: dict, result: dict) -> None:
+            background_jobs.record_result(
+                background_job_id,
+                cache_job["staged_name"],
+                status="ready" if result.get("ok") else "failed",
+                detail="Cycling cache ready" if result.get("ok") else None,
+                error=result.get("error"),
+                counter="ready" if result.get("ok") else "failed",
+            )
+
+        cache_results = build_import_caches_parallel(
+            cache_jobs,
+            progress_callback=report_progress,
+        )
         apply_import_cache_results(db, source_file_ids_by_staged_name, cache_results)
+        failed = sum(1 for result in cache_results.values() if not result.get("ok"))
+        background_jobs.update_job(
+            background_job_id,
+            status="completed",
+            description=(
+                f"Prepared cycling caches for {len(cache_results) - failed} files"
+                + (f"; {failed} failed" if failed else "")
+            ),
+        )
+    except Exception as exc:
+        background_jobs.update_job(background_job_id, status="failed", error=str(exc))
     finally:
         db.close()
 
@@ -361,9 +405,19 @@ def start_import_cache_jobs(
 ) -> None:
     if not cache_jobs:
         return
+    background_job_id = background_jobs.create_job(
+        kind="import_cache",
+        title="Preparing imported cells",
+        description=f"Building cycling caches for {len(cache_jobs)} files",
+        total=len(cache_jobs),
+        items=[
+            {"id": job["staged_name"], "label": Path(job["path"]).name}
+            for job in cache_jobs
+        ],
+    )
     thread = threading.Thread(
         target=run_import_cache_jobs,
-        args=(dict(source_file_ids_by_staged_name), list(cache_jobs)),
+        args=(dict(source_file_ids_by_staged_name), list(cache_jobs), background_job_id),
         daemon=True,
     )
     thread.start()
@@ -740,6 +794,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
                     db.add(FolderCell(folder_id=folder_id, cell_id=cell.id, position=position + 1))
 
         sf.parse_status = "parsing"
+        sf.capacity_summary_status = "pending"
         db.flush()
         source_file_ids_by_staged_name[draft.staged_name] = sf.id
         cache_jobs.append(
