@@ -41,6 +41,7 @@ import styles from "./CellDetailTabs.module.css";
 function statusColor(status: string) {
   if (status === "parsed" || status === "online") return "teal";
   if (status === "changed") return "orange";
+  if (status === "changing") return "yellow";
   if (status === "error" || status === "offline") return "red";
   return "gray";
 }

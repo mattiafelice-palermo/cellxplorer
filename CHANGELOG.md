@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 - 2026-07-14
+
+- Added background diagnostics, runtime session tracking, and a persistent activity view.
+- Added tray-aware source monitoring with configurable schedules, lightweight metadata scans,
+  and retries for files that are still growing.
+- Added explicit Active, Complete, and Source changing states in the cell database.
+
 ## 0.2.0 - 2026-07-14
 
 - Added a Settings workspace with persistent download-location preferences for browser and

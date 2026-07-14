@@ -10,12 +10,12 @@ from fastapi.staticfiles import StaticFiles
 from .config import CALC_VERSION, FRONTEND_DIST
 from .db import Base, engine, ensure_runtime_schema
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, files, library, replicates, settings, tree
-from .services import calc, parsing, scanner
+from .routers import activity, analyses, diagnostics, files, library, replicates, settings, tree
+from .services import calc, parsing, scanner, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="CellXplorer", version="1.0.0")
+app = FastAPI(title="CellXplorer", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,7 +25,11 @@ app.add_middleware(
 
 Base.metadata.create_all(engine)
 ensure_runtime_schema()
+app.add_event_handler("startup", sessions.start_runtime_session)
 app.add_event_handler("startup", scanner.start_capacity_summary_backfill)
+app.add_event_handler("startup", source_monitor.start_source_monitor)
+app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
+app.add_event_handler("shutdown", lambda: sessions.finish_runtime_session("backend_shutdown"))
 
 app.include_router(files.router)
 app.include_router(library.router)
@@ -34,6 +38,7 @@ app.include_router(analyses.router)
 app.include_router(replicates.router)
 app.include_router(activity.router)
 app.include_router(settings.router)
+app.include_router(diagnostics.router)
 
 
 @app.get("/api/health")

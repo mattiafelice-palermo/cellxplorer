@@ -15,11 +15,13 @@ from pathlib import Path
 APP_DATA_DIR = Path(os.environ.get("CELLXPLORER_DATA", Path.home() / ".cellxplorer"))
 CACHE_DIR = APP_DATA_DIR / "cache"
 IMPORT_DIR = APP_DATA_DIR / "imports"
+LOG_DIR = APP_DATA_DIR / "logs"
 DB_PATH = APP_DATA_DIR / "cellxplorer.db"
 
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
 

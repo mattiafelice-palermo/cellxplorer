@@ -29,6 +29,24 @@ _capacity_backfill_lock = threading.Lock()
 _capacity_backfill_running = False
 
 
+class SourceChangedDuringRead(RuntimeError):
+    """Raised when a source keeps growing while an automatic update reads it."""
+
+
+def source_signature(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _require_signature(path: Path, expected: tuple[int, int]) -> None:
+    try:
+        current = source_signature(path)
+    except OSError as exc:
+        raise SourceChangedDuringRead("Source became unavailable while it was being read") from exc
+    if current != expected:
+        raise SourceChangedDuringRead("Source is still changing; update deferred")
+
+
 def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.total_charge_capacity_mah = info.get("total_charge_capacity_mah")
     sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
@@ -195,6 +213,10 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             existing.path = str(path)
             existing.filename = path.name
             existing.location_status = "online"
+            try:
+                existing.observed_size, existing.observed_mtime_ns = source_signature(path)
+            except OSError:
+                pass
             db.commit()
             if job_id is not None:
                 _bump(job_id, "relinked")
@@ -209,12 +231,16 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             _bump(job_id, "changed")
 
     meta = parsing.read_header_metadata(path)
+    observed_size, observed_mtime_ns = source_signature(path)
     sf = SourceFile(
         hash=file_hash,
         path=str(path),
         filename=path.name,
-        size=path.stat().st_size,
+        size=observed_size,
         ext=path.suffix.lower().lstrip("."),
+        observed_size=observed_size,
+        observed_mtime_ns=observed_mtime_ns,
+        last_source_check_at=datetime.now(timezone.utc),
         nda_version=meta.get("nda_version"),
         device_info=meta.get("device_info"),
         channel=meta.get("channel"),
@@ -274,7 +300,9 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     meta = parsing.read_header_metadata(p)
     sf.hash = new_hash
     sf.filename = p.name
-    sf.size = p.stat().st_size
+    sf.size, sf.observed_mtime_ns = source_signature(p)
+    sf.observed_size = sf.size
+    sf.last_source_check_at = datetime.now(timezone.utc)
     sf.ext = p.suffix.lower().lstrip(".")
     sf.nda_version = meta.get("nda_version")
     sf.device_info = meta.get("device_info")
@@ -307,6 +335,59 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     # The current bytes have been adopted even if rebuilding their cache
     # failed; another source check must not be needed to clear "changed".
     sf.location_status = "online"
+    db.commit()
+    return sf
+
+
+def update_source_from_path_if_stable(
+    db: Session,
+    sf: SourceFile,
+    *,
+    expected_size: int,
+    expected_mtime_ns: int,
+) -> SourceFile:
+    """Adopt a source only if it remains unchanged throughout the full read."""
+    p = Path(sf.path)
+    expected = (expected_size, expected_mtime_ns)
+    _require_signature(p, expected)
+    new_hash = parsing.compute_hash(p)
+    _require_signature(p, expected)
+
+    duplicate = db.query(SourceFile).filter(
+        SourceFile.hash == new_hash,
+        SourceFile.id != sf.id,
+    ).first()
+    if duplicate is not None:
+        raise ValueError("Another source file already has this content hash")
+
+    meta = parsing.read_header_metadata(p)
+    _require_signature(p, expected)
+    info = cache.build(new_hash, p)
+    _require_signature(p, expected)
+
+    sf.hash = new_hash
+    sf.filename = p.name
+    sf.size = expected_size
+    sf.ext = p.suffix.lower().lstrip(".")
+    sf.observed_size = expected_size
+    sf.observed_mtime_ns = expected_mtime_ns
+    sf.last_source_check_at = datetime.now(timezone.utc)
+    sf.nda_version = meta.get("nda_version")
+    sf.device_info = meta.get("device_info")
+    sf.channel = meta.get("channel")
+    sf.barcode = meta.get("barcode")
+    sf.remarks = meta.get("remarks")
+    sf.start_time = meta.get("start_time")
+    sf.active_mass_mg = meta.get("active_mass_mg")
+    sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
+    sf.header_meta = meta.get("raw") or None
+    sf.location_status = "online"
+    sf.parse_status = "parsed"
+    sf.parse_error = None
+    sf.parser_version = info["parser_version"]
+    sf.row_count = info["rows"]
+    sf.cycle_count = info["cycles"]
+    apply_capacity_summary(sf, info)
     db.commit()
     return sf
 

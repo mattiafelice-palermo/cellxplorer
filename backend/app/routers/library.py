@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import threading
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from time import sleep as _sleep
 from typing import Literal
 
 import numpy as np
@@ -43,6 +44,7 @@ _source_check_job_lock = threading.Lock()
 _source_check_jobs: dict[int, dict] = {}
 _latest_source_check_job_id: int | None = None
 _next_source_check_job_id = 1
+_JobThread = threading.Thread
 
 
 def source_file_needs_cache(sf: SourceFile) -> bool:
@@ -211,6 +213,7 @@ def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> di
         **totals,
         "has_offline": "offline" in statuses,
         "has_changed": "changed" in statuses,
+        "has_changing": "changing" in statuses,
         "has_parsing": "parsing" in statuses,
         "has_summary_pending": any(
             link.file.parse_status == "parsed"
@@ -449,13 +452,55 @@ def _source_check_worker(job: dict) -> dict:
         return {"id": job["id"], "location_status": "offline", "hash": None}
     try:
         current_hash = parsing.compute_hash(path)
+        stat = path.stat()
     except OSError:
         return {"id": job["id"], "location_status": "offline", "hash": None}
     return {
         "id": job["id"],
         "location_status": "changed" if current_hash != job["hash"] else "online",
         "hash": current_hash,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "hashed": True,
     }
+
+
+def _source_stat_worker(job: dict) -> dict:
+    try:
+        stat = Path(job["path"]).stat()
+    except OSError:
+        return {"id": job["id"], "location_status": "offline"}
+    return {
+        "id": job["id"],
+        "location_status": "online",
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _source_stat_batches(
+    jobs: list[dict],
+    *,
+    batch_size: int,
+    max_workers: int,
+) -> list[dict]:
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="source-stat") as executor:
+        for start in range(0, len(jobs), batch_size):
+            results.extend(executor.map(_source_stat_worker, jobs[start : start + batch_size]))
+    return results
+
+
+def _set_current_thread_low_priority() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        thread_handle = ctypes.windll.kernel32.GetCurrentThread()
+        ctypes.windll.kernel32.SetThreadPriority(thread_handle, -1)
+    except Exception:
+        pass
 
 
 def cell_source_check_worker_count(n_jobs: int, max_workers: int | None = None) -> int:
@@ -467,6 +512,14 @@ def _source_check_job_snapshot(job_id: int) -> dict | None:
     with _source_check_job_lock:
         job = _source_check_jobs.get(job_id)
         return deepcopy(job) if job else None
+
+
+def source_check_running() -> bool:
+    with _source_check_job_lock:
+        if _latest_source_check_job_id is None:
+            return False
+        job = _source_check_jobs.get(_latest_source_check_job_id)
+        return bool(job and job.get("status") == "running")
 
 
 def _update_source_check_job(job_id: int, **values) -> None:
@@ -498,8 +551,12 @@ def _update_source_check_file(job_id: int, file_id: int, **values) -> None:
 def _record_source_check_result(job_id: int, db: Session, source_job: dict, result: dict) -> None:
     status = result.get("location_status", "error")
     sf = db.get(SourceFile, source_job["id"])
-    if sf is not None and status in {"online", "changed", "offline"}:
-        sf.location_status = status
+    if sf is not None and status in {"online", "changed", "offline", "deferred"}:
+        sf.location_status = "changing" if status == "deferred" else status
+        sf.last_source_check_at = datetime.now(timezone.utc)
+        if result.get("size") is not None:
+            sf.observed_size = result["size"]
+            sf.observed_mtime_ns = result.get("mtime_ns")
         db.commit()
 
     background_job_id = None
@@ -507,12 +564,21 @@ def _record_source_check_result(job_id: int, db: Session, source_job: dict, resu
         job = _source_check_jobs[job_id]
         background_job_id = job.get("background_job_id")
         job["completed"] += 1
-        if status in {"online", "changed", "offline"}:
+        if status in {"online", "changed", "offline", "deferred"}:
             job[status] += 1
         else:
             job["errors"] += 1
         if status == "changed":
             job["changed_file_ids"].append(source_job["id"])
+            if result.get("size") is not None:
+                job["changed_source_signatures"][source_job["id"]] = {
+                    "size": result["size"],
+                    "mtime_ns": result["mtime_ns"],
+                }
+        if status == "deferred":
+            job["deferred_file_ids"].append(source_job["id"])
+        if result.get("hashed"):
+            job["hashed"] += 1
         for row in job["files"]:
             if row["file_id"] == source_job["id"]:
                 row["status"] = status
@@ -525,19 +591,379 @@ def _record_source_check_result(job_id: int, db: Session, source_job: dict, resu
             background_job_id,
             source_job["id"],
             status=display_status,
-            detail="Source matches the registered checksum" if status == "online" else None,
+            detail=(
+                "Source matches the registered checksum"
+                if status == "online"
+                else "Source was still changing and will be checked again"
+                if status == "deferred"
+                else None
+            ),
             error=result.get("error"),
             counter="failed" if status == "error" else status,
         )
 
 
-def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> None:
+def _record_source_retry_result(
+    job_id: int,
+    db: Session,
+    source_job: dict,
+    result: dict,
+) -> None:
+    """Replace one deferred result without counting the source twice."""
+    status = result.get("location_status", "error")
+    sf = db.get(SourceFile, source_job["id"])
+    if sf is not None:
+        if status in {"online", "changed", "offline"}:
+            sf.location_status = status
+            sf.last_source_check_at = datetime.now(timezone.utc)
+            if result.get("size") is not None:
+                sf.observed_size = result["size"]
+                sf.observed_mtime_ns = result.get("mtime_ns")
+        elif status == "deferred":
+            sf.location_status = "changing"
+            sf.last_source_check_at = datetime.now(timezone.utc)
+        db.commit()
+
+    with _source_check_job_lock:
+        job = _source_check_jobs[job_id]
+        background_job_id = job.get("background_job_id")
+        job["retry_completed"] += 1
+        if status != "deferred":
+            job["deferred"] = max(0, job["deferred"] - 1)
+            job["deferred_file_ids"] = [
+                file_id for file_id in job["deferred_file_ids"] if file_id != source_job["id"]
+            ]
+            if status in {"online", "changed", "offline"}:
+                job[status] += 1
+            else:
+                job["errors"] += 1
+        if status == "changed" and source_job["id"] not in job["changed_file_ids"]:
+            job["changed_file_ids"].append(source_job["id"])
+            if result.get("size") is not None:
+                job["changed_source_signatures"][source_job["id"]] = {
+                    "size": result["size"],
+                    "mtime_ns": result["mtime_ns"],
+                }
+        if result.get("hashed"):
+            job["hashed"] += 1
+        for row in job["files"]:
+            if row["file_id"] == source_job["id"]:
+                row["status"] = status
+                row["error"] = result.get("error")
+                break
+
+    if background_job_id is not None:
+        background_jobs.record_result(
+            background_job_id,
+            source_job["id"],
+            status=("ready" if status == "online" else "failed" if status == "error" else status),
+            detail=(
+                "Source is stable and matches the registered checksum"
+                if status == "online"
+                else "Source is still changing"
+                if status == "deferred"
+                else None
+            ),
+            error=result.get("error"),
+            counter=f"retry_{'failed' if status == 'error' else status}",
+        )
+
+
+def _run_metadata_source_checks(
+    job_id: int,
+    db: Session,
+    jobs: list[dict],
+    *,
+    batch_size: int,
+    worker_count: int,
+    stability_seconds: float,
+) -> None:
+    """Stat everything concurrently, then hash only stable metadata changes."""
+    for source_job in jobs:
+        _update_source_check_file(job_id, source_job["id"], status="checking")
+
+    first_results = _source_stat_batches(
+        jobs,
+        batch_size=batch_size,
+        max_workers=worker_count,
+    )
+    first_by_id = {result["id"]: result for result in first_results}
+    candidates: list[dict] = []
+    for source_job in jobs:
+        result = first_by_id[source_job["id"]]
+        if result["location_status"] == "offline":
+            _record_source_check_result(job_id, db, source_job, result)
+            continue
+        unchanged_metadata = (
+            source_job.get("observed_size") == result["size"]
+            and source_job.get("observed_mtime_ns") == result["mtime_ns"]
+            and source_job.get("location_status") not in {"changed", "offline", "changing"}
+        )
+        if unchanged_metadata:
+            _record_source_check_result(job_id, db, source_job, result)
+        else:
+            candidates.append(source_job)
+
+    if not candidates:
+        return
+
+    background_job_id = (_source_check_job_snapshot(job_id) or {}).get("background_job_id")
+    if background_job_id is not None:
+        background_jobs.update_job(
+            background_job_id,
+            description=(
+                f"Waiting {stability_seconds:g} s to confirm "
+                f"{len(candidates)} possible source change"
+                f"{'s' if len(candidates) != 1 else ''}"
+            ),
+        )
+    _sleep(stability_seconds)
+
+    second_results = _source_stat_batches(
+        candidates,
+        batch_size=batch_size,
+        max_workers=worker_count,
+    )
+    second_by_id = {result["id"]: result for result in second_results}
+    if background_job_id is not None:
+        background_jobs.update_job(
+            background_job_id,
+            description=f"Verifying {len(candidates)} stable source files",
+        )
+
+    for source_job in candidates:
+        first = first_by_id[source_job["id"]]
+        second = second_by_id[source_job["id"]]
+        if second["location_status"] == "offline":
+            _record_source_check_result(job_id, db, source_job, second)
+            continue
+        if (first["size"], first["mtime_ns"]) != (second["size"], second["mtime_ns"]):
+            _record_source_check_result(
+                job_id,
+                db,
+                source_job,
+                {
+                    "id": source_job["id"],
+                    "location_status": "deferred",
+                },
+            )
+            continue
+        try:
+            current_hash = parsing.compute_hash(Path(source_job["path"]))
+            final = _source_stat_worker(source_job)
+            if final.get("location_status") != "online" or (
+                final.get("size"), final.get("mtime_ns")
+            ) != (second["size"], second["mtime_ns"]):
+                result = {"id": source_job["id"], "location_status": "deferred"}
+            else:
+                result = {
+                    **final,
+                    "location_status": (
+                        "changed" if current_hash != source_job["hash"] else "online"
+                    ),
+                    "hash": current_hash,
+                    "hashed": True,
+                }
+        except OSError:
+            result = {"id": source_job["id"], "location_status": "offline"}
+        except Exception as exc:
+            result = {
+                "id": source_job["id"],
+                "location_status": "error",
+                "error": str(exc),
+            }
+        _record_source_check_result(job_id, db, source_job, result)
+
+
+def _retry_deferred_sources_once(
+    job_id: int,
+    db: Session,
+    jobs: list[dict],
+    *,
+    batch_size: int,
+    worker_count: int,
+    stability_seconds: float,
+) -> None:
+    for source_job in jobs:
+        _update_source_check_file(job_id, source_job["id"], status="checking")
+    first_results = _source_stat_batches(
+        jobs,
+        batch_size=batch_size,
+        max_workers=worker_count,
+    )
+    first_by_id = {result["id"]: result for result in first_results}
+    stable_candidates = [
+        source_job
+        for source_job in jobs
+        if first_by_id[source_job["id"]].get("location_status") == "online"
+    ]
+    if stable_candidates:
+        _sleep(stability_seconds)
+        second_results = _source_stat_batches(
+            stable_candidates,
+            batch_size=batch_size,
+            max_workers=worker_count,
+        )
+        second_by_id = {result["id"]: result for result in second_results}
+    else:
+        second_by_id = {}
+
+    for source_job in jobs:
+        first = first_by_id[source_job["id"]]
+        if first.get("location_status") != "online":
+            _record_source_retry_result(job_id, db, source_job, first)
+            continue
+        second = second_by_id[source_job["id"]]
+        if second.get("location_status") != "online":
+            _record_source_retry_result(job_id, db, source_job, second)
+            continue
+        if (first["size"], first["mtime_ns"]) != (second["size"], second["mtime_ns"]):
+            _record_source_retry_result(
+                job_id,
+                db,
+                source_job,
+                {"id": source_job["id"], "location_status": "deferred"},
+            )
+            continue
+        try:
+            current_hash = parsing.compute_hash(Path(source_job["path"]))
+            final = _source_stat_worker(source_job)
+            if final.get("location_status") != "online" or (
+                final.get("size"), final.get("mtime_ns")
+            ) != (second["size"], second["mtime_ns"]):
+                result = {"id": source_job["id"], "location_status": "deferred"}
+            else:
+                result = {
+                    **final,
+                    "location_status": (
+                        "changed" if current_hash != source_job["hash"] else "online"
+                    ),
+                    "hash": current_hash,
+                    "hashed": True,
+                }
+        except OSError:
+            result = {"id": source_job["id"], "location_status": "offline"}
+        except Exception as exc:
+            result = {
+                "id": source_job["id"],
+                "location_status": "error",
+                "error": str(exc),
+            }
+        _record_source_retry_result(job_id, db, source_job, result)
+
+
+def _run_deferred_source_retries(
+    job_id: int,
+    db: Session,
+    jobs: list[dict],
+    *,
+    batch_size: int,
+    worker_count: int,
+    stability_seconds: float,
+    retry_count: int,
+    retry_delay_minutes: int,
+    retry_deadline_at: str | None,
+) -> None:
+    jobs_by_id = {source_job["id"]: source_job for source_job in jobs}
+    try:
+        deadline = datetime.fromisoformat(retry_deadline_at) if retry_deadline_at else None
+        if deadline and deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+    except ValueError:
+        deadline = None
+    delay_seconds = retry_delay_minutes * 60
+
+    for attempt in range(1, retry_count + 1):
+        snapshot = _source_check_job_snapshot(job_id)
+        if not snapshot or not snapshot.get("deferred_file_ids"):
+            break
+        retry_at = datetime.now(timezone.utc).timestamp() + delay_seconds + stability_seconds
+        if deadline and retry_at >= deadline.timestamp():
+            _update_source_check_job(job_id, retries_stopped="next_scheduled_check")
+            if snapshot.get("background_job_id") is not None:
+                background_jobs.update_job(
+                    snapshot["background_job_id"],
+                    description=(
+                        f"Leaving {snapshot['deferred']} changing source file"
+                        f"{'s' if snapshot['deferred'] != 1 else ''} for the next scheduled check"
+                    ),
+                )
+            break
+
+        retry_jobs = [
+            jobs_by_id[file_id]
+            for file_id in snapshot["deferred_file_ids"]
+            if file_id in jobs_by_id
+        ]
+        if not retry_jobs:
+            break
+        retry_start_at = datetime.fromtimestamp(
+            datetime.now(timezone.utc).timestamp() + delay_seconds,
+            timezone.utc,
+        ).isoformat()
+        with _source_check_job_lock:
+            live = _source_check_jobs[job_id]
+            live["phase"] = "retry_wait"
+            live["retry_attempt"] = attempt
+            live["retry_next_at"] = retry_start_at
+            live["retry_total"] += len(retry_jobs)
+            live["background_total"] += len(retry_jobs)
+            background_total = live["background_total"]
+            background_job_id = live.get("background_job_id")
+            for row in live["files"]:
+                if row["file_id"] in live["deferred_file_ids"]:
+                    row["status"] = "waiting_retry"
+        if background_job_id is not None:
+            background_jobs.update_job(
+                background_job_id,
+                total=background_total,
+                description=(
+                    f"Retry {attempt} of {retry_count} for {len(retry_jobs)} changing source file"
+                    f"{'s' if len(retry_jobs) != 1 else ''} in {retry_delay_minutes} min"
+                ),
+            )
+        _sleep(delay_seconds)
+        _update_source_check_job(job_id, phase="retrying", retry_next_at=None)
+        if background_job_id is not None:
+            background_jobs.update_job(
+                background_job_id,
+                description=(
+                    f"Retrying {len(retry_jobs)} changing source file"
+                    f"{'s' if len(retry_jobs) != 1 else ''}"
+                ),
+            )
+        _retry_deferred_sources_once(
+            job_id,
+            db,
+            retry_jobs,
+            batch_size=batch_size,
+            worker_count=worker_count,
+            stability_seconds=stability_seconds,
+        )
+    _update_source_check_job(job_id, phase="checking", retry_next_at=None)
+
+
+def _run_source_check_job(
+    job_id: int,
+    jobs: list[dict],
+    worker_count: int,
+    scan_mode: str = "checksum",
+    batch_size: int = 100,
+    stability_seconds: float = 5.0,
+    low_impact: bool = False,
+    retry_count: int = 0,
+    retry_delay_minutes: int = 5,
+    retry_deadline_at: str | None = None,
+) -> None:
+    if low_impact:
+        _set_current_thread_low_priority()
     db = SessionLocal()
     try:
         if not jobs:
             _update_source_check_job(
                 job_id,
                 status="completed",
+                phase="completed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
             snapshot = _source_check_job_snapshot(job_id)
@@ -546,6 +972,27 @@ def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> N
                     snapshot["background_job_id"],
                     status="completed",
                     description="No active source files needed checking",
+                )
+        elif scan_mode == "metadata":
+            _run_metadata_source_checks(
+                job_id,
+                db,
+                jobs,
+                batch_size=batch_size,
+                worker_count=worker_count,
+                stability_seconds=stability_seconds,
+            )
+            if retry_count > 0:
+                _run_deferred_source_retries(
+                    job_id,
+                    db,
+                    jobs,
+                    batch_size=batch_size,
+                    worker_count=worker_count,
+                    stability_seconds=stability_seconds,
+                    retry_count=retry_count,
+                    retry_delay_minutes=retry_delay_minutes,
+                    retry_deadline_at=retry_deadline_at,
                 )
         elif worker_count == 1:
             for source_job in jobs:
@@ -592,10 +1039,118 @@ def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> N
                         submit_next()
 
         snapshot = _source_check_job_snapshot(job_id)
+        if snapshot and snapshot["status"] == "running" and snapshot.get("update_after_check"):
+            changed_ids = list(dict.fromkeys(snapshot["changed_file_ids"]))
+            background_job_id = snapshot.get("background_job_id")
+            _update_source_check_job(
+                job_id,
+                phase="updating",
+                update_total=len(changed_ids),
+                update_completed=0,
+            )
+            if background_job_id is not None:
+                background_jobs.update_job(
+                    background_job_id,
+                    total=snapshot["total"] + len(changed_ids),
+                    description=(
+                        f"Updating {len(changed_ids)} changed source file"
+                        f"{'s' if len(changed_ids) != 1 else ''}"
+                        if changed_ids
+                        else "All active sources are already current"
+                    ),
+                )
+
+            ready_cell_ids: set[int] = set()
+            updated_file_ids: list[int] = []
+            update_errors: list[dict] = []
+            for file_id in changed_ids:
+                sf = db.get(SourceFile, file_id)
+                if sf is None:
+                    continue
+                _update_source_check_file(job_id, file_id, status="updating")
+                error = None
+                try:
+                    signature = snapshot.get("changed_source_signatures", {}).get(file_id)
+                    if scan_mode == "metadata" and signature:
+                        updated_sf = scanner.update_source_from_path_if_stable(
+                            db,
+                            sf,
+                            expected_size=signature["size"],
+                            expected_mtime_ns=signature["mtime_ns"],
+                        )
+                    else:
+                        updated_sf = scanner.update_source_from_path(db, sf)
+                    if updated_sf.parse_status == "error":
+                        error = updated_sf.parse_error or "Cache rebuild failed"
+                    else:
+                        updated_file_ids.append(updated_sf.id)
+                        if updated_sf.test_link and updated_sf.test_link.test:
+                            ready_cell_ids.add(updated_sf.test_link.test.cell_id)
+                except scanner.SourceChangedDuringRead as exc:
+                    error = None
+                    sf.location_status = "changing"
+                    sf.last_source_check_at = datetime.now(timezone.utc)
+                    db.commit()
+                    with _source_check_job_lock:
+                        live = _source_check_jobs.get(job_id)
+                        if live is not None:
+                            live["deferred"] += 1
+                            live["update_completed"] += 1
+                            if file_id not in live["deferred_file_ids"]:
+                                live["deferred_file_ids"].append(file_id)
+                            for row in live["files"]:
+                                if row["file_id"] == file_id:
+                                    row["status"] = "deferred"
+                                    row["error"] = None
+                                    break
+                    if background_job_id is not None:
+                        background_jobs.record_result(
+                            background_job_id,
+                            file_id,
+                            status="deferred",
+                            detail=str(exc),
+                            counter="deferred",
+                        )
+                    continue
+                except Exception as exc:  # preserve the remaining updates
+                    error = str(exc)
+
+                with _source_check_job_lock:
+                    live = _source_check_jobs.get(job_id)
+                    if live is not None:
+                        live["update_completed"] += 1
+                        if error:
+                            update_errors.append(
+                                {"file_id": file_id, "filename": sf.filename, "error": error}
+                            )
+                        for row in live["files"]:
+                            if row["file_id"] == file_id:
+                                row["status"] = "failed" if error else "ready"
+                                row["error"] = error
+                                break
+                if background_job_id is not None:
+                    background_jobs.record_result(
+                        background_job_id,
+                        file_id,
+                        status="failed" if error else "ready",
+                        detail=None if error else "Updated source and rebuilt cache",
+                        error=error,
+                        counter="update_failed" if error else "updated",
+                    )
+
+            _update_source_check_job(
+                job_id,
+                updated=len(updated_file_ids),
+                updated_file_ids=updated_file_ids,
+                ready_cell_ids=sorted(ready_cell_ids),
+                update_errors=update_errors,
+            )
+            snapshot = _source_check_job_snapshot(job_id)
         if snapshot and snapshot["status"] == "running":
             _update_source_check_job(
                 job_id,
                 status="completed",
+                phase="completed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
             snapshot = _source_check_job_snapshot(job_id)
@@ -604,19 +1159,33 @@ def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> N
                 snapshot["background_job_id"],
                 status="completed",
                 description=(
-                    f"Checked {snapshot['completed']} source files: "
-                    f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                    f"Checked {snapshot['completed']} source files and updated "
+                    f"{snapshot.get('updated', 0)}"
+                    if snapshot.get("update_after_check")
+                    else (
+                        f"Checked {snapshot['completed']} source files: "
+                        f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                    )
                 ),
             )
         if snapshot:
-            severity = "warning" if snapshot["changed"] or snapshot["offline"] or snapshot["errors"] else "info"
+            severity = (
+                "warning"
+                if snapshot["offline"] or snapshot["errors"] or snapshot.get("deferred") or snapshot.get("update_errors")
+                else "info"
+            )
             record_activity(
                 db,
                 category="source",
-                action="check_sources",
+                action="check_update_sources" if snapshot.get("update_after_check") else "check_sources",
                 message=(
-                    f"Checked {snapshot['completed']} source files: "
-                    f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                    f"Checked {snapshot['completed']} source files and updated "
+                    f"{snapshot.get('updated', 0)} changed sources"
+                    if snapshot.get("update_after_check")
+                    else (
+                        f"Checked {snapshot['completed']} source files: "
+                        f"{snapshot['changed']} changed, {snapshot['offline']} offline"
+                    )
                 ),
                 severity=severity,
                 details={
@@ -626,8 +1195,23 @@ def _run_source_check_job(job_id: int, jobs: list[dict], worker_count: int) -> N
                     "offline": snapshot["offline"],
                     "online": snapshot["online"],
                     "errors": snapshot["errors"],
+                    "deferred": snapshot.get("deferred", 0),
+                    "hashed": snapshot.get("hashed", 0),
                     "changed_file_ids": snapshot["changed_file_ids"],
                     "workers": snapshot["workers"],
+                    "scan_mode": snapshot.get("scan_mode", "checksum"),
+                    "trigger": snapshot.get("trigger", "manual"),
+                    "batch_size": snapshot.get("batch_size"),
+                    "stability_seconds": snapshot.get("stability_seconds"),
+                    "retry_count": snapshot.get("retry_count", 0),
+                    "retry_attempts_used": snapshot.get("retry_attempt", 0),
+                    "retry_delay_minutes": snapshot.get("retry_delay_minutes"),
+                    "retry_completed": snapshot.get("retry_completed", 0),
+                    "retries_stopped": snapshot.get("retries_stopped"),
+                    "updated": snapshot.get("updated", 0),
+                    "updated_file_ids": snapshot.get("updated_file_ids", []),
+                    "ready_cell_ids": snapshot.get("ready_cell_ids", []),
+                    "update_errors": snapshot.get("update_errors", []),
                 },
                 started_at=datetime.fromisoformat(snapshot["started_at"]),
                 finished_at=datetime.fromisoformat(
@@ -657,12 +1241,33 @@ def start_source_check_job(
     db: Session,
     cell_ids: list[int] | None = None,
     include_complete: bool = False,
+    update_after_check: bool = False,
+    *,
+    scan_mode: Literal["checksum", "metadata"] = "checksum",
+    batch_size: int = 100,
+    stability_seconds: float = 5.0,
+    trigger: Literal["manual", "tray", "scheduled"] = "manual",
+    low_impact: bool = False,
+    retry_count: int = 0,
+    retry_delay_minutes: int = 5,
+    retry_deadline_at: str | None = None,
 ) -> dict:
     global _latest_source_check_job_id, _next_source_check_job_id
     with _source_check_job_lock:
         if _latest_source_check_job_id is not None:
             current = _source_check_jobs.get(_latest_source_check_job_id)
             if current and current["status"] == "running":
+                if trigger == "scheduled":
+                    return deepcopy(current)
+                if update_after_check and not current.get("update_after_check"):
+                    current["update_after_check"] = True
+                    background_job_id = current.get("background_job_id")
+                    if background_job_id is not None:
+                        background_jobs.update_job(
+                            background_job_id,
+                            kind="source_check_update",
+                            title="Checking and updating sources",
+                        )
                 return deepcopy(current)
 
     source_files, skipped_complete = _cell_source_files(
@@ -676,15 +1281,26 @@ def start_source_check_job(
             "path": sf.path,
             "hash": sf.hash,
             "filename": sf.filename,
+            "observed_size": sf.observed_size,
+            "observed_mtime_ns": sf.observed_mtime_ns,
+            "location_status": sf.location_status,
         }
         for sf in source_files
     ]
-    worker_count = cell_source_check_worker_count(len(jobs))
+    if scan_mode == "metadata":
+        batch_size = max(1, min(int(batch_size), 5000))
+        worker_count = max(1, min(len(jobs) or 1, batch_size, 16))
+    else:
+        worker_count = cell_source_check_worker_count(len(jobs))
     now = datetime.now(timezone.utc).isoformat()
     background_job_id = background_jobs.create_job(
-        kind="source_check",
-        title="Checking sources",
-        description=f"Checking checksums for {len(jobs)} source files",
+        kind="source_check_update" if update_after_check else "source_check",
+        title="Checking and updating sources" if update_after_check else "Checking sources",
+        description=(
+            f"Scanning metadata for {len(jobs)} source files"
+            if scan_mode == "metadata"
+            else f"Checking checksums for {len(jobs)} source files"
+        ),
         total=len(jobs),
         items=[{"id": source_job["id"], "label": source_job["filename"]} for source_job in jobs],
     )
@@ -699,9 +1315,12 @@ def start_source_check_job(
             "online": 0,
             "changed": 0,
             "offline": 0,
+            "deferred": 0,
             "errors": 0,
+            "hashed": 0,
             "skipped_complete": skipped_complete,
             "changed_file_ids": [],
+            "changed_source_signatures": {},
             "requested_cell_ids": list(dict.fromkeys(cell_ids or [])),
             "workers": worker_count,
             "files": [
@@ -717,6 +1336,29 @@ def start_source_check_job(
             "completed_at": None,
             "error": None,
             "background_job_id": background_job_id,
+            "phase": "checking",
+            "update_after_check": update_after_check,
+            "update_total": 0,
+            "update_completed": 0,
+            "updated": 0,
+            "updated_file_ids": [],
+            "ready_cell_ids": [],
+            "update_errors": [],
+            "scan_mode": scan_mode,
+            "trigger": trigger,
+            "batch_size": batch_size if scan_mode == "metadata" else None,
+            "stability_seconds": stability_seconds if scan_mode == "metadata" else None,
+            "low_impact": low_impact,
+            "deferred_file_ids": [],
+            "retry_count": retry_count,
+            "retry_delay_minutes": retry_delay_minutes,
+            "retry_deadline_at": retry_deadline_at,
+            "retry_attempt": 0,
+            "retry_total": 0,
+            "retry_completed": 0,
+            "retry_next_at": None,
+            "retries_stopped": None,
+            "background_total": len(jobs),
         }
         _source_check_jobs[job_id] = job
         _latest_source_check_job_id = job_id
@@ -724,9 +1366,20 @@ def start_source_check_job(
         for old_id in old_ids:
             _source_check_jobs.pop(old_id, None)
 
-    threading.Thread(
+    _JobThread(
         target=_run_source_check_job,
-        args=(job_id, jobs, worker_count),
+        args=(
+            job_id,
+            jobs,
+            worker_count,
+            scan_mode,
+            batch_size,
+            stability_seconds,
+            low_impact,
+            retry_count,
+            retry_delay_minutes,
+            retry_deadline_at,
+        ),
         daemon=True,
         name=f"source-check-{job_id}",
     ).start()
@@ -835,6 +1488,16 @@ def create_source_check_job(req: CellSourceCheckRequest, db: Session = Depends(g
         db,
         cell_ids=req.cell_ids,
         include_complete=req.include_complete,
+    )
+
+
+@router.post("/cells/check-update-sources/jobs")
+def create_source_check_update_job(db: Session = Depends(get_db)):
+    return start_source_check_job(
+        db,
+        cell_ids=None,
+        include_complete=False,
+        update_after_check=True,
     )
 
 

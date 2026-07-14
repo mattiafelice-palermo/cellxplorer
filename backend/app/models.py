@@ -47,6 +47,9 @@ class SourceFile(Base):
     filename: Mapped[str] = mapped_column(String(255))
     size: Mapped[int] = mapped_column(Integer)
     ext: Mapped[str] = mapped_column(String(10))  # nda | ndax
+    observed_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observed_mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_source_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # header metadata (extracted without full parse)
     nda_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -384,6 +387,21 @@ class ActivityEvent(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class AppSession(Base):
+    """One desktop/backend run, retained for uptime and startup diagnostics."""
+
+    __tablename__ = "app_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    startup_mode: Mapped[str] = mapped_column(String(30), default="development", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    app_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    backend_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
 # --------------------------------------------------------------- settings

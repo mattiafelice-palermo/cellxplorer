@@ -94,6 +94,25 @@ export interface DownloadSettings {
   download_folder: string | null;
 }
 
+export interface SourceMonitoringSettings {
+  enabled: boolean;
+  schedule_mode: "interval" | "daily";
+  interval_value: number;
+  interval_unit: "minutes" | "hours" | "days";
+  daily_every_days: number;
+  daily_time: string;
+  auto_update: boolean;
+  scan_batch_size: number;
+  stability_value: number;
+  stability_unit: "seconds" | "minutes";
+  retry_count: number;
+  retry_delay_minutes: number;
+  next_run_at: string | null;
+  last_started_at: string | null;
+  last_finished_at: string | null;
+  last_status: string | null;
+}
+
 export interface SavedDownload {
   saved: boolean;
   filename: string;
@@ -105,8 +124,13 @@ export type SourceCheckFileStatus =
   | "checking"
   | "online"
   | "changed"
+  | "updating"
+  | "ready"
+  | "deferred"
+  | "waiting_retry"
   | "offline"
-  | "error";
+  | "error"
+  | "failed";
 
 export interface SourceCheckJob {
   id: number;
@@ -116,11 +140,29 @@ export interface SourceCheckJob {
   online: number;
   changed: number;
   offline: number;
+  deferred?: number;
   errors: number;
+  hashed?: number;
   skipped_complete: number;
   changed_file_ids: number[];
+  phase?: "checking" | "retry_wait" | "retrying" | "updating" | "completed";
+  update_after_check?: boolean;
+  update_total?: number;
+  update_completed?: number;
+  updated?: number;
+  updated_file_ids?: number[];
+  ready_cell_ids?: number[];
+  update_errors?: { file_id: number; filename: string; error: string }[];
   requested_cell_ids: number[];
   workers: number;
+  scan_mode?: "checksum" | "metadata";
+  trigger?: "manual" | "tray" | "scheduled";
+  retry_count?: number;
+  retry_delay_minutes?: number;
+  retry_attempt?: number;
+  retry_total?: number;
+  retry_completed?: number;
+  retry_next_at?: string | null;
   files: {
     file_id: number;
     filename: string;
@@ -149,7 +191,7 @@ export interface SourceFile {
   start_time: string | null;
   active_mass_mg: number | null;
   nominal_capacity_mah: number | null;
-  location_status: "online" | "offline" | "changed";
+  location_status: "online" | "offline" | "changed" | "changing";
   parse_status: "unparsed" | "parsing" | "parsed" | "error";
   parse_error: string | null;
   parser_version: string | null;
@@ -178,6 +220,7 @@ export interface CellSummary {
   total_discharge_capacity_mah: number | null;
   has_offline: boolean;
   has_changed: boolean;
+  has_changing: boolean;
   has_parsing: boolean;
   has_summary_pending: boolean;
   has_summary_error: boolean;
@@ -763,6 +806,57 @@ export interface BackgroundJob {
   error: string | null;
   started_at: string;
   completed_at: string | null;
+}
+
+export interface AppSession {
+  id: number;
+  startup_mode: "manual" | "startup" | "development" | string;
+  status: "running" | "closed" | "interrupted" | string;
+  app_version: string | null;
+  backend_pid: number | null;
+  exit_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface DiagnosticsHealth {
+  sampled_at: string;
+  backend: { status: string; pid: number; database_ok: boolean };
+  storage: {
+    data_path: string;
+    log_path: string;
+    database_bytes: number;
+    cache_bytes: number;
+    free_bytes: number;
+    total_bytes: number;
+    data_writable: boolean;
+    cache_writable: boolean;
+    logs_writable: boolean;
+  };
+  jobs: { running: number; failed: number };
+  session: AppSession | null;
+}
+
+export interface DiagnosticsResources {
+  sampled_at: string;
+  process_count: number;
+  cpu_percent: number;
+  memory_bytes: number;
+  read_bytes: number;
+  written_bytes: number;
+  uptime_seconds: number;
+  processes: {
+    pid: number;
+    name: string;
+    memory_bytes: number;
+    read_bytes: number;
+    written_bytes: number;
+  }[];
+}
+
+export interface DiagnosticsLogs {
+  backend: string[];
+  crash: string[];
 }
 
 export interface Meta {

@@ -353,7 +353,9 @@ export function LibraryPage() {
       const ready = new Set(result.ready_cell_ids);
       qc.setQueriesData<CellSummary[]>({ queryKey: ["cells"] }, (current) =>
         current?.map((cell) =>
-          ready.has(cell.id) ? { ...cell, has_changed: false, has_offline: false } : cell
+          ready.has(cell.id)
+            ? { ...cell, has_changed: false, has_offline: false, has_changing: false }
+            : cell
         )
       );
       setSelectedCellIds((current) => {
@@ -459,6 +461,7 @@ export function LibraryPage() {
       complete: rows.filter((cell) => cell.cycling_status === "complete").length,
       parsing: rows.filter((cell) => cell.has_parsing).length,
       needUpdate: rows.filter((cell) => cell.has_changed).length,
+      changing: rows.filter((cell) => cell.has_changing).length,
       offline: rows.filter((cell) => cell.has_offline).length,
     };
   }, [cells.data]);
@@ -757,6 +760,11 @@ export function LibraryPage() {
                             complete
                           </Badge>
                         )}
+                        {cell.cycling_status !== "complete" && (
+                          <Badge color="teal" variant="outline">
+                            active
+                          </Badge>
+                        )}
                         {cell.has_parsing && (
                           <Badge color="blue" variant="light">
                             parsing
@@ -777,12 +785,18 @@ export function LibraryPage() {
                             changed
                           </Badge>
                         )}
+                        {cell.has_changing && (
+                          <Badge color="yellow" variant="light">
+                            source changing
+                          </Badge>
+                        )}
                         {cell.has_offline && (
                           <Badge color="red" variant="light">
                             offline
                           </Badge>
                         )}
                         {!cell.has_changed &&
+                          !cell.has_changing &&
                           !cell.has_offline &&
                           !cell.has_parsing &&
                           !cell.has_summary_pending &&
@@ -844,6 +858,7 @@ export function LibraryPage() {
                       <Text size="xs" c="dimmed">
                         {totals.cells} cell{totals.cells === 1 ? "" : "s"} - {totals.active} active -{" "}
                         {totals.complete} complete - {totals.parsing} parsing - {totals.needUpdate} need update
+                        {totals.changing ? ` - ${totals.changing} changing` : ""}
                         {totals.offline ? ` - ${totals.offline} offline` : ""}
                       </Text>
                       {selectedCellIds.size > 0 && (
@@ -1133,9 +1148,19 @@ export function LibraryPage() {
                     cycling complete
                   </Badge>
                 )}
+                {detail.data.cycling_status !== "complete" && (
+                  <Badge color="teal" variant="outline">
+                    cycling active
+                  </Badge>
+                )}
                 {detail.data.has_changed && (
                   <Badge color="orange" variant="light">
                     source changed
+                  </Badge>
+                )}
+                {detail.data.has_changing && (
+                  <Badge color="yellow" variant="light">
+                    source changing
                   </Badge>
                 )}
                 {detail.data.has_offline && (

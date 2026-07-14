@@ -63,6 +63,18 @@ def ensure_runtime_schema() -> None:
                 "ADD COLUMN capacity_summary_status VARCHAR(20) "
                 "NOT NULL DEFAULT 'pending'"
             )
+        if source_columns and "observed_size" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files ADD COLUMN observed_size INTEGER"
+            )
+        if source_columns and "observed_mtime_ns" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files ADD COLUMN observed_mtime_ns INTEGER"
+            )
+        if source_columns and "last_source_check_at" not in source_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE source_files ADD COLUMN last_source_check_at DATETIME"
+            )
         activity_columns = {
             row[1]
             for row in conn.exec_driver_sql("PRAGMA table_info(activity_events)").fetchall()

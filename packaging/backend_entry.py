@@ -22,7 +22,7 @@ def _crash_log_path() -> Path:
     if data_override:
         base = Path(data_override)
     else:
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Cellxplorer"
+        base = Path.home() / ".cellxplorer"
     return base / "logs" / "backend-crash.log"
 
 

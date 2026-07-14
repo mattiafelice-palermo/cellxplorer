@@ -22,8 +22,10 @@ import { IconActivity, IconBug, IconChartLine, IconDatabase, IconFolder, IconLoa
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { get, type BackgroundJob, type SourceCheckJob } from "./api";
+import { get, post, type BackgroundJob, type SourceCheckJob } from "./api";
+import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { addDebugEvent, getDebugEvents } from "./debug";
+import { isTauriApp } from "./downloads";
 import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
 import { AnalysisPage } from "./pages/AnalysisPage";
 import { InboxPage } from "./pages/InboxPage";
@@ -68,6 +70,7 @@ export default function App() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const handledSourceCheckJob = useRef<number | null>(null);
+  const handledSourceChangingState = useRef("");
   const [uiZoom, setUiZoom] = useState(() => {
     const stored = Number(window.localStorage.getItem("cellxplorer-ui-zoom"));
     return Number.isFinite(stored) && stored >= 0.7 && stored <= 1.6 ? stored : 1;
@@ -106,11 +109,50 @@ export default function App() {
       window.removeEventListener("wheel", onWheel, { capture: true });
     };
   }, []);
+  useEffect(() => {
+    if (!isTauriApp()) return;
+    let disposed = false;
+    const cleanups: (() => void)[] = [];
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const unlistenCheck = await listen("tray-check-update", async () => {
+        try {
+          const job = await post<SourceCheckJob>("/api/cells/check-update-sources/jobs");
+          queryClient.setQueryData(["source-check-job"], job);
+          queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+        } catch (error) {
+          notifications.show({
+            message: error instanceof Error ? error.message : "Could not start source maintenance.",
+            color: "red",
+          });
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("set_tray_status", { message: null });
+        }
+      });
+      const unlistenQuit = await listen("tray-quit-requested", async () => {
+        try {
+          await post("/api/session/finish");
+        } finally {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("quit_app");
+        }
+      });
+      if (disposed) {
+        unlistenCheck();
+        unlistenQuit();
+      } else {
+        cleanups.push(unlistenCheck, unlistenQuit);
+      }
+    });
+    return () => {
+      disposed = true;
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [queryClient]);
   const backgroundJobs = useQuery({
     queryKey: ["background-jobs"],
     queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
     refetchInterval: (query) =>
-      query.state.data?.some((job) => job.status === "running") ? 700 : 1200,
+      query.state.data?.some((job) => job.status === "running") ? 700 : 5000,
   });
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
@@ -119,7 +161,17 @@ export default function App() {
   });
   useEffect(() => {
     const job = sourceCheckJob.data;
-    if (!job || job.status === "running" || handledSourceCheckJob.current === job.id) return;
+    if (!job) return;
+    if (job.status === "running") {
+      const state = `${job.id}:${job.deferred ?? 0}`;
+      if (handledSourceChangingState.current !== state) {
+        handledSourceChangingState.current = state;
+        queryClient.invalidateQueries({ queryKey: ["cells"] });
+        queryClient.invalidateQueries({ queryKey: ["cell"] });
+      }
+      return;
+    }
+    if (handledSourceCheckJob.current === job.id) return;
     handledSourceCheckJob.current = job.id;
     queryClient.invalidateQueries({ queryKey: ["cells"] });
     queryClient.invalidateQueries({ queryKey: ["cell"] });
@@ -129,9 +181,15 @@ export default function App() {
     if (job.status === "failed") {
       notifications.show({ message: job.error || "Source check failed.", color: "red" });
     } else {
+      const updateWarnings = Boolean(job.offline || job.errors || job.deferred || job.update_errors?.length);
+      const deferredSuffix = job.deferred ? ` ${job.deferred} deferred because the source was still changing.` : "";
       notifications.show({
-        message: `Checked ${job.completed} source file${job.completed === 1 ? "" : "s"} (${job.changed} changed, ${job.offline} offline).`,
-        color: job.changed || job.offline || job.errors ? "orange" : "teal",
+        message: job.update_after_check
+          ? `Checked ${job.completed} sources and updated ${job.updated ?? 0} changed file${job.updated === 1 ? "" : "s"}.${deferredSuffix}`
+          : `Checked ${job.completed} source file${job.completed === 1 ? "" : "s"} (${job.changed} changed, ${job.offline} offline).${deferredSuffix}`,
+        color: job.update_after_check
+          ? (updateWarnings ? "orange" : "teal")
+          : (job.changed || job.offline || job.errors ? "orange" : "teal"),
       });
       if (job.skipped_complete) {
         notifications.show({
@@ -139,6 +197,11 @@ export default function App() {
           color: "gray",
         });
       }
+    }
+    if (isTauriApp()) {
+      void import("@tauri-apps/api/core").then(({ invoke }) =>
+        invoke("set_tray_status", { message: null }),
+      );
     }
   }, [queryClient, sourceCheckJob.data]);
   const guardedNavigate = (path: string) => {
@@ -280,28 +343,24 @@ export default function App() {
               <Route path="/analyses" element={<AnalysesIndexPage />} />
               <Route path="/analyses/:analysisId" element={<AnalysisPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/settings/monitoring" element={<SettingsPage />} />
+              <Route path="/settings/desktop" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />
             </Routes>
           </RouteErrorBoundary>
         </div>
       </AppShell.Main>
 
-      <Modal opened={debugOpen} onClose={() => setDebugOpen(false)} title="Debug info" size="xl">
-        <ScrollArea h={520} type="auto">
-          <Code block>
-            {JSON.stringify(
-              {
-                route: location.pathname,
-                href: window.location.href,
-                userAgent: navigator.userAgent,
-                events: getDebugEvents(),
-              },
-              null,
-              2
-            )}
-          </Code>
-        </ScrollArea>
-      </Modal>
+      <DiagnosticsModal
+        opened={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        debugContext={{
+          route: location.pathname,
+          href: window.location.href,
+          userAgent: navigator.userAgent,
+          events: getDebugEvents(),
+        }}
+      />
       <Modal
         opened={activityOpen}
         onClose={() => setActivityOpen(false)}

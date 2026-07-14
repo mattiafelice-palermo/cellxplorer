@@ -6,7 +6,7 @@ import re
 import threading
 import uuid
 from concurrent.futures import ProcessPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -721,13 +721,17 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             raise HTTPException(409, f"{draft.filename} is already registered")
 
         meta = parsing.read_header_metadata(source_path)
+        source_stat = source_path.stat()
         if existing is None:
             sf = SourceFile(
                 hash=file_hash,
                 path=str(source_path),
                 filename=draft.filename,
-                size=source_path.stat().st_size,
+                size=source_stat.st_size,
                 ext=Path(draft.filename).suffix.lower().lstrip("."),
+                observed_size=source_stat.st_size,
+                observed_mtime_ns=source_stat.st_mtime_ns,
+                last_source_check_at=datetime.now(timezone.utc),
                 nda_version=meta.get("nda_version"),
                 device_info=meta.get("device_info"),
                 channel=meta.get("channel"),
@@ -746,8 +750,11 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             sf = existing
             sf.path = str(source_path)
             sf.filename = draft.filename
-            sf.size = source_path.stat().st_size
+            sf.size = source_stat.st_size
             sf.ext = Path(draft.filename).suffix.lower().lstrip(".")
+            sf.observed_size = source_stat.st_size
+            sf.observed_mtime_ns = source_stat.st_mtime_ns
+            sf.last_source_check_at = datetime.now(timezone.utc)
             sf.nda_version = meta.get("nda_version")
             sf.device_info = meta.get("device_info")
             sf.channel = meta.get("channel")

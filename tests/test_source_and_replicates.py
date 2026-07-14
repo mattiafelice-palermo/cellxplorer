@@ -472,7 +472,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             def start(self):
                 pass
 
-        original_thread = library.threading.Thread
+        original_thread = library._JobThread
         live_jobs = []
         try:
             background_jobs.clear_jobs()
@@ -480,11 +480,16 @@ class SourceAndReplicateTests(unittest.TestCase):
                 library._source_check_jobs.clear()
                 library._latest_source_check_job_id = None
                 library._next_source_check_job_id = 1
-            library.threading.Thread = DeferredThread
+            library._JobThread = DeferredThread
             job = library.start_source_check_job(db, cell_ids=[cell.id])
+            upgraded = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                update_after_check=True,
+            )
             live_jobs = background_jobs.list_jobs()
         finally:
-            library.threading.Thread = original_thread
+            library._JobThread = original_thread
             with library._source_check_job_lock:
                 library._source_check_jobs.clear()
                 library._latest_source_check_job_id = None
@@ -496,8 +501,98 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(job["requested_cell_ids"], [cell.id])
         self.assertEqual(job["files"][0]["filename"], "active.ndax")
         self.assertEqual(job["files"][0]["status"], "queued")
-        self.assertEqual(live_jobs[0]["kind"], "source_check")
+        self.assertEqual(upgraded["id"], job["id"])
+        self.assertTrue(upgraded["update_after_check"])
+        self.assertEqual(live_jobs[0]["kind"], "source_check_update")
+        self.assertEqual(live_jobs[0]["title"], "Checking and updating sources")
         self.assertEqual(live_jobs[0]["items"][0]["label"], "active.ndax")
+
+    def test_combined_source_job_adopts_changed_file_and_marks_it_ready(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "active.ndax"
+            path.write_bytes(b"new bytes")
+            cell = Cell(name="Active", cycling_status="active")
+            source = SourceFile(
+                hash="old-hash",
+                path=str(path),
+                filename=path.name,
+                size=3,
+                ext="ndax",
+                location_status="online",
+                parse_status="parsed",
+            )
+            db.add_all([cell, source])
+            db.flush()
+            test = Test(cell_id=cell.id, name="Imported file")
+            db.add(test)
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+            db.commit()
+
+            class ImmediateThread:
+                def __init__(self, *, target, args=(), kwargs=None, **_):
+                    self.target = target
+                    self.args = args
+                    self.kwargs = kwargs or {}
+
+                def start(self):
+                    self.target(*self.args, **self.kwargs)
+
+            factory = sessionmaker(
+                bind=db.get_bind(),
+                autoflush=False,
+                expire_on_commit=False,
+            )
+            original_thread = library._JobThread
+            original_session_local = library.SessionLocal
+            original_hash = library.parsing.compute_hash
+            original_update = library.scanner.update_source_from_path
+
+            def adopt_source(update_db, update_source):
+                update_source.hash = "new-hash"
+                update_source.location_status = "online"
+                update_source.parse_status = "parsed"
+                update_db.commit()
+                return update_source
+
+            try:
+                background_jobs.clear_jobs()
+                with library._source_check_job_lock:
+                    library._source_check_jobs.clear()
+                    library._latest_source_check_job_id = None
+                    library._next_source_check_job_id = 1
+                library._JobThread = ImmediateThread
+                library.SessionLocal = factory
+                library.parsing.compute_hash = lambda _: "new-hash"
+                library.scanner.update_source_from_path = adopt_source
+                job = library.start_source_check_job(db, update_after_check=True)
+            finally:
+                library._JobThread = original_thread
+                library.SessionLocal = original_session_local
+                library.parsing.compute_hash = original_hash
+                library.scanner.update_source_from_path = original_update
+
+            try:
+                self.assertEqual(job["status"], "completed")
+                self.assertEqual(job["phase"], "completed")
+                self.assertEqual(job["changed"], 1)
+                self.assertEqual(job["updated"], 1)
+                self.assertEqual(job["ready_cell_ids"], [cell.id])
+                self.assertEqual(job["files"][0]["status"], "ready")
+                db.expire_all()
+                self.assertEqual(db.get(SourceFile, source.id).location_status, "online")
+                event = (
+                    db.query(ActivityEvent)
+                    .filter(ActivityEvent.action == "check_update_sources")
+                    .one()
+                )
+                self.assertEqual(event.details["updated"], 1)
+            finally:
+                with library._source_check_job_lock:
+                    library._source_check_jobs.clear()
+                    library._latest_source_check_job_id = None
+                background_jobs.clear_jobs()
 
     def test_update_changed_sources_returns_cells_that_are_ready(self):
         db = self.make_session()
