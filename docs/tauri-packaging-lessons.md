@@ -125,7 +125,13 @@ origin. Therefore relative frontend calls like `/api/cells` do not automatically
 The frontend API client must:
 
 - keep relative `/api/...` URLs for normal backend-served browser use and Vite dev proxy use;
-- use `http://127.0.0.1:8642/api/...` when running from the packaged Tauri origin.
+- ask the Tauri command `backend_api_base` for the sidecar address when running from the packaged
+  desktop origin.
+
+The desktop sidecar must not bind the fixed development port `8642`. A developer server, stale
+process, or another local program may already own it. Tauri selects a free loopback port at startup,
+passes it to the sidecar as `CELLXPLORER_PORT`, and exposes the matching base URL to the frontend.
+`packaging/backend_entry.py` keeps `8642` only as the browser-development fallback.
 
 The backend must allow local Tauri origins with CORS. `backend/app/main.py` includes
 `CORSMiddleware` with permissive local settings. The backend binds only to `127.0.0.1` and does
@@ -137,6 +143,9 @@ localhost ports. Production bundles should fall back to `http://127.0.0.1:8642/a
 
 If a packaged app launches but pages show generic "Could not load..." messages while
 `Invoke-RestMethod http://127.0.0.1:8642/api/...` works, suspect frontend origin/API routing first.
+Check `backend.log` for WinError 10048 as well; it means a fixed-port build could not start its own
+backend. Export code should fall back to the native Save As dialog if download preferences are
+temporarily unavailable, so a settings failure does not block the user's export.
 
 ## Windowless backend sidecar
 

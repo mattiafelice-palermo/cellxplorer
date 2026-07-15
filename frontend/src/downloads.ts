@@ -36,7 +36,14 @@ async function saveWithNativeDialog(blob: Blob, filename: string): Promise<Downl
 }
 
 export async function saveDownload(blob: Blob, filename: string): Promise<DownloadResult> {
-  const settings = await get<DownloadSettings>("/api/settings");
+  let settings: DownloadSettings;
+  try {
+    settings = await get<DownloadSettings>("/api/settings");
+  } catch {
+    if (isTauriApp()) return saveWithNativeDialog(blob, filename);
+    browserDownload(blob, filename);
+    return { cancelled: false, usedDefaultFolder: false };
+  }
   if (settings.download_mode === "folder") {
     const form = new FormData();
     form.append("file", blob, filename);

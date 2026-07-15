@@ -15,7 +15,7 @@ from .services import calc, parsing, scanner, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="CellXplorer", version="0.3.0")
+app = FastAPI(title="CellXplorer", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

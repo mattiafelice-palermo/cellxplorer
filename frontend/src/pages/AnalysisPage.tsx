@@ -339,8 +339,11 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   tick_marks: "none",
   tick_length: 5,
   tick_width: 1,
+  ce_custom_colors: {},
   ce_line_width: 1.5,
   ce_line_dash: "dot",
+  ce_marker_mode: "none",
+  ce_marker_size: 5,
   ce_opacity: 0.7,
   legend_position: "bottom",
   legend_mode: "outside",
@@ -525,6 +528,7 @@ function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
     ...DEFAULT_PLOT_STYLE,
     ...(style ?? {}),
     custom_colors: { ...(style?.custom_colors ?? {}) },
+    ce_custom_colors: { ...(style?.ce_custom_colors ?? {}) },
     x_axis: xAxis,
     y_axis: yAxis,
     y2_axis: y2Axis,
@@ -637,6 +641,12 @@ function hexToRgba(color: string, alpha: number): string {
 function plotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   if (style.marker_mode === "points") return "markers";
   if (style.marker_mode === "lines_points") return "lines+markers";
+  return "lines";
+}
+
+function cePlotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
+  if (style.ce_marker_mode === "points") return "markers";
+  if (style.ce_marker_mode === "lines_points") return "lines+markers";
   return "lines";
 }
 
@@ -1694,6 +1704,7 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
     if (!colorFor.has(key)) colorFor.set(key, style.custom_colors[key] ?? palette[ci++ % palette.length]);
     return colorFor.get(key)!;
   };
+  const pickCe = (key: string) => style.ce_custom_colors[key] ?? pick(key);
 
   for (const agg of result.aggregates) {
     const color = pick(`g${agg.group_id}`);
@@ -1725,14 +1736,16 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
         : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
     } as Plotly.Data);
     if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
+      const ceColor = pickCe(`g${agg.group_id}`);
       out.push({
         x: agg.x,
         y: agg.quantities["coulombic_efficiency_pct"].mean,
         name: `${agg.group_name} CE`,
         yaxis: "y2",
-        line: { color, width: style.ce_line_width, dash: style.ce_line_dash },
+        line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
+        marker: { color: ceColor, size: style.ce_marker_size },
         type: "scatter",
-        mode: "lines",
+        mode: cePlotMode(style),
         opacity: style.ce_opacity,
       } as Plotly.Data);
     }
@@ -1764,14 +1777,16 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
       showlegend: !compact && !grouped,
     } as Plotly.Data);
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
+      const ceColor = pickCe(`c${s.cell_id}`);
       out.push({
         x: s.x,
         y: s.quantities["coulombic_efficiency_pct"],
         name: `${s.label} CE`,
         yaxis: "y2",
-        line: { color, width: style.ce_line_width, dash: style.ce_line_dash },
+        line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
+        marker: { color: ceColor, size: style.ce_marker_size },
         type: "scatter",
-        mode: "lines",
+        mode: cePlotMode(style),
         opacity: style.ce_opacity,
       } as Plotly.Data);
     }
@@ -3220,7 +3235,7 @@ function PlotStylePanel({
           </ActionIcon>
         </Tooltip>
       </Group>
-      <Accordion multiple defaultValue={["colors", "axes"]}>
+      <Accordion multiple defaultValue={["colors", "axes", "ce-overlay"]}>
         <Accordion.Item value="colors">
           <Accordion.Control>
             <Text fw={700} size="sm">
@@ -3360,6 +3375,101 @@ function PlotStylePanel({
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
+
+        {ceOverlayActive && (
+          <Accordion.Item value="ce-overlay">
+            <Accordion.Control>
+              <Text fw={700} size="sm">
+                CE overlay
+              </Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap="xs">
+                <Text size="xs" c="dimmed">
+                  These settings apply only to coulombic-efficiency traces on the right axis.
+                </Text>
+                {colorTargets.length > 0 && (
+                  <Stack gap={6}>
+                    {colorTargets.map((target, index) => {
+                      const palette = PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+                      const mainColor =
+                        style.custom_colors[target.key] ?? palette[index % palette.length];
+                      return (
+                        <DebouncedColorInput
+                          key={`ce-${target.key}`}
+                          label={`${target.label} CE`}
+                          description={target.sub}
+                          value={style.ce_custom_colors[target.key] ?? mainColor}
+                          format="hex"
+                          onCommit={(value) =>
+                            setStyle((next) => {
+                              next.ce_custom_colors[target.key] = value;
+                            })
+                          }
+                          swatches={COLOR_SWATCHES}
+                          swatchesPerRow={8}
+                        />
+                      );
+                    })}
+                  </Stack>
+                )}
+                <Group grow>
+                  <DebouncedNumberInput
+                    label="Width"
+                    min={0.5}
+                    max={8}
+                    step={0.25}
+                    value={style.ce_line_width}
+                    onCommit={(value) => setStyle((next) => void (next.ce_line_width = value ?? 1.5))}
+                  />
+                  <Select
+                    label="Dash"
+                    data={[
+                      { value: "solid", label: "Solid" },
+                      { value: "dot", label: "Dot" },
+                      { value: "dash", label: "Dash" },
+                      { value: "longdash", label: "Long dash" },
+                    ]}
+                    value={style.ce_line_dash}
+                    onChange={(value) =>
+                      value && setStyle((next) => void (next.ce_line_dash = value as PlotStyle["ce_line_dash"]))
+                    }
+                  />
+                </Group>
+                <Group grow>
+                  <Select
+                    label="Markers"
+                    data={[
+                      { value: "none", label: "None" },
+                      { value: "points", label: "Points" },
+                      { value: "lines_points", label: "Lines + points" },
+                    ]}
+                    value={style.ce_marker_mode}
+                    onChange={(value) =>
+                      value &&
+                      setStyle((next) => void (next.ce_marker_mode = value as PlotStyle["ce_marker_mode"]))
+                    }
+                  />
+                  <DebouncedNumberInput
+                    label="Marker size"
+                    min={2}
+                    max={14}
+                    value={style.ce_marker_size}
+                    onCommit={(value) => setStyle((next) => void (next.ce_marker_size = value ?? 5))}
+                  />
+                </Group>
+                <DebouncedNumberInput
+                  label="Opacity"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={style.ce_opacity}
+                  onCommit={(value) => setStyle((next) => void (next.ce_opacity = value ?? 0.7))}
+                />
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
 
         <Accordion.Item value="axes">
           <Accordion.Control>
@@ -3503,43 +3613,6 @@ function PlotStylePanel({
                       setAxis("y2_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
                     }
                   />
-                  {ceOverlayActive && (
-                    <>
-                      <Divider label="CE line" labelPosition="left" />
-                      <Group grow>
-                        <DebouncedNumberInput
-                          label="CE width"
-                          min={0.5}
-                          max={8}
-                          step={0.25}
-                          value={style.ce_line_width}
-                          onCommit={(value) => setStyle((next) => void (next.ce_line_width = value ?? 1.5))}
-                        />
-                        <Select
-                          label="CE dash"
-                          data={[
-                            { value: "solid", label: "Solid" },
-                            { value: "dot", label: "Dot" },
-                            { value: "dash", label: "Dash" },
-                            { value: "longdash", label: "Long dash" },
-                          ]}
-                          value={style.ce_line_dash}
-                          onChange={(value) =>
-                            value &&
-                            setStyle((next) => void (next.ce_line_dash = value as PlotStyle["ce_line_dash"]))
-                          }
-                        />
-                      </Group>
-                      <DebouncedNumberInput
-                        label="CE opacity"
-                        min={0.05}
-                        max={1}
-                        step={0.05}
-                        value={style.ce_opacity}
-                        onCommit={(value) => setStyle((next) => void (next.ce_opacity = value ?? 0.7))}
-                      />
-                    </>
-                  )}
                 </>
               )}
             </Stack>

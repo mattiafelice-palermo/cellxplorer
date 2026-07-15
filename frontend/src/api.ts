@@ -27,7 +27,13 @@ function errorMessage(detail: unknown, fallback: string): string {
   return fallback;
 }
 
-function apiUrl(url: string): string {
+let desktopApiBase: Promise<string> | null = null;
+
+function isTauriRuntime(): boolean {
+  return "__TAURI_INTERNALS__" in window;
+}
+
+async function apiUrl(url: string): Promise<string> {
   if (/^https?:\/\//i.test(url)) return url;
   const host = window.location.hostname;
   const isLocalhost = host === "127.0.0.1" || host === "localhost";
@@ -39,11 +45,22 @@ function apiUrl(url: string): string {
   const servedByVite =
     isViteDev && isLocalhost && window.location.port !== "8642";
   if (servedByBackend || servedByVite) return url;
+
+  if (isTauriRuntime()) {
+    desktopApiBase ??= import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string>("backend_api_base"))
+      .then((value) => value.replace(/\/$/, ""))
+      .catch((error) => {
+        desktopApiBase = null;
+        throw error;
+      });
+    return `${await desktopApiBase}${url}`;
+  }
   return `http://127.0.0.1:8642${url}`;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const targetUrl = apiUrl(url);
+  const targetUrl = await apiUrl(url);
   const isFormData = options?.body instanceof FormData;
   const method = options?.method ?? "GET";
   addDebugEvent("api:request", {
@@ -500,8 +517,11 @@ export interface PlotStyle {
   tick_length: number;
   tick_width: number;
   /** CE overlay trace styling (cycles tab right axis). */
+  ce_custom_colors: Record<string, string>;
   ce_line_width: number;
   ce_line_dash: "solid" | "dot" | "dash" | "longdash";
+  ce_marker_mode: "none" | "points" | "lines_points";
+  ce_marker_size: number;
   ce_opacity: number;
   /** Legacy single-field position; superseded by legend_mode/side/custom. */
   legend_position: "bottom" | "right" | "top" | "inside";

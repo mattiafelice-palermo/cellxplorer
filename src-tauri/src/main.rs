@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -18,6 +19,8 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 struct BackendChild(Mutex<Option<CommandChild>>);
+
+struct BackendEndpoint(String);
 
 struct LifecycleState {
     quitting: AtomicBool,
@@ -195,6 +198,18 @@ fn startup_mode() -> String {
     }
 }
 
+fn available_backend_port() -> std::io::Result<u16> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+#[tauri::command]
+fn backend_api_base(endpoint: tauri::State<'_, BackendEndpoint>) -> String {
+    endpoint.0.clone()
+}
+
 #[cfg(target_os = "windows")]
 fn autostart_status() -> Result<bool, String> {
     use std::os::windows::process::CommandExt;
@@ -322,6 +337,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
+            backend_api_base,
             is_autostart_enabled,
             open_app_folder,
             quit_app,
@@ -330,10 +346,13 @@ fn main() {
             startup_mode
         ])
         .setup(move |app| {
+            let backend_port = available_backend_port()?;
+            app.manage(BackendEndpoint(format!("http://127.0.0.1:{backend_port}")));
             let version = app.package_info().version.to_string();
             let sidecar = app
                 .shell()
                 .sidecar("cellxplorer-backend")?
+                .env("CELLXPLORER_PORT", backend_port.to_string())
                 .env("CELLXPLORER_STARTUP_MODE", startup_label)
                 .env("CELLXPLORER_APP_VERSION", version);
             let (_rx, child) = sidecar.spawn()?;

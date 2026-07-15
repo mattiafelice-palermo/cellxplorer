@@ -48,6 +48,14 @@ def _configure_logging() -> None:
         logging.basicConfig(level=logging.CRITICAL)
 
 
+def _backend_port() -> int:
+    try:
+        port = int(os.environ.get("CELLXPLORER_PORT", "8642"))
+    except ValueError:
+        return 8642
+    return port if 1 <= port <= 65535 else 8642
+
+
 def main() -> int:
     multiprocessing.freeze_support()
     try:
@@ -61,7 +69,7 @@ def main() -> int:
         uvicorn.run(
             app,
             host="127.0.0.1",
-            port=8642,
+            port=_backend_port(),
             log_level="info",
             log_config=None,
             access_log=False,
