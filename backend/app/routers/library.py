@@ -178,6 +178,86 @@ def cell_capacity_totals(cell: Cell) -> dict:
     }
 
 
+SCIENTIFIC_OVERRIDE_KEYS = {
+    "active_mass_mg": "override.active_mass_mg",
+    "nominal_capacity_mah": "override.nominal_capacity_mah",
+    "electrode_area_cm2": "override.electrode_area_cm2",
+}
+
+
+def _positive_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def cell_scientific_metadata(cell: Cell) -> dict:
+    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    source_mass = next(
+        (
+            value
+            for test in cell.tests
+            for link in test.file_links
+            if (value := _positive_float(link.file.active_mass_mg)) is not None
+        ),
+        None,
+    )
+    source_nominal = next(
+        (
+            value
+            for test in cell.tests
+            for link in test.file_links
+            if (value := _positive_float(link.file.nominal_capacity_mah)) is not None
+        ),
+        None,
+    )
+    values = {
+        "active_mass_mg": {
+            "source_value": source_mass,
+            "override_value": _positive_float(metadata.get("override.active_mass_mg")),
+            "legacy_value": _positive_float(
+                metadata.get("active_material_mg") or metadata.get("active_mass_mg")
+            ),
+        },
+        "nominal_capacity_mah": {
+            "source_value": source_nominal,
+            "override_value": _positive_float(metadata.get("override.nominal_capacity_mah")),
+            "legacy_value": _positive_float(
+                metadata.get("nominal_capacity_mah") or metadata.get("nominal_capacity")
+            ),
+        },
+        "electrode_area_cm2": {
+            "source_value": None,
+            "override_value": _positive_float(metadata.get("override.electrode_area_cm2")),
+            "legacy_value": _positive_float(metadata.get("electrode_area_cm2")),
+        },
+    }
+    for value in values.values():
+        value["effective_value"] = (
+            value["override_value"] or value["legacy_value"] or value["source_value"]
+        )
+    return values
+
+
+def cell_scientific_presets(cell: Cell) -> dict:
+    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    return {
+        "active_material": {
+            "preset_id": metadata.get("override.active_material_preset_id"),
+            "name": metadata.get("override.active_material_name"),
+            "specific_capacity_mah_g": _positive_float(
+                metadata.get("override.active_material_specific_capacity_mah_g")
+            ),
+        },
+        "electrode_area_preset_id": metadata.get("override.electrode_area_preset_id"),
+        "electrode_area_preset_name": metadata.get("override.electrode_area_preset_name"),
+    }
+
+
 def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> dict:
     if tag_names is None:
         tags = (
@@ -207,6 +287,8 @@ def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> di
         "cycling_status": cell.cycling_status,
         "tags": sorted(tag_names),
         "metadata": meta,
+        "scientific_metadata": cell_scientific_metadata(cell),
+        "scientific_presets": cell_scientific_presets(cell),
         "n_tests": len(cell.tests),
         "n_files": n_files,
         "total_cycles": cycles,
@@ -310,11 +392,34 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
     return d
 
 
+def _observed_steps_for_source(source_file: SourceFile) -> list[dict]:
+    parser_version = source_file.parser_version or parsing.PARSER_VERSION
+    raw = cache.load_raw_columns(
+        source_file.hash,
+        parser_version,
+        ["cycle", "step", "step_index"],
+    )
+    if raw is None:
+        raw = cache.load_raw_columns(
+            source_file.hash,
+            parser_version,
+            ["cycle", "step_index"],
+        )
+    return protocol.observed_step_coverage(raw)
+
+
 @router.get("/cells/{cell_id}/protocol")
-def get_cell_protocol(cell_id: int, db: Session = Depends(get_db)):
+def get_cell_protocol(
+    cell_id: int,
+    db: Session = Depends(get_db),
+    include_observed: bool = False,
+):
     cell = db.get(Cell, cell_id)
     if cell is None:
         raise HTTPException(404, "No such cell")
+    effective_nominal_capacity = cell_scientific_metadata(cell)["nominal_capacity_mah"][
+        "effective_value"
+    ]
     return {
         "cell_id": cell.id,
         "cell_name": cell.name,
@@ -327,9 +432,13 @@ def get_cell_protocol(cell_id: int, db: Session = Depends(get_db)):
                         "id": link.file.id,
                         "filename": link.file.filename,
                         "path": link.file.path,
+                        "hash": link.file.hash,
+                        "observed_steps": (
+                            _observed_steps_for_source(link.file) if include_observed else []
+                        ),
                         "protocol": protocol.reconstruct_protocol(
                             link.file.header_meta,
-                            link.file.nominal_capacity_mah,
+                            effective_nominal_capacity,
                         ),
                     }
                     for link in sorted(test.file_links, key=lambda item: item.position)
@@ -344,6 +453,68 @@ class CellUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     archived: bool | None = None
+    active_mass_mg_override: float | None = None
+    nominal_capacity_mah_override: float | None = None
+    electrode_area_cm2_override: float | None = None
+    active_material_preset_id: str | None = None
+    active_material_name: str | None = None
+    active_material_specific_capacity_mah_g: float | None = None
+    electrode_area_preset_id: str | None = None
+    electrode_area_preset_name: str | None = None
+
+
+def _set_cell_metadata_value(
+    db: Session,
+    cell_id: int,
+    key: str,
+    value: float | None,
+) -> bool:
+    row = (
+        db.query(CellMetadata)
+        .filter(CellMetadata.cell_id == cell_id, CellMetadata.key == key)
+        .first()
+    )
+    if value is None:
+        if row is None:
+            return False
+        db.delete(row)
+        return True
+    if value <= 0:
+        raise HTTPException(422, f"{key} must be positive")
+    text = str(float(value))
+    if row is not None:
+        if row.value == text:
+            return False
+        row.value = text
+    else:
+        db.add(CellMetadata(cell_id=cell_id, key=key, value=text))
+    return True
+
+
+def _set_cell_text_metadata_value(
+    db: Session,
+    cell_id: int,
+    key: str,
+    value: str | None,
+) -> bool:
+    row = (
+        db.query(CellMetadata)
+        .filter(CellMetadata.cell_id == cell_id, CellMetadata.key == key)
+        .first()
+    )
+    text = (value or "").strip()
+    if not text:
+        if row is None:
+            return False
+        db.delete(row)
+        return True
+    if row is not None:
+        if row.value == text:
+            return False
+        row.value = text
+    else:
+        db.add(CellMetadata(cell_id=cell_id, key=key, value=text))
+    return True
 
 
 @router.patch("/cells/{cell_id}")
@@ -376,6 +547,37 @@ def update_cell(cell_id: int, req: CellUpdate, db: Session = Depends(get_db)):
         if req.archived != cell.archived:
             cell.archived = req.archived  # soft delete only — analyses keep working
             changed_fields.append("archived")
+    override_fields = {
+        "active_mass_mg_override": "active_mass_mg",
+        "nominal_capacity_mah_override": "nominal_capacity_mah",
+        "electrode_area_cm2_override": "electrode_area_cm2",
+        "active_material_specific_capacity_mah_g": "active_material_specific_capacity_mah_g",
+    }
+    for request_field, scientific_field in override_fields.items():
+        if request_field not in req.model_fields_set:
+            continue
+        key = SCIENTIFIC_OVERRIDE_KEYS.get(
+            scientific_field,
+            f"override.{scientific_field}",
+        )
+        if _set_cell_metadata_value(
+            db,
+            cell.id,
+            key,
+            getattr(req, request_field),
+        ):
+            changed_fields.append(scientific_field)
+    text_override_fields = {
+        "active_material_preset_id": "override.active_material_preset_id",
+        "active_material_name": "override.active_material_name",
+        "electrode_area_preset_id": "override.electrode_area_preset_id",
+        "electrode_area_preset_name": "override.electrode_area_preset_name",
+    }
+    for request_field, key in text_override_fields.items():
+        if request_field not in req.model_fields_set:
+            continue
+        if _set_cell_text_metadata_value(db, cell.id, key, getattr(req, request_field)):
+            changed_fields.append(request_field)
     if changed_fields:
         record_activity(
             db,
@@ -391,6 +593,15 @@ def update_cell(cell_id: int, req: CellUpdate, db: Session = Depends(get_db)):
             },
         )
     db.commit()
+    if any(
+        field in changed_fields
+        for field in [
+            *SCIENTIFIC_OVERRIDE_KEYS,
+            "active_material_specific_capacity_mah_g",
+            *text_override_fields,
+        ]
+    ):
+        db.expire(cell, ["metadata_entries"])
     return cell_dict(db, cell)
 
 

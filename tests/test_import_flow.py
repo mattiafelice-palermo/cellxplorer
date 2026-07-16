@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, SourceFile, Test, TestFile
+from app.models import Cell, CellMetadata, SourceFile, Test, TestFile
 from app.routers import files
 from app.routers import library
 from app.services import parsing
@@ -34,6 +35,75 @@ class ImportFlowTests(unittest.TestCase):
         self.assertTrue(files.import_filename_allowed("cycling.NDA"))
         self.assertFalse(files.import_filename_allowed("notes.csv"))
         self.assertFalse(files.import_filename_allowed(""))
+
+    def test_folder_listing_is_recursive_and_filters_non_neware_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "batch" / "nested"
+            nested.mkdir(parents=True)
+            (root / "root.nda").write_bytes(b"root")
+            (nested / "cell.ndax").write_bytes(b"nested")
+            (nested / "notes.csv").write_text("ignore", encoding="ascii")
+
+            result = files.list_import_folder_files(root)
+
+        self.assertEqual(
+            [item["relative_path"] for item in result["files"]],
+            ["root.nda", "batch/nested/cell.ndax"],
+        )
+
+    def test_source_listing_combines_multiple_folders_and_loose_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            loose = root / "loose.nda"
+            loose.write_bytes(b"loose")
+            (first / "one.ndax").write_bytes(b"one")
+            (second / "two.nda").write_bytes(b"two")
+
+            result = files.list_import_sources(
+                [str(loose)],
+                [str(first), str(second)],
+            )
+
+        self.assertEqual(
+            [item["relative_path"] for item in result["files"]],
+            ["Loose files/loose.nda", "first/one.ndax", "second/two.nda"],
+        )
+
+    def test_import_directory_browser_lists_folders_and_neware_files_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "nested").mkdir()
+            (root / "cell.ndax").write_bytes(b"cell")
+            (root / "older.nda").write_bytes(b"older")
+            (root / "notes.csv").write_text("ignore", encoding="ascii")
+
+            result = files.browse_import_directory(str(root))
+
+        self.assertEqual(result["current_path"], str(root.resolve()))
+        self.assertEqual(
+            [(entry["name"], entry["kind"]) for entry in result["entries"]],
+            [("nested", "folder"), ("cell.ndax", "file"), ("older.nda", "file")],
+        )
+        self.assertEqual(result["parent_path"], str(root.resolve().parent))
+
+    def test_quick_access_pins_and_recent_folders_are_persistent(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp).resolve()
+            files.remember_import_folder(db, folder)
+            files.update_import_pinned_folders(
+                files.ImportPinnedFoldersRequest(paths=[str(folder)]),
+                db=db,
+            )
+            items = files.import_quick_access(db)
+
+        match = next(item for item in items if item["path"] == str(folder))
+        self.assertTrue(match["pinned"])
 
     def test_staged_path_rejects_directory_escape(self):
         with self.assertRaises(ValueError):
@@ -363,6 +433,14 @@ class ImportFlowTests(unittest.TestCase):
                             filename=path.name,
                             cell_name="Async import cell",
                             test_name="Imported file",
+                            active_mass_mg_override=25,
+                            nominal_capacity_mah_override=4.25,
+                            electrode_area_cm2_override=1.539,
+                            active_material_preset_id="lfp-reference",
+                            active_material_name="LFP",
+                            active_material_specific_capacity_mah_g=170,
+                            electrode_area_preset_id="coin-14mm",
+                            electrode_area_preset_name="14 mm circular electrode",
                         )
                     ]
                 ),
@@ -377,6 +455,21 @@ class ImportFlowTests(unittest.TestCase):
         source_file = db.query(SourceFile).filter(SourceFile.filename == path.name).one()
         self.assertEqual(source_file.parse_status, "parsing")
         self.assertEqual(started[0][0], {"large.ndax": source_file.id})
+        metadata = {
+            row.key: row.value
+            for row in db.query(CellMetadata)
+            .filter(CellMetadata.cell_id == result["created"][0]["cell_id"])
+            .all()
+        }
+        self.assertEqual(metadata["override.active_material_name"], "LFP")
+        self.assertEqual(
+            metadata["override.active_material_specific_capacity_mah_g"],
+            "170.0",
+        )
+        self.assertEqual(
+            metadata["override.electrode_area_preset_name"],
+            "14 mm circular electrode",
+        )
 
     def test_ensure_cell_caches_does_not_parse_files_already_parsing(self):
         db = self.make_session()

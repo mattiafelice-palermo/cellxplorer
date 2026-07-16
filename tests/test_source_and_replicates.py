@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import pandas as pd
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -132,6 +133,41 @@ class SourceAndReplicateTests(unittest.TestCase):
 
         self.assertEqual([row["id"] for row in by_description], [group.id])
         self.assertEqual([row["id"] for row in by_member], [group.id])
+
+    def test_replicate_edit_allows_one_cell_but_rejects_empty_group(self):
+        db = self.make_session()
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        group = ReplicateGroup(name="Replicate")
+        db.add_all([cell_a, cell_b, group])
+        db.flush()
+        db.add_all(
+            [
+                ReplicateGroupCell(group_id=group.id, cell_id=cell_a.id, position=0),
+                ReplicateGroupCell(group_id=group.id, cell_id=cell_b.id, position=1),
+            ]
+        )
+        db.commit()
+
+        updated = replicates.update_replicate_group(
+            group.id,
+            replicates.ReplicateGroupUpdate(
+                name="Edited replicate",
+                description="One member remains",
+                cell_ids=[cell_b.id],
+            ),
+            db=db,
+        )
+
+        self.assertEqual(updated["name"], "Edited replicate")
+        self.assertEqual(updated["cell_ids"], [cell_b.id])
+        with self.assertRaises(HTTPException) as empty:
+            replicates.update_replicate_group(
+                group.id,
+                replicates.ReplicateGroupUpdate(cell_ids=[]),
+                db=db,
+            )
+        self.assertEqual(empty.exception.status_code, 400)
 
     def test_delete_cell_removes_folder_refs_but_keeps_nonempty_replicates(self):
         db = self.make_session()

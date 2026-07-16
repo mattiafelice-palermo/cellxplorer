@@ -358,7 +358,29 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         .map(([key, value]) => [`${test.name} / file ${index + 1} / ${key}`, String(value)] as const)
     )
   );
-  const rows = [...Object.entries(cell.metadata), ...sourceMetadata];
+  const scientificRows = [
+    ["Active material preset", cell.scientific_presets.active_material.name, ""],
+    [
+      "Active material specific capacity",
+      cell.scientific_presets.active_material.specific_capacity_mah_g,
+      "mAh/g",
+    ],
+    ["Active material mass / source", cell.scientific_metadata.active_mass_mg.source_value, "mg"],
+    ["Active material mass / override", cell.scientific_metadata.active_mass_mg.override_value, "mg"],
+    ["Active material mass / effective", cell.scientific_metadata.active_mass_mg.effective_value, "mg"],
+    ["Nominal capacity / source", cell.scientific_metadata.nominal_capacity_mah.source_value, "mAh"],
+    ["Nominal capacity / override", cell.scientific_metadata.nominal_capacity_mah.override_value, "mAh"],
+    ["Nominal capacity / effective", cell.scientific_metadata.nominal_capacity_mah.effective_value, "mAh"],
+    ["Electrode area / override", cell.scientific_metadata.electrode_area_cm2.override_value, "cm²"],
+    ["Electrode area / effective", cell.scientific_metadata.electrode_area_cm2.effective_value, "cm²"],
+    ["Electrode area preset", cell.scientific_presets.electrode_area_preset_name, ""],
+  ]
+    .filter(([, value]) => value !== null)
+    .map(([label, value, unit]) => [label, `${value}${unit ? ` ${unit}` : ""}`] as const);
+  const cellMetadata = Object.entries(cell.metadata).filter(
+    ([key]) => !key.startsWith("override.")
+  );
+  const rows = [...scientificRows, ...cellMetadata, ...sourceMetadata];
   if (!rows.length) return <Alert color="gray">No metadata stored.</Alert>;
   return (
     <ScrollArea h={520} type="auto">
@@ -366,8 +388,8 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         <Table.Tbody>
           {rows.map(([key, value], index) => (
             <Table.Tr key={`${key}-${index}`}>
-              <Table.Td w="38%"><Text size="xs" c="dimmed">{displayMetadataKey(key)}</Text></Table.Td>
-              <Table.Td><Text size="xs">{value}</Text></Table.Td>
+              <Table.Td w="38%"><Text size="xs" c="dimmed">{displayMetadataKey(String(key))}</Text></Table.Td>
+              <Table.Td><Text size="xs">{String(value)}</Text></Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>

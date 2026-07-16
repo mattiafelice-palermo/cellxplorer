@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import uuid
 from pathlib import Path
 from shutil import copyfileobj
 from typing import Literal
@@ -18,11 +20,17 @@ router = APIRouter(prefix="/api", tags=["settings"])
 DOWNLOAD_MODE_KEY = "download_mode"
 DOWNLOAD_FOLDER_KEY = "download_folder"
 VALID_DOWNLOAD_MODES = {"ask", "folder"}
+AREA_PRESETS_KEY = "electrode_area_presets"
+MATERIAL_PRESETS_KEY = "active_material_presets"
+PLOT_STYLE_PRESETS_KEY = "plot_style_presets"
+COLOR_PALETTES_KEY = "color_palettes"
+EXPORT_FILENAME_TEMPLATE_KEY = "export_filename_template"
 
 
 class DownloadSettings(BaseModel):
     download_mode: str = "ask"
     download_folder: str | None = None
+    export_filename_template: str = "{analysis} - {plot_title}"
 
 
 class SourceMonitoringSettings(BaseModel):
@@ -44,6 +52,86 @@ class SourceMonitoringSettings(BaseModel):
     last_status: str | None = None
 
 
+class ElectrodeAreaPreset(BaseModel):
+    id: str
+    name: str
+    area_cm2: float
+    description: str | None = None
+    is_default: bool = False
+
+
+class ElectrodeAreaPresetSettings(BaseModel):
+    presets: list[ElectrodeAreaPreset]
+
+
+class ActiveMaterialPreset(BaseModel):
+    id: str
+    name: str
+    specific_capacity_mah_g: float
+    description: str | None = None
+    is_default: bool = False
+
+
+class ActiveMaterialPresetSettings(BaseModel):
+    presets: list[ActiveMaterialPreset]
+
+
+class PlotStylePreset(BaseModel):
+    id: str
+    name: str
+    plot_family: Literal["all", "cycles", "time_capacity"] = "all"
+    style: dict
+    is_default: bool = False
+
+
+class PlotStylePresetSettings(BaseModel):
+    presets: list[PlotStylePreset]
+
+
+class ColorPalette(BaseModel):
+    id: str
+    name: str
+    kind: Literal["categorical", "sequential"] = "categorical"
+    colors: list[str]
+
+
+class ColorPaletteSettings(BaseModel):
+    palettes: list[ColorPalette]
+
+
+DEFAULT_AREA_PRESETS = [
+    ElectrodeAreaPreset(
+        id="coin-14mm",
+        name="14 mm circular electrode",
+        area_cm2=1.539,
+        description="Common coin-cell electrode diameter.",
+        is_default=True,
+    ),
+    ElectrodeAreaPreset(
+        id="coin-15mm",
+        name="15 mm circular electrode",
+        area_cm2=1.767,
+        description="Common coin-cell electrode diameter.",
+    ),
+]
+
+DEFAULT_MATERIAL_PRESETS = [
+    ActiveMaterialPreset(
+        id="lfp-reference",
+        name="LFP",
+        specific_capacity_mah_g=170,
+        description="Editable reference value; confirm the convention used by your laboratory.",
+        is_default=True,
+    ),
+    ActiveMaterialPreset(
+        id="nmc-reference",
+        name="NMC",
+        specific_capacity_mah_g=200,
+        description="Editable reference value; confirm the convention used by your laboratory.",
+    ),
+]
+
+
 def _setting(db: Session, key: str) -> str | None:
     row = db.get(AppSetting, key)
     return row.value if row else None
@@ -57,6 +145,48 @@ def _set_setting(db: Session, key: str, value: str | None) -> None:
         db.add(AppSetting(key=key, value=value))
 
 
+def _area_presets(db: Session) -> ElectrodeAreaPresetSettings:
+    raw = _setting(db, AREA_PRESETS_KEY)
+    if not raw:
+        return ElectrodeAreaPresetSettings(presets=DEFAULT_AREA_PRESETS)
+    try:
+        payload = json.loads(raw)
+        return ElectrodeAreaPresetSettings.model_validate({"presets": payload})
+    except (ValueError, TypeError):
+        return ElectrodeAreaPresetSettings(presets=DEFAULT_AREA_PRESETS)
+
+
+def _material_presets(db: Session) -> ActiveMaterialPresetSettings:
+    raw = _setting(db, MATERIAL_PRESETS_KEY)
+    if not raw:
+        return ActiveMaterialPresetSettings(presets=DEFAULT_MATERIAL_PRESETS)
+    try:
+        payload = json.loads(raw)
+        return ActiveMaterialPresetSettings.model_validate({"presets": payload})
+    except (ValueError, TypeError):
+        return ActiveMaterialPresetSettings(presets=DEFAULT_MATERIAL_PRESETS)
+
+
+def _plot_style_presets(db: Session) -> PlotStylePresetSettings:
+    raw = _setting(db, PLOT_STYLE_PRESETS_KEY)
+    if not raw:
+        return PlotStylePresetSettings(presets=[])
+    try:
+        return PlotStylePresetSettings.model_validate({"presets": json.loads(raw)})
+    except (ValueError, TypeError):
+        return PlotStylePresetSettings(presets=[])
+
+
+def _color_palettes(db: Session) -> ColorPaletteSettings:
+    raw = _setting(db, COLOR_PALETTES_KEY)
+    if not raw:
+        return ColorPaletteSettings(palettes=[])
+    try:
+        return ColorPaletteSettings.model_validate({"palettes": json.loads(raw)})
+    except (ValueError, TypeError):
+        return ColorPaletteSettings(palettes=[])
+
+
 def _current_settings(db: Session) -> DownloadSettings:
     mode = _setting(db, DOWNLOAD_MODE_KEY) or "ask"
     if mode not in VALID_DOWNLOAD_MODES:
@@ -64,6 +194,10 @@ def _current_settings(db: Session) -> DownloadSettings:
     return DownloadSettings(
         download_mode=mode,
         download_folder=_setting(db, DOWNLOAD_FOLDER_KEY),
+        export_filename_template=(
+            _setting(db, EXPORT_FILENAME_TEMPLATE_KEY)
+            or "{analysis} - {plot_title}"
+        ),
     )
 
 
@@ -121,8 +255,186 @@ def update_settings(payload: DownloadSettings, db: Session = Depends(get_db)):
 
     _set_setting(db, DOWNLOAD_MODE_KEY, payload.download_mode)
     _set_setting(db, DOWNLOAD_FOLDER_KEY, folder_value)
+    template = payload.export_filename_template.strip()
+    _set_setting(
+        db,
+        EXPORT_FILENAME_TEMPLATE_KEY,
+        template or "{analysis} - {plot_title}",
+    )
     db.commit()
     return _current_settings(db)
+
+
+@router.get("/settings/electrode-area-presets", response_model=ElectrodeAreaPresetSettings)
+def get_electrode_area_presets(db: Session = Depends(get_db)):
+    return _area_presets(db)
+
+
+@router.put("/settings/electrode-area-presets", response_model=ElectrodeAreaPresetSettings)
+def update_electrode_area_presets(
+    payload: ElectrodeAreaPresetSettings,
+    db: Session = Depends(get_db),
+):
+    names: set[str] = set()
+    normalized: list[ElectrodeAreaPreset] = []
+    default_seen = False
+    for preset in payload.presets:
+        name = preset.name.strip()
+        if not name:
+            raise HTTPException(422, "Every area preset needs a name.")
+        if name.casefold() in names:
+            raise HTTPException(409, f"Duplicate area preset name: {name}")
+        if preset.area_cm2 <= 0:
+            raise HTTPException(422, f"{name} must have a positive area.")
+        names.add(name.casefold())
+        is_default = bool(preset.is_default and not default_seen)
+        default_seen = default_seen or is_default
+        normalized.append(
+            ElectrodeAreaPreset(
+                id=preset.id.strip() or uuid.uuid4().hex,
+                name=name,
+                area_cm2=round(float(preset.area_cm2), 8),
+                description=(preset.description or "").strip() or None,
+                is_default=is_default,
+            )
+        )
+    _set_setting(
+        db,
+        AREA_PRESETS_KEY,
+        json.dumps([preset.model_dump() for preset in normalized]),
+    )
+    db.commit()
+    return ElectrodeAreaPresetSettings(presets=normalized)
+
+
+@router.get("/settings/active-material-presets", response_model=ActiveMaterialPresetSettings)
+def get_active_material_presets(db: Session = Depends(get_db)):
+    return _material_presets(db)
+
+
+@router.put("/settings/active-material-presets", response_model=ActiveMaterialPresetSettings)
+def update_active_material_presets(
+    payload: ActiveMaterialPresetSettings,
+    db: Session = Depends(get_db),
+):
+    names: set[str] = set()
+    normalized: list[ActiveMaterialPreset] = []
+    default_seen = False
+    for preset in payload.presets:
+        name = preset.name.strip()
+        if not name:
+            raise HTTPException(422, "Every material preset needs a name.")
+        if name.casefold() in names:
+            raise HTTPException(409, f"Duplicate material preset name: {name}")
+        if preset.specific_capacity_mah_g <= 0:
+            raise HTTPException(422, f"{name} must have a positive specific capacity.")
+        names.add(name.casefold())
+        is_default = bool(preset.is_default and not default_seen)
+        default_seen = default_seen or is_default
+        normalized.append(
+            ActiveMaterialPreset(
+                id=preset.id.strip() or uuid.uuid4().hex,
+                name=name,
+                specific_capacity_mah_g=round(float(preset.specific_capacity_mah_g), 8),
+                description=(preset.description or "").strip() or None,
+                is_default=is_default,
+            )
+        )
+    _set_setting(
+        db,
+        MATERIAL_PRESETS_KEY,
+        json.dumps([preset.model_dump() for preset in normalized]),
+    )
+    db.commit()
+    return ActiveMaterialPresetSettings(presets=normalized)
+
+
+@router.get("/settings/plot-style-presets", response_model=PlotStylePresetSettings)
+def get_plot_style_presets(db: Session = Depends(get_db)):
+    return _plot_style_presets(db)
+
+
+@router.put("/settings/plot-style-presets", response_model=PlotStylePresetSettings)
+def update_plot_style_presets(
+    payload: PlotStylePresetSettings,
+    db: Session = Depends(get_db),
+):
+    names: set[str] = set()
+    normalized: list[PlotStylePreset] = []
+    defaults: set[str] = set()
+    for preset in payload.presets:
+        name = preset.name.strip()
+        if not name:
+            raise HTTPException(422, "Every plot-style preset needs a name.")
+        key = f"{preset.plot_family}:{name.casefold()}"
+        if key in names:
+            raise HTTPException(409, f"Duplicate plot-style preset name: {name}")
+        names.add(key)
+        is_default = bool(preset.is_default and preset.plot_family not in defaults)
+        if is_default:
+            defaults.add(preset.plot_family)
+        normalized.append(
+            PlotStylePreset(
+                id=preset.id.strip() or uuid.uuid4().hex,
+                name=name,
+                plot_family=preset.plot_family,
+                style=preset.style,
+                is_default=is_default,
+            )
+        )
+    _set_setting(
+        db,
+        PLOT_STYLE_PRESETS_KEY,
+        json.dumps([preset.model_dump() for preset in normalized]),
+    )
+    db.commit()
+    return PlotStylePresetSettings(presets=normalized)
+
+
+@router.get("/settings/color-palettes", response_model=ColorPaletteSettings)
+def get_color_palettes(db: Session = Depends(get_db)):
+    return _color_palettes(db)
+
+
+@router.put("/settings/color-palettes", response_model=ColorPaletteSettings)
+def update_color_palettes(
+    payload: ColorPaletteSettings,
+    db: Session = Depends(get_db),
+):
+    names: set[str] = set()
+    normalized: list[ColorPalette] = []
+    for palette in payload.palettes:
+        name = palette.name.strip()
+        if not name:
+            raise HTTPException(422, "Every color palette needs a name.")
+        if name.casefold() in names:
+            raise HTTPException(409, f"Duplicate color palette name: {name}")
+        colors = [color.strip() for color in palette.colors if color.strip()]
+        if not colors:
+            raise HTTPException(422, f"{name} needs at least one color.")
+        if any(
+            len(color) != 7
+            or not color.startswith("#")
+            or any(char not in "0123456789abcdefABCDEF" for char in color[1:])
+            for color in colors
+        ):
+            raise HTTPException(422, f"{name} contains an invalid hex color.")
+        names.add(name.casefold())
+        normalized.append(
+            ColorPalette(
+                id=palette.id.strip() or uuid.uuid4().hex,
+                name=name,
+                kind=palette.kind,
+                colors=colors,
+            )
+        )
+    _set_setting(
+        db,
+        COLOR_PALETTES_KEY,
+        json.dumps([palette.model_dump() for palette in normalized]),
+    )
+    db.commit()
+    return ColorPaletteSettings(palettes=normalized)
 
 
 @router.get("/source-monitor/settings", response_model=SourceMonitoringSettings)

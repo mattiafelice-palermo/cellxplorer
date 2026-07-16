@@ -21,6 +21,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AnalysisFull, AnalysisSummary, del, FolderNode, get, post, Tree } from "../api";
+import { clearAnalysisQueryCache } from "../analysisQueryCache";
 
 function flattenFolders(nodes: FolderNode[], depth = 0): { value: string; label: string }[] {
   return nodes.flatMap((node) => [
@@ -86,7 +87,8 @@ export function AnalysesIndexPage() {
   const create = useMutation({
     mutationFn: (body: { title: string; folder_id: number | null }) =>
       post<AnalysisFull>("/api/analyses", body),
-    onSuccess: (a) => {
+    onSuccess: async (a) => {
+      await clearAnalysisQueryCache(qc, a.id);
       qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       modals.closeAll();
@@ -97,7 +99,13 @@ export function AnalysesIndexPage() {
 
   const remove = useMutation({
     mutationFn: (id: number) => del(`/api/analyses/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["analyses"] }),
+    onSuccess: async (_, id) => {
+      await clearAnalysisQueryCache(qc, id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+        qc.invalidateQueries({ queryKey: ["tree"] }),
+      ]);
+    },
   });
 
   const rows = analyses.data ?? [];

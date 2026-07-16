@@ -26,9 +26,9 @@ from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION
 from ..models import Cell, ReplicateGroup, SourceFile
-from . import cache, calc, parsing, stitch
+from . import cache, calc, parsing, protocol, stitch
 
-SPEC_VERSION = 6
+SPEC_VERSION = 7
 
 # quantities served to the client: every cached per-cycle column plus
 # derived ones computed here at render time
@@ -81,6 +81,7 @@ def default_spec(title: str) -> dict:
         "created_at": now,
         "modified_at": now,
         "selection": {"entries": [], "exclusions": [], "hidden_replicate_group_ids": []},
+        "protocol_segments": [],
         "computation": {
             "cycle_range": {"start": 1, "end": None},
             "exclude_check_cycles_every_n": 0,
@@ -93,6 +94,7 @@ def default_spec(title: str) -> dict:
                 "method": "mean",
                 "direction": "charge_minus_discharge",
             },
+            "protocol_filter": {"excluded_segment_ids": [], "only_segment_ids": []},
         },
         "aggregation": {"mode": "replicate_mean", "dispersion": "std", "min_n_for_band": 2},
         "presentation": {
@@ -100,6 +102,7 @@ def default_spec(title: str) -> dict:
             "ce_overlay": True,
             "show_individual_cells": True,
             "legend": True,
+            "hidden_protocol_segment_ids": [],
         },
         "saved_plots": [],
     }
@@ -117,6 +120,230 @@ def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[Source
             hashes.append(link.file.hash)
             files.append(link.file)
     return hashes, files
+
+
+PROTOCOL_SEGMENT_MODES = ("excluded", "only", "hidden")
+
+
+def _protocol_filter_context(spec: dict) -> tuple[dict, list[dict]]:
+    """Resolve configured segment IDs while treating stale IDs as inactive."""
+    segments: dict[str, dict] = {}
+    configured_segments = spec.get("protocol_segments") or []
+    for segment in configured_segments if isinstance(configured_segments, list) else []:
+        if isinstance(segment, dict) and segment.get("id") is not None:
+            segments.setdefault(str(segment["id"]), segment)
+
+    computation_filter = spec.get("computation", {}).get("protocol_filter") or {}
+    configured = {
+        "excluded": computation_filter.get("excluded_segment_ids", []),
+        "only": computation_filter.get("only_segment_ids", []),
+        "hidden": spec.get("presentation", {}).get("hidden_protocol_segment_ids", []),
+    }
+    selected: dict[str, list[dict]] = {mode: [] for mode in PROTOCOL_SEGMENT_MODES}
+    badges: list[dict] = []
+    selected_ids: set[str] = set()
+    for mode, ids in configured.items():
+        seen: set[str] = set()
+        for value in ids if isinstance(ids, list) else []:
+            segment_id = str(value)
+            if segment_id in seen:
+                continue
+            seen.add(segment_id)
+            segment = segments.get(segment_id)
+            if segment is None:
+                badges.append(
+                    {
+                        "kind": "protocol_segment_missing",
+                        "segment_id": value,
+                        "detail": f"Protocol segment {value!r} no longer exists and was ignored.",
+                    }
+                )
+                continue
+            selected[mode].append(segment)
+            selected_ids.add(segment_id)
+    return (
+        {
+            "selected": selected,
+            "selected_ids": selected_ids,
+            "matched_ids": set(),
+            "badge_keys": set(),
+            "active": any(selected.values()),
+            "only_active": bool(selected["only"]),
+        },
+        badges,
+    )
+
+
+def _add_protocol_badge(
+    context: dict,
+    badges: list[dict],
+    kind: str,
+    detail: str,
+    *,
+    cell: Cell | None = None,
+    source_file: SourceFile | None = None,
+) -> None:
+    key = (kind, cell.id if cell else None, source_file.hash if source_file else None, detail)
+    if key in context["badge_keys"]:
+        return
+    context["badge_keys"].add(key)
+    badge = {"kind": kind, "detail": detail}
+    if cell is not None:
+        badge.update({"cell_id": cell.id, "cell_name": cell.name})
+    if source_file is not None:
+        badge.update({"file": source_file.filename, "source_hash": source_file.hash})
+    badges.append(badge)
+
+
+def _target_step_indices(target: object) -> set[int]:
+    if not isinstance(target, dict):
+        return set()
+    result: set[int] = set()
+    values = target.get("step_indices") or []
+    for value in values if isinstance(values, list) else []:
+        if isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number) and number.is_integer():
+            result.add(int(number))
+    return result
+
+
+def _protocol_step_targets(
+    files: list[SourceFile], context: dict, badges: list[dict], cell: Cell
+) -> dict[int, dict[str, set[int]]]:
+    by_segment: dict[int, dict[str, set[int]]] = {}
+    if not context["active"]:
+        return by_segment
+    for segment_index, source_file in enumerate(files):
+        reconstructed = protocol.reconstruct_protocol(
+            source_file.header_meta,
+            source_file.nominal_capacity_mah,
+        )
+        if not reconstructed.get("n_steps"):
+            _add_protocol_badge(
+                context,
+                badges,
+                "protocol_missing",
+                "Protocol metadata is unavailable; active protocol-segment filters cannot be mapped for this file.",
+                cell=cell,
+                source_file=source_file,
+            )
+            continue
+        signature = reconstructed["signature"]
+        modes = {mode: set() for mode in PROTOCOL_SEGMENT_MODES}
+        for mode, selected_segments in context["selected"].items():
+            for segment in selected_segments:
+                segment_matches = False
+                targets = segment.get("targets") or []
+                for target in targets if isinstance(targets, list) else []:
+                    if not isinstance(target, dict) or target.get("protocol_signature") != signature:
+                        continue
+                    segment_matches = True
+                    modes[mode].update(_target_step_indices(target))
+                if segment_matches:
+                    context["matched_ids"].add(str(segment["id"]))
+        by_segment[segment_index] = modes
+    return by_segment
+
+
+def _append_unmatched_protocol_badges(context: dict, badges: list[dict]) -> None:
+    for segment_id in sorted(context["selected_ids"] - context["matched_ids"]):
+        _add_protocol_badge(
+            context,
+            badges,
+            "protocol_segment_unmatched",
+            "No selected source file has the protocol signature targeted by "
+            f"segment {segment_id!r}.",
+        )
+
+
+def _protocol_cycle_sets(
+    files: list[SourceFile],
+    stitched_segments: list[dict],
+    parser_version: str,
+    targets: dict[int, dict[str, set[int]]],
+    context: dict,
+    badges: list[dict],
+    cell: Cell,
+) -> dict[str, set[int]]:
+    matched = {mode: set() for mode in PROTOCOL_SEGMENT_MODES}
+    segment_by_index = {segment["segment"]: segment for segment in stitched_segments}
+    for segment_index, source_file in enumerate(files):
+        modes = targets.get(segment_index)
+        if not modes or not any(modes.values()):
+            continue
+        raw = cache.load_raw_columns(source_file.hash, parser_version, ["cycle", "step_index"])
+        step_column = "step_index"
+        if raw is None and cache.raw_path(source_file.hash, parser_version).exists():
+            raw = cache.load_raw_columns(source_file.hash, parser_version, ["cycle", "Step_Index"])
+            step_column = "Step_Index"
+        if raw is None:
+            cache_exists = cache.raw_path(source_file.hash, parser_version).exists()
+            _add_protocol_badge(
+                context,
+                badges,
+                "protocol_mapping_unavailable" if cache_exists else "protocol_mapping_cache_missing",
+                (
+                    "Raw cycle or step-index data is unavailable; protocol-segment cycle mapping could not be applied."
+                    if cache_exists
+                    else f"Raw cache at parser {parser_version} is unavailable; protocol-segment cycle mapping could not be applied."
+                ),
+                cell=cell,
+                source_file=source_file,
+            )
+            continue
+        stitched_segment = segment_by_index.get(segment_index)
+        if stitched_segment is None:
+            _add_protocol_badge(
+                context,
+                badges,
+                "protocol_mapping_unavailable",
+                "Raw cycle or step-index data is unavailable; protocol-segment cycle mapping could not be applied.",
+                cell=cell,
+                source_file=source_file,
+            )
+            continue
+        cycles = pd.to_numeric(raw["cycle"], errors="coerce")
+        steps = pd.to_numeric(raw[step_column], errors="coerce")
+        if not cycles.notna().any():
+            continue
+        first_cycle = int(cycles.min())
+        offset = int(stitched_segment["cycle_start"]) - first_cycle
+        for mode, step_indices in modes.items():
+            if not step_indices:
+                continue
+            local_cycles = cycles.loc[steps.isin(step_indices)].dropna().astype("int64").unique()
+            matched[mode].update(int(cycle) + offset for cycle in local_cycles)
+    return matched
+
+
+def _protocol_row_mask(
+    frame: pd.DataFrame, targets: dict[int, dict[str, set[int]]], mode: str
+) -> np.ndarray:
+    mask = np.zeros(len(frame), dtype=bool)
+    step_column = "step_index" if "step_index" in frame.columns else "Step_Index" if "Step_Index" in frame.columns else None
+    if step_column is None or "segment" not in frame.columns:
+        return mask
+    steps = pd.to_numeric(frame[step_column], errors="coerce")
+    segments = pd.to_numeric(frame["segment"], errors="coerce")
+    for segment_index, modes in targets.items():
+        step_indices = modes.get(mode, set())
+        if step_indices:
+            mask |= (segments.eq(segment_index) & steps.isin(step_indices)).to_numpy()
+    return mask
+
+
+def _downsample_indices(length: int, max_points: int, visible: np.ndarray) -> np.ndarray:
+    take = np.unique(np.linspace(0, length - 1, max_points).astype(int))
+    transitions = np.flatnonzero(visible[1:] != visible[:-1]) + 1
+    if len(transitions):
+        boundaries = np.unique(np.concatenate((transitions - 1, transitions)))
+        take = np.unique(np.concatenate((take, boundaries)))
+    return take
 
 
 def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:
@@ -223,7 +450,7 @@ def _metadata_float(value: object) -> float | None:
 
 def cell_active_mass_mg(cell: Cell) -> float | None:
     metadata = {entry.key: entry.value for entry in cell.metadata_entries}
-    for key in ("active_material_mg", "active_mass_mg"):
+    for key in ("override.active_mass_mg", "active_material_mg", "active_mass_mg"):
         value = _metadata_float(metadata.get(key))
         if value is not None:
             return value
@@ -238,7 +465,7 @@ def cell_active_mass_mg(cell: Cell) -> float | None:
 
 def cell_nominal_capacity_mah(cell: Cell) -> float | None:
     metadata = {entry.key: entry.value for entry in cell.metadata_entries}
-    for key in ("nominal_capacity_mah", "nominal_capacity"):
+    for key in ("override.nominal_capacity_mah", "nominal_capacity_mah", "nominal_capacity"):
         value = _metadata_float(metadata.get(key))
         if value is not None:
             return value
@@ -249,6 +476,15 @@ def cell_nominal_capacity_mah(cell: Cell) -> float | None:
             if value is not None:
                 source_values.append(value)
     return source_values[0] if source_values else None
+
+
+def cell_electrode_area_cm2(cell: Cell) -> float | None:
+    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    for key in ("override.electrode_area_cm2", "electrode_area_cm2"):
+        value = _metadata_float(metadata.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _polarization_values(frame: pd.DataFrame, computation: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -737,11 +973,12 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
     exclusions = selection.get("exclusions", [])
     hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
     units, missing_refs = resolve_selection(db, spec)
+    protocol_context, protocol_badges = _protocol_filter_context(spec)
 
     quantity_cols = [col for col, _ in ALL_QUANTITIES.values()]
     cell_series: list[dict] = []
     sources: list[dict] = []
-    badges: list[dict] = []
+    badges: list[dict] = list(protocol_badges)
 
     from . import scanner  # local import to avoid a module cycle
 
@@ -762,6 +999,16 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
                     scanner.parse_file(db, f)
 
         stitched, segments, missing = stitch.stitch_cycles(hashes, parser_version, calc_version)
+        step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
+        protocol_cycles = _protocol_cycle_sets(
+            files,
+            segments,
+            parser_version,
+            step_targets,
+            protocol_context,
+            badges,
+            cell,
+        )
 
         for f in files:
             if not Path(f.path).exists():
@@ -799,15 +1046,25 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
             metrics = {"n_cycles": 0}
             ref = None
         else:
-            derived, ref_val = add_derived_columns(stitched, computation, active_mass_mg)
-            filtered = apply_filters(derived, computation).sort_values("cycle")
-            x = [int(v) for v in filtered["cycle"]]
+            metric_frame = stitched
+            if protocol_context["only_active"]:
+                metric_frame = metric_frame[metric_frame["cycle"].isin(protocol_cycles["only"])]
+            if protocol_cycles["excluded"]:
+                metric_frame = metric_frame[~metric_frame["cycle"].isin(protocol_cycles["excluded"])]
+            derived, ref_val = add_derived_columns(metric_frame, computation, active_mass_mg)
+            metric_filtered = apply_filters(derived, computation).sort_values("cycle")
+            plot_filtered = metric_filtered
+            if protocol_cycles["hidden"]:
+                plot_filtered = plot_filtered[
+                    ~plot_filtered["cycle"].isin(protocol_cycles["hidden"])
+                ]
+            x = [int(v) for v in plot_filtered["cycle"]]
             quantities = {
-                c: _jsonsafe(filtered[c].to_numpy(dtype="float64")) if c in filtered.columns
+                c: _jsonsafe(plot_filtered[c].to_numpy(dtype="float64")) if c in plot_filtered.columns
                 else [None] * len(x)
                 for c in quantity_cols
             }
-            metrics = cell_metrics(derived, filtered, computation, ref_val)
+            metrics = cell_metrics(derived, metric_filtered, computation, ref_val)
             ref = None if np.isnan(ref_val) else float(ref_val)
 
         cell_series.append(
@@ -822,6 +1079,8 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
         sources.append(
             {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
              "file_hashes": hashes})
+
+    _append_unmatched_protocol_badges(protocol_context, badges)
 
     for miss in missing_refs:
         badges.append({"kind": "missing_reference",
@@ -946,12 +1205,13 @@ def compute_time_capacity(
     exclusions = selection.get("exclusions", [])
     hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
     units, missing_refs = resolve_selection(db, spec)
+    protocol_context, protocol_badges = _protocol_filter_context(spec)
 
     from . import scanner
 
     at_current = parser_version == parsing.PARSER_VERSION
     traces: list[dict] = []
-    badges: list[dict] = []
+    badges: list[dict] = list(protocol_badges)
 
     for unit in units:
         cell: Cell = unit["cell"]
@@ -961,6 +1221,7 @@ def compute_time_capacity(
                 if not cache.raw_path(f.hash, parser_version).exists() and Path(f.path).exists():
                     scanner.parse_file(db, f)
 
+        step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
         raw, segments, missing = _stitch_raw(hashes, parser_version)
         for h in missing:
             badges.append(
@@ -988,17 +1249,59 @@ def compute_time_capacity(
         capacity = _phase_capacity(raw, phases)
         active_mass_mg = cell_active_mass_mg(cell)
         nominal_capacity_mah = cell_nominal_capacity_mah(cell)
+        electrode_area_cm2 = cell_electrode_area_cm2(cell)
         active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
         capacity_g = capacity / active_mass_g if active_mass_g and active_mass_g > 0 else np.full(len(raw), np.nan)
         derivative_x, derivative_y = _derivative_curve(
             raw, phases, capacity, capacity_g, settings
         )
 
+        if protocol_context["active"]:
+            has_step_column = "step_index" in raw.columns or "Step_Index" in raw.columns
+            if not has_step_column and any(
+                step_indices
+                for modes in step_targets.values()
+                for step_indices in modes.values()
+            ):
+                _add_protocol_badge(
+                    protocol_context,
+                    badges,
+                    "protocol_mapping_unavailable",
+                    "Raw step-index data is unavailable; protocol-segment row masking could not be applied.",
+                    cell=cell,
+                )
+            only_match = _protocol_row_mask(raw, step_targets, "only")
+            plot_mask = _protocol_row_mask(raw, step_targets, "excluded")
+            plot_mask |= _protocol_row_mask(raw, step_targets, "hidden")
+            if protocol_context["only_active"]:
+                plot_mask |= ~only_match
+        else:
+            plot_mask = np.zeros(len(raw), dtype=bool)
+
+        voltage = (
+            raw["voltage_v"].to_numpy(dtype="float64").copy()
+            if "voltage_v" in raw.columns
+            else np.full(len(raw), np.nan)
+        )
+        current = (
+            raw["current_ma"].to_numpy(dtype="float64").copy()
+            if "current_ma" in raw.columns
+            else np.full(len(raw), np.nan)
+        )
+        capacity = capacity.copy()
+        capacity_g = capacity_g.copy()
+        derivative_x = derivative_x.copy()
+        derivative_y = derivative_y.copy()
+        for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
+            values[plot_mask] = np.nan
+
         max_points = max(100, settings["max_points_per_cell"])
         if len(raw) > max_points:
-            take = np.unique(np.linspace(0, len(raw) - 1, max_points).astype(int))
+            take = _downsample_indices(len(raw), max_points, ~plot_mask)
             raw = raw.iloc[take]
             phases = np.asarray(phases)[take].tolist()
+            voltage = voltage[take]
+            current = current[take]
             capacity = capacity[take]
             capacity_g = capacity_g[take]
             derivative_x = derivative_x[take]
@@ -1016,12 +1319,13 @@ def compute_time_capacity(
                 "excluded": exclusion is not None or group_hidden,
                 "active_mass_mg": active_mass_mg,
                 "nominal_capacity_mah": nominal_capacity_mah,
+                "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
                 "time_s": _jsonsafe(raw["time_s"].to_numpy()) if "time_s" in raw.columns else [None] * len(raw),
                 "capacity_mah": _jsonsafe(capacity),
                 "capacity_mah_g": _jsonsafe(capacity_g),
-                "voltage_v": _jsonsafe(raw["voltage_v"].to_numpy()) if "voltage_v" in raw.columns else [None] * len(raw),
-                "current_ma": _jsonsafe(raw["current_ma"].to_numpy()) if "current_ma" in raw.columns else [None] * len(raw),
+                "voltage_v": _jsonsafe(voltage),
+                "current_ma": _jsonsafe(current),
                 "phase": phases,
                 "status": _textsafe(raw["status"]) if "status" in raw.columns else [None] * len(raw),
                 "derivative_x": _jsonsafe(derivative_x),
@@ -1029,6 +1333,8 @@ def compute_time_capacity(
                 "segments": segments,
             }
         )
+
+    _append_unmatched_protocol_badges(protocol_context, badges)
 
     for miss in missing_refs:
         badges.append(

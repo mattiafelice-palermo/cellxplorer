@@ -16,8 +16,23 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import Cell, CellMetadata, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
+from app.routers.library import get_cell_protocol
 from app.services import analysis_engine as engine
-from app.services import cache, parsing
+from app.services import cache, parsing, protocol
+
+
+def analysis_protocol_header() -> dict[str, str]:
+    return {
+        "Step.Step_Info.Step1.Step_Type": "1",
+        "Step.Step_Info.Step1.Limit.Main.Curr.Value": "1000",
+        "Step.Step_Info.Step1.Limit.Main.Stop_Volt.Value": "42000",
+        "Step.Step_Info.Step2.Step_Type": "2",
+        "Step.Step_Info.Step2.Limit.Main.Curr.Value": "-1000",
+        "Step.Step_Info.Step2.Limit.Main.Stop_Volt.Value": "30000",
+        "Step.Step_Info.Step3.Step_Type": "1",
+        "Step.Step_Info.Step3.Limit.Main.Curr.Value": "1000",
+        "Step.Step_Info.Step3.Limit.Main.Stop_Volt.Value": "41000",
+    }
 
 
 def synth_raw(n_cycles: int, cap0: float, fade: float) -> pd.DataFrame:
@@ -30,7 +45,8 @@ def synth_raw(n_cycles: int, cap0: float, fade: float) -> pd.DataFrame:
                 t += 1800
                 rows.append({
                     "record_index": idx, "cycle": cyc, "step": cyc * 2 + (0 if sign > 0 else 1),
-                    "step_index": 1, "status": status, "time_s": 1800.0 * frac,
+                    "step_index": (1 if cyc % 2 else 3) if sign > 0 else 2,
+                    "status": status, "time_s": 1800.0 * frac,
                     "voltage_v": 3.3 + sign * 0.2,
                     "current_ma": sign * 1000.0,
                     "charge_capacity_mah": cap * frac if sign > 0 else cap,
@@ -81,7 +97,8 @@ class AnalysisEngineTests(unittest.TestCase):
             self.db.add(cell)
             self.db.flush()
             sf = SourceFile(hash=h, path=h, filename=f"{name}.ndax", size=1, ext="ndax",
-                            parse_status="parsed", parser_version=parsing.PARSER_VERSION)
+                            parse_status="parsed", parser_version=parsing.PARSER_VERSION,
+                            header_meta=analysis_protocol_header(), nominal_capacity_mah=2.0)
             self.db.add(sf)
             test = Test(cell_id=cell.id, name="t")
             self.db.add(test)
@@ -102,10 +119,131 @@ class AnalysisEngineTests(unittest.TestCase):
         spec["computation"].update(comp)
         return spec
 
+    def spec_with_protocol_mode(self, mode: str) -> dict:
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        signature = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )["signature"]
+        spec["protocol_segments"] = [
+            {
+                "id": "odd-charge",
+                "name": "Odd-cycle charge",
+                "targets": [{"protocol_signature": signature, "step_indices": [1]}],
+            }
+        ]
+        if mode == "hidden":
+            spec["presentation"]["hidden_protocol_segment_ids"] = ["odd-charge"]
+        else:
+            spec["computation"]["protocol_filter"][f"{mode}_segment_ids"] = [
+                "odd-charge"
+            ]
+        return spec
+
     def test_default_spec_has_saved_plot_container(self):
         spec = engine.default_spec("t")
         self.assertEqual(spec["spec_version"], engine.SPEC_VERSION)
         self.assertEqual(spec["saved_plots"], [])
+        self.assertEqual(spec["protocol_segments"], [])
+        self.assertEqual(
+            spec["computation"]["protocol_filter"],
+            {"excluded_segment_ids": [], "only_segment_ids": []},
+        )
+        self.assertEqual(spec["presentation"]["hidden_protocol_segment_ids"], [])
+
+    def test_cycle_protocol_filters_distinguish_hidden_excluded_and_only(self):
+        expected = {
+            "excluded": (list(range(2, 51, 2)), 25),
+            "hidden": (list(range(2, 51, 2)), 50),
+            "only": (list(range(1, 51, 2)), 25),
+        }
+        for mode, (cycles, metric_count) in expected.items():
+            with self.subTest(mode=mode):
+                result = engine.compute(self.db, self.spec_with_protocol_mode(mode), None)
+                series = result["cell_series"][0]
+                self.assertEqual(series["x"], cycles)
+                self.assertEqual(series["metrics"]["n_cycles"], metric_count)
+
+    def test_cycle_compute_does_not_load_raw_without_protocol_filter(self):
+        original = cache.load_raw_columns
+        cache.load_raw_columns = (
+            lambda *_args, **_kwargs: self.fail("raw cache fast path regressed")
+        )
+        try:
+            result = engine.compute(
+                self.db,
+                self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}]),
+                None,
+            )
+        finally:
+            cache.load_raw_columns = original
+        self.assertEqual(result["cell_series"][0]["metrics"]["n_cycles"], 50)
+
+    def test_cell_protocol_payload_includes_source_hash_and_signature(self):
+        result = get_cell_protocol(self.cells["c1"].id, self.db)
+        source = result["tests"][0]["files"][0]
+
+        self.assertEqual(source["hash"], self.HASHES["c1"])
+        self.assertEqual(
+            source["protocol"]["signature"],
+            protocol.reconstruct_protocol(analysis_protocol_header(), 2.0)["signature"],
+        )
+
+    def test_stale_protocol_segment_id_is_badged_and_ignored(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["protocol_filter"]["only_segment_ids"] = ["gone"]
+
+        result = engine.compute(self.db, spec, None)
+
+        self.assertEqual(result["cell_series"][0]["metrics"]["n_cycles"], 50)
+        self.assertIn(
+            "protocol_segment_missing",
+            {badge["kind"] for badge in result["badges"]},
+        )
+
+    def test_missing_protocol_metadata_is_badged(self):
+        source = self.cells["c1"].tests[0].file_links[0].file
+        source.header_meta = None
+        self.db.flush()
+
+        result = engine.compute(self.db, self.spec_with_protocol_mode("excluded"), None)
+
+        self.assertIn("protocol_missing", {badge["kind"] for badge in result["badges"]})
+        self.assertEqual(result["cell_series"][0]["metrics"]["n_cycles"], 50)
+
+    def test_step_index_matching_is_scoped_by_protocol_signature(self):
+        spec = self.spec_with_protocol_mode("excluded")
+        source = self.cells["c1"].tests[0].file_links[0].file
+        changed_header = analysis_protocol_header()
+        changed_header["Step.Step_Info.Step1.Limit.Main.Stop_Volt.Value"] = "41500"
+        source.header_meta = changed_header
+        self.db.flush()
+
+        result = engine.compute(self.db, spec, None)
+
+        self.assertEqual(result["cell_series"][0]["x"], list(range(1, 51)))
+        self.assertIn(
+            "protocol_segment_unmatched",
+            {badge["kind"] for badge in result["badges"]},
+        )
+
+    def test_time_protocol_filters_emit_null_gaps_without_dropping_rows(self):
+        expected_non_null = {"excluded": 150, "hidden": 150, "only": 50}
+        for mode, non_null_count in expected_non_null.items():
+            with self.subTest(mode=mode):
+                result = engine.compute_time_capacity(
+                    self.db, self.spec_with_protocol_mode(mode), None
+                )
+                trace = result["cell_traces"][0]
+                self.assertEqual(len(trace["cycle"]), 200)
+                self.assertEqual(len(trace["time_s"]), 200)
+                self.assertEqual(
+                    sum(value is not None for value in trace["voltage_v"]),
+                    non_null_count,
+                )
+                self.assertEqual(
+                    sum(value is not None for value in trace["capacity_mah"]),
+                    non_null_count,
+                )
 
     def test_group_and_cell_selection(self):
         spec = self.spec_with([
@@ -233,6 +371,17 @@ class AnalysisEngineTests(unittest.TestCase):
             series["quantities"]["charge_capacity_loss_mah"][1] / 0.01,
             places=6,
         )
+
+    def test_scientific_override_takes_priority_over_imported_mass(self):
+        cell = self.cells["c1"]
+        self.db.add_all(
+            [
+                CellMetadata(cell_id=cell.id, key="active_material_mg", value="10"),
+                CellMetadata(cell_id=cell.id, key="override.active_mass_mg", value="20"),
+            ]
+        )
+        self.db.flush()
+        self.assertEqual(engine.cell_active_mass_mg(cell), 20.0)
 
     def test_time_capacity_traces_filter_cycles_and_specific_capacity(self):
         cell = self.cells["c1"]

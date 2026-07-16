@@ -4,6 +4,25 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.5.0 - 2026-07-16
+
+- Added a unified file and folder import browser with quick-access locations, pinned folders,
+  recursive Neware-file discovery, multi-selection tools, per-file previews, and the ability to
+  append files from additional locations without losing import work.
+- Added editable scientific cell metadata, including electrode-area and active-material presets,
+  custom values, and automatic nominal-capacity calculation from material mass.
+- Added complete replicate editing and improved cell, folder, and analysis lifecycle handling,
+  including non-recycled analysis identities, safer duplication names, and stale-cache cleanup.
+- Expanded protocol-aware analysis with selectable protocol segments, charge-CV duration and
+  capacity metrics, derivative plots, and configurable styling for low-replicate-count points.
+- Added a clean New plot workflow, reusable plot-style presets, custom categorical and sequential
+  color palettes, and independent coulombic-efficiency palette and series styling.
+- Added token-assisted export filenames for plot and tabular downloads while preserving free-form
+  editing, together with improved axis spacing, tick controls, aspect-ratio handling, and export
+  fidelity.
+- Added Settings pages for scientific metadata presets, plot presets, color palettes, and default
+  export filename templates.
+
 ## 0.4.0 - 2026-07-15
 
 - Added dedicated coulombic-efficiency overlay controls for per-series colors, line styles,

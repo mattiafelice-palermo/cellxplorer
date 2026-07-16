@@ -197,6 +197,21 @@ def load_raw(file_hash: str, parser_version: str) -> pd.DataFrame | None:
     return pd.read_parquet(p) if p.exists() else None
 
 
+def load_raw_columns(
+    file_hash: str, parser_version: str, columns: list[str]
+) -> pd.DataFrame | None:
+    """Load selected raw columns without materializing the full cache."""
+    _wait_for_pending(file_hash)
+    p = raw_path(file_hash, parser_version)
+    if not p.exists():
+        return None
+    try:
+        return pd.read_parquet(p, columns=columns)
+    except (KeyError, ValueError):
+        logger.warning("raw cache %s lacks requested columns %s", p, columns)
+        return None
+
+
 def available_versions(file_hash: str) -> list[dict]:
     """List cached (parser, calc) version pairs for a file."""
     d = _dir(file_hash)

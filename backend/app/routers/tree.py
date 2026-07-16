@@ -24,6 +24,7 @@ from ..models import (
     ProjectCell,
     ReplicateGroup,
 )
+from ..services.entity_ids import next_analysis_id
 
 router = APIRouter(prefix="/api", tags=["tree"])
 
@@ -236,6 +237,7 @@ def copy_folder_tree(db: Session, folder_id: int, parent_id: int | None) -> Fold
         ).all():
             db.add(
                 Analysis(
+                    id=next_analysis_id(db),
                     title=f"{analysis.title} copy",
                     folder_id=copied.id,
                     project_id=None,

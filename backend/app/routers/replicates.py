@@ -183,12 +183,19 @@ def update_replicate_group(group_id: int, req: ReplicateGroupUpdate, db: Session
         name = req.name.strip()
         if not name:
             raise HTTPException(400, "Replicate group needs a name")
+        duplicate = (
+            db.query(ReplicateGroup)
+            .filter(ReplicateGroup.name == name, ReplicateGroup.id != group_id)
+            .first()
+        )
+        if duplicate is not None:
+            raise HTTPException(409, "Replicate group already exists")
         group.name = name
     if req.description is not None:
         group.description = req.description.strip() or None
     if req.cell_ids is not None:
-        if len(set(req.cell_ids)) < 2:
-            raise HTTPException(400, "A replicate group needs at least two cells")
+        if len(set(req.cell_ids)) < 1:
+            raise HTTPException(400, "An empty replicate group must be deleted")
         replace_group_cells(db, group.id, req.cell_ids)
     if req.folder_ids is not None:
         replace_group_folders(db, group.id, req.folder_ids)

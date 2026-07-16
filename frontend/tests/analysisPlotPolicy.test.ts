@@ -165,3 +165,68 @@ test("saved plot preview signature changes when analysis sample membership chang
 
   assert.notEqual(savedPlotPreviewSignature(before, savedPlot), savedPlotPreviewSignature(after, savedPlot));
 });
+
+test("saved plot restore keeps global segment definitions and restores plot segment state", () => {
+  const current = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], []));
+  current.protocol_segments = [
+    {
+      id: "formation",
+      name: "Formation",
+      targets: [{ protocol_signature: "protocol-a", step_indices: [1, 2] }],
+    },
+  ];
+  current.computation.protocol_filter = { excluded_segment_ids: [], only_segment_ids: [] };
+  current.presentation.hidden_protocol_segment_ids = [];
+  const savedPlot = {
+    id: "plot-segments",
+    tab: "cycles",
+    name: "Formation hidden",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: {
+      ...current.computation,
+      protocol_filter: { excluded_segment_ids: ["formation"], only_segment_ids: [] },
+    },
+    aggregation: current.aggregation,
+    presentation: { ...current.presentation, hidden_protocol_segment_ids: ["formation"] },
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as const;
+
+  const restored = specForSavedPlotView(current, savedPlot);
+
+  assert.deepEqual(restored.protocol_segments, current.protocol_segments);
+  assert.deepEqual(restored.computation.protocol_filter?.excluded_segment_ids, ["formation"]);
+  assert.deepEqual(restored.presentation.hidden_protocol_segment_ids, ["formation"]);
+});
+
+test("saved plot previews invalidate when global segment targets change", () => {
+  const before = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], []));
+  before.protocol_segments = [
+    {
+      id: "rpt",
+      name: "RPT",
+      targets: [{ protocol_signature: "protocol-a", step_indices: [3] }],
+    },
+  ];
+  before.computation.protocol_filter = { excluded_segment_ids: ["rpt"], only_segment_ids: [] };
+  before.presentation.hidden_protocol_segment_ids = [];
+  const after = structuredClone(before);
+  after.protocol_segments[0].targets[0].step_indices = [3, 4];
+  const savedPlot = {
+    id: "plot-rpt",
+    tab: "cycles",
+    name: "RPT removed",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: before.computation,
+    aggregation: before.aggregation,
+    presentation: before.presentation,
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as const;
+
+  assert.notEqual(savedPlotPreviewSignature(before, savedPlot), savedPlotPreviewSignature(after, savedPlot));
+});

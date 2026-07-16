@@ -7,9 +7,13 @@ rate capability.
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
+import json
 import re
 from statistics import median
 from typing import Any
+
+import pandas as pd
 
 
 STEP_TYPES = {
@@ -35,6 +39,22 @@ STEP_TYPES = {
 }
 
 COMMON_C_RATE_DENOMINATORS = (2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100)
+
+SIGNATURE_FIELDS = (
+    "number",
+    "type_id",
+    "current_ma",
+    "target_voltage_v",
+    "stop_voltage_v",
+    "stop_current_ma",
+    "time_limit_s",
+    "record_interval_s",
+    "record_voltage_delta_v",
+    "protection_upper_v",
+    "protection_lower_v",
+    "loop_start_step",
+    "loop_count",
+)
 
 
 def _number(value: object) -> float | None:
@@ -181,6 +201,67 @@ def _step_summary(step: dict) -> str:
     return " | ".join(parts)
 
 
+def _protocol_signature(steps: list[dict]) -> str:
+    """Hash executable settings without source or inferred display values."""
+    canonical_steps = []
+    for step in steps:
+        item = {field: step.get(field) for field in SIGNATURE_FIELDS}
+        item["explicit_c_rate"] = (
+            step.get("c_rate") if step.get("c_rate_source") == "explicit" else None
+        )
+        canonical_steps.append(item)
+    payload = json.dumps(
+        {"signature_version": 1, "steps": canonical_steps},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def observed_step_coverage(frame: pd.DataFrame | None) -> list[dict]:
+    """Summarize executed protocol-step occurrences from a raw cache slice."""
+    if frame is None or frame.empty or "step_index" not in frame.columns:
+        return []
+
+    columns = ["step_index"]
+    if "cycle" in frame.columns:
+        columns.append("cycle")
+    if "step" in frame.columns:
+        columns.append("step")
+    work = frame.loc[:, columns].copy()
+    work["step_index"] = pd.to_numeric(work["step_index"], errors="coerce")
+    work = work.dropna(subset=["step_index"])
+    if work.empty:
+        return []
+    work["step_index"] = work["step_index"].astype("int64")
+
+    if "step" in work.columns:
+        work["step"] = pd.to_numeric(work["step"], errors="coerce")
+        execution_counts = work.groupby("step_index", sort=True)["step"].nunique(dropna=True)
+    else:
+        work["__run_start"] = work["step_index"].ne(work["step_index"].shift()).astype("int64")
+        execution_counts = work.groupby("step_index", sort=True)["__run_start"].sum()
+
+    cycles_by_step: dict[int, list[int]] = {}
+    if "cycle" in work.columns:
+        work["cycle"] = pd.to_numeric(work["cycle"], errors="coerce")
+        cycles_by_step = {
+            int(step_index): sorted({int(value) for value in values.dropna()})
+            for step_index, values in work.groupby("step_index", sort=True)["cycle"]
+        }
+
+    return [
+        {
+            "step_index": int(step_index),
+            "execution_count": int(execution_count),
+            "cycle_count": len(cycles_by_step.get(int(step_index), [])),
+            "cycles": cycles_by_step.get(int(step_index), []),
+        }
+        for step_index, execution_count in execution_counts.items()
+    ]
+
+
 def _structural_groups(steps: list[dict]) -> list[dict]:
     if not steps:
         return []
@@ -284,6 +365,7 @@ def reconstruct_protocol(flat: dict[str, str] | None, nominal_capacity_mah: floa
     if len(charge_cutoffs) > 1 or len(discharge_cutoffs) > 1:
         warnings.append("The protocol contains multiple operational voltage windows; all are shown rather than forcing one cutoff pair.")
     return {
+        "signature": _protocol_signature(steps),
         "n_steps": len(steps),
         "n_executable_steps": len(executable),
         "steps": steps,

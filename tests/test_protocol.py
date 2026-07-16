@@ -3,6 +3,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
@@ -40,6 +42,39 @@ def synthetic_header():
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_observed_step_coverage_counts_executions_and_cycles(self):
+        frame = pd.DataFrame(
+            {
+                "cycle": [1, 1, 1, 2, 2, 3],
+                "step": [10, 10, 11, 12, 12, 13],
+                "step_index": [5, 5, 6, 5, 5, 6],
+            }
+        )
+
+        self.assertEqual(
+            protocol.observed_step_coverage(frame),
+            [
+                {"step_index": 5, "execution_count": 2, "cycle_count": 2, "cycles": [1, 2]},
+                {"step_index": 6, "execution_count": 2, "cycle_count": 2, "cycles": [1, 3]},
+            ],
+        )
+
+    def test_signature_matches_equivalent_protocols_across_sources(self):
+        first = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        second = protocol.reconstruct_protocol(dict(synthetic_header()), nominal_capacity_mah=20)
+
+        self.assertEqual(first["signature"], second["signature"])
+        self.assertEqual(len(first["signature"]), 64)
+
+    def test_signature_changes_when_executable_settings_change(self):
+        changed = synthetic_header()
+        changed["Step.Step_Info.Step3.Limit.Main.Stop_Volt.Value"] = "29000"
+
+        self.assertNotEqual(
+            protocol.reconstruct_protocol(synthetic_header())["signature"],
+            protocol.reconstruct_protocol(changed)["signature"],
+        )
+
     def test_reconstructs_steps_and_explicit_loop(self):
         result = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
         self.assertEqual(result["n_steps"], 6)

@@ -79,6 +79,8 @@ import {
   CellMetrics,
   CellSummary,
   ComputeResult,
+  ColorPaletteSettings,
+  DownloadSettings,
   del,
   FolderNode,
   get,
@@ -86,15 +88,18 @@ import {
   put,
   PlotAspectRatioKey,
   PlotExportFormat,
+  ProtocolSegment,
   ReplicateGroupSummary,
   SavedAnalysisPlot,
   SelectionEntry,
   PlotStyle,
+  PlotStylePresetSettings,
   PlotAxisScope,
   TimeCapacityResult,
   TimeCapacityTrace,
   Tree,
 } from "../api";
+import { clearAnalysisQueryCache } from "../analysisQueryCache";
 import {
   plotViewSignature,
   savedPlotPreviewSignature,
@@ -102,13 +107,22 @@ import {
   specForSavedPlotView,
 } from "../analysisPlotPolicy";
 import Plot from "../components/Plot";
+import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
 import { saveDownload } from "../downloads";
+import {
+  EXPORT_FILENAME_TOKENS,
+  insertFilenameToken,
+  renderExportFilename,
+  sanitizeExportFilename,
+  type ExportFilenameToken,
+} from "../exportFilenames";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
 import {
   getCycleQuantityExplainer,
   getTimeCapacityExplainer,
   type PlotExplainer,
 } from "../plotExplainers";
+import { applyPlotStylePreset } from "../plotStylePresets";
 
 const PALETTE = [
   "#12b886",
@@ -130,6 +144,7 @@ const PLOT_PALETTES: Record<PlotStyle["palette"], string[]> = {
   presentation: ["#12b886", "#2563eb", "#f97316", "#e11d48", "#7c3aed", "#0f766e", "#ca8a04"],
   okabe_ito: ["#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000"],
   tableau: ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"],
+  blues: ["#08306b", "#2171b5", "#4292c6", "#6baed6", "#9ecae1", "#c6dbef"],
   viridis: ["#440154", "#414487", "#2A788E", "#22A884", "#7AD151", "#FDE725"],
   monochrome: ["#111827", "#4b5563", "#6b7280", "#9ca3af", "#d1d5db"],
   custom: PALETTE,
@@ -142,6 +157,7 @@ const PALETTE_OPTIONS: { value: PlotStyle["palette"]; label: string }[] = [
   { value: "presentation", label: "Presentation" },
   { value: "okabe_ito", label: "Okabe-Ito" },
   { value: "tableau", label: "Tableau" },
+  { value: "blues", label: "Blues" },
   { value: "viridis", label: "Viridis" },
   { value: "monochrome", label: "Monochrome" },
   { value: "custom", label: "Custom" },
@@ -301,6 +317,10 @@ const DEFAULT_COMPUTATION: AnalysisSpec["computation"] = {
     method: "mean",
     direction: "charge_minus_discharge",
   },
+  protocol_filter: {
+    excluded_segment_ids: [],
+    only_segment_ids: [],
+  },
   time_capacity: DEFAULT_TIME_CAPACITY,
 };
 
@@ -312,6 +332,8 @@ const DEFAULT_AGGREGATION: AnalysisSpec["aggregation"] = {
 
 const DEFAULT_PLOT_STYLE: PlotStyle = {
   palette: "app",
+  palette_id: null,
+  palette_colors: [],
   custom_colors: {},
   line_width: 2.5,
   line_dash: "solid",
@@ -319,6 +341,9 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   marker_size: 5,
   individual_opacity: 0.35,
   band_opacity: 0.18,
+  low_n_color: "#868e96",
+  low_n_marker_symbol: "x",
+  low_n_marker_size: 8,
   show_grid: true,
   show_zero_line: false,
   show_frame: false,
@@ -329,9 +354,36 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   x_title: null,
   y_title: null,
   y2_title: null,
-  x_axis: { mode: "auto", min: null, max: null, dtick: null },
-  y_axis: { mode: "auto", min: null, max: null, dtick: null },
-  y2_axis: { mode: "auto", min: null, max: null, dtick: null },
+  x_axis: {
+    mode: "auto",
+    min: null,
+    max: null,
+    tick_mode: "auto",
+    dtick: null,
+    tick_count: null,
+    title_standoff: 14,
+    tick_label_standoff: 4,
+  },
+  y_axis: {
+    mode: "auto",
+    min: null,
+    max: null,
+    tick_mode: "auto",
+    dtick: null,
+    tick_count: null,
+    title_standoff: 14,
+    tick_label_standoff: 4,
+  },
+  y2_axis: {
+    mode: "auto",
+    min: null,
+    max: null,
+    tick_mode: "auto",
+    dtick: null,
+    tick_count: null,
+    title_standoff: 14,
+    tick_label_standoff: 4,
+  },
   axis_scopes: {},
   tick_font_size: 12,
   axis_title_size: 14,
@@ -340,6 +392,10 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   tick_length: 5,
   tick_width: 1,
   ce_custom_colors: {},
+  ce_palette_mode: "match",
+  ce_palette_id: null,
+  ce_palette_colors: [],
+  ce_single_color: "#495057",
   ce_line_width: 1.5,
   ce_line_dash: "dot",
   ce_marker_mode: "none",
@@ -372,6 +428,7 @@ const DEFAULT_PRESENTATION: AnalysisSpec["presentation"] = {
   ce_overlay: true,
   show_individual_cells: true,
   legend: true,
+  hidden_protocol_segment_ids: [],
   plot_style: DEFAULT_PLOT_STYLE,
 };
 
@@ -529,6 +586,8 @@ function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
     ...(style ?? {}),
     custom_colors: { ...(style?.custom_colors ?? {}) },
     ce_custom_colors: { ...(style?.ce_custom_colors ?? {}) },
+    palette_colors: [...(style?.palette_colors ?? [])],
+    ce_palette_colors: [...(style?.ce_palette_colors ?? [])],
     x_axis: xAxis,
     y_axis: yAxis,
     y2_axis: y2Axis,
@@ -644,6 +703,18 @@ function plotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   return "lines";
 }
 
+function plotPalette(style: PlotStyle): string[] {
+  return style.palette_colors?.length
+    ? style.palette_colors
+    : PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+}
+
+function cePalette(style: PlotStyle): string[] {
+  return style.ce_palette_colors?.length
+    ? style.ce_palette_colors
+    : PLOT_PALETTES.app;
+}
+
 function cePlotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   if (style.ce_marker_mode === "points") return "markers";
   if (style.ce_marker_mode === "lines_points") return "lines+markers";
@@ -653,43 +724,95 @@ function cePlotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
 type AxisOverrides = {
   autorange?: boolean;
   range?: [number, number];
+  tickmode?: "linear" | "array";
+  tick0?: number;
   dtick?: number;
+  tickvals?: number[];
   autorangeoptions?: { minallowed?: number; maxallowed?: number };
 };
+
+function numericTraceExtent(
+  traces: Plotly.Data[],
+  coordinate: "x" | "y",
+  axisNames: string[]
+): [number, number] | undefined {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const raw of traces) {
+    const trace = raw as Record<string, unknown>;
+    const axisName = String(trace[coordinate === "x" ? "xaxis" : "yaxis"] ?? coordinate);
+    if (!axisNames.includes(axisName)) continue;
+    const values = trace[coordinate];
+    if (!values || typeof (values as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function") {
+      continue;
+    }
+    for (const rawValue of values as Iterable<unknown>) {
+      const value = typeof rawValue === "number" ? rawValue : Number(rawValue);
+      if (!Number.isFinite(value)) continue;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+  }
+  return Number.isFinite(min) && Number.isFinite(max) && min !== max ? [min, max] : undefined;
+}
 
 // Returns ONLY the keys that should override Plotly's defaults. In auto mode
 // this is empty on purpose: passing `range: undefined, autorange: true` on a
 // layout-only re-render (grid/zero-line/border toggles) made Plotly.react
 // fall back to its empty-plot ranges (x [-1, 6], y [-1, 4]) without
 // recomputing from data. One-sided manual bounds clamp the autorange.
-function axisLayout(axis: PlotStyle["x_axis"]): AxisOverrides {
+function axisLayout(
+  axis: PlotStyle["x_axis"],
+  observedRange?: [number, number]
+): AxisOverrides {
   const out: AxisOverrides = {};
-  if (axis.dtick !== null && axis.dtick !== undefined && axis.dtick > 0) out.dtick = axis.dtick;
-  if (axis.mode !== "manual") return out;
   const hasMin = axis.min !== null && axis.min !== undefined;
   const hasMax = axis.max !== null && axis.max !== undefined;
-  if (hasMin && hasMax) {
+  const validManualRange = hasMin && hasMax && axis.min! < axis.max!;
+  if (axis.mode === "manual" && validManualRange) {
     out.autorange = false;
     out.range = [axis.min!, axis.max!];
-  } else if (hasMin || hasMax) {
+  } else if (axis.mode === "manual" && hasMin !== hasMax) {
     out.autorange = true;
     out.autorangeoptions = {
       ...(hasMin ? { minallowed: axis.min! } : {}),
       ...(hasMax ? { maxallowed: axis.max! } : {}),
     };
   }
+  if (axis.tick_mode === "step" && axis.dtick !== null && axis.dtick > 0) {
+    out.tickmode = "linear";
+    out.dtick = axis.dtick;
+    const start = validManualRange ? axis.min! : observedRange?.[0];
+    if (start !== undefined) out.tick0 = start;
+  } else if (axis.tick_mode === "count" && axis.tick_count !== null && axis.tick_count >= 2) {
+    const start = validManualRange ? axis.min! : hasMin ? axis.min! : observedRange?.[0];
+    const end = validManualRange ? axis.max! : hasMax ? axis.max! : observedRange?.[1];
+    if (start !== undefined && end !== undefined && start < end) {
+      const steps = axis.tick_count - 1;
+      out.tickmode = "array";
+      out.tickvals = Array.from(
+        { length: axis.tick_count },
+        (_, index) => start + ((end - start) * index) / steps
+      );
+    }
+  }
   return out;
 }
 
 // Shared tick-mark + tick-label styling for all axes.
-function tickLayout(style: PlotStyle) {
+function tickLayout(style: PlotStyle, axis: PlotStyle["x_axis"]) {
   return {
     ticks: style.tick_marks === "none" ? ("" as const) : style.tick_marks,
     ticklen: style.tick_length,
     tickwidth: style.tick_width,
     tickcolor: style.frame_color,
     tickfont: { size: style.tick_font_size },
+    ticklabelstandoff: axis.tick_label_standoff,
   };
+}
+
+function axisGapDelta(axis: PlotStyle["x_axis"]): number {
+  return axis.title_standoff + axis.tick_label_standoff - 18;
 }
 
 const INSIDE_LEGEND_CHROME = {
@@ -979,37 +1102,107 @@ function aspectRatioValue(aspect: PlotAspectRatioKey, fallback: number): number 
   return fallback;
 }
 
+type ExportPlan = {
+  layoutWidth: number;
+  layoutHeight: number;
+  pixelWidth: number;
+  pixelHeight: number;
+  scale: number;
+  innerRatio: number;
+  margin: { l: number; r: number; t: number; b: number };
+};
+
+function layoutMargins(
+  layout: Partial<Plotly.Layout>,
+  style: PlotStyle
+): ExportPlan["margin"] {
+  const raw = (layout.margin ?? {}) as Partial<ExportPlan["margin"]>;
+  const margin = {
+    l: Number(raw.l ?? 60),
+    r: Number(raw.r ?? 30),
+    t: Number(raw.t ?? 20),
+    b: Number(raw.b ?? 55),
+  };
+  if (style.export_include_title) {
+    margin.t = Math.max(margin.t, style.axis_title_size + 34);
+  }
+  return margin;
+}
+
 function resolveExportPlan(
   style: PlotStyle,
-  plotDiv: HTMLElement
-): { layoutWidth: number; layoutHeight: number; pixelWidth: number; pixelHeight: number; scale: number } {
-  const rect = plotDiv.getBoundingClientRect();
-  const viewWidth = Math.max(320, Math.round(rect.width || style.export_width));
-  const viewHeight = Math.max(240, Math.round(rect.height || style.export_height));
+  viewSize: { width: number; height: number } | null,
+  layout: Partial<Plotly.Layout>
+): ExportPlan {
+  const viewWidth = Math.max(320, Math.round(viewSize?.width || style.export_width));
+  const viewHeight = Math.max(240, Math.round(viewSize?.height || Number(layout.height) || 500));
+  const margin = layoutMargins(layout, style);
   const aspect = style.export_aspect_ratio ?? "view";
-  const viewRatio = viewWidth / viewHeight;
-  const ratio =
-    aspect === "custom"
-      ? Math.max(0.1, (style.export_width || viewWidth) / (style.export_height || viewHeight))
-      : aspectRatioValue(aspect, viewRatio);
+  const viewInnerWidth = Math.max(120, viewWidth - margin.l - margin.r);
+  const viewInnerHeight = Math.max(120, viewHeight - margin.t - margin.b);
+  const viewRatio = viewInnerWidth / viewInnerHeight;
   const layoutWidth = viewWidth;
-  const layoutHeight = Math.max(240, Math.round(layoutWidth / ratio));
   const pixelWidth = Math.max(320, Math.round(style.export_width || viewWidth));
-  const pixelHeight = Math.max(240, Math.round(pixelWidth / ratio));
+  const scale = pixelWidth / layoutWidth;
+  let layoutHeight: number;
+  let pixelHeight: number;
+  let innerRatio: number;
+  if (aspect === "custom") {
+    pixelHeight = Math.max(240, Math.round(style.export_height || viewHeight * scale));
+    layoutHeight = Math.max(margin.t + margin.b + 120, pixelHeight / scale);
+    pixelHeight = Math.round(layoutHeight * scale);
+    innerRatio = viewInnerWidth / Math.max(120, layoutHeight - margin.t - margin.b);
+  } else {
+    innerRatio = aspectRatioValue(aspect, viewRatio);
+    layoutHeight = viewInnerWidth / innerRatio + margin.t + margin.b;
+    pixelHeight = Math.max(240, Math.round(layoutHeight * scale));
+  }
   return {
-    layoutWidth,
-    layoutHeight,
+    layoutWidth: Math.round(layoutWidth),
+    layoutHeight: Math.round(layoutHeight),
     pixelWidth,
     pixelHeight,
-    scale: Math.max(1, pixelWidth / layoutWidth),
+    scale,
+    innerRatio,
+    margin,
   };
+}
+
+function exportFigure(
+  traces: Plotly.Data[],
+  layout: Partial<Plotly.Layout>,
+  style: PlotStyle,
+  plotName: string,
+  plan: ExportPlan
+) {
+  const exportLayout: Partial<Plotly.Layout> = {
+    ...layout,
+    width: plan.layoutWidth,
+    height: plan.layoutHeight,
+    autosize: false,
+    margin: plan.margin,
+  };
+  if (style.export_include_title) {
+    exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
+  }
+  return { data: traces, layout: exportLayout };
 }
 
 
 function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedAnalysisPlot {
+  const validSegmentIds = new Set((base.protocol_segments ?? []).map((segment) => segment.id));
+  const protocolFilter = {
+    excluded_segment_ids: [...new Set(plot.computation?.protocol_filter?.excluded_segment_ids ?? [])]
+      .filter((id) => validSegmentIds.has(id)),
+    only_segment_ids: [...new Set(plot.computation?.protocol_filter?.only_segment_ids ?? [])]
+      .filter((id) => validSegmentIds.has(id)),
+  };
   const presentation = {
     ...DEFAULT_PRESENTATION,
     ...(plot.presentation ?? {}),
+    hidden_protocol_segment_ids: [
+      ...new Set(plot.presentation?.hidden_protocol_segment_ids ?? []),
+    ].filter((id) => validSegmentIds.has(id)),
     plot_style: normalizePlotStyle(plot.presentation?.plot_style),
   };
   const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[presentation.quantity];
@@ -1023,6 +1216,11 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
       entries: [],
       exclusions: clone(plot.selection?.exclusions ?? []),
       hidden_replicate_group_ids: clone(plot.selection?.hidden_replicate_group_ids ?? []),
+    },
+    computation: {
+      ...DEFAULT_COMPUTATION,
+      ...(plot.computation ?? {}),
+      protocol_filter: protocolFilter,
     },
     presentation,
   };
@@ -1039,6 +1237,17 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
     exclusions: spec.selection?.exclusions ?? [],
     hidden_replicate_group_ids: spec.selection?.hidden_replicate_group_ids ?? [],
   };
+  spec.protocol_segments = (spec.protocol_segments ?? []).map((segment) => ({
+    id: segment.id,
+    name: segment.name,
+    targets: (segment.targets ?? [])
+      .map((target) => ({
+        protocol_signature: target.protocol_signature,
+        step_indices: [...new Set(target.step_indices ?? [])].sort((a, b) => a - b),
+      }))
+      .filter((target) => target.protocol_signature && target.step_indices.length > 0),
+  }));
+  const validSegmentIds = new Set(spec.protocol_segments.map((segment) => segment.id));
   spec.computation = {
     ...DEFAULT_COMPUTATION,
     ...(spec.computation ?? {}),
@@ -1054,6 +1263,14 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       ...DEFAULT_COMPUTATION.polarization,
       ...(spec.computation?.polarization ?? {}),
     },
+    protocol_filter: {
+      excluded_segment_ids: [
+        ...new Set(spec.computation?.protocol_filter?.excluded_segment_ids ?? []),
+      ].filter((id) => validSegmentIds.has(id)),
+      only_segment_ids: [
+        ...new Set(spec.computation?.protocol_filter?.only_segment_ids ?? []),
+      ].filter((id) => validSegmentIds.has(id)),
+    },
     time_capacity: {
       ...DEFAULT_TIME_CAPACITY,
       ...(spec.computation?.time_capacity ?? {}),
@@ -1063,6 +1280,9 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
   spec.presentation = {
     ...DEFAULT_PRESENTATION,
     ...(spec.presentation ?? {}),
+    hidden_protocol_segment_ids: [
+      ...new Set(spec.presentation?.hidden_protocol_segment_ids ?? []),
+    ].filter((id) => validSegmentIds.has(id)),
     plot_style: normalizePlotStyle(spec.presentation?.plot_style),
   };
   const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[spec.presentation.quantity];
@@ -1095,8 +1315,10 @@ function computeSignature(spec: AnalysisSpec | null): string {
   if (!spec) return "no-spec";
   return JSON.stringify({
     selection: spec.selection,
+    protocol_segments: spec.protocol_segments ?? [],
     computation: spec.computation,
     aggregation: spec.aggregation,
+    hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
   });
 }
 
@@ -1695,7 +1917,8 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
   const { column } = resolvedQuantity(result, spec);
   const showCeOverlay = !compact && (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
   const style = currentPlotStyle(spec, "cycles");
-  const palette = PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+  const palette = plotPalette(style);
+  const secondaryPalette = cePalette(style);
   const mode = compact ? "lines" : plotMode(style);
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
@@ -1704,7 +1927,15 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
     if (!colorFor.has(key)) colorFor.set(key, style.custom_colors[key] ?? palette[ci++ % palette.length]);
     return colorFor.get(key)!;
   };
-  const pickCe = (key: string) => style.ce_custom_colors[key] ?? pick(key);
+  let ceIndex = 0;
+  const pickCe = (key: string) => {
+    if (style.ce_custom_colors[key]) return style.ce_custom_colors[key];
+    if (style.ce_palette_mode === "single") return style.ce_single_color ?? "#495057";
+    if (style.ce_palette_mode === "secondary") {
+      return secondaryPalette[ceIndex++ % secondaryPalette.length];
+    }
+    return pick(key);
+  };
 
   for (const agg of result.aggregates) {
     const color = pick(`g${agg.group_id}`);
@@ -1735,6 +1966,44 @@ function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = fa
         ? undefined
         : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
     } as Plotly.Data);
+    if (!compact) {
+      const lowCountX: number[] = [];
+      const lowCountY: number[] = [];
+      const lowCountN: number[] = [];
+      q.n.forEach((count, index) => {
+        const value = q.mean[index];
+        if (
+          count > 0 &&
+          count < spec.aggregation.min_n_for_band &&
+          value !== null &&
+          Number.isFinite(value)
+        ) {
+          lowCountX.push(agg.x[index]);
+          lowCountY.push(value);
+          lowCountN.push(count);
+        }
+      });
+      if (lowCountX.length > 0) {
+        out.push({
+          x: lowCountX,
+          y: lowCountY,
+          name: `${agg.group_name} below minimum n`,
+          type: "scatter",
+          mode: "markers",
+          marker: {
+            color: style.low_n_color,
+            size: style.low_n_marker_size,
+            symbol: style.low_n_marker_symbol,
+            line: { color: style.paper_bgcolor, width: 0.8 },
+          },
+          customdata: lowCountN,
+          showlegend: false,
+          hovertemplate:
+            `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
+            `<extra>${agg.group_name}</extra>`,
+        } as Plotly.Data);
+      }
+    }
     if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
       const ceColor = pickCe(`g${agg.group_id}`);
       out.push({
@@ -1916,7 +2185,7 @@ function currentAxisValues(
   quantity: TimeCapacityCurrentAxis,
   cfg: TimeCapacityConfig
 ): (number | null)[] {
-  const area = cfg.electrode_area_cm2 ?? null;
+  const area = cfg.electrode_area_cm2 ?? trace.electrode_area_cm2 ?? null;
   const nominal = trace.nominal_capacity_mah ?? null;
   return segment.current.map((value) => {
     if (value === null || !Number.isFinite(value)) return null;
@@ -1945,7 +2214,7 @@ function hasRightCurrentValues(result: TimeCapacityResult | undefined, spec: Ana
 
 function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): Plotly.Data[] {
   const style = currentPlotStyle(spec, "time_capacity");
-  const palette = PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+  const palette = plotPalette(style);
   const cfg = timeCapacityConfig(spec);
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
@@ -2065,7 +2334,11 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
   return out;
 }
 
-function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: AnalysisSpec): Partial<Plotly.Layout> {
+function timeCapacityLayout(
+  result: TimeCapacityResult | undefined,
+  spec: AnalysisSpec,
+  traces: Plotly.Data[] = []
+): Partial<Plotly.Layout> {
   const style = currentPlotStyle(spec, "time_capacity");
   const cfg = timeCapacityConfig(spec);
   const xTitle = result?.cell_traces[0] ? timeCapacityX(result.cell_traces[0], spec).title : "Time (min)";
@@ -2073,9 +2346,14 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
   const hasRightCurrent = hasRightCurrentValues(result, spec);
   const lm = legendMargins(style, spec.presentation.legend);
-  const rightMargin = Math.max(hasRightCurrent ? 84 : 28, lm.r ? lm.r + 24 : 0);
-  const ticks = tickLayout(style);
-  const baseAxis = {
+  const leftGap = axisGapDelta(style.y_axis);
+  const bottomGap = axisGapDelta(style.x_axis);
+  const rightGap = hasRightCurrent ? axisGapDelta(style.y2_axis) : 0;
+  const rightMargin = Math.max(
+    (hasRightCurrent ? 84 : 28) + rightGap,
+    lm.r ? lm.r + 24 : 0
+  );
+  const baseAxis = (axis: PlotStyle["x_axis"]) => ({
     showgrid: style.show_grid,
     gridcolor: "#e9ecef",
     zeroline: style.show_zero_line,
@@ -2083,9 +2361,12 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
     mirror: style.show_frame,
     linecolor: style.frame_color,
     linewidth: style.frame_width,
-    ...ticks,
-  };
+    ...tickLayout(style, axis),
+  });
   const titleFont = { size: style.axis_title_size };
+  const xRange = numericTraceExtent(traces, "x", ["x", "x2"]);
+  const yRange = numericTraceExtent(traces, "y", ["y"]);
+  const y2Range = numericTraceExtent(traces, "y", ["y2", "y3"]);
   if (cfg.view !== "voltage_current") {
     const specific = cfg.derivative_specific;
     const xTitle = cfg.view === "dqdv" ? "Voltage (V)" : specific ? "Specific capacity (mAh/g)" : "Capacity (mAh)";
@@ -2096,23 +2377,36 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
     return {
       height: 560,
       margin: {
-        l: 78 + lm.l,
+        l: 78 + lm.l + leftGap,
         r: Math.max(28, lm.r ? lm.r + 24 : 0),
         t: 20 + lm.t,
-        b: 58 + lm.b,
+        b: 58 + lm.b + bottomGap,
       },
       paper_bgcolor: style.paper_bgcolor,
       plot_bgcolor: style.plot_bgcolor,
       font: { size: style.tick_font_size },
       showlegend: spec.presentation.legend,
       legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
-      xaxis: { ...baseAxis, title: { text: style.x_title ?? xTitle, font: titleFont }, ...axisLayout(style.x_axis) },
-      yaxis: { ...baseAxis, title: { text: style.y_title ?? yTitle, font: titleFont }, ...axisLayout(style.y_axis) },
+      xaxis: {
+        ...baseAxis(style.x_axis),
+        title: { text: style.x_title ?? xTitle, font: titleFont, standoff: style.x_axis.title_standoff },
+        ...axisLayout(style.x_axis, xRange),
+      },
+      yaxis: {
+        ...baseAxis(style.y_axis),
+        title: { text: style.y_title ?? yTitle, font: titleFont, standoff: style.y_axis.title_standoff },
+        ...axisLayout(style.y_axis, yRange),
+      },
     };
   }
   return {
     height: cfg.stacked ? 620 : 560,
-    margin: { l: 70 + lm.l, r: rightMargin, t: 20 + lm.t, b: 58 + lm.b },
+    margin: {
+      l: 70 + lm.l + leftGap,
+      r: rightMargin,
+      t: 20 + lm.t,
+      b: 58 + lm.b + bottomGap,
+    },
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
@@ -2128,12 +2422,16 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
     showlegend: spec.presentation.legend,
     legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
     xaxis: {
-      ...baseAxis,
-      title: { text: cfg.stacked ? "" : style.x_title ?? xTitle, font: titleFont },
+      ...baseAxis(style.x_axis),
+      title: {
+        text: cfg.stacked ? "" : style.x_title ?? xTitle,
+        font: titleFont,
+        standoff: style.x_axis.title_standoff,
+      },
       domain: [0, 1],
       anchor: "y",
       showticklabels: !cfg.stacked,
-      ticks: cfg.stacked ? "" : baseAxis.ticks,
+      ticks: cfg.stacked ? "" : tickLayout(style, style.x_axis).ticks,
       // same vertical grid as the bottom subplot so the gridlines run
       // contiguously through both (they align because the axes match)
       showgrid: style.show_grid,
@@ -2145,47 +2443,63 @@ function timeCapacityLayout(result: TimeCapacityResult | undefined, spec: Analys
       showline: cfg.stacked ? false : style.show_frame,
       mirror: cfg.stacked ? false : style.show_frame,
       ...(cfg.stacked ? { matches: "x2" as const } : {}),
-      ...(cfg.stacked ? {} : axisLayout(style.x_axis)),
+      ...(cfg.stacked ? {} : axisLayout(style.x_axis, xRange)),
     },
     yaxis: {
-      ...baseAxis,
-      title: { text: style.y_title ?? "Voltage (V)", font: titleFont },
+      ...baseAxis(style.y_axis),
+      title: {
+        text: style.y_title ?? "Voltage (V)",
+        font: titleFont,
+        standoff: style.y_axis.title_standoff,
+      },
       domain: cfg.stacked ? [0.39, 1] : [0, 1],
       ...(cfg.stacked ? { showline: false, mirror: false } : {}),
-      ...axisLayout(style.y_axis),
+      ...axisLayout(style.y_axis, yRange),
     },
     ...(cfg.stacked
       ? {
           xaxis2: {
-            ...baseAxis,
-            title: { text: style.x_title ?? xTitle, font: titleFont },
+            ...baseAxis(style.x_axis),
+            title: {
+              text: style.x_title ?? xTitle,
+              font: titleFont,
+              standoff: style.x_axis.title_standoff,
+            },
             domain: [0, 1],
             anchor: "y2",
             showline: false,
             mirror: false,
-            ...axisLayout(style.x_axis),
+            ...axisLayout(style.x_axis, xRange),
           },
           yaxis2: {
-            ...baseAxis,
-            title: { text: style.y2_title ?? leftCurrentLabel, font: titleFont },
+            ...baseAxis(style.y2_axis),
+            title: {
+              text: style.y2_title ?? leftCurrentLabel,
+              font: titleFont,
+              standoff: style.y2_axis.title_standoff,
+            },
             domain: [0, 0.39],
             anchor: "x2",
             showline: false,
             mirror: false,
-            ...axisLayout(style.y2_axis),
+            ...axisLayout(style.y2_axis, y2Range),
           },
           ...(hasRightCurrent
             ? {
                 yaxis3: {
-                  ...baseAxis,
-                  title: { text: rightCurrentLabel, font: titleFont },
+                  ...baseAxis(style.y2_axis),
+                  title: {
+                    text: rightCurrentLabel,
+                    font: titleFont,
+                    standoff: style.y2_axis.title_standoff,
+                  },
                   overlaying: "y2" as const,
                   side: "right" as const,
                   anchor: "x2",
                   showgrid: false,
                   showline: false,
                   mirror: false,
-                  ...axisLayout(style.y2_axis),
+                  ...axisLayout(style.y2_axis, y2Range),
                 },
               }
             : {}),
@@ -3124,7 +3438,7 @@ function snapshotPaletteColors(
   style: PlotStyle,
   targets: { key: string; label: string; sub: string }[]
 ): void {
-  const palette = PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+  const palette = plotPalette(style);
   targets.forEach((target, index) => {
     if (!style.custom_colors[target.key]) {
       style.custom_colors[target.key] = palette[index % palette.length];
@@ -3174,6 +3488,26 @@ function PlotStylePanel({
   onToggle: () => void;
   axisScope?: AnalysisTabKey;
 }) {
+  const queryClient = useQueryClient();
+  const presetQuery = useQuery({
+    queryKey: ["plot-style-presets"],
+    queryFn: () => get<PlotStylePresetSettings>("/api/settings/plot-style-presets"),
+    staleTime: 5 * 60_000,
+  });
+  const paletteQuery = useQuery({
+    queryKey: ["color-palettes"],
+    queryFn: () => get<ColorPaletteSettings>("/api/settings/color-palettes"),
+    staleTime: 5 * 60_000,
+  });
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [applyPresetRanges, setApplyPresetRanges] = useState(false);
+  const [applyPresetTicks, setApplyPresetTicks] = useState(false);
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [presetFamily, setPresetFamily] = useState<"all" | "cycles" | "time_capacity">(
+    axisScope === "time_capacity" ? "time_capacity" : "cycles",
+  );
+  const [presetDefault, setPresetDefault] = useState(false);
   const style = currentPlotStyle(spec, axisScope);
   const colorTargets = plotColorTargets(result);
   const computeResult = result && "cell_traces" in result ? undefined : result;
@@ -3192,6 +3526,69 @@ function PlotStylePanel({
     setStyle((next) => {
       next[axis] = { ...next[axis] };
       fn(next[axis]);
+    });
+  };
+  const axisRangeError = (axis: PlotStyle["x_axis"]) =>
+    axis.mode === "manual" &&
+    axis.min !== null &&
+    axis.max !== null &&
+    axis.min >= axis.max
+      ? "Minimum must be smaller than maximum."
+      : undefined;
+  const availablePresets = (presetQuery.data?.presets ?? []).filter(
+    (preset) => preset.plot_family === "all" || preset.plot_family === axisScope,
+  );
+  const customPaletteOptions = (paletteQuery.data?.palettes ?? []).map((palette) => ({
+    value: `user:${palette.id}`,
+    label: palette.name,
+  }));
+  const paletteOptions = [
+    ...PALETTE_OPTIONS.filter((option) => option.value !== "custom"),
+    ...(customPaletteOptions.length
+      ? [{ group: "Custom palettes", items: customPaletteOptions }]
+      : []),
+    { value: "custom", label: "Manual colors" },
+  ];
+  const savePreset = useMutation({
+    mutationFn: () => {
+      const id = crypto.randomUUID();
+      const existing = presetQuery.data?.presets ?? [];
+      return put<PlotStylePresetSettings>("/api/settings/plot-style-presets", {
+        presets: [
+          ...existing,
+          {
+            id,
+            name: presetName.trim(),
+            plot_family: presetFamily,
+            style,
+            is_default: presetDefault,
+          },
+        ],
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["plot-style-presets"], saved);
+      setSavePresetOpen(false);
+      setPresetName("");
+      setPresetDefault(false);
+      notifications.show({ message: "Plot-style preset saved.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not save the preset.", color: "red" }),
+  });
+  const applySelectedPreset = () => {
+    const preset = availablePresets.find((item) => item.id === selectedPresetId);
+    if (!preset) return;
+    setStyle((next) => {
+      Object.assign(
+        next,
+        applyPlotStylePreset(
+          next,
+          normalizePlotStyle(preset.style),
+          applyPresetRanges,
+          applyPresetTicks,
+        ),
+      );
     });
   };
 
@@ -3235,6 +3632,54 @@ function PlotStylePanel({
           </ActionIcon>
         </Tooltip>
       </Group>
+      <Stack gap={6} mb="sm">
+        <Select
+          label="Style preset"
+          placeholder={presetQuery.isLoading ? "Loading presets..." : "Choose preset"}
+          data={availablePresets.map((preset) => ({
+            value: preset.id,
+            label: `${preset.name}${preset.is_default ? " (default)" : ""}`,
+          }))}
+          value={selectedPresetId}
+          onChange={setSelectedPresetId}
+          clearable
+        />
+        <Group gap="md">
+          <Checkbox
+            size="xs"
+            label="Apply ranges"
+            checked={applyPresetRanges}
+            onChange={(event) => setApplyPresetRanges(event.currentTarget.checked)}
+          />
+          <Checkbox
+            size="xs"
+            label="Apply ticks"
+            checked={applyPresetTicks}
+            onChange={(event) => setApplyPresetTicks(event.currentTarget.checked)}
+          />
+        </Group>
+        <Group grow>
+          <Button
+            size="xs"
+            variant="default"
+            disabled={!selectedPresetId}
+            onClick={applySelectedPreset}
+          >
+            Apply
+          </Button>
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconPlus size={13} />}
+            onClick={() => {
+              setPresetFamily(axisScope === "time_capacity" ? "time_capacity" : "cycles");
+              setSavePresetOpen(true);
+            }}
+          >
+            Save current
+          </Button>
+        </Group>
+      </Stack>
       <Accordion multiple defaultValue={["colors", "axes", "ce-overlay"]}>
         <Accordion.Item value="colors">
           <Accordion.Control>
@@ -3246,17 +3691,33 @@ function PlotStylePanel({
             <Stack gap="xs">
               <Select
                 label="Palette"
-                data={PALETTE_OPTIONS}
-                value={style.palette}
+                data={paletteOptions}
+                value={style.palette_id ? `user:${style.palette_id}` : style.palette}
                 onChange={(value) =>
                   value &&
                   setStyle((next) => {
+                    if (value.startsWith("user:")) {
+                      const palette = paletteQuery.data?.palettes.find(
+                        (item) => item.id === value.slice(5),
+                      );
+                      if (!palette) return;
+                      next.palette = "custom";
+                      next.palette_id = palette.id;
+                      next.palette_colors = [...palette.colors];
+                      next.custom_colors = {};
+                      return;
+                    }
                     if (value === "custom") {
                       // freeze the CURRENT colors so nothing jumps
                       snapshotPaletteColors(next, colorTargets);
-                    } else {
-                      next.custom_colors = {};
+                      next.palette_id = null;
+                      next.palette_colors = [];
+                      next.palette = "custom";
+                      return;
                     }
+                    next.palette_id = null;
+                    next.palette_colors = [];
+                    next.custom_colors = {};
                     next.palette = value as PlotStyle["palette"];
                   })
                 }
@@ -3264,7 +3725,8 @@ function PlotStylePanel({
               {colorTargets.length > 0 && (
                 <Stack gap={6}>
                   {colorTargets.map((target, index) => {
-                    const fallback = PLOT_PALETTES[style.palette][index % PLOT_PALETTES[style.palette].length];
+                    const activePalette = plotPalette(style);
+                    const fallback = activePalette[index % activePalette.length];
                     return (
                       <DebouncedColorInput
                         key={target.key}
@@ -3372,6 +3834,54 @@ function PlotStylePanel({
                   }
                 />
               </Group>
+              {axisScope === "cycles" && (
+                <>
+                  <Divider label="Below minimum replicate count" labelPosition="left" />
+                  <Text size="xs" c="dimmed">
+                    These markers identify aggregate points where fewer cells contribute than the
+                    minimum selected for the replicate band.
+                  </Text>
+                  <DebouncedColorInput
+                    label="Point color"
+                    value={style.low_n_color}
+                    format="hex"
+                    onCommit={(value) => setStyle((next) => void (next.low_n_color = value))}
+                    swatches={COLOR_SWATCHES}
+                    swatchesPerRow={8}
+                  />
+                  <Group grow>
+                    <Select
+                      label="Marker"
+                      data={[
+                        { value: "circle", label: "Circle" },
+                        { value: "square", label: "Square" },
+                        { value: "diamond", label: "Diamond" },
+                        { value: "cross", label: "Cross" },
+                        { value: "x", label: "X" },
+                        { value: "triangle-up", label: "Triangle" },
+                      ]}
+                      value={style.low_n_marker_symbol}
+                      onChange={(value) =>
+                        value &&
+                        setStyle(
+                          (next) =>
+                            void (next.low_n_marker_symbol =
+                              value as PlotStyle["low_n_marker_symbol"])
+                        )
+                      }
+                    />
+                    <DebouncedNumberInput
+                      label="Marker size"
+                      min={2}
+                      max={20}
+                      value={style.low_n_marker_size}
+                      onCommit={(value) =>
+                        setStyle((next) => void (next.low_n_marker_size = value ?? 8))
+                      }
+                    />
+                  </Group>
+                </>
+              )}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -3388,12 +3898,81 @@ function PlotStylePanel({
                 <Text size="xs" c="dimmed">
                   These settings apply only to coulombic-efficiency traces on the right axis.
                 </Text>
+                <Select
+                  label="CE colors"
+                  data={[
+                    { value: "match", label: "Match primary series" },
+                    { value: "secondary", label: "Independent palette" },
+                    { value: "single", label: "Single color" },
+                  ]}
+                  value={style.ce_palette_mode ?? "match"}
+                  onChange={(value) =>
+                    value &&
+                    setStyle((next) => {
+                      next.ce_palette_mode = value as NonNullable<PlotStyle["ce_palette_mode"]>;
+                      next.ce_custom_colors = {};
+                    })
+                  }
+                />
+                {(style.ce_palette_mode ?? "match") === "secondary" && (
+                  <Select
+                    label="CE palette"
+                    data={paletteOptions.filter(
+                      (option) => !("value" in option) || option.value !== "custom",
+                    )}
+                    value={
+                      style.ce_palette_id
+                        ? `user:${style.ce_palette_id}`
+                        : "app"
+                    }
+                    onChange={(value) =>
+                      value &&
+                      setStyle((next) => {
+                        if (value.startsWith("user:")) {
+                          const palette = paletteQuery.data?.palettes.find(
+                            (item) => item.id === value.slice(5),
+                          );
+                          if (!palette) return;
+                          next.ce_palette_id = palette.id;
+                          next.ce_palette_colors = [...palette.colors];
+                        } else {
+                          next.ce_palette_id = null;
+                          next.ce_palette_colors = [
+                            ...(PLOT_PALETTES[value as PlotStyle["palette"]] ??
+                              PLOT_PALETTES.app),
+                          ];
+                        }
+                        next.ce_custom_colors = {};
+                      })
+                    }
+                  />
+                )}
+                {(style.ce_palette_mode ?? "match") === "single" && (
+                  <DebouncedColorInput
+                    label="CE color"
+                    value={style.ce_single_color ?? "#495057"}
+                    format="hex"
+                    onCommit={(value) =>
+                      setStyle((next) => {
+                        next.ce_single_color = value;
+                        next.ce_custom_colors = {};
+                      })
+                    }
+                    swatches={COLOR_SWATCHES}
+                    swatchesPerRow={8}
+                  />
+                )}
                 {colorTargets.length > 0 && (
                   <Stack gap={6}>
                     {colorTargets.map((target, index) => {
-                      const palette = PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
+                      const palette =
+                        style.ce_palette_mode === "secondary"
+                          ? cePalette(style)
+                          : plotPalette(style);
                       const mainColor =
-                        style.custom_colors[target.key] ?? palette[index % palette.length];
+                        style.ce_palette_mode === "single"
+                          ? style.ce_single_color ?? "#495057"
+                          : style.custom_colors[target.key] ?? palette[index % palette.length];
                       return (
                         <DebouncedColorInput
                           key={`ce-${target.key}`}
@@ -3507,12 +4086,17 @@ function PlotStylePanel({
                   <DebouncedNumberInput
                     label="X min"
                     placeholder="Auto"
+                    step={0.1}
+                    decimalScale={8}
+                    error={axisRangeError(style.x_axis)}
                     value={style.x_axis.min}
                     onCommit={(value) => setAxis("x_axis", (axis) => void (axis.min = value))}
                   />
                   <DebouncedNumberInput
                     label="X max"
                     placeholder="Auto"
+                    step={0.1}
+                    decimalScale={8}
                     value={style.x_axis.max}
                     onCommit={(value) => setAxis("x_axis", (axis) => void (axis.max = value))}
                   />
@@ -3534,12 +4118,17 @@ function PlotStylePanel({
                   <DebouncedNumberInput
                     label="Y min"
                     placeholder="Auto"
+                    step={0.1}
+                    decimalScale={8}
+                    error={axisRangeError(style.y_axis)}
                     value={style.y_axis.min}
                     onCommit={(value) => setAxis("y_axis", (axis) => void (axis.min = value))}
                   />
                   <DebouncedNumberInput
                     label="Y max"
                     placeholder="Auto"
+                    step={0.1}
+                    decimalScale={8}
                     value={style.y_axis.max}
                     onCommit={(value) => setAxis("y_axis", (axis) => void (axis.max = value))}
                   />
@@ -3548,23 +4137,137 @@ function PlotStylePanel({
               <Text size="10px" c="dimmed">
                 Leave one bound empty to clamp only that side.
               </Text>
+              <Group grow align="start">
+                <Select
+                  label="X ticks"
+                  data={[
+                    { value: "auto", label: "Automatic" },
+                    { value: "step", label: "Step size" },
+                    { value: "count", label: "Tick count" },
+                  ]}
+                  value={style.x_axis.tick_mode}
+                  onChange={(value) =>
+                    value &&
+                    setAxis(
+                      "x_axis",
+                      (axis) => void (axis.tick_mode = value as PlotStyle["x_axis"]["tick_mode"])
+                    )
+                  }
+                />
+                {style.x_axis.tick_mode === "step" ? (
+                  <DebouncedNumberInput
+                    label="X step"
+                    min={0}
+                    step={0.1}
+                    decimalScale={8}
+                    value={style.x_axis.dtick}
+                    onCommit={(value) =>
+                      setAxis("x_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                    }
+                  />
+                ) : style.x_axis.tick_mode === "count" ? (
+                  <DebouncedNumberInput
+                    label="X tick count"
+                    min={2}
+                    max={30}
+                    step={1}
+                    allowDecimal={false}
+                    value={style.x_axis.tick_count}
+                    onCommit={(value) =>
+                      setAxis(
+                        "x_axis",
+                        (axis) => void (axis.tick_count = value && value >= 2 ? Math.round(value) : null)
+                      )
+                    }
+                  />
+                ) : <div />}
+              </Group>
+              <Group grow align="start">
+                <Select
+                  label="Y ticks"
+                  data={[
+                    { value: "auto", label: "Automatic" },
+                    { value: "step", label: "Step size" },
+                    { value: "count", label: "Tick count" },
+                  ]}
+                  value={style.y_axis.tick_mode}
+                  onChange={(value) =>
+                    value &&
+                    setAxis(
+                      "y_axis",
+                      (axis) => void (axis.tick_mode = value as PlotStyle["y_axis"]["tick_mode"])
+                    )
+                  }
+                />
+                {style.y_axis.tick_mode === "step" ? (
+                  <DebouncedNumberInput
+                    label="Y step"
+                    min={0}
+                    step={0.1}
+                    decimalScale={8}
+                    value={style.y_axis.dtick}
+                    onCommit={(value) =>
+                      setAxis("y_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                    }
+                  />
+                ) : style.y_axis.tick_mode === "count" ? (
+                  <DebouncedNumberInput
+                    label="Y tick count"
+                    min={2}
+                    max={30}
+                    step={1}
+                    allowDecimal={false}
+                    value={style.y_axis.tick_count}
+                    onCommit={(value) =>
+                      setAxis(
+                        "y_axis",
+                        (axis) => void (axis.tick_count = value && value >= 2 ? Math.round(value) : null)
+                      )
+                    }
+                  />
+                ) : <div />}
+              </Group>
               <Group grow>
                 <DebouncedNumberInput
-                  label="X tick step"
-                  placeholder="Auto"
+                  label="X title gap"
+                  description="Axis title to tick labels"
                   min={0}
-                  value={style.x_axis.dtick}
+                  max={80}
+                  value={style.x_axis.title_standoff}
                   onCommit={(value) =>
-                    setAxis("x_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                    setAxis("x_axis", (axis) => void (axis.title_standoff = value ?? 14))
                   }
                 />
                 <DebouncedNumberInput
-                  label="Y tick step"
-                  placeholder="Auto"
+                  label="X label gap"
+                  description="Tick labels to axis"
                   min={0}
-                  value={style.y_axis.dtick}
+                  max={40}
+                  value={style.x_axis.tick_label_standoff}
                   onCommit={(value) =>
-                    setAxis("y_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                    setAxis("x_axis", (axis) => void (axis.tick_label_standoff = value ?? 4))
+                  }
+                />
+              </Group>
+              <Group grow>
+                <DebouncedNumberInput
+                  label="Y title gap"
+                  description="Axis title to tick labels"
+                  min={0}
+                  max={80}
+                  value={style.y_axis.title_standoff}
+                  onCommit={(value) =>
+                    setAxis("y_axis", (axis) => void (axis.title_standoff = value ?? 14))
+                  }
+                />
+                <DebouncedNumberInput
+                  label="Y label gap"
+                  description="Tick labels to axis"
+                  min={0}
+                  max={40}
+                  value={style.y_axis.tick_label_standoff}
+                  onCommit={(value) =>
+                    setAxis("y_axis", (axis) => void (axis.tick_label_standoff = value ?? 4))
                   }
                 />
               </Group>
@@ -3593,26 +4296,88 @@ function PlotStylePanel({
                       <DebouncedNumberInput
                         label="Right min"
                         placeholder="Auto"
+                        step={0.1}
+                        decimalScale={8}
+                        error={axisRangeError(style.y2_axis)}
                         value={style.y2_axis.min}
                         onCommit={(value) => setAxis("y2_axis", (axis) => void (axis.min = value))}
                       />
                       <DebouncedNumberInput
                         label="Right max"
                         placeholder="Auto"
+                        step={0.1}
+                        decimalScale={8}
                         value={style.y2_axis.max}
                         onCommit={(value) => setAxis("y2_axis", (axis) => void (axis.max = value))}
                       />
                     </Group>
                   )}
-                  <DebouncedNumberInput
-                    label="Right tick step"
-                    placeholder="Auto"
-                    min={0}
-                    value={style.y2_axis.dtick}
-                    onCommit={(value) =>
-                      setAxis("y2_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                  <Select
+                    label="Right ticks"
+                    data={[
+                      { value: "auto", label: "Automatic" },
+                      { value: "step", label: "Step size" },
+                      { value: "count", label: "Tick count" },
+                    ]}
+                    value={style.y2_axis.tick_mode}
+                    onChange={(value) =>
+                      value &&
+                      setAxis(
+                        "y2_axis",
+                        (axis) => void (axis.tick_mode = value as PlotStyle["y2_axis"]["tick_mode"])
+                      )
                     }
                   />
+                  {style.y2_axis.tick_mode === "step" && (
+                    <DebouncedNumberInput
+                      label="Right tick step"
+                      min={0}
+                      step={0.1}
+                      decimalScale={8}
+                      value={style.y2_axis.dtick}
+                      onCommit={(value) =>
+                        setAxis("y2_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                      }
+                    />
+                  )}
+                  {style.y2_axis.tick_mode === "count" && (
+                    <DebouncedNumberInput
+                      label="Right tick count"
+                      min={2}
+                      max={30}
+                      step={1}
+                      allowDecimal={false}
+                      value={style.y2_axis.tick_count}
+                      onCommit={(value) =>
+                        setAxis(
+                          "y2_axis",
+                          (axis) => void (axis.tick_count = value && value >= 2 ? Math.round(value) : null)
+                        )
+                      }
+                    />
+                  )}
+                  <Group grow>
+                    <DebouncedNumberInput
+                      label="Right title gap"
+                      description="Axis title to tick labels"
+                      min={0}
+                      max={80}
+                      value={style.y2_axis.title_standoff}
+                      onCommit={(value) =>
+                        setAxis("y2_axis", (axis) => void (axis.title_standoff = value ?? 14))
+                      }
+                    />
+                    <DebouncedNumberInput
+                      label="Right label gap"
+                      description="Tick labels to axis"
+                      min={0}
+                      max={40}
+                      value={style.y2_axis.tick_label_standoff}
+                      onCommit={(value) =>
+                        setAxis("y2_axis", (axis) => void (axis.tick_label_standoff = value ?? 4))
+                      }
+                    />
+                  </Group>
                 </>
               )}
             </Stack>
@@ -3861,6 +4626,59 @@ function PlotStylePanel({
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
+      <Modal
+        opened={savePresetOpen}
+        onClose={() => setSavePresetOpen(false)}
+        title="Save plot-style preset"
+        centered
+      >
+        <Stack gap="sm">
+          <TextInput
+            label="Preset name"
+            value={presetName}
+            onChange={(event) => setPresetName(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && presetName.trim()) savePreset.mutate();
+            }}
+            autoFocus
+          />
+          <Select
+            label="Available for"
+            value={presetFamily}
+            data={[
+              { value: "all", label: "All plot types" },
+              { value: "cycles", label: "Cycles plots" },
+              { value: "time_capacity", label: "Time / capacity plots" },
+            ]}
+            onChange={(value) =>
+              value &&
+              setPresetFamily(value as "all" | "cycles" | "time_capacity")
+            }
+          />
+          <Switch
+            label="Use as default for new plots"
+            checked={presetDefault}
+            onChange={(event) => setPresetDefault(event.currentTarget.checked)}
+          />
+          <Text size="xs" c="dimmed">
+            The preset stores all current styling, ranges, and tick settings. When applying it,
+            ranges and ticks can be left unchanged independently.
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setSavePresetOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              leftSection={<IconDeviceFloppy size={14} />}
+              disabled={!presetName.trim()}
+              loading={savePreset.isPending}
+              onClick={() => savePreset.mutate()}
+            >
+              Save preset
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Paper>
   );
 }
@@ -3922,8 +4740,13 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
 }
 
 function PlotHeader({
+  analysisTitle,
+  tabName,
   plotName,
   subtitle,
+  quantityName,
+  xAxisName,
+  sampleSummary,
   explainer,
   onExport,
   onDataExport,
@@ -3931,35 +4754,45 @@ function PlotHeader({
   style,
   updateStyle,
   viewSize,
+  layout,
   canExport = false,
 }: {
+  analysisTitle?: string;
+  tabName?: string;
   plotName: string;
   subtitle: string;
+  quantityName?: string;
+  xAxisName?: string;
+  sampleSummary?: string;
   explainer?: PlotExplainer;
-  onExport?: (format: PlotExportFormat) => void;
-  onDataExport?: () => void;
+  onExport?: (format: PlotExportFormat, baseName: string) => void;
+  onDataExport?: (baseName: string) => void;
   getExportPreview?: () => Promise<string | null>;
   style?: PlotStyle;
   updateStyle?: (fn: (style: PlotStyle) => void) => void;
   viewSize?: { width: number; height: number } | null;
+  layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
   const selectedFormat = exportStyle.export_format ?? "png";
   const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const ratio =
-    exportStyle.export_aspect_ratio === "custom"
-      ? Math.max(0.1, exportStyle.export_width / exportStyle.export_height)
-      : aspectRatioValue(
-          exportStyle.export_aspect_ratio,
-          (viewSize?.width ?? exportStyle.export_width) / (viewSize?.height ?? exportStyle.export_height)
-        );
-  const exportWidthValue = exportStyle.export_width || viewSize?.width || DEFAULT_PLOT_STYLE.export_width;
-  const exportHeightValue =
-    exportStyle.export_aspect_ratio === "custom"
-      ? exportStyle.export_height
-      : Math.max(240, Math.round(exportWidthValue / ratio));
+  const [filenameRequest, setFilenameRequest] = useState<{
+    kind: "plot" | "data";
+    format: PlotExportFormat | "csv" | "xlsx";
+  } | null>(null);
+  const [filenameTemplate, setFilenameTemplate] = useState("");
+  const filenameInputRef = useRef<HTMLInputElement | null>(null);
+  const downloadSettings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => get<DownloadSettings>("/api/settings"),
+    staleTime: 5 * 60_000,
+  });
+  const exportPreviewSignature = JSON.stringify(exportStyle);
+  const plan = resolveExportPlan(exportStyle, viewSize ?? null, layout ?? {});
+  const exportWidthValue = plan.pixelWidth;
+  const exportHeightValue = plan.pixelHeight;
   const ppi = Math.max(36, exportStyle.export_ppi || DEFAULT_PLOT_STYLE.export_ppi);
   const printWidthCm = (exportWidthValue / ppi) * 2.54;
   const printHeightCm = (exportHeightValue / ppi) * 2.54;
@@ -3967,18 +4800,60 @@ function PlotHeader({
   const setAspect = (value: PlotAspectRatioKey) => {
     setExportStyle((next) => {
       next.export_aspect_ratio = value;
-      if (value !== "view" && value !== "custom") {
-        next.export_height = Math.round(next.export_width / aspectRatioValue(value, next.export_width / next.export_height));
-      }
     });
   };
   const setExportWidth = (value: number) => {
     setExportStyle((next) => {
       next.export_width = value;
-      if (next.export_aspect_ratio !== "custom" && next.export_aspect_ratio !== "view") {
-        next.export_height = Math.round(value / aspectRatioValue(next.export_aspect_ratio, value / next.export_height));
-      }
     });
+  };
+  const filenameContext = {
+    analysis: analysisTitle?.trim() || "Analysis",
+    plotTitle:
+      plotName === "Unsaved plot" || plotName === "New plot"
+        ? subtitle || "Plot"
+        : plotName,
+    quantity: quantityName?.trim() || subtitle || "Plot",
+    xAxis: xAxisName?.trim() || "X axis",
+    tab: tabName?.trim() || "Analysis",
+    sampleSummary: sampleSummary?.trim() || "samples",
+  };
+  const openFilenameDialog = (
+    kind: "plot" | "data",
+    format: PlotExportFormat | "csv" | "xlsx",
+  ) => {
+    setFilenameTemplate(
+      downloadSettings.data?.export_filename_template || "{analysis} - {plot_title}",
+    );
+    setFilenameRequest({ kind, format });
+    setExportPopoverOpen(false);
+  };
+  const insertToken = (token: ExportFilenameToken) => {
+    const input = filenameInputRef.current;
+    const inserted = insertFilenameToken(
+      filenameTemplate,
+      token,
+      input?.selectionStart,
+      input?.selectionEnd,
+    );
+    setFilenameTemplate(inserted.value);
+    window.setTimeout(() => {
+      input?.focus();
+      input?.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
+  };
+  const renderedFilename = sanitizeExportFilename(
+    renderExportFilename(filenameTemplate, filenameContext),
+    "plot",
+  );
+  const confirmFilename = () => {
+    if (!filenameRequest) return;
+    if (filenameRequest.kind === "plot") {
+      onExport?.(filenameRequest.format as PlotExportFormat, renderedFilename);
+    } else {
+      onDataExport?.(renderedFilename);
+    }
+    setFilenameRequest(null);
   };
 
   // live thumbnail of the actual export output (same figure, scaled down),
@@ -4002,13 +4877,13 @@ function PlotHeader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     exportPopoverOpen,
-    exportStyle.export_aspect_ratio,
-    exportStyle.export_width,
-    exportStyle.export_height,
-    exportStyle.export_include_title,
+    exportPreviewSignature,
+    viewSize?.width,
+    viewSize?.height,
   ]);
 
   return (
+    <>
     <Group justify="space-between" mb="xs" align="start">
       <div>
         <Text fw={800} size="lg">
@@ -4027,7 +4902,9 @@ function PlotHeader({
               variant="default"
               leftSection={<IconTable size={14} />}
               disabled={!canExport}
-              onClick={onDataExport}
+              onClick={() =>
+                openFilenameDialog("data", exportStyle.data_export_format)
+              }
             >
               {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
             </Button>
@@ -4097,7 +4974,13 @@ function PlotHeader({
                     Exports the plotted series as x/y column pairs per trace (dispersion bands
                     excluded). Excel files keep full numeric precision.
                   </Text>
-                  <Button fullWidth leftSection={<IconTable size={14} />} onClick={onDataExport}>
+                  <Button
+                    fullWidth
+                    leftSection={<IconTable size={14} />}
+                    onClick={() =>
+                      openFilenameDialog("data", exportStyle.data_export_format)
+                    }
+                  >
                     Download {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
                   </Button>
                 </Stack>
@@ -4112,7 +4995,7 @@ function PlotHeader({
               variant="default"
               leftSection={<IconDownload size={14} />}
               disabled={!canExport}
-              onClick={() => onExport(selectedFormat)}
+              onClick={() => openFilenameDialog("plot", selectedFormat)}
             >
               {selectedFormat.toUpperCase()}
             </Button>
@@ -4186,7 +5069,7 @@ function PlotHeader({
                         )}
                       </div>
                       <Text size="10px" c="dimmed">
-                        This uses the selected aspect ratio and figure styling. The downloaded file keeps the full resolution.
+                        The aspect ratio applies to the data rectangle; labels, margins, and outside legends are added around it.
                       </Text>
                     </Stack>
                   )}
@@ -4258,7 +5141,11 @@ function PlotHeader({
                           setExportStyle((next) => void (next.export_include_title = event.currentTarget.checked))
                         }
                       />
-                      <Button fullWidth leftSection={<IconDownload size={14} />} onClick={() => onExport(selectedFormat)}>
+                      <Button
+                        fullWidth
+                        leftSection={<IconDownload size={14} />}
+                        onClick={() => openFilenameDialog("plot", selectedFormat)}
+                      >
                         Download {selectedFormat.toUpperCase()}
                       </Button>
                     </Stack>
@@ -4269,19 +5156,86 @@ function PlotHeader({
         )}
       </Group>
     </Group>
+    <Modal
+      opened={filenameRequest !== null}
+      onClose={() => setFilenameRequest(null)}
+      title="Choose export filename"
+      centered
+      size="lg"
+    >
+      <Stack gap="sm">
+        <TextInput
+          ref={filenameInputRef}
+          label="Filename"
+          description="Insert automatic fields with the buttons, and type any additional text normally."
+          value={filenameTemplate}
+          onChange={(event) => setFilenameTemplate(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              confirmFilename();
+            }
+          }}
+          autoFocus
+        />
+        <Group gap={6}>
+          {EXPORT_FILENAME_TOKENS.map((token) => (
+            <Button
+              key={token}
+              size="compact-xs"
+              variant="light"
+              onClick={() => insertToken(token)}
+            >
+              {token}
+            </Button>
+          ))}
+        </Group>
+        <Paper withBorder p="xs" bg="gray.0">
+          <Text size="xs" c="dimmed">Result</Text>
+          <Text size="sm" fw={600}>
+            {renderedFilename}.{filenameRequest?.format ?? selectedFormat}
+          </Text>
+        </Paper>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => setFilenameRequest(null)}>
+            Cancel
+          </Button>
+          <Button
+            leftSection={
+              filenameRequest?.kind === "data"
+                ? <IconTable size={15} />
+                : <IconDownload size={15} />
+            }
+            onClick={confirmFilename}
+          >
+            Export
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+    </>
   );
 }
 
-function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec): Partial<Plotly.Layout> {
+function cyclePlotLayout(
+  result: ComputeResult | undefined,
+  spec: AnalysisSpec,
+  traces: Plotly.Data[] = []
+): Partial<Plotly.Layout> {
   const style = currentPlotStyle(spec, "cycles");
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const quantityInfo = resolvedQuantity(result, spec);
   const showCeOverlay = (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
   const lm = legendMargins(style, spec.presentation.legend);
-  const rightMargin = Math.max(showCeOverlay ? 64 : 24, lm.r ? lm.r + 24 : 0);
+  const leftGap = axisGapDelta(style.y_axis);
+  const bottomGap = axisGapDelta(style.x_axis);
+  const rightGap = showCeOverlay ? axisGapDelta(style.y2_axis) : 0;
+  const rightMargin = Math.max(
+    (showCeOverlay ? 64 : 24) + rightGap,
+    lm.r ? lm.r + 24 : 0
+  );
   const topMargin = 20 + lm.t;
-  const ticks = tickLayout(style);
-  const axisBase = {
+  const axisBase = (axis: PlotStyle["x_axis"]) => ({
     showgrid: style.show_grid,
     gridcolor: "#edf2f7",
     zeroline: false,
@@ -4289,13 +5243,21 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
     mirror: style.show_frame,
     linecolor: style.frame_color,
     linewidth: style.frame_width,
-    ...ticks,
-  };
+    ...tickLayout(style, axis),
+  });
   const titleFont = { size: style.axis_title_size };
+  const xRange = numericTraceExtent(traces, "x", ["x"]);
+  const yRange = numericTraceExtent(traces, "y", ["y"]);
+  const y2Range = numericTraceExtent(traces, "y", ["y2"]);
 
   return {
     height: 500,
-    margin: { l: 66 + lm.l, r: rightMargin, t: topMargin, b: 58 + lm.b },
+    margin: {
+      l: 66 + lm.l + leftGap,
+      r: rightMargin,
+      t: topMargin,
+      b: 58 + lm.b + bottomGap,
+    },
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
@@ -4305,22 +5267,34 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
     // an empty plot
     uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${spec.presentation.normalize_by_mass ? "g" : "abs"}`,
     xaxis: {
-      ...axisBase,
-      title: { text: style.x_title ?? "Cycle", font: titleFont },
-      ...axisLayout(style.x_axis),
+      ...axisBase(style.x_axis),
+      title: {
+        text: style.x_title ?? "Cycle",
+        font: titleFont,
+        standoff: style.x_axis.title_standoff,
+      },
+      ...axisLayout(style.x_axis, xRange),
     },
     yaxis: {
-      ...axisBase,
+      ...axisBase(style.y_axis),
       // zero line only makes sense on the value axis of a cycle plot
       zeroline: style.show_zero_line,
       zerolinecolor: "#adb5bd",
-      title: { text: style.y_title ?? quantityInfo?.label ?? "", font: titleFont },
-      ...axisLayout(style.y_axis),
+      title: {
+        text: style.y_title ?? quantityInfo?.label ?? "",
+        font: titleFont,
+        standoff: style.y_axis.title_standoff,
+      },
+      ...axisLayout(style.y_axis, yRange),
     },
     ...(showCeOverlay
       ? {
           yaxis2: {
-            title: { text: style.y2_title ?? "CE (%)", font: titleFont },
+            title: {
+              text: style.y2_title ?? "CE (%)",
+              font: titleFont,
+              standoff: style.y2_axis.title_standoff,
+            },
             overlaying: "y" as const,
             side: "right" as const,
             showgrid: false,
@@ -4328,8 +5302,8 @@ function cyclePlotLayout(result: ComputeResult | undefined, spec: AnalysisSpec):
             showline: style.show_frame,
             linecolor: style.frame_color,
             linewidth: style.frame_width,
-            ...ticks,
-            ...axisLayout(style.y2_axis),
+            ...tickLayout(style, style.y2_axis),
+            ...axisLayout(style.y2_axis, y2Range),
           },
         }
       : {}),
@@ -4490,6 +5464,7 @@ function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
 }
 
 function CyclePlotCard({
+  analysisTitle,
   plotName,
   subtitle,
   result,
@@ -4498,6 +5473,7 @@ function CyclePlotCard({
   updating,
   error,
 }: {
+  analysisTitle: string;
   plotName: string;
   subtitle: string;
   result: ComputeResult | undefined;
@@ -4534,9 +5510,9 @@ function CyclePlotCard({
   }`;
   const zoom = useZoomMemory(zoomSignature);
   const layout = useMemo(
-    () => zoom.apply(cyclePlotLayout(result, spec)),
+    () => zoom.apply(cyclePlotLayout(result, spec, traces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result, viewSignature]
+    [result, viewSignature, traces]
   );
   const style = currentPlotStyle(spec, "cycles");
   const explainer = getCycleQuantityExplainer(
@@ -4568,28 +5544,20 @@ function CyclePlotCard({
     });
   };
 
-  const buildExportFigure = (plan: { layoutWidth: number; layoutHeight: number }) => {
-    const exportLayout: Partial<Plotly.Layout> = {
-      ...layout,
-      width: plan.layoutWidth,
-      height: plan.layoutHeight,
-      autosize: false,
-    };
-    if (style.export_include_title) {
-      exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
-      exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
-    }
-    return { data: traces, layout: exportLayout };
+  const currentViewSize = () => {
+    if (!plotDivRef.current) return plotSize;
+    const rect = plotDivRef.current.getBoundingClientRect();
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
   };
 
   // faithful mini-render of the export output for the settings popover
   const getExportPreview = async (): Promise<string | null> => {
     if (!plotDivRef.current || traces.length === 0) return null;
-    const plan = resolveExportPlan(style, plotDivRef.current);
+    const plan = resolveExportPlan(style, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    return toImage(buildExportFigure(plan), {
+    return toImage(exportFigure(traces, layout, style, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -4597,21 +5565,21 @@ function CyclePlotCard({
     });
   };
 
-  const handleDataExport = () => {
-    downloadDataExport(tracesToColumns(traces, layout), style, `${slugFilename(plotName)}-data`).catch(
+  const handleDataExport = (baseName: string) => {
+    downloadDataExport(tracesToColumns(traces, layout), style, baseName).catch(
       (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
     );
   };
 
-  const exportPlot = async (format: PlotExportFormat) => {
+  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     if (!plotDivRef.current || !result) return;
     try {
-      const plan = resolveExportPlan(style, plotDivRef.current);
+      const plan = resolveExportPlan(style, currentViewSize(), layout);
       const ppi = Math.max(36, style.export_ppi ?? 96);
-      const filename = slugFilename(plotName);
+      const filename = slugFilename(baseName);
       // Render off the live figure with an export-only layout (exact size,
       // optional in-figure title) so the on-screen plot is never disturbed.
-      const figure = buildExportFigure(plan);
+      const figure = exportFigure(traces, layout, style, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -4663,8 +5631,15 @@ function CyclePlotCard({
           loaderProps={{ size: "sm", color: "teal" }}
         />
         <PlotHeader
+          analysisTitle={analysisTitle}
+          tabName="Cycles"
           plotName={plotName}
           subtitle={subtitle}
+          quantityName={resolvedQuantity(result, spec)?.label ?? subtitle}
+          xAxisName={style.x_title ?? "Cycle"}
+          sampleSummary={`${spec.selection.entries.length} ${
+            spec.selection.entries.length === 1 ? "sample" : "samples"
+          }`}
           explainer={explainer}
           onExport={exportPlot}
           onDataExport={handleDataExport}
@@ -4672,6 +5647,7 @@ function CyclePlotCard({
           style={style}
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
+          layout={layout}
           canExport={traces.length > 0}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
@@ -4722,12 +5698,14 @@ function CyclePlotCard({
 
 function TimeCapacityPlotCard({
   analysisId,
+  analysisTitle,
   plotName,
   subtitle,
   spec,
   update,
 }: {
   analysisId: number;
+  analysisTitle: string;
   plotName: string;
   subtitle: string;
   spec: AnalysisSpec;
@@ -4745,6 +5723,9 @@ function TimeCapacityPlotCard({
     () =>
       JSON.stringify({
         selection: spec.selection,
+        protocol_segments: spec.protocol_segments ?? [],
+        protocol_filter: spec.computation.protocol_filter,
+        hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
         cycles: cfg.cycles,
         start: cfg.cycle_start,
         end: cfg.cycle_end,
@@ -4757,7 +5738,16 @@ function TimeCapacityPlotCard({
           smoothing: cfg.smoothing_window,
         },
       }),
-    [spec.selection, cfg.cycles, cfg.cycle_start, cfg.cycle_end, cfg.max_points_per_cell]
+    [
+      spec.selection,
+      spec.protocol_segments,
+      spec.computation.protocol_filter,
+      spec.presentation.hidden_protocol_segment_ids,
+      cfg.cycles,
+      cfg.cycle_start,
+      cfg.cycle_end,
+      cfg.max_points_per_cell,
+    ]
   );
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, dataSignature],
@@ -4784,9 +5774,9 @@ function TimeCapacityPlotCard({
   const zoomSignature = `${timeResult.data?.computed_at ?? "no-data"}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(timeResult.data, spec)),
+    () => zoom.apply(timeCapacityLayout(timeResult.data, spec, traces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timeResult.data, viewSignature]
+    [timeResult.data, viewSignature, traces]
   );
   const style = currentPlotStyle(spec, "time_capacity");
   const explainer = getTimeCapacityExplainer(
@@ -4821,28 +5811,20 @@ function TimeCapacityPlotCard({
     });
   };
 
-  const buildExportFigure = (plan: { layoutWidth: number; layoutHeight: number }) => {
-    const exportLayout: Partial<Plotly.Layout> = {
-      ...layout,
-      width: plan.layoutWidth,
-      height: plan.layoutHeight,
-      autosize: false,
-    };
-    if (style.export_include_title) {
-      exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
-      exportLayout.margin = { ...(layout.margin as object), t: Math.max(48, style.axis_title_size + 34) };
-    }
-    return { data: traces, layout: exportLayout };
+  const currentViewSize = () => {
+    if (!plotDivRef.current) return plotSize;
+    const rect = plotDivRef.current.getBoundingClientRect();
+    return { width: Math.round(rect.width), height: Math.round(rect.height) };
   };
 
   // faithful mini-render of the export output for the settings popover
   const getExportPreview = async (): Promise<string | null> => {
     if (!plotDivRef.current || traces.length === 0) return null;
-    const plan = resolveExportPlan(style, plotDivRef.current);
+    const plan = resolveExportPlan(style, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
     ).toImage;
-    return toImage(buildExportFigure(plan), {
+    return toImage(exportFigure(traces, layout, style, plotName, plan), {
       format: "png",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -4850,19 +5832,19 @@ function TimeCapacityPlotCard({
     });
   };
 
-  const handleDataExport = () => {
-    downloadDataExport(tracesToColumns(traces, layout), style, `${slugFilename(plotName)}-data`).catch(
+  const handleDataExport = (baseName: string) => {
+    downloadDataExport(tracesToColumns(traces, layout), style, baseName).catch(
       (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
     );
   };
 
-  const exportPlot = async (format: PlotExportFormat) => {
+  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     if (!plotDivRef.current || !timeResult.data) return;
     try {
-      const plan = resolveExportPlan(style, plotDivRef.current);
+      const plan = resolveExportPlan(style, currentViewSize(), layout);
       const ppi = Math.max(36, style.export_ppi ?? 96);
-      const filename = slugFilename(plotName);
-      const figure = buildExportFigure(plan);
+      const filename = slugFilename(baseName);
+      const figure = exportFigure(traces, layout, style, plotName, plan);
       const toImage = (
         PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
       ).toImage;
@@ -4914,8 +5896,27 @@ function TimeCapacityPlotCard({
           loaderProps={{ size: "sm", color: "teal" }}
         />
         <PlotHeader
+          analysisTitle={analysisTitle}
+          tabName="Time / capacity"
           plotName={plotName}
           subtitle={subtitle}
+          quantityName={
+            cfg.view === "voltage_current"
+              ? "Voltage and current"
+              : cfg.view === "dqdv"
+                ? "dQ/dV"
+                : "dV/dQ"
+          }
+          xAxisName={
+            cfg.x_axis === "time"
+              ? `Time (${cfg.time_unit})`
+              : cfg.x_axis === "capacity_mah_g"
+                ? "Specific capacity (mAh/g)"
+                : "Capacity (mAh)"
+          }
+          sampleSummary={`${spec.selection.entries.length} ${
+            spec.selection.entries.length === 1 ? "sample" : "samples"
+          }`}
           explainer={explainer}
           onExport={exportPlot}
           onDataExport={handleDataExport}
@@ -4923,6 +5924,7 @@ function TimeCapacityPlotCard({
           style={style}
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
+          layout={layout}
           canExport={traces.length > 0}
         />
         {timeResult.isError && (
@@ -5013,6 +6015,7 @@ function SavedPlotsPanel({
   plots,
   activeSavedPlotId,
   activePlotDirty,
+  onNewPlot,
   onSaveNew,
   onUpdateActive,
   onOpen,
@@ -5024,6 +6027,7 @@ function SavedPlotsPanel({
   plots: SavedAnalysisPlot[];
   activeSavedPlotId: string | null;
   activePlotDirty: boolean;
+  onNewPlot: () => void;
   onSaveNew: () => void;
   onUpdateActive: () => void;
   onOpen: (plot: SavedAnalysisPlot) => void;
@@ -5044,6 +6048,14 @@ function SavedPlotsPanel({
           </Text>
         </div>
         <Group gap="xs">
+          <Button
+            size="xs"
+            variant="default"
+            leftSection={<IconPlus size={14} />}
+            onClick={onNewPlot}
+          >
+            New plot
+          </Button>
           <Button size="xs" variant="default" disabled={!activeSavedPlotId || !activePlotDirty} onClick={onUpdateActive}>
             Update plot
           </Button>
@@ -5203,6 +6215,7 @@ export function AnalysisPage() {
   const analysis = useQuery({
     queryKey: ["analysis", aid],
     queryFn: () => get<AnalysisFull>(`/api/analyses/${aid}`),
+    refetchOnMount: "always",
   });
   const groupsQuery = useQuery({
     queryKey: ["replicate-groups"],
@@ -5215,6 +6228,11 @@ export function AnalysisPage() {
   const treeQuery = useQuery({
     queryKey: ["tree"],
     queryFn: () => get<Tree>("/api/tree"),
+  });
+  const plotPresetQuery = useQuery({
+    queryKey: ["plot-style-presets"],
+    queryFn: () => get<PlotStylePresetSettings>("/api/settings/plot-style-presets"),
+    staleTime: 5 * 60_000,
   });
 
   const [spec, setSpec] = useState<AnalysisSpec | null>(null);
@@ -5239,10 +6257,30 @@ export function AnalysisPage() {
     [spec, title]
   );
   const autosaveSignatureRef = useRef(autosaveSignature);
+  const protocolCellIds = useMemo(() => {
+    if (!spec) return [];
+    const groupById = new Map((groupsQuery.data ?? []).map((group) => [group.id, group]));
+    const ids = new Set<number>();
+    for (const entry of spec.selection.entries) {
+      if (entry.kind === "cell") ids.add(entry.ref_id);
+      else groupById.get(entry.ref_id)?.cell_ids.forEach((cellId) => ids.add(cellId));
+    }
+    return [...ids].sort((a, b) => a - b);
+  }, [groupsQuery.data, spec]);
 
   useEffect(() => {
     autosaveSignatureRef.current = autosaveSignature;
   }, [autosaveSignature]);
+
+  useEffect(() => {
+    setSpec(null);
+    setTitle("");
+    setDirty(false);
+    setRendered(null);
+    setActiveSavedPlotId(null);
+    setActivePlotBaselineSignature(null);
+    setPlotWorkspaceTouched(false);
+  }, [aid]);
 
   useEffect(() => {
     if (analysis.data && spec === null) {
@@ -5303,7 +6341,8 @@ export function AnalysisPage() {
 
   const duplicate = useMutation({
     mutationFn: () => post<AnalysisFull>(`/api/analyses/${aid}/duplicate`),
-    onSuccess: (a) => {
+    onSuccess: async (a) => {
+      await clearAnalysisQueryCache(qc, a.id);
       notifications.show({ message: "Duplicated; now editing the copy", color: "teal" });
       setSpec(null);
       setRendered(null);
@@ -5316,7 +6355,14 @@ export function AnalysisPage() {
 
   const remove = useMutation({
     mutationFn: () => del(`/api/analyses/${aid}`),
-    onSuccess: () => navigate("/analyses"),
+    onSuccess: async () => {
+      navigate("/analyses");
+      await clearAnalysisQueryCache(qc, aid);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+        qc.invalidateQueries({ queryKey: ["tree"] }),
+      ]);
+    },
   });
 
   useEffect(() => {
@@ -5489,6 +6535,89 @@ export function AnalysisPage() {
     });
   };
 
+  const saveProtocolSegment = (segment: ProtocolSegment) => {
+    update((s) => {
+      const segments = s.protocol_segments ?? [];
+      const index = segments.findIndex((item) => item.id === segment.id);
+      if (index >= 0) segments[index] = segment;
+      else segments.push(segment);
+      s.protocol_segments = segments;
+    });
+  };
+
+  const toggleProtocolSegmentHidden = (segmentId: string) => {
+    update((s) => {
+      const hidden = s.presentation.hidden_protocol_segment_ids ?? [];
+      s.presentation.hidden_protocol_segment_ids = hidden.includes(segmentId)
+        ? hidden.filter((id) => id !== segmentId)
+        : [...hidden, segmentId];
+    });
+  };
+
+  const toggleProtocolSegmentExcluded = (segmentId: string) => {
+    update((s) => {
+      const filter = s.computation.protocol_filter ?? {
+        excluded_segment_ids: [],
+        only_segment_ids: [],
+      };
+      const excluded = filter.excluded_segment_ids.includes(segmentId);
+      s.computation.protocol_filter = {
+        excluded_segment_ids: excluded
+          ? filter.excluded_segment_ids.filter((id) => id !== segmentId)
+          : [...filter.excluded_segment_ids, segmentId],
+        only_segment_ids: excluded
+          ? filter.only_segment_ids
+          : filter.only_segment_ids.filter((id) => id !== segmentId),
+      };
+    });
+  };
+
+  const useOnlyProtocolSegment = (segmentId: string | null) => {
+    update((s) => {
+      const filter = s.computation.protocol_filter ?? {
+        excluded_segment_ids: [],
+        only_segment_ids: [],
+      };
+      s.computation.protocol_filter = {
+        excluded_segment_ids: segmentId
+          ? filter.excluded_segment_ids.filter((id) => id !== segmentId)
+          : filter.excluded_segment_ids,
+        only_segment_ids: segmentId ? [segmentId] : [],
+      };
+      if (segmentId) {
+        s.presentation.hidden_protocol_segment_ids = (
+          s.presentation.hidden_protocol_segment_ids ?? []
+        ).filter((id) => id !== segmentId);
+      }
+    });
+  };
+
+  const deleteProtocolSegment = (segmentId: string) => {
+    update((s) => {
+      const without = (values: string[] | undefined) => (values ?? []).filter((id) => id !== segmentId);
+      s.protocol_segments = (s.protocol_segments ?? []).filter((segment) => segment.id !== segmentId);
+      s.computation.protocol_filter = {
+        excluded_segment_ids: without(s.computation.protocol_filter?.excluded_segment_ids),
+        only_segment_ids: without(s.computation.protocol_filter?.only_segment_ids),
+      };
+      s.presentation.hidden_protocol_segment_ids = without(s.presentation.hidden_protocol_segment_ids);
+      s.saved_plots = (s.saved_plots ?? []).map((plot) => ({
+        ...plot,
+        computation: {
+          ...plot.computation,
+          protocol_filter: {
+            excluded_segment_ids: without(plot.computation.protocol_filter?.excluded_segment_ids),
+            only_segment_ids: without(plot.computation.protocol_filter?.only_segment_ids),
+          },
+        },
+        presentation: {
+          ...plot.presentation,
+          hidden_protocol_segment_ids: without(plot.presentation.hidden_protocol_segment_ids),
+        },
+      }));
+    });
+  };
+
   const openSavedPlot = (plot: SavedAnalysisPlot) => {
     const restoredForBaseline = specForSavedPlot(spec, plot);
     setActiveSavedPlotId(plot.id);
@@ -5529,6 +6658,66 @@ export function AnalysisPage() {
     setActivePlotBaselineSignature(snapshotSignature(spec));
     setPlotWorkspaceTouched(false);
     setSaveDraft(null);
+  };
+
+  const startNewPlot = () => {
+    const reset = () => {
+      const family =
+        activeTab === "time_capacity"
+          ? "time_capacity"
+          : activeTab === "cycles"
+            ? "cycles"
+            : "all";
+      const defaults = plotPresetQuery.data?.presets ?? [];
+      const preset =
+        defaults.find(
+          (item) => item.is_default && item.plot_family === family,
+        ) ??
+        defaults.find(
+          (item) => item.is_default && item.plot_family === "all",
+        );
+      const initialStyle = preset
+        ? normalizePlotStyle(preset.style)
+        : normalizePlotStyle(DEFAULT_PLOT_STYLE);
+      update((s) => {
+        const entries = clone(s.selection.entries);
+        const savedPlots = clone(s.saved_plots ?? []);
+        const existingStyles = { ...(s.presentation.plot_styles ?? {}) };
+        s.selection = {
+          entries,
+          exclusions: [],
+          hidden_replicate_group_ids: [],
+        };
+        s.computation = clone(DEFAULT_COMPUTATION);
+        s.aggregation = clone(DEFAULT_AGGREGATION);
+        s.presentation = {
+          ...clone(DEFAULT_PRESENTATION),
+          plot_style: initialStyle,
+          plot_styles: {
+            ...existingStyles,
+            [activeTab]: initialStyle,
+          },
+        };
+        s.saved_plots = savedPlots;
+      });
+      setActiveSavedPlotId(null);
+      setActivePlotBaselineSignature(null);
+      setPlotWorkspaceTouched(false);
+    };
+    if (hasUnsavedPlot) {
+      modals.openConfirmModal({
+        title: "Start a new plot?",
+        children: (
+          <Text size="sm">
+            Unsaved changes in the current plot will be discarded. Saved plots are not affected.
+          </Text>
+        ),
+        labels: { confirm: "Start new plot", cancel: "Go back" },
+        onConfirm: reset,
+      });
+      return;
+    }
+    reset();
   };
 
   const savePlotAndLeave = () => {
@@ -5574,6 +6763,20 @@ export function AnalysisPage() {
         onToggleCell={toggleCellVisibility}
         onToggleReplicate={toggleReplicateVisibility}
       />
+      {(["cycles", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) && (
+        <ProtocolSegmentsPanel
+          cellIds={protocolCellIds}
+          segments={spec.protocol_segments ?? []}
+          hiddenSegmentIds={spec.presentation.hidden_protocol_segment_ids ?? []}
+          excludedSegmentIds={spec.computation.protocol_filter?.excluded_segment_ids ?? []}
+          onlySegmentIds={spec.computation.protocol_filter?.only_segment_ids ?? []}
+          onSaveSegment={saveProtocolSegment}
+          onDeleteSegment={deleteProtocolSegment}
+          onToggleHidden={toggleProtocolSegmentHidden}
+          onToggleExcluded={toggleProtocolSegmentExcluded}
+          onUseOnly={useOnlyProtocolSegment}
+        />
+      )}
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
       {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}
     </Stack>
@@ -5587,6 +6790,7 @@ export function AnalysisPage() {
       plots={spec.saved_plots ?? []}
       activeSavedPlotId={activeSavedPlotId}
       activePlotDirty={activePlotDirty}
+      onNewPlot={startNewPlot}
       onSaveNew={() =>
         setSaveDraft({
           name: suggestedPlotName(activeTab, displayResult, spec),
@@ -5675,6 +6879,7 @@ export function AnalysisPage() {
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
               <CyclePlotCard
+                analysisTitle={title}
                 plotName={displayPlotName}
                 subtitle={displaySubtitle}
                 result={displayResult}
@@ -5708,6 +6913,7 @@ export function AnalysisPage() {
             <Stack style={{ flex: 1, minWidth: 0 }}>
               <TimeCapacityPlotCard
                 analysisId={aid}
+                analysisTitle={title}
                 plotName={displayPlotName}
                 subtitle={displaySubtitle}
                 spec={spec}

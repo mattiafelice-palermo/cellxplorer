@@ -12,6 +12,8 @@ import {
   Loader,
   Menu,
   Modal,
+  MultiSelect,
+  NumberInput,
   Paper,
   ScrollArea,
   Select,
@@ -45,8 +47,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  ActiveMaterialPresetSettings,
   CellDetail,
   CellSummary,
+  ElectrodeAreaPresetSettings,
   del,
   get,
   patch,
@@ -58,6 +62,7 @@ import {
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
+import { nominalCapacityFromMass } from "../scientificMetadata";
 import { ImportCellsLauncher } from "./InboxPage";
 
 function statusColor(status: string) {
@@ -120,6 +125,15 @@ export function LibraryPage() {
   const [editingCell, setEditingCell] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editActiveMass, setEditActiveMass] = useState<number | null>(null);
+  const [editNominalCapacity, setEditNominalCapacity] = useState<number | null>(null);
+  const [editElectrodeArea, setEditElectrodeArea] = useState<number | null>(null);
+  const [editMaterialSelection, setEditMaterialSelection] = useState("custom");
+  const [editAreaSelection, setEditAreaSelection] = useState("custom");
+  const [editingGroup, setEditingGroup] = useState<ReplicateGroupSummary | null>(null);
+  const [editGroupName, setEditGroupName] = useState("");
+  const [editGroupDescription, setEditGroupDescription] = useState("");
+  const [editGroupCellIds, setEditGroupCellIds] = useState<string[]>([]);
   const handledSourceCheckJob = useRef<number | null>(null);
 
   const cells = useQuery({
@@ -152,6 +166,67 @@ export function LibraryPage() {
         }`
       ),
   });
+
+  const replicateEditCells = useQuery({
+    queryKey: ["cells", "replicate-edit"],
+    queryFn: () => get<CellSummary[]>("/api/cells"),
+    enabled: editingGroup !== null,
+  });
+  const areaPresets = useQuery({
+    queryKey: ["electrode-area-presets"],
+    queryFn: () =>
+      get<ElectrodeAreaPresetSettings>("/api/settings/electrode-area-presets"),
+    enabled: editingCell,
+  });
+  const materialPresets = useQuery({
+    queryKey: ["active-material-presets"],
+    queryFn: () =>
+      get<ActiveMaterialPresetSettings>("/api/settings/active-material-presets"),
+    enabled: editingCell,
+  });
+  const materialPresetData = [
+    { value: "custom", label: "Custom nominal capacity" },
+    ...(materialPresets.data?.presets ?? []).map((preset) => ({
+      value: preset.id,
+      label: `${preset.name} (${preset.specific_capacity_mah_g} mAh/g)`,
+    })),
+  ];
+  if (
+    editMaterialSelection !== "custom" &&
+    !materialPresetData.some((option) => option.value === editMaterialSelection)
+  ) {
+    materialPresetData.push({
+      value: editMaterialSelection,
+      label: `${
+        detail.data?.scientific_presets.active_material.name ?? "Saved material preset"
+      } (saved value)`,
+    });
+  }
+  const areaPresetData = [
+    { value: "custom", label: "Custom" },
+    ...(areaPresets.data?.presets ?? []).map((preset) => ({
+      value: preset.id,
+      label: `${preset.name} (${preset.area_cm2} cm²)`,
+    })),
+  ];
+  if (
+    editAreaSelection !== "custom" &&
+    !areaPresetData.some((option) => option.value === editAreaSelection)
+  ) {
+    areaPresetData.push({
+      value: editAreaSelection,
+      label:
+        detail.data?.scientific_presets.electrode_area_preset_name ??
+        "Saved area preset",
+    });
+  }
+  const editScientificValid =
+    editMaterialSelection === "custom" ||
+    Boolean(
+      (editActiveMass ??
+        detail.data?.scientific_metadata.active_mass_mg.source_value) &&
+        editNominalCapacity
+    );
 
   const replicatePreview = useQuery({
     queryKey: ["replicate-preview", previewGroupId],
@@ -243,6 +318,41 @@ export function LibraryPage() {
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
 
+  const editReplicateGroup = useMutation({
+    mutationFn: (body: { id: number; name: string; description: string; cell_ids: number[] }) =>
+      patch<ReplicateGroupSummary>(`/api/replicate-groups/${body.id}`, {
+        name: body.name,
+        description: body.description,
+        cell_ids: body.cell_ids,
+      }),
+    onSuccess: (group) => {
+      notifications.show({ message: `Saved changes to ${group.name}`, color: "teal" });
+      setEditingGroup(null);
+      setPreviewGroupId((current) => (current === group.id ? group.id : current));
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["replicate-preview", group.id] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["analysis"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const deleteReplicateGroup = useMutation({
+    mutationFn: (group: ReplicateGroupSummary) => del(`/api/replicate-groups/${group.id}`),
+    onSuccess: (_, group) => {
+      notifications.show({ message: `Removed empty replicate group ${group.name}`, color: "teal" });
+      setEditingGroup(null);
+      setPreviewGroupId((current) => (current === group.id ? null : current));
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["analysis"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+
   const ungroupReplicates = useMutation({
     mutationFn: (body: { cell_ids?: number[]; group_ids?: number[] }) =>
       post<{ ok: boolean }>("/api/replicate-groups/ungroup", body),
@@ -271,10 +381,31 @@ export function LibraryPage() {
   });
 
   const editCell = useMutation({
-    mutationFn: (body: { id: number; name: string; description: string }) =>
+    mutationFn: (body: {
+      id: number;
+      name: string;
+      description: string;
+      active_mass_mg_override: number | null;
+      nominal_capacity_mah_override: number | null;
+      electrode_area_cm2_override: number | null;
+      active_material_preset_id: string | null;
+      active_material_name: string | null;
+      active_material_specific_capacity_mah_g: number | null;
+      electrode_area_preset_id: string | null;
+      electrode_area_preset_name: string | null;
+    }) =>
       patch<CellSummary>(`/api/cells/${body.id}`, {
         name: body.name,
         description: body.description,
+        active_mass_mg_override: body.active_mass_mg_override,
+        nominal_capacity_mah_override: body.nominal_capacity_mah_override,
+        electrode_area_cm2_override: body.electrode_area_cm2_override,
+        active_material_preset_id: body.active_material_preset_id,
+        active_material_name: body.active_material_name,
+        active_material_specific_capacity_mah_g:
+          body.active_material_specific_capacity_mah_g,
+        electrode_area_preset_id: body.electrode_area_preset_id,
+        electrode_area_preset_name: body.electrode_area_preset_name,
       }),
     onSuccess: (updated) => {
       notifications.show({ message: `Saved changes to ${updated.name}`, color: "teal" });
@@ -284,6 +415,13 @@ export function LibraryPage() {
       setEditingCell(false);
       setEditName(updated.name);
       setEditDescription(updated.description ?? "");
+      setEditActiveMass(updated.scientific_metadata.active_mass_mg.override_value);
+      setEditNominalCapacity(updated.scientific_metadata.nominal_capacity_mah.override_value);
+      setEditElectrodeArea(updated.scientific_metadata.electrode_area_cm2.override_value);
+      setEditMaterialSelection(
+        updated.scientific_presets.active_material.preset_id ?? "custom"
+      );
+      setEditAreaSelection(updated.scientific_presets.electrode_area_preset_id ?? "custom");
       qc.invalidateQueries({ queryKey: ["cells"] });
       qc.invalidateQueries({ queryKey: ["cell", updated.id] });
       qc.invalidateQueries({ queryKey: ["tree"] });
@@ -413,7 +551,40 @@ export function LibraryPage() {
     setSelectedId(cell.id);
     setEditName(cell.name);
     setEditDescription(cell.description ?? "");
+    setEditActiveMass(cell.scientific_metadata.active_mass_mg.override_value);
+    setEditNominalCapacity(cell.scientific_metadata.nominal_capacity_mah.override_value);
+    setEditElectrodeArea(cell.scientific_metadata.electrode_area_cm2.override_value);
+    setEditMaterialSelection(cell.scientific_presets.active_material.preset_id ?? "custom");
+    setEditAreaSelection(cell.scientific_presets.electrode_area_preset_id ?? "custom");
     setEditingCell(true);
+  };
+
+  const startEditingGroup = (group: ReplicateGroupSummary) => {
+    setEditingGroup(group);
+    setEditGroupName(group.name);
+    setEditGroupDescription(group.description ?? "");
+    setEditGroupCellIds(group.cell_ids.map(String));
+  };
+
+  const saveGroupEdit = () => {
+    if (!editingGroup || !editGroupName.trim()) return;
+    const cellIds = editGroupCellIds.map(Number);
+    if (cellIds.length === 0) {
+      if (
+        window.confirm(
+          `${editingGroup.name} has no cells left. Remove this empty replicate group?`
+        )
+      ) {
+        deleteReplicateGroup.mutate(editingGroup);
+      }
+      return;
+    }
+    editReplicateGroup.mutate({
+      id: editingGroup.id,
+      name: editGroupName.trim(),
+      description: editGroupDescription,
+      cell_ids: cellIds,
+    });
   };
 
   const stopEditingCell = () => {
@@ -421,15 +592,54 @@ export function LibraryPage() {
     if (detail.data) {
       setEditName(detail.data.name);
       setEditDescription(detail.data.description ?? "");
+      setEditActiveMass(detail.data.scientific_metadata.active_mass_mg.override_value);
+      setEditNominalCapacity(detail.data.scientific_metadata.nominal_capacity_mah.override_value);
+      setEditElectrodeArea(detail.data.scientific_metadata.electrode_area_cm2.override_value);
+      setEditMaterialSelection(
+        detail.data.scientific_presets.active_material.preset_id ?? "custom"
+      );
+      setEditAreaSelection(
+        detail.data.scientific_presets.electrode_area_preset_id ?? "custom"
+      );
     }
   };
 
   const saveCellEdit = () => {
-    if (selectedId === null || !editName.trim()) return;
+    if (selectedId === null || !editName.trim() || !editScientificValid) return;
+    const selectedMaterial = materialPresets.data?.presets.find(
+      (preset) => preset.id === editMaterialSelection
+    );
     editCell.mutate({
       id: selectedId,
       name: editName.trim(),
       description: editDescription,
+      active_mass_mg_override: editActiveMass,
+      nominal_capacity_mah_override: editNominalCapacity,
+      electrode_area_cm2_override: editElectrodeArea,
+      active_material_preset_id:
+        editMaterialSelection === "custom" ? null : editMaterialSelection,
+      active_material_name:
+        editMaterialSelection === "custom"
+          ? null
+          : selectedMaterial?.name ??
+            detail.data?.scientific_presets.active_material.name ??
+            null,
+      active_material_specific_capacity_mah_g:
+        editMaterialSelection === "custom"
+          ? null
+          : selectedMaterial?.specific_capacity_mah_g ??
+            detail.data?.scientific_presets.active_material.specific_capacity_mah_g ??
+            null,
+      electrode_area_preset_id:
+        editAreaSelection === "custom" ? null : editAreaSelection,
+      electrode_area_preset_name:
+        editAreaSelection === "custom"
+          ? null
+          : areaPresets.data?.presets.find(
+              (preset) => preset.id === editAreaSelection
+            )?.name ??
+            detail.data?.scientific_presets.electrode_area_preset_name ??
+            null,
     });
   };
 
@@ -556,7 +766,7 @@ export function LibraryPage() {
         >
           {({ open, loading }) => (
             <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
-              Load cell files
+              Load cells
             </Button>
           )}
         </ImportCellsLauncher>
@@ -986,6 +1196,14 @@ export function LibraryPage() {
                         <Button
                           size="xs"
                           variant="default"
+                          leftSection={<IconPencil size={14} />}
+                          onClick={() => startEditingGroup(group)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="default"
                           leftSection={<IconEye size={14} />}
                           onClick={() => setPreviewGroupId(group.id)}
                         >
@@ -1101,6 +1319,65 @@ export function LibraryPage() {
       </Modal>
 
       <Modal
+        opened={editingGroup !== null}
+        onClose={() => setEditingGroup(null)}
+        title="Edit replicate group"
+        size="lg"
+      >
+        <Stack>
+          <TextInput
+            label="Name"
+            value={editGroupName}
+            onChange={(event) => setEditGroupName(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveGroupEdit();
+            }}
+            data-autofocus
+          />
+          <Textarea
+            label="Description"
+            value={editGroupDescription}
+            onChange={(event) => setEditGroupDescription(event.currentTarget.value)}
+            minRows={2}
+          />
+          <MultiSelect
+            label="Cells"
+            description="A one-cell replicate is allowed. Saving an empty group will offer to remove it."
+            placeholder="Search and select cells"
+            data={(replicateEditCells.data ?? []).map((cell) => ({
+              value: String(cell.id),
+              label: cell.name,
+            }))}
+            value={editGroupCellIds}
+            onChange={setEditGroupCellIds}
+            searchable
+            clearable
+            hidePickedOptions
+            nothingFoundMessage="No cells found"
+          />
+          {editGroupCellIds.length === 0 && (
+            <Alert color="orange">
+              This group will be empty. Saving will ask whether to remove the group.
+            </Alert>
+          )}
+          <Group justify="end">
+            <Button variant="default" onClick={() => setEditingGroup(null)}>
+              Cancel
+            </Button>
+            <Button
+              leftSection={editGroupCellIds.length === 0 ? <IconTrash size={16} /> : <IconDeviceFloppy size={16} />}
+              color={editGroupCellIds.length === 0 ? "red" : "teal"}
+              disabled={!editGroupName.trim()}
+              loading={editReplicateGroup.isPending || deleteReplicateGroup.isPending}
+              onClick={saveGroupEdit}
+            >
+              {editGroupCellIds.length === 0 ? "Remove empty group" : "Save changes"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
         opened={previewGroupId !== null}
         onClose={() => setPreviewGroupId(null)}
         title={previewGroup?.name ?? "Replicate group"}
@@ -1185,7 +1462,7 @@ export function LibraryPage() {
                   <Button
                     leftSection={<IconDeviceFloppy size={15} />}
                     loading={editCell.isPending}
-                    disabled={!editName.trim()}
+                    disabled={!editName.trim() || !editScientificValid}
                     onClick={saveCellEdit}
                   >
                     Save changes
@@ -1228,7 +1505,7 @@ export function LibraryPage() {
                 />
                 <Textarea
                   label="Cell notes"
-                  description="User notes only. File metadata and cycling data remain read-only."
+                  description="User notes only. Original file metadata and cycling data remain preserved."
                   value={editDescription}
                   onChange={(event) => setEditDescription(event.currentTarget.value)}
                   onKeyDown={(event) => {
@@ -1238,6 +1515,131 @@ export function LibraryPage() {
                   minRows={3}
                   maxRows={7}
                 />
+                <Divider label="Scientific metadata overrides" labelPosition="left" />
+                <Alert color="gray">
+                  Overrides are used in calculations while the original Neware values remain visible
+                  in the Metadata tab. Clear a field to restore the source value.
+                </Alert>
+                <Group grow align="start">
+                  <NumberInput
+                    label="Active material mass (mg)"
+                    description={`Source: ${
+                      detail.data.scientific_metadata.active_mass_mg.source_value ?? "not detected"
+                    }`}
+                    min={0.000001}
+                    decimalScale={6}
+                    value={editActiveMass ?? ""}
+                    placeholder={
+                      detail.data.scientific_metadata.active_mass_mg.effective_value?.toString() ??
+                      "Custom value"
+                    }
+                    error={
+                      editMaterialSelection !== "custom" &&
+                      !(editActiveMass ??
+                        detail.data.scientific_metadata.active_mass_mg.source_value)
+                        ? "Enter a mass to calculate nominal capacity"
+                        : undefined
+                    }
+                    onChange={(value) => {
+                      const mass = value === "" ? null : Number(value);
+                      setEditActiveMass(mass);
+                      if (editMaterialSelection !== "custom") {
+                        const preset = materialPresets.data?.presets.find(
+                          (item) => item.id === editMaterialSelection
+                        );
+                        const specificCapacity =
+                          preset?.specific_capacity_mah_g ??
+                          detail.data.scientific_presets.active_material
+                            .specific_capacity_mah_g;
+                        const effectiveMass =
+                          mass ??
+                          detail.data.scientific_metadata.active_mass_mg.source_value;
+                        setEditNominalCapacity(
+                          nominalCapacityFromMass(effectiveMass, specificCapacity)
+                        );
+                      }
+                    }}
+                  />
+                  <Select
+                    label="Active material"
+                    description="Preset specific capacity is used with the active material mass"
+                    data={materialPresetData}
+                    value={editMaterialSelection}
+                    searchable
+                    onChange={(selection) => {
+                      const nextSelection = selection ?? "custom";
+                      setEditMaterialSelection(nextSelection);
+                      if (nextSelection === "custom") return;
+                      const preset = materialPresets.data?.presets.find(
+                        (item) => item.id === nextSelection
+                      );
+                      const specificCapacity =
+                        preset?.specific_capacity_mah_g ??
+                        detail.data.scientific_presets.active_material
+                          .specific_capacity_mah_g;
+                      const mass =
+                        editActiveMass ??
+                        detail.data.scientific_metadata.active_mass_mg.source_value;
+                      setEditNominalCapacity(
+                        nominalCapacityFromMass(mass, specificCapacity)
+                      );
+                    }}
+                  />
+                </Group>
+                <NumberInput
+                  label="Nominal capacity (mAh)"
+                  description={
+                    editMaterialSelection === "custom"
+                      ? `Custom value; source: ${
+                          detail.data.scientific_metadata.nominal_capacity_mah.source_value ??
+                          "not detected"
+                        }`
+                      : "Calculated from active material mass × preset specific capacity"
+                  }
+                  min={0.000001}
+                  decimalScale={6}
+                  value={editNominalCapacity ?? ""}
+                  placeholder={
+                    detail.data.scientific_metadata.nominal_capacity_mah.effective_value?.toString() ??
+                    "Custom value"
+                  }
+                  disabled={editMaterialSelection !== "custom"}
+                  onChange={(value) =>
+                    setEditNominalCapacity(value === "" ? null : Number(value))
+                  }
+                />
+                <Group grow align="end">
+                  <Select
+                    label="Electrode-area preset"
+                    value={editAreaSelection}
+                    searchable
+                    data={areaPresetData}
+                    onChange={(presetId) => {
+                      const nextSelection = presetId ?? "custom";
+                      setEditAreaSelection(nextSelection);
+                      if (nextSelection === "custom") return;
+                      const preset = areaPresets.data?.presets.find(
+                        (item) => item.id === nextSelection
+                      );
+                      if (preset) setEditElectrodeArea(preset.area_cm2);
+                    }}
+                  />
+                  <NumberInput
+                    label="Electrode area (cm²)"
+                    description="Used for current-density calculations"
+                    min={0.000001}
+                    decimalScale={6}
+                    value={editElectrodeArea ?? ""}
+                    placeholder={
+                      detail.data.scientific_metadata.electrode_area_cm2.effective_value?.toString() ??
+                      "Custom value"
+                    }
+                    disabled={editAreaSelection !== "custom"}
+                    onChange={(value) =>
+                      setEditElectrodeArea(value === "" ? null : Number(value))
+                    }
+                  />
+                </Group>
               </Stack>
             ) : (
               detail.data.description && <Alert color="gray">{detail.data.description}</Alert>

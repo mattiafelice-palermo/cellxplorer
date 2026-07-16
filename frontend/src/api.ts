@@ -109,6 +109,54 @@ export const del = <T>(url: string) => request<T>(url, { method: "DELETE" });
 export interface DownloadSettings {
   download_mode: "ask" | "folder";
   download_folder: string | null;
+  export_filename_template: string;
+}
+
+export interface ElectrodeAreaPreset {
+  id: string;
+  name: string;
+  area_cm2: number;
+  description: string | null;
+  is_default: boolean;
+}
+
+export interface ElectrodeAreaPresetSettings {
+  presets: ElectrodeAreaPreset[];
+}
+
+export interface ActiveMaterialPreset {
+  id: string;
+  name: string;
+  specific_capacity_mah_g: number;
+  description: string | null;
+  is_default: boolean;
+}
+
+export interface ActiveMaterialPresetSettings {
+  presets: ActiveMaterialPreset[];
+}
+
+export interface PlotStylePreset {
+  id: string;
+  name: string;
+  plot_family: "all" | "cycles" | "time_capacity";
+  style: Partial<PlotStyle>;
+  is_default: boolean;
+}
+
+export interface PlotStylePresetSettings {
+  presets: PlotStylePreset[];
+}
+
+export interface ColorPalette {
+  id: string;
+  name: string;
+  kind: "categorical" | "sequential";
+  colors: string[];
+}
+
+export interface ColorPaletteSettings {
+  palettes: ColorPalette[];
 }
 
 export interface SourceMonitoringSettings {
@@ -230,6 +278,24 @@ export interface CellSummary {
   cycling_status: "active" | "complete";
   tags: string[];
   metadata: Record<string, string>;
+  scientific_metadata: Record<
+    "active_mass_mg" | "nominal_capacity_mah" | "electrode_area_cm2",
+    {
+      source_value: number | null;
+      override_value: number | null;
+      legacy_value: number | null;
+      effective_value: number | null;
+    }
+  >;
+  scientific_presets: {
+    active_material: {
+      preset_id: string | null;
+      name: string | null;
+      specific_capacity_mah_g: number | null;
+    };
+    electrode_area_preset_id: string | null;
+    electrode_area_preset_name: string | null;
+  };
   n_tests: number;
   n_files: number;
   total_cycles: number;
@@ -272,6 +338,7 @@ export interface ProtocolStep {
 }
 
 export interface FileProtocol {
+  signature: string;
   n_steps: number;
   n_executable_steps: number;
   steps: ProtocolStep[];
@@ -300,8 +367,33 @@ export interface CellProtocol {
   tests: {
     id: number;
     name: string;
-    files: { id: number; filename: string; path: string; protocol: FileProtocol }[];
+    files: {
+      id: number;
+      filename: string;
+      path: string;
+      hash: string;
+      /** Transitional alias used by older/local protocol payloads. */
+      source_hash?: string;
+      observed_steps: {
+        step_index: number;
+        execution_count: number;
+        cycle_count: number;
+        cycles: number[];
+      }[];
+      protocol: FileProtocol;
+    }[];
   }[];
+}
+
+export interface ProtocolSegmentTarget {
+  protocol_signature: string;
+  step_indices: number[];
+}
+
+export interface ProtocolSegment {
+  id: string;
+  name: string;
+  targets: ProtocolSegmentTarget[];
 }
 
 export interface ReplicateGroupSummary {
@@ -457,6 +549,7 @@ export type PlotPaletteKey =
   | "presentation"
   | "okabe_ito"
   | "tableau"
+  | "blues"
   | "viridis"
   | "monochrome"
   | "custom";
@@ -475,7 +568,11 @@ export interface PlotAxisStyle {
   mode: "auto" | "manual";
   min: number | null;
   max: number | null;
+  tick_mode: "auto" | "step" | "count";
   dtick: number | null;
+  tick_count: number | null;
+  title_standoff: number;
+  tick_label_standoff: number;
 }
 
 export interface PlotAxisScope {
@@ -489,6 +586,8 @@ export interface PlotAxisScope {
 
 export interface PlotStyle {
   palette: PlotPaletteKey;
+  palette_id?: string | null;
+  palette_colors?: string[];
   custom_colors: Record<string, string>;
   line_width: number;
   line_dash: "solid" | "dot" | "dash" | "longdash";
@@ -496,6 +595,9 @@ export interface PlotStyle {
   marker_size: number;
   individual_opacity: number;
   band_opacity: number;
+  low_n_color: string;
+  low_n_marker_symbol: "circle" | "square" | "diamond" | "cross" | "x" | "triangle-up";
+  low_n_marker_size: number;
   show_grid: boolean;
   show_zero_line: boolean; // y axis only — an x zero line is meaningless on cycle plots
   show_frame: boolean;
@@ -518,6 +620,10 @@ export interface PlotStyle {
   tick_width: number;
   /** CE overlay trace styling (cycles tab right axis). */
   ce_custom_colors: Record<string, string>;
+  ce_palette_mode?: "match" | "secondary" | "single";
+  ce_palette_id?: string | null;
+  ce_palette_colors?: string[];
+  ce_single_color?: string;
   ce_line_width: number;
   ce_line_dash: "solid" | "dot" | "dash" | "longdash";
   ce_marker_mode: "none" | "points" | "lines_points";
@@ -569,6 +675,7 @@ export interface AnalysisSpec {
     exclusions: Exclusion[];
     hidden_replicate_group_ids?: number[];
   };
+  protocol_segments?: ProtocolSegment[];
   computation: {
     cycle_range: { start: number | null; end: number | null };
     exclude_check_cycles_every_n: number;
@@ -582,6 +689,10 @@ export interface AnalysisSpec {
         | "last_charge_first_discharge"
         | "first_charge_last_discharge";
       direction: "charge_minus_discharge" | "discharge_minus_charge";
+    };
+    protocol_filter?: {
+      excluded_segment_ids: string[];
+      only_segment_ids: string[];
     };
     time_capacity?: {
       x_axis: "time" | "capacity_mah" | "capacity_mah_g";
@@ -613,6 +724,7 @@ export interface AnalysisSpec {
     ce_overlay: boolean;
     show_individual_cells: boolean;
     legend: boolean;
+    hidden_protocol_segment_ids?: string[];
     /** Legacy single style shared by all tabs; superseded by plot_styles. */
     plot_style?: PlotStyle;
     /** One fully independent style per plot tab. */
@@ -753,6 +865,7 @@ export interface TimeCapacityTrace {
   excluded: boolean;
   active_mass_mg: number | null;
   nominal_capacity_mah: number | null;
+  electrode_area_cm2: number | null;
   cycle: (number | null)[];
   time_s: (number | null)[];
   capacity_mah: (number | null)[];
@@ -929,6 +1042,43 @@ export interface ImportPreview {
 
 export interface ImportInspectResult {
   files: ImportPreview[];
+}
+
+export interface ImportFolderFile {
+  path: string | null;
+  relative_path: string;
+  filename: string;
+  size: number;
+}
+
+export interface ImportFolderSelectionResult {
+  root_path: string | null;
+  root_name: string | null;
+  files: ImportFolderFile[];
+}
+
+export interface ImportBrowseEntry {
+  path: string;
+  name: string;
+  kind: "folder" | "file";
+  size: number | null;
+  modified_at: string | null;
+}
+
+export interface ImportBrowseResult {
+  current_path: string;
+  parent_path: string | null;
+  roots: { path: string; name: string }[];
+  quick_access: ImportQuickAccessItem[];
+  entries: ImportBrowseEntry[];
+}
+
+export interface ImportQuickAccessItem {
+  path: string;
+  label: string;
+  section: "quick" | "pinned" | "recent";
+  pinned: boolean;
+  available: boolean;
 }
 
 export interface ImportPreviewResult {

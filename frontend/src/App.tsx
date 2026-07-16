@@ -344,6 +344,8 @@ export default function App() {
               <Route path="/analyses/:analysisId" element={<AnalysisPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/monitoring" element={<SettingsPage />} />
+              <Route path="/settings/metadata" element={<SettingsPage />} />
+              <Route path="/settings/plots" element={<SettingsPage />} />
               <Route path="/settings/desktop" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />
             </Routes>

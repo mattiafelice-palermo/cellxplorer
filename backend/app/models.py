@@ -339,6 +339,15 @@ class AnalysisCollection(Base):
 # --------------------------------------------------------------- analyses
 
 
+class EntityIdSequence(Base):
+    """Durable monotonic identifiers for entities whose URL identity must not recycle."""
+
+    __tablename__ = "entity_id_sequences"
+
+    entity: Mapped[str] = mapped_column(String(50), primary_key=True)
+    next_id: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class Analysis(Base):
     """A persistent specification (recipe). The spec/provenance are versioned
     JSON documents (see SPEC.md 'Analysis spec format'). Filing is OPTIONAL:
@@ -346,6 +355,7 @@ class Analysis(Base):
     Filing has ZERO effect on what data the analysis can reach."""
 
     __tablename__ = "analyses"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(255))

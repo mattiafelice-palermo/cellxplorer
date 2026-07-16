@@ -13,7 +13,7 @@ os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import ActivityEvent, Cell
+from app.models import ActivityEvent, Cell, CellMetadata, SourceFile, Test, TestFile
 from app.routers import library
 
 
@@ -61,6 +61,65 @@ class LibraryCellEditTests(unittest.TestCase):
             library.update_cell(first.id, library.CellUpdate(name="Cell B"), db=db)
         self.assertEqual(duplicate.exception.status_code, 409)
         self.assertEqual(db.get(Cell, first.id).name, "Cell A")
+
+    def test_update_cell_scientific_overrides_preserve_source_values(self):
+        db = self.make_session()
+        cell = Cell(name="Cell A")
+        test = Test(cell=cell, name="Cycling")
+        source = SourceFile(
+            hash="a" * 64,
+            path="C:/cell.ndax",
+            filename="cell.ndax",
+            size=10,
+            ext="ndax",
+            active_mass_mg=10.0,
+            nominal_capacity_mah=2.0,
+        )
+        db.add_all([cell, test, source])
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        db.commit()
+
+        result = library.update_cell(
+            cell.id,
+            library.CellUpdate(
+                active_mass_mg_override=12.5,
+                nominal_capacity_mah_override=2.2,
+                electrode_area_cm2_override=1.539,
+                active_material_preset_id="lab-lfp",
+                active_material_name="Lab LFP",
+                active_material_specific_capacity_mah_g=176,
+                electrode_area_preset_id="coin-14mm",
+                electrode_area_preset_name="14 mm circular electrode",
+            ),
+            db=db,
+        )
+
+        self.assertEqual(source.active_mass_mg, 10.0)
+        self.assertEqual(result["scientific_metadata"]["active_mass_mg"]["source_value"], 10.0)
+        self.assertEqual(result["scientific_metadata"]["active_mass_mg"]["effective_value"], 12.5)
+        self.assertEqual(result["scientific_metadata"]["electrode_area_cm2"]["effective_value"], 1.539)
+        self.assertEqual(
+            result["scientific_presets"]["active_material"]["name"],
+            "Lab LFP",
+        )
+        self.assertEqual(
+            result["scientific_presets"]["active_material"]["specific_capacity_mah_g"],
+            176,
+        )
+        self.assertEqual(
+            result["scientific_presets"]["electrode_area_preset_name"],
+            "14 mm circular electrode",
+        )
+        keys = {row.key: row.value for row in db.query(CellMetadata).all()}
+        self.assertEqual(keys["override.active_mass_mg"], "12.5")
+
+        cleared = library.update_cell(
+            cell.id,
+            library.CellUpdate(active_mass_mg_override=None),
+            db=db,
+        )
+        self.assertEqual(cleared["scientific_metadata"]["active_mass_mg"]["effective_value"], 10.0)
 
 
 if __name__ == "__main__":

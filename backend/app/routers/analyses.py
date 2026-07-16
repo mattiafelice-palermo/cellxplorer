@@ -7,17 +7,47 @@ versions; recompute (explicit) moves to current versions.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Analysis, Folder
 from ..services import analysis_engine as engine
+from ..services.entity_ids import next_analysis_id
 
 router = APIRouter(prefix="/api", tags=["analyses"])
+
+
+def duplicate_title(db: Session, original: str) -> str:
+    candidate = f"(copy) {original}"
+    if db.query(Analysis.id).filter(Analysis.title == candidate).first() is None:
+        return candidate
+    number = 2
+    while True:
+        candidate = f"(copy {number}) {original}"
+        if db.query(Analysis.id).filter(Analysis.title == candidate).first() is None:
+            return candidate
+        number += 1
+
+
+def analysis_name_exists(
+    db: Session,
+    title: str,
+    folder_id: int | None,
+    exclude_id: int | None = None,
+) -> bool:
+    query = db.query(Analysis.id).filter(func.lower(Analysis.title) == title.casefold())
+    query = query.filter(
+        Analysis.folder_id == folder_id if folder_id is not None else Analysis.folder_id.is_(None)
+    )
+    if exclude_id is not None:
+        query = query.filter(Analysis.id != exclude_id)
+    return query.first() is not None
 
 
 def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
@@ -68,7 +98,9 @@ def create_analysis(req: AnalysisCreate, db: Session = Depends(get_db)):
     spec["title"] = title
     if req.folder_id is not None and db.get(Folder, req.folder_id) is None:
         raise HTTPException(404, "No such folder")
-    a = Analysis(title=title, spec=spec, folder_id=req.folder_id)
+    if analysis_name_exists(db, title, req.folder_id):
+        raise HTTPException(409, f'An analysis named "{title}" already exists in this folder')
+    a = Analysis(id=next_analysis_id(db), title=title, spec=spec, folder_id=req.folder_id)
     db.add(a)
     db.commit()
     return analysis_dict(db, a, full=True)
@@ -94,8 +126,14 @@ def update_analysis(analysis_id: int, req: AnalysisUpdate, db: Session = Depends
     a = db.get(Analysis, analysis_id)
     if a is None:
         raise HTTPException(404, "No such analysis")
+    next_title = (req.title.strip() or a.title) if req.title is not None else a.title
+    next_folder_id = None if req.unfile else req.folder_id if req.folder_id is not None else a.folder_id
+    if next_folder_id is not None and db.get(Folder, next_folder_id) is None:
+        raise HTTPException(404, "No such folder")
+    if analysis_name_exists(db, next_title, next_folder_id, exclude_id=a.id):
+        raise HTTPException(409, f'An analysis named "{next_title}" already exists in this folder')
     if req.title is not None:
-        a.title = req.title.strip() or a.title
+        a.title = next_title
     if req.spec is not None:
         req.spec["title"] = a.title
         req.spec["modified_at"] = engine.now_iso()
@@ -103,8 +141,6 @@ def update_analysis(analysis_id: int, req: AnalysisUpdate, db: Session = Depends
     if req.unfile:
         a.folder_id = None
     elif req.folder_id is not None:
-        if db.get(Folder, req.folder_id) is None:
-            raise HTTPException(404, "No such folder")
         a.folder_id = req.folder_id
     a.modified_at = datetime.now(timezone.utc)
     db.commit()
@@ -159,10 +195,17 @@ def duplicate_analysis(analysis_id: int, db: Session = Depends(get_db)):
     a = db.get(Analysis, analysis_id)
     if a is None:
         raise HTTPException(404, "No such analysis")
-    spec = dict(a.spec)
+    title = duplicate_title(db, a.title)
+    spec = deepcopy(a.spec)
     spec["created_at"] = engine.now_iso()
-    copy = Analysis(title=f"{a.title} (copy)", spec=spec, provenance=a.provenance,
-                    folder_id=a.folder_id)
+    spec["title"] = title
+    copy = Analysis(
+        id=next_analysis_id(db),
+        title=title,
+        spec=spec,
+        provenance=deepcopy(a.provenance),
+        folder_id=a.folder_id,
+    )
     db.add(copy)
     db.commit()
     return analysis_dict(db, copy, full=True)

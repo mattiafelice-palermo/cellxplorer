@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import uuid
+import json
 from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ from ..models import (
     ReplicateGroup,
     ReplicateGroupCell,
     SourceFile,
+    AppSetting,
     Test,
     TestFile,
 )
@@ -500,6 +502,14 @@ class ImportCellDraft(BaseModel):
     description: str | None = None
     test_name: str | None = None
     metadata: dict[str, str] = {}
+    active_mass_mg_override: float | None = None
+    nominal_capacity_mah_override: float | None = None
+    electrode_area_cm2_override: float | None = None
+    active_material_preset_id: str | None = None
+    active_material_name: str | None = None
+    active_material_specific_capacity_mah_g: float | None = None
+    electrode_area_preset_id: str | None = None
+    electrode_area_preset_name: str | None = None
 
 
 class ImportReplicateGroupDraft(BaseModel):
@@ -573,6 +583,293 @@ class ImportPathInspectRequest(BaseModel):
     paths: list[str]
 
 
+class ImportSourceListRequest(BaseModel):
+    file_paths: list[str] = []
+    folder_paths: list[str] = []
+
+
+class ImportBrowseRequest(BaseModel):
+    path: str | None = None
+
+
+class ImportPinnedFoldersRequest(BaseModel):
+    paths: list[str]
+
+
+IMPORT_PINNED_FOLDERS_KEY = "import_pinned_folders"
+IMPORT_RECENT_FOLDERS_KEY = "import_recent_folders"
+
+
+def _path_setting(db: Session, key: str) -> list[str]:
+    row = db.get(AppSetting, key)
+    if row is None or not row.value:
+        return []
+    try:
+        values = json.loads(row.value)
+    except (TypeError, ValueError):
+        return []
+    return [str(value) for value in values if str(value).strip()]
+
+
+def _set_path_setting(db: Session, key: str, paths: list[str]) -> None:
+    row = db.get(AppSetting, key)
+    value = json.dumps(paths)
+    if row is None:
+        db.add(AppSetting(key=key, value=value))
+    else:
+        row.value = value
+
+
+def _normalized_unique_paths(paths: list[str], require_existing: bool = False) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        try:
+            path = Path(raw).expanduser().resolve()
+        except OSError:
+            path = Path(raw).expanduser()
+        if require_existing and not path.is_dir():
+            continue
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(str(path))
+    return normalized
+
+
+def _quick_access_entry(
+    path: Path,
+    label: str,
+    section: str,
+    *,
+    pinned: bool = False,
+) -> dict:
+    return {
+        "path": str(path),
+        "label": label,
+        "section": section,
+        "pinned": pinned,
+        "available": path.is_dir() and os.access(path, os.R_OK),
+    }
+
+
+def import_quick_access(db: Session) -> list[dict]:
+    home = Path.home()
+    entries: list[dict] = []
+    standard = [
+        (home, "Home"),
+        (home / "Desktop", "Desktop"),
+        (home / "Documents", "Documents"),
+        (home / "Downloads", "Downloads"),
+    ]
+    seen: set[str] = set()
+    for path, label in standard:
+        key = os.path.normcase(str(path))
+        seen.add(key)
+        entries.append(_quick_access_entry(path, label, "quick"))
+    for raw in _path_setting(db, IMPORT_PINNED_FOLDERS_KEY):
+        path = Path(raw)
+        key = os.path.normcase(str(path))
+        if key in seen:
+            for entry in entries:
+                if os.path.normcase(entry["path"]) == key:
+                    entry["pinned"] = True
+            continue
+        seen.add(key)
+        entries.append(_quick_access_entry(path, path.name or str(path), "pinned", pinned=True))
+    for raw in _path_setting(db, IMPORT_RECENT_FOLDERS_KEY):
+        path = Path(raw)
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(_quick_access_entry(path, path.name or str(path), "recent"))
+    return entries
+
+
+def remember_import_folder(db: Session, path: Path) -> None:
+    existing = _path_setting(db, IMPORT_RECENT_FOLDERS_KEY)
+    key = os.path.normcase(str(path))
+    recent = [str(path)] + [item for item in existing if os.path.normcase(item) != key]
+    _set_path_setting(db, IMPORT_RECENT_FOLDERS_KEY, recent[:8])
+    db.commit()
+
+
+def import_browse_roots() -> list[dict[str, str]]:
+    roots: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add_root(path: Path, name: str) -> None:
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            return
+        key = os.path.normcase(str(resolved))
+        if key in seen or not resolved.is_dir():
+            return
+        seen.add(key)
+        roots.append({"path": str(resolved), "name": name})
+
+    add_root(Path.home(), "Home")
+    if os.name == "nt":
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = Path(f"{letter}:\\")
+            if drive.exists():
+                add_root(drive, f"{letter}:")
+    else:
+        add_root(Path("/"), "/")
+    return roots
+
+
+def browse_import_directory(path: str | None = None, db: Session | None = None) -> dict:
+    default_path = Path.home() / "Documents"
+    requested = (
+        Path(path).expanduser()
+        if path
+        else default_path if default_path.is_dir() else Path.home()
+    )
+    try:
+        current = requested.resolve()
+    except OSError as exc:
+        raise HTTPException(400, f"Could not resolve directory: {exc}") from exc
+    if not current.exists():
+        raise HTTPException(404, f"Directory is missing: {current}")
+    if not current.is_dir():
+        raise HTTPException(400, f"Not a directory: {current}")
+
+    entries: list[dict] = []
+    try:
+        with os.scandir(current) as scan:
+            for entry in scan:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        kind = "folder"
+                    elif entry.is_file(follow_symlinks=False) and import_filename_allowed(entry.name):
+                        kind = "file"
+                    else:
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                entries.append(
+                    {
+                        "path": str(Path(entry.path).resolve()),
+                        "name": entry.name,
+                        "kind": kind,
+                        "size": stat.st_size if kind == "file" else None,
+                        "modified_at": datetime.fromtimestamp(
+                            stat.st_mtime,
+                            tz=timezone.utc,
+                        ).isoformat(),
+                    }
+                )
+    except PermissionError as exc:
+        raise HTTPException(403, f"Directory cannot be opened: {current}") from exc
+    except OSError as exc:
+        raise HTTPException(422, f"Directory could not be read: {exc}") from exc
+
+    entries.sort(key=lambda item: (item["kind"] != "folder", item["name"].casefold()))
+    parent = current.parent
+    if db is not None:
+        remember_import_folder(db, current)
+    return {
+        "current_path": str(current),
+        "parent_path": None if parent == current else str(parent),
+        "roots": import_browse_roots(),
+        "quick_access": import_quick_access(db) if db is not None else [],
+        "entries": entries,
+    }
+
+
+def list_import_folder_files(root: Path) -> dict:
+    root = root.expanduser().resolve()
+    if not root.is_dir():
+        raise HTTPException(400, f"Not a directory: {root}")
+    files: list[dict] = []
+
+    def on_walk_error(_error: OSError) -> None:
+        return None
+
+    for current, directories, filenames in os.walk(
+        root,
+        topdown=True,
+        onerror=on_walk_error,
+        followlinks=False,
+    ):
+        directories.sort(key=str.casefold)
+        for filename in sorted(filenames, key=str.casefold):
+            path = Path(current) / filename
+            if not import_filename_allowed(filename):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            files.append(
+                {
+                    "path": str(path.resolve()),
+                    "relative_path": path.relative_to(root).as_posix(),
+                    "filename": path.name,
+                    "size": stat.st_size,
+                }
+            )
+    return {
+        "root_path": str(root),
+        "root_name": root.name or str(root),
+        "files": files,
+    }
+
+
+def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
+    files: list[dict] = []
+    seen: set[str] = set()
+    loose_paths = [Path(path).expanduser().resolve() for path in file_paths]
+    for path in loose_paths:
+        if not path.is_file():
+            raise HTTPException(404, f"File is missing: {path}")
+        if not import_filename_allowed(path.name):
+            raise HTTPException(400, f"Only .nda and .ndax files can be imported: {path.name}")
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        files.append(
+            {
+                "path": str(path),
+                "relative_path": f"Loose files/{path.name}",
+                "filename": path.name,
+                "size": path.stat().st_size,
+            }
+        )
+
+    folder_labels: dict[str, int] = {}
+    for raw_folder in folder_paths:
+        folder = Path(raw_folder).expanduser().resolve()
+        listing = list_import_folder_files(folder)
+        base_label = listing["root_name"]
+        occurrence = folder_labels.get(base_label.casefold(), 0) + 1
+        folder_labels[base_label.casefold()] = occurrence
+        label = base_label if occurrence == 1 else f"{base_label} ({occurrence})"
+        for item in listing["files"]:
+            path = Path(item["path"]).resolve()
+            key = os.path.normcase(str(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(
+                {
+                    **item,
+                    "relative_path": f"{label}/{item['relative_path']}",
+                }
+            )
+    return {
+        "root_path": None,
+        "root_name": "Selected sources",
+        "files": files,
+    }
+
+
 @router.post("/imports/inspect")
 async def inspect_import_files(files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
     previews = []
@@ -602,6 +899,32 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
     return {"files": [_inspect_import_path(Path(path), db) for path in req.paths]}
 
 
+@router.post("/imports/list-sources")
+def list_import_source_paths(req: ImportSourceListRequest):
+    return list_import_sources(req.file_paths, req.folder_paths)
+
+
+@router.post("/imports/browse")
+def browse_import_source_paths(req: ImportBrowseRequest, db: Session = Depends(get_db)):
+    return browse_import_directory(req.path, db)
+
+
+@router.get("/imports/quick-access")
+def get_import_quick_access(db: Session = Depends(get_db)):
+    return {"items": import_quick_access(db)}
+
+
+@router.put("/imports/quick-access/pinned")
+def update_import_pinned_folders(
+    req: ImportPinnedFoldersRequest,
+    db: Session = Depends(get_db),
+):
+    paths = _normalized_unique_paths(req.paths)
+    _set_path_setting(db, IMPORT_PINNED_FOLDERS_KEY, paths)
+    db.commit()
+    return {"items": import_quick_access(db)}
+
+
 @router.post("/imports/pick-files")
 def pick_import_files(db: Session = Depends(get_db)):
     try:
@@ -626,6 +949,26 @@ def pick_import_files(db: Session = Depends(get_db)):
     finally:
         root.destroy()
     return {"files": [_inspect_import_path(Path(path), db) for path in selected]}
+
+
+@router.post("/imports/pick-folder")
+def pick_import_folder():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise HTTPException(500, f"Native folder picker is not available: {exc}") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        selected = filedialog.askdirectory(title="Select a folder containing Neware cell files")
+    finally:
+        root.destroy()
+    if not selected:
+        return {"root_path": None, "root_name": None, "files": []}
+    return list_import_folder_files(Path(selected))
 
 
 @router.post("/imports/preview")
@@ -771,6 +1114,28 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         db.flush()
 
         imported_metadata = full_cell_metadata_from_header(meta, draft.metadata)
+        override_values = {
+            "override.active_mass_mg": draft.active_mass_mg_override,
+            "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
+            "override.electrode_area_cm2": draft.electrode_area_cm2_override,
+            "override.active_material_specific_capacity_mah_g":
+                draft.active_material_specific_capacity_mah_g,
+        }
+        for key, value in override_values.items():
+            if value is not None:
+                if value <= 0:
+                    raise HTTPException(422, f"{key} must be positive")
+                imported_metadata[key] = str(float(value))
+        text_overrides = {
+            "override.active_material_preset_id": draft.active_material_preset_id,
+            "override.active_material_name": draft.active_material_name,
+            "override.electrode_area_preset_id": draft.electrode_area_preset_id,
+            "override.electrode_area_preset_name": draft.electrode_area_preset_name,
+        }
+        for key, value in text_overrides.items():
+            text = (value or "").strip()
+            if text:
+                imported_metadata[key] = text
         for key, value in imported_metadata.items():
             k = key.strip()
             v = str(value).strip()
