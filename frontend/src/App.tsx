@@ -136,6 +136,22 @@ export default function App() {
     let disposed = false;
     const cleanups: (() => void)[] = [];
     void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const openPortableImport = (deepLink?: string) => {
+        const params = new URLSearchParams({ portableImport: "1" });
+        if (deepLink) {
+          try {
+            const source = new URL(deepLink).searchParams.get("source");
+            if (source) params.set("portableSource", source);
+          } catch {
+            // Older links intentionally open the empty import modal.
+          }
+        }
+        navigate(`/analyses?${params.toString()}`);
+      };
+      const unlistenPortableImport = await listen<string>(
+        "portable-import-requested",
+        (event) => openPortableImport(event.payload)
+      );
       const unlistenCheck = await listen("tray-check-update", async () => {
         try {
           const job = await post<SourceCheckJob>("/api/cells/check-update-sources/jobs");
@@ -159,17 +175,21 @@ export default function App() {
         }
       });
       if (disposed) {
+        unlistenPortableImport();
         unlistenCheck();
         unlistenQuit();
       } else {
-        cleanups.push(unlistenCheck, unlistenQuit);
+        cleanups.push(unlistenPortableImport, unlistenCheck, unlistenQuit);
       }
+      const { invoke } = await import("@tauri-apps/api/core");
+      const pending = await invoke<string | null>("take_pending_deep_link");
+      if (pending && !disposed) openPortableImport(pending);
     });
     return () => {
       disposed = true;
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [queryClient]);
+  }, [navigate, queryClient]);
   const backgroundJobs = useQuery({
     queryKey: ["background-jobs"],
     queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),

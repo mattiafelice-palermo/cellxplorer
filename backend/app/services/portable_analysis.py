@@ -100,11 +100,14 @@ def cleanup_pending_imports() -> None:
             continue
 
 
-def stage_import(source_path: Path) -> str:
+def stage_import(source_path: Path, *, preserve_source: bool = False) -> str:
     cleanup_pending_imports()
     token = uuid.uuid4().hex
     destination = _pending_import_dir() / f"{token}.html"
-    shutil.move(str(source_path), destination)
+    if preserve_source:
+        shutil.copy2(source_path, destination)
+    else:
+        shutil.move(str(source_path), destination)
     return token
 
 
@@ -549,6 +552,12 @@ def _html_head(title: str) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="application-name" content="CellXplorer">
+<meta name="theme-color" content="#12b886">
+<meta name="description" content="Portable CellXplorer battery cycling analysis">
+<meta property="og:title" content="{title} - CellXplorer">
+<meta property="og:description" content="Portable battery cycling analysis">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2312b886'/%3E%3Cpath d='M17 13l15 19 15-19h-9L32 21l-6-8zm0 38h9l6-8 6 8h9L32 32z' fill='white'/%3E%3C/svg%3E">
 <title>{title} - CellXplorer portable analysis</title>
 <style>
 :root{{--teal:#12b886;--ink:#17212b;--muted:#7c8794;--line:#dfe4e8;--soft:#f7f8f9}}
@@ -562,8 +571,10 @@ h1{{font-size:22px;margin:0}} h2{{font-size:17px;margin:0 0 12px}} p{{margin:4px
 #chart{{width:100%;min-height:520px}} .toolbar{{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}}
 #chart .frozen-plot{{display:block;width:100%;height:auto;min-height:360px}}
 #series-controls{{display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0 2px}} #series-controls label{{font-size:12px}}
-button.action{{border:1px solid var(--line);background:#fff;border-radius:5px;padding:8px 12px;cursor:pointer}}
+button.action,.action-link{{border:1px solid var(--line);background:#fff;border-radius:5px;padding:8px 12px;cursor:pointer;color:inherit;text-decoration:none;font:inherit}}
 .header-actions{{display:flex;align-items:center;gap:12px}} .primary{{background:var(--teal)!important;color:#fff;border-color:var(--teal)!important}}
+#report-cover{{position:fixed;inset:0;z-index:1000;background:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:32px}}
+.cover-mark{{width:64px;height:64px;margin:0 auto 16px;border-radius:12px;background:var(--teal);color:#fff;font-size:44px;line-height:58px;font-weight:300}}
 dialog{{width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 48px);border:1px solid var(--line);border-radius:8px;padding:0;box-shadow:0 18px 55px #17212b33}}
 dialog::backdrop{{background:#17212b55}} .dialog-head,.dialog-foot{{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px}}
 .dialog-head{{border-bottom:1px solid var(--line)}} .dialog-foot{{border-top:1px solid var(--line);justify-content:flex-end}} .dialog-body{{padding:8px 18px 18px;overflow:auto}}
@@ -575,7 +586,8 @@ table{{border-collapse:collapse;width:100%}} th,td{{border-bottom:1px solid var(
 </style>
 </head>
 <body>
-<header><div><h1 id="title">Portable analysis</h1><p class="muted" id="subtitle">Loading report...</p></div><div class="header-actions"><button class="action" id="download-originals" hidden>Download source files</button><strong style="color:var(--teal)">CellXplorer</strong></div></header>
+<div id="report-cover"><div><div class="cover-mark">X</div><h1>{title}</h1><p class="muted">CellXplorer portable battery analysis</p></div></div>
+<header><div><h1 id="title">Portable analysis</h1><p class="muted" id="subtitle">Loading report...</p></div><div class="header-actions"><a class="action-link primary" id="open-cellxplorer" href="cellxplorer://import-analysis">Open in CellXplorer</a><button class="action" id="download-originals" hidden>Download source files</button><strong style="color:var(--teal)">CellXplorer</strong></div></header>
 <main>
 <aside class="panel"><h2>Saved plots</h2><div id="views"></div><div id="warnings"></div></aside>
 <section>
@@ -1083,6 +1095,10 @@ def _html_tail() -> str:
     link.download = `${active.name || "analysis-data"}.csv`; link.click(); URL.revokeObjectURL(link.href);
   }
   async function start() {
+    const openCellXplorer = byId("open-cellxplorer");
+    if (openCellXplorer && window.location.protocol === "file:") {
+      openCellXplorer.href = "cellxplorer://import-analysis?source=" + encodeURIComponent(window.location.href);
+    }
     const bytes = await decodePayload("report");
     report = JSON.parse(new TextDecoder().decode(bytes));
     text(byId("title"), report.analysis.title);
@@ -1115,6 +1131,7 @@ def _html_tail() -> str:
     renderMetadata();
     renderSources();
     openView(report.views[0]);
+    byId("report-cover")?.remove();
     try {
       await loadPlotly();
       if (active) renderChart(active);

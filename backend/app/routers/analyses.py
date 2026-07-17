@@ -13,16 +13,17 @@ from pathlib import Path
 import re
 import tempfile
 from typing import Literal
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
 from ..db import get_db
-from ..models import Analysis, Folder
+from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
 from ..services import analysis_engine as engine
 from ..services import analysis_cache, background_jobs, portable_analysis
 from ..services.entity_ids import next_analysis_id
@@ -80,6 +81,60 @@ def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
     if full:
         d["spec"] = a.spec
         d["provenance"] = a.provenance
+        entries = a.spec.get("selection", {}).get("entries", [])
+        cell_ids = {
+            int(entry["ref_id"])
+            for entry in entries
+            if entry.get("kind") == "cell" and entry.get("ref_id") is not None
+        }
+        group_ids = {
+            int(entry["ref_id"])
+            for entry in entries
+            if entry.get("kind") == "replicate_group" and entry.get("ref_id") is not None
+        }
+        cells = (
+            db.query(Cell).filter(Cell.id.in_(cell_ids)).order_by(Cell.name).all()
+            if cell_ids
+            else []
+        )
+        groups = (
+            db.query(ReplicateGroup)
+            .options(
+                selectinload(ReplicateGroup.cell_links).selectinload(ReplicateGroupCell.cell)
+            )
+            .filter(ReplicateGroup.id.in_(group_ids))
+            .order_by(ReplicateGroup.name)
+            .all()
+            if group_ids
+            else []
+        )
+        d["selection_cells"] = [
+            {
+                "id": cell.id,
+                "name": cell.name,
+                "description": cell.description,
+                "archived": cell.archived,
+            }
+            for cell in cells
+        ]
+        d["selection_groups"] = [
+            {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description,
+                "cell_ids": [membership.cell_id for membership in group.cell_links],
+                "cells": [
+                    {
+                        "id": membership.cell.id,
+                        "name": membership.cell.name,
+                        "description": membership.cell.description,
+                        "archived": membership.cell.archived,
+                    }
+                    for membership in group.cell_links
+                ],
+            }
+            for group in groups
+        ]
     return d
 
 
@@ -176,7 +231,6 @@ class ComputeRequest(BaseModel):
     save_provenance: bool = False
     job_id: int | None = None
     viewport_width: int | None = Field(default=None, ge=240, le=10000)
-    x_range: list[float] | None = None
     precision: Literal["standard", "full"] = "standard"
     compact: bool = False
 
@@ -310,12 +364,8 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
-    if req.x_range is not None and len(req.x_range) != 2:
-        raise HTTPException(422, "x_range must contain a minimum and maximum")
-    x_range = tuple(req.x_range) if req.x_range is not None else None
     options = {
         "viewport_width": req.viewport_width or 1200,
-        "x_range": req.x_range,
         "precision": req.precision,
         "compact": req.compact,
     }
@@ -337,7 +387,6 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                 a.provenance,
                 use_current_versions=req.recompute,
                 viewport_width=req.viewport_width,
-                x_range=x_range,
                 precision=req.precision,
                 compact=req.compact,
                 progress=_progress_callback(req.job_id),
@@ -353,11 +402,59 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
 
 class PlotArtifactRequest(BaseModel):
     signature: str = Field(min_length=1, max_length=20_000)
-    svg: str = Field(min_length=10, max_length=12_000_000)
+    svg: str = Field(min_length=10, max_length=100_000_000)
+    thumbnail: str | None = Field(default=None, max_length=2_500_000)
+    figure: dict
+    summary: list[dict] = Field(default_factory=list)
 
 
 class PlotArtifactLookup(BaseModel):
     signature: str = Field(min_length=1, max_length=20_000)
+
+
+def _plot_artifact_signature(
+    db: Session,
+    analysis: Analysis,
+    plot_id: str,
+    client_signature: str,
+) -> str:
+    saved_plot = next(
+        (
+            plot
+            for plot in analysis.spec.get("saved_plots", [])
+            if str(plot.get("id")) == plot_id
+        ),
+        None,
+    )
+    if saved_plot is None:
+        raise HTTPException(404, "No such saved plot")
+    spec = deepcopy(analysis.spec)
+    selection = deepcopy(spec.get("selection") or {})
+    saved_selection = saved_plot.get("selection") or {}
+    selection["exclusions"] = deepcopy(saved_selection.get("exclusions") or [])
+    selection["hidden_replicate_group_ids"] = deepcopy(
+        saved_selection.get("hidden_replicate_group_ids") or []
+    )
+    spec["selection"] = selection
+    spec["computation"] = deepcopy(saved_plot.get("computation") or {})
+    spec["aggregation"] = deepcopy(saved_plot.get("aggregation") or {})
+    spec["presentation"] = deepcopy(saved_plot.get("presentation") or {})
+    tab = saved_plot.get("tab")
+    kind = "time_capacity" if tab == "time_capacity" else "cycles"
+    request_options = (
+        {"viewport_width": 1200, "precision": "standard", "compact": True}
+        if kind == "time_capacity"
+        else None
+    )
+    data_signature = analysis_cache.result_key(
+        db,
+        kind,
+        spec,
+        analysis.provenance,
+        use_current_versions=False,
+        request_options=request_options,
+    )
+    return f"{client_signature}:{data_signature}"
 
 
 @router.get("/analyses/{analysis_id}/plot-artifacts/{plot_id}")
@@ -367,12 +464,14 @@ def get_plot_artifact(
     signature: str,
     db: Session = Depends(get_db),
 ):
-    if db.get(Analysis, analysis_id) is None:
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
         raise HTTPException(404, "No such analysis")
-    svg = analysis_cache.load_artifact(analysis_id, plot_id, signature)
-    if svg is None:
+    cache_signature = _plot_artifact_signature(db, analysis, plot_id, signature)
+    artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
+    if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
-    return {"signature": signature, "svg": svg}
+    return {"signature": signature, **artifact}
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/lookup")
@@ -382,12 +481,63 @@ def lookup_plot_artifact(
     req: PlotArtifactLookup,
     db: Session = Depends(get_db),
 ):
-    if db.get(Analysis, analysis_id) is None:
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
         raise HTTPException(404, "No such analysis")
-    svg = analysis_cache.load_artifact(analysis_id, plot_id, req.signature)
-    if svg is None:
+    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
+    if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
-    return {"signature": req.signature, "svg": svg}
+    return {"signature": req.signature, **artifact}
+
+
+@router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/thumbnail/lookup")
+def lookup_plot_thumbnail(
+    analysis_id: int,
+    plot_id: str,
+    req: PlotArtifactLookup,
+    db: Session = Depends(get_db),
+):
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    thumbnail = analysis_cache.load_indexed_thumbnail(
+        analysis_id,
+        plot_id,
+        req.signature,
+    )
+    if thumbnail is not None:
+        return {"signature": req.signature, "thumbnail": thumbnail}
+
+    # Adopt caches written before the direct index existed. Plot ids are
+    # stable and a refreshed saved plot always writes a newer thumbnail, so
+    # this is a constant-time disk lookup rather than a 25-cell fingerprint.
+    thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id)
+    if thumbnail is not None:
+        analysis_cache.store_indexed_thumbnail(
+            analysis_id,
+            plot_id,
+            req.signature,
+            thumbnail,
+        )
+        return {"signature": req.signature, "thumbnail": thumbnail}
+
+    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    thumbnail = analysis_cache.load_thumbnail(analysis_id, plot_id, cache_signature)
+    if thumbnail is None:
+        # One-time migration for artifacts created before thumbnails were
+        # split into lightweight files.
+        artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
+        thumbnail = artifact.get("thumbnail") if artifact is not None else None
+    if thumbnail is None:
+        raise HTTPException(404, "No cached plot thumbnail")
+    analysis_cache.store_indexed_thumbnail(
+        analysis_id,
+        plot_id,
+        req.signature,
+        thumbnail,
+    )
+    return {"signature": req.signature, "thumbnail": thumbnail}
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}")
@@ -397,15 +547,31 @@ def store_plot_artifact(
     req: PlotArtifactRequest,
     db: Session = Depends(get_db),
 ):
-    if db.get(Analysis, analysis_id) is None:
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
         raise HTTPException(404, "No such analysis")
     normalized = req.svg.lstrip()
     if not normalized.startswith("<svg") or re.search(
         r"<(?:script|iframe|object|embed|foreignObject)\b", normalized, re.IGNORECASE
     ):
         raise HTTPException(422, "Only self-contained SVG plot artifacts are accepted")
-    analysis_cache.store_artifact(analysis_id, plot_id, req.signature, req.svg)
-    return {"signature": req.signature, "svg": req.svg}
+    if req.thumbnail is not None and not req.thumbnail.startswith("data:image/png;base64,"):
+        raise HTTPException(422, "Only PNG plot thumbnails are accepted")
+    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    artifact = {
+        "svg": req.svg,
+        "thumbnail": req.thumbnail,
+        "figure": req.figure,
+        "summary": req.summary,
+    }
+    analysis_cache.store_artifact(
+        analysis_id,
+        plot_id,
+        cache_signature,
+        artifact,
+        client_signature=req.signature,
+    )
+    return {"signature": req.signature, **artifact}
 
 
 class AnalysisDuplicateRequest(BaseModel):
@@ -475,9 +641,39 @@ class PortableStagedImportRequest(BaseModel):
     cell_names: dict[str, str] = Field(default_factory=dict)
 
 
+class PortablePathInspectRequest(BaseModel):
+    source: str
+
+
 def _portable_filename(title: str) -> str:
     clean = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title).strip(" .-")
     return f"{clean or 'CellXplorer analysis'}.html"
+
+
+def _portable_local_path(source: str) -> Path:
+    """Resolve a local report path supplied by the desktop deep link."""
+    value = source.strip()
+    if not value:
+        raise HTTPException(400, "The portable report path is missing.")
+    raw_windows_path = bool(re.match(r"^[A-Za-z]:[\\/]", value))
+    parsed = urlparse(value) if not raw_windows_path else urlparse("")
+    if parsed.scheme and parsed.scheme.lower() != "file":
+        raise HTTPException(400, "Only local portable report files can be opened automatically.")
+    if parsed.scheme.lower() == "file":
+        decoded = unquote(parsed.path)
+        if parsed.netloc:
+            decoded = f"//{parsed.netloc}{decoded}"
+        elif re.match(r"^/[A-Za-z]:/", decoded):
+            decoded = decoded[1:]
+        value = decoded
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise HTTPException(400, "The portable report path must be absolute.")
+    if path.suffix.lower() not in {".html", ".htm"}:
+        raise HTTPException(400, "Select a CellXplorer portable HTML analysis.")
+    if not path.is_file():
+        raise HTTPException(404, "The portable report is no longer available at this location.")
+    return path.resolve()
 
 
 @router.get("/analyses/{analysis_id}/portable-estimate")
@@ -586,6 +782,23 @@ async def inspect_portable_analysis(
     finally:
         temporary.close()
         temporary_path.unlink(missing_ok=True)
+
+
+@router.post("/analyses/portable-inspect-path")
+def inspect_portable_analysis_path(
+    req: PortablePathInspectRequest,
+    db: Session = Depends(get_db),
+):
+    """Stage a local report handed to the desktop app by its custom protocol."""
+    source_path = _portable_local_path(req.source)
+    token = portable_analysis.stage_import(source_path, preserve_source=True)
+    staged_path = portable_analysis.pending_import_path(token)
+    try:
+        review = portable_analysis.inspect_analysis_html(db, staged_path)
+        return {"token": token, "filename": source_path.name, **review}
+    except Exception:
+        portable_analysis.discard_pending_import(token)
+        raise
 
 
 @router.post("/analyses/portable-import-staged")

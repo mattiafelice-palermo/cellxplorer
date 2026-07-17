@@ -22,7 +22,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconActivityHeartbeat, IconChartLine, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconHistory, IconPlus, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -41,11 +41,7 @@ import {
   type SourceMonitoringSettings,
 } from "../api";
 import { isTauriApp } from "../downloads";
-import {
-  EXPORT_FILENAME_TOKENS,
-  insertFilenameToken,
-  type ExportFilenameToken,
-} from "../exportFilenames";
+import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -108,7 +104,6 @@ export function SettingsPage() {
   const [filenameTemplate, setFilenameTemplate] = useState(
     "{analysis} - {plot_title}"
   );
-  const filenameInputRef = useRef<HTMLInputElement | null>(null);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [monitorForm, setMonitorForm] = useState<SourceMonitoringSettings>({
@@ -348,21 +343,6 @@ export function SettingsPage() {
   const palettesDirty = Boolean(colorPalettes.data) &&
     JSON.stringify(paletteForm) !== JSON.stringify(colorPalettes.data?.palettes ?? []);
   const formatDateTime = (value: string | null) => value ? new Date(value).toLocaleString() : "Not yet";
-  const insertFilenameTemplateToken = (token: ExportFilenameToken) => {
-    const input = filenameInputRef.current;
-    const inserted = insertFilenameToken(
-      filenameTemplate,
-      token,
-      input?.selectionStart,
-      input?.selectionEnd,
-    );
-    setFilenameTemplate(inserted.value);
-    window.setTimeout(() => {
-      input?.focus();
-      input?.setSelectionRange(inserted.cursor, inserted.cursor);
-    });
-  };
-
   return (
     <Stack gap="lg" maw={980}>
       <Title order={2}>Settings</Title>
@@ -449,27 +429,11 @@ export function SettingsPage() {
 
               <div>
                 <Text fw={600} size="sm" mb={6}>Default export filename</Text>
-                <TextInput
-                  ref={filenameInputRef}
+                <FilenameTemplateEditor
                   value={filenameTemplate}
-                  onChange={(event) => setFilenameTemplate(event.currentTarget.value)}
-                  placeholder="{analysis} - {plot_title}"
+                  onChange={setFilenameTemplate}
+                  label="Template"
                 />
-                <Group gap={6} mt={6}>
-                  {EXPORT_FILENAME_TOKENS.map((token) => (
-                    <Button
-                      key={token}
-                      size="compact-xs"
-                      variant="light"
-                      onClick={() => insertFilenameTemplateToken(token)}
-                    >
-                      {token}
-                    </Button>
-                  ))}
-                </Group>
-                <Text c="dimmed" size="xs" mt={6}>
-                  Tokens are replaced at export time. Ordinary text can be mixed with them.
-                </Text>
               </div>
 
               <Group justify="flex-end">

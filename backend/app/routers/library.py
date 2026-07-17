@@ -184,6 +184,20 @@ SCIENTIFIC_OVERRIDE_KEYS = {
     "electrode_area_cm2": "override.electrode_area_cm2",
 }
 
+SCIENTIFIC_SUMMARY_METADATA_KEYS = {
+    *SCIENTIFIC_OVERRIDE_KEYS.values(),
+    "active_material_mg",
+    "active_mass_mg",
+    "nominal_capacity_mah",
+    "nominal_capacity",
+    "electrode_area_cm2",
+    "override.active_material_preset_id",
+    "override.active_material_name",
+    "override.active_material_specific_capacity_mah_g",
+    "override.electrode_area_preset_id",
+    "override.electrode_area_preset_name",
+}
+
 
 def _positive_float(value) -> float | None:
     if value is None:
@@ -195,8 +209,12 @@ def _positive_float(value) -> float | None:
     return number if number > 0 else None
 
 
-def cell_scientific_metadata(cell: Cell) -> dict:
-    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+def cell_scientific_metadata(
+    cell: Cell,
+    metadata: dict[str, str] | None = None,
+) -> dict:
+    if metadata is None:
+        metadata = {entry.key: entry.value for entry in cell.metadata_entries}
     source_mass = next(
         (
             value
@@ -243,8 +261,12 @@ def cell_scientific_metadata(cell: Cell) -> dict:
     return values
 
 
-def cell_scientific_presets(cell: Cell) -> dict:
-    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+def cell_scientific_presets(
+    cell: Cell,
+    metadata: dict[str, str] | None = None,
+) -> dict:
+    if metadata is None:
+        metadata = {entry.key: entry.value for entry in cell.metadata_entries}
     return {
         "active_material": {
             "preset_id": metadata.get("override.active_material_preset_id"),
@@ -258,7 +280,14 @@ def cell_scientific_presets(cell: Cell) -> dict:
     }
 
 
-def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> dict:
+def cell_dict(
+    db: Session,
+    cell: Cell,
+    tag_names: list[str] | None = None,
+    *,
+    include_metadata: bool = True,
+    metadata_values: dict[str, str] | None = None,
+) -> dict:
     if tag_names is None:
         tags = (
             db.query(Tag.name)
@@ -267,7 +296,11 @@ def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> di
             .all()
         )
         tag_names = [row[0] for row in tags]
-    meta = {m.key: m.value for m in cell.metadata_entries}
+    meta = (
+        metadata_values
+        if metadata_values is not None
+        else {m.key: m.value for m in cell.metadata_entries}
+    )
     n_files = sum(len(t.file_links) for t in cell.tests)
     cycles = 0
     statuses = set()
@@ -279,16 +312,15 @@ def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> di
     totals = cell_capacity_totals(cell)
     cell.total_charge_capacity_mah = totals["total_charge_capacity_mah"]
     cell.total_discharge_capacity_mah = totals["total_discharge_capacity_mah"]
-    return {
+    result = {
         "id": cell.id,
         "name": cell.name,
         "description": cell.description,
         "archived": cell.archived,
         "cycling_status": cell.cycling_status,
         "tags": sorted(tag_names),
-        "metadata": meta,
-        "scientific_metadata": cell_scientific_metadata(cell),
-        "scientific_presets": cell_scientific_presets(cell),
+        "scientific_metadata": cell_scientific_metadata(cell, meta),
+        "scientific_presets": cell_scientific_presets(cell, meta),
         "n_tests": len(cell.tests),
         "n_files": n_files,
         "total_cycles": cycles,
@@ -311,6 +343,9 @@ def cell_dict(db: Session, cell: Cell, tag_names: list[str] | None = None) -> di
         ),
         "created_at": cell.created_at.isoformat(),
     }
+    if include_metadata:
+        result["metadata"] = meta
+    return result
 
 
 @router.get("/cells")
@@ -338,7 +373,6 @@ def list_cells(
         q = q.filter(Cell.id.in_(sub))
     cells = (
         q.options(
-            selectinload(Cell.metadata_entries),
             selectinload(Cell.tests)
             .selectinload(Test.file_links)
             .selectinload(TestFile.file),
@@ -347,6 +381,7 @@ def list_cells(
         .all()
     )
     tags_by_cell: dict[int, list[str]] = {cell.id: [] for cell in cells}
+    metadata_by_cell: dict[int, dict[str, str]] = {cell.id: {} for cell in cells}
     if cells:
         tag_rows = (
             db.query(CellTag.cell_id, Tag.name)
@@ -356,7 +391,26 @@ def list_cells(
         )
         for cell_id, tag_name in tag_rows:
             tags_by_cell[cell_id].append(tag_name)
-    return [cell_dict(db, cell, tags_by_cell[cell.id]) for cell in cells]
+        metadata_rows = (
+            db.query(CellMetadata.cell_id, CellMetadata.key, CellMetadata.value)
+            .filter(
+                CellMetadata.cell_id.in_(metadata_by_cell),
+                CellMetadata.key.in_(SCIENTIFIC_SUMMARY_METADATA_KEYS),
+            )
+            .all()
+        )
+        for cell_id, key, value in metadata_rows:
+            metadata_by_cell[cell_id][key] = value
+    return [
+        cell_dict(
+            db,
+            cell,
+            tags_by_cell[cell.id],
+            include_metadata=False,
+            metadata_values=metadata_by_cell[cell.id],
+        )
+        for cell in cells
+    ]
 
 
 class CellCreate(BaseModel):
@@ -420,7 +474,7 @@ def get_cell_protocol(
     effective_nominal_capacity = cell_scientific_metadata(cell)["nominal_capacity_mah"][
         "effective_value"
     ]
-    return {
+    result = {
         "cell_id": cell.id,
         "cell_name": cell.name,
         "tests": [
@@ -447,6 +501,7 @@ def get_cell_protocol(
             for test in sorted(cell.tests, key=lambda item: item.id)
         ],
     }
+    return result
 
 
 class CellUpdate(BaseModel):

@@ -335,7 +335,6 @@ export interface CellSummary {
   archived: boolean;
   cycling_status: "active" | "complete";
   tags: string[];
-  metadata: Record<string, string>;
   scientific_metadata: Record<
     "active_mass_mg" | "nominal_capacity_mah" | "electrode_area_cm2",
     {
@@ -369,6 +368,7 @@ export interface CellSummary {
 }
 
 export interface CellDetail extends CellSummary {
+  metadata: Record<string, string>;
   tests: { id: number; name: string; description: string | null; files: SourceFile[] }[];
 }
 
@@ -811,6 +811,14 @@ export interface AnalysisSummary {
 export interface AnalysisFull extends AnalysisSummary {
   spec: AnalysisSpec;
   provenance: Provenance | null;
+  selection_cells: Pick<CellSummary, "id" | "name" | "description" | "archived">[];
+  selection_groups: {
+    id: number;
+    name: string;
+    description: string | null;
+    cell_ids: number[];
+    cells: Pick<CellSummary, "id" | "name" | "description" | "archived">[];
+  }[];
 }
 
 export interface PortableAnalysisEstimate {
@@ -873,6 +881,7 @@ export interface PortableCellReview {
 
 export interface PortableAnalysisInspection {
   token: string;
+  filename?: string;
   analysis_title: string;
   created_at: string | null;
   includes_original_files: boolean;
@@ -996,6 +1005,8 @@ export interface TimeCapacityTrace {
   nominal_capacity_mah: number | null;
   electrode_area_cm2: number | null;
   cycle: (number | null)[];
+  /** Canonical plotted x coordinates calculated before display sampling. */
+  display_x?: (number | null)[];
   time_s: (number | null)[];
   capacity_mah: (number | null)[];
   capacity_mah_g: (number | null)[];
@@ -1023,7 +1034,6 @@ export interface TimeCapacityResult {
     configured_max_points_per_cell: number;
     max_points_per_cell: number;
     total_points: number;
-    x_range: number[] | null;
     precision: "standard" | "full";
     compact: boolean;
   };

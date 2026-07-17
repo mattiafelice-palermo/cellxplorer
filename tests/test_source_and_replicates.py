@@ -15,7 +15,7 @@ os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import ActivityEvent, Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
+from app.models import ActivityEvent, Cell, CellMetadata, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
 from app.services import background_jobs, cache, parsing, scanner
 from app.routers import files, library, replicates
 
@@ -394,6 +394,10 @@ class SourceAndReplicateTests(unittest.TestCase):
         )
         test = Test(cell=cell, name="Imported file")
         test.file_links = [TestFile(file=source, position=0)]
+        cell.metadata_entries = [
+            CellMetadata(key="raw.large.header", value="x" * 20_000),
+            CellMetadata(key="active_material_mg", value="12.5"),
+        ]
         db.add(cell)
         db.commit()
 
@@ -417,6 +421,9 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(len(payload), 1)
         self.assertEqual(payload[0]["total_cycles"], 250)
         self.assertEqual(payload[0]["total_charge_capacity_mah"], 25.0)
+        self.assertNotIn("metadata", payload[0])
+        detail = library.get_cell(cell.id, db=db)
+        self.assertEqual(detail["metadata"]["raw.large.header"], "x" * 20_000)
 
     def test_cell_source_check_skips_completed_cells_and_marks_changed_active_sources(self):
         db = self.make_session()

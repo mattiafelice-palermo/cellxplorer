@@ -35,76 +35,9 @@ unsafe extern "system" {
         pv_attribute: *const std::ffi::c_void,
         cb_attribute: u32,
     ) -> i32;
-    fn CreateMutexW(
-        mutex_attributes: *mut std::ffi::c_void,
-        initial_owner: i32,
-        name: *const u16,
-    ) -> *mut std::ffi::c_void;
-    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
-    fn GetLastError() -> u32;
-    fn FindWindowW(class_name: *const u16, window_name: *const u16) -> *mut std::ffi::c_void;
-    fn ShowWindow(hwnd: *mut std::ffi::c_void, command: i32) -> i32;
-    fn SetForegroundWindow(hwnd: *mut std::ffi::c_void) -> i32;
 }
 
-#[cfg(target_os = "windows")]
-struct SingleInstanceGuard(*mut std::ffi::c_void);
-
-#[cfg(target_os = "windows")]
-impl Drop for SingleInstanceGuard {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn single_instance_guard() -> Option<SingleInstanceGuard> {
-    use std::os::windows::ffi::OsStrExt;
-
-    let mutex_name: Vec<u16> = std::ffi::OsStr::new("Local\\CellXplorerDesktop")
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, mutex_name.as_ptr()) };
-    if handle.is_null() {
-        return Some(SingleInstanceGuard(handle));
-    }
-    const ERROR_ALREADY_EXISTS: u32 = 183;
-    if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
-        return Some(SingleInstanceGuard(handle));
-    }
-
-    unsafe {
-        let _ = CloseHandle(handle);
-    }
-    let title: Vec<u16> = std::ffi::OsStr::new("CellXplorer")
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
-    if !window.is_null() {
-        const SW_RESTORE: i32 = 9;
-        const SW_SHOW: i32 = 5;
-        unsafe {
-            let _ = ShowWindow(window, SW_RESTORE);
-            let _ = ShowWindow(window, SW_SHOW);
-            let _ = SetForegroundWindow(window);
-        }
-    }
-    None
-}
-
-#[cfg(not(target_os = "windows"))]
-struct SingleInstanceGuard;
-
-#[cfg(not(target_os = "windows"))]
-fn single_instance_guard() -> Option<SingleInstanceGuard> {
-    Some(SingleInstanceGuard)
-}
+struct PendingDeepLink(Mutex<Option<String>>);
 
 #[cfg(target_os = "windows")]
 fn set_dwm_color(hwnd: *mut std::ffi::c_void, attribute: u32, color: u32) {
@@ -162,6 +95,24 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn queue_deep_link(app: &AppHandle, url: String) {
+    if !url.starts_with("cellxplorer://import-analysis") {
+        return;
+    }
+    if let Some(state) = app.try_state::<PendingDeepLink>() {
+        if let Ok(mut pending) = state.0.lock() {
+            *pending = Some(url.clone());
+        }
+    }
+    show_main_window(app);
+    let _ = app.emit("portable-import-requested", url);
+}
+
+#[tauri::command]
+fn take_pending_deep_link(state: tauri::State<'_, PendingDeepLink>) -> Option<String> {
+    state.0.lock().ok().and_then(|mut pending| pending.take())
 }
 
 fn stop_backend(app: &AppHandle) {
@@ -322,17 +273,28 @@ fn open_app_folder(app: AppHandle, kind: String) -> Result<(), String> {
 }
 
 fn main() {
-    let Some(_instance_guard) = single_instance_guard() else {
-        return;
-    };
     let start_hidden = std::env::args().any(|arg| arg == "--hidden");
+    let initial_deep_link =
+        std::env::args().find(|arg| arg.starts_with("cellxplorer://import-analysis"));
     let startup_label = if start_hidden { "startup" } else { "manual" };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(url) = args
+                .into_iter()
+                .find(|arg| arg.starts_with("cellxplorer://import-analysis"))
+            {
+                queue_deep_link(app, url);
+            } else {
+                show_main_window(app);
+            }
+        }))
         .manage(LifecycleState {
             quitting: AtomicBool::new(false),
             close_notice_shown: AtomicBool::new(false),
         })
+        .manage(PendingDeepLink(Mutex::new(None)))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -343,7 +305,8 @@ fn main() {
             quit_app,
             set_autostart_enabled,
             set_tray_status,
-            startup_mode
+            startup_mode,
+            take_pending_deep_link
         ])
         .setup(move |app| {
             let backend_port = available_backend_port()?;
@@ -414,6 +377,9 @@ fn main() {
                 if start_hidden {
                     let _ = window.hide();
                 }
+            }
+            if let Some(url) = initial_deep_link.clone() {
+                queue_deep_link(app.handle(), url);
             }
             Ok(())
         })

@@ -53,6 +53,6 @@ export function savedPlotPreviewSignature(base: AnalysisSpec, plot: SavedAnalysi
     protocol_segments: previewSpec.protocol_segments ?? [],
     computation: previewSpec.computation,
     aggregation: previewSpec.aggregation,
-    hidden_protocol_segment_ids: previewSpec.presentation.hidden_protocol_segment_ids ?? [],
+    presentation: previewSpec.presentation,
   });
 }

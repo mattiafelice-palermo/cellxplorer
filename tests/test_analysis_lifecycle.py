@@ -13,7 +13,7 @@ os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Folder
+from app.models import Cell, Folder, ReplicateGroup, ReplicateGroupCell
 from app.routers import analyses, tree
 
 
@@ -75,6 +75,28 @@ class AnalysisLifecycleTests(unittest.TestCase):
 
         self.assertEqual(updated["title"], "New title")
         self.assertEqual(updated["spec"]["title"], "New title")
+
+    def test_analysis_detail_includes_lightweight_selected_sample_identities(self):
+        db = self.make_session()
+        standalone = Cell(name="Standalone")
+        grouped = Cell(name="Grouped")
+        group = ReplicateGroup(name="Replicate A")
+        group.cell_links = [ReplicateGroupCell(cell=grouped)]
+        db.add_all([standalone, group])
+        db.commit()
+        spec = analyses.engine.default_spec("Identity test")
+        spec["selection"]["entries"] = [
+            {"kind": "cell", "ref_id": standalone.id},
+            {"kind": "replicate_group", "ref_id": group.id},
+        ]
+
+        created = analyses.create_analysis(
+            analyses.AnalysisCreate(title="Identity test", spec=spec), db=db
+        )
+
+        self.assertEqual(created["selection_cells"][0]["name"], "Standalone")
+        self.assertEqual(created["selection_groups"][0]["name"], "Replicate A")
+        self.assertEqual(created["selection_groups"][0]["cells"][0]["name"], "Grouped")
 
     def test_copying_folder_tree_uses_monotonic_analysis_ids(self):
         db = self.make_session()

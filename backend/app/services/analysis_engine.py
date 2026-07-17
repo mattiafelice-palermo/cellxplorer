@@ -369,7 +369,12 @@ def _downsample_indices(
         usable_series = [np.arange(length, dtype="float64")]
 
     remaining = max(1, max_points - len(mandatory))
-    points_per_bucket = max(2, len(usable_series) * 2)
+    # Keep one neighbour on either side of an extremum. A lone retained
+    # extremum is scientifically useful but renders as an isolated marker
+    # when an adjacent source row is masked; the three-point micro-segment
+    # preserves the local line shape without materially increasing the
+    # display budget.
+    points_per_bucket = max(2, len(usable_series) * 2) * 3
     bucket_count = max(1, remaining // points_per_bucket)
     edges = np.linspace(0, length, bucket_count + 1).astype("int64")
     selected: set[int] = set(int(value) for value in mandatory)
@@ -382,8 +387,14 @@ def _downsample_indices(
             if len(finite) == 0:
                 continue
             finite_values = local[finite]
-            selected.add(int(start + finite[int(np.argmin(finite_values))]))
-            selected.add(int(start + finite[int(np.argmax(finite_values))]))
+            extrema = (
+                int(start + finite[int(np.argmin(finite_values))]),
+                int(start + finite[int(np.argmax(finite_values))]),
+            )
+            for point in extrema:
+                selected.update(
+                    range(max(0, point - 1), min(length, point + 2))
+                )
 
     if len(selected) < max_points:
         fill = np.linspace(0, length - 1, max_points - len(selected) + 2).astype("int64")
@@ -1297,7 +1308,6 @@ def compute_time_capacity(
     use_current_versions: bool = False,
     *,
     viewport_width: int | None = None,
-    x_range: tuple[float, float] | None = None,
     precision: str = "standard",
     compact: bool = False,
     progress: ProgressCallback | None = None,
@@ -1324,9 +1334,6 @@ def compute_time_capacity(
 
     configured_max = max(100, settings["max_points_per_cell"])
     width = max(320, min(6000, int(viewport_width or 1200)))
-    global_budget = 60_000 if x_range is not None else 40_000
-    adaptive_max = min(configured_max, width * (3 if x_range is not None else 2))
-    adaptive_max = min(adaptive_max, max(300, global_budget // max(1, len(units))))
     total_units = len(units)
     total_returned_points = 0
 
@@ -1414,40 +1421,20 @@ def compute_time_capacity(
         for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
             values[plot_mask] = np.nan
 
-        if x_range is not None and len(raw):
-            display_x = _time_capacity_display_x(raw, phases, capacity, capacity_g, settings)
-            low, high = sorted((float(x_range[0]), float(x_range[1])))
-            in_range = np.flatnonzero(np.isfinite(display_x) & (display_x >= low) & (display_x <= high))
-            if len(in_range):
-                take_range = np.unique(
-                    np.concatenate(
-                        (
-                            np.maximum(0, in_range - 1),
-                            in_range,
-                            np.minimum(len(raw) - 1, in_range + 1),
-                        )
-                    )
-                )
-                raw = raw.iloc[take_range]
-                phases = np.asarray(phases)[take_range].tolist()
-                plot_mask = plot_mask[take_range]
-                voltage = voltage[take_range]
-                current = current[take_range]
-                capacity = capacity[take_range]
-                capacity_g = capacity_g[take_range]
-                derivative_x = derivative_x[take_range]
-                derivative_y = derivative_y[take_range]
-
-        if len(raw) > adaptive_max:
+        display_x = _time_capacity_display_x(raw, phases, capacity, capacity_g, settings)
+        if len(raw) > configured_max:
             envelope_series = (
                 [derivative_x, derivative_y]
                 if settings["view"] != "voltage_current"
-                else [voltage, current]
+                else [voltage]
             )
+            primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
+            visible_values = ~plot_mask & np.isfinite(primary_values)
             take = _downsample_indices(
-                len(raw), adaptive_max, ~plot_mask, envelope_series
+                len(raw), configured_max, visible_values, envelope_series
             )
             raw = raw.iloc[take]
+            display_x = display_x[take]
             phases = np.asarray(phases)[take].tolist()
             voltage = voltage[take]
             current = current[take]
@@ -1475,6 +1462,7 @@ def compute_time_capacity(
                 "nominal_capacity_mah": nominal_capacity_mah,
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
+                "display_x": _jsonsafe_plot(display_x, None if full_precision else 6),
                 "time_s": (
                     _jsonsafe_plot(raw["time_s"].to_numpy(), None if full_precision else 3)
                     if (not compact or (not is_derivative and x_axis == "time")) and "time_s" in raw.columns
@@ -1525,9 +1513,8 @@ def compute_time_capacity(
         "rendering": {
             "viewport_width": width,
             "configured_max_points_per_cell": configured_max,
-            "max_points_per_cell": adaptive_max,
+            "max_points_per_cell": configured_max,
             "total_points": total_returned_points,
-            "x_range": list(x_range) if x_range is not None else None,
             "precision": precision,
             "compact": compact,
         },

@@ -35,8 +35,8 @@ import {
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import {
   AnalysisFull,
@@ -310,6 +310,7 @@ function AnalysisCreateForm({
 
 export function AnalysesIndexPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [portableFile, setPortableFile] = useState<File | null>(null);
@@ -319,6 +320,14 @@ export function AnalysesIndexPage() {
   const [portableAddCells, setPortableAddCells] = useState(true);
   const [portableChoices, setPortableChoices] = useState<Record<string, string>>({});
   const [portableCellNames, setPortableCellNames] = useState<Record<string, string>>({});
+  const [portableImportOpen, setPortableImportOpen] = useState(
+    () => searchParams.get("portableImport") === "1"
+  );
+  const handledPortableSource = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("portableImport") === "1") setPortableImportOpen(true);
+  }, [searchParams]);
 
   const analyses = useQuery({
     queryKey: ["analyses", search],
@@ -352,32 +361,53 @@ export function AnalysesIndexPage() {
     },
   });
 
+  const applyPortableReview = (review: PortableAnalysisInspection) => {
+    setPortableReview(review);
+    setPortableTitle(review.analysis_title);
+    setPortableChoices(
+      Object.fromEntries(
+        review.sources
+          .filter((source) => source.status === "possible_update")
+          .map((source) => [
+            source.source_id,
+            source.suggested_action === "use_library" &&
+            source.suggested_library_source_id
+              ? `library:${source.suggested_library_source_id}`
+              : "embedded",
+          ])
+      )
+    );
+    setPortableCellNames(
+      Object.fromEntries(review.cells.map((cell) => [cell.cell_id, cell.name]))
+    );
+  };
+
   const inspectPortable = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file, file.name);
       return postForm<PortableAnalysisInspection>("/api/analyses/portable-inspect", form);
     },
-    onSuccess: (review) => {
-      setPortableReview(review);
-      setPortableTitle(review.analysis_title);
-      setPortableChoices(
-        Object.fromEntries(
-          review.sources
-            .filter((source) => source.status === "possible_update")
-            .map((source) => [
-              source.source_id,
-              source.suggested_action === "use_library" &&
-              source.suggested_library_source_id
-                ? `library:${source.suggested_library_source_id}`
-                : "embedded",
-            ])
-        )
-      );
-      setPortableCellNames(
-        Object.fromEntries(review.cells.map((cell) => [cell.cell_id, cell.name]))
-      );
+    onSuccess: applyPortableReview,
+    onError: (error: Error) =>
+      notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const inspectPortablePath = useMutation({
+    mutationFn: (source: string) =>
+      post<PortableAnalysisInspection>("/api/analyses/portable-inspect-path", { source }),
+    onMutate: (source) => {
+      let filename = "Portable analysis.html";
+      try {
+        const url = new URL(source);
+        filename = decodeURIComponent(url.pathname.split("/").pop() || filename);
+      } catch {
+        filename = source.split(/[\\/]/).pop() || filename;
+      }
+      setPortableFile(new File([], filename, { type: "text/html" }));
+      setPortableImportOpen(true);
     },
+    onSuccess: applyPortableReview,
     onError: (error: Error) =>
       notifications.show({ message: error.message, color: "red" }),
   });
@@ -391,11 +421,43 @@ export function AnalysesIndexPage() {
     setPortableAddCells(true);
     setPortableChoices({});
     setPortableCellNames({});
+    setPortableImportOpen(false);
     inspectPortable.reset();
+    inspectPortablePath.reset();
+    handledPortableSource.current = null;
+    if (searchParams.has("portableImport") || searchParams.has("portableSource")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("portableImport");
+      next.delete("portableSource");
+      setSearchParams(next, { replace: true });
+    }
     if (discard && token) {
       del(`/api/analyses/portable-import-staged/${token}`).catch(() => undefined);
     }
   };
+
+  const choosePortableFile = (file: File | null) => {
+    if (!file) return;
+    resetPortable();
+    setPortableImportOpen(true);
+    setPortableFolder("none");
+    setPortableFile(file);
+    inspectPortable.mutate(file);
+  };
+
+  const portableSource = searchParams.get("portableSource");
+  useEffect(() => {
+    if (
+      !portableSource ||
+      handledPortableSource.current === portableSource ||
+      portableReview ||
+      inspectPortablePath.isPending
+    ) {
+      return;
+    }
+    handledPortableSource.current = portableSource;
+    inspectPortablePath.mutate(portableSource);
+  }, [portableReview, portableSource, inspectPortablePath.isPending]);
 
   const createPortableFolder = useMutation({
     mutationFn: ({ name, parentId }: { name: string; parentId: number | null }) =>
@@ -490,26 +552,13 @@ export function AnalysesIndexPage() {
       <Group justify="space-between">
         <Title order={3}>Analyses</Title>
         <Group gap="xs">
-          <FileButton
-            onChange={(file) => {
-              if (!file) return;
-              resetPortable();
-              setPortableFolder("none");
-              setPortableFile(file);
-              inspectPortable.mutate(file);
-            }}
-            accept=".html,.htm,text/html"
+          <Button
+            variant="default"
+            leftSection={<IconFileImport size={16} />}
+            onClick={() => setPortableImportOpen(true)}
           >
-            {(props) => (
-              <Button
-                {...props}
-                variant="default"
-                leftSection={<IconFileImport size={16} />}
-              >
-                Import portable analysis
-              </Button>
-            )}
-          </FileButton>
+            Import portable analysis
+          </Button>
           <Button
             leftSection={<IconPlus size={16} />}
             onClick={() =>
@@ -619,7 +668,7 @@ export function AnalysesIndexPage() {
         </Table>
       )}
       <Modal
-        opened={portableFile !== null}
+        opened={portableImportOpen}
         onClose={() => !importPortable.isPending && resetPortable()}
         title="Import portable analysis"
         size="xl"
@@ -627,6 +676,22 @@ export function AnalysesIndexPage() {
         closeOnEscape={!importPortable.isPending}
       >
         <Stack>
+          {!portableFile ? (
+            <Paper withBorder p="xl">
+              <Stack align="center" gap="sm">
+                <IconFileImport size={28} color="var(--mantine-color-teal-6)" />
+                <div>
+                  <Text ta="center" fw={700}>Choose a portable CellXplorer report</Text>
+                  <Text ta="center" size="sm" c="dimmed">
+                    Select the HTML file you received or previously exported.
+                  </Text>
+                </div>
+                <FileButton onChange={choosePortableFile} accept=".html,.htm,text/html">
+                  {(props) => <Button {...props}>Select HTML file</Button>}
+                </FileButton>
+              </Stack>
+            </Paper>
+          ) : null}
           <div>
             <Group gap={4}>
               <Text fw={700} size="sm">
@@ -635,15 +700,17 @@ export function AnalysesIndexPage() {
               <InfoHint label="CellXplorer reads the package data and verifies its checksums without running JavaScript from the report." />
             </Group>
           </div>
-          {inspectPortable.isPending ? (
+          {inspectPortable.isPending || inspectPortablePath.isPending ? (
             <Stack align="center" py="xl">
               <Loader size="sm" />
               <Text size="sm" c="dimmed">
                 Inspecting package and comparing its sources with the library...
               </Text>
             </Stack>
-          ) : inspectPortable.isError ? (
-            <Alert color="red">{inspectPortable.error.message}</Alert>
+          ) : inspectPortable.isError || inspectPortablePath.isError ? (
+            <Alert color="red">
+              {(inspectPortable.error ?? inspectPortablePath.error)?.message}
+            </Alert>
           ) : portableReview ? (
             <>
               <TextInput

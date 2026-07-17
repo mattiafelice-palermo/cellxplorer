@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import Analysis, Cell, Folder, FolderCell, SourceFile, Test, TestFile
+from app.routers.analyses import _portable_local_path
 from app.services import analysis_engine, cache, calc, parsing, portable_analysis
 
 
@@ -194,6 +195,12 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertNotIn("cycle_cache", kinds)
         html = destination.read_bytes()
         self.assertIn(b"CellXplorer portable analysis", html)
+        self.assertIn(b"cellxplorer://import-analysis", html)
+        self.assertIn(b"Open in CellXplorer", html)
+        self.assertIn(b'id="open-cellxplorer"', html)
+        self.assertIn(b'encodeURIComponent(window.location.href)', html)
+        self.assertIn(b'id="report-cover"', html)
+        self.assertIn(b'rel="icon"', html)
         self.assertIn(b"window.Plotly.newPlot", html)
         self.assertIn(b"Standard precision", html)
         self.assertNotIn(b"row.map(quote)", html)
@@ -219,6 +226,24 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertFalse(any("offline" in warning.lower() for warning in warnings))
         result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
         self.assertEqual(result["cell_series"][0]["x"], [1])
+
+    def test_desktop_deep_link_accepts_only_existing_local_html(self):
+        destination, _ = self.create_export(include_original_files=False)
+        self.assertEqual(_portable_local_path(destination.as_uri()), destination.resolve())
+        self.assertEqual(_portable_local_path(str(destination)), destination.resolve())
+
+        token = portable_analysis.stage_import(destination, preserve_source=True)
+        self.assertTrue(destination.is_file())
+        self.assertTrue(portable_analysis.pending_import_path(token).is_file())
+        portable_analysis.discard_pending_import(token)
+
+        with self.assertRaises(HTTPException) as remote_error:
+            _portable_local_path("https://example.com/report.html")
+        self.assertEqual(remote_error.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as missing_error:
+            _portable_local_path((self.root / "missing.html").as_uri())
+        self.assertEqual(missing_error.exception.status_code, 404)
 
     def test_round_trip_with_original_extracts_online_source(self):
         destination, source_hash = self.create_export(include_original_files=True)

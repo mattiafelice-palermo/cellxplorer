@@ -406,6 +406,19 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
 
+    def test_downsample_extrema_keep_immediate_neighbours(self):
+        values = np.zeros(1000, dtype="float64")
+        values[500] = 10.0
+        take = engine._downsample_indices(
+            len(values),
+            100,
+            np.ones(len(values), dtype=bool),
+            [values],
+        )
+
+        selected = set(take.tolist())
+        self.assertTrue({499, 500, 501}.issubset(selected))
+
     def test_time_capacity_trace_includes_nominal_capacity_for_c_rate(self):
         cell = self.cells["c1"]
         self.db.add(CellMetadata(cell_id=cell.id, key="nominal_capacity_mah", value="2.5"))

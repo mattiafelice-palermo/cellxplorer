@@ -22,6 +22,8 @@ class AnalysisCacheTests(unittest.TestCase):
             patch.object(analysis_cache, "_ROOT", root),
             patch.object(analysis_cache, "_RESULTS", root / "results"),
             patch.object(analysis_cache, "_ARTIFACTS", root / "artifacts"),
+            patch.object(analysis_cache, "_THUMBNAILS", root / "thumbnails"),
+            patch.object(analysis_cache, "_THUMBNAIL_INDEXES", root / "thumbnail-index"),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -42,13 +44,52 @@ class AnalysisCacheTests(unittest.TestCase):
 
     def test_artifacts_are_signature_scoped_and_removable(self):
         svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'
-        analysis_cache.store_artifact(7, "plot-one", "signature-a", svg)
+        artifact = {
+            "svg": svg,
+            "thumbnail": "data:image/png;base64,iVBORw0KGgo=",
+            "figure": {"data": [], "layout": {}, "config": {}},
+            "summary": [{"label": "Cell A", "cycles": 3, "status": "Visible"}],
+        }
+        analysis_cache.store_artifact(
+            7,
+            "plot-one",
+            "signature-a",
+            artifact,
+            client_signature="client-signature-a",
+        )
 
-        self.assertEqual(analysis_cache.load_artifact(7, "plot-one", "signature-a"), svg)
+        self.assertEqual(analysis_cache.load_artifact(7, "plot-one", "signature-a"), artifact)
+        self.assertEqual(
+            analysis_cache.load_thumbnail(7, "plot-one", "signature-a"),
+            artifact["thumbnail"],
+        )
+        self.assertEqual(
+            analysis_cache.load_indexed_thumbnail(7, "plot-one", "client-signature-a"),
+            artifact["thumbnail"],
+        )
+        self.assertEqual(
+            analysis_cache.load_latest_thumbnail(7, "plot-one"),
+            artifact["thumbnail"],
+        )
         self.assertIsNone(analysis_cache.load_artifact(7, "plot-one", "signature-b"))
+
+        refreshed = {
+            "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 1"/></svg>',
+            "thumbnail": None,
+            "figure": {"data": [{"x": [1], "y": [2]}], "layout": {}, "config": {}},
+            "summary": [{"label": "Cell A", "cycles": 4, "status": "Visible"}],
+        }
+        analysis_cache.store_artifact(7, "plot-one", "signature-a", refreshed)
+        merged = analysis_cache.load_artifact(7, "plot-one", "signature-a")
+        self.assertEqual(merged["thumbnail"], artifact["thumbnail"])
+        self.assertEqual(merged["svg"], refreshed["svg"])
 
         analysis_cache.delete_analysis_artifacts(7)
         self.assertIsNone(analysis_cache.load_artifact(7, "plot-one", "signature-a"))
+        self.assertIsNone(analysis_cache.load_thumbnail(7, "plot-one", "signature-a"))
+        self.assertIsNone(
+            analysis_cache.load_indexed_thumbnail(7, "plot-one", "client-signature-a")
+        )
 
 
 if __name__ == "__main__":

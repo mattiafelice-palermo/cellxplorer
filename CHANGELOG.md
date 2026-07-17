@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.7.0 - 2026-07-17
+
+- Saved analysis plots now load more quickly through reusable plot-artifact and thumbnail
+  caching, with better cache indexing and cleanup.
+- Interactive analysis plots are more responsive on large datasets, using WebGL when supported,
+  preserving zoom state, improving hover details, and keeping important extrema visible while
+  reducing the number of points drawn.
+- Portable analysis reports now have a smoother open-in-CellXplorer workflow, including desktop
+  deep links and local report-path inspection.
+- Portable imports better preserve original source-file paths and provide safer, clearer source
+  reconciliation when matching files by checksum or comparing possible file versions.
+- Analysis selections now expose more complete cell and replicate-group information, while
+  scientific metadata summaries are loaded more efficiently.
+- Added a filename-template editor with clearer token-based editing and preview behavior for
+  exported plots and tables.
+- Improved desktop integration for portable reports and related Tauri deep-link handling.
+
 ## 0.6.0 - 2026-07-17
 
 - Added forward-only database schema revisions with compatibility checks, automatic pre-migration

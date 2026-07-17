@@ -166,6 +166,30 @@ test("saved plot preview signature changes when analysis sample membership chang
   assert.notEqual(savedPlotPreviewSignature(before, savedPlot), savedPlotPreviewSignature(after, savedPlot));
 });
 
+test("saved plot preview signature changes when saved styling changes", () => {
+  const base = makeSpec([{ kind: "cell", ref_id: 1 }], []);
+  const savedPlot = {
+    id: "plot-style",
+    tab: "cycles",
+    name: "Styled view",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: structuredClone(base.computation),
+    aggregation: structuredClone(base.aggregation),
+    presentation: structuredClone(base.presentation),
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as any;
+  const before = savedPlotPreviewSignature(base, savedPlot);
+  savedPlot.presentation.plot_style = {
+    line_width: 4,
+    series_colors: { "cell:1": "#ff0000" },
+  };
+
+  assert.notEqual(before, savedPlotPreviewSignature(base, savedPlot));
+});
+
 test("saved plot restore keeps global segment definitions and restores plot segment state", () => {
   const current = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], []));
   current.protocol_segments = [
