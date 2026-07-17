@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -41,3 +41,11 @@ def list_activity(limit: int = 80, db: Session = Depends(get_db)):
 @router.get("/background-jobs")
 def list_background_jobs(limit: int = 20):
     return background_jobs.list_jobs(limit=limit)
+
+
+@router.get("/background-jobs/{job_id}")
+def get_background_job(job_id: int):
+    job = background_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "No such background job")
+    return job

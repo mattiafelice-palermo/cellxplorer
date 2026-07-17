@@ -95,6 +95,41 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function requestBlob(url: string, options?: RequestInit): Promise<Blob> {
+  const targetUrl = await apiUrl(url);
+  const method = options?.method ?? "GET";
+  addDebugEvent("api:request", {
+    method,
+    url: targetUrl,
+    body: describeRequestBody(options?.body),
+  });
+  const res = await fetch(targetUrl, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.headers ?? {}),
+    },
+    ...options,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = errorMessage(
+        body && typeof body === "object" && "detail" in body
+          ? (body as { detail: unknown }).detail
+          : undefined,
+        detail,
+      );
+    } catch {
+      /* ignore */
+    }
+    addDebugEvent("api:error", { method, url: targetUrl, status: res.status, detail });
+    throw new ApiError(res.status, detail);
+  }
+  addDebugEvent("api:response", { method, url: targetUrl, status: res.status });
+  return res.blob();
+}
+
 export const get = <T>(url: string) => request<T>(url);
 export const post = <T>(url: string, body?: unknown) =>
   request<T>(url, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
@@ -105,11 +140,34 @@ export const put = <T>(url: string, body: unknown) =>
 export const patch = <T>(url: string, body: unknown) =>
   request<T>(url, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T>(url: string) => request<T>(url, { method: "DELETE" });
+export const postBlob = (url: string, body?: unknown) =>
+  requestBlob(url, {
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
 export interface DownloadSettings {
   download_mode: "ask" | "folder";
   download_folder: string | null;
   export_filename_template: string;
+}
+
+export interface DatabaseStatus {
+  status:
+    | "ready"
+    | "migration_failed"
+    | "database_too_new"
+    | "database_unrecognized"
+    | "database_corrupt";
+  compatible: boolean;
+  app_version: string;
+  schema_revision: string | null;
+  supported_revision: string;
+  previous_revision: string | null;
+  migration_performed: boolean;
+  legacy_database: boolean;
+  backup_path: string | null;
+  message: string;
 }
 
 export interface ElectrodeAreaPreset {
@@ -652,6 +710,7 @@ export interface PlotStyle {
   legend_custom_y: number;
   /** Data (CSV/XLSX) export preferences. */
   data_export_format: "csv" | "xlsx";
+  data_precision: "standard" | "full";
   data_decimal_separator: "point" | "comma";
   data_delimiter: "comma" | "semicolon" | "tab";
   export_settings_version: number;
@@ -754,6 +813,75 @@ export interface AnalysisFull extends AnalysisSummary {
   provenance: Provenance | null;
 }
 
+export interface PortableAnalysisEstimate {
+  cells: number;
+  sources: number;
+  cache_bytes: number;
+  runtime_bytes: number;
+  runtime_embedded_bytes: number;
+  plot_count: number;
+  report_shell_bytes: number;
+  estimated_per_plot_bytes: number;
+  original_bytes: number;
+  missing_originals: number;
+  estimated_without_originals: number;
+  estimated_with_originals: number;
+}
+
+export interface PortableAnalysisImportResult {
+  analysis: AnalysisFull;
+  warnings: string[];
+}
+
+export interface PortableSourceCandidate {
+  source_file_id: number;
+  filename: string;
+  path: string;
+  hash: string;
+  cell_id: number | null;
+  cell_name: string | null;
+  matched_on: string[];
+  comparison: "library_newer" | "embedded_newer" | "unknown";
+  cycle_count: number | null;
+  row_count: number | null;
+  size: number;
+  location_status: string;
+}
+
+export interface PortableSourceReview {
+  source_id: string;
+  filename: string;
+  hash: string;
+  status: "exact" | "possible_update" | "new";
+  embedded: boolean;
+  cycle_count: number | null;
+  row_count: number | null;
+  size: number;
+  message: string;
+  exact_match: PortableSourceCandidate | null;
+  candidates: PortableSourceCandidate[];
+  suggested_action: "use_library" | "import_embedded";
+  suggested_library_source_id?: number;
+}
+
+export interface PortableCellReview {
+  cell_id: string;
+  name: string;
+  status: "reuse" | "review" | "add";
+  sources: PortableSourceReview[];
+}
+
+export interface PortableAnalysisInspection {
+  token: string;
+  analysis_title: string;
+  created_at: string | null;
+  includes_original_files: boolean;
+  plot_count: number;
+  cells: PortableCellReview[];
+  sources: PortableSourceReview[];
+  requires_resolution: boolean;
+}
+
 export interface Provenance {
   computed_at: string;
   parser_version: string;
@@ -854,6 +982,7 @@ export interface ComputeResult {
   group_metrics: GroupMetrics[];
   badges: Badge[];
   sources: Provenance["sources"];
+  cache_status?: "hit" | "miss";
 }
 
 export interface TimeCapacityTrace {
@@ -888,6 +1017,16 @@ export interface TimeCapacityResult {
   settings: NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
   cell_traces: TimeCapacityTrace[];
   badges: Badge[];
+  cache_status?: "hit" | "miss";
+  rendering?: {
+    viewport_width: number;
+    configured_max_points_per_cell: number;
+    max_points_per_cell: number;
+    total_points: number;
+    x_range: number[] | null;
+    precision: "standard" | "full";
+    compact: boolean;
+  };
 }
 
 export interface ScanJob {
@@ -955,6 +1094,7 @@ export interface AppSession {
 export interface DiagnosticsHealth {
   sampled_at: string;
   backend: { status: string; pid: number; database_ok: boolean };
+  database: DatabaseStatus | null;
   storage: {
     data_path: string;
     log_path: string;
@@ -993,6 +1133,9 @@ export interface DiagnosticsLogs {
 }
 
 export interface Meta {
+  app_version: string;
+  database_schema_revision: string | null;
+  supported_database_schema_revision: string;
   parser_version: string;
   calc_version: string;
   quantities: { value: string; label: string }[];

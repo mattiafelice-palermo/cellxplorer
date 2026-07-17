@@ -40,9 +40,11 @@ By default all user state is under `%USERPROFILE%\.cellxplorer`:
 Never clear, replace, seed, or migrate the user's real database unless the user explicitly asks.
 Tests set `CELLXPLORER_DATA` to `.test-cellxplorer`, which is ignored by Git.
 
-`Base.metadata.create_all()` creates new tables but does not add columns to existing SQLite tables.
-Any new persistent column needs a backward-compatible migration in
-`backend/app/db.py::ensure_runtime_schema`. Released migrations must preserve existing data.
+Production databases are versioned through the packaged migration registry under
+`backend/app/migrations/`. Any persistent schema change needs a new forward-only revision and
+focused data-preservation tests. Never edit a released migration. `Base.metadata.create_all()` is
+still used by isolated tests and the `0001` historical baseline, not as a substitute for future
+production migrations. See `docs/database-migrations.md`.
 
 ## Important locations
 
@@ -51,13 +53,30 @@ Any new persistent column needs a backward-compatible migration in
 - `backend/app/services/parsing.py`: the only direct NewareNDA integration
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/analysis_engine.py`: analysis computation
+- `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
 - `frontend/src/pages/AnalysisPage.tsx`: analysis editor and saved plots
 - `frontend/src/api.ts`: typed frontend API client
 - `packaging/`, `src-tauri/`, and `docs/windows-packaging.md`: Windows desktop packaging
+- `docs/portable-analysis-html.md`: portable report format, security, and round-trip rules
 
 ## Development commands
+
+Use the repository helper scripts for the normal Windows workflows:
+
+```powershell
+.\scripts\start-webapp.cmd
+.\scripts\build-app.cmd
+```
+
+`start-webapp.cmd` starts FastAPI and Vite together, configures the Vite API proxy, opens the
+frontend, and cleans up both child processes on `Ctrl+C`. It accepts `-BackendPort`,
+`-FrontendPort`, and `-NoBrowser`.
+
+`build-app.cmd` installs npm dependencies when needed, builds the frontend, builds and copies the
+PyInstaller sidecar, and creates the NSIS installer. It accepts `-SkipInstall`, `-SkipFrontend`,
+`-SkipBackend`, and `-SkipInstaller` for incremental work. See `docs/local-development.md`.
 
 Run the built frontend through FastAPI:
 
@@ -100,6 +119,12 @@ outside the workspace. This is an execution-environment issue, not necessarily a
 - Metadata display should include all available values and remain collapsed by default.
 - Avoid broad refactors in `AnalysisPage.tsx` unless the task requires them; it is large and has
   sensitive saved-plot/autosave behavior. Keep tab-specific logic isolated where possible.
+- Portable HTML is an untrusted, checksummed container. Import must never execute its JavaScript.
+  Each exported plot keeps the serialized Plotly figure for interactive browsers and a frozen SVG
+  from that same final figure for restricted previews such as Teams. Keep CSV data in the figure
+  rather than adding another numerical cache copy.
+- Embedded portable-report sources are downloaded individually or as a ZIP organized with one
+  folder per cell. Preserve that hierarchy when multi-source cells are added later.
 - The worktree may contain user changes. Never reset or discard unrelated modifications.
 
 ## Verification expectations

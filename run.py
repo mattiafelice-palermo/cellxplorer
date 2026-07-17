@@ -5,6 +5,7 @@
 Data lives in %USERPROFILE%/.cellxplorer (override with CELLXPLORER_DATA).
 """
 import sys
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "backend"))
@@ -12,4 +13,10 @@ sys.path.insert(0, str(Path(__file__).parent / "backend"))
 import uvicorn
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8642, log_level="info")
+    try:
+        port = int(os.environ.get("CELLXPLORER_PORT", "8642"))
+    except ValueError:
+        port = 8642
+    if not 1 <= port <= 65535:
+        port = 8642
+    uvicorn.run("app.main:app", host="127.0.0.1", port=port, log_level="info")

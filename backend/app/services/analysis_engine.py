@@ -19,6 +19,7 @@ import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -29,6 +30,7 @@ from ..models import Cell, ReplicateGroup, SourceFile
 from . import cache, calc, parsing, protocol, stitch
 
 SPEC_VERSION = 7
+ProgressCallback = Callable[[int, int, str, str], None]
 
 # quantities served to the client: every cached per-cycle column plus
 # derived ones computed here at render time
@@ -337,13 +339,56 @@ def _protocol_row_mask(
     return mask
 
 
-def _downsample_indices(length: int, max_points: int, visible: np.ndarray) -> np.ndarray:
-    take = np.unique(np.linspace(0, length - 1, max_points).astype(int))
+def _downsample_indices(
+    length: int,
+    max_points: int,
+    visible: np.ndarray,
+    series: list[np.ndarray] | None = None,
+) -> np.ndarray:
+    """Pixel-friendly min/max envelope sampling.
+
+    Uniform strides erase narrow voltage/current excursions.  For every
+    bucket we retain extrema from each supplied series, then fill any spare
+    budget uniformly. Visibility transitions are always kept so filtered
+    protocol regions remain disconnected.
+    """
+    if length <= max_points:
+        return np.arange(length, dtype="int64")
     transitions = np.flatnonzero(visible[1:] != visible[:-1]) + 1
+    mandatory = np.array([0, length - 1], dtype="int64")
     if len(transitions):
-        boundaries = np.unique(np.concatenate((transitions - 1, transitions)))
-        take = np.unique(np.concatenate((take, boundaries)))
-    return take
+        mandatory = np.unique(
+            np.concatenate((mandatory, np.maximum(0, transitions - 1), transitions))
+        )
+    usable_series = [
+        np.asarray(values, dtype="float64")
+        for values in (series or [])
+        if len(values) == length and np.isfinite(values).any()
+    ]
+    if not usable_series:
+        usable_series = [np.arange(length, dtype="float64")]
+
+    remaining = max(1, max_points - len(mandatory))
+    points_per_bucket = max(2, len(usable_series) * 2)
+    bucket_count = max(1, remaining // points_per_bucket)
+    edges = np.linspace(0, length, bucket_count + 1).astype("int64")
+    selected: set[int] = set(int(value) for value in mandatory)
+    for start, end in zip(edges[:-1], edges[1:]):
+        if end <= start:
+            continue
+        for values in usable_series:
+            local = values[start:end]
+            finite = np.flatnonzero(np.isfinite(local))
+            if len(finite) == 0:
+                continue
+            finite_values = local[finite]
+            selected.add(int(start + finite[int(np.argmin(finite_values))]))
+            selected.add(int(start + finite[int(np.argmax(finite_values))]))
+
+    if len(selected) < max_points:
+        fill = np.linspace(0, length - 1, max_points - len(selected) + 2).astype("int64")
+        selected.update(int(value) for value in fill)
+    return np.asarray(sorted(selected), dtype="int64")
 
 
 def resolve_selection(db: Session, spec: dict) -> tuple[list[dict], list[dict]]:
@@ -606,6 +651,13 @@ def _jsonsafe(arr) -> list:
     return out
 
 
+def _jsonsafe_plot(arr, digits: int | None) -> list:
+    values = np.asarray(arr, dtype="float64")
+    if digits is not None:
+        values = np.round(values, digits)
+    return [None if np.isnan(value) else float(value) for value in values]
+
+
 def _jsonsafe_int(arr) -> list:
     out = []
     for v in np.asarray(arr, dtype="float64"):
@@ -658,6 +710,43 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
     offsets = np.zeros(len(t))
     offsets[resets + 1] = t[resets]
     return frame.assign(time_s=t + np.cumsum(offsets))
+
+
+def _time_capacity_display_x(
+    raw: pd.DataFrame,
+    phases: list[str],
+    capacity: np.ndarray,
+    capacity_g: np.ndarray,
+    settings: dict,
+) -> np.ndarray:
+    if settings["x_axis"] == "capacity_mah_g":
+        values = capacity_g.copy()
+    elif settings["x_axis"] == "capacity_mah":
+        values = capacity.copy()
+    else:
+        factor = 3600.0 if settings["time_unit"] == "h" else 60.0 if settings["time_unit"] == "min" else 1.0
+        values = (
+            raw["time_s"].to_numpy(dtype="float64") / factor
+            if "time_s" in raw.columns
+            else np.full(len(raw), np.nan)
+        )
+    if settings["display_mode"] == "consecutive":
+        finite = np.flatnonzero(np.isfinite(values))
+        return values - values[finite[0]] if len(finite) else values
+
+    cycles = raw["cycle"].to_numpy() if "cycle" in raw.columns else np.zeros(len(raw))
+    phase_values = np.asarray(phases)
+    output = np.full(len(values), np.nan)
+    for cycle in np.unique(cycles):
+        for phase in ("charge", "discharge"):
+            indices = np.flatnonzero((cycles == cycle) & (phase_values == phase) & np.isfinite(values))
+            if len(indices) == 0:
+                continue
+            reset = values[indices] - values[indices[0]]
+            if settings["display_mode"] == "overlap_mirror" and phase == "discharge":
+                reset = np.nanmax(reset) - reset
+            output[indices] = reset
+    return output
 
 
 def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
@@ -960,7 +1049,13 @@ def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation:
 # ------------------------------------------------------------- computation
 
 
-def compute(db: Session, spec: dict, provenance: dict | None, use_current_versions: bool = False) -> dict:
+def compute(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    use_current_versions: bool = False,
+    progress: ProgressCallback | None = None,
+) -> dict:
     parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
@@ -984,8 +1079,11 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
 
     at_current = (parser_version == parsing.PARSER_VERSION and calc_version == CALC_VERSION)
 
-    for unit in units:
+    total_units = len(units)
+    for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
+        if progress:
+            progress(unit_index - 1, total_units, cell.name, "Reading cached cycle data")
         hashes, files = cell_ordered_hashes(db, cell)
         # caches are regenerable from source at any time — but only at the
         # CURRENT versions; renders pinned to old versions use what exists
@@ -1079,6 +1177,8 @@ def compute(db: Session, spec: dict, provenance: dict | None, use_current_versio
         sources.append(
             {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
              "file_hashes": hashes})
+        if progress:
+            progress(unit_index, total_units, cell.name, "Cycle data ready")
 
     _append_unmatched_protocol_badges(protocol_context, badges)
 
@@ -1191,7 +1291,16 @@ def _stitch_raw(
 
 
 def compute_time_capacity(
-    db: Session, spec: dict, provenance: dict | None, use_current_versions: bool = False
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    use_current_versions: bool = False,
+    *,
+    viewport_width: int | None = None,
+    x_range: tuple[float, float] | None = None,
+    precision: str = "standard",
+    compact: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> dict:
     parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
@@ -1213,8 +1322,18 @@ def compute_time_capacity(
     traces: list[dict] = []
     badges: list[dict] = list(protocol_badges)
 
-    for unit in units:
+    configured_max = max(100, settings["max_points_per_cell"])
+    width = max(320, min(6000, int(viewport_width or 1200)))
+    global_budget = 60_000 if x_range is not None else 40_000
+    adaptive_max = min(configured_max, width * (3 if x_range is not None else 2))
+    adaptive_max = min(adaptive_max, max(300, global_budget // max(1, len(units))))
+    total_units = len(units)
+    total_returned_points = 0
+
+    for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
+        if progress:
+            progress(unit_index - 1, total_units, cell.name, "Reading raw cache")
         hashes, files = cell_ordered_hashes(db, cell)
         if at_current:
             for f in files:
@@ -1295,9 +1414,39 @@ def compute_time_capacity(
         for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
             values[plot_mask] = np.nan
 
-        max_points = max(100, settings["max_points_per_cell"])
-        if len(raw) > max_points:
-            take = _downsample_indices(len(raw), max_points, ~plot_mask)
+        if x_range is not None and len(raw):
+            display_x = _time_capacity_display_x(raw, phases, capacity, capacity_g, settings)
+            low, high = sorted((float(x_range[0]), float(x_range[1])))
+            in_range = np.flatnonzero(np.isfinite(display_x) & (display_x >= low) & (display_x <= high))
+            if len(in_range):
+                take_range = np.unique(
+                    np.concatenate(
+                        (
+                            np.maximum(0, in_range - 1),
+                            in_range,
+                            np.minimum(len(raw) - 1, in_range + 1),
+                        )
+                    )
+                )
+                raw = raw.iloc[take_range]
+                phases = np.asarray(phases)[take_range].tolist()
+                plot_mask = plot_mask[take_range]
+                voltage = voltage[take_range]
+                current = current[take_range]
+                capacity = capacity[take_range]
+                capacity_g = capacity_g[take_range]
+                derivative_x = derivative_x[take_range]
+                derivative_y = derivative_y[take_range]
+
+        if len(raw) > adaptive_max:
+            envelope_series = (
+                [derivative_x, derivative_y]
+                if settings["view"] != "voltage_current"
+                else [voltage, current]
+            )
+            take = _downsample_indices(
+                len(raw), adaptive_max, ~plot_mask, envelope_series
+            )
             raw = raw.iloc[take]
             phases = np.asarray(phases)[take].tolist()
             voltage = voltage[take]
@@ -1306,6 +1455,11 @@ def compute_time_capacity(
             capacity_g = capacity_g[take]
             derivative_x = derivative_x[take]
             derivative_y = derivative_y[take]
+
+        full_precision = precision == "full" or not compact
+        is_derivative = settings["view"] != "voltage_current"
+        x_axis = settings["x_axis"]
+        total_returned_points += len(raw)
 
         exclusion = exclusion_for_unit(exclusions, unit)
         group_hidden = unit["group_id"] in hidden_group_ids
@@ -1321,18 +1475,32 @@ def compute_time_capacity(
                 "nominal_capacity_mah": nominal_capacity_mah,
                 "electrode_area_cm2": electrode_area_cm2,
                 "cycle": _jsonsafe_int(raw["cycle"].to_numpy()),
-                "time_s": _jsonsafe(raw["time_s"].to_numpy()) if "time_s" in raw.columns else [None] * len(raw),
-                "capacity_mah": _jsonsafe(capacity),
-                "capacity_mah_g": _jsonsafe(capacity_g),
-                "voltage_v": _jsonsafe(voltage),
-                "current_ma": _jsonsafe(current),
+                "time_s": (
+                    _jsonsafe_plot(raw["time_s"].to_numpy(), None if full_precision else 3)
+                    if (not compact or (not is_derivative and x_axis == "time")) and "time_s" in raw.columns
+                    else []
+                ),
+                "capacity_mah": (
+                    _jsonsafe_plot(capacity, None if full_precision else 6)
+                    if not compact or (not is_derivative and x_axis == "capacity_mah")
+                    else []
+                ),
+                "capacity_mah_g": (
+                    _jsonsafe_plot(capacity_g, None if full_precision else 5)
+                    if not compact or (not is_derivative and x_axis == "capacity_mah_g")
+                    else []
+                ),
+                "voltage_v": _jsonsafe_plot(voltage, None if full_precision else 5) if not compact or not is_derivative else [],
+                "current_ma": _jsonsafe_plot(current, None if full_precision else 5) if not compact or not is_derivative else [],
                 "phase": phases,
-                "status": _textsafe(raw["status"]) if "status" in raw.columns else [None] * len(raw),
-                "derivative_x": _jsonsafe(derivative_x),
-                "derivative_y": _jsonsafe(derivative_y),
+                "status": _textsafe(raw["status"]) if not compact and "status" in raw.columns else [],
+                "derivative_x": _jsonsafe_plot(derivative_x, None if full_precision else 7) if not compact or is_derivative else [],
+                "derivative_y": _jsonsafe_plot(derivative_y, None if full_precision else 7) if not compact or is_derivative else [],
                 "segments": segments,
             }
         )
+        if progress:
+            progress(unit_index, total_units, cell.name, "Plot data ready")
 
     _append_unmatched_protocol_badges(protocol_context, badges)
 
@@ -1354,6 +1522,15 @@ def compute_time_capacity(
         "settings": settings,
         "cell_traces": traces,
         "badges": badges,
+        "rendering": {
+            "viewport_width": width,
+            "configured_max_points_per_cell": configured_max,
+            "max_points_per_cell": adaptive_max,
+            "total_points": total_returned_points,
+            "x_range": list(x_range) if x_range is not None else None,
+            "precision": precision,
+            "compact": compact,
+        },
     }
 
 

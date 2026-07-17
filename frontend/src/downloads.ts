@@ -6,6 +6,27 @@ export interface DownloadResult {
   usedDefaultFolder: boolean;
 }
 
+export type ShareResult = "shared" | "cancelled" | "unsupported";
+
+export async function shareDownload(
+  blob: Blob,
+  filename: string,
+  title: string,
+  text: string,
+): Promise<ShareResult> {
+  if (!navigator.share) return "unsupported";
+  const file = new File([blob], filename, { type: blob.type || "text/html" });
+  const data: ShareData = { title, text, files: [file] };
+  if (navigator.canShare && !navigator.canShare(data)) return "unsupported";
+  try {
+    await navigator.share(data);
+    return "shared";
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
+    throw error;
+  }
+}
+
 export function isTauriApp(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }

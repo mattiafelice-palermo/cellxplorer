@@ -46,6 +46,36 @@ class AnalysisLifecycleTests(unittest.TestCase):
         self.assertEqual(second["title"], "(copy 2) Capacity study")
         self.assertGreater(second["id"], first["id"])
 
+    def test_duplicate_can_be_copied_directly_to_another_folder(self):
+        db = self.make_session()
+        source = Folder(name="Source")
+        target = Folder(name="Target")
+        db.add_all([source, target])
+        db.commit()
+        original = analyses.create_analysis(
+            analyses.AnalysisCreate(title="Capacity study", folder_id=source.id), db=db
+        )
+
+        copied = analyses.duplicate_analysis(
+            original["id"],
+            analyses.AnalysisDuplicateRequest(folder_id=target.id),
+            db=db,
+        )
+
+        self.assertEqual(copied["folder"]["id"], target.id)
+        self.assertEqual(copied["title"], "(copy) Capacity study")
+
+    def test_renaming_analysis_updates_spec_title(self):
+        db = self.make_session()
+        created = analyses.create_analysis(analyses.AnalysisCreate(title="Old title"), db=db)
+
+        updated = analyses.update_analysis(
+            created["id"], analyses.AnalysisUpdate(title="New title"), db=db
+        )
+
+        self.assertEqual(updated["title"], "New title")
+        self.assertEqual(updated["spec"]["title"], "New title")
+
     def test_copying_folder_tree_uses_monotonic_analysis_ids(self):
         db = self.make_session()
         folder = Folder(name="Source")

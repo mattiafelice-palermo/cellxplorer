@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import CALC_VERSION, FRONTEND_DIST
-from .db import Base, engine, ensure_runtime_schema
+from .config import APP_VERSION, CALC_VERSION, FRONTEND_DIST
+from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
 from .routers import activity, analyses, diagnostics, files, library, replicates, settings, tree
+from .services.activity_log import record_activity
 from .services import calc, parsing, scanner, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="CellXplorer", version="0.5.0")
+DATABASE_STATUS = initialize_database()
+
+app = FastAPI(title="CellXplorer", version=APP_VERSION)
+app.add_middleware(GZipMiddleware, minimum_size=4096, compresslevel=5)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,13 +28,75 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-Base.metadata.create_all(engine)
-ensure_runtime_schema()
-app.add_event_handler("startup", sessions.start_runtime_session)
-app.add_event_handler("startup", scanner.start_capacity_summary_backfill)
-app.add_event_handler("startup", source_monitor.start_source_monitor)
-app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
-app.add_event_handler("shutdown", lambda: sessions.finish_runtime_session("backend_shutdown"))
+_COMPATIBILITY_API_PATHS = {
+    "/api/health",
+    "/api/meta",
+    "/api/database/status",
+    "/api/diagnostics/health",
+    "/api/diagnostics/resources",
+    "/api/diagnostics/logs",
+}
+
+
+@app.middleware("http")
+async def database_compatibility_guard(request: Request, call_next):
+    if (
+        not DATABASE_STATUS.compatible
+        and request.url.path.startswith("/api/")
+        and request.url.path not in _COMPATIBILITY_API_PATHS
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": DATABASE_STATUS.message,
+                "database": DATABASE_STATUS.as_dict(),
+            },
+        )
+    return await call_next(request)
+
+
+def _record_migration_activity() -> None:
+    if not DATABASE_STATUS.migration_performed:
+        return
+    db = SessionLocal()
+    try:
+        action = (
+            "database_initialized"
+            if DATABASE_STATUS.backup_path is None
+            else "database_migrated"
+        )
+        record_activity(
+            db,
+            category="system",
+            action=action,
+            message=DATABASE_STATUS.message,
+            details={
+                "from_revision": DATABASE_STATUS.previous_revision,
+                "to_revision": DATABASE_STATUS.schema_revision,
+                "legacy_database": DATABASE_STATUS.legacy_database,
+                "backup_created": DATABASE_STATUS.backup_path is not None,
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logging.getLogger(__name__).exception(
+            "Could not record database migration activity"
+        )
+    finally:
+        db.close()
+
+
+if DATABASE_STATUS.compatible:
+    _record_migration_activity()
+    app.add_event_handler("startup", sessions.start_runtime_session)
+    app.add_event_handler("startup", scanner.start_capacity_summary_backfill)
+    app.add_event_handler("startup", source_monitor.start_source_monitor)
+    app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
+    app.add_event_handler(
+        "shutdown",
+        lambda: sessions.finish_runtime_session("backend_shutdown"),
+    )
 
 app.include_router(files.router)
 app.include_router(library.router)
@@ -43,12 +110,23 @@ app.include_router(diagnostics.router)
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok" if DATABASE_STATUS.compatible else "degraded",
+        "database": DATABASE_STATUS.as_dict(),
+    }
+
+
+@app.get("/api/database/status")
+def database_status():
+    return DATABASE_STATUS.as_dict()
 
 
 @app.get("/api/meta")
 def meta():
     return {
+        "app_version": APP_VERSION,
+        "database_schema_revision": DATABASE_STATUS.schema_revision,
+        "supported_database_schema_revision": DATABASE_STATUS.supported_revision,
         "parser_version": parsing.PARSER_VERSION,
         "calc_version": CALC_VERSION,
         "quantities": [

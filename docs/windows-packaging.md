@@ -7,8 +7,9 @@ This repository can be packaged as a native Windows app with Tauri:
 3. Let Tauri bundle both into an installer.
 
 User data must stay outside the install directory. The current backend already stores data under
-`CELLXPLORER_DATA` or the user's `.cellxplorer` folder. Before distributing to users, this should
-move to `%LOCALAPPDATA%\Cellxplorer` and be protected by schema migrations and automatic backups.
+`CELLXPLORER_DATA` or the user's `.cellxplorer` folder. The SQLite database is protected by
+explicit packaged schema migrations and automatic pre-migration backups. See
+`docs/database-migrations.md`.
 
 ## Required local tools
 
@@ -18,7 +19,18 @@ move to `%LOCALAPPDATA%\Cellxplorer` and be protected by schema migrations and a
 - PyInstaller
 - Windows installer toolchain required by Tauri for MSI/NSIS
 
-## Build command
+## Recommended build command
+
+From the repository root, run:
+
+```powershell
+.\scripts\build-app.cmd
+```
+
+This performs the complete frontend, backend sidecar, and NSIS build. See
+`docs/local-development.md` for incremental options and the expected output path.
+
+## Manual build sequence
 
 ```powershell
 npm.cmd install
@@ -33,6 +45,10 @@ Copy-Item dist\cellxplorer-backend.exe src-tauri\binaries\cellxplorer-backend-x8
 
 npm.cmd run tauri:build
 ```
+
+The backend build includes `backend/app/assets/plotly.min.js`. This offline runtime is embedded
+once in each portable HTML analysis so serialized Plotly figures remain interactive without an
+internet connection.
 
 ## Agent build note
 

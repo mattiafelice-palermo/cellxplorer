@@ -14,10 +14,12 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Menu,
   Modal,
   NumberInput,
   Paper,
   Popover,
+  Progress,
   ScrollArea,
   Select,
   SegmentedControl,
@@ -36,6 +38,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconActivity,
   IconBolt,
+  IconBrandTeams,
   IconChartLine,
   IconChevronDown,
   IconChevronLeft,
@@ -47,6 +50,7 @@ import {
   IconDownload,
   IconEye,
   IconEyeOff,
+  IconFileExport,
   IconFolder,
   IconGauge,
   IconInfoCircle,
@@ -75,7 +79,9 @@ import {
   AnalysisFull,
   AnalysisSpec,
   AnalysisTabKey,
+  ApiError,
   Badge as ApiBadge,
+  BackgroundJob,
   CellMetrics,
   CellSummary,
   ComputeResult,
@@ -84,7 +90,9 @@ import {
   del,
   FolderNode,
   get,
+  PortableAnalysisEstimate,
   post,
+  postBlob,
   put,
   PlotAspectRatioKey,
   PlotExportFormat,
@@ -108,7 +116,7 @@ import {
 } from "../analysisPlotPolicy";
 import Plot from "../components/Plot";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
-import { saveDownload } from "../downloads";
+import { saveDownload, shareDownload } from "../downloads";
 import {
   EXPORT_FILENAME_TOKENS,
   insertFilenameToken,
@@ -136,6 +144,14 @@ const PALETTE = [
   "#3A0CA3",
   "#FB8500",
 ];
+
+function formatPortableBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / 1024 ** index;
+  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
+}
 
 const PLOT_PALETTES: Record<PlotStyle["palette"], string[]> = {
   app: PALETTE,
@@ -304,6 +320,32 @@ const DEFAULT_TIME_CAPACITY: TimeCapacityConfig = {
   max_points_per_cell: 4000,
 };
 
+type PlotArtifact = { signature: string; svg: string };
+
+function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function jobProgress(job: BackgroundJob | undefined): number {
+  if (!job) return 0;
+  if (job.total <= 0) return job.status === "completed" ? 100 : 0;
+  return Math.max(0, Math.min(100, (job.completed / job.total) * 100));
+}
+
+function ComputeProgress({ job, label }: { job: BackgroundJob | undefined; label: string }) {
+  return (
+    <Stack gap="xs" w={360} maw="80%">
+      <Text size="sm" fw={600} ta="center">
+        {job?.description || label}
+      </Text>
+      <Progress value={jobProgress(job)} animated={job?.status === "running"} color="teal" />
+      <Text size="xs" c="dimmed" ta="center">
+        {job?.total ? `${job.completed} of ${job.total} cells` : "Preparing cached data"}
+      </Text>
+    </Stack>
+  );
+}
+
 function timeCapacityConfig(spec: AnalysisSpec): TimeCapacityConfig {
   return { ...DEFAULT_TIME_CAPACITY, ...(spec.computation.time_capacity ?? {}) };
 }
@@ -410,9 +452,10 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   legend_custom_x: 0.5,
   legend_custom_y: 0.5,
   data_export_format: "csv",
+  data_precision: "standard",
   data_decimal_separator: "point",
   data_delimiter: "comma",
-  export_settings_version: 3,
+  export_settings_version: 4,
   export_format: "png",
   export_aspect_ratio: "view",
   export_ppi: 300,
@@ -924,9 +967,25 @@ function blobFromDataUrl(dataUrl: string, fallbackType: string): Blob {
   return new Blob([bytes as BlobPart], { type: mime });
 }
 
+function textFromDataUrl(dataUrl: string): string {
+  const [metadata, payload = ""] = dataUrl.split(",", 2);
+  return metadata.includes(";base64")
+    ? new TextDecoder().decode(bytesFromDataUrl(dataUrl))
+    : decodeURIComponent(payload);
+}
+
 // ------------------------------------------------------ data export (CSV/XLSX)
 
 type DataColumn = { header: string; values: (number | null)[] };
+
+function exportDecimalPlaces(header: string): number {
+  const value = header.toLowerCase();
+  if (value.includes("cycle")) return 0;
+  if (value.includes("time")) return 3;
+  if (value.includes("voltage") || value.includes("current")) return 5;
+  if (value.includes("derivative") || value.includes("dq/dv") || value.includes("dv/dq")) return 7;
+  return 6;
+}
 
 // Export exactly what is plotted: one x/y column pair per visible trace
 // (works for any tab — traces need not share an x grid). Dispersion bands
@@ -955,13 +1014,18 @@ function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.Layout>):
 
 function buildDelimitedText(
   columns: DataColumn[],
+  precision: PlotStyle["data_precision"],
   decimal: PlotStyle["data_decimal_separator"],
   delimiter: PlotStyle["data_delimiter"]
 ): string {
   const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
-  const formatNumber = (v: number | null | undefined) => {
+  const formatNumber = (v: number | null | undefined, header: string) => {
     if (v === null || v === undefined || Number.isNaN(v)) return "";
-    const s = String(v);
+    const rounded =
+      precision === "full"
+        ? v
+        : Number(v.toFixed(exportDecimalPlaces(header)));
+    const s = String(rounded);
     return decimal === "comma" ? s.replace(".", ",") : s;
   };
   const quote = (s: string) =>
@@ -969,7 +1033,7 @@ function buildDelimitedText(
   const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
   const lines = [columns.map((c) => quote(c.header)).join(sep)];
   for (let i = 0; i < rowCount; i += 1) {
-    lines.push(columns.map((c) => formatNumber(c.values[i])).join(sep));
+    lines.push(columns.map((c) => formatNumber(c.values[i], c.header)).join(sep));
   }
   // BOM so Excel detects UTF-8
   return "﻿" + lines.join("\r\n");
@@ -985,7 +1049,9 @@ async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseN
       aoa.push(
         columns.map((c) => {
           const v = c.values[i];
-          return v === null || v === undefined || Number.isNaN(v) ? null : v;
+          if (v === null || v === undefined || Number.isNaN(v)) return null;
+          if (style.data_precision === "full") return v;
+          return Number(v.toFixed(exportDecimalPlaces(c.header)));
         })
       );
     }
@@ -1001,7 +1067,12 @@ async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseN
     );
     return;
   }
-  const text = buildDelimitedText(columns, style.data_decimal_separator, style.data_delimiter);
+  const text = buildDelimitedText(
+    columns,
+    style.data_precision,
+    style.data_decimal_separator,
+    style.data_delimiter
+  );
   await downloadBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${baseName}.csv`);
 }
 
@@ -2253,8 +2324,8 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
             mode: plotMode(style),
             type: "scatter",
             connectgaps: false,
-            customdata: Array(x.length).fill(`${phase}, cycle ${cycle ?? "?"}`),
-            hovertemplate: "%{y:.5g}<br>%{x:.5g}<br>%{customdata}<extra>%{fullData.name}</extra>",
+            meta: `${phase}, cycle ${cycle ?? "?"}`,
+            hovertemplate: "%{y:.5g}<br>%{x:.5g}<br>%{meta}<extra>%{fullData.name}</extra>",
           } as Plotly.Data);
         }
         start = end;
@@ -2283,8 +2354,8 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
         mode: plotMode(style),
         type: "scatter",
         connectgaps: false,
-        customdata: segment.cycle,
-        hovertemplate: `%{y:.4f} V<br>%{x:.4f}<br>cycle %{customdata}<extra>${name}</extra>`,
+        meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
+        hovertemplate: `%{y:.4f} V<br>%{x:.4f}<br>%{meta}<extra>${name}</extra>`,
       } as Plotly.Data);
       if (cfg.stacked) {
         const left = cfg.current_left ?? "current_ma";
@@ -2303,8 +2374,8 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
             connectgaps: false,
             showlegend: false,
             opacity: 0.85,
-            customdata: segment.cycle,
-            hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>cycle %{customdata}<extra>${currentAxisLabel(left)}</extra>`,
+            meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
+            hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>%{meta}<extra>${currentAxisLabel(left)}</extra>`,
           } as Plotly.Data);
         }
         if (cfg.current_right && cfg.current_right !== "none") {
@@ -2323,8 +2394,8 @@ function tracesForTimeCapacity(result: TimeCapacityResult, spec: AnalysisSpec): 
               connectgaps: false,
               showlegend: false,
               opacity: 0.75,
-              customdata: segment.cycle,
-              hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>cycle %{customdata}<extra>${currentAxisLabel(cfg.current_right)}</extra>`,
+              meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
+              hovertemplate: `%{y:.4f}<br>%{x:.4f}<br>%{meta}<extra>${currentAxisLabel(cfg.current_right)}</extra>`,
             } as Plotly.Data);
           }
         }
@@ -2537,9 +2608,27 @@ function SavedPlotPreview({
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
+  const qc = useQueryClient();
+  const artifact = useQuery({
+    queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryFn: async () => {
+      try {
+        return await post<PlotArtifact>(
+          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}/lookup`,
+          { signature: previewSignature }
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
   const preview = useQuery({
     queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature],
     queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, { spec: previewSpec }),
+    enabled: artifact.isSuccess && artifact.data === null,
     staleTime: 5 * 60_000,
   });
   const traces = useMemo(
@@ -2547,7 +2636,44 @@ function SavedPlotPreview({
     [preview.data, previewSpec]
   );
 
-  if (preview.isLoading) {
+  useEffect(() => {
+    if (artifact.data || !preview.data || traces.length === 0) return;
+    let cancelled = false;
+    const layout = cyclePlotLayout(preview.data, previewSpec, traces);
+    const figure = portableFigure(traces, layout);
+    if (!figure) return;
+    portableSvg(figure)
+      .then((svg) =>
+        post<PlotArtifact>(
+          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}`,
+          { signature: previewSignature, svg }
+        )
+      )
+      .then((stored) => {
+        if (!cancelled) {
+          qc.setQueryData(
+            ["plot-artifact", analysisId, plot.id, previewSignature],
+            stored
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, traces]);
+
+  if (artifact.data) {
+    return (
+      <img
+        src={svgDataUrl(artifact.data.svg)}
+        alt=""
+        style={{ width: "100%", height: 130, objectFit: "contain", display: "block" }}
+      />
+    );
+  }
+
+  if (artifact.isLoading || preview.isLoading) {
     return (
       <Center h={120}>
         <Loader size={18} />
@@ -2614,9 +2740,33 @@ function SavedTimeCapacityPreview({
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
+  const qc = useQueryClient();
+  const artifact = useQuery({
+    queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryFn: async () => {
+      try {
+        return await post<PlotArtifact>(
+          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}/lookup`,
+          { signature: previewSignature }
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
   const preview = useQuery({
     queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature],
-    queryFn: () => post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, { spec: previewSpec }),
+    queryFn: () =>
+      post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+        spec: previewSpec,
+        viewport_width: 800,
+        precision: "standard",
+        compact: true,
+      }),
+    enabled: artifact.isSuccess && artifact.data === null,
     staleTime: 5 * 60_000,
   });
   const traces = useMemo(
@@ -2624,7 +2774,44 @@ function SavedTimeCapacityPreview({
     [preview.data, previewSpec]
   );
 
-  if (preview.isLoading) {
+  useEffect(() => {
+    if (artifact.data || !preview.data || traces.length === 0) return;
+    let cancelled = false;
+    const layout = timeCapacityLayout(preview.data, previewSpec, traces);
+    const figure = portableFigure(traces, layout);
+    if (!figure) return;
+    portableSvg(figure)
+      .then((svg) =>
+        post<PlotArtifact>(
+          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}`,
+          { signature: previewSignature, svg }
+        )
+      )
+      .then((stored) => {
+        if (!cancelled) {
+          qc.setQueryData(
+            ["plot-artifact", analysisId, plot.id, previewSignature],
+            stored
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, traces]);
+
+  if (artifact.data) {
+    return (
+      <img
+        src={svgDataUrl(artifact.data.svg)}
+        alt=""
+        style={{ width: "100%", height: 130, objectFit: "contain", display: "block" }}
+      />
+    );
+  }
+
+  if (artifact.isLoading || preview.isLoading) {
     return (
       <Center h={120}>
         <Loader size={18} />
@@ -4931,6 +5118,21 @@ function PlotHeader({
                       )
                     }
                   />
+                  <Select
+                    label="Numeric precision"
+                    data={[
+                      { value: "standard", label: "Standard (recommended)" },
+                      { value: "full", label: "Full source precision" },
+                    ]}
+                    value={exportStyle.data_precision}
+                    comboboxProps={{ withinPortal: false }}
+                    onChange={(value) =>
+                      value &&
+                      setExportStyle(
+                        (next) => void (next.data_precision = value as PlotStyle["data_precision"])
+                      )
+                    }
+                  />
                   {exportStyle.data_export_format === "csv" && (
                     <>
                       <Select
@@ -4972,7 +5174,8 @@ function PlotHeader({
                   )}
                   <Text size="10px" c="dimmed">
                     Exports the plotted series as x/y column pairs per trace (dispersion bands
-                    excluded). Excel files keep full numeric precision.
+                    excluded). Standard precision removes meaningless floating-point tails; full
+                    precision preserves every stored digit.
                   </Text>
                   <Button
                     fullWidth
@@ -5312,6 +5515,189 @@ function cyclePlotLayout(
   };
 }
 
+type PortablePlotSnapshot = {
+  id: string;
+  name: string;
+  subtitle: string;
+  description: string | null;
+  tab: AnalysisTabKey;
+  figure: {
+    data: unknown[];
+    layout: Record<string, unknown>;
+    config: Record<string, unknown>;
+  } | null;
+  svg: string | null;
+  summary: { label: string; cycles: number | null; status: string }[];
+};
+
+function portableFigure(
+  traces: Plotly.Data[],
+  layout: Partial<Plotly.Layout>
+): PortablePlotSnapshot["figure"] {
+  const responsiveLayout = { ...layout, autosize: true } as Record<string, unknown>;
+  delete responsiveLayout.width;
+  return JSON.parse(
+    JSON.stringify({
+      data: traces,
+      layout: responsiveLayout,
+      config: { displaylogo: false, responsive: true },
+    })
+  ) as NonNullable<PortablePlotSnapshot["figure"]>;
+}
+
+async function portableSvg(
+  figure: NonNullable<PortablePlotSnapshot["figure"]>
+): Promise<string> {
+  const toImage = (
+    PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
+  ).toImage;
+  const dataUrl = await toImage(figure, {
+    format: "svg",
+    width: 1200,
+    height: 720,
+  });
+  return textFromDataUrl(dataUrl);
+}
+
+async function buildPortablePlotSnapshots(
+  analysisId: number,
+  baseSpec: AnalysisSpec,
+  analysisTitle: string,
+  selectedPlotIds: string[],
+  onProgress?: (completed: number, total: number, stage: string) => void
+): Promise<PortablePlotSnapshot[]> {
+  const saved = baseSpec.saved_plots ?? [];
+  const views =
+    saved.length > 0
+      ? saved.filter((plot) => selectedPlotIds.includes(plot.id))
+      : [
+          {
+            id: "current",
+            tab: "cycles" as AnalysisTabKey,
+            name: analysisTitle,
+            subtitle: "Current analysis view",
+            description: null,
+          },
+        ].filter((plot) => selectedPlotIds.includes(plot.id));
+
+  const snapshots: PortablePlotSnapshot[] = [];
+  for (let index = 0; index < views.length; index += 1) {
+      const view = views[index];
+      onProgress?.(index, views.length, `Preparing ${view.name}`);
+      const viewSpec =
+        "selection" in view
+          ? specForSavedPlot(baseSpec, view as SavedAnalysisPlot)
+          : clone(baseSpec);
+      const artifactSignature =
+        "selection" in view
+          ? savedPlotPreviewSignature(baseSpec, view as SavedAnalysisPlot)
+          : null;
+      let cachedSvg: string | null = null;
+      if (artifactSignature) {
+        try {
+          cachedSvg = (
+            await post<PlotArtifact>(
+              `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}/lookup`,
+              { signature: artifactSignature }
+            )
+          ).svg;
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 404) throw error;
+        }
+      }
+      if (view.tab === "time_capacity") {
+        const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
+          kind: "time_capacity",
+          spec: viewSpec,
+        });
+        const result = await post<TimeCapacityResult>(
+          `/api/analyses/${analysisId}/time-capacity`,
+          {
+            spec: viewSpec,
+            job_id: job.id,
+            viewport_width: 1200,
+            precision: "standard",
+            compact: true,
+          }
+        );
+        const traces = tracesForTimeCapacity(result, viewSpec);
+        const layout = timeCapacityLayout(result, viewSpec, traces);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const svg = cachedSvg ?? (figure ? await portableSvg(figure) : null);
+        if (svg && artifactSignature && !cachedSvg) {
+          await post<PlotArtifact>(
+            `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+            { signature: artifactSignature, svg }
+          );
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary: result.cell_traces.map((trace) => ({
+            label: trace.label,
+            cycles: new Set(trace.cycle.filter((cycle) => cycle !== null)).size,
+            status: trace.excluded ? "Hidden" : "Visible",
+          })),
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
+      if (view.tab === "cycles") {
+        const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
+          kind: "cycles",
+          spec: viewSpec,
+        });
+        const result = await post<ComputeResult>(
+          `/api/analyses/${analysisId}/compute`,
+          { spec: viewSpec, job_id: job.id }
+        );
+        const traces = tracesForResult(result, viewSpec);
+        const layout = cyclePlotLayout(result, viewSpec, traces);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const svg = cachedSvg ?? (figure ? await portableSvg(figure) : null);
+        if (svg && artifactSignature && !cachedSvg) {
+          await post<PlotArtifact>(
+            `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+            { signature: artifactSignature, svg }
+          );
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary: result.cell_series.map((series) => ({
+            label: series.label,
+            cycles: series.metrics?.n_cycles ?? series.x.length,
+            status: series.excluded ? "Hidden" : "Visible",
+          })),
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
+      snapshots.push({
+        id: view.id,
+        name: view.name,
+        subtitle: view.subtitle,
+        description: view.description,
+        tab: view.tab,
+        figure: null,
+        svg: null,
+        summary: [],
+      });
+      onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+  }
+  return snapshots;
+}
+
 // Keep the Plotly graph exactly as wide as its container, loop-free.
 //
 // The sync compares the RENDERED plot width against the container width and
@@ -5472,6 +5858,7 @@ function CyclePlotCard({
   update,
   updating,
   error,
+  computeJob,
 }: {
   analysisTitle: string;
   plotName: string;
@@ -5481,6 +5868,7 @@ function CyclePlotCard({
   update: (fn: (s: AnalysisSpec) => void) => void;
   updating: boolean;
   error: Error | null;
+  computeJob: BackgroundJob | undefined;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -5653,9 +6041,13 @@ function CyclePlotCard({
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {traces.length === 0 ? (
           <Center h={500}>
-            <Text size="sm" c="dimmed">
-              Add cells or replicates to start plotting.
-            </Text>
+            {updating ? (
+              <ComputeProgress job={computeJob} label="Preparing cycle plot" />
+            ) : (
+              <Text size="sm" c="dimmed">
+                Add cells or replicates to start plotting.
+              </Text>
+            )}
           </Center>
         ) : (
           <Box
@@ -5713,9 +6105,16 @@ function TimeCapacityPlotCard({
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
+  const [computeJobId, setComputeJobId] = useState<number | null>(null);
+  const [refineRange, setRefineRange] = useState<[number, number] | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
+  const refinementTimer = useRef<number | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const viewportWidth = Math.max(
+    600,
+    Math.round(((plotSize?.width ?? Math.max(600, window.innerWidth - 760)) / 200)) * 200
+  );
   // Refetch ONLY when fields that change the returned data change. Display
   // choices (stacked, x axis, units, current axes) are frontend renderings —
   // refetching on them doubled every toggle into two full plot rebuilds.
@@ -5730,6 +6129,8 @@ function TimeCapacityPlotCard({
         start: cfg.cycle_start,
         end: cfg.cycle_end,
         points: cfg.max_points_per_cell,
+        viewportWidth,
+        refineRange,
         derivative: cfg.view === "voltage_current" ? null : {
           view: cfg.view,
           phase: cfg.derivative_phase,
@@ -5747,14 +6148,42 @@ function TimeCapacityPlotCard({
       cfg.cycle_start,
       cfg.cycle_end,
       cfg.max_points_per_cell,
+      viewportWidth,
+      refineRange,
     ]
   );
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, dataSignature],
-    queryFn: () =>
-      post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, { spec }),
+    queryFn: async () => {
+      const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
+        kind: "time_capacity",
+        spec,
+      });
+      setComputeJobId(job.id);
+      try {
+        return await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+          spec,
+          job_id: job.id,
+          viewport_width: viewportWidth,
+          x_range: refineRange,
+          precision: "standard",
+          compact: true,
+        });
+      } finally {
+        window.setTimeout(
+          () => setComputeJobId((current) => (current === job.id ? null : current)),
+          300
+        );
+      }
+    },
     enabled: spec.selection.entries.length > 0,
     staleTime: 5 * 60_000,
+  });
+  const computeJob = useQuery({
+    queryKey: ["background-job", computeJobId],
+    queryFn: () => get<BackgroundJob>(`/api/background-jobs/${computeJobId}`),
+    enabled: computeJobId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 300 : false),
   });
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
@@ -5771,7 +6200,7 @@ function TimeCapacityPlotCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [timeResult.data, viewSignature]
   );
-  const zoomSignature = `${timeResult.data?.computed_at ?? "no-data"}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
+  const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
     () => zoom.apply(timeCapacityLayout(timeResult.data, spec, traces)),
@@ -5800,6 +6229,22 @@ function TimeCapacityPlotCard({
   };
   const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     zoom.onRelayout(event);
+    const values = event as Record<string, unknown>;
+    if (values["xaxis.autorange"] === true || values["xaxis2.autorange"] === true) {
+      if (refinementTimer.current !== null) window.clearTimeout(refinementTimer.current);
+      setRefineRange(null);
+    } else {
+      const xRange = (values["xaxis.range"] ?? values["xaxis2.range"]) as unknown;
+      const rangeValues = Array.isArray(xRange) ? xRange : [];
+      const low = Number(values["xaxis.range[0]"] ?? values["xaxis2.range[0]"] ?? rangeValues[0]);
+      const high = Number(values["xaxis.range[1]"] ?? values["xaxis2.range[1]"] ?? rangeValues[1]);
+      if (Number.isFinite(low) && Number.isFinite(high) && low !== high) {
+        if (refinementTimer.current !== null) window.clearTimeout(refinementTimer.current);
+        refinementTimer.current = window.setTimeout(() => {
+          setRefineRange([Math.min(low, high), Math.max(low, high)]);
+        }, 350);
+      }
+    }
     if (style.legend_mode === "outside") return;
     const point = draggedLegendPoint(event);
     if (!point) return;
@@ -5810,6 +6255,17 @@ function TimeCapacityPlotCard({
       next.legend_custom_y = point.y;
     });
   };
+
+  useEffect(
+    () => () => {
+      if (refinementTimer.current !== null) window.clearTimeout(refinementTimer.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    setRefineRange(null);
+  }, [cfg.x_axis, cfg.time_unit, cfg.display_mode, cfg.cycle_start, cfg.cycle_end, JSON.stringify(cfg.cycles)]);
 
   const currentViewSize = () => {
     if (!plotDivRef.current) return plotSize;
@@ -5932,7 +6388,7 @@ function TimeCapacityPlotCard({
         )}
         {timeResult.isLoading ? (
           <Center h={500}>
-            <Loader />
+            <ComputeProgress job={computeJob.data} label="Preparing time/capacity plot" />
           </Center>
         ) : traces.length === 0 ? (
           <Center h={500}>
@@ -6243,6 +6699,16 @@ export function AnalysisPage() {
   const [activePlotBaselineSignature, setActivePlotBaselineSignature] = useState<string | null>(null);
   const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [portableExportOpen, setPortableExportOpen] = useState(false);
+  const [portableExportAction, setPortableExportAction] = useState<"download" | "share">("download");
+  const [includePortableOriginals, setIncludePortableOriginals] = useState(false);
+  const [portablePlotIds, setPortablePlotIds] = useState<string[]>([]);
+  const [portableProgress, setPortableProgress] = useState<{
+    completed: number;
+    total: number;
+    stage: string;
+  } | null>(null);
+  const [computeJobId, setComputeJobId] = useState<number | null>(null);
   const [saveDraft, setSaveDraft] = useState<{ name: string; description: string } | null>(null);
   const [leavePrompt, setLeavePrompt] = useState<{
     proceed: () => void;
@@ -6252,6 +6718,13 @@ export function AnalysisPage() {
   const [leaveSaving, setLeaveSaving] = useState(false);
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
+  const portableEstimate = useQuery({
+    queryKey: ["portable-analysis-estimate", aid],
+    queryFn: () =>
+      get<PortableAnalysisEstimate>(`/api/analyses/${aid}/portable-estimate`),
+    enabled: portableExportOpen,
+    staleTime: 30_000,
+  });
   const autosaveSignature = useMemo(
     () => (spec ? JSON.stringify({ title, spec }) : "no-spec"),
     [spec, title]
@@ -6309,9 +6782,34 @@ export function AnalysisPage() {
 
   const compute = useQuery({
     queryKey: ["compute", aid, computeSignature(spec)],
-    queryFn: () => post<ComputeResult>(`/api/analyses/${aid}/compute`, { spec }),
-    enabled: spec !== null,
+    queryFn: async () => {
+      const job = await post<BackgroundJob>(`/api/analyses/${aid}/compute-jobs`, {
+        kind: "cycles",
+        spec,
+      });
+      setComputeJobId(job.id);
+      try {
+        return await post<ComputeResult>(`/api/analyses/${aid}/compute`, {
+          spec,
+          job_id: job.id,
+        });
+      } finally {
+        window.setTimeout(
+          () => setComputeJobId((current) => (current === job.id ? null : current)),
+          300
+        );
+      }
+    },
+    // Time/capacity has its own raw-data query. Running the cycle engine at
+    // the same time doubled cache reads and JSON work on large analyses.
+    enabled: spec !== null && activeTab !== "time_capacity",
     staleTime: 5 * 60_000,
+  });
+  const computeJob = useQuery({
+    queryKey: ["background-job", computeJobId],
+    queryFn: () => get<BackgroundJob>(`/api/background-jobs/${computeJobId}`),
+    enabled: computeJobId !== null,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 300 : false),
   });
 
   useEffect(() => {
@@ -6365,6 +6863,72 @@ export function AnalysisPage() {
     },
   });
 
+  const portableExport = useMutation({
+    mutationFn: async (action: "download" | "share") => {
+      if (!spec) throw new Error("The analysis is not ready.");
+      if (portablePlotIds.length === 0) throw new Error("Select at least one saved plot.");
+      await put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec });
+      setPortableProgress({ completed: 0, total: portablePlotIds.length, stage: "Preparing plots" });
+      const views = await buildPortablePlotSnapshots(
+        aid,
+        spec,
+        title,
+        portablePlotIds,
+        (completed, total, stage) => setPortableProgress({ completed, total, stage })
+      );
+      setPortableProgress({
+        completed: portablePlotIds.length,
+        total: portablePlotIds.length,
+        stage: includePortableOriginals ? "Packing report and source files" : "Packing report",
+      });
+      const blob = await postBlob(`/api/analyses/${aid}/portable-export`, {
+        include_original_files: includePortableOriginals,
+        views,
+      });
+      const filename = `${sanitizeExportFilename(title) || "CellXplorer analysis"}.html`;
+      if (action === "share") {
+        const shared = await shareDownload(
+          blob,
+          filename,
+          title || "CellXplorer analysis",
+          "CellXplorer portable battery analysis",
+        );
+        if (shared !== "unsupported") {
+          return { cancelled: shared === "cancelled", usedDefaultFolder: false, shared: true };
+        }
+        const saved = await saveDownload(blob, filename);
+        if (!saved.cancelled) {
+          const message = encodeURIComponent(
+            `CellXplorer analysis "${title}" is ready to attach: ${saved.path || filename}`,
+          );
+          window.open(`https://teams.microsoft.com/l/chat/0/0?message=${message}`, "_blank");
+        }
+        return { ...saved, shared: false, teamsFallback: true };
+      }
+      return { ...(await saveDownload(blob, filename)), shared: false };
+    },
+    onSuccess: (result) => {
+      setPortableProgress(null);
+      setDirty(false);
+      setAutosaveStatus("saved");
+      if (!result.cancelled) {
+        setPortableExportOpen(false);
+        notifications.show({
+          message: result.shared
+            ? "Portable analysis shared."
+            : "teamsFallback" in result && result.teamsFallback
+              ? "Report saved and Teams opened. Attach the saved HTML to the message."
+              : "Portable analysis exported.",
+          color: "teal",
+        });
+      }
+    },
+    onError: (error: Error) => {
+      setPortableProgress(null);
+      notifications.show({ message: error.message, color: "red" });
+    },
+  });
+
   useEffect(() => {
     if (!spec || !dirty) return;
     const signatureAtSchedule = autosaveSignature;
@@ -6390,6 +6954,29 @@ export function AnalysisPage() {
   }, [aid, autosaveSignature, dirty, qc, spec, title]);
 
   const displayResult = rendered?.result ?? compute.data;
+  const portablePlotOptions = spec?.saved_plots?.length
+    ? spec.saved_plots
+    : [
+        {
+          id: "current",
+          name: title || "Current analysis",
+          subtitle: "Current analysis view",
+          tab: "cycles" as AnalysisTabKey,
+        },
+      ];
+  const openPortableExport = (action: "download" | "share" = "download") => {
+    setPortableExportAction(action);
+    setPortablePlotIds(portablePlotOptions.map((plot) => plot.id));
+    setPortableExportOpen(true);
+  };
+  const portableEstimatedBytes = portableEstimate.data
+    ? portableEstimate.data.runtime_embedded_bytes +
+      portableEstimate.data.report_shell_bytes +
+      portablePlotIds.length * portableEstimate.data.estimated_per_plot_bytes +
+      (includePortableOriginals
+        ? Math.ceil((portableEstimate.data.original_bytes * 4) / 3)
+        : 0)
+    : null;
   const activePlot = spec
     ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
     : null;
@@ -6834,6 +7421,37 @@ export function AnalysisPage() {
               Duplicate
             </Button>
           </Tooltip>
+          <Button.Group>
+            <Tooltip label="Create a standalone, re-importable HTML analysis">
+              <Button
+                variant="default"
+                leftSection={<IconFileExport size={16} />}
+                onClick={() => openPortableExport("download")}
+              >
+                Portable report
+              </Button>
+            </Tooltip>
+            <Menu withinPortal position="bottom-end">
+              <Menu.Target>
+                <ActionIcon
+                  variant="default"
+                  size={36}
+                  aria-label="Portable report actions"
+                  style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                >
+                  <IconChevronDown size={15} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  leftSection={<IconBrandTeams size={16} />}
+                  onClick={() => openPortableExport("share")}
+                >
+                  Share to Teams
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Button.Group>
           <ActionIcon
             variant="subtle"
             color="red"
@@ -6887,6 +7505,7 @@ export function AnalysisPage() {
                 update={update}
                 updating={plotUpdating}
                 error={compute.isError ? (compute.error as Error) : null}
+                computeJob={computeJob.data}
               />
               {savedPlotsPanel}
             </Stack>
@@ -7003,6 +7622,220 @@ export function AnalysisPage() {
           }}
         />
       )}
+
+      <Modal
+        opened={portableExportOpen}
+        onClose={() => !portableExport.isPending && setPortableExportOpen(false)}
+        title={portableExportAction === "share" ? "Share portable analysis" : "Export portable analysis"}
+        size="xl"
+        closeOnClickOutside={!portableExport.isPending}
+        closeOnEscape={!portableExport.isPending}
+      >
+        <Stack>
+          <Text size="sm">
+            Creates one HTML file that opens as an interactive report in a browser and can be
+            imported into CellXplorer later.
+          </Text>
+          <Paper withBorder p="sm">
+            <Group justify="space-between" mb="xs">
+              <div>
+                <Text size="sm" fw={700}>
+                  Plots to include
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {portablePlotIds.length} of {portablePlotOptions.length} selected
+                </Text>
+              </div>
+              <Group gap="xs">
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  onClick={() => setPortablePlotIds(portablePlotOptions.map((plot) => plot.id))}
+                >
+                  Select all
+                </Button>
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="gray"
+                  onClick={() => setPortablePlotIds([])}
+                >
+                  Clear
+                </Button>
+              </Group>
+            </Group>
+            <ScrollArea.Autosize mah={430}>
+              <Stack gap="xs">
+                {portablePlotOptions.map((plot) => {
+                  const selected = portablePlotIds.includes(plot.id);
+                  const toggle = () =>
+                    setPortablePlotIds((current) =>
+                      selected
+                        ? current.filter((id) => id !== plot.id)
+                        : [...current, plot.id]
+                    );
+                  return (
+                    <Paper
+                      key={plot.id}
+                      withBorder
+                      p="xs"
+                      bg={selected ? "var(--mantine-color-teal-0)" : "#fcfcfd"}
+                      style={{
+                        borderColor: selected
+                          ? "var(--mantine-color-teal-3)"
+                          : "var(--mantine-color-gray-2)",
+                        cursor: "pointer",
+                      }}
+                      onClick={toggle}
+                    >
+                      <Group wrap="nowrap" align="center">
+                        <Checkbox
+                          checked={selected}
+                          onChange={toggle}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`Include ${plot.name}`}
+                        />
+                        <Box
+                          w={210}
+                          style={{ flexShrink: 0, pointerEvents: "none" }}
+                        >
+                          {"selection" in plot ? (
+                            plot.tab === "time_capacity" ? (
+                              <SavedTimeCapacityPreview
+                                analysisId={aid}
+                                baseSpec={spec}
+                                plot={plot as SavedAnalysisPlot}
+                              />
+                            ) : plot.tab === "cycles" || plot.tab === "recap" ? (
+                              <SavedPlotPreview
+                                analysisId={aid}
+                                baseSpec={spec}
+                                plot={plot as SavedAnalysisPlot}
+                              />
+                            ) : (
+                              <Center h={130}>
+                                <Text size="xs" c="dimmed">
+                                  {tabLabel(plot.tab)}
+                                </Text>
+                              </Center>
+                            )
+                          ) : (
+                            <Center h={130}>
+                              <Text size="xs" c="dimmed">
+                                Current view
+                              </Text>
+                            </Center>
+                          )}
+                        </Box>
+                        <Stack gap={3} style={{ minWidth: 0, flex: 1 }}>
+                          <Badge size="xs" variant="light" color={selected ? "teal" : "gray"}>
+                            {tabLabel(plot.tab)}
+                          </Badge>
+                          <Text size="sm" fw={700} lineClamp={2}>
+                            {plot.name}
+                          </Text>
+                          <Text size="xs" c="dimmed" lineClamp={2}>
+                            {plot.subtitle || tabLabel(plot.tab)}
+                          </Text>
+                        </Stack>
+                      </Group>
+                    </Paper>
+                  );
+                })}
+              </Stack>
+            </ScrollArea.Autosize>
+          </Paper>
+          {portableEstimate.isError ? (
+            <Alert color="red">Could not estimate the export size.</Alert>
+          ) : (
+            <Paper withBorder p="sm" bg="#fbfbfc">
+              <Group justify="space-between" align="start">
+                <div>
+                  <Text size="sm" fw={700}>
+                    {portableEstimate.data?.cells ?? "..."} cells ·{" "}
+                    {portableEstimate.data?.sources ?? "..."} source files
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Embedded Plotly runtime after compression:{" "}
+                    {portableEstimate.data
+                      ? formatPortableBytes(portableEstimate.data.runtime_embedded_bytes)
+                      : "calculating..."}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Rough HTML estimate:{" "}
+                    {portableEstimatedBytes !== null
+                      ? formatPortableBytes(portableEstimatedBytes)
+                      : "calculating..."}
+                  </Text>
+                </div>
+                <Text size="xs" c="dimmed" maw={260}>
+                  Metadata, settings and provenance are always included. Plot data varies with
+                  point density, so this estimate is intentionally approximate.
+                </Text>
+              </Group>
+            </Paper>
+          )}
+          <Switch
+            checked={includePortableOriginals}
+            onChange={(event) => setIncludePortableOriginals(event.currentTarget.checked)}
+            label="Include original .nda/.ndax files"
+            description={
+              portableEstimate.data
+                ? `${formatPortableBytes(portableEstimate.data.original_bytes)} before compression. Embedded sources are gzip-compressed and decoded only when extracted or imported.`
+                : "Original Neware files can make the HTML substantially larger."
+            }
+          />
+          {includePortableOriginals && portableEstimate.data?.missing_originals ? (
+            <Alert color="orange">
+              {portableEstimate.data.missing_originals} original source{" "}
+              {portableEstimate.data.missing_originals === 1 ? "is" : "are"} unavailable and
+              cannot be embedded. The report will retain its source reference and frozen plots.
+            </Alert>
+          ) : null}
+          <Alert color="gray">
+            Reports without original files remain fully viewable. On import, CellXplorer reconnects
+            sources by checksum or recorded path; missing sources remain offline until relinked.
+          </Alert>
+          {portableExport.isPending && portableProgress ? (
+            <Paper withBorder p="sm">
+              <Stack gap={6}>
+                <Group justify="space-between">
+                  <Text size="sm" fw={600}>{portableProgress.stage}</Text>
+                  <Text size="xs" c="dimmed">
+                    {portableProgress.completed} of {portableProgress.total} plots
+                  </Text>
+                </Group>
+                <Progress
+                  color="teal"
+                  animated
+                  value={
+                    portableProgress.total > 0
+                      ? (portableProgress.completed / portableProgress.total) * 100
+                      : 0
+                  }
+                />
+              </Stack>
+            </Paper>
+          ) : null}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={portableExport.isPending}
+              onClick={() => setPortableExportOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              leftSection={<IconFileExport size={16} />}
+              loading={portableExport.isPending}
+              disabled={portablePlotIds.length === 0}
+              onClick={() => portableExport.mutate(portableExportAction)}
+            >
+              {portableExportAction === "share" ? "Share HTML" : "Export HTML"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Modal opened={saveDraft !== null} onClose={() => setSaveDraft(null)} title="Save new plot">
         <Stack>

@@ -105,6 +105,12 @@ def list_jobs(limit: int = 20) -> list[dict]:
     return rows[: max(1, min(int(limit), 30))]
 
 
+def get_job(job_id: int) -> dict | None:
+    with _lock:
+        job = _jobs.get(int(job_id))
+        return deepcopy(job) if job is not None else None
+
+
 def clear_jobs() -> None:
     """Test helper: live jobs are intentionally session-only."""
     global _next_id

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..config import APP_DATA_DIR, CACHE_DIR, DB_PATH, LOG_DIR
-from ..db import SessionLocal, get_db
+from ..db import SessionLocal, get_database_status, get_db
 from ..models import AppSession
 from ..services import background_jobs, sessions
 
@@ -260,40 +260,52 @@ def finish_current_session():
 
 
 @router.get("/diagnostics/health")
-def diagnostics_health(db: Session = Depends(get_db)):
-    database_ok = True
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception:
-        database_ok = False
+def diagnostics_health():
+    database_status = get_database_status()
+    database_ok = bool(database_status and database_status.compatible)
+    db = SessionLocal() if database_ok else None
+    if db is not None:
+        try:
+            db.execute(text("SELECT 1"))
+        except Exception:
+            database_ok = False
     disk = shutil.disk_usage(APP_DATA_DIR)
     current_id = sessions.current_session_id()
-    current = db.get(AppSession, current_id) if current_id is not None else None
+    current = (
+        db.get(AppSession, current_id)
+        if db is not None and current_id is not None
+        else None
+    )
     jobs = background_jobs.list_jobs(limit=30)
-    return {
-        "sampled_at": datetime.now(timezone.utc).isoformat(),
-        "backend": {
-            "status": "ok",
-            "pid": os.getpid(),
-            "database_ok": database_ok,
-        },
-        "storage": {
-            "data_path": str(APP_DATA_DIR),
-            "log_path": str(LOG_DIR),
-            "database_bytes": DB_PATH.stat().st_size if DB_PATH.exists() else 0,
-            "cache_bytes": _directory_size(CACHE_DIR),
-            "free_bytes": disk.free,
-            "total_bytes": disk.total,
-            "data_writable": _writable(APP_DATA_DIR),
-            "cache_writable": _writable(CACHE_DIR),
-            "logs_writable": _writable(LOG_DIR),
-        },
-        "jobs": {
-            "running": sum(job["status"] == "running" for job in jobs),
-            "failed": sum(job["status"] == "failed" for job in jobs),
-        },
-        "session": _session_dict(current) if current else None,
-    }
+    try:
+        return {
+            "sampled_at": datetime.now(timezone.utc).isoformat(),
+            "backend": {
+                "status": "ok",
+                "pid": os.getpid(),
+                "database_ok": database_ok,
+            },
+            "database": database_status.as_dict() if database_status else None,
+            "storage": {
+                "data_path": str(APP_DATA_DIR),
+                "log_path": str(LOG_DIR),
+                "database_bytes": DB_PATH.stat().st_size if DB_PATH.exists() else 0,
+                "cache_bytes": _directory_size(CACHE_DIR),
+                "free_bytes": disk.free,
+                "total_bytes": disk.total,
+                "data_writable": _writable(APP_DATA_DIR),
+                "cache_writable": _writable(CACHE_DIR),
+                "logs_writable": _writable(LOG_DIR),
+            },
+            "jobs": {
+                "running": sum(job["status"] == "running" for job in jobs),
+                "failed": sum(job["status"] == "failed" for job in jobs),
+            },
+            "session": _session_dict(current) if current else None,
+        }
+    finally:
+        if db is not None:
+            db.close()
 
 
 @router.get("/diagnostics/resources")

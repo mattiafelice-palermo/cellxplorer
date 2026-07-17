@@ -18,11 +18,27 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconActivity, IconBug, IconChartLine, IconDatabase, IconFolder, IconLoader2, IconSettings } from "@tabler/icons-react";
+import {
+  IconActivity,
+  IconAlertTriangle,
+  IconBug,
+  IconChartLine,
+  IconDatabase,
+  IconFolder,
+  IconFolderOpen,
+  IconLoader2,
+  IconSettings,
+} from "@tabler/icons-react";
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { get, post, type BackgroundJob, type SourceCheckJob } from "./api";
+import {
+  get,
+  post,
+  type BackgroundJob,
+  type DatabaseStatus,
+  type SourceCheckJob,
+} from "./api";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
@@ -74,6 +90,12 @@ export default function App() {
   const [uiZoom, setUiZoom] = useState(() => {
     const stored = Number(window.localStorage.getItem("cellxplorer-ui-zoom"));
     return Number.isFinite(stored) && stored >= 0.7 && stored <= 1.6 ? stored : 1;
+  });
+  const databaseStatus = useQuery({
+    queryKey: ["database-status"],
+    queryFn: () => get<DatabaseStatus>("/api/database/status"),
+    retry: 2,
+    staleTime: Infinity,
   });
   useEffect(() => {
     document.documentElement.style.removeProperty("zoom");
@@ -151,12 +173,14 @@ export default function App() {
   const backgroundJobs = useQuery({
     queryKey: ["background-jobs"],
     queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
+    enabled: databaseStatus.data?.compatible === true,
     refetchInterval: (query) =>
       query.state.data?.some((job) => job.status === "running") ? 700 : 5000,
   });
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
     queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
+    enabled: databaseStatus.data?.compatible === true,
     refetchInterval: (query) => (query.state.data?.status === "running" ? 600 : false),
   });
   useEffect(() => {
@@ -217,6 +241,123 @@ export default function App() {
     : activeJob
       ? 100
       : 0;
+
+  if (databaseStatus.isLoading) {
+    return (
+      <Group h="100vh" justify="center">
+        <Stack align="center" gap="sm">
+          <IconLoader2 size={28} className="source-check-spin" />
+          <Text c="dimmed">Checking the CellXplorer database...</Text>
+        </Stack>
+      </Group>
+    );
+  }
+
+  if (databaseStatus.isError || !databaseStatus.data) {
+    return (
+      <Group h="100vh" justify="center" p="xl">
+        <Alert
+          color="red"
+          title="Could not contact the CellXplorer backend"
+          maw={680}
+        >
+          The application could not determine whether the database is compatible.
+          Check the backend log or restart CellXplorer.
+        </Alert>
+      </Group>
+    );
+  }
+
+  if (!databaseStatus.data.compatible) {
+    const status = databaseStatus.data;
+    const title =
+      status.status === "database_too_new"
+        ? "This database needs a newer CellXplorer"
+        : status.status === "database_corrupt"
+          ? "The database may be damaged"
+          : status.status === "database_unrecognized"
+            ? "This database is not recognized"
+            : "The database could not be upgraded";
+    const openFolder = async (kind: "data" | "logs") => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("open_app_folder", { kind });
+      } catch {
+        notifications.show({
+          message: "Folder opening is available in the Windows application.",
+          color: "orange",
+        });
+      }
+    };
+    return (
+      <Group h="100vh" justify="center" p="xl" bg="gray.0">
+        <Paper withBorder p="xl" maw={760} w="100%">
+          <Stack gap="lg">
+            <Group gap="sm">
+              <IconAlertTriangle
+                size={30}
+                color="var(--mantine-color-orange-6)"
+              />
+              <div>
+                <Title order={2}>{title}</Title>
+                <Text c="dimmed">
+                  Your database has not been modified further.
+                </Text>
+              </div>
+            </Group>
+            <Alert color="orange">{status.message}</Alert>
+            <Paper withBorder p="md" bg="gray.0">
+              <Stack gap={6}>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">Application version</Text>
+                  <Code>{status.app_version}</Code>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">Database schema</Text>
+                  <Code>{status.schema_revision ?? "Unversioned"}</Code>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">Supported schema</Text>
+                  <Code>{status.supported_revision}</Code>
+                </Group>
+                {status.backup_path ? (
+                  <Stack gap={4} mt="xs">
+                    <Text size="sm" c="dimmed">Pre-migration backup</Text>
+                    <Code block>{status.backup_path}</Code>
+                  </Stack>
+                ) : null}
+              </Stack>
+            </Paper>
+            <Text size="sm">
+              CellXplorer has disabled normal database operations to avoid
+              damaging user data. Updating the application may be required for
+              a newer schema; migration failures can be investigated from the
+              logs.
+            </Text>
+            <Group>
+              <Button
+                variant="default"
+                leftSection={<IconFolderOpen size={16} />}
+                onClick={() => openFolder("data")}
+              >
+                Data folder
+              </Button>
+              <Button
+                variant="default"
+                leftSection={<IconFolderOpen size={16} />}
+                onClick={() => openFolder("logs")}
+              >
+                Log folder
+              </Button>
+              <Button variant="light" onClick={() => window.location.reload()}>
+                Retry
+              </Button>
+            </Group>
+          </Stack>
+        </Paper>
+      </Group>
+    );
+  }
 
   return (
     <AppShell

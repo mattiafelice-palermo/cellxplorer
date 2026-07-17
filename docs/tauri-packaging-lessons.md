@@ -171,12 +171,9 @@ Without it, the main desktop app can open a terminal even if the backend sidecar
 ## Data location and compatibility
 
 The backend currently stores user data under `CELLXPLORER_DATA` or `%USERPROFILE%\.cellxplorer`.
-Before serious distribution, move the default to `%LOCALAPPDATA%\Cellxplorer` and add:
-
-- explicit schema versioning;
-- automatic DB backup before migrations;
-- logged migration results;
-- a diagnostics export that includes logs, versions, and schema status without raw user data.
+It now uses packaged forward-only schema revisions, automatic SQLite backups before migration,
+startup compatibility checks, and schema status in diagnostics. See `docs/database-migrations.md`.
+Moving the default data location to `%LOCALAPPDATA%\Cellxplorer` remains a future packaging change.
 
 Never store the user database or cache under the app install directory.
 

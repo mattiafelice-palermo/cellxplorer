@@ -148,10 +148,20 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
                   <HealthBadge ok={health.data ? health.data.backend.status === "ok" : undefined} label="Backend" />
                   <HealthBadge ok={health.data?.backend.database_ok} label="Database" />
                   <HealthBadge ok={health.data ? !health.data.jobs.failed : undefined} label="Jobs" />
+                  {health.data?.database ? (
+                    <Badge variant="light" color={health.data.database.compatible ? "teal" : "orange"}>
+                      Schema {health.data.database.schema_revision ?? "unversioned"}
+                    </Badge>
+                  ) : null}
                 </Group>
                 <Text size="sm" c="dimmed" mt="sm">
                   {health.data ? `${health.data.jobs.running} background jobs running` : "Checking background jobs..."}
                 </Text>
+                {health.data?.database ? (
+                  <Text size="xs" c="dimmed" mt={4}>
+                    Supports schema {health.data.database.supported_revision}. {health.data.database.message}
+                  </Text>
+                ) : null}
               </Paper>
               <Paper withBorder p="md">
                 <Group justify="space-between" mb="sm">

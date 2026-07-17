@@ -51,10 +51,12 @@ import {
   get,
   patch,
   post,
+  put,
   ReplicateGroupPreview,
   ReplicateGroupSummary,
   Tree,
 } from "../api";
+import { clearAnalysisQueryCache } from "../analysisQueryCache";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { ImportCellsLauncher } from "./InboxPage";
@@ -437,6 +439,8 @@ export function ProjectsPage() {
   const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
   const [editingFolderName, setEditingFolderName] = useState("");
+  const [editingAnalysisId, setEditingAnalysisId] = useState<number | null>(null);
+  const [editingAnalysisTitle, setEditingAnalysisTitle] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [addReferencesOpen, setAddReferencesOpen] = useState(false);
   const [previewWidth, setPreviewWidth] = useState(390);
@@ -608,6 +612,56 @@ export function ProjectsPage() {
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
+  const updateAnalysis = useMutation({
+    mutationFn: (body: { id: number; title?: string; folderId?: number | null }) =>
+      put<AnalysisFull>(
+        `/api/analyses/${body.id}`,
+        body.title !== undefined
+          ? { title: body.title }
+          : body.folderId === null
+            ? { unfile: true }
+            : { folder_id: body.folderId }
+      ),
+    onSuccess: async (analysis) => {
+      setEditingAnalysisId(null);
+      await clearAnalysisQueryCache(qc, analysis.id);
+      await Promise.all([
+        invalidateTree(),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+      ]);
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  const copyAnalysis = useMutation({
+    mutationFn: (body: { id: number; folderId: number | null }) =>
+      post<AnalysisFull>(
+        `/api/analyses/${body.id}/duplicate`,
+        body.folderId === null ? { unfile: true } : { folder_id: body.folderId }
+      ),
+    onSuccess: async (analysis) => {
+      await clearAnalysisQueryCache(qc, analysis.id);
+      await Promise.all([
+        invalidateTree(),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+      ]);
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  const deleteAnalysis = useMutation({
+    mutationFn: async (id: number) => {
+      await del(`/api/analyses/${id}`);
+      await clearAnalysisQueryCache(qc, id);
+    },
+    onSuccess: async () => {
+      setSelectedKeys(new Set());
+      setPreview(null);
+      await Promise.all([
+        invalidateTree(),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+      ]);
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
 
   const openCreateFolder = (parentId: number | null) =>
     modals.open({
@@ -638,6 +692,20 @@ export function ProjectsPage() {
   const startRename = (folder: FolderNode) => {
     setEditingFolderId(folder.id);
     setEditingFolderName(folder.name);
+  };
+
+  const startAnalysisRename = (analysis: { id: number; title: string }) => {
+    setEditingAnalysisId(analysis.id);
+    setEditingAnalysisTitle(analysis.title);
+  };
+
+  const commitAnalysisRename = (analysis: { id: number; title: string }) => {
+    const nextTitle = editingAnalysisTitle.trim();
+    if (!nextTitle || nextTitle === analysis.title) {
+      setEditingAnalysisId(null);
+      return;
+    }
+    updateAnalysis.mutate({ id: analysis.id, title: nextTitle });
   };
 
   const commitRename = (folder: FolderNode) => {
@@ -732,11 +800,15 @@ export function ProjectsPage() {
   const selectedFolders = selectedActionItems.filter((item) => item.kind === "folder");
   const selectedCells = selectedActionItems.filter((item) => item.kind === "cell");
   const selectedGroups = selectedActionItems.filter((item) => item.kind === "replicate_group");
+  const selectedAnalyses = selectedActionItems.filter((item) => item.kind === "analysis");
   const hasOnlyFolders = selectedFolders.length > 0 && selectedFolders.length === selectedActionItems.length;
   const hasOnlyReferences =
     selectedCells.length + selectedGroups.length > 0 &&
     selectedCells.length + selectedGroups.length === selectedActionItems.length;
   const hasSingleFolder = selectedFolders.length === 1 && selectedActionItems.length === 1;
+  const hasOnlyAnalyses =
+    selectedAnalyses.length > 0 && selectedAnalyses.length === selectedActionItems.length;
+  const hasSingleAnalysis = selectedAnalyses.length === 1 && selectedActionItems.length === 1;
 
   const transferCells = (targetFolderId: number, copy: boolean, items = selectedCells) => {
     const bySource = new Map<number, number[]>();
@@ -771,6 +843,17 @@ export function ProjectsPage() {
     });
   };
 
+  const transferAnalyses = (
+    targetFolderId: number | null,
+    copy: boolean,
+    items = selectedAnalyses
+  ) => {
+    items.forEach((item) => {
+      if (copy) copyAnalysis.mutate({ id: item.id, folderId: targetFolderId });
+      else updateAnalysis.mutate({ id: item.id, folderId: targetFolderId });
+    });
+  };
+
   const handleDragStart = (event: DragEvent, item: TreeItem) => {
     const dragItems = selectedKeys.has(item.key) ? selectedActionItems : [item];
     event.dataTransfer.effectAllowed = "copyMove";
@@ -787,9 +870,11 @@ export function ProjectsPage() {
     const folderItems = items.filter((item) => item.kind === "folder");
     const cellItems = items.filter((item) => item.kind === "cell");
     const groupItems = items.filter((item) => item.kind === "replicate_group");
+    const analysisItems = items.filter((item) => item.kind === "analysis");
     if (folderItems.length) transferFolders(folder.id, copy, folderItems);
     if (cellItems.length) transferCells(folder.id, copy, cellItems);
     if (groupItems.length) transferGroups(folder.id, copy, groupItems);
+    if (analysisItems.length) transferAnalyses(folder.id, copy, analysisItems);
   };
 
   const copyTo = () => {
@@ -800,6 +885,9 @@ export function ProjectsPage() {
         if (selectedCells.length) transferCells(folderId, true);
         if (selectedGroups.length) transferGroups(folderId, true);
       });
+    }
+    if (hasOnlyAnalyses) {
+      openDestination("Copy to", (folderId) => transferAnalyses(folderId, true));
     }
   };
 
@@ -812,12 +900,29 @@ export function ProjectsPage() {
         if (selectedGroups.length) transferGroups(folderId, false);
       });
     }
+    if (hasOnlyAnalyses) {
+      openDestination("Move to", (folderId) => transferAnalyses(folderId, false));
+    }
   };
 
   const deleteSelected = () => {
     if (selectedActionItems.length === 1 && selectedActionItems[0].kind === "folder") {
       const folder = findFolder(folders, selectedActionItems[0].id);
       if (folder) confirmDeleteFolder(folder);
+      return;
+    }
+    if (hasOnlyAnalyses) {
+      modals.openConfirmModal({
+        title: `Delete ${selectedAnalyses.length === 1 ? selectedAnalyses[0].label : `${selectedAnalyses.length} analyses`}?`,
+        children: (
+          <Text size="sm">
+            This deletes the selected analysis record and its saved plots. Cell data remains in the database.
+          </Text>
+        ),
+        labels: { confirm: "Delete", cancel: "Cancel" },
+        confirmProps: { color: "red" },
+        onConfirm: () => selectedAnalyses.forEach((item) => deleteAnalysis.mutate(item.id)),
+      });
       return;
     }
     modals.openConfirmModal({
@@ -976,11 +1081,23 @@ export function ProjectsPage() {
               Rename
             </Menu.Item>
           )}
-          {(hasOnlyFolders || hasOnlyReferences) && <Menu.Item onClick={moveTo}>Move to...</Menu.Item>}
-          {(hasOnlyFolders || hasOnlyReferences) && <Menu.Item leftSection={<IconCopy size={14} />} onClick={copyTo}>Copy to...</Menu.Item>}
-          {(hasOnlyFolders || hasOnlyReferences) && (
+          {hasSingleAnalysis && (
+            <Menu.Item
+              onClick={() =>
+                startAnalysisRename({
+                  id: selectedAnalyses[0].id,
+                  title: selectedAnalyses[0].label,
+                })
+              }
+            >
+              Rename
+            </Menu.Item>
+          )}
+          {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && <Menu.Item onClick={moveTo}>Move to...</Menu.Item>}
+          {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && <Menu.Item leftSection={<IconCopy size={14} />} onClick={copyTo}>Copy to...</Menu.Item>}
+          {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && (
             <Menu.Item color="red" onClick={deleteSelected}>
-              Remove
+              {hasOnlyAnalyses ? "Delete" : "Remove"}
             </Menu.Item>
           )}
         </Menu.Dropdown>
@@ -1264,9 +1381,12 @@ export function ProjectsPage() {
     return (
       <Group
         key={key}
-        gap={6}
+        className="project-tree-row"
+        justify="space-between"
         wrap="nowrap"
         p={6}
+        draggable={editingAnalysisId !== analysis.id}
+        onDragStart={(event) => handleDragStart(event, item)}
         onContextMenu={(event) => handleContextMenu(event, item)}
         onDoubleClick={(event) => {
           event.stopPropagation();
@@ -1281,10 +1401,81 @@ export function ProjectsPage() {
         }}
         onClick={(event) => handleSelect(event, item)}
       >
-        <IconChartLine size={15} color="var(--mantine-color-gray-6)" />
-        <Text size="sm" fw={selected ? 700 : 400} truncate>
-          {analysis.title}
-        </Text>
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+          <IconChartLine size={15} color="var(--mantine-color-gray-6)" />
+          {editingAnalysisId === analysis.id ? (
+            <TextInput
+              size="xs"
+              value={editingAnalysisTitle}
+              onChange={(event) => setEditingAnalysisTitle(event.currentTarget.value)}
+              onClick={(event) => event.stopPropagation()}
+              onBlur={() => commitAnalysisRename(analysis)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitAnalysisRename(analysis);
+                if (event.key === "Escape") setEditingAnalysisId(null);
+              }}
+              autoFocus
+              style={{ flex: 1 }}
+            />
+          ) : (
+            <Text size="sm" fw={selected ? 700 : 400} truncate>
+              {analysis.title}
+            </Text>
+          )}
+        </Group>
+        <Menu withinPortal position="bottom-end">
+          <Menu.Target>
+            <ActionIcon
+              className="project-tree-hover-actions"
+              size="sm"
+              variant="subtle"
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Actions for ${analysis.title}`}
+            >
+              <IconDotsVertical size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item onClick={() => startAnalysisRename(analysis)}>Rename</Menu.Item>
+            <Menu.Item
+              onClick={() =>
+                openDestination("Move to", (targetFolderId) =>
+                  transferAnalyses(targetFolderId, false, [item])
+                )
+              }
+            >
+              Move to...
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconCopy size={14} />}
+              onClick={() =>
+                openDestination("Copy to", (targetFolderId) =>
+                  transferAnalyses(targetFolderId, true, [item])
+                )
+              }
+            >
+              Copy to...
+            </Menu.Item>
+            <Menu.Item
+              color="red"
+              onClick={() => {
+                modals.openConfirmModal({
+                  title: `Delete ${analysis.title}?`,
+                  children: (
+                    <Text size="sm">
+                      This deletes the analysis and its saved plots. Cell data remains in the database.
+                    </Text>
+                  ),
+                  labels: { confirm: "Delete", cancel: "Cancel" },
+                  confirmProps: { color: "red" },
+                  onConfirm: () => deleteAnalysis.mutate(analysis.id),
+                });
+              }}
+            >
+              Delete
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </Group>
     );
   }

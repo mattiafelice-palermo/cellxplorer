@@ -16,6 +16,7 @@ APP_DATA_DIR = Path(os.environ.get("CELLXPLORER_DATA", Path.home() / ".cellxplor
 CACHE_DIR = APP_DATA_DIR / "cache"
 IMPORT_DIR = APP_DATA_DIR / "imports"
 LOG_DIR = APP_DATA_DIR / "logs"
+BACKUP_DIR = APP_DATA_DIR / "backups"
 DB_PATH = APP_DATA_DIR / "cellxplorer.db"
 
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -24,6 +25,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
+APP_VERSION = "0.6.0"
 
 # Version of our derived per-cycle calculation code. Bump when the
 # calculation in services/calc.py changes meaning.

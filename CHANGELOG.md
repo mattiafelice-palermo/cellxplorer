@@ -4,6 +4,22 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.6.0 - 2026-07-17
+
+- Added forward-only database schema revisions with compatibility checks, automatic pre-migration
+  backups, migration diagnostics, and clear refusal of databases created by newer app versions.
+- Added portable single-HTML analysis reports with selectable saved plots, CSV export, metadata,
+  optional gzip-compressed Neware source files, and round-trip import into CellXplorer.
+- Portable reports now retain full interactive Plotly figures in normal browsers and faithful
+  pre-rendered Plotly SVGs in restricted previews such as Microsoft Teams.
+- Added source reconciliation during portable import, including exact-checksum reuse, explicit
+  handling of possible older/newer files, analysis renaming, and cell links in the destination
+  folder.
+- Added a full-width folder-tree destination picker with inline folder creation for portable
+  imports, plus rename, move, copy, delete, and drag-and-drop actions for analyses in Projects.
+- Embedded report sources can now be downloaded individually from a header dialog or together as
+  a ZIP organized into one folder per cell.
+
 ## 0.5.0 - 2026-07-16
 
 - Added a unified file and folder import browser with quick-access locations, pinned folders,
