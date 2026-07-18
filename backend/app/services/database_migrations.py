@@ -89,12 +89,12 @@ def _existing_tables(path: Path) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def _integrity_error(path: Path) -> str | None:
+def _integrity_error(path: Path, pragma: str = "quick_check") -> str | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
     try:
         with closing(_connect_readonly(path)) as connection:
-            rows = connection.execute("PRAGMA integrity_check").fetchall()
+            rows = connection.execute(f"PRAGMA {pragma}").fetchall()
     except sqlite3.DatabaseError as exc:
         return str(exc)
     messages = [str(row[0]) for row in rows]
@@ -238,6 +238,9 @@ def migrate_database(
             message=f"The database could not be read: {exc}",
         )
 
+    # Every launch pays for this scan while the UI waits, so use the fast
+    # page-level quick_check; the thorough scan runs before a migration
+    # rewrites the file.
     integrity_error = _integrity_error(path)
     if integrity_error:
         logger.error("Database integrity check failed: %s", integrity_error)
@@ -306,6 +309,19 @@ def migrate_database(
 
     backup_path = None
     if not is_empty:
+        integrity_error = _integrity_error(path, pragma="integrity_check")
+        if integrity_error:
+            logger.error(
+                "Database integrity check failed before migration: %s",
+                integrity_error,
+            )
+            return _status(
+                "database_corrupt",
+                compatible=False,
+                schema_revision=revision,
+                legacy_database=is_legacy,
+                message=f"SQLite integrity check failed: {integrity_error}",
+            )
         try:
             backup_path = _create_backup(
                 path,

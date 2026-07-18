@@ -94,7 +94,11 @@ export default function App() {
   const databaseStatus = useQuery({
     queryKey: ["database-status"],
     queryFn: () => get<DatabaseStatus>("/api/database/status"),
-    retry: 2,
+    // The desktop backend needs a few seconds to boot before it can answer.
+    // Poll quickly so the app opens the moment it is reachable; the
+    // unreachable screen only appears after sustained failure (~18s).
+    retry: 60,
+    retryDelay: 300,
     staleTime: Infinity,
   });
   useEffect(() => {

@@ -67,6 +67,7 @@ class AnalysisCacheTests(unittest.TestCase):
             analysis_cache.load_indexed_thumbnail(7, "plot-one", "client-signature-a"),
             artifact["thumbnail"],
         )
+        self.assertTrue(analysis_cache.has_indexed_thumbnails(7, "plot-one"))
         self.assertEqual(
             analysis_cache.load_latest_thumbnail(7, "plot-one"),
             artifact["thumbnail"],
@@ -90,6 +91,7 @@ class AnalysisCacheTests(unittest.TestCase):
         self.assertIsNone(
             analysis_cache.load_indexed_thumbnail(7, "plot-one", "client-signature-a")
         )
+        self.assertFalse(analysis_cache.has_indexed_thumbnails(7, "plot-one"))
 
 
 if __name__ == "__main__":

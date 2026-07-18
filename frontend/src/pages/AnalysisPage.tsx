@@ -5703,7 +5703,19 @@ async function portableThumbnail(svg: string): Promise<string> {
   });
   documentNode.querySelectorAll(".scatterlayer path.js-line").forEach((node) => {
     const path = node as SVGPathElement;
-    const current = Number.parseFloat(path.style.strokeWidth || "1.5");
+    const rawWidth = path.style.strokeWidth || path.getAttribute("stroke-width");
+    const current = rawWidth ? Number.parseFloat(rawWidth) : Number.NaN;
+    const rawOpacity = path.style.strokeOpacity || path.getAttribute("stroke-opacity");
+    const opacity = rawOpacity ? Number.parseFloat(rawOpacity) : 1;
+    if (
+      !Number.isFinite(current) ||
+      current <= 0 ||
+      (Number.isFinite(opacity) && opacity <= 0) ||
+      path.style.stroke === "none" ||
+      path.getAttribute("stroke") === "none"
+    ) {
+      return;
+    }
     path.style.strokeWidth = `${Math.max(3.5, current * 1.6)}px`;
   });
   documentNode
@@ -6977,6 +6989,8 @@ export function AnalysisPage() {
     proceed: () => void;
     mode: "new" | "update";
     name: string;
+    description: string;
+    stage: "confirm" | "details";
   } | null>(null);
   const [leaveSaving, setLeaveSaving] = useState(false);
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
@@ -7365,6 +7379,8 @@ export function AnalysisPage() {
         proceed: request.detail.proceed,
         mode: activePlotDirty ? "update" : "new",
         name: activePlot?.name ?? suggestedPlotName(activeTab, displayResult, spec),
+        description: activePlot?.description ?? "",
+        stage: "confirm",
       });
     };
     window.addEventListener(ANALYSIS_LEAVE_EVENT, onLeaveRequest);
@@ -7665,7 +7681,13 @@ export function AnalysisPage() {
     const next = clone(spec);
     const plot = activePlot
       ? savedPlotFromSpec(next, activeTab, activePlot.name, subtitle, activePlot.description, activePlot)
-      : savedPlotFromSpec(next, activeTab, leavePrompt.name, subtitle, null);
+      : savedPlotFromSpec(
+          next,
+          activeTab,
+          leavePrompt.name,
+          subtitle,
+          leavePrompt.description || null,
+        );
     next.saved_plots = activePlot
       ? (next.saved_plots ?? []).map((item) => (item.id === activePlot.id ? plot : item))
       : [...(next.saved_plots ?? []), plot];
@@ -8250,29 +8272,48 @@ export function AnalysisPage() {
       <Modal
         opened={leavePrompt !== null}
         onClose={() => setLeavePrompt(null)}
-        title="Unsaved plot"
+        title={leavePrompt?.stage === "details" ? "Save new plot" : "Unsaved plot"}
         closeOnClickOutside={!leaveSaving}
         closeOnEscape={!leaveSaving}
       >
         <Stack>
-          <Text size="sm" c="dimmed">
-            Save this plot before leaving the analysis?
-          </Text>
-          {leavePrompt?.mode === "new" && (
-            <TextInput
-              label="Plot title"
-              value={leavePrompt.name}
-              onChange={(event) =>
-                setLeavePrompt((prompt) =>
-                  prompt ? { ...prompt, name: event.currentTarget.value } : prompt
-                )
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter") savePlotAndLeave();
-              }}
-            />
+          {leavePrompt?.stage === "confirm" ? (
+            <Text size="sm" c="dimmed">
+              Save this plot before leaving the analysis?
+            </Text>
+          ) : (
+            <>
+              <TextInput
+                label="Title"
+                value={leavePrompt?.name ?? ""}
+                onChange={(event) =>
+                  setLeavePrompt((prompt) =>
+                    prompt ? { ...prompt, name: event.currentTarget.value } : prompt
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && leavePrompt?.name.trim()) savePlotAndLeave();
+                }}
+                data-autofocus
+              />
+              <Text size="sm" c="dimmed">
+                {plotSubtitle(activeTab, displayResult, spec)}
+              </Text>
+              <Textarea
+                label="Description"
+                minRows={3}
+                value={leavePrompt?.description ?? ""}
+                onChange={(event) =>
+                  setLeavePrompt((prompt) =>
+                    prompt
+                      ? { ...prompt, description: event.currentTarget.value }
+                      : prompt
+                  )
+                }
+              />
+            </>
           )}
-          {leavePrompt?.mode === "update" && activePlot && (
+          {leavePrompt?.stage === "confirm" && leavePrompt.mode === "update" && activePlot && (
             <Text size="sm" fw={700}>
               {activePlot.name}
             </Text>
@@ -8293,8 +8334,18 @@ export function AnalysisPage() {
             >
               Discard
             </Button>
-            <Button loading={leaveSaving} onClick={savePlotAndLeave}>
-              Save and leave
+            <Button
+              loading={leaveSaving}
+              disabled={leavePrompt?.stage === "details" && !leavePrompt.name.trim()}
+              onClick={() => {
+                if (leavePrompt?.mode === "new" && leavePrompt.stage === "confirm") {
+                  setLeavePrompt({ ...leavePrompt, stage: "details" });
+                  return;
+                }
+                savePlotAndLeave();
+              }}
+            >
+              {leavePrompt?.stage === "details" ? "Save and leave" : "Save"}
             </Button>
           </Group>
         </Stack>

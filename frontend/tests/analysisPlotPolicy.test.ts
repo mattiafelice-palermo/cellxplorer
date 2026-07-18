@@ -190,6 +190,49 @@ test("saved plot preview signature changes when saved styling changes", () => {
   assert.notEqual(before, savedPlotPreviewSignature(base, savedPlot));
 });
 
+test("saved plot preview signature changes on an explicit plot update", () => {
+  const base = makeSpec([{ kind: "cell", ref_id: 1 }], []);
+  const savedPlot = {
+    id: "plot-updated",
+    tab: "cycles",
+    name: "Updated view",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: structuredClone(base.computation),
+    aggregation: structuredClone(base.aggregation),
+    presentation: structuredClone(base.presentation),
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as any;
+  const before = savedPlotPreviewSignature(base, savedPlot);
+  savedPlot.modified_at = "2026-01-02T00:00:00Z";
+
+  assert.notEqual(before, savedPlotPreviewSignature(base, savedPlot));
+});
+
+test("saved plot preview signature includes the thumbnail renderer version", () => {
+  const base = makeSpec([{ kind: "cell", ref_id: 1 }], []);
+  const savedPlot = {
+    id: "plot-renderer-version",
+    tab: "cycles",
+    name: "Versioned preview",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: structuredClone(base.computation),
+    aggregation: structuredClone(base.aggregation),
+    presentation: structuredClone(base.presentation),
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as any;
+
+  assert.match(
+    savedPlotPreviewSignature(base, savedPlot),
+    /"thumbnail_renderer_version":\d+/
+  );
+});
+
 test("saved plot restore keeps global segment definitions and restores plot segment state", () => {
   const current = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], []));
   current.protocol_segments = [

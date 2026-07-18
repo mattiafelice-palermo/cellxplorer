@@ -509,6 +509,12 @@ def lookup_plot_thumbnail(
     if thumbnail is not None:
         return {"signature": req.signature, "thumbnail": thumbnail}
 
+    # Once a plot has signature-indexed thumbnails, an unknown client
+    # signature means the plot changed. Do not relabel an older scientific
+    # artifact as the new preview while the analysis autosave is catching up.
+    if analysis_cache.has_indexed_thumbnails(analysis_id, plot_id):
+        raise HTTPException(404, "No cached plot thumbnail")
+
     # Adopt caches written before the direct index existed. Plot ids are
     # stable and a refreshed saved plot always writes a newer thumbnail, so
     # this is a constant-time disk lookup rather than a 25-cell fingerprint.

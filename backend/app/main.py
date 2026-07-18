@@ -1,6 +1,27 @@
 from __future__ import annotations
 
 import logging
+import threading
+
+
+def _warm_heavy_imports() -> None:
+    # Join order: the main thread blocks on pandas (via the routers) before
+    # NewareNDA (via parsing); pyarrow last — nothing joins on it at boot.
+    try:
+        import pandas  # noqa: F401
+        import NewareNDA  # noqa: F401
+        import pyarrow  # noqa: F401  pandas defers it to the first Parquet read
+    except Exception:
+        # The real import site will surface the error with full context.
+        logging.getLogger(__name__).exception("Import warm-up failed")
+
+
+# Load the data stack in parallel with the web stack below: boot pays
+# max() of the two chains instead of their sum, and the module import
+# locks make the routers' own `import pandas` wait for this thread.
+# Keep it ONE thread with packages the lines below never import —
+# importing the same package from two threads can hit _DeadlockError.
+threading.Thread(target=_warm_heavy_imports, name="import-warmup", daemon=True).start()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware

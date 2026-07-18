@@ -263,6 +263,13 @@ def store_indexed_thumbnail(
         _prune_locked()
 
 
+def has_indexed_thumbnails(analysis_id: int, plot_id: str) -> bool:
+    """Return whether this saved plot has entered the signature-indexed cache era."""
+    safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)
+    directory = _THUMBNAIL_INDEXES / str(analysis_id) / safe_plot
+    return directory.is_dir() and any(directory.glob("*.json.gz"))
+
+
 def load_latest_thumbnail(analysis_id: int, plot_id: str) -> str | None:
     """Adopt the newest legacy thumbnail when its direct index is absent."""
     safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)

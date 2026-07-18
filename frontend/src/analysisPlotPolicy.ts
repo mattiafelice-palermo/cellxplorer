@@ -1,5 +1,9 @@
 import type { AnalysisSpec, SavedAnalysisPlot } from "./api";
 
+// Increment when thumbnail generation changes in a way that makes persisted
+// PNG/SVG artifacts visually incompatible with the live plot renderer.
+export const SAVED_PLOT_THUMBNAIL_RENDER_VERSION = 3;
+
 function clone<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;
@@ -49,6 +53,8 @@ export function plotViewSignature(spec: AnalysisSpec): string {
 export function savedPlotPreviewSignature(base: AnalysisSpec, plot: SavedAnalysisPlot): string {
   const previewSpec = specForSavedPlotView(base, plot);
   return JSON.stringify({
+    thumbnail_renderer_version: SAVED_PLOT_THUMBNAIL_RENDER_VERSION,
+    saved_plot_modified_at: plot.modified_at,
     selection: previewSpec.selection,
     protocol_segments: previewSpec.protocol_segments ?? [],
     computation: previewSpec.computation,
