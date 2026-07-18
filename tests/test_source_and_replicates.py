@@ -425,6 +425,100 @@ class SourceAndReplicateTests(unittest.TestCase):
         detail = library.get_cell(cell.id, db=db)
         self.assertEqual(detail["metadata"]["raw.large.header"], "x" * 20_000)
 
+    def test_optimized_cell_listing_matches_detail_summary_semantics(self):
+        db = self.make_session()
+        ready = Cell(name="Ready summary", cycling_status="active")
+        ready.metadata_entries = [
+            CellMetadata(key="override.active_mass_mg", value="9.5"),
+            CellMetadata(key="override.electrode_area_cm2", value="1.54"),
+        ]
+        ready_test = Test(cell=ready, name="Ready files")
+        ready_test.file_links = [
+            TestFile(
+                position=0,
+                file=SourceFile(
+                    hash="summary-ready-1",
+                    path="C:/data/ready-1.ndax",
+                    filename="ready-1.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="online",
+                    parse_status="parsed",
+                    cycle_count=10,
+                    active_mass_mg=8.0,
+                    nominal_capacity_mah=2.0,
+                    total_charge_capacity_mah=3.25,
+                    total_discharge_capacity_mah=3.0,
+                    capacity_summary_status="ready",
+                ),
+            ),
+            TestFile(
+                position=1,
+                file=SourceFile(
+                    hash="summary-ready-2",
+                    path="C:/data/ready-2.ndax",
+                    filename="ready-2.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="changed",
+                    parse_status="parsed",
+                    cycle_count=12,
+                    active_mass_mg=8.5,
+                    nominal_capacity_mah=2.1,
+                    total_charge_capacity_mah=4.5,
+                    total_discharge_capacity_mah=4.25,
+                    capacity_summary_status="ready",
+                ),
+            ),
+        ]
+        pending = Cell(name="Pending summary", cycling_status="complete")
+        pending_test = Test(cell=pending, name="Pending file")
+        pending_test.file_links = [
+            TestFile(
+                position=0,
+                file=SourceFile(
+                    hash="summary-pending",
+                    path="C:/data/pending.ndax",
+                    filename="pending.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="offline",
+                    parse_status="parsed",
+                    cycle_count=4,
+                    total_charge_capacity_mah=1.0,
+                    total_discharge_capacity_mah=0.9,
+                    capacity_summary_status="pending",
+                ),
+            )
+        ]
+        empty = Cell(name="No files", cycling_status="active")
+        db.add_all([ready, pending, empty])
+        db.commit()
+
+        payload = {row["id"]: row for row in library.list_cells(db=db)}
+
+        self.assertEqual(payload[ready.id]["n_tests"], 1)
+        self.assertEqual(payload[ready.id]["n_files"], 2)
+        self.assertEqual(payload[ready.id]["total_cycles"], 22)
+        self.assertEqual(payload[ready.id]["total_charge_capacity_mah"], 7.75)
+        self.assertEqual(payload[ready.id]["total_discharge_capacity_mah"], 7.25)
+        self.assertTrue(payload[ready.id]["has_changed"])
+        self.assertEqual(
+            payload[ready.id]["scientific_metadata"]["active_mass_mg"],
+            {
+                "source_value": 8.0,
+                "override_value": 9.5,
+                "legacy_value": None,
+                "effective_value": 9.5,
+            },
+        )
+        self.assertIsNone(payload[pending.id]["total_charge_capacity_mah"])
+        self.assertTrue(payload[pending.id]["has_offline"])
+        self.assertTrue(payload[pending.id]["has_summary_pending"])
+        self.assertEqual(payload[empty.id]["n_tests"], 0)
+        self.assertEqual(payload[empty.id]["n_files"], 0)
+        self.assertIsNone(payload[empty.id]["total_discharge_capacity_mah"])
+
     def test_cell_source_check_skips_completed_cells_and_marks_changed_active_sources(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:

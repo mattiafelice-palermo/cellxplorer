@@ -11,7 +11,11 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
-import { ApiError } from "./api";
+import { isTransientApiError } from "./apiRetryPolicy";
+import {
+  configureStartupQueryDefaults,
+  startupQueryPersistence,
+} from "./startupQueryPersistence";
 
 const theme = createTheme({
   primaryColor: "teal",
@@ -22,15 +26,19 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       // The desktop window is intentionally displayed before its Python
-      // sidecar is ready. Keep page queries alive during that short boot
-      // window, but do not retry real HTTP/application errors.
+      // sidecar is ready. Retry connectivity and transient server failures,
+      // but surface permanent client/application errors immediately.
       retry: (failureCount, error) =>
-        !(error instanceof ApiError) && failureCount < 30,
+        isTransientApiError(error) && failureCount < 30,
       retryDelay: 250,
       refetchOnWindowFocus: false,
     },
   },
 });
+
+configureStartupQueryDefaults(queryClient);
+startupQueryPersistence.restore(queryClient);
+startupQueryPersistence.start(queryClient);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

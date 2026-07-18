@@ -874,7 +874,7 @@ export function LibraryPage() {
         <Center h={360}>
           <Loader color="teal" />
         </Center>
-      ) : cells.isError ? (
+      ) : cells.isError && !cells.data ? (
         <Alert color="red">Could not load the cell library.</Alert>
       ) : (cells.data ?? []).length === 0 ? (
         <Paper withBorder p="lg">

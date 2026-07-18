@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.8.0 - 2026-07-18
+
+- Added a fully branded CellXplorer installer and uninstaller with a compact guided flow,
+  installation progress, desktop and startup choices, and explicit protection of the user's
+  scientific database during uninstall.
+- Cell and Analysis Databases now reopen immediately from compact, database-validated startup
+  summaries while the backend verifies current records in the background.
+- Improved repeated desktop launches by refreshing cells, analyses, replicate groups, and folders
+  together, retaining all four summaries consistently, and safely flushing them during quick
+  close/reopen cycles.
+- Greatly reduced Cell Database list-query overhead by replacing per-cell relationship traversal
+  with bounded aggregate loading and keeping scientific cache work outside the page-load path.
+- Hardened SQLite startup concurrency with one-time WAL configuration, foreign-key enforcement,
+  lock waiting, and retries for transient sidecar or database failures.
+- Added a thematic agent knowledge base covering architecture, data ownership, state persistence,
+  performance constraints, verification, releases, and Windows packaging.
+
 ## 0.7.0 - 2026-07-17
 
 - Saved analysis plots now load more quickly through reusable plot-artifact and thumbnail

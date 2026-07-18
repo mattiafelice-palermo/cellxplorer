@@ -590,7 +590,13 @@ export function AnalysesIndexPage() {
         onChange={(e) => setSearch(e.currentTarget.value)}
         maw={360}
       />
-      {rows.length === 0 ? (
+      {analyses.isLoading && !analyses.data ? (
+        <Group justify="center" py="xl">
+          <Loader color="teal" />
+        </Group>
+      ) : analyses.isError && !analyses.data ? (
+        <Alert color="red">Could not load the analysis database.</Alert>
+      ) : rows.length === 0 ? (
         <Alert color="gray">
           No analyses yet. Create one, then add replicate groups or individual cells to compare
           capacities, efficiencies, retention and more.

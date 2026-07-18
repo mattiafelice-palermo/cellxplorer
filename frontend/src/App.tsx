@@ -49,6 +49,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
+import { startupQueryPersistence } from "./startupQueryPersistence";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -101,6 +102,34 @@ export default function App() {
     retryDelay: 300,
     staleTime: Infinity,
   });
+  useEffect(() => {
+    if (databaseStatus.data) {
+      startupQueryPersistence.reconcile(queryClient, databaseStatus.data);
+      if (databaseStatus.data.compatible) {
+        // Populate every compact startup view, even when the user does not
+        // visit it during this session. React Query deduplicates the request
+        // for whichever page is already active.
+        void Promise.allSettled([
+          queryClient.prefetchQuery({
+            queryKey: ["cells", ""],
+            queryFn: () => get<unknown[]>("/api/cells"),
+          }),
+          queryClient.prefetchQuery({
+            queryKey: ["analyses", ""],
+            queryFn: () => get<unknown[]>("/api/analyses"),
+          }),
+          queryClient.prefetchQuery({
+            queryKey: ["replicate-groups"],
+            queryFn: () => get<unknown[]>("/api/replicate-groups"),
+          }),
+          queryClient.prefetchQuery({
+            queryKey: ["tree"],
+            queryFn: () => get<unknown>("/api/tree"),
+          }),
+        ]).then(() => startupQueryPersistence.flush(queryClient));
+      }
+    }
+  }, [databaseStatus.data, queryClient]);
   useEffect(() => {
     document.documentElement.style.removeProperty("zoom");
     window.localStorage.setItem("cellxplorer-ui-zoom", String(uiZoom));

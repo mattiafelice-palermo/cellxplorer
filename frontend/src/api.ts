@@ -168,6 +168,7 @@ export interface DatabaseStatus {
   legacy_database: boolean;
   backup_path: string | null;
   message: string;
+  database_instance_id: string | null;
 }
 
 export interface ElectrodeAreaPreset {

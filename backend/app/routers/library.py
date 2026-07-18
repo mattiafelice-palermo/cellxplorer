@@ -1,6 +1,7 @@
 """The canonical Library: cells, tests, metadata, cell tags."""
 from __future__ import annotations
 
+import math
 import os
 import threading
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
@@ -12,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import CALC_VERSION
@@ -198,11 +200,12 @@ def _finite_sum(values) -> float | None:
         if value is None:
             continue
         try:
-            if np.isnan(value):
-                continue
-        except TypeError:
-            pass
-        total += float(value)
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(number):
+            continue
+        total += number
         found = True
     return round(total, 6) if found else None
 
@@ -282,6 +285,14 @@ def cell_scientific_metadata(
         ),
         None,
     )
+    return _scientific_metadata_values(metadata, source_mass, source_nominal)
+
+
+def _scientific_metadata_values(
+    metadata: dict[str, str],
+    source_mass: float | None,
+    source_nominal: float | None,
+) -> dict:
     values = {
         "active_mass_mg": {
             "source_value": source_mass,
@@ -308,6 +319,137 @@ def cell_scientific_metadata(
             value["override_value"] or value["legacy_value"] or value["source_value"]
         )
     return values
+
+
+def _empty_cell_file_summary() -> dict:
+    return {
+        "n_tests": 0,
+        "n_files": 0,
+        "total_cycles": 0,
+        "total_charge_capacity_mah": None,
+        "total_discharge_capacity_mah": None,
+        "has_offline": False,
+        "has_changed": False,
+        "has_changing": False,
+        "has_parsing": False,
+        "has_summary_pending": False,
+        "has_summary_error": False,
+    }
+
+
+def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
+    """Build library-row file summaries without materializing ORM graphs."""
+    if not cell_ids:
+        return {}
+    rows = (
+        db.query(
+            Test.cell_id.label("cell_id"),
+            func.count(func.distinct(Test.id)).label("n_tests"),
+            func.count(SourceFile.id).label("n_files"),
+            func.coalesce(func.sum(SourceFile.cycle_count), 0).label("total_cycles"),
+            func.sum(SourceFile.total_charge_capacity_mah).label("total_charge"),
+            func.sum(SourceFile.total_discharge_capacity_mah).label("total_discharge"),
+            func.sum(
+                case(
+                    (
+                        SourceFile.id.is_not(None)
+                        & (func.coalesce(SourceFile.capacity_summary_status, "") != "ready"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("not_ready"),
+            func.max(case((SourceFile.location_status == "offline", 1), else_=0)).label(
+                "has_offline"
+            ),
+            func.max(case((SourceFile.location_status == "changed", 1), else_=0)).label(
+                "has_changed"
+            ),
+            func.max(case((SourceFile.location_status == "changing", 1), else_=0)).label(
+                "has_changing"
+            ),
+            func.max(case((SourceFile.parse_status == "parsing", 1), else_=0)).label(
+                "has_parsing"
+            ),
+            func.max(
+                case(
+                    (
+                        (SourceFile.parse_status == "parsed")
+                        & (SourceFile.capacity_summary_status == "pending"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("has_summary_pending"),
+            func.max(
+                case(
+                    (
+                        (SourceFile.parse_status == "parsed")
+                        & (SourceFile.capacity_summary_status == "error"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("has_summary_error"),
+        )
+        .outerjoin(TestFile, TestFile.test_id == Test.id)
+        .outerjoin(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(Test.cell_id.in_(cell_ids))
+        .group_by(Test.cell_id)
+        .all()
+    )
+    summaries: dict[int, dict] = {}
+    for row in rows:
+        all_ready = int(row.n_files or 0) > 0 and int(row.not_ready or 0) == 0
+        summaries[int(row.cell_id)] = {
+            "n_tests": int(row.n_tests or 0),
+            "n_files": int(row.n_files or 0),
+            "total_cycles": int(row.total_cycles or 0),
+            "total_charge_capacity_mah": (
+                round(float(row.total_charge), 6)
+                if all_ready and row.total_charge is not None
+                else None
+            ),
+            "total_discharge_capacity_mah": (
+                round(float(row.total_discharge), 6)
+                if all_ready and row.total_discharge is not None
+                else None
+            ),
+            "has_offline": bool(row.has_offline),
+            "has_changed": bool(row.has_changed),
+            "has_changing": bool(row.has_changing),
+            "has_parsing": bool(row.has_parsing),
+            "has_summary_pending": bool(row.has_summary_pending),
+            "has_summary_error": bool(row.has_summary_error),
+        }
+    return summaries
+
+
+def _cell_source_scientific_values(
+    db: Session, cell_ids: list[int]
+) -> dict[int, tuple[float | None, float | None]]:
+    if not cell_ids:
+        return {}
+    rows = (
+        db.query(
+            Test.cell_id,
+            SourceFile.active_mass_mg,
+            SourceFile.nominal_capacity_mah,
+        )
+        .join(TestFile, TestFile.test_id == Test.id)
+        .join(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(Test.cell_id.in_(cell_ids))
+        .order_by(Test.id, TestFile.position)
+        .all()
+    )
+    values: dict[int, list[float | None]] = {}
+    for cell_id, mass, nominal in rows:
+        current = values.setdefault(int(cell_id), [None, None])
+        if current[0] is None:
+            current[0] = _positive_float(mass)
+        if current[1] is None:
+            current[1] = _positive_float(nominal)
+    return {cell_id: (value[0], value[1]) for cell_id, value in values.items()}
 
 
 def cell_scientific_presets(
@@ -420,17 +562,12 @@ def list_cells(
     if project_id is not None:
         sub = db.query(ProjectCell.cell_id).filter(ProjectCell.project_id == project_id).scalar_subquery()
         q = q.filter(Cell.id.in_(sub))
-    cells = (
-        q.options(
-            selectinload(Cell.tests)
-            .selectinload(Test.file_links)
-            .selectinload(TestFile.file),
-        )
-        .order_by(Cell.name)
-        .all()
-    )
+    cells = q.order_by(Cell.name).all()
+    cell_ids = [cell.id for cell in cells]
     tags_by_cell: dict[int, list[str]] = {cell.id: [] for cell in cells}
     metadata_by_cell: dict[int, dict[str, str]] = {cell.id: {} for cell in cells}
+    file_summaries = _cell_file_summaries(db, cell_ids)
+    source_values = _cell_source_scientific_values(db, cell_ids)
     if cells:
         tag_rows = (
             db.query(CellTag.cell_id, Tag.name)
@@ -450,16 +587,28 @@ def list_cells(
         )
         for cell_id, key, value in metadata_rows:
             metadata_by_cell[cell_id][key] = value
-    return [
-        cell_dict(
-            db,
-            cell,
-            tags_by_cell[cell.id],
-            include_metadata=False,
-            metadata_values=metadata_by_cell[cell.id],
+    result = []
+    for cell in cells:
+        metadata = metadata_by_cell[cell.id]
+        source_mass, source_nominal = source_values.get(cell.id, (None, None))
+        summary = file_summaries.get(cell.id, _empty_cell_file_summary())
+        result.append(
+            {
+                "id": cell.id,
+                "name": cell.name,
+                "description": cell.description,
+                "archived": cell.archived,
+                "cycling_status": cell.cycling_status,
+                "tags": sorted(tags_by_cell[cell.id]),
+                "scientific_metadata": _scientific_metadata_values(
+                    metadata, source_mass, source_nominal
+                ),
+                "scientific_presets": cell_scientific_presets(cell, metadata),
+                **summary,
+                "created_at": cell.created_at.isoformat(),
+            }
         )
-        for cell in cells
-    ]
+    return result
 
 
 class CellCreate(BaseModel):

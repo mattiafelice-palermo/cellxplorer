@@ -11,6 +11,19 @@ Read `README.md` for the short overview, `spec.md` for the original domain model
 `docs/` for parser and Windows packaging notes. The current code and tests take precedence where
 the original specification is stale.
 
+## Agent knowledge base
+
+Read `docs/agent-knowledge/README.md` before substantial work. It indexes the stable architectural
+knowledge, performance invariants, and change playbooks that are easy to miss by reading one module
+in isolation. The detailed migration, portable-report, parser, and packaging manuals remain in
+their existing files under `docs/` and are linked from that index.
+
+When work reveals a durable fact that would save a future agent meaningful investigation, update
+the relevant knowledge document in the same change. Record architectural constraints, ownership
+boundaries, proven failure modes, and verification techniques. Do not turn the knowledge base into
+a chronological work log, copy chat transcripts into it, or document guesses that have not been
+confirmed by code or tests.
+
 ## Core data rules
 
 - `SourceFile -> Test -> Cell` is the canonical scientific hierarchy. A cell is the primary object

@@ -14,11 +14,28 @@ from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
 from .routers import activity, analyses, diagnostics, files, library, replicates, settings, tree
 from .services.activity_log import record_activity
-from .services import sessions, source_monitor
+from .services import database_identity, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
 DATABASE_STATUS = initialize_database()
+
+
+def _load_database_instance_id() -> str | None:
+    if not DATABASE_STATUS.compatible:
+        return None
+    db = SessionLocal()
+    try:
+        return database_identity.ensure_database_instance_id(db)
+    except Exception:
+        db.rollback()
+        logging.getLogger(__name__).exception("Could not load database instance identity")
+        return None
+    finally:
+        db.close()
+
+
+DATABASE_INSTANCE_ID = _load_database_instance_id()
 
 app = FastAPI(title="CellXplorer", version=APP_VERSION)
 app.add_middleware(GZipMiddleware, minimum_size=4096, compresslevel=5)
@@ -142,7 +159,10 @@ def health():
 
 @app.get("/api/database/status")
 def database_status():
-    return DATABASE_STATUS.as_dict()
+    return {
+        **DATABASE_STATUS.as_dict(),
+        "database_instance_id": DATABASE_INSTANCE_ID,
+    }
 
 
 @app.get("/api/meta")

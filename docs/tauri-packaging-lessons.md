@@ -9,7 +9,7 @@ into a Windows desktop app with Tauri. Read this before changing the packaging s
 - The Python/FastAPI backend is frozen with PyInstaller as a Tauri sidecar executable.
 - Tauri bundles the frontend and the backend sidecar into a Windows installer.
 - The default successful installer target is NSIS:
-  `src-tauri/target/release/bundle/nsis/CellXplorer_0.1.1_x64-setup.exe`.
+  `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`.
 - MSI generation reached WiX linking, but WiX ICE validation failed in this environment because
   the Windows Installer service was not accessible to the build process. NSIS is the clean default.
 
