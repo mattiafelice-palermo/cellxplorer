@@ -168,3 +168,24 @@ Remaining:
   per-launch DB check is `quick_check`, full `integrity_check` only
   pre-migration. Commit `6ca14e5` holds the earlier half of this work;
   everything after (skeleton, installer overhaul) is uncommitted.
+
+## 2026-07-18 compact progress-page pass
+
+- The installer and uninstaller now use a 760 x 500 logical-pixel window
+  instead of 760 x 640. At 150% Windows scaling the captured window is
+  1140 x 750 physical pixels.
+- Custom-page footer dividers and buttons moved from y=310/322 to
+  y=250/262. The inner custom dialog height is 470 logical pixels.
+- The stock install-files page is now rebuilt as a branded CellXplorer
+  surface: icon and wordmark, top divider, page heading and subtitle,
+  status, teal progress bar, details toggle/log, and a bottom divider
+  above the native wizard actions.
+- The expanded details log is 128 logical pixels high and is reserved in
+  the layout, so showing it does not move the header, progress bar, or
+  footer actions.
+- Installer and uninstaller share the same progress macro, with distinct
+  install/remove headings and subtitles.
+- The side-effect-free preview harness verified welcome, location,
+  collapsed progress, expanded progress, and completed progress states.
+  The preview stub still exits before the custom finish page as described
+  in OPEN ISSUE #1; this pass did not change that harness behavior.

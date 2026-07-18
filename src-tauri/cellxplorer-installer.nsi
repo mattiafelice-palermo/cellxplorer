@@ -406,10 +406,10 @@ Function PageReinstall
       SendMessage $R3 ${BM_SETCHECK} ${BST_CHECKED} 0
     ${EndIf}
 
-    ${NSD_CreateHLine} 0 310u 100% 1u ""
+    ${NSD_CreateHLine} 0 250u 100% 1u ""
     Pop $0
-    !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 322u 18% "Back" CellXplorerNativeBack
-    !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 322u 18% "Continue" "12B886" CellXplorerNativeNext
+    !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Back" CellXplorerNativeBack
+    !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "12B886" CellXplorerNativeNext
 
     ${NSD_SetFocus} $R2
     nsDialogs::Show
@@ -557,7 +557,7 @@ Function CxPrepareWindow
     ${EndIf}
     IntOp $5 760 * $4
     IntOp $5 $5 / 96
-    IntOp $6 640 * $4
+    IntOp $6 500 * $4
     IntOp $6 $6 / 96
     System::Call 'user32::GetSystemMetrics(i 0)i.r0'
     System::Call 'user32::GetSystemMetrics(i 1)i.r1'
@@ -601,7 +601,7 @@ Function CxPrepareDialog
   ${EndIf}
   IntOp $5 680 * $4
   IntOp $5 $5 / 96
-  IntOp $6 570 * $4
+  IntOp $6 470 * $4
   IntOp $6 $6 / 96
   IntOp $7 40 * $4
   IntOp $7 $7 / 96
@@ -669,7 +669,7 @@ FunctionEnd
 ; The stock file-copy page positions its controls for the small default
 ; wizard window; restyle it to match the branded pages: white surface,
 ; teal flat progress bar, and the native buttons pinned bottom-right.
-!macro CxStyleInstFilesBody
+!macro CxStyleInstFilesBody HEADING SUBTITLE
   ; MUI re-shows its banner chrome when a stock page appears; put it away
   ; again (the wizard buttons 1/2/3 stay visible on this page).
   !insertmacro CxHideNativeControl 1034
@@ -690,27 +690,73 @@ FunctionEnd
     StrCpy $4 96
   ${EndIf}
 
-  ; Inner dialog: same 40px column as the custom pages, upper third.
+  ; Inner dialog: same 40px column as the custom pages. The stock MUI
+  ; page becomes a compact branded surface instead of floating its
+  ; progress controls in a mostly empty window.
   IntOp $5 680 * $4
   IntOp $5 $5 / 96
-  IntOp $6 260 * $4
+  IntOp $6 430 * $4
   IntOp $6 $6 / 96
   IntOp $7 40 * $4
   IntOp $7 $7 / 96
-  IntOp $8 170 * $4
+  IntOp $8 0 * $4
   IntOp $8 $8 / 96
   System::Call 'user32::SetWindowPos(p $0, p 0, i $7, i $8, i $5, i $6, i 0x0004)'
+
+  ; Brand header. These controls are children of the stock page dialog,
+  ; so they are destroyed automatically when the progress page closes.
+  IntOp $7 20 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 24 * $4
+  IntOp $8 $8 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x50000003, i 0, i $7, i $8, i $8, p $0, p 0, p 0, p 0)p.r1'
+  ${NSD_SetIconFromInstaller} $1 $2
+  SetCtlColors $1 "202124" "FFFFFF"
+
+  IntOp $7 38 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 24 * $4
+  IntOp $8 $8 / 96
+  IntOp $9 260 * $4
+  IntOp $9 $9 / 96
+  IntOp $R6 24 * $4
+  IntOp $R6 $R6 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "${PRODUCTNAME}", i 0x50000000, i $7, i $8, i $9, i $R6, p $0, p 0, p 0, p 0)p.r1'
+  !insertmacro CxStyleText $1 "202124" "FFFFFF" $CxBrandFont
+
+  IntOp $7 64 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 1 * $4
+  IntOp $8 $8 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x50000000, i 0, i $7, i $5, i $8, p $0, p 0, p 0, p 0)p.r1'
+  SetCtlColors $1 "D6DCE2" "D6DCE2"
+
+  IntOp $7 88 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 36 * $4
+  IntOp $8 $8 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "${HEADING}", i 0x50000000, i 0, i $7, i $5, i $8, p $0, p 0, p 0, p 0)p.r1'
+  !insertmacro CxStyleText $1 "111315" "FFFFFF" $CxHeadingFont
+
+  IntOp $7 122 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 24 * $4
+  IntOp $8 $8 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "${SUBTITLE}", i 0x50000000, i 0, i $7, i $5, i $8, p $0, p 0, p 0, p 0)p.r1'
+  !insertmacro CxStyleText $1 "7A8491" "FFFFFF" $CxBodyFont
 
   ; Stretch the stock controls across the full content column: their
   ; template sizes are for the small default wizard.
   IntOp $8 22 * $4
   IntOp $8 $8 / 96
   GetDlgItem $1 $0 1006
-  System::Call 'user32::MoveWindow(p r1, i 0, i 0, i $5, i $8, i 1)'
+  IntOp $7 158 * $4
+  IntOp $7 $7 / 96
+  System::Call 'user32::MoveWindow(p r1, i 0, i $7, i $5, i $8, i 1)'
   SetCtlColors $1 "7A8491" "FFFFFF"
   SendMessage $1 ${WM_SETFONT} $CxBodyFont 1
 
-  IntOp $8 30 * $4
+  IntOp $8 184 * $4
   IntOp $8 $8 / 96
   IntOp $9 12 * $4
   IntOp $9 $9 / 96
@@ -720,7 +766,7 @@ FunctionEnd
   SendMessage $1 0x0409 0 0x0086B812
   SendMessage $1 0x2001 0 0x00F5F3F1
 
-  IntOp $8 56 * $4
+  IntOp $8 214 * $4
   IntOp $8 $8 / 96
   IntOp $9 26 * $4
   IntOp $9 $9 / 96
@@ -730,12 +776,20 @@ FunctionEnd
   System::Call 'user32::MoveWindow(p r1, i 0, i $8, i $R6, i $9, i 1)'
   SendMessage $1 ${WM_SETFONT} $CxBodyFont 1
 
-  IntOp $8 94 * $4
+  IntOp $8 252 * $4
   IntOp $8 $8 / 96
-  IntOp $9 160 * $4
+  IntOp $9 128 * $4
   IntOp $9 $9 / 96
   GetDlgItem $1 $0 1016
   System::Call 'user32::MoveWindow(p r1, i 0, i $8, i $5, i $9, i 1)'
+
+  ; Divider above the native actions, matching every custom page.
+  IntOp $7 398 * $4
+  IntOp $7 $7 / 96
+  IntOp $8 1 * $4
+  IntOp $8 $8 / 96
+  System::Call 'user32::CreateWindowExW(i 0, w "STATIC", w "", i 0x50000000, i 0, i $7, i $5, i $8, p $0, p 0, p 0, p 0)p.r1'
+  SetCtlColors $1 "D6DCE2" "D6DCE2"
 
   ; Pin the native wizard buttons to the bottom-right of the resized
   ; window; their template position is mid-air after the resize.
@@ -767,7 +821,7 @@ FunctionEnd
 !macroend
 
 Function CxStyleInstFiles
-  !insertmacro CxStyleInstFilesBody
+  !insertmacro CxStyleInstFilesBody "Install ${PRODUCTNAME}" "Installing application files and shortcuts."
 FunctionEnd
 
 Function CellXplorerWelcomePage
@@ -800,10 +854,10 @@ Function CellXplorerWelcomePage
   Pop $0
   !insertmacro CxStyleText $0 "7A8491" "FFFFFF" $CxBodyFont
 
-  ${NSD_CreateHLine} 0 310u 100% 1u ""
+  ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
-  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 322u 18% "Cancel" CellXplorerNativeCancel
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 322u 18% "Continue" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Cancel" CellXplorerNativeCancel
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "12B886" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
@@ -874,10 +928,10 @@ Function CellXplorerInstallPage
   Pop $0
   !insertmacro CxStyleText $0 "7A8491" "FFFFFF" $CxSmallFont
 
-  ${NSD_CreateHLine} 0 310u 100% 1u ""
+  ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
-  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 322u 18% "Back" CellXplorerNativeBack
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 322u 18% "Install" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Back" CellXplorerNativeBack
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Install" "12B886" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
@@ -994,9 +1048,9 @@ Function CellXplorerFinishPage
   ${NSD_OnClick} $CxLaunchText CellXplorerToggleLaunchOption
   Call CellXplorerPaintLaunchOption
 
-  ${NSD_CreateHLine} 0 310u 100% 1u ""
+  ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 322u 18% "Finish" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Finish" "12B886" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
@@ -1023,7 +1077,7 @@ Function un.CxPrepareWindow
   ${EndIf}
   IntOp $5 760 * $4
   IntOp $5 $5 / 96
-  IntOp $6 640 * $4
+  IntOp $6 500 * $4
   IntOp $6 $6 / 96
   System::Call 'user32::GetSystemMetrics(i 0)i.r0'
   System::Call 'user32::GetSystemMetrics(i 1)i.r1'
@@ -1059,7 +1113,7 @@ Function un.CxPrepareDialog
   ${EndIf}
   IntOp $5 680 * $4
   IntOp $5 $5 / 96
-  IntOp $6 570 * $4
+  IntOp $6 470 * $4
   IntOp $6 $6 / 96
   IntOp $7 40 * $4
   IntOp $7 $7 / 96
@@ -1085,7 +1139,7 @@ Function un.CellXplorerNativeCancel
 FunctionEnd
 
 Function un.CxStyleInstFiles
-  !insertmacro CxStyleInstFilesBody
+  !insertmacro CxStyleInstFilesBody "Uninstall ${PRODUCTNAME}" "Removing application files and shortcuts."
 FunctionEnd
 
 Function un.CellXplorerNativeNext
@@ -1140,10 +1194,10 @@ Function un.CellXplorerUninstallPage
     ${NSD_Check} $CxKeepDataRadio
   ${EndIf}
 
-  ${NSD_CreateHLine} 0 310u 100% 1u ""
+  ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
-  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 322u 18% "Cancel" un.CellXplorerNativeCancel
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 322u 18% "Uninstall" "FA5252" un.CellXplorerNativeNext
+  !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Cancel" un.CellXplorerNativeCancel
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Uninstall" "FA5252" un.CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
