@@ -24,9 +24,32 @@ from starlette.background import BackgroundTask
 
 from ..db import get_db
 from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
-from ..services import analysis_engine as engine
-from ..services import analysis_cache, background_jobs, portable_analysis
+from ..services import background_jobs
 from ..services.entity_ids import next_analysis_id
+from ..services.lazy_module import LazyModule
+
+
+def _load_analysis_engine():
+    from ..services import analysis_engine
+
+    return analysis_engine
+
+
+def _load_analysis_cache():
+    from ..services import analysis_cache as module
+
+    return module
+
+
+def _load_portable_analysis():
+    from ..services import portable_analysis as module
+
+    return module
+
+
+engine = LazyModule(_load_analysis_engine)
+analysis_cache = LazyModule(_load_analysis_cache)
+portable_analysis = LazyModule(_load_portable_analysis)
 
 router = APIRouter(prefix="/api", tags=["analyses"])
 

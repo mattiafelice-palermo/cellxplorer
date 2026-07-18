@@ -10,8 +10,6 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -34,8 +32,53 @@ from ..models import (
     Test,
     TestFile,
 )
-from ..services import background_jobs, cache, calc, parsing, scanner
+from ..services import background_jobs
 from ..services.activity_log import record_activity
+from ..services.lazy_module import LazyModule
+
+
+def _load_numpy():
+    import numpy
+
+    return numpy
+
+
+def _load_pandas():
+    import pandas
+
+    return pandas
+
+
+def _load_cache():
+    from ..services import cache as module
+
+    return module
+
+
+def _load_calc():
+    from ..services import calc as module
+
+    return module
+
+
+def _load_parsing():
+    from ..services import parsing as module
+
+    return module
+
+
+def _load_scanner():
+    from ..services import scanner as module
+
+    return module
+
+
+np = LazyModule(_load_numpy)
+pd = LazyModule(_load_pandas)
+cache = LazyModule(_load_cache)
+calc = LazyModule(_load_calc)
+parsing = LazyModule(_load_parsing)
+scanner = LazyModule(_load_scanner)
 
 router = APIRouter(prefix="/api", tags=["files"])
 

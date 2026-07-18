@@ -10,7 +10,6 @@ from pathlib import Path
 from time import sleep as _sleep
 from typing import Literal
 
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
@@ -32,11 +31,61 @@ from ..models import (
     Test,
     TestFile,
 )
-from ..services import analysis_engine as analysis_svc
 from ..services import background_jobs
 from ..services.activity_log import record_activity
-from ..services import cache, parsing, protocol, scanner, stitch
+from ..services.lazy_module import LazyModule
 from .files import file_dict
+
+
+def _load_numpy():
+    import numpy
+
+    return numpy
+
+
+def _load_analysis_engine():
+    from ..services import analysis_engine
+
+    return analysis_engine
+
+
+def _load_cache():
+    from ..services import cache as module
+
+    return module
+
+
+def _load_parsing():
+    from ..services import parsing as module
+
+    return module
+
+
+def _load_protocol():
+    from ..services import protocol as module
+
+    return module
+
+
+def _load_scanner():
+    from ..services import scanner as module
+
+    return module
+
+
+def _load_stitch():
+    from ..services import stitch as module
+
+    return module
+
+
+np = LazyModule(_load_numpy)
+analysis_svc = LazyModule(_load_analysis_engine)
+cache = LazyModule(_load_cache)
+parsing = LazyModule(_load_parsing)
+protocol = LazyModule(_load_protocol)
+scanner = LazyModule(_load_scanner)
+stitch = LazyModule(_load_stitch)
 
 router = APIRouter(prefix="/api", tags=["library"])
 

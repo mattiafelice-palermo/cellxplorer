@@ -119,6 +119,17 @@ fn stop_backend(app: &AppHandle) {
     if let Some(child_state) = app.try_state::<BackendChild>() {
         if let Ok(mut child) = child_state.0.lock() {
             if let Some(child) = child.take() {
+                // The PyInstaller onefile launcher re-executes itself, so
+                // killing only the direct child orphans the inner process,
+                // which keeps the backend port and the installed exe locked.
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/T", "/PID", &child.pid().to_string()])
+                        .creation_flags(0x08000000)
+                        .status();
+                }
                 let _ = child.kill();
             }
         }

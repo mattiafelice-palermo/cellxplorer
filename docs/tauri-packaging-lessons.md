@@ -193,3 +193,17 @@ The packaging spike successfully produced:
 The first installed-app smoke test showed the Tauri shell launched and the backend health endpoint
 responded, but the frontend initially failed to load the cell database because it used relative API
 URLs. That is why the API base URL/CORS changes above matter.
+
+## Custom installer maintenance
+
+The production NSIS bundle now uses `src-tauri/cellxplorer-installer.nsi`, not Tauri's implicit
+stock wizard. It owns the visible installer and uninstaller layout, including the data-preservation
+choice. Keep Tauri's generated install, upgrade, shortcut, registry, WebView2, and uninstaller
+sections intact when changing the appearance. Replacing the entire template with a short custom
+script is unsafe because it silently drops those behaviors.
+
+NSIS dialog coordinates use dialog units, while Win32 window sizing uses physical pixels. In the
+760-pixel CellXplorer frame, controls must be smoke-tested from the compiled installer; a layout
+that looks arithmetically correct can still clip because percentage widths are based on the MUI
+dialog resource. The current template intentionally constrains visible content to the tested inner
+width and hides all stock MUI header/footer/navigation control IDs on custom pages.

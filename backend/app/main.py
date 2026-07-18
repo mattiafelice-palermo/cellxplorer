@@ -3,26 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 
-
-def _warm_heavy_imports() -> None:
-    # Join order: the main thread blocks on pandas (via the routers) before
-    # NewareNDA (via parsing); pyarrow last — nothing joins on it at boot.
-    try:
-        import pandas  # noqa: F401
-        import NewareNDA  # noqa: F401
-        import pyarrow  # noqa: F401  pandas defers it to the first Parquet read
-    except Exception:
-        # The real import site will surface the error with full context.
-        logging.getLogger(__name__).exception("Import warm-up failed")
-
-
-# Load the data stack in parallel with the web stack below: boot pays
-# max() of the two chains instead of their sum, and the module import
-# locks make the routers' own `import pandas` wait for this thread.
-# Keep it ONE thread with packages the lines below never import —
-# importing the same package from two threads can hit _DeadlockError.
-threading.Thread(target=_warm_heavy_imports, name="import-warmup", daemon=True).start()
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -34,7 +14,7 @@ from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
 from .routers import activity, analyses, diagnostics, files, library, replicates, settings, tree
 from .services.activity_log import record_activity
-from .services import calc, parsing, scanner, sessions, source_monitor
+from .services import sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
@@ -108,10 +88,33 @@ def _record_migration_activity() -> None:
         db.close()
 
 
+def _warm_scientific_services() -> None:
+    """Warm the data stack after the API is listening, then start backfills."""
+    try:
+        import pandas  # noqa: F401
+        import NewareNDA  # noqa: F401
+        import pyarrow  # noqa: F401
+
+        from .services import scanner
+
+        scanner.start_capacity_summary_backfill()
+    except Exception:
+        # The real import site will still surface a failure with full context.
+        logging.getLogger(__name__).exception("Scientific service warm-up failed")
+
+
+def _start_scientific_service_warmup() -> None:
+    threading.Thread(
+        target=_warm_scientific_services,
+        name="scientific-service-warmup",
+        daemon=True,
+    ).start()
+
+
 if DATABASE_STATUS.compatible:
     _record_migration_activity()
     app.add_event_handler("startup", sessions.start_runtime_session)
-    app.add_event_handler("startup", scanner.start_capacity_summary_backfill)
+    app.add_event_handler("startup", _start_scientific_service_warmup)
     app.add_event_handler("startup", source_monitor.start_source_monitor)
     app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
     app.add_event_handler(
@@ -144,6 +147,8 @@ def database_status():
 
 @app.get("/api/meta")
 def meta():
+    from .services import calc, parsing
+
     return {
         "app_version": APP_VERSION,
         "database_schema_revision": DATABASE_STATUS.schema_revision,

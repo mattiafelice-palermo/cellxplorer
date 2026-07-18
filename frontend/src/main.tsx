@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
+import { ApiError } from "./api";
 
 const theme = createTheme({
   primaryColor: "teal",
@@ -18,7 +19,17 @@ const theme = createTheme({
 });
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      // The desktop window is intentionally displayed before its Python
+      // sidecar is ready. Keep page queries alive during that short boot
+      // window, but do not retry real HTTP/application errors.
+      retry: (failureCount, error) =>
+        !(error instanceof ApiError) && failureCount < 30,
+      retryDelay: 250,
+      refetchOnWindowFocus: false,
+    },
+  },
 });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

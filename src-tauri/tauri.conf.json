@@ -35,9 +35,12 @@
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,
+        "template": "cellxplorer-installer.nsi",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "installerHooks": "nsis-hooks.nsh",
+        "headerImage": "nsis-header.bmp",
+        "sidebarImage": "nsis-sidebar.bmp",
         "installMode": "perMachine"
       },
       "wix": {

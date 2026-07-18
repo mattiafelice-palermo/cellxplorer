@@ -72,6 +72,35 @@ The Tauri bundle uses `src-tauri/icons/icon.ico`, and the runtime window/taskbar
 uses `src-tauri/icons/icon-256.rgba`. If the root `.ico` is replaced, regenerate both
 of those files before rebuilding.
 
+## Branded NSIS installer
+
+`src-tauri/cellxplorer-installer.nsi` is a vendored copy of Tauri's NSIS template with the
+CellXplorer installer and uninstaller surfaces built directly in nsDialogs. Tauri is configured to
+use it through `bundle.windows.nsis.template` in `src-tauri/tauri.conf.json`. The first visible
+installer page is the location step; it includes the three-step progress indicator, desktop and
+startup options, and the custom CellXplorer actions. Uninstall preserves `%USERPROFILE%\.cellxplorer`
+by default and offers deletion only as an explicit, confirmed destructive choice.
+
+The template is version-coupled to the Tauri CLI. When upgrading Tauri, compare it with the exact
+upstream template for the new CLI before carrying the branded sections forward. A template can
+compile successfully while stock MUI controls overlap the custom page, so visually smoke-test both
+the installer and uninstaller after template or NSIS changes. Never test the destructive uninstall
+choice against a real user data directory.
+
+## Desktop startup performance
+
+The packaged backend is a PyInstaller one-file sidecar. A cold launch includes extraction of the
+scientific Python runtime before FastAPI can listen. Database migration inspection itself is small
+(about 0.1-0.2 seconds on the development database); do not weaken schema compatibility checks to
+optimize startup. Expensive pandas, NewareNDA, PyArrow, analysis, and cache modules are loaded lazily
+after API startup, and old-cache capacity backfilling starts from the same deferred warm-up thread.
+
+The frontend deliberately mounts its normal route immediately while the database-status query is
+pending. Network-only query failures are retried during the short sidecar boot window. The backend
+compatibility middleware remains authoritative: if the schema is unsupported, normal API requests
+are rejected and the frontend replaces the route with the compatibility screen as soon as status
+arrives. This restores the pre-0.6 responsive shell without bypassing migration safety.
+
 MSI is possible, but the default target is NSIS because WiX validation can fail on
 machines where the Windows Installer service is not available to the build process.
 For this spike, MSI could be emitted manually with WiX `light.exe -sval` after Tauri

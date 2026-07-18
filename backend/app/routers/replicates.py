@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -19,9 +17,59 @@ from ..models import (
     ReplicateGroup,
     ReplicateGroupCell,
 )
-from ..services import analysis_engine as analysis_svc
-from ..services import cache, parsing, scanner, stitch
+from ..services.lazy_module import LazyModule
 from .library import cell_capacity_totals
+
+
+def _load_numpy():
+    import numpy
+
+    return numpy
+
+
+def _load_pandas():
+    import pandas
+
+    return pandas
+
+
+def _load_analysis_engine():
+    from ..services import analysis_engine
+
+    return analysis_engine
+
+
+def _load_cache():
+    from ..services import cache as module
+
+    return module
+
+
+def _load_parsing():
+    from ..services import parsing as module
+
+    return module
+
+
+def _load_scanner():
+    from ..services import scanner as module
+
+    return module
+
+
+def _load_stitch():
+    from ..services import stitch as module
+
+    return module
+
+
+np = LazyModule(_load_numpy)
+pd = LazyModule(_load_pandas)
+analysis_svc = LazyModule(_load_analysis_engine)
+cache = LazyModule(_load_cache)
+parsing = LazyModule(_load_parsing)
+scanner = LazyModule(_load_scanner)
+stitch = LazyModule(_load_stitch)
 
 router = APIRouter(prefix="/api", tags=["replicates"])
 

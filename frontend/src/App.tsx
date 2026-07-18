@@ -266,18 +266,7 @@ export default function App() {
       ? 100
       : 0;
 
-  if (databaseStatus.isLoading) {
-    return (
-      <Group h="100vh" justify="center">
-        <Stack align="center" gap="sm">
-          <IconLoader2 size={28} className="source-check-spin" />
-          <Text c="dimmed">Checking the CellXplorer database...</Text>
-        </Stack>
-      </Group>
-    );
-  }
-
-  if (databaseStatus.isError || !databaseStatus.data) {
+  if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
       <Group h="100vh" justify="center" p="xl">
         <Alert
@@ -292,7 +281,7 @@ export default function App() {
     );
   }
 
-  if (!databaseStatus.data.compatible) {
+  if (databaseStatus.data && !databaseStatus.data.compatible) {
     const status = databaseStatus.data;
     const title =
       status.status === "database_too_new"
