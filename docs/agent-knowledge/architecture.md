@@ -35,6 +35,43 @@ Canonical user data lives outside the installation directory, normally under
 - `cellxplorer.db` is the canonical relational state.
 - `cache/` contains regenerable parsed and derived Parquet data.
 - `imports/`, `logs/`, and `backups/` contain app-managed supporting data.
+- `downloads-history.json` is a disposable, atomically written registry of exported files
+  (`services/download_registry.py`): UX metadata only, never scientific data.
+
+## Global search and shortcuts
+
+`components/CommandPalette.tsx` (Ctrl+K) searches cells, analyses, saved plots, replicate groups,
+and folders entirely client-side: it reads the startup-persisted `["cells",""]`,
+`["analyses",""]`, `["replicate-groups"]`, and `["tree"]` queries from the React Query cache, so it
+never issues a request. Ranking uses `src/fuzzySearch.ts`, a local scorer tuned for
+delimiter-heavy names (`ME_20260512_LFP_LPMoL_611_FM+CYFC_25C`): exact/prefix/substring beat
+word-boundary hits, which beat scattered subsequences. Do not swap in a generic fuzzy library
+without re-checking that typing `611` still ranks the `_611_` cell first.
+
+Results navigate through one-shot URL parameters, each consumed and stripped by its page:
+`/?cell=<id>` and `/?replicate=<id>` (LibraryPage), `/analyses/<id>?tab=<key>&plot=<id>`
+(AnalysisPage restores the saved plot and its tab), and `/projects?folder=<id>` (ProjectsPage
+selects the folder and expands its ancestor chain). Saved plots are searchable because
+`analysis_dict` includes a compact `saved_plots` array (id, name, tab) in the list summary; keep
+that field small — the full spec must not be sent to the index.
+
+Application shortcuts live in one keydown listener in `App.tsx`: Ctrl+K toggles the palette,
+Ctrl+B collapses the navbar, and Ctrl +/-/0 plus Ctrl+wheel control UI zoom. Ctrl+A is
+deliberately never bound so "select all" keeps working in every input.
+
+## Downloads and exports
+
+Every export (plot PNG/PDF/SVG, CSV/XLSX data, portable HTML, diagnostics) funnels through
+`frontend/src/downloads.ts` `saveDownload`. It honors the `download_mode` setting — `folder`
+(auto-saved server-side via `POST /api/downloads`, which records the entry) or `ask` (native
+Tauri save dialog, then `POST /api/downloads/history` to record the chosen path) — and on the
+plain web build falls back to a browser download recorded without an actionable path. After a
+successful save it dispatches a `cellxplorer:download` window event carrying the entry.
+`components/DownloadsButton.tsx` (header, beside Activity) listens for that event to auto-open its
+popover, and lists history from `GET /api/downloads/history`. File actions are desktop-only:
+`open_download` / `reveal_download` Tauri commands (main.rs; reveal uses `explorer /select`), and
+delete goes through `DELETE /api/downloads/history/{id}?delete_file=…`. The web build shows history
+but hides open/reveal/delete-file. Any new export path must call `saveDownload` to appear here.
 
 Original Neware files normally remain at their source paths. The database stores their provenance,
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not

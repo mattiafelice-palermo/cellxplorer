@@ -290,6 +290,49 @@ fn open_app_folder(app: AppHandle, kind: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[allow(deprecated)]
+#[tauri::command]
+fn open_download(app: AppHandle, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err("The file is no longer at this location.".to_string());
+    }
+    app.shell()
+        .open(path, None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn reveal_download(path: String) -> Result<(), String> {
+    let target = std::path::Path::new(&path);
+    if !target.is_file() {
+        return Err("The file is no longer at this location.".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // explorer /select,PATH opens the folder with the file highlighted.
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", target.display()))
+            .creation_flags(0x08000000)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Fall back to opening the containing folder.
+        let folder = target
+            .parent()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or(path);
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
 fn main() {
     let start_hidden = std::env::args().any(|arg| arg == "--hidden");
     let initial_deep_link =
@@ -321,6 +364,8 @@ fn main() {
             is_autostart_enabled,
             is_main_window_visible,
             open_app_folder,
+            open_download,
+            reveal_download,
             quit_app,
             set_autostart_enabled,
             set_tray_status,

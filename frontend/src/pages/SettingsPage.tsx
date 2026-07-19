@@ -49,6 +49,7 @@ import {
 } from "../api";
 import { isTauriApp } from "../downloads";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
+import { WARMUP_NOW_EVENT } from "../components/CacheWarmupCoordinator";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -345,6 +346,28 @@ export function SettingsPage() {
     },
     onError: (error: Error) =>
       notifications.show({ message: error.message || "Could not save cache settings.", color: "red" }),
+  });
+  const refreshCacheNow = useMutation({
+    mutationFn: () => post<{ id?: number }>("/api/cache/warmup/start"),
+    onSuccess: (job) => {
+      // Ask the idle coordinator to run at once instead of waiting for the
+      // configured idle delay.
+      window.dispatchEvent(new Event(WARMUP_NOW_EVENT));
+      queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      const total = (job as { total?: number } | undefined)?.total ?? 0;
+      notifications.show({
+        message: total
+          ? `Preparing ${total} plot${total === 1 ? "" : "s"} that need a refresh.`
+          : "All saved plots are already up to date.",
+        color: "teal",
+      });
+    },
+    onError: (error: Error) =>
+      notifications.show({
+        message: error.message || "Could not start cache preparation.",
+        color: "red",
+      }),
   });
   const cleanCache = useMutation({
     mutationFn: (payload: { category?: string; kind?: string; identifier?: string; force?: boolean }) =>
@@ -1446,7 +1469,15 @@ export function SettingsPage() {
                   suffix=" s"
                   maw={240}
                 />
-                <Group justify="flex-end">
+                <Group justify="space-between">
+                  <Button
+                    variant="default"
+                    leftSection={<IconRefresh size={16} />}
+                    loading={refreshCacheNow.isPending}
+                    onClick={() => refreshCacheNow.mutate()}
+                  >
+                    Check and prepare now
+                  </Button>
                   <Button
                     leftSection={<IconDeviceFloppy size={16} />}
                     disabled={!cacheDirty}
@@ -1456,6 +1487,11 @@ export function SettingsPage() {
                     Save settings
                   </Button>
                 </Group>
+                <Text size="xs" c="dimmed">
+                  "Check and prepare now" rescans every saved plot, queues the ones whose cache is
+                  missing or out of date, and starts preparing them immediately instead of waiting
+                  for the idle delay.
+                </Text>
               </Stack>
             </Paper>
 

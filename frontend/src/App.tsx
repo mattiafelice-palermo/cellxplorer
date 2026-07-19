@@ -1,11 +1,13 @@
 import {
   Accordion,
+  ActionIcon,
   Alert,
   AppShell,
   Badge,
   Button,
   Code,
   Group,
+  Kbd,
   Modal,
   NavLink,
   Paper,
@@ -15,6 +17,7 @@ import {
   Divider,
   Text,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,7 +29,9 @@ import {
   IconDatabase,
   IconFolder,
   IconFolderOpen,
+  IconLayoutSidebar,
   IconLoader2,
+  IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
@@ -39,7 +44,9 @@ import {
   type DatabaseStatus,
   type SourceCheckJob,
 } from "./api";
+import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
+import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
@@ -87,6 +94,8 @@ export default function App() {
   const queryClient = useQueryClient();
   const [debugOpen, setDebugOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navbarCollapsed, setNavbarCollapsed] = useState(false);
   const handledSourceCheckJob = useRef<number | null>(null);
   const handledSourceChangingState = useRef("");
   const [uiZoom, setUiZoom] = useState(() => {
@@ -141,6 +150,20 @@ export default function App() {
     const adjust = (delta: number) =>
       setUiZoom((current) => Math.min(1.6, Math.max(0.7, Math.round((current + delta) * 10) / 10)));
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const key = event.key.toLowerCase();
+      // Ctrl+K opens global search, Ctrl+B toggles the sidebar. Both are safe
+      // to capture while typing; Ctrl+A is deliberately left to "select all".
+      if (key === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (key === "b") {
+        event.preventDefault();
+        setNavbarCollapsed((collapsed) => !collapsed);
+        return;
+      }
       if (!event.ctrlKey) return;
       if (event.key === "+" || event.key === "=") {
         event.preventDefault();
@@ -412,7 +435,11 @@ export default function App() {
   return (
     <AppShell
       header={{ height: 52 * uiZoom }}
-      navbar={{ width: 290 * uiZoom, breakpoint: "xs" }}
+      navbar={{
+        width: 290 * uiZoom,
+        breakpoint: "xs",
+        collapsed: { desktop: navbarCollapsed, mobile: navbarCollapsed },
+      }}
       padding={0}
     >
       <CacheWarmupCoordinator enabled={databaseStatus.data?.compatible === true} />
@@ -425,6 +452,16 @@ export default function App() {
           style={{ zoom: uiZoom, width: "100%" }}
         >
           <Group gap="xs">
+            <Tooltip label="Toggle sidebar (Ctrl+B)" withArrow>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                aria-label="Toggle sidebar"
+                onClick={() => setNavbarCollapsed((collapsed) => !collapsed)}
+              >
+                <IconLayoutSidebar size={18} />
+              </ActionIcon>
+            </Tooltip>
             <img
               src="/app-icon.png"
               alt=""
@@ -432,6 +469,16 @@ export default function App() {
               style={{ width: 24, height: 24, display: "block" }}
             />
             <Title order={4}>CellXplorer</Title>
+            <Button
+              size="compact-sm"
+              variant="default"
+              ml="md"
+              leftSection={<IconSearch size={14} />}
+              rightSection={<Kbd size="xs">Ctrl+K</Kbd>}
+              onClick={() => setPaletteOpen(true)}
+            >
+              Search
+            </Button>
           </Group>
           <Group gap="xs">
             <Button
@@ -464,6 +511,7 @@ export default function App() {
                 "Activity"
               )}
             </Button>
+            <DownloadsButton />
             <Button
               size="compact-sm"
               variant="subtle"
@@ -546,6 +594,7 @@ export default function App() {
         </div>
       </AppShell.Main>
 
+      <CommandPalette opened={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <DiagnosticsModal
         opened={debugOpen}
         onClose={() => setDebugOpen(false)}

@@ -39,8 +39,8 @@ import {
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
-import { DragEvent, MouseEvent, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import {
   AnalysisFull,
@@ -433,6 +433,7 @@ function AddReferencesModal({
 export function ProjectsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<number>>(new Set());
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
@@ -456,13 +457,46 @@ export function ProjectsPage() {
   const visibleItems = useMemo(() => visibleTreeItems(folders, expandedFolders), [folders, expandedFolders]);
   const itemsByKey = useMemo(() => new Map(visibleItems.map((item) => [item.key, item])), [visibleItems]);
 
+  // Deep link from the command palette: ?folder=<id> selects the folder and
+  // expands every ancestor so it is visible in the tree. Consumed once.
+  const folderDeepLinkApplied = useRef(false);
+  useEffect(() => {
+    if (folderDeepLinkApplied.current || !tree.data) return;
+    const folderParam = searchParams.get("folder");
+    if (!folderParam) return;
+    const targetId = Number(folderParam);
+    if (!Number.isFinite(targetId)) return;
+    folderDeepLinkApplied.current = true;
+
+    const ancestors: number[] = [];
+    const walk = (nodes: FolderNode[], trail: number[]): boolean => {
+      for (const node of nodes) {
+        if (node.id === targetId) {
+          ancestors.push(...trail);
+          return true;
+        }
+        if (walk(node.children, [...trail, node.id])) return true;
+      }
+      return false;
+    };
+    if (walk(tree.data.folders, [])) {
+      setExpandedFolders((current) => new Set([...current, ...ancestors, targetId]));
+      setSelectedFolderId(targetId);
+      setSelectedKeys(new Set([folderKey(targetId)]));
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("folder");
+    setSearchParams(next, { replace: true });
+  }, [tree.data, searchParams, setSearchParams]);
+
   useEffect(() => {
     if (!tree.data) return;
+    if (searchParams.get("folder")) return;
     if (selectedFolderId !== null && findFolder(tree.data.folders, selectedFolderId)) return;
     const firstFolder = tree.data.folders[0]?.id ?? null;
     setSelectedFolderId(firstFolder);
     if (firstFolder !== null) setSelectedKeys(new Set([folderKey(firstFolder)]));
-  }, [tree.data, selectedFolderId]);
+  }, [tree.data, selectedFolderId, searchParams]);
 
   useEffect(() => {
     if (folderIds.length > 0 && expandedFolders.size === 0) {

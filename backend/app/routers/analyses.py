@@ -94,6 +94,18 @@ def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
             + len(a.spec.get("selection", {}).get("hidden_replicate_group_ids", []))
         ),
         "quantity": a.spec.get("presentation", {}).get("quantity"),
+        # Compact saved-plot index so the command palette can offer plots as
+        # results and open the analysis on the matching tab without loading
+        # every full spec.
+        "saved_plots": [
+            {
+                "id": str(plot.get("id")),
+                "name": str(plot.get("name") or "Saved plot"),
+                "tab": str(plot.get("tab") or "cycles"),
+            }
+            for plot in (a.spec.get("saved_plots") or [])
+            if plot.get("id")
+        ],
         "has_provenance": a.provenance is not None,
         "computed_at": (a.provenance or {}).get("computed_at"),
         "parser_version": (a.provenance or {}).get("parser_version"),

@@ -75,12 +75,13 @@ import {
   type ReactNode,
 } from "react";
 import PlotlyLib from "plotly.js-dist-min";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
   AnalysisFull,
   AnalysisSpec,
   AnalysisTabKey,
+  ANALYSIS_TAB_KEYS,
   ApiError,
   Badge as ApiBadge,
   BackgroundJob,
@@ -5355,7 +5356,7 @@ function PlotHeader({
               variant="default"
               leftSection={<IconTable size={14} />}
               disabled={!canExport}
-              onClick={() => setDataExportPopoverOpen(true)}
+              onClick={exportData}
             >
               {exportStyle.data_export_format === "xlsx" ? "XLSX" : "CSV"}
             </Button>
@@ -5485,7 +5486,7 @@ function PlotHeader({
               variant="default"
               leftSection={<IconDownload size={14} />}
               disabled={!canExport}
-              onClick={() => setExportPopoverOpen(true)}
+              onClick={exportPlot}
             >
               {selectedFormat.toUpperCase()}
             </Button>
@@ -7054,6 +7055,7 @@ export function AnalysisPage() {
   const { analysisId } = useParams();
   const aid = Number(analysisId);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
 
   const analysis = useQuery({
@@ -7156,6 +7158,33 @@ export function AnalysisPage() {
   useEffect(() => {
     if (activeTab === "time_capacity") setTimeCapacityVisited(true);
   }, [activeTab]);
+
+  // Deep link from the command palette: ?tab=<key> selects the tab and
+  // ?plot=<id> restores that saved plot. Applied once the spec has loaded,
+  // then stripped from the URL. Declared with the other hooks so it always
+  // runs — the component returns early while the analysis is still loading.
+  const deepLinkApplied = useRef(false);
+  useEffect(() => {
+    if (deepLinkApplied.current || !spec) return;
+    const tabParam = searchParams.get("tab");
+    const plotParam = searchParams.get("plot");
+    if (!tabParam && !plotParam) return;
+    deepLinkApplied.current = true;
+    const plot = plotParam
+      ? (spec.saved_plots ?? []).find((candidate) => candidate.id === plotParam)
+      : undefined;
+    if (plot) {
+      openSavedPlot(plot);
+    } else if (tabParam && (ANALYSIS_TAB_KEYS as readonly string[]).includes(tabParam)) {
+      setActiveTab(tabParam as AnalysisTabKey);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("tab");
+    next.delete("plot");
+    setSearchParams(next, { replace: true });
+    // openSavedPlot is declared below and stable for this one-shot deep link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (analysis.data && spec === null) {

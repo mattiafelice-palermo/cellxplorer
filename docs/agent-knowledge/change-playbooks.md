@@ -26,6 +26,30 @@
 5. If adding startup persistence, explicitly allowlist the query and verify that it contains no raw
    scientific data.
 
+## Adding a hook to a large page component
+
+`AnalysisPage` (and any component with early returns such as
+`if (analysis.isLoading || spec === null) return ...`) must receive new `useState`, `useRef`, and
+`useEffect` calls **above** those returns. Adding a hook further down compiles and type-checks
+cleanly but throws "Rendered more hooks than during the previous render" the moment the early
+return path is taken, which blanks the route behind the error boundary. A one-shot effect may
+still reference a `const` callback declared later in the body: the closure resolves when the
+effect runs, not when it is created.
+
+## Verifying UI in the browser
+
+Query the element you actually mean. Placeholders and labels repeat across the app — for example
+LibraryPage owns an input whose placeholder starts with "Search cells", so
+`input[placeholder*="Search cells"]` silently matches it instead of the command palette and makes
+a working feature look broken. Prefer a distinctive substring or a `data-` attribute. When a
+control appears not to respond, first check a second control that shares the same state pattern
+(a working `Ctrl+B` proved the shared keydown handler and state updates were fine, isolating the
+problem to the selector).
+
+Synthetic `input.value = ...` plus a dispatched `input` event does not update React state; drive
+text entry with real key events. Dev-server pages can also show duplicated console output, so
+confirm suspected regressions against the production build before treating them as real.
+
 ## Performance change
 
 1. Profile the actual slow boundary before changing behavior.

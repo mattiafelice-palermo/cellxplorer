@@ -283,10 +283,21 @@ export interface SourceMonitoringSettings {
   last_status: string | null;
 }
 
+export interface DownloadEntry {
+  id: string;
+  filename: string;
+  path: string;
+  kind: string;
+  bytes: number | null;
+  created_at: string;
+  exists: boolean;
+}
+
 export interface SavedDownload {
   saved: boolean;
   filename: string;
   path: string;
+  entry?: DownloadEntry;
 }
 
 export type SourceCheckFileStatus =
@@ -618,15 +629,18 @@ export interface Exclusion {
   excluded_at?: string;
 }
 
-export type AnalysisTabKey =
-  | "time_capacity"
-  | "cycles"
-  | "polarization"
-  | "crate"
-  | "chargeability"
-  | "dcir"
-  | "recap"
-  | "settings";
+export const ANALYSIS_TAB_KEYS = [
+  "time_capacity",
+  "cycles",
+  "polarization",
+  "crate",
+  "chargeability",
+  "dcir",
+  "recap",
+  "settings",
+] as const;
+
+export type AnalysisTabKey = (typeof ANALYSIS_TAB_KEYS)[number];
 
 export interface SavedAnalysisPlot {
   id: string;
@@ -839,6 +853,12 @@ export interface AnalysisSpec {
   saved_plots?: SavedAnalysisPlot[];
 }
 
+export interface AnalysisSavedPlotSummary {
+  id: string;
+  name: string;
+  tab: string;
+}
+
 export interface AnalysisSummary {
   id: number;
   title: string;
@@ -847,6 +867,7 @@ export interface AnalysisSummary {
   n_entries: number;
   n_exclusions: number;
   quantity: string | null;
+  saved_plots: AnalysisSavedPlotSummary[];
   has_provenance: boolean;
   computed_at: string | null;
   parser_version: string | null;

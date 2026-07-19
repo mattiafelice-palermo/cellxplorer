@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import AppSetting
-from ..services import source_monitor
+from ..services import download_registry, source_monitor
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -494,8 +494,56 @@ def save_download(file: UploadFile = File(...), db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Could not save the download: {exc}")
     finally:
         file.file.close()
+    entry = download_registry.record(
+        filename=destination.name,
+        path=str(destination),
+        bytes_=destination.stat().st_size if destination.is_file() else None,
+    )
     return {
         "saved": True,
         "filename": destination.name,
         "path": str(destination),
+        "entry": entry,
     }
+
+
+class DownloadRegistration(BaseModel):
+    filename: str
+    path: str
+    bytes: int | None = None
+
+
+@router.post("/downloads/history")
+def register_download(payload: DownloadRegistration):
+    """Record a download the client wrote itself (native save dialog)."""
+    size = payload.bytes
+    if size is None:
+        try:
+            candidate = Path(payload.path)
+            size = candidate.stat().st_size if candidate.is_file() else None
+        except OSError:
+            size = None
+    return download_registry.record(
+        filename=_safe_filename(payload.filename),
+        path=payload.path,
+        bytes_=size,
+    )
+
+
+@router.get("/downloads/history")
+def list_downloads():
+    return download_registry.list_entries()
+
+
+@router.delete("/downloads/history/{entry_id}")
+def delete_download(entry_id: str, delete_file: bool = False):
+    result = download_registry.delete_entry(entry_id, delete_file=delete_file)
+    if not result["removed"]:
+        raise HTTPException(status_code=404, detail="No such download entry")
+    return result
+
+
+@router.delete("/downloads/history")
+def clear_downloads():
+    download_registry.clear()
+    return {"cleared": True}

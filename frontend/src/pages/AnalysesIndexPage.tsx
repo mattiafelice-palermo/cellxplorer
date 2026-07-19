@@ -676,7 +676,40 @@ export function AnalysesIndexPage() {
       <Modal
         opened={portableImportOpen}
         onClose={() => !importPortable.isPending && resetPortable()}
-        title="Import portable analysis"
+        // The action buttons live in the modal header: it stays pinned while
+        // the source list scrolls, so Import is reachable without scrolling
+        // to the bottom of a long package.
+        title={
+          <Group justify="space-between" wrap="nowrap" w="100%" pr="sm">
+            <Text fw={700}>Import portable analysis</Text>
+            <Group gap="xs" wrap="nowrap">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={importPortable.isPending}
+                onClick={() => resetPortable()}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="xs"
+                leftSection={<IconFileImport size={14} />}
+                loading={importPortable.isPending}
+                disabled={
+                  !portableReview ||
+                  !portableTitle.trim() ||
+                  portableUnresolved ||
+                  portableMissingCellName ||
+                  inspectPortable.isPending
+                }
+                onClick={() => importPortable.mutate()}
+              >
+                Import
+              </Button>
+            </Group>
+          </Group>
+        }
+        styles={{ title: { flex: 1 } }}
         size="xl"
         closeOnClickOutside={!importPortable.isPending}
         closeOnEscape={!importPortable.isPending}
@@ -913,29 +946,6 @@ export function AnalysesIndexPage() {
               </Stack>
             </>
           ) : null}
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              disabled={importPortable.isPending}
-              onClick={() => resetPortable()}
-            >
-              Cancel
-            </Button>
-            <Button
-              leftSection={<IconFileImport size={16} />}
-              loading={importPortable.isPending}
-              disabled={
-                !portableReview ||
-                !portableTitle.trim() ||
-                portableUnresolved ||
-                portableMissingCellName ||
-                inspectPortable.isPending
-              }
-              onClick={() => importPortable.mutate()}
-            >
-              Import
-            </Button>
-          </Group>
         </Stack>
       </Modal>
     </Stack>

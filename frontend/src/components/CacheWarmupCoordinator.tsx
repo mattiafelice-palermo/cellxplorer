@@ -21,12 +21,15 @@ async function mainWindowIsHidden(): Promise<boolean> {
   }
 }
 
+export const WARMUP_NOW_EVENT = "cellxplorer:warmup-now";
+
 export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
   const queryClient = useQueryClient();
   const lastInteraction = useRef(Date.now());
   const busy = useRef(false);
   const lastPoll = useRef(0);
   const pauseRequested = useRef(false);
+  const forceRun = useRef(false);
   const [task, setTask] = useState<CacheWarmupTask | null>(null);
   const settings = useQuery({
     queryKey: ["cache-settings"],
@@ -70,16 +73,29 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
     };
   }, [queryClient]);
 
+  // Manual "refresh cache now" from Settings: run a preparation pass at once,
+  // bypassing the idle and hidden-window gates for the next tick.
+  useEffect(() => {
+    const runNow = () => {
+      forceRun.current = true;
+      lastPoll.current = 0;
+    };
+    window.addEventListener(WARMUP_NOW_EVENT, runNow);
+    return () => window.removeEventListener(WARMUP_NOW_EVENT, runNow);
+  }, []);
+
   useEffect(() => {
     if (!enabled || !settings.data?.warmup_enabled) return;
     const timer = window.setInterval(async () => {
+      const forced = forceRun.current;
       if (busy.current || task || Date.now() - lastPoll.current < 1500) return;
-      if (Date.now() - lastInteraction.current < settings.data!.idle_seconds * 1000) return;
-      if (settings.data!.only_when_hidden && !(await mainWindowIsHidden())) return;
+      if (!forced && Date.now() - lastInteraction.current < settings.data!.idle_seconds * 1000) return;
+      if (!forced && settings.data!.only_when_hidden && !(await mainWindowIsHidden())) return;
       busy.current = true;
       lastPoll.current = Date.now();
+      forceRun.current = false;
       try {
-        if (pauseRequested.current) {
+        if (pauseRequested.current || forced) {
           await post("/api/cache/warmup/resume");
           pauseRequested.current = false;
         }

@@ -45,6 +45,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import {
   ActiveMaterialPresetSettings,
@@ -110,6 +111,7 @@ function cellsUrl(search: string) {
 
 export function LibraryPage() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [replicateSearch, setReplicateSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -123,6 +125,31 @@ export function LibraryPage() {
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<number>>(new Set());
   const [editingCell, setEditingCell] = useState(false);
+  // Deep links from the command palette: ?cell=<id> opens that cell's detail,
+  // ?replicate=<id> opens the replicate preview. The parameter is consumed
+  // once so normal navigation afterwards is unaffected.
+  useEffect(() => {
+    const cellParam = searchParams.get("cell");
+    const replicateParam = searchParams.get("replicate");
+    if (!cellParam && !replicateParam) return;
+    if (cellParam) {
+      const id = Number(cellParam);
+      if (Number.isFinite(id)) {
+        setSelectedId(id);
+        setPreviewGroupId(null);
+      }
+    } else if (replicateParam) {
+      const id = Number(replicateParam);
+      if (Number.isFinite(id)) {
+        setPreviewGroupId(id);
+        setSelectedId(null);
+      }
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("cell");
+    next.delete("replicate");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editActiveMass, setEditActiveMass] = useState<number | null>(null);

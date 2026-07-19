@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.11.0 - 2026-07-20
+
+- Added a downloads manager beside the activity indicator: every exported plot, data file, and
+  portable report is recorded with its location, a popup announces each new download, and the
+  history survives restarts. Files can be opened, shown in their folder, copied as a path, or
+  deleted, and entries whose file has moved are marked instead of silently disappearing.
+- Added global search on Ctrl+K over cells, analyses, saved plots, replicate groups, and folders,
+  with fuzzy matching that still finds the intended item when nothing matches exactly. Opening a
+  result jumps to the right place: a cell shows its details, a saved plot opens its analysis on the
+  matching tab, and a folder opens the project tree expanded to it.
+- Added Ctrl+B to collapse and restore the sidebar, plus a toggle beside the application title.
+- Plot and data export buttons now download immediately using the current settings; the adjacent
+  arrow still opens the export options.
+- Added a "Check and prepare now" action to cache settings that rescans saved plots and refreshes
+  the ones whose cache is missing or out of date without waiting for the idle delay.
+- The import dialog keeps Cancel and Import visible while reviewing long source lists.
+
 ## 0.10.0 - 2026-07-19
 
 - Idle preparation no longer re-runs work for plots that are already cached, and builds its queue
