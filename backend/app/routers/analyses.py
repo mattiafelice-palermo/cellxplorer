@@ -256,6 +256,7 @@ class ComputeRequest(BaseModel):
     viewport_width: int | None = Field(default=None, ge=240, le=10000)
     precision: Literal["standard", "full"] = "standard"
     compact: bool = False
+    background: bool = False
 
 
 def _progress_callback(job_id: int | None):
@@ -267,13 +268,19 @@ def _progress_callback(job_id: int | None):
     recorded: set[int] = set()
 
     def report(completed: int, total: int, label: str, detail: str) -> None:
+        # A call with completed=k reports that cell k just finished; `detail`
+        # is its outcome ("Read from cache" / "Re-parsed from source"). The
+        # counter separates the cells that only needed a cache read from the
+        # one(s) that actually re-parsed a source file, so the Activity entry
+        # reads "24 cached, 1 re-parsed" instead of "25 cells".
         if completed > 0 and completed not in recorded:
+            reparsed = detail.startswith("Re-parsed")
             background_jobs.record_result(
                 job_id,
                 completed,
                 status="ready",
-                detail="Plot data ready",
-                counter="ready",
+                detail=detail,
+                counter="reparsed" if reparsed else "cached",
             )
             recorded.add(completed)
         if completed < total:
@@ -281,9 +288,12 @@ def _progress_callback(job_id: int | None):
                 job_id,
                 completed + 1,
                 status="processing",
-                detail=detail,
+                detail="Preparing cell data",
             )
-        background_jobs.update_job(job_id, description=f"{detail}: {label}")
+        background_jobs.update_job(
+            job_id,
+            description=f"Preparing plot data ({min(completed + 1, total)}/{total} cells)",
+        )
 
     return report
 
@@ -307,11 +317,26 @@ def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None =
                     detail="Loaded from persistent cache",
                     counter="cached",
                 )
+    if cached:
+        description = "Loaded cached plot data"
+    else:
+        # Summarize how much real work happened: the re-parse count is the
+        # part that mattered; the rest were fast cache reads.
+        counters = background_jobs.get_job(job_id).get("counters", {}) if background_jobs.get_job(job_id) else {}
+        reparsed = counters.get("reparsed", 0)
+        cached_reads = counters.get("cached", 0)
+        if reparsed:
+            description = (
+                f"Re-parsed {reparsed} source file{'s' if reparsed != 1 else ''}, "
+                f"read {cached_reads} from cache"
+            )
+        else:
+            description = f"Read {cached_reads} cell{'s' if cached_reads != 1 else ''} from cache"
     background_jobs.update_job(
         job_id,
         completed=job.get("total", 0),
         status="completed",
-        description="Loaded cached plot" if cached else "Plot ready",
+        description=description,
     )
 
 
@@ -331,11 +356,11 @@ def create_analysis_compute_job(
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
     units, _ = engine.resolve_selection(db, spec)
-    label = "time/capacity plot" if req.kind == "time_capacity" else "cycle plot"
+    kind_label = "time/capacity" if req.kind == "time_capacity" else "cycle"
     job_id = background_jobs.create_job(
         kind="analysis_compute",
-        title=f"Preparing {label}",
-        description="Waiting to read cached cell data",
+        title=f"Preparing {analysis.title} ({kind_label} plot)",
+        description="Reading cell data",
         total=len(units),
         items=[
             {"id": index, "label": unit["label"], "status": "queued"}
@@ -356,15 +381,22 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     )
     result = None if req.recompute else analysis_cache.load_result("cycles", key)
     cached = result is not None
+    if cached:
+        # Availability is not part of the cache key; badges must reflect the
+        # current source status rather than the state at compute time.
+        engine.refresh_availability_badges(db, spec, result)
     try:
         if result is None:
-            result = engine.compute(
-                db,
-                spec,
-                a.provenance,
-                use_current_versions=req.recompute,
-                progress=_progress_callback(req.job_id),
-            )
+            from ..services.process_priority import background_thread_priority
+
+            with background_thread_priority(req.background):
+                result = engine.compute(
+                    db,
+                    spec,
+                    a.provenance,
+                    use_current_versions=req.recompute,
+                    progress=_progress_callback(req.job_id),
+                )
             result["cache_status"] = "miss"
             analysis_cache.store_result("cycles", key, result)
         _finish_job(req.job_id, cached=cached)
@@ -404,16 +436,19 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
     cached = result is not None
     try:
         if result is None:
-            result = engine.compute_time_capacity(
-                db,
-                spec,
-                a.provenance,
-                use_current_versions=req.recompute,
-                viewport_width=req.viewport_width,
-                precision=req.precision,
-                compact=req.compact,
-                progress=_progress_callback(req.job_id),
-            )
+            from ..services.process_priority import background_thread_priority
+
+            with background_thread_priority(req.background):
+                result = engine.compute_time_capacity(
+                    db,
+                    spec,
+                    a.provenance,
+                    use_current_versions=req.recompute,
+                    viewport_width=req.viewport_width,
+                    precision=req.precision,
+                    compact=req.compact,
+                    progress=_progress_callback(req.job_id),
+                )
             result["cache_status"] = "miss"
             analysis_cache.store_result("time_capacity", key, result)
         _finish_job(req.job_id, cached=cached)
@@ -429,6 +464,9 @@ class PlotArtifactRequest(BaseModel):
     thumbnail: str | None = Field(default=None, max_length=2_500_000)
     figure: dict
     summary: list[dict] = Field(default_factory=list)
+    warmup_task_id: str | None = Field(default=None, max_length=500)
+    expected_data_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    expected_analysis_modified_at: str | None = Field(default=None, max_length=100)
 
 
 class PlotArtifactLookup(BaseModel):
@@ -451,32 +489,7 @@ def _plot_artifact_signature(
     )
     if saved_plot is None:
         raise HTTPException(404, "No such saved plot")
-    spec = deepcopy(analysis.spec)
-    selection = deepcopy(spec.get("selection") or {})
-    saved_selection = saved_plot.get("selection") or {}
-    selection["exclusions"] = deepcopy(saved_selection.get("exclusions") or [])
-    selection["hidden_replicate_group_ids"] = deepcopy(
-        saved_selection.get("hidden_replicate_group_ids") or []
-    )
-    spec["selection"] = selection
-    spec["computation"] = deepcopy(saved_plot.get("computation") or {})
-    spec["aggregation"] = deepcopy(saved_plot.get("aggregation") or {})
-    spec["presentation"] = deepcopy(saved_plot.get("presentation") or {})
-    tab = saved_plot.get("tab")
-    kind = "time_capacity" if tab == "time_capacity" else "cycles"
-    request_options = (
-        {"viewport_width": 1200, "precision": "standard", "compact": True}
-        if kind == "time_capacity"
-        else None
-    )
-    data_signature = analysis_cache.result_key(
-        db,
-        kind,
-        spec,
-        analysis.provenance,
-        use_current_versions=False,
-        request_options=request_options,
-    )
+    data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
     return f"{client_signature}:{data_signature}"
 
 
@@ -586,6 +599,37 @@ def store_plot_artifact(
         raise HTTPException(422, "Only self-contained SVG plot artifacts are accepted")
     if req.thumbnail is not None and not req.thumbnail.startswith("data:image/png;base64,"):
         raise HTTPException(422, "Only PNG plot thumbnails are accepted")
+    saved_plot = next(
+        (
+            plot
+            for plot in analysis.spec.get("saved_plots", [])
+            if str(plot.get("id")) == plot_id
+        ),
+        None,
+    )
+    if saved_plot is None:
+        raise HTTPException(404, "No such saved plot")
+    current_data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
+    if (
+        req.expected_data_signature is not None
+        and req.expected_data_signature != current_data_signature
+    ):
+        raise HTTPException(409, "This cache task was superseded by newer source data")
+    if req.expected_analysis_modified_at is not None:
+        current_modified_at = analysis.modified_at.isoformat() if analysis.modified_at else None
+        if req.expected_analysis_modified_at != current_modified_at:
+            raise HTTPException(409, "This cache task was superseded by newer analysis settings")
+    if req.warmup_task_id is not None:
+        from ..services import cache_maintenance
+
+        if not cache_maintenance.warmup.authorize_task(
+            req.warmup_task_id,
+            analysis_id,
+            plot_id,
+            req.expected_data_signature or "",
+            req.expected_analysis_modified_at,
+        ):
+            raise HTTPException(409, "This cache task is no longer active")
     cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
     artifact = {
         "svg": req.svg,
@@ -600,6 +644,18 @@ def store_plot_artifact(
         artifact,
         client_signature=req.signature,
     )
+    # This plot is now prepared for its current data signature and revision;
+    # idle warmup can leave it out of future queues.
+    analysis_cache.store_prepared_marker(
+        analysis_id,
+        plot_id,
+        current_data_signature,
+        saved_plot.get("modified_at"),
+    )
+    if req.warmup_task_id is None:
+        from ..services import cache_maintenance
+
+        cache_maintenance.warmup.foreground_ready(analysis_id, plot_id)
     return {"signature": req.signature, **artifact}
 
 

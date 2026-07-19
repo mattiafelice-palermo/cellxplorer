@@ -2,6 +2,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Code,
   ColorInput,
   Divider,
@@ -18,15 +19,18 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconActivityHeartbeat, IconChartLine, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconHistory, IconPlus, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { IconActivityHeartbeat, IconChartLine, IconDatabaseCog, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconHistory, IconInfoCircle, IconPlus, IconRefresh, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   get,
+  post,
   put,
   type ActiveMaterialPreset,
   type ActiveMaterialPresetSettings,
@@ -34,6 +38,9 @@ import {
   type AppSession,
   type ColorPalette,
   type ColorPaletteSettings,
+  type CacheInventory,
+  type CacheOffender,
+  type CacheSettings,
   type DownloadSettings,
   type ElectrodeAreaPreset,
   type ElectrodeAreaPresetSettings,
@@ -43,12 +50,61 @@ import {
 import { isTauriApp } from "../downloads";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && size >= 1024; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${unit}`;
+}
+
+const CACHE_CATEGORY_HINTS = {
+  scientific:
+    "Parsed copies of your Neware files (raw datapoints and per-cycle tables) stored as fast Parquet caches, keyed by file checksum. Rebuilding one means re-parsing its source file — slow, and impossible while the source is offline. That is why there is no one-click cleanup here; individual items can be removed under Largest cache items.",
+  analysis_results:
+    "Numerical outputs of analysis computations: the series and metrics behind each plot view. Cheap to regenerate from the scientific cache the next time a plot is opened.",
+  analysis_artifacts:
+    "Full rendered plot packages (SVG plus the interactive figure) that power instant saved-plot restore and portable reports. Regenerated on demand.",
+  thumbnails:
+    "The small preview images on saved-plot cards. They total a few megabytes, but recreating each one requires a full plot render, so automatic cleanup never touches them.",
+} as const;
+
+function CacheStat({
+  label,
+  hint,
+  bytes,
+}: {
+  label: string;
+  hint?: string;
+  bytes: number;
+}) {
+  return (
+    <div>
+      <Group gap={4} wrap="nowrap">
+        <Text size="xs" c="dimmed">{label}</Text>
+        {hint ? (
+          <Tooltip label={hint} multiline w={300} position="top-start" withArrow>
+            <IconInfoCircle size={13} color="var(--mantine-color-gray-5)" style={{ cursor: "help", flexShrink: 0 }} />
+          </Tooltip>
+        ) : null}
+      </Group>
+      <Text fw={700}>{formatBytes(bytes)}</Text>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
+    : location.pathname.endsWith("/cache")
+      ? "cache"
     : location.pathname.endsWith("/monitoring")
       ? "monitoring"
     : location.pathname.endsWith("/metadata")
@@ -99,6 +155,16 @@ export function SettingsPage() {
     queryFn: () => get<ColorPaletteSettings>("/api/settings/color-palettes"),
     enabled: activeTab === "plots",
   });
+  const cacheSettings = useQuery({
+    queryKey: ["cache-settings"],
+    queryFn: () => get<CacheSettings>("/api/cache/settings"),
+    enabled: activeTab === "cache",
+  });
+  const cacheInventory = useQuery({
+    queryKey: ["cache-inventory"],
+    queryFn: () => get<CacheInventory>("/api/cache/inventory?limit=30"),
+    enabled: activeTab === "cache",
+  });
   const [mode, setMode] = useState<DownloadSettings["download_mode"]>("ask");
   const [folder, setFolder] = useState("");
   const [filenameTemplate, setFilenameTemplate] = useState(
@@ -127,6 +193,13 @@ export function SettingsPage() {
   const [presetForm, setPresetForm] = useState<ElectrodeAreaPreset[]>([]);
   const [materialPresetForm, setMaterialPresetForm] = useState<ActiveMaterialPreset[]>([]);
   const [paletteForm, setPaletteForm] = useState<ColorPalette[]>([]);
+  const [cacheForm, setCacheForm] = useState<CacheSettings>({
+    warmup_enabled: true,
+    only_when_hidden: false,
+    idle_seconds: 15,
+    scientific_limit_bytes: 10 * 1024 ** 3,
+    analysis_limit_bytes: 1024 ** 3,
+  });
 
   useEffect(() => {
     if (!settings.data) return;
@@ -149,6 +222,9 @@ export function SettingsPage() {
   useEffect(() => {
     if (colorPalettes.data) setPaletteForm(colorPalettes.data.palettes);
   }, [colorPalettes.data]);
+  useEffect(() => {
+    if (cacheSettings.data) setCacheForm(cacheSettings.data);
+  }, [cacheSettings.data]);
 
   useEffect(() => {
     if (activeTab !== "desktop" || !isTauriApp()) return;
@@ -259,6 +335,27 @@ export function SettingsPage() {
         color: "red",
       }),
   });
+  const saveCacheSettings = useMutation({
+    mutationFn: () => put<CacheSettings>("/api/cache/settings", cacheForm),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["cache-settings"], saved);
+      setCacheForm(saved);
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      notifications.show({ message: "Cache settings saved.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not save cache settings.", color: "red" }),
+  });
+  const cleanCache = useMutation({
+    mutationFn: (payload: { category?: string; kind?: string; identifier?: string; force?: boolean }) =>
+      post<{ ok: boolean; bytes_removed: number }>("/api/cache/cleanup", payload),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+      notifications.show({ message: `Freed ${formatBytes(result.bytes_removed)}.`, color: "teal" });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
   const deletePlotPreset = useMutation({
     mutationFn: (presetId: string) =>
       put<PlotStylePresetSettings>("/api/settings/plot-style-presets", {
@@ -342,6 +439,129 @@ export function SettingsPage() {
       JSON.stringify(materialPresets.data?.presets ?? []);
   const palettesDirty = Boolean(colorPalettes.data) &&
     JSON.stringify(paletteForm) !== JSON.stringify(colorPalettes.data?.palettes ?? []);
+  const cacheDirty = Boolean(cacheSettings.data) &&
+    JSON.stringify(cacheForm) !== JSON.stringify(cacheSettings.data);
+  const offenders = cacheInventory.data?.offenders ?? [];
+  const offenderKey = (item: CacheOffender) => `${item.kind}:${item.id}`;
+  const [selectedOffenders, setSelectedOffenders] = useState<string[]>([]);
+  const lastOffenderIndex = useRef<number | null>(null);
+  const visibleSelected = offenders.filter((item) => selectedOffenders.includes(offenderKey(item)));
+  const toggleOffenderAt = (index: number, shiftKey: boolean) => {
+    const key = offenderKey(offenders[index]);
+    setSelectedOffenders((current) => {
+      const selected = new Set(current);
+      if (shiftKey && lastOffenderIndex.current !== null) {
+        const [from, to] = [lastOffenderIndex.current, index].sort((a, b) => a - b);
+        const turnOn = !selected.has(key);
+        for (let i = from; i <= to; i += 1) {
+          const rangeKey = offenderKey(offenders[i]);
+          if (turnOn) selected.add(rangeKey);
+          else selected.delete(rangeKey);
+        }
+      } else if (selected.has(key)) {
+        selected.delete(key);
+      } else {
+        selected.add(key);
+      }
+      return [...selected];
+    });
+    lastOffenderIndex.current = index;
+  };
+  const cleanCacheBulk = useMutation({
+    mutationFn: async (items: CacheOffender[]) => {
+      let freed = 0;
+      const failures: string[] = [];
+      for (const item of items) {
+        try {
+          const result = await post<{ ok: boolean; bytes_removed: number }>("/api/cache/cleanup", {
+            kind: item.kind,
+            identifier: item.id,
+            force: item.kind === "scientific" && !item.source_available,
+          });
+          freed += result.bytes_removed;
+        } catch (error) {
+          failures.push(item.label);
+          void error;
+        }
+      }
+      return { freed, failures };
+    },
+    onSuccess: ({ freed, failures }) => {
+      setSelectedOffenders([]);
+      lastOffenderIndex.current = null;
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+      if (failures.length) {
+        notifications.show({
+          message: `Freed ${formatBytes(freed)}. Could not clean: ${failures.join(", ")}.`,
+          color: "orange",
+        });
+      } else {
+        notifications.show({ message: `Freed ${formatBytes(freed)}.`, color: "teal" });
+      }
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  const requestBulkOffenderCleanup = () => {
+    if (visibleSelected.length === 0) return;
+    const offline = visibleSelected.filter(
+      (item) => item.kind === "scientific" && !item.source_available
+    );
+    const totalBytes = visibleSelected.reduce((sum, item) => sum + item.bytes, 0);
+    modals.openConfirmModal({
+      title: `Clean ${visibleSelected.length} cache item${visibleSelected.length === 1 ? "" : "s"}?`,
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">This will free {formatBytes(totalBytes)} of regenerable data.</Text>
+          {offline.length ? (
+            <Alert color="orange">
+              {offline.length === 1
+                ? `The source file of "${offline[0].label}" is unavailable — its cache may be the only locally readable copy of that data.`
+                : `${offline.length} selected items have unavailable source files — their caches may be the only locally readable copies of that data.`}
+            </Alert>
+          ) : null}
+        </Stack>
+      ),
+      labels: { confirm: offline.length ? "Remove anyway" : "Clean cache", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: () => cleanCacheBulk.mutate(visibleSelected),
+    });
+  };
+  const requestCategoryCleanup = (category: string, label: string) =>
+    modals.openConfirmModal({
+      title: `Clean ${label}?`,
+      children: (
+        <Text size="sm">
+          This removes regenerable cache files only. Your database and original cycling files are not changed.
+        </Text>
+      ),
+      labels: { confirm: "Clean cache", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: () => cleanCache.mutate({ category }),
+    });
+  const requestOffenderCleanup = (item: CacheOffender) => {
+    const unavailable = item.kind === "scientific" && !item.source_available;
+    modals.openConfirmModal({
+      title: `Clean cache for ${item.label}?`,
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">This will free {formatBytes(item.bytes)} of regenerable data.</Text>
+          {unavailable ? (
+            <Alert color="orange">
+              The original source file is unavailable. This cache may be the only locally readable copy of its parsed data.
+            </Alert>
+          ) : null}
+        </Stack>
+      ),
+      labels: { confirm: unavailable ? "Remove anyway" : "Clean cache", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: () => cleanCache.mutate({
+        kind: item.kind,
+        identifier: item.id,
+        force: unavailable,
+      }),
+    });
+  };
   const formatDateTime = (value: string | null) => value ? new Date(value).toLocaleString() : "Not yet";
   return (
     <Stack gap="lg" maw={980}>
@@ -352,6 +572,8 @@ export function SettingsPage() {
         onChange={(value) => navigate(
           value === "activity"
             ? "/settings/activity"
+            : value === "cache"
+              ? "/settings/cache"
             : value === "monitoring"
               ? "/settings/monitoring"
               : value === "metadata"
@@ -369,6 +591,7 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
+          <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
         </Tabs.List>
 
@@ -1189,6 +1412,220 @@ export function SettingsPage() {
               </Text>
             </Stack>
           </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="cache" pt="lg">
+          <Stack gap="lg">
+            <Paper withBorder p="lg">
+              <Stack gap="md">
+                <div>
+                  <Title order={4}>Background preparation</Title>
+                  <Text c="dimmed" size="sm">
+                    Quietly rebuild missing plot data and thumbnails while CellXplorer is idle. Work runs one plot at a time at reduced CPU priority and pauses before starting more work when you return.
+                  </Text>
+                </div>
+                {cacheSettings.isError ? <Alert color="red">Could not load cache settings.</Alert> : null}
+                <Switch
+                  checked={cacheForm.warmup_enabled}
+                  onChange={(event) => setCacheForm((current) => ({ ...current, warmup_enabled: event.currentTarget.checked }))}
+                  label="Prepare analysis caches in the background"
+                />
+                <Switch
+                  checked={cacheForm.only_when_hidden}
+                  disabled={!cacheForm.warmup_enabled}
+                  onChange={(event) => setCacheForm((current) => ({ ...current, only_when_hidden: event.currentTarget.checked }))}
+                  label="Only while the app window is hidden"
+                />
+                <NumberInput
+                  label="Idle delay"
+                  description="Seconds without keyboard, mouse, or touch input before a new plot is prepared."
+                  value={cacheForm.idle_seconds}
+                  onChange={(value) => setCacheForm((current) => ({ ...current, idle_seconds: Number(value) || 15 }))}
+                  min={5}
+                  max={3600}
+                  suffix=" s"
+                  maw={240}
+                />
+                <Group justify="flex-end">
+                  <Button
+                    leftSection={<IconDeviceFloppy size={16} />}
+                    disabled={!cacheDirty}
+                    loading={saveCacheSettings.isPending}
+                    onClick={() => saveCacheSettings.mutate()}
+                  >
+                    Save settings
+                  </Button>
+                </Group>
+              </Stack>
+            </Paper>
+
+            <Paper withBorder p="lg">
+              <Stack gap="md">
+                <Group justify="space-between">
+                  <div>
+                    <Title order={4}>Storage budgets</Title>
+                    <Text c="dimmed" size="sm">Limits apply to regenerable data only. Saved thumbnails are protected from automatic cleanup.</Text>
+                  </div>
+                  <Group gap="xs">
+                    <Button
+                      variant="default"
+                      leftSection={<IconRefresh size={16} />}
+                      loading={cacheInventory.isFetching}
+                      onClick={() => cacheInventory.refetch()}
+                    >
+                      Recalculate
+                    </Button>
+                    <Button
+                      leftSection={<IconDeviceFloppy size={16} />}
+                      disabled={!cacheDirty}
+                      loading={saveCacheSettings.isPending}
+                      onClick={() => saveCacheSettings.mutate()}
+                    >
+                      Save budgets
+                    </Button>
+                  </Group>
+                </Group>
+                <Group grow align="start">
+                  <Select
+                    label="Scientific cache"
+                    description="Raw and per-cycle Parquet data."
+                    value={cacheForm.scientific_limit_bytes === null ? "unlimited" : String(cacheForm.scientific_limit_bytes)}
+                    onChange={(value) => setCacheForm((current) => ({ ...current, scientific_limit_bytes: value === "unlimited" ? null : Number(value) }))}
+                    data={[
+                      { value: String(5 * 1024 ** 3), label: "5 GB" },
+                      { value: String(10 * 1024 ** 3), label: "10 GB" },
+                      { value: String(25 * 1024 ** 3), label: "25 GB" },
+                      { value: String(50 * 1024 ** 3), label: "50 GB" },
+                      { value: "unlimited", label: "Unlimited" },
+                    ]}
+                  />
+                  <Select
+                    label="Analysis cache"
+                    description="Computed results and full plot artifacts."
+                    value={cacheForm.analysis_limit_bytes === null ? "unlimited" : String(cacheForm.analysis_limit_bytes)}
+                    onChange={(value) => setCacheForm((current) => ({ ...current, analysis_limit_bytes: value === "unlimited" ? null : Number(value) }))}
+                    data={[
+                      { value: String(512 * 1024 ** 2), label: "512 MB" },
+                      { value: String(1024 ** 3), label: "1 GB" },
+                      { value: String(2 * 1024 ** 3), label: "2 GB" },
+                      { value: String(5 * 1024 ** 3), label: "5 GB" },
+                      { value: "unlimited", label: "Unlimited" },
+                    ]}
+                  />
+                </Group>
+                {cacheInventory.data ? (
+                  <Group gap="xl">
+                    <CacheStat label="Total cache" bytes={cacheInventory.data.total_bytes} />
+                    <CacheStat
+                      label="Scientific data"
+                      hint={CACHE_CATEGORY_HINTS.scientific}
+                      bytes={cacheInventory.data.categories.scientific?.bytes ?? 0}
+                    />
+                    <CacheStat
+                      label="Computed results"
+                      hint={CACHE_CATEGORY_HINTS.analysis_results}
+                      bytes={cacheInventory.data.categories.analysis_results?.bytes ?? 0}
+                    />
+                    <CacheStat
+                      label="Plot artifacts"
+                      hint={CACHE_CATEGORY_HINTS.analysis_artifacts}
+                      bytes={cacheInventory.data.categories.analysis_artifacts?.bytes ?? 0}
+                    />
+                    <CacheStat
+                      label="Thumbnails"
+                      hint={CACHE_CATEGORY_HINTS.thumbnails}
+                      bytes={(cacheInventory.data.categories.thumbnails?.bytes ?? 0) + (cacheInventory.data.categories.thumbnail_indexes?.bytes ?? 0)}
+                    />
+                  </Group>
+                ) : null}
+                <Group>
+                  <Button variant="default" color="red" onClick={() => requestCategoryCleanup("analysis_results", "computed analysis results")}>Clean computed results</Button>
+                  <Button variant="default" color="red" onClick={() => requestCategoryCleanup("analysis_artifacts", "full plot artifacts")}>Clean plot artifacts</Button>
+                </Group>
+              </Stack>
+            </Paper>
+
+            <Paper withBorder p="lg">
+              <Stack gap="md">
+                <Group justify="space-between" align="start">
+                  <div>
+                    <Title order={4}>Largest cache items</Title>
+                    <Text c="dimmed" size="sm">Original files and database records are never removed. Offline sources are highlighted before their cache can be cleared. Shift+click selects a range, Ctrl+click a row toggles it.</Text>
+                  </div>
+                  <Button
+                    color="red"
+                    variant="light"
+                    disabled={visibleSelected.length === 0}
+                    loading={cleanCacheBulk.isPending}
+                    leftSection={<IconTrash size={16} />}
+                    onClick={requestBulkOffenderCleanup}
+                  >
+                    Remove selected ({visibleSelected.length})
+                  </Button>
+                </Group>
+                {cacheInventory.isError ? <Alert color="red">Could not calculate cache usage.</Alert> : null}
+                <ScrollArea type="auto">
+                  <Table verticalSpacing="sm" miw={760}>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th w={36}>
+                          <Checkbox
+                            size="sm"
+                            aria-label="Select all cache items"
+                            checked={offenders.length > 0 && visibleSelected.length === offenders.length}
+                            indeterminate={visibleSelected.length > 0 && visibleSelected.length < offenders.length}
+                            onChange={() => {
+                              lastOffenderIndex.current = null;
+                              setSelectedOffenders(
+                                visibleSelected.length === offenders.length
+                                  ? []
+                                  : offenders.map(offenderKey)
+                              );
+                            }}
+                          />
+                        </Table.Th>
+                        <Table.Th>Item</Table.Th><Table.Th>Type</Table.Th><Table.Th>Size</Table.Th><Table.Th>Last used</Table.Th><Table.Th>Source</Table.Th><Table.Th />
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {offenders.map((item, index) => (
+                        <Table.Tr
+                          key={offenderKey(item)}
+                          bg={selectedOffenders.includes(offenderKey(item)) ? "var(--mantine-color-red-0)" : undefined}
+                          onClick={(event) => {
+                            if (event.ctrlKey || event.metaKey || event.shiftKey) {
+                              event.preventDefault();
+                              toggleOffenderAt(index, event.shiftKey);
+                            }
+                          }}
+                          style={{ userSelect: "none" }}
+                        >
+                          <Table.Td>
+                            <Checkbox
+                              size="sm"
+                              aria-label={`Select ${item.label}`}
+                              checked={selectedOffenders.includes(offenderKey(item))}
+                              onChange={() => {}}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleOffenderAt(index, (event.nativeEvent as MouseEvent).shiftKey);
+                              }}
+                            />
+                          </Table.Td>
+                          <Table.Td><Text size="sm" fw={600} lineClamp={1}>{item.label}</Text></Table.Td>
+                          <Table.Td><Badge variant="light">{item.kind === "scientific" ? "Cell data" : "Analysis plots"}</Badge></Table.Td>
+                          <Table.Td>{formatBytes(item.bytes)}</Table.Td>
+                          <Table.Td>{item.last_used_at ? new Date(item.last_used_at).toLocaleString() : "Unknown"}</Table.Td>
+                          <Table.Td>{item.kind === "scientific" ? <Badge color={item.source_available ? "teal" : "orange"} variant="light">{item.source_available ? "Available" : "Offline"}</Badge> : "Regenerable"}</Table.Td>
+                          <Table.Td><Button size="xs" variant="subtle" color="red" onClick={(event) => { event.stopPropagation(); requestOffenderCleanup(item); }}>Clean</Button></Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Stack>
+            </Paper>
+          </Stack>
         </Tabs.Panel>
 
         <Tabs.Panel value="activity" pt="lg">

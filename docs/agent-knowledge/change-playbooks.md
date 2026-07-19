@@ -36,15 +36,17 @@
 
 ## Release and Windows package
 
-1. Update the same version in `backend/app/config.py`, root and frontend package manifests and
+1. Choose the SemVer bump automatically when committing completed work: patch for compatible fixes,
+   minor for backward-compatible features, and major only for intentional compatibility breaks.
+2. Update the same version in `backend/app/config.py`, root and frontend package manifests and
    lockfiles, `src-tauri/tauri.conf.json`, and the CellXplorer package entries in Cargo files.
-2. Add the release at the top of `CHANGELOG.md` using user-facing language.
-3. Run `python -m unittest discover tests`.
-4. Run `node --test frontend\tests\*.test.ts`.
-5. Run the frontend production build.
-6. Build the installer only when requested or when packaging itself changed, following
+3. Add the release at the top of `CHANGELOG.md` using user-facing language.
+4. Run `python -m unittest discover tests`.
+5. Run `node --test frontend\tests\*.test.ts`.
+6. Run the frontend production build.
+7. Build the installer only when requested or when packaging itself changed, following
    `docs/windows-packaging.md`.
-7. Visually test custom installer and uninstaller pages after NSIS changes. Never test destructive
+8. Visually test custom installer and uninstaller pages after NSIS changes. Never test destructive
    uninstall against real user data.
 
 The expected installer is `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`.

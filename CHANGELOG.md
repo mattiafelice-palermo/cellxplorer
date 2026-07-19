@@ -4,6 +4,32 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.10.0 - 2026-07-19
+
+- Idle preparation no longer re-runs work for plots that are already cached, and builds its queue
+  from per-plot prepared markers so saving one plot no longer walks every saved plot.
+- Cached analysis results are no longer invalidated by transient source availability changes;
+  source-offline and source-changed badges are refreshed from current status at display time.
+- Editing a cell's name, archived state, or mass/capacity/area overrides now invalidates and
+  requeues only the affected analyses' cached plots.
+- Analysis compute activity now distinguishes cells read from cache from the ones re-parsed from
+  source, names the analysis in the entry, and summarizes the real work performed.
+- Cache settings explain each category with inline help, and the largest-item list supports
+  multi-selection (Shift/Ctrl-click) for bulk cleanup.
+- Reduced repeated cache-size scanning and per-idle re-fingerprinting through an incremental size
+  total and a cheap change probe.
+
+## 0.9.0 - 2026-07-18
+
+- Added configurable scientific and analysis cache budgets, storage inventory, largest-item
+  inspection, and safe cleanup controls that protect source-backed data when originals are offline.
+- Added low-priority idle preparation of saved analysis results, plot artifacts, and thumbnails,
+  with visible activity progress and automatic pause/resume when the user returns.
+- Source updates now invalidate and queue only affected analyses, deduplicate repeated refreshes,
+  reject obsolete background generations, and yield to plots prepared directly by the user.
+- Successfully replaced source files now remove their obsolete Parquet cache after the new cache is
+  durable; failed replacements preserve the previous cache for recovery.
+
 ## 0.8.0 - 2026-07-18
 
 - Added a fully branded CellXplorer installer and uninstaller with a compact guided flow,

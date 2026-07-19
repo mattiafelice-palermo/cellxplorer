@@ -40,6 +40,7 @@ import {
   type SourceCheckJob,
 } from "./api";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
+import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
 import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
@@ -255,6 +256,13 @@ export default function App() {
     queryClient.invalidateQueries({ queryKey: ["files"] });
     queryClient.invalidateQueries({ queryKey: ["tree"] });
     queryClient.invalidateQueries({ queryKey: ["activity"] });
+    queryClient.invalidateQueries({ queryKey: ["analysis"] });
+    queryClient.invalidateQueries({ queryKey: ["compute"] });
+    queryClient.invalidateQueries({ queryKey: ["time-capacity"] });
+    queryClient.invalidateQueries({ queryKey: ["plot-thumbnail"] });
+    queryClient.invalidateQueries({ queryKey: ["plot-artifact"] });
+    queryClient.invalidateQueries({ queryKey: ["saved-plot-preview"] });
+    queryClient.invalidateQueries({ queryKey: ["saved-time-preview"] });
     if (job.status === "failed") {
       notifications.show({ message: job.error || "Source check failed.", color: "red" });
     } else {
@@ -407,6 +415,7 @@ export default function App() {
       navbar={{ width: 290 * uiZoom, breakpoint: "xs" }}
       padding={0}
     >
+      <CacheWarmupCoordinator enabled={databaseStatus.data?.compatible === true} />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"
@@ -530,6 +539,7 @@ export default function App() {
               <Route path="/settings/metadata" element={<SettingsPage />} />
               <Route path="/settings/plots" element={<SettingsPage />} />
               <Route path="/settings/desktop" element={<SettingsPage />} />
+              <Route path="/settings/cache" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />
             </Routes>
           </RouteErrorBoundary>
@@ -612,9 +622,9 @@ export default function App() {
                               key={label}
                               size="sm"
                               variant="light"
-                              color={label === "failed" || label === "offline" ? "red" : label === "changed" ? "orange" : "teal"}
+                              color={label === "failed" || label === "offline" ? "red" : label === "changed" || label === "reparsed" ? "orange" : label === "cached" ? "gray" : "teal"}
                             >
-                              {count} {label}
+                              {count} {label === "reparsed" ? "re-parsed" : label === "cached" ? "from cache" : label}
                             </Badge>
                           ))}
                         </Group>

@@ -60,6 +60,92 @@ exports and scientific calculations must not silently inherit display-only downs
 reports keep serialized Plotly figures for interactive browsers and frozen SVG fallbacks for
 restricted viewers. See `docs/portable-analysis-html.md`.
 
+## Cache tiers, budgets, and background preparation
+
+The cache has two independently budgeted tiers:
+
+- **Scientific cache**: parsed raw and per-cycle Parquet data under the versioned cache root.
+  It is keyed by source checksum and can be rebuilt only while the corresponding source file is
+  available. Reads update the cache file timestamps; scientific budget cleanup therefore uses
+  access-aware LRU rather than creation time.
+- **Analysis cache**: computed analysis results and full plot artifacts. These are always
+  regenerable from the database plus scientific cache/source data. Saved-plot thumbnails and their
+  indexes are deliberately excluded from normal LRU pruning because they are small and provide the
+  immediate library/editor experience.
+
+The persisted policy and inventory API live in
+`backend/app/services/cache_maintenance.py` and
+`backend/app/routers/cache_management.py`. Defaults are 10 GB for scientific data and 1 GB for
+analysis data; both can be changed or made unlimited in Settings. Automatic cleanup must never
+remove the SQLite database, imported/source files, or a scientific cache whose source is offline.
+The UI may allow an explicit, separately confirmed cleanup of an offline scientific item.
+
+`frontend/src/components/CacheWarmupCoordinator.tsx` performs opportunistic preparation after an
+idle delay. It requests one saved plot at a time, renders through the same analysis preview path,
+and reports progress as a normal background job. Backend compute work from this path uses reduced
+Windows thread priority. Browser/GPU thumbnail work cannot receive OS process priority, so it is
+kept serialized and starts only while idle; the optional desktop-only policy restricts work to a
+hidden window. Returning to the app prevents another item from starting but does not abandon the
+item already in flight.
+
+Warmup is resumable rather than a durable queue: on the next scan, plots whose fingerprint still
+matches a completed run are skipped, while changed analyses or missing cache artifacts are offered
+again. Any change to the saved-plot fingerprint inputs must be reflected in the coordinator so
+stale plots are not treated as prepared.
+
+The queue itself is built server-side from per-plot "prepared" markers
+(`analysis_cache.load_prepared_marker`): a marker records the data signature and plot
+`modified_at` the plot was last prepared for, written both when an artifact is stored and when a
+warmup task completes ready. A plot whose marker still matches is left out of the queue entirely,
+so saving one new plot yields a one-item job instead of a pass over every saved plot, and an
+all-prepared scan must not spawn an empty job. Markers are wiped by
+`invalidate_cell_dependents`, by per-analysis artifact cleanup, and by the visual cache category
+cleanups (but not by cleaning computed results, which does not affect plot preparedness).
+
+Analysis cache keys cover the scientific inputs only. Source `location_status` is deliberately
+excluded: results are computed from the cached Parquet, which transient offline/changed flips do
+not touch, so a drive reconnect or a still-cycling source file must not invalidate every cached
+result for the cell. Availability badges are therefore refreshed at response time from the
+database status fields (`analysis_engine.refresh_availability_badges`) whenever a cached result
+is served. Warmup tasks must never recompute a plot whose thumbnail or artifact is already
+cached; the background compute is gated exactly like the visible preview path.
+
+When a source file adopts new bytes, its scientific and numerical analysis keys change naturally
+because they include the source checksum. In addition, `cache_maintenance.invalidate_cell_dependents`
+must remove visual artifacts and direct thumbnail indexes for every analysis that references the
+cell either directly or through a replicate group. It then queues only those saved plots for idle
+warmup. Do not invalidate every analysis globally. The same invalidation runs (with
+`reason="cell_edit"`) when cell properties that enter the cache key change: name, archived flag,
+and the mass/capacity/area overrides. Notes and display-only preset fields must not trigger it.
+Editing such a cell property without invalidating would leave saved-plot thumbnails permanently
+stale, because the thumbnail index is keyed by the client signature alone.
+
+Two hot paths are intentionally incremental rather than re-scanned per call: the warmup
+coordinator's `start()` short-circuits on a cheap analyses probe (count + latest `modified_at`)
+before re-fingerprinting every plot, and its job fingerprint uses per-plot `modified_at` so an
+analysis autosave that does not touch saved plots cannot spawn a new warmup job. Direct data
+changes bypass the probe via `enqueue_analyses`. The analysis-cache budget keeps a running size
+total adjusted on every store/unlink; the full directory walk happens only when the total says
+the budget overflowed, and the periodic maintenance loop resets the total to self-heal drift. After the replacement source has parsed and its
+new Parquet cache is durable, remove the previous source-checksum directory immediately; no
+`SourceFile` references it anymore. Preserve that old directory when replacement parsing fails so
+recovery remains possible. Old checksum-keyed multi-cell analysis results remain harmless and are
+removed by normal LRU cleanup.
+
+Every source-triggered warmup task carries the analysis modification timestamp and exact scientific
+data signature that existed when it was queued. Validate both before rendering and again before
+storing a generated artifact. Multiple source changes may leave older generations in the queue;
+skip those generations and retain the newest one. If the user opens and successfully prepares a
+queued plot first, retire its matching idle work. Deleted analyses/plots are skipped rather than
+treated as failures. These rules prevent a slow background render from writing old data under a
+new cache identity.
+
+Idle warmup uses a finish-current-then-pause policy. User activity requests a pause, but an active
+plot render is allowed to complete atomically. The background job then changes to `paused`, which
+removes it from the header progress indicator while retaining its queue and progress. After the
+configured idle interval the frontend resumes the same job. Do not cancel an in-flight render or
+mark a paused queue as completed.
+
 ## Measuring before optimizing
 
 Separate these costs when profiling:

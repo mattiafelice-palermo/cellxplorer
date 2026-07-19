@@ -1,7 +1,8 @@
 """Parquet cache, keyed by (file hash, parser version, calc version).
 
-Caches are regenerable artifacts, never user-facing entities. Old versions
-are kept on disk so previously computed analyses stay reproducible.
+Caches are regenerable artifacts, never user-facing entities. A successfully
+updated source replaces its old content-addressed directory; derived analysis
+results use their own checksum keys and expire through the analysis LRU.
 
 Layout:  CACHE_DIR/<hash[:2]>/<hash>/raw__p<parser>.parquet
          CACHE_DIR/<hash[:2]>/<hash>/cycles__p<parser>__c<calc>.parquet
@@ -11,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -41,6 +43,32 @@ def wait_for_pending(file_hash: str) -> None:
     done. Needed before handing work to OTHER processes (which cannot see
     this process's write threads); in-process readers wait automatically."""
     _wait_for_pending(file_hash)
+
+
+def pending_hashes() -> set[str]:
+    """Return hashes whose Parquet files are currently being written."""
+    with _pending_lock:
+        return set(_pending)
+
+
+def remove_hash_cache(file_hash: str) -> int:
+    """Remove one obsolete content-addressed cache after its replacement is durable."""
+    if re.fullmatch(r"[0-9a-fA-F]{64}", file_hash) is None:
+        raise ValueError("Invalid source checksum")
+    _wait_for_pending(file_hash)
+    directory = _dir(file_hash)
+    if not directory.exists():
+        return 0
+    removed = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+    shutil.rmtree(directory, ignore_errors=True)
+    return removed
+
+
+def _touch(path: Path) -> None:
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def _write_atomic(df: pd.DataFrame, path: Path) -> None:
@@ -182,7 +210,9 @@ def load_cycles(
     _wait_for_pending(file_hash)
     p = cycles_path(file_hash, parser_version, calc_version)
     if p.exists():
-        return pd.read_parquet(p)
+        value = pd.read_parquet(p)
+        _touch(p)
+        return value
     rp = raw_path(file_hash, parser_version)
     if rp.exists() and calc_version == CALC_VERSION:
         cycles = calc.per_cycle(pd.read_parquet(rp))
@@ -194,7 +224,11 @@ def load_cycles(
 def load_raw(file_hash: str, parser_version: str) -> pd.DataFrame | None:
     _wait_for_pending(file_hash)
     p = raw_path(file_hash, parser_version)
-    return pd.read_parquet(p) if p.exists() else None
+    if not p.exists():
+        return None
+    value = pd.read_parquet(p)
+    _touch(p)
+    return value
 
 
 def load_raw_columns(
@@ -206,7 +240,9 @@ def load_raw_columns(
     if not p.exists():
         return None
     try:
-        return pd.read_parquet(p, columns=columns)
+        value = pd.read_parquet(p, columns=columns)
+        _touch(p)
+        return value
     except (KeyError, ValueError):
         logger.warning("raw cache %s lacks requested columns %s", p, columns)
         return None

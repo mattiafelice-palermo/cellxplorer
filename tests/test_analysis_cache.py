@@ -93,6 +93,29 @@ class AnalysisCacheTests(unittest.TestCase):
         )
         self.assertFalse(analysis_cache.has_indexed_thumbnails(7, "plot-one"))
 
+    def test_lru_pruning_preserves_saved_plot_thumbnails(self):
+        analysis_cache.store_artifact(
+            8,
+            "plot-two",
+            "signature-b",
+            {
+                "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>',
+                "thumbnail": "data:image/png;base64,iVBORw0KGgo=",
+                "figure": {"data": [{"x": list(range(100)), "y": list(range(100))}]},
+                "summary": [],
+            },
+            client_signature="client-signature-b",
+        )
+
+        with analysis_cache._lock:
+            analysis_cache._prune_locked(limit_bytes=1)
+
+        self.assertIsNone(analysis_cache.load_artifact(8, "plot-two", "signature-b"))
+        self.assertEqual(
+            analysis_cache.load_indexed_thumbnail(8, "plot-two", "client-signature-b"),
+            "data:image/png;base64,iVBORw0KGgo=",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

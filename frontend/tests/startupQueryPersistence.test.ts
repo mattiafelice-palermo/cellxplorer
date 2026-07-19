@@ -28,7 +28,7 @@ class MemoryStorage {
 const status = {
   status: "ready",
   compatible: true,
-  app_version: "0.8.0",
+  app_version: "0.9.0",
   schema_revision: "0002",
   supported_revision: "0002",
   previous_revision: null,

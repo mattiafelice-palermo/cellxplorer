@@ -152,6 +152,52 @@ export interface DownloadSettings {
   export_filename_template: string;
 }
 
+export interface CacheSettings {
+  warmup_enabled: boolean;
+  only_when_hidden: boolean;
+  idle_seconds: number;
+  scientific_limit_bytes: number | null;
+  analysis_limit_bytes: number | null;
+}
+
+export interface CacheCategoryStats {
+  files: number;
+  bytes: number;
+  last_used_at: string | null;
+}
+
+export interface CacheOffender {
+  kind: "scientific" | "analysis_artifacts";
+  id: string;
+  label: string;
+  bytes: number;
+  files: number;
+  last_used_at: string | null;
+  source_available: boolean;
+  source_path?: string | null;
+  cell_id?: number | null;
+  analysis_id?: number | null;
+}
+
+export interface CacheInventory {
+  policy: CacheSettings;
+  categories: Record<string, CacheCategoryStats>;
+  total_bytes: number;
+  free_bytes: number;
+  offenders: CacheOffender[];
+}
+
+export interface CacheWarmupTask {
+  id: string;
+  analysis_id: number;
+  analysis_title: string;
+  plot_id: string;
+  plot_title: string;
+  tab: AnalysisTabKey;
+  analysis_modified_at: string | null;
+  expected_data_signature: string;
+}
+
 export interface DatabaseStatus {
   status:
     | "ready"
@@ -1081,7 +1127,7 @@ export interface BackgroundJob {
   kind: "capacity_summary" | "source_check" | "import_cache" | string;
   title: string;
   description: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "paused" | "completed" | "failed";
   total: number;
   completed: number;
   counters: Record<string, number>;

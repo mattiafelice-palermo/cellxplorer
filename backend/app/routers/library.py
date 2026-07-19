@@ -855,6 +855,25 @@ def update_cell(cell_id: int, req: CellUpdate, db: Session = Depends(get_db)):
         ]
     ):
         db.expire(cell, ["metadata_entries"])
+    # These fields enter the analysis cache key (labels, archived flag, and
+    # the normalization inputs), so cached plots of dependent analyses are
+    # stale from this moment. Notes and display-only preset names are not.
+    cache_key_fields = {
+        "name",
+        "archived",
+        "active_mass_mg",
+        "nominal_capacity_mah",
+        "electrode_area_cm2",
+    }
+    if cache_key_fields.intersection(changed_fields):
+        from ..services import cache_maintenance
+
+        cache_maintenance.invalidate_cell_dependents(
+            db,
+            cell.id,
+            reason="cell_edit",
+        )
+        db.commit()
     return cell_dict(db, cell)
 
 

@@ -1,0 +1,603 @@
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+ROOT = Path(__file__).resolve().parents[1]
+os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
+sys.path.insert(0, str(ROOT / "backend"))
+
+from app.db import Base
+from app.models import (
+    Analysis,
+    Cell,
+    ReplicateGroup,
+    ReplicateGroupCell,
+    SourceFile,
+    Test,
+    TestFile,
+)
+from app.services import background_jobs, cache, cache_maintenance
+from app.routers import analyses as analyses_router
+
+
+class CacheMaintenanceTests(unittest.TestCase):
+    def setUp(self):
+        background_jobs.clear_jobs()
+        # Prepared markers persist on disk; stale ones from earlier runs
+        # would make the warmup queue tests order-dependent.
+        cache_maintenance.analysis_cache.clear_prepared_markers()
+
+    def tearDown(self):
+        background_jobs.clear_jobs()
+        cache_maintenance.analysis_cache.clear_prepared_markers()
+
+    def make_session(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def test_cache_policy_round_trips_nullable_budgets(self):
+        db = self.make_session()
+        policy = cache_maintenance.CachePolicy(
+            warmup_enabled=False,
+            only_when_hidden=True,
+            idle_seconds=45,
+            scientific_limit_bytes=None,
+            analysis_limit_bytes=2 * 1024**3,
+        )
+
+        with patch.object(cache_maintenance.analysis_cache, "configure_limit"):
+            cache_maintenance.save_policy(db, policy)
+
+        self.assertEqual(cache_maintenance.load_policy(db), policy)
+
+    def test_offline_scientific_cache_requires_explicit_force(self):
+        db = self.make_session()
+        source_hash = "a" * 64
+        db.add(
+            SourceFile(
+                hash=source_hash,
+                path=str(ROOT / "missing-source.ndax"),
+                filename="missing-source.ndax",
+                size=123,
+                ext="ndax",
+            )
+        )
+        db.commit()
+
+        with tempfile.TemporaryDirectory() as folder:
+            cache_root = Path(folder)
+            scientific = cache_root / source_hash[:2] / source_hash
+            scientific.mkdir(parents=True)
+            (scientific / "cycles.parquet").write_bytes(b"cached")
+            with patch.object(cache_maintenance, "CACHE_DIR", cache_root):
+                with self.assertRaises(PermissionError):
+                    cache_maintenance.cleanup_offender(db, "scientific", source_hash)
+
+                removed = cache_maintenance.cleanup_offender(
+                    db,
+                    "scientific",
+                    source_hash,
+                    force=True,
+                )
+
+            self.assertEqual(removed, len(b"cached"))
+            self.assertFalse(scientific.exists())
+
+    def test_obsolete_source_cache_is_removed_by_checksum(self):
+        source_hash = "a" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            cache_root = Path(folder)
+            scientific = cache_root / source_hash[:2] / source_hash
+            scientific.mkdir(parents=True)
+            (scientific / "raw.parquet").write_bytes(b"raw-cache")
+            with patch.object(cache, "CACHE_DIR", cache_root):
+                removed = cache.remove_hash_cache(source_hash)
+
+            self.assertEqual(removed, len(b"raw-cache"))
+            self.assertFalse(scientific.exists())
+
+    def test_orphaned_source_cache_is_eligible_for_lru_cleanup(self):
+        db = self.make_session()
+        source_hash = "b" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            cache_root = Path(folder)
+            scientific = cache_root / source_hash[:2] / source_hash
+            scientific.mkdir(parents=True)
+            (scientific / "cycles.parquet").write_bytes(b"orphaned")
+            with (
+                patch.object(cache_maintenance, "CACHE_DIR", cache_root),
+                patch.object(cache_maintenance.cache, "pending_hashes", return_value=set()),
+            ):
+                removed = cache_maintenance.enforce_scientific_limit(db, 1)
+
+            self.assertEqual(removed, len(b"orphaned"))
+            self.assertFalse(scientific.exists())
+
+    def test_cell_update_invalidates_direct_and_replicate_analyses(self):
+        db = self.make_session()
+        cell = Cell(name="Updated cell")
+        other = Cell(name="Other cell")
+        group = ReplicateGroup(name="Replicates")
+        db.add_all([cell, other, group])
+        db.flush()
+        db.add(ReplicateGroupCell(group_id=group.id, cell_id=cell.id, position=0))
+        direct = Analysis(
+            title="Direct",
+            spec={
+                "selection": {"entries": [{"kind": "cell", "ref_id": cell.id}]},
+                "saved_plots": [{"id": "direct-plot", "name": "Direct plot"}],
+            },
+        )
+        replicate = Analysis(
+            title="Replicate",
+            spec={
+                "selection": {"entries": [{"kind": "replicate_group", "ref_id": group.id}]},
+                "saved_plots": [{"id": "replicate-plot", "name": "Replicate plot"}],
+            },
+        )
+        unrelated = Analysis(
+            title="Unrelated",
+            spec={
+                "selection": {"entries": [{"kind": "cell", "ref_id": other.id}]},
+                "saved_plots": [{"id": "other-plot", "name": "Other plot"}],
+            },
+        )
+        db.add_all([direct, replicate, unrelated])
+        db.commit()
+
+        with (
+            patch.object(cache_maintenance.analysis_cache, "delete_analysis_artifacts") as delete,
+            patch.object(
+                cache_maintenance.warmup,
+                "enqueue_analyses",
+                return_value={"analyses": 2, "plots": 2},
+            ) as enqueue,
+        ):
+            result = cache_maintenance.invalidate_cell_dependents(
+                db,
+                cell.id,
+                source_id=7,
+            )
+
+        self.assertEqual(result["analysis_ids"], sorted([direct.id, replicate.id]))
+        self.assertEqual(result["queued_plots"], 2)
+        self.assertEqual({call.args[0] for call in delete.call_args_list}, {direct.id, replicate.id})
+        enqueue.assert_called_once_with(db, {direct.id, replicate.id})
+
+    def test_warmup_finishes_current_plot_then_pauses_and_resumes(self):
+        db = self.make_session()
+        db.add(
+            Analysis(
+                title="Two plots",
+                spec={
+                    "selection": {"entries": []},
+                    "saved_plots": [
+                        {"id": "one", "name": "One"},
+                        {"id": "two", "name": "Two"},
+                    ],
+                },
+            )
+        )
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+        first = coordinator.next_task(db)
+
+        pause = coordinator.request_pause()
+        self.assertTrue(pause["finishing_current"])
+        self.assertEqual(background_jobs.get_job(started["id"])["status"], "running")
+
+        coordinator.complete(first["id"], status="ready", detail="Ready", error=None)
+        paused = background_jobs.get_job(started["id"])
+        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(paused["completed"], 1)
+        self.assertIsNone(coordinator.next_task(db))
+
+        coordinator.resume()
+        self.assertEqual(background_jobs.get_job(started["id"])["status"], "running")
+        self.assertEqual(coordinator.next_task(db)["plot_id"], "two")
+
+    def test_new_source_revision_supersedes_older_queued_plot(self):
+        db = self.make_session()
+        cell = Cell(name="Changing cell")
+        source = SourceFile(
+            hash="c" * 64,
+            path="C:/data/changing.ndax",
+            filename="changing.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+        )
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Changing cell")
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        analysis = Analysis(
+            title="Changing analysis",
+            spec={
+                "selection": {"entries": [{"kind": "cell", "ref_id": cell.id}]},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+
+        coordinator.enqueue_analyses(db, {analysis.id})
+        source.hash = "d" * 64
+        db.commit()
+        coordinator.enqueue_analyses(db, {analysis.id})
+
+        task = coordinator.next_task(db)
+        self.assertIsNotNone(task)
+        self.assertEqual(task["expected_data_signature"], cache_maintenance.analysis_cache.saved_plot_data_signature(
+            db, analysis, analysis.spec["saved_plots"][0]
+        ))
+        job = background_jobs.list_jobs()[0]
+        self.assertEqual(job["completed"], 1)
+        self.assertEqual(job["counters"]["skipped"], 1)
+
+    def test_foreground_plot_retires_matching_idle_work(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Foreground",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+
+        self.assertEqual(coordinator.foreground_ready(analysis.id, "plot"), 1)
+        self.assertIsNone(coordinator.next_task(db))
+        job = background_jobs.get_job(started["id"])
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["counters"]["skipped"], 1)
+
+    def _seed_cell_with_source(self, db, *, source_hash: str = "e" * 64):
+        cell = Cell(name="Keyed cell")
+        source = SourceFile(
+            hash=source_hash,
+            path="C:/data/keyed.ndax",
+            filename="keyed.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+            location_status="online",
+        )
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Keyed cell")
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        analysis = Analysis(
+            title="Keyed analysis",
+            spec={
+                "selection": {"entries": [{"kind": "cell", "ref_id": cell.id}]},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        return cell, source, analysis
+
+    def test_result_key_ignores_location_status_flips(self):
+        db = self.make_session()
+        _cell, source, analysis = self._seed_cell_with_source(db)
+        plot = analysis.spec["saved_plots"][0]
+        online = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+
+        source.location_status = "offline"
+        db.commit()
+        offline = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+        source.location_status = "changed"
+        db.commit()
+        changed_status = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+
+        self.assertEqual(online, offline)
+        self.assertEqual(online, changed_status)
+
+        source.hash = "f" * 64
+        db.commit()
+        new_bytes = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+        self.assertNotEqual(online, new_bytes)
+
+    def test_cached_result_gets_fresh_availability_badges(self):
+        from app.services import analysis_engine
+
+        db = self.make_session()
+        cell, source, analysis = self._seed_cell_with_source(db)
+        result = {
+            "badges": [
+                {"kind": "source_changed", "cell_id": cell.id, "cell_name": cell.name,
+                 "file": "stale.ndax", "detail": "stale"},
+                {"kind": "cell_archived", "cell_id": cell.id, "cell_name": cell.name,
+                 "detail": "kept"},
+            ]
+        }
+
+        source.location_status = "offline"
+        db.commit()
+        analysis_engine.refresh_availability_badges(db, analysis.spec, result)
+
+        kinds = [badge["kind"] for badge in result["badges"]]
+        self.assertIn("cell_archived", kinds)
+        self.assertIn("source_offline", kinds)
+        self.assertNotIn("source_changed", kinds)
+
+        source.location_status = "online"
+        db.commit()
+        analysis_engine.refresh_availability_badges(db, analysis.spec, result)
+        kinds = [badge["kind"] for badge in result["badges"]]
+        self.assertEqual(kinds, ["cell_archived"])
+
+    def test_cell_property_edit_invalidates_dependent_visuals(self):
+        from app.routers import library as library_router
+
+        db = self.make_session()
+        cell, _source, _analysis = self._seed_cell_with_source(db)
+
+        with patch.object(
+            cache_maintenance,
+            "invalidate_cell_dependents",
+            return_value={"cell_id": cell.id, "analysis_ids": [], "queued_plots": 0},
+        ) as invalidate:
+            library_router.update_cell(
+                cell.id,
+                library_router.CellUpdate(active_mass_mg_override=12.5),
+                db,
+            )
+        invalidate.assert_called_once()
+        self.assertEqual(invalidate.call_args.kwargs.get("reason"), "cell_edit")
+
+        with patch.object(cache_maintenance, "invalidate_cell_dependents") as invalidate:
+            library_router.update_cell(
+                cell.id,
+                library_router.CellUpdate(description="Notes only"),
+                db,
+            )
+        invalidate.assert_not_called()
+
+    def test_invalidation_activity_names_affected_analyses(self):
+        db = self.make_session()
+        cell, _source, analysis = self._seed_cell_with_source(db)
+
+        with (
+            patch.object(cache_maintenance.analysis_cache, "delete_analysis_artifacts"),
+            patch.object(
+                cache_maintenance.warmup,
+                "enqueue_analyses",
+                return_value={"analyses": 1, "plots": 1},
+            ),
+            patch.object(cache_maintenance, "record_activity") as record,
+        ):
+            cache_maintenance.invalidate_cell_dependents(db, cell.id, reason="cell_edit")
+
+        message = record.call_args.kwargs["message"]
+        self.assertIn(analysis.title, message)
+        self.assertIn("Cell property change", message)
+        self.assertEqual(
+            record.call_args.kwargs["details"]["analysis_titles"], [analysis.title]
+        )
+
+    def test_warmup_start_skips_full_rescan_when_analyses_unchanged(self):
+        from datetime import datetime, timezone
+
+        db = self.make_session()
+        _cell, _source, analysis = self._seed_cell_with_source(db)
+        analysis.modified_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        calls = {"count": 0}
+        real_signature = cache_maintenance.analysis_cache.saved_plot_data_signature
+
+        def counting_signature(*args, **kwargs):
+            calls["count"] += 1
+            return real_signature(*args, **kwargs)
+
+        with patch.object(
+            cache_maintenance.analysis_cache,
+            "saved_plot_data_signature",
+            side_effect=counting_signature,
+        ):
+            started = coordinator.start(db)
+            task = coordinator.next_task(db)
+            coordinator.complete(task["id"], status="ready", detail=None, error=None)
+            after_first = calls["count"]
+            self.assertGreater(after_first, 0)
+
+            # Unchanged analyses: the probe short-circuits before any
+            # per-plot fingerprinting.
+            second = coordinator.start(db)
+            self.assertEqual(calls["count"], after_first)
+            self.assertEqual(second["id"], started["id"])
+
+            # An analysis autosave that does not touch saved plots rescans
+            # once but must not spawn a new job over all plots.
+            analysis.modified_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+            db.commit()
+            third = coordinator.start(db)
+            self.assertGreater(calls["count"], after_first)
+            self.assertEqual(third["id"], started["id"])
+
+            # A saved-plot edit produces a new fingerprint and a new job.
+            spec = dict(analysis.spec)
+            spec["saved_plots"] = [
+                {"id": "plot", "name": "Plot", "modified_at": "2026-01-03T00:00:00Z"}
+            ]
+            analysis.spec = spec
+            analysis.modified_at = datetime(2026, 1, 3, tzinfo=timezone.utc)
+            db.commit()
+            fourth = coordinator.start(db)
+            self.assertNotEqual(fourth["id"], started["id"])
+
+    def test_analysis_budget_uses_running_total_and_survives_bulk_delete(self):
+        from app.services import analysis_cache
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            overrides = {
+                "_ROOT": root,
+                "_RESULTS": root / "results",
+                "_ARTIFACTS": root / "artifacts",
+                "_THUMBNAILS": root / "thumbnails",
+                "_THUMBNAIL_INDEXES": root / "thumbnail-index",
+            }
+            with (
+                patch.multiple(analysis_cache, **overrides),
+                patch.object(analysis_cache, "ANALYSIS_CACHE_LIMIT_BYTES", 10_000),
+                patch.object(analysis_cache, "_budget_total", None),
+            ):
+                for index in range(6):
+                    # os.urandom hex resists gzip, so file sizes stay ~2 KB
+                    # and the 10 KB budget genuinely overflows.
+                    analysis_cache.store_result(
+                        "cycles", f"{index:064d}", {"payload": os.urandom(2048).hex()}
+                    )
+                files = analysis_cache._budget_files()
+                total = sum(path.stat().st_size for path in files)
+                self.assertLessEqual(total, 10_000)
+                self.assertLess(len(files), 6)
+
+                # Thumbnails never count toward, nor are evicted by, the budget.
+                analysis_cache.store_thumbnail(
+                    5, "plot", "sig", "data:image/png;base64," + "A" * 8192
+                )
+                self.assertTrue(
+                    analysis_cache.load_thumbnail(5, "plot", "sig")
+                )
+
+                # Bulk deletion resets the tracker; later stores still prune.
+                analysis_cache.delete_analysis_artifacts(5)
+                for index in range(6, 12):
+                    analysis_cache.store_result(
+                        "cycles", f"{index:064d}", {"payload": os.urandom(2048).hex()}
+                    )
+                files = analysis_cache._budget_files()
+                self.assertLessEqual(sum(path.stat().st_size for path in files), 10_000)
+
+    def test_warmup_queues_only_unprepared_plots(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Partially prepared",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [
+                    {"id": "old", "name": "Old plot"},
+                    {"id": "new", "name": "New plot"},
+                ],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        old_signature = cache_maintenance.analysis_cache.saved_plot_data_signature(
+            db, analysis, analysis.spec["saved_plots"][0]
+        )
+        cache_maintenance.analysis_cache.store_prepared_marker(
+            analysis.id, "old", old_signature, None
+        )
+
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+
+        self.assertEqual(started["total"], 1)
+        task = coordinator.next_task(db)
+        self.assertEqual(task["plot_id"], "new")
+        self.assertIn(analysis.title, started["items"][0]["label"])
+
+    def test_ready_completion_writes_prepared_marker_and_empties_next_queue(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="One plot",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "solo", "name": "Solo"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+        task = coordinator.next_task(db)
+        coordinator.complete(task["id"], status="ready", detail="Already cached", error=None)
+
+        marker = cache_maintenance.analysis_cache.load_prepared_marker(analysis.id, "solo")
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["data_signature"], task["expected_data_signature"])
+
+        # A later scan with unchanged data finds nothing to queue and does
+        # not spawn a fresh job.
+        from datetime import datetime, timezone
+
+        analysis.modified_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        db.commit()
+        again = coordinator.start(db)
+        self.assertEqual(again["id"], started["id"])
+
+    def test_invalidation_clears_markers_so_plots_requeue(self):
+        db = self.make_session()
+        cell, _source, analysis = self._seed_cell_with_source(db)
+        plot = analysis.spec["saved_plots"][0]
+        signature = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+        cache_maintenance.analysis_cache.store_prepared_marker(
+            analysis.id, plot["id"], signature, None
+        )
+
+        with patch.object(
+            cache_maintenance.warmup,
+            "enqueue_analyses",
+            return_value={"analyses": 1, "plots": 1},
+        ):
+            cache_maintenance.invalidate_cell_dependents(db, cell.id)
+
+        self.assertIsNone(
+            cache_maintenance.analysis_cache.load_prepared_marker(analysis.id, plot["id"])
+        )
+
+    def test_artifact_write_rejects_superseded_scientific_signature(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Protected artifact",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        request = analyses_router.PlotArtifactRequest(
+            signature="client-signature",
+            svg='<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            figure={"data": [], "layout": {}},
+            expected_data_signature="superseded",
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            analyses_router.store_plot_artifact(analysis.id, "plot", request, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
+
+
+if __name__ == "__main__":
+    unittest.main()

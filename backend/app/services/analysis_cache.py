@@ -5,6 +5,7 @@ deleted at any time and is keyed by the complete scientific input signature.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import gzip
 import hashlib
 import json
@@ -20,15 +21,17 @@ from sqlalchemy.orm import Session
 from ..config import CACHE_DIR, CALC_VERSION
 from . import parsing
 
-ANALYSIS_CACHE_VERSION = 2
+ANALYSIS_CACHE_VERSION = 3
 PLOT_ARTIFACT_CACHE_VERSION = 2
 THUMBNAIL_CACHE_VERSION = 3
-ANALYSIS_CACHE_LIMIT_BYTES = 512 * 1024 * 1024
+DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES = 1024 * 1024 * 1024
+ANALYSIS_CACHE_LIMIT_BYTES: int | None = DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES
 _ROOT = CACHE_DIR / "analysis"
 _RESULTS = _ROOT / "results"
 _ARTIFACTS = _ROOT / "artifacts"
 _THUMBNAILS = _ROOT / "thumbnails"
 _THUMBNAIL_INDEXES = _ROOT / "thumbnail-index"
+_PREPARED = _ROOT / "prepared"
 _lock = threading.RLock()
 
 
@@ -55,6 +58,54 @@ def _atomic_gzip(path: Path, data: bytes) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+# Running total of the budgeted tiers (results + artifacts; thumbnails are
+# exempt). Stores adjust it incrementally so the per-write budget check is a
+# comparison, not a full cache walk. None means "stale, rescan before use";
+# bulk deletions and the periodic maintenance pass reset it to self-heal any
+# drift from external file changes.
+_budget_total: int | None = None
+
+
+def invalidate_size_tracker() -> None:
+    global _budget_total
+    with _lock:
+        _budget_total = None
+
+
+def _budget_files() -> list[Path]:
+    return [
+        path
+        for directory in (_RESULTS, _ARTIFACTS)
+        if directory.exists()
+        for path in directory.rglob("*.gz")
+        if path.is_file()
+    ]
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _store_budgeted(path: Path, data: bytes) -> None:
+    """Write one results/artifacts file and keep the running total current."""
+    global _budget_total
+    previous = _file_size(path)
+    _atomic_gzip(path, data)
+    if _budget_total is not None:
+        _budget_total += _file_size(path) - previous
+
+
+def _forget_budgeted(path: Path) -> None:
+    """Account for a results/artifacts file that is about to be unlinked."""
+    global _budget_total
+    with _lock:
+        if _budget_total is not None:
+            _budget_total -= _file_size(path)
 
 
 def _scientific_spec(spec: dict) -> dict:
@@ -100,8 +151,14 @@ def result_key(
                 "label": unit["label"],
                 "group_id": unit["group_id"],
                 "group_name": unit["group_name"],
+                # location_status is deliberately NOT part of the key: results
+                # are computed from the cached Parquet, which transient
+                # offline/changed flips do not touch. Availability badges are
+                # refreshed at response time instead
+                # (engine.refresh_availability_badges), so a drive reconnect
+                # or an in-progress cycling file cannot invalidate every
+                # cached result for the cell.
                 "hashes": hashes,
-                "locations": [file.location_status for file in files],
                 "active_mass_mg": engine.cell_active_mass_mg(cell),
                 "nominal_capacity_mah": engine.cell_nominal_capacity_mah(cell),
                 "electrode_area_cm2": engine.cell_electrode_area_cm2(cell),
@@ -119,6 +176,35 @@ def result_key(
             "missing": missing,
             "options": request_options or {},
         }
+    )
+
+
+def saved_plot_data_signature(db: Session, analysis: Any, saved_plot: dict) -> str:
+    """Fingerprint the exact scientific inputs expected by one saved plot."""
+    spec = deepcopy(analysis.spec)
+    selection = deepcopy(spec.get("selection") or {})
+    saved_selection = saved_plot.get("selection") or {}
+    selection["exclusions"] = deepcopy(saved_selection.get("exclusions") or [])
+    selection["hidden_replicate_group_ids"] = deepcopy(
+        saved_selection.get("hidden_replicate_group_ids") or []
+    )
+    spec["selection"] = selection
+    spec["computation"] = deepcopy(saved_plot.get("computation") or {})
+    spec["aggregation"] = deepcopy(saved_plot.get("aggregation") or {})
+    spec["presentation"] = deepcopy(saved_plot.get("presentation") or {})
+    kind = "time_capacity" if saved_plot.get("tab") == "time_capacity" else "cycles"
+    request_options = (
+        {"viewport_width": 1200, "precision": "standard", "compact": True}
+        if kind == "time_capacity"
+        else None
+    )
+    return result_key(
+        db,
+        kind,
+        spec,
+        analysis.provenance,
+        use_current_versions=False,
+        request_options=request_options,
     )
 
 
@@ -141,6 +227,7 @@ def load_result(kind: str, key: str) -> dict | None:
         result["cache_status"] = "hit"
         return result
     except (OSError, EOFError, json.JSONDecodeError):
+        _forget_budgeted(path)
         path.unlink(missing_ok=True)
         return None
 
@@ -149,7 +236,7 @@ def store_result(kind: str, key: str, result: dict) -> None:
     value = dict(result)
     value.pop("cache_status", None)
     with _lock:
-        _atomic_gzip(_result_path(kind, key), _json_bytes(value))
+        _store_budgeted(_result_path(kind, key), _json_bytes(value))
         _prune_locked()
 
 
@@ -263,6 +350,58 @@ def store_indexed_thumbnail(
         _prune_locked()
 
 
+def _prepared_marker_path(analysis_id: int, plot_id: str) -> Path:
+    safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)
+    return _PREPARED / str(analysis_id) / f"{safe_plot}.json"
+
+
+def load_prepared_marker(analysis_id: int, plot_id: str) -> dict | None:
+    """Read the (data signature, plot revision) this plot was last prepared for.
+
+    The marker lets the warmup coordinator build its queue server-side from
+    exactly the plots that need work, instead of walking every saved plot
+    through a frontend cache lookup on each pass.
+    """
+    path = _prepared_marker_path(analysis_id, plot_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_bytes())
+    except (OSError, json.JSONDecodeError):
+        path.unlink(missing_ok=True)
+        return None
+
+
+def store_prepared_marker(
+    analysis_id: int,
+    plot_id: str,
+    data_signature: str,
+    plot_modified_at: str | None,
+) -> None:
+    path = _prepared_marker_path(analysis_id, plot_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        temporary.write_bytes(
+            _json_bytes(
+                {
+                    "data_signature": data_signature,
+                    "plot_modified_at": plot_modified_at,
+                }
+            )
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def clear_prepared_markers(analysis_id: int | None = None) -> None:
+    import shutil
+
+    target = _PREPARED if analysis_id is None else _PREPARED / str(analysis_id)
+    shutil.rmtree(target, ignore_errors=True)
+
+
 def has_indexed_thumbnails(analysis_id: int, plot_id: str) -> bool:
     """Return whether this saved plot has entered the signature-indexed cache era."""
     safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)
@@ -305,10 +444,12 @@ def load_artifact(analysis_id: int, plot_id: str, signature: str) -> dict | None
         with gzip.open(path, "rb") as source:
             value = json.loads(source.read())
         if value.get("cache_version") != PLOT_ARTIFACT_CACHE_VERSION:
+            _forget_budgeted(path)
             path.unlink(missing_ok=True)
             return None
         artifact = value.get("artifact")
         if not isinstance(artifact, dict) or not isinstance(artifact.get("svg"), str):
+            _forget_budgeted(path)
             path.unlink(missing_ok=True)
             return None
         thumbnail = load_thumbnail(analysis_id, plot_id, signature)
@@ -322,6 +463,7 @@ def load_artifact(analysis_id: int, plot_id: str, signature: str) -> dict | None
             pass
         return artifact
     except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        _forget_budgeted(path)
         path.unlink(missing_ok=True)
         return None
 
@@ -350,7 +492,7 @@ def store_artifact(
         # The saved-plot rows only need the small thumbnail. Keep it in its
         # own file so page reloads never decompress the full Plotly figure.
         value["thumbnail"] = None
-        _atomic_gzip(
+        _store_budgeted(
             _artifact_path(analysis_id, plot_id, signature),
             _json_bytes(
                 {
@@ -368,17 +510,46 @@ def delete_analysis_artifacts(analysis_id: int) -> None:
     shutil.rmtree(_ARTIFACTS / str(analysis_id), ignore_errors=True)
     shutil.rmtree(_THUMBNAILS / str(analysis_id), ignore_errors=True)
     shutil.rmtree(_THUMBNAIL_INDEXES / str(analysis_id), ignore_errors=True)
+    shutil.rmtree(_PREPARED / str(analysis_id), ignore_errors=True)
+    invalidate_size_tracker()
 
 
-def _prune_locked(limit_bytes: int = ANALYSIS_CACHE_LIMIT_BYTES) -> None:
-    if not _ROOT.exists():
+def configure_limit(limit_bytes: int | None) -> None:
+    """Set the disposable analysis-cache budget for this backend session.
+
+    Also refreshes the running size total from disk: the periodic
+    maintenance loop calls this, which self-heals any drift caused by
+    external deletions.
+    """
+    global ANALYSIS_CACHE_LIMIT_BYTES
+    ANALYSIS_CACHE_LIMIT_BYTES = None if limit_bytes is None else max(0, int(limit_bytes))
+    invalidate_size_tracker()
+    with _lock:
+        _prune_locked()
+
+
+def _prune_locked(limit_bytes: int | None = None) -> None:
+    global _budget_total
+    limit = ANALYSIS_CACHE_LIMIT_BYTES if limit_bytes is None else limit_bytes
+    if limit is None or not _ROOT.exists():
         return
-    files = [path for path in _ROOT.rglob("*.gz") if path.is_file()]
-    total = sum(path.stat().st_size for path in files)
-    if total <= limit_bytes:
+    # Saved-plot thumbnails are deliberately excluded. They are tiny, make
+    # analysis reopening feel immediate, and can only be recreated by
+    # rendering the plot. Numerical results and full Plotly artifacts are the
+    # appropriate LRU eviction candidates.
+    if _budget_total is None:
+        _budget_total = sum(_file_size(path) for path in _budget_files())
+    if _budget_total <= limit:
+        # The common case: the incremental total says we are under budget,
+        # so no directory walk happens at all.
+        return
+    files = _budget_files()
+    total = sum(_file_size(path) for path in files)
+    _budget_total = total
+    if total <= limit:
         return
     files.sort(key=lambda path: path.stat().st_mtime)
-    target = int(limit_bytes * 0.9)
+    target = int(limit * 0.9)
     for path in files:
         if total <= target:
             break
@@ -388,9 +559,10 @@ def _prune_locked(limit_bytes: int = ANALYSIS_CACHE_LIMIT_BYTES) -> None:
             total -= size
         except OSError:
             continue
+    _budget_total = total
 
 
-def cache_stats() -> dict[str, int]:
+def cache_stats() -> dict[str, int | None]:
     files = [path for path in _ROOT.rglob("*.gz") if path.is_file()] if _ROOT.exists() else []
     return {
         "files": len(files),

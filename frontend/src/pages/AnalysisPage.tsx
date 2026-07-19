@@ -84,6 +84,7 @@ import {
   ApiError,
   Badge as ApiBadge,
   BackgroundJob,
+  CacheWarmupTask,
   CellMetrics,
   CellSummary,
   ComputeResult,
@@ -2676,15 +2677,24 @@ function SavedPlotPreview({
   analysisId,
   baseSpec,
   plot,
+  warmup = false,
+  warmupTask,
+  onWarmupComplete,
 }: {
   analysisId: number;
   baseSpec: AnalysisSpec;
   plot: SavedAnalysisPlot;
+  warmup?: boolean;
+  warmupTask?: CacheWarmupTask;
+  onWarmupComplete?: (error?: string, detail?: string) => void;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const qc = useQueryClient();
   const [generationFailed, setGenerationFailed] = useState(false);
+  const warmupReported = useRef(false);
+  const renderedFresh = useRef(false);
+  const rebuiltThumbnail = useRef(false);
   const thumbnail = useQuery({
     queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
     queryFn: () => lookupPlotThumbnail(analysisId, plot.id, previewSignature),
@@ -2709,8 +2719,14 @@ function SavedPlotPreview({
     retry: false,
   });
   const preview = useQuery({
-    queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature],
-    queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, { spec: previewSpec }),
+    queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
+    queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
+      spec: previewSpec,
+      background: warmup,
+    }),
+    // Warmup must not recompute plots that are already cached: the compute
+    // only runs when neither a thumbnail nor a full artifact exists, exactly
+    // like the visible path.
     enabled: thumbnail.isSuccess && thumbnail.data === null && artifact.isSuccess && artifact.data === null,
     staleTime: 5 * 60_000,
   });
@@ -2742,6 +2758,7 @@ function SavedPlotPreview({
           summary,
         };
         generatedLocally = true;
+        renderedFresh.current = true;
         if (!cancelled) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
@@ -2752,7 +2769,7 @@ function SavedPlotPreview({
             generated
           );
         }
-        return storePlotArtifactWithRetry(analysisId, plot.id, generated);
+        return storePlotArtifactWithRetry(analysisId, plot.id, generated, warmupTask);
       })
       .then((stored) => {
         if (!cancelled) {
@@ -2775,7 +2792,7 @@ function SavedPlotPreview({
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces]);
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces, warmupTask]);
 
   useEffect(() => {
     const current = artifact.data;
@@ -2784,6 +2801,7 @@ function SavedPlotPreview({
     queuedPortableThumbnail(current.svg)
       .then((thumbnail) => {
         const enriched = { ...current, thumbnail };
+        rebuiltThumbnail.current = true;
         if (!cancelled) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
@@ -2794,16 +2812,38 @@ function SavedPlotPreview({
             enriched
           );
         }
-        return storePlotArtifactWithRetry(analysisId, plot.id, enriched);
+        return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
       .catch((error) => console.warn("Could not cache the plot thumbnail", error));
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data]);
+  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, warmupTask]);
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  useEffect(() => {
+    if (!warmup || warmupReported.current || !onWarmupComplete) return;
+    // A cache hit (thumbnail or artifact) completes the task without any
+    // compute; the compute path only runs when nothing was cached.
+    if (previewImage) {
+      warmupReported.current = true;
+      onWarmupComplete(
+        undefined,
+        renderedFresh.current
+          ? "Computed data and rendered thumbnail"
+          : rebuiltThumbnail.current
+            ? "Thumbnail rebuilt from cached plot"
+            : "Already cached"
+      );
+    } else if (preview.isError) {
+      warmupReported.current = true;
+      onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
+    } else if (preview.isSuccess && (traces.length === 0 || generationFailed)) {
+      warmupReported.current = true;
+      onWarmupComplete(generationFailed ? "Thumbnail generation failed" : undefined);
+    }
+  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, previewImage, traces.length, warmup]);
   if (previewImage) {
     return (
       <img
@@ -2837,15 +2877,24 @@ function SavedTimeCapacityPreview({
   analysisId,
   baseSpec,
   plot,
+  warmup = false,
+  warmupTask,
+  onWarmupComplete,
 }: {
   analysisId: number;
   baseSpec: AnalysisSpec;
   plot: SavedAnalysisPlot;
+  warmup?: boolean;
+  warmupTask?: CacheWarmupTask;
+  onWarmupComplete?: (error?: string, detail?: string) => void;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const qc = useQueryClient();
   const [generationFailed, setGenerationFailed] = useState(false);
+  const warmupReported = useRef(false);
+  const renderedFresh = useRef(false);
+  const rebuiltThumbnail = useRef(false);
   const thumbnail = useQuery({
     queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
     queryFn: () => lookupPlotThumbnail(analysisId, plot.id, previewSignature),
@@ -2870,14 +2919,18 @@ function SavedTimeCapacityPreview({
     retry: false,
   });
   const preview = useQuery({
-    queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature],
+    queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
     queryFn: () =>
       post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
         spec: previewSpec,
         viewport_width: 1200,
         precision: "standard",
         compact: true,
+        background: warmup,
       }),
+    // Warmup must not recompute plots that are already cached: the compute
+    // only runs when neither a thumbnail nor a full artifact exists, exactly
+    // like the visible path.
     enabled: thumbnail.isSuccess && thumbnail.data === null && artifact.isSuccess && artifact.data === null,
     staleTime: 5 * 60_000,
   });
@@ -2909,6 +2962,7 @@ function SavedTimeCapacityPreview({
           summary,
         };
         generatedLocally = true;
+        renderedFresh.current = true;
         if (!cancelled) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
@@ -2919,7 +2973,7 @@ function SavedTimeCapacityPreview({
             generated
           );
         }
-        return storePlotArtifactWithRetry(analysisId, plot.id, generated);
+        return storePlotArtifactWithRetry(analysisId, plot.id, generated, warmupTask);
       })
       .then((stored) => {
         if (!cancelled) {
@@ -2942,7 +2996,7 @@ function SavedTimeCapacityPreview({
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces]);
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces, warmupTask]);
 
   useEffect(() => {
     const current = artifact.data;
@@ -2951,6 +3005,7 @@ function SavedTimeCapacityPreview({
     queuedPortableThumbnail(current.svg)
       .then((thumbnail) => {
         const enriched = { ...current, thumbnail };
+        rebuiltThumbnail.current = true;
         if (!cancelled) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
@@ -2961,16 +3016,38 @@ function SavedTimeCapacityPreview({
             enriched
           );
         }
-        return storePlotArtifactWithRetry(analysisId, plot.id, enriched);
+        return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
       .catch((error) => console.warn("Could not cache the time/capacity thumbnail", error));
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data]);
+  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, warmupTask]);
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  useEffect(() => {
+    if (!warmup || warmupReported.current || !onWarmupComplete) return;
+    // A cache hit (thumbnail or artifact) completes the task without any
+    // compute; the compute path only runs when nothing was cached.
+    if (previewImage) {
+      warmupReported.current = true;
+      onWarmupComplete(
+        undefined,
+        renderedFresh.current
+          ? "Computed data and rendered thumbnail"
+          : rebuiltThumbnail.current
+            ? "Thumbnail rebuilt from cached plot"
+            : "Already cached"
+      );
+    } else if (preview.isError) {
+      warmupReported.current = true;
+      onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
+    } else if (preview.isSuccess && (traces.length === 0 || generationFailed)) {
+      warmupReported.current = true;
+      onWarmupComplete(generationFailed ? "Thumbnail generation failed" : undefined);
+    }
+  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, previewImage, traces.length, warmup]);
   if (previewImage) {
     return (
       <img
@@ -2998,6 +3075,38 @@ function SavedTimeCapacityPreview({
     );
   }
   return null;
+}
+
+export function AnalysisCacheWarmupRenderer({
+  analysis,
+  plot,
+  task,
+  onComplete,
+}: {
+  analysis: AnalysisFull;
+  plot: SavedAnalysisPlot;
+  task: CacheWarmupTask;
+  onComplete: (error?: string, detail?: string) => void;
+}) {
+  return plot.tab === "time_capacity" ? (
+    <SavedTimeCapacityPreview
+      analysisId={analysis.id}
+      baseSpec={analysis.spec}
+      plot={plot}
+      warmup
+      warmupTask={task}
+      onWarmupComplete={onComplete}
+    />
+  ) : (
+    <SavedPlotPreview
+      analysisId={analysis.id}
+      baseSpec={analysis.spec}
+      plot={plot}
+      warmup
+      warmupTask={task}
+      onWarmupComplete={onComplete}
+    />
+  );
 }
 
 function CachedSavedPlotPreview({
@@ -5790,7 +5899,8 @@ function queuedPortableThumbnail(
 async function storePlotArtifactWithRetry(
   analysisId: number,
   plotId: string,
-  artifact: PlotArtifact
+  artifact: PlotArtifact,
+  warmupTask?: CacheWarmupTask,
 ): Promise<PlotArtifact> {
   const delays = [0, 800, 1600, 2600];
   let lastError: unknown = null;
@@ -5799,7 +5909,14 @@ async function storePlotArtifactWithRetry(
     try {
       return await post<PlotArtifact>(
         `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}`,
-        artifact
+        warmupTask
+          ? {
+              ...artifact,
+              warmup_task_id: warmupTask.id,
+              expected_data_signature: warmupTask.expected_data_signature,
+              expected_analysis_modified_at: warmupTask.analysis_modified_at,
+            }
+          : artifact
       );
     } catch (error) {
       lastError = error;

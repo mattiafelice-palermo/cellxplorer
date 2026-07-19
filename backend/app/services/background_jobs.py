@@ -75,6 +75,32 @@ def update_item(job_id: int, item_id: str | int, **values) -> None:
                 return
 
 
+def append_items(
+    job_id: int,
+    items: list[dict],
+    *,
+    total_increment: int | None = None,
+) -> None:
+    """Append work to a live job without resetting completed progress."""
+    if not items:
+        return
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        job["items"].extend(
+            {
+                "id": str(item["id"]),
+                "label": str(item["label"]),
+                "status": item.get("status", "queued"),
+                "detail": item.get("detail"),
+                "error": item.get("error"),
+            }
+            for item in items
+        )
+        job["total"] += len(items) if total_increment is None else max(0, int(total_increment))
+
+
 def record_result(
     job_id: int,
     item_id: str | int,

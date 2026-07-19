@@ -97,6 +97,13 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+#[tauri::command]
+fn is_main_window_visible(app: AppHandle) -> bool {
+    app.get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
 fn queue_deep_link(app: &AppHandle, url: String) {
     if !url.starts_with("cellxplorer://import-analysis") {
         return;
@@ -312,6 +319,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_api_base,
             is_autostart_enabled,
+            is_main_window_visible,
             open_app_folder,
             quit_app,
             set_autostart_enabled,

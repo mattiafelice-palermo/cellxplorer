@@ -12,9 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from .config import APP_VERSION, CALC_VERSION, FRONTEND_DIST
 from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, diagnostics, files, library, replicates, settings, tree
+from .routers import activity, analyses, cache_management, diagnostics, files, library, replicates, settings, tree
 from .services.activity_log import record_activity
-from .services import database_identity, sessions, source_monitor
+from .services import cache_maintenance, database_identity, sessions, source_monitor
 
 logging.basicConfig(level=logging.INFO)
 
@@ -133,7 +133,9 @@ if DATABASE_STATUS.compatible:
     app.add_event_handler("startup", sessions.start_runtime_session)
     app.add_event_handler("startup", _start_scientific_service_warmup)
     app.add_event_handler("startup", source_monitor.start_source_monitor)
+    app.add_event_handler("startup", cache_maintenance.start_cache_maintenance)
     app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
+    app.add_event_handler("shutdown", cache_maintenance.stop_cache_maintenance)
     app.add_event_handler(
         "shutdown",
         lambda: sessions.finish_runtime_session("backend_shutdown"),
@@ -146,6 +148,7 @@ app.include_router(analyses.router)
 app.include_router(replicates.router)
 app.include_router(activity.router)
 app.include_router(settings.router)
+app.include_router(cache_management.router)
 app.include_router(diagnostics.router)
 
 

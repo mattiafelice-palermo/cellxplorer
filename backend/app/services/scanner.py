@@ -284,8 +284,23 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     return sf
 
 
+def _remove_replaced_cache(db: Session, previous_hash: str, current_hash: str) -> int:
+    """Discard an old scientific cache only when no source still references it."""
+    if previous_hash == current_hash:
+        return 0
+    referenced = db.query(SourceFile.id).filter(SourceFile.hash == previous_hash).first()
+    if referenced is not None:
+        return 0
+    try:
+        return cache.remove_hash_cache(previous_hash)
+    except (OSError, ValueError):
+        logger.warning("could not remove replaced cache %s", previous_hash, exc_info=True)
+        return 0
+
+
 def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     """Replace a SourceFile identity/cache with the current bytes at its path."""
+    previous_hash = sf.hash
     p = Path(sf.path)
     if not p.exists():
         sf.location_status = "offline"
@@ -336,6 +351,20 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     # failed; another source check must not be needed to clear "changed".
     sf.location_status = "online"
     db.commit()
+    if sf.hash != previous_hash:
+        from . import cache_maintenance
+
+        cell_id = sf.test_link.test.cell_id if sf.test_link and sf.test_link.test else None
+        if cell_id is not None:
+            cache_maintenance.invalidate_cell_dependents(
+                db,
+                cell_id,
+                source_id=sf.id,
+                queue_warmup=sf.parse_status == "parsed",
+            )
+            db.commit()
+        if sf.parse_status == "parsed":
+            _remove_replaced_cache(db, previous_hash, sf.hash)
     return sf
 
 
@@ -347,6 +376,7 @@ def update_source_from_path_if_stable(
     expected_mtime_ns: int,
 ) -> SourceFile:
     """Adopt a source only if it remains unchanged throughout the full read."""
+    previous_hash = sf.hash
     p = Path(sf.path)
     expected = (expected_size, expected_mtime_ns)
     _require_signature(p, expected)
@@ -389,6 +419,18 @@ def update_source_from_path_if_stable(
     sf.cycle_count = info["cycles"]
     apply_capacity_summary(sf, info)
     db.commit()
+    if sf.hash != previous_hash:
+        from . import cache_maintenance
+
+        cell_id = sf.test_link.test.cell_id if sf.test_link and sf.test_link.test else None
+        if cell_id is not None:
+            cache_maintenance.invalidate_cell_dependents(
+                db,
+                cell_id,
+                source_id=sf.id,
+            )
+            db.commit()
+        _remove_replaced_cache(db, previous_hash, sf.hash)
     return sf
 
 

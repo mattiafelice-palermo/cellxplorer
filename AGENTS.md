@@ -65,11 +65,13 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/routers/`: `/api` endpoints
 - `backend/app/services/parsing.py`: the only direct NewareNDA integration
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
+- `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
 - `backend/app/services/analysis_engine.py`: analysis computation
 - `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
 - `frontend/src/pages/AnalysisPage.tsx`: analysis editor and saved plots
+- `frontend/src/components/CacheWarmupCoordinator.tsx`: idle saved-plot cache preparation
 - `frontend/src/api.ts`: typed frontend API client
 - `packaging/`, `src-tauri/`, and `docs/windows-packaging.md`: Windows desktop packaging
 - `docs/portable-analysis-html.md`: portable report format, security, and round-trip rules
@@ -149,3 +151,17 @@ required for ordinary app changes; rebuild it only when requested.
 
 Before packaging, follow `docs/windows-packaging.md` and `docs/tauri-packaging-lessons.md`. The
 expected NSIS artifact is under `src-tauri/target/release/bundle/nsis/`.
+
+## Versioning policy
+
+When committing completed user-facing work, update the application version and `CHANGELOG.md`
+without waiting for a separate user request. Follow SemVer pragmatically:
+
+- patch for compatible bug fixes, reliability improvements, and internal-only changes;
+- minor for backward-compatible features or meaningful workflow additions;
+- major for deliberate compatibility breaks in the database, portable-report format, or public
+  behavior that cannot be migrated safely.
+
+Keep the backend, root/frontend package manifests and lockfiles, Tauri configuration, and the
+CellXplorer Cargo package entry on the same version. Do not bump versions for intermediate edits
+that are not being committed as a completed change.

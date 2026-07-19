@@ -45,6 +45,27 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertEqual(job["items"][1]["status"], "queued")
         self.assertIsNotNone(job["completed_at"])
 
+    def test_append_items_extends_total_without_resetting_progress(self):
+        job_id = background_jobs.create_job(
+            kind="cache_warmup",
+            title="Preparing cache",
+            description="Working",
+            total=1,
+            items=[{"id": "first", "label": "First"}],
+        )
+        background_jobs.record_result(job_id, "first", status="ready", counter="ready")
+
+        background_jobs.append_items(
+            job_id,
+            [{"id": "second", "label": "Second"}],
+            total_increment=1,
+        )
+
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["total"], 2)
+        self.assertEqual(job["completed"], 1)
+        self.assertEqual([item["id"] for item in job["items"]], ["first", "second"])
+
 
 if __name__ == "__main__":
     unittest.main()

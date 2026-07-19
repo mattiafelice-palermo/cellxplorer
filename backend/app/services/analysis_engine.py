@@ -1060,6 +1060,43 @@ def aggregate_series(members: list[dict], quantity_cols: list[str], aggregation:
 # ------------------------------------------------------------- computation
 
 
+def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
+    """Replace source-availability badges on a cached result with fresh ones.
+
+    Availability is deliberately not part of the cache key (transient
+    offline/changed flips do not change the Parquet the numbers came from),
+    so a cached result may carry badges from another availability state.
+    This rebuilds the two availability badge kinds from the database status
+    fields only — no disk probing on the hot path; the source-check jobs and
+    fresh computes keep ``location_status`` current.
+    """
+    availability_kinds = {"source_offline", "source_changed"}
+    fresh: list[dict] = []
+    units, _missing = resolve_selection(db, spec)
+    for unit in units:
+        cell = unit["cell"]
+        _hashes, files = cell_ordered_hashes(db, cell)
+        for f in files:
+            if f.location_status == "offline":
+                fresh.append(
+                    {"kind": "source_offline", "cell_id": cell.id, "cell_name": cell.name,
+                     "file": f.filename,
+                     "detail": "Source file not found at its last known location. Rendering "
+                     "from cache; re-import or update from source to relink."})
+            elif f.location_status == "changed":
+                fresh.append(
+                    {"kind": "source_changed", "cell_id": cell.id, "cell_name": cell.name,
+                     "file": f.filename,
+                     "detail": "Source data changed since computed. Showing cached result — "
+                     "recompute explicitly to update."})
+    kept = [
+        badge
+        for badge in (result.get("badges") or [])
+        if badge.get("kind") not in availability_kinds
+    ]
+    result["badges"] = kept + fresh
+
+
 def compute(
     db: Session,
     spec: dict,
@@ -1098,6 +1135,7 @@ def compute(
         hashes, files = cell_ordered_hashes(db, cell)
         # caches are regenerable from source at any time — but only at the
         # CURRENT versions; renders pinned to old versions use what exists
+        reparsed = False
         if at_current:
             for f in files:
                 if (
@@ -1106,6 +1144,7 @@ def compute(
                     and Path(f.path).exists()
                 ):
                     scanner.parse_file(db, f)
+                    reparsed = True
 
         stitched, segments, missing = stitch.stitch_cycles(hashes, parser_version, calc_version)
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
@@ -1189,7 +1228,12 @@ def compute(
             {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
              "file_hashes": hashes})
         if progress:
-            progress(unit_index, total_units, cell.name, "Cycle data ready")
+            progress(
+                unit_index,
+                total_units,
+                cell.name,
+                "Re-parsed from source" if reparsed else "Read from cache",
+            )
 
     _append_unmatched_protocol_badges(protocol_context, badges)
 
@@ -1342,10 +1386,12 @@ def compute_time_capacity(
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading raw cache")
         hashes, files = cell_ordered_hashes(db, cell)
+        reparsed = False
         if at_current:
             for f in files:
                 if not cache.raw_path(f.hash, parser_version).exists() and Path(f.path).exists():
                     scanner.parse_file(db, f)
+                    reparsed = True
 
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
         raw, segments, missing = _stitch_raw(hashes, parser_version)
@@ -1488,7 +1534,12 @@ def compute_time_capacity(
             }
         )
         if progress:
-            progress(unit_index, total_units, cell.name, "Plot data ready")
+            progress(
+                unit_index,
+                total_units,
+                cell.name,
+                "Re-parsed from source" if reparsed else "Read from cache",
+            )
 
     _append_unmatched_protocol_badges(protocol_context, badges)
 

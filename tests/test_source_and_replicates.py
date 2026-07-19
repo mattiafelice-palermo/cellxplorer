@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from fastapi import HTTPException
@@ -67,7 +68,8 @@ class SourceAndReplicateTests(unittest.TestCase):
                 "cycles": 45,
             }
             try:
-                updated = scanner.update_source_from_path(db, sf)
+                with patch.object(cache, "remove_hash_cache") as remove_old:
+                    updated = scanner.update_source_from_path(db, sf)
             finally:
                 parsing.compute_hash = original_hash
                 parsing.read_header_metadata = original_meta
@@ -80,6 +82,35 @@ class SourceAndReplicateTests(unittest.TestCase):
             self.assertEqual(updated.row_count, 123)
             self.assertEqual(updated.cycle_count, 45)
             self.assertEqual(updated.remarks, "updated")
+            remove_old.assert_called_once_with("oldhash")
+
+    def test_failed_source_update_preserves_previous_cache(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cell.ndax"
+            path.write_bytes(b"new content")
+            source = SourceFile(
+                hash="a" * 64,
+                path=str(path),
+                filename=path.name,
+                size=3,
+                ext="ndax",
+                location_status="changed",
+                parse_status="parsed",
+            )
+            db.add(source)
+            db.commit()
+
+            with (
+                patch.object(parsing, "compute_hash", return_value="b" * 64),
+                patch.object(parsing, "read_header_metadata", return_value={}),
+                patch.object(cache, "build", side_effect=ValueError("parse failed")),
+                patch.object(cache, "remove_hash_cache") as remove_old,
+            ):
+                scanner.update_source_from_path(db, source)
+
+            self.assertEqual(source.parse_status, "error")
+            remove_old.assert_not_called()
 
     def test_replicate_preview_aggregates_aligned_cycle_values_and_stats(self):
         frames = [
