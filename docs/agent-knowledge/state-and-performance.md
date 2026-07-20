@@ -146,6 +146,63 @@ removes it from the header progress indicator while retaining its queue and prog
 configured idle interval the frontend resumes the same job. Do not cancel an in-flight render or
 mark a paused queue as completed.
 
+## Serving a cached analysis result
+
+A cache hit must not pay for the payload twice. Results are stored as an immutable body plus a tiny
+badge sidecar (`<key>.meta.json` beside `<key>.json.gz`), and `analysis_cache.splice_result_body`
+prepends `cache_status` and `badges` onto the stored bytes without parsing them. `badges` is the
+only part of a cached result that must never be replayed as stored: source-availability badges are
+rebuilt from current database status on every response by `analysis_engine.availability_badges`.
+
+Rules that keep this correct:
+
+- Entries written before the split have no sidecar. `load_result_body` returns `None` for them so
+  the caller falls back to parsing, and `upgrade_result_format` rewrites them. A backfill is
+  mandatory for any change to stored cache layout: a warm cache never recomputes, so without one an
+  existing install gets no benefit at all.
+- Sidecars must be deleted with the body they describe. `_budget_files()` globs only `*.gz`, so
+  anything else added beside a cached result is invisible to both pruning and the reported cache
+  size and will orphan unless handled explicitly.
+- Endpoints returning large payloads should return a `Response` built with `orjson`
+  (`app/responses.py:fast_json`). Returning a bare dict makes FastAPI walk the whole structure with
+  `jsonable_encoder` and then serialize it again.
+
+## Warm-path costs on an analysis
+
+Verified on a 25-cell database with ~40k metadata rows. When a warm analysis feels slow, check these
+before looking anywhere else:
+
+- **Scalar metadata reads.** `cell_active_mass_mg` and friends must never touch
+  `cell.metadata_entries`; that loads every metadata row for the cell. Use
+  `analysis_engine.load_scalar_metadata` for a selection, or the targeted per-cell query.
+- **Relationship walks.** `cell_ordered_hashes` walks `cell.tests -> file_links -> file`, which is
+  ~7 lazy queries per cell. `analysis_engine.preload_cell_sources` fetches the chain for a whole
+  selection in one round trip with `header_meta` deferred — that column holds raw instrument headers
+  and is only read when reconstructing protocols during a real compute.
+- **Cache-key construction.** `result_key` runs before any cached bytes are read, so anything
+  expensive inside it is paid on every request including hits.
+
+Changing how `result_key` gathers its inputs is unusually unforgiving: a fingerprint that changes
+for the same data invalidates every cached result (loud, harmless), but one that stops distinguishing
+two different datasets serves a cached result for data it no longer describes (silent, wrong).
+Verify any such change by recomputing keys both ways across every analysis and asserting the digests
+are byte-identical before trusting it.
+
+## Presentation filters versus computation
+
+`computeSignature` deliberately excludes `presentation`, so anything placed there costs no recompute
+and no cache invalidation when toggled. Display-only filters belong there —
+`presentation.hide_diagnostic_cycles` is the worked example.
+
+Two rules follow:
+
+- Filter the computed result once, before building traces, rather than at each trace. Capacity,
+  coulombic efficiency, the replicate band and the below-minimum-n markers all read the same arrays,
+  so filtering upstream makes "every quantity drops the same cycles" true by construction.
+- `viewSignature` gates the trace memo. Any presentation field that changes *what is plotted* — not
+  just how it looks — must be added there, or the plot will silently not update while the rest of
+  the UI reacts normally.
+
 ## Measuring before optimizing
 
 Separate these costs when profiling:

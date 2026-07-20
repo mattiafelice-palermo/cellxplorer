@@ -38,6 +38,14 @@ effect runs, not when it is created.
 
 ## Verifying UI in the browser
 
+Scope any DOM probe to the region under test. The header carries its own activity spinner, so a
+body-wide search for a loader reports a false positive that looks exactly like the bug you are
+hunting.
+
+`tsc` cannot catch a hooks-order violation, and neither can a passing unit test. Any change that
+adds a hook to a component with early returns must be opened in a browser before it is believed.
+
+
 Query the element you actually mean. Placeholders and labels repeat across the app — for example
 LibraryPage owns an input whose placeholder starts with "Search cells", so
 `input[placeholder*="Search cells"]` silently matches it instead of the command palette and makes
@@ -49,6 +57,32 @@ problem to the selector).
 Synthetic `input.value = ...` plus a dispatched `input` event does not update React state; drive
 text entry with real key events. Dev-server pages can also show duplicated console output, so
 confirm suspected regressions against the production build before treating them as real.
+
+## Hiding or filtering scientific data
+
+Any feature that removes data points from a view must satisfy all of these:
+
+1. **Never infer from the quantity being plotted.** Hiding low-capacity cycles by thresholding
+   capacity cannot distinguish a diagnostic pulse from a cell that died; both read as "capacity
+   collapsed". `diagnosticCycles.ts` keys on charge and discharge *duration* instead, because that
+   is what physically distinguishes a diagnostic cycle. Prefer a signal that is causally different,
+   not a proxy for the thing you want to exclude.
+2. **Compare against a rolling local baseline, not a global one**, so gradual degradation shifts the
+   reference instead of tripping it.
+3. **Default to off, and state both sides.** Report what was removed *and* what remains; a lone
+   "42 hidden" invites the reader to assume the rest is everything.
+4. **Keep the filter out of stored and exported data.** Exports carry every point so the choice is
+   reversible by whoever opens the file, including when the source files are gone.
+5. **Disclose unconditionally in exports.** A "show hidden" toggle in a report is not disclosure: a
+   reader who has already zoomed to the meaningful band sees nothing change and concludes nothing
+   was hidden. Use a visible chip plus a listing of the affected cycles.
+6. **Follow the data, not just the page.** Check every path that leaves the document. The portable
+   report's `plottedColumns()` builds its CSV from the chart traces, so a filtered plot yields a
+   filtered CSV — a chip protects the reader, a column protects whoever pulls the numbers out.
+
+When logic is duplicated across the frontend and the report generator (`diagnosticCycles.ts` and
+`services/diagnostic_cycles.py`), test both against the same real fixture and say so in both files.
+A report that describes a different plot than the app rendered is worse than no report.
 
 ## Performance change
 
@@ -74,3 +108,24 @@ confirm suspected regressions against the production build before treating them 
    uninstall against real user data.
 
 The expected installer is `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`.
+
+### Packaging cost, measured
+
+A full `scripts/build-app.ps1` run is roughly a minute when nothing forces a sidecar rebuild:
+frontend ~22s, cargo ~20s warm, makensis ~6s. Two settings account for most of the difference from
+the ~4 minutes it took before:
+
+- `[profile.release] incremental = true` in `src-tauri/Cargo.toml`. `tauri-build` re-runs its build
+  script every pass, so without incremental data the app crate was fully recompiled and relinked
+  every time — 86s even with no source changes.
+- `bundle.windows.nsis.compression = "zlib"`. The payload is ~87MB of which 72MB is a PyInstaller
+  onefile sidecar that is *already* zlib-compressed internally. Solid LZMA spent ~80s to produce an
+  installer the same size; zlib takes ~6s and costs 1.2MB (1.6%).
+
+PyInstaller caches its own stages, so an unchanged rebuild is ~3s and a changed one ~70s, of which
+most is re-analysing the pandas/numpy/pyarrow dependency graph. `scripts/build-app.ps1` fingerprints
+the Python sources and skips the stage entirely when nothing changed; `-ForceBackend` overrides.
+
+Do not try to shrink the sidecar by excluding modules. `tkinter` is used by `routers/files.py` for
+the native folder picker, and the remaining unused modules are ~3MB against pandas 62MB, numpy 31MB
+and pyarrow 84MB.

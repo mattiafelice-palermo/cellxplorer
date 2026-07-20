@@ -81,6 +81,17 @@ The database has a stable instance UUID stored in `AppSetting`. Frontend startup
 accepted only when both this UUID and the schema revision match, preventing cached summaries from
 one database being shown for another.
 
+## Loading states
+
+Almost every read is served from cache in well under 250ms. A progress indicator shown for that long
+is worse than none: the appear/disappear registers as a flicker, and a spinner *means* "this is
+slow". `useDelayedFlag` in `AnalysisPage.tsx` gates them — nothing for the first 250ms, then a
+400ms floor once shown, because without the floor a 300ms load merely flashes at a new threshold.
+
+Hold the container's height whether or not the indicator is showing, so a fast result lands without
+reflow. Note that a route can carry more than one indicator: the page-level spinner that fires while
+the analysis record itself loads is separate from each plot's, and it is usually the most visible.
+
 ## Domain ownership
 
 `SourceFile -> Test -> Cell` is the scientific hierarchy. Replicate groups and folders hold

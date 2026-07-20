@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.12.0 - 2026-07-20
+
+- Added "Hide diagnostic cycles" to the cycles plot. Cycling protocols interleave DCIR pulses and
+  rate checks among normal cycles, and those land far above and below the real capacity band, which
+  compresses the plot to the point of being unreadable. The toggle identifies them from how long
+  each cycle took to charge and discharge — never from capacity itself, so a genuinely degrading
+  cell is never hidden — and reports both how many cycles were removed and how many remain. The
+  sensitivity is adjustable, and the setting starts switched off.
+- Hidden cycles never leave the plot: exports still contain every cycle, so re-importing a report
+  restores them even when the original source files are gone. A report exported from a filtered plot
+  states so above the chart and lists the affected cycles below it, rather than relying on the
+  reader to go looking.
+- Opening an analysis whose cache is already built is faster again: a cached result is now handed
+  back without being unpacked and repacked on the way out, on top of the lookup work in 0.11.1.
+- Repackaging the application takes about a minute instead of about four, and produces an installer
+  1.2 MB larger.
+
 ## 0.11.1 - 2026-07-20
 
 - Opening an analysis whose cache is already built is now about four times faster for cycle plots
