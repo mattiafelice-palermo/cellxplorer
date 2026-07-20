@@ -1165,6 +1165,24 @@ def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
     fresh computes keep ``location_status`` current.
     """
     availability_kinds = {"source_offline", "source_changed"}
+    kept = [
+        badge
+        for badge in (result.get("badges") or [])
+        if badge.get("kind") not in availability_kinds
+    ]
+    result["badges"] = kept + availability_badges(db, spec)
+
+
+AVAILABILITY_BADGE_KINDS = {"source_offline", "source_changed"}
+
+
+def availability_badges(db: Session, spec: dict) -> list[dict]:
+    """Build source-availability badges from current database status.
+
+    Split out from :func:`refresh_availability_badges` so a cached response can
+    be served without parsing its payload: the badges are the only part of a
+    cached result that must not be reused as stored.
+    """
     fresh: list[dict] = []
     units, _missing = resolve_selection(db, spec)
     preload_cell_sources(db, [unit["cell"] for unit in units])
@@ -1184,12 +1202,7 @@ def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
                      "file": f.filename,
                      "detail": "Source data changed since computed. Showing cached result — "
                      "recompute explicitly to update."})
-    kept = [
-        badge
-        for badge in (result.get("badges") or [])
-        if badge.get("kind") not in availability_kinds
-    ]
-    result["badges"] = kept + fresh
+    return fresh
 
 
 def compute(

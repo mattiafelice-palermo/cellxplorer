@@ -16,6 +16,9 @@ user-facing impact.
   entry now appears only when real work starts.
 - Saved-plot thumbnails that are already cached now appear immediately instead of waiting behind
   the generation of an uncached plot on the same page.
+- Loading indicators no longer flash for work that finishes quickly. Opening an analysis, switching
+  tabs, and drawing saved-plot previews now hold their space silently and only report progress once
+  a load has actually been slow, so a fast result appears without a spinner blinking in front of it.
 - Global search now matches across entities: searching a cell name together with another term
   surfaces the analyses and saved plots that contain that cell. Results are grouped by kind, and an
   entry that matched through its contents lists the cell names responsible, so it is clear why it

@@ -366,6 +366,38 @@ function jobProgress(job: BackgroundJob | undefined): number {
   return Math.max(0, Math.min(100, (job.completed / job.total) * 100));
 }
 
+/**
+ * Report a pending state only once it has lasted long enough to be worth
+ * mentioning, then for long enough to be read.
+ *
+ * Most loads are served from cache in well under 250ms. Showing a progress bar
+ * for that long makes a fast app feel sluggish twice over: the appear/disappear
+ * registers as a flicker, and a spinner *means* "this is slow". The floor
+ * matters as much as the delay — without it a 300ms load would show a 50ms
+ * flash, moving the problem rather than fixing it.
+ */
+function useDelayedFlag(active: boolean, delay = 250, minimum = 400): boolean {
+  const [visible, setVisible] = useState(false);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    let timer: number | undefined;
+    if (active && !visible) {
+      timer = window.setTimeout(() => {
+        shownAt.current = Date.now();
+        setVisible(true);
+      }, delay);
+    } else if (!active && visible) {
+      const remaining = Math.max(0, minimum - (Date.now() - shownAt.current));
+      if (remaining === 0) setVisible(false);
+      else timer = window.setTimeout(() => setVisible(false), remaining);
+    }
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [active, visible, delay, minimum]);
+  return visible;
+}
+
 function ComputeProgress({ job, label }: { job: BackgroundJob | undefined; label: string }) {
   return (
     <Stack gap="xs" w={360} maw="80%">
@@ -2823,6 +2855,9 @@ function SavedPlotPreview({
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  const previewPending =
+    thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed);
+  const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
     // A cache hit (thumbnail or artifact) completes the task without any
@@ -2855,12 +2890,10 @@ function SavedPlotPreview({
     );
   }
 
-  if (thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed)) {
-    return (
-      <Center h={120}>
-        <Loader size={18} />
-      </Center>
-    );
+  if (previewPending) {
+    // A grid of saved plots would otherwise flash twenty loaders at once on a
+    // warm cache. Hold the row height; only admit to loading if it drags.
+    return <Center h={120}>{showPreviewLoader ? <Loader size={18} /> : null}</Center>;
   }
   if (traces.length === 0 || generationFailed) {
     return (
@@ -3027,6 +3060,9 @@ function SavedTimeCapacityPreview({
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  const previewPending =
+    thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed);
+  const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
     // A cache hit (thumbnail or artifact) completes the task without any
@@ -3059,12 +3095,10 @@ function SavedTimeCapacityPreview({
     );
   }
 
-  if (thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed)) {
-    return (
-      <Center h={120}>
-        <Loader size={18} />
-      </Center>
-    );
+  if (previewPending) {
+    // A grid of saved plots would otherwise flash twenty loaders at once on a
+    // warm cache. Hold the row height; only admit to loading if it drags.
+    return <Center h={120}>{showPreviewLoader ? <Loader size={18} /> : null}</Center>;
   }
   if (traces.length === 0 || generationFailed) {
     return (
@@ -6316,6 +6350,7 @@ function CyclePlotCard({
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
+  const showComputeProgress = useDelayedFlag(updating);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   // Rebuild traces/layout only when the fields they actually read change —
@@ -6489,9 +6524,13 @@ function CyclePlotCard({
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {traces.length === 0 ? (
+          // The height is held whether or not progress is showing, so a load
+          // that beats the delay lands the plot without any reflow.
           <Center h={500}>
             {updating ? (
-              <ComputeProgress job={computeJob} label="Preparing cycle plot" />
+              showComputeProgress ? (
+                <ComputeProgress job={computeJob} label="Preparing cycle plot" />
+              ) : null
             ) : (
               <Text size="sm" c="dimmed">
                 Add cells or replicates to start plotting.
@@ -6632,6 +6671,7 @@ function TimeCapacityPlotCardView({
     refetchInterval: (query) =>
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
+  const showComputeProgress = useDelayedFlag(timeResult.isLoading);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -6810,8 +6850,11 @@ function TimeCapacityPlotCardView({
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
         )}
         {timeResult.isLoading ? (
+          // Hold the space silently until the load is slow enough to mention.
           <Center h={500}>
-            <ComputeProgress job={computeJob.data ?? undefined} label="Preparing time/capacity plot" />
+            {showComputeProgress ? (
+              <ComputeProgress job={computeJob.data ?? undefined} label="Preparing time/capacity plot" />
+            ) : null}
           </Center>
         ) : traces.length === 0 ? (
           <Center h={500}>
@@ -7297,6 +7340,9 @@ export function AnalysisPage() {
     refetchInterval: (query) =>
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
+  // Declared with the other hooks: the page has early returns below, and this
+  // gates the one that renders while the analysis itself is being fetched.
+  const showPageLoader = useDelayedFlag(analysis.isLoading || spec === null);
 
   useEffect(() => {
     if (compute.data && spec) setRendered({ result: compute.data, spec: clone(spec) });
@@ -7583,11 +7629,9 @@ export function AnalysisPage() {
   }
 
   if (analysis.isLoading || spec === null) {
-    return (
-      <Center h={300}>
-        <Loader />
-      </Center>
-    );
+    // Opening an analysis is usually instant; hold the height silently rather
+    // than flashing a spinner on the way in.
+    return <Center h={300}>{showPageLoader ? <Loader /> : null}</Center>;
   }
 
   const currentAnalysis = analysis.data!;

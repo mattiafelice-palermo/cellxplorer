@@ -229,6 +229,15 @@ def load_result(kind: str, key: str) -> dict | None:
             os.utime(path, None)
         except OSError:
             pass
+        # Entries written since the body/header split keep their badges in a
+        # sidecar; older ones still carry them inline. Either way callers get
+        # the whole result back.
+        sidecar = _sidecar_path(kind, key)
+        if sidecar.is_file():
+            try:
+                result["badges"] = json.loads(sidecar.read_bytes()).get("badges") or []
+            except (OSError, json.JSONDecodeError, AttributeError):
+                result.setdefault("badges", [])
         result["cache_status"] = "hit"
         return result
     except (OSError, EOFError, json.JSONDecodeError):
@@ -237,12 +246,107 @@ def load_result(kind: str, key: str) -> dict | None:
         return None
 
 
+def _sidecar_path(kind: str, key: str) -> Path:
+    path = _result_path(kind, key)
+    return path.with_name(path.name[: -len(".json.gz")] + ".meta.json")
+
+
+def _write_sidecar(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        temporary.write_bytes(_json_bytes(value))
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def store_result(kind: str, key: str, result: dict) -> None:
+    """Persist a result split into a big immutable body and a tiny header.
+
+    ``badges`` and ``cache_status`` are the only parts of a cached result that
+    must not be replayed as stored: availability badges are rebuilt from current
+    database status on every response. Keeping them out of the compressed body
+    lets a cache hit be served by splicing bytes instead of parsing megabytes
+    of JSON (see :func:`load_result_body`).
+    """
     value = dict(result)
     value.pop("cache_status", None)
+    badges = value.pop("badges", None) or []
+    kept = [
+        badge
+        for badge in badges
+        if badge.get("kind") not in engine_availability_kinds()
+    ]
     with _lock:
         _store_budgeted(_result_path(kind, key), _json_bytes(value))
+        _write_sidecar(_sidecar_path(kind, key), {"badges": kept})
         _prune_locked()
+
+
+def engine_availability_kinds() -> set[str]:
+    # Local import keeps the engine -> cache -> engine cycle broken.
+    from . import analysis_engine as engine
+
+    return engine.AVAILABILITY_BADGE_KINDS
+
+
+def load_result_body(kind: str, key: str) -> tuple[bytes, list[dict]] | None:
+    """Return a cached result's raw JSON bytes plus its stored badges.
+
+    The bytes are the object *without* ``badges``/``cache_status`` — the caller
+    splices those back in. Returns ``None`` when the entry predates this split
+    (no sidecar), so the caller can fall back to the parsing path.
+    """
+    path = _result_path(kind, key)
+    sidecar = _sidecar_path(kind, key)
+    if not path.is_file() or not sidecar.is_file():
+        return None
+    try:
+        badges = json.loads(sidecar.read_bytes()).get("badges") or []
+        with gzip.open(path, "rb") as source:
+            body = source.read()
+        try:
+            os.utime(path, None)
+        except OSError:
+            pass
+        return body, badges
+    except (OSError, EOFError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def upgrade_result_format(kind: str, key: str, result: dict) -> None:
+    """Rewrite an entry stored before the body/header split.
+
+    Without this the fast path would only ever apply to results computed after
+    the upgrade — and a warm cache never recomputes, so an existing install
+    would see no benefit at all. Re-storing costs one write per entry, once.
+    """
+    if _sidecar_path(kind, key).is_file():
+        return
+    try:
+        store_result(kind, key, result)
+    except OSError:
+        pass  # The slow path already produced a correct response.
+
+
+def splice_result_body(body: bytes, badges: list[dict], cache_status: str) -> bytes:
+    """Prepend the volatile keys to a stored body without parsing it.
+
+    The stored body is a JSON object that deliberately lacks ``badges`` and
+    ``cache_status``, so the response is built by replacing its opening brace.
+    This is what makes a cache hit cost a file read rather than a parse and a
+    re-encode of several megabytes.
+    """
+    rest = body.lstrip()
+    if not rest.startswith(b"{"):
+        raise ValueError("cached result body is not a JSON object")
+    rest = rest[1:].lstrip()
+    head = b'{"cache_status":' + _json_bytes(cache_status) + b',"badges":' + _json_bytes(badges)
+    if rest.startswith(b"}"):
+        # The stored object held nothing but the keys we just re-added.
+        return head + b"}"
+    return head + b"," + rest
 
 
 def artifact_signature(signature: str) -> str:
@@ -561,6 +665,9 @@ def _prune_locked(limit_bytes: int | None = None) -> None:
         try:
             size = path.stat().st_size
             path.unlink()
+            # Drop the badge sidecar with its body so it cannot outlive it.
+            if path.name.endswith(".json.gz"):
+                path.with_name(path.name[: -len(".json.gz")] + ".meta.json").unlink(missing_ok=True)
             total -= size
         except OSError:
             continue

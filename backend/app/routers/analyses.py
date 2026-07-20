@@ -15,7 +15,7 @@ import tempfile
 from typing import Literal
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -420,12 +420,28 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     key = analysis_cache.result_key(
         db, "cycles", spec, a.provenance, use_current_versions=req.recompute
     )
+    if not req.recompute:
+        # Fast path: serve the stored bytes verbatim, splicing in only the
+        # badges, so a cache hit never parses the payload.
+        stored = analysis_cache.load_result_body("cycles", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body, kept + engine.availability_badges(db, spec), "hit"
+                ),
+                media_type="application/json",
+            )
     result = None if req.recompute else analysis_cache.load_result("cycles", key)
     cached = result is not None
     if cached:
         # Availability is not part of the cache key; badges must reflect the
         # current source status rather than the state at compute time.
         engine.refresh_availability_badges(db, spec, result)
+        # Entry predates the body/header split; rewrite it so the next read
+        # takes the fast path.
+        analysis_cache.upgrade_result_format("cycles", key, result)
     job_id = req.job_id
     try:
         if result is None:
@@ -478,8 +494,21 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         use_current_versions=req.recompute,
         request_options=options,
     )
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("time_capacity", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body, kept + engine.availability_badges(db, spec), "hit"
+                ),
+                media_type="application/json",
+            )
     result = None if req.recompute else analysis_cache.load_result("time_capacity", key)
     cached = result is not None
+    if cached:
+        analysis_cache.upgrade_result_format("time_capacity", key, result)
     job_id = req.job_id
     try:
         if result is None:
