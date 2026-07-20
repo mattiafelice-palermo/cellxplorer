@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -561,6 +561,44 @@ class AnalysisEngineTests(unittest.TestCase):
         loaded = self.db.get(Cell, cell.id)
         self.assertEqual(len(loaded.metadata_entries), 304)
         self.assertEqual(engine.cell_active_mass_mg(loaded), 99.0)
+
+    def test_preloading_sources_removes_the_per_cell_query_walk(self):
+        """Walking cell.tests -> file_links -> file lazily is an N+1.
+
+        Building a cache key for 25 cells issued 175 queries before any cached
+        bytes were read. The preload must make those walks free, return the
+        files in the same order, and leave header_meta unfetched — it holds the
+        raw instrument header and nothing on the cache-hit path reads it.
+        """
+        cells = list(self.cells.values())
+        expected = {}
+        for cell in cells:
+            hashes, files = engine.cell_ordered_hashes(self.db, cell)
+            expected[cell.id] = (hashes, [f.id for f in files])
+
+        self.db.expire_all()
+        engine.preload_cell_sources(self.db, cells)
+
+        queries: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            queries.append(statement)
+
+        bind = self.db.get_bind()
+        event.listen(bind, "before_cursor_execute", record)
+        try:
+            for cell in cells:
+                hashes, files = engine.cell_ordered_hashes(self.db, cell)
+                self.assertEqual((hashes, [f.id for f in files]), expected[cell.id])
+        finally:
+            event.remove(bind, "before_cursor_execute", record)
+
+        self.assertEqual(queries, [], f"preload left {len(queries)} lazy queries behind")
+
+        # header_meta stays deferred until something actually asks for it.
+        _hashes, files = engine.cell_ordered_hashes(self.db, cells[0])
+        self.assertIn("header_meta", inspect(files[0]).unloaded)
+        self.assertEqual(files[0].header_meta, analysis_protocol_header())
 
     def test_provenance_roundtrip_and_version_badge(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

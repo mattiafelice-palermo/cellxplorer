@@ -138,6 +138,11 @@ def result_key(
         calc_version = provenance.get("calc_version") or calc_version
 
     units, missing = engine.resolve_selection(db, spec)
+    # Pure loading strategy — the fingerprints below are byte-identical either
+    # way, this just avoids ~10 lazy-load queries per cell.
+    selected = [unit["cell"] for unit in units]
+    engine.preload_cell_sources(db, selected)
+    scalar_metadata = engine.load_scalar_metadata(db, selected)
     unit_fingerprints: list[dict[str, Any]] = []
     for unit in units:
         cell = unit["cell"]
@@ -159,9 +164,9 @@ def result_key(
                 # or an in-progress cycling file cannot invalidate every
                 # cached result for the cell.
                 "hashes": hashes,
-                "active_mass_mg": engine.cell_active_mass_mg(cell),
-                "nominal_capacity_mah": engine.cell_nominal_capacity_mah(cell),
-                "electrode_area_cm2": engine.cell_electrode_area_cm2(cell),
+                "active_mass_mg": engine.cell_active_mass_mg(cell, scalar_metadata.get(cell.id)),
+                "nominal_capacity_mah": engine.cell_nominal_capacity_mah(cell, scalar_metadata.get(cell.id)),
+                "electrode_area_cm2": engine.cell_electrode_area_cm2(cell, scalar_metadata.get(cell.id)),
                 "archived": bool(cell.archived),
             }
         )

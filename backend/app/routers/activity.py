@@ -43,6 +43,16 @@ def list_background_jobs(limit: int = 20):
     return background_jobs.list_jobs(limit=limit)
 
 
+@router.get("/background-jobs/by-token/{token}")
+def get_background_job_by_token(token: str):
+    """Return the job a client's token refers to, or null if none exists yet.
+
+    A cached compute never opens a job, so "no job" is the normal, successful
+    outcome here rather than an error.
+    """
+    return background_jobs.find_by_token(token)
+
+
 @router.get("/background-jobs/{job_id}")
 def get_background_job(job_id: int):
     job = background_jobs.get_job(job_id)

@@ -274,6 +274,9 @@ class ComputeRequest(BaseModel):
     recompute: bool = False  # explicit: use current parser/calc versions
     save_provenance: bool = False
     job_id: int | None = None
+    # Client-generated id used to open a job only if the cache misses, so a
+    # cached load costs no extra round-trip and leaves no activity entry.
+    job_token: str | None = Field(default=None, max_length=100)
     viewport_width: int | None = Field(default=None, ge=240, le=10000)
     precision: Literal["standard", "full"] = "standard"
     compact: bool = False
@@ -366,6 +369,34 @@ class AnalysisComputeJobCreate(BaseModel):
     spec: dict | None = None
 
 
+def _open_compute_job(
+    db: Session,
+    analysis: Analysis,
+    spec: dict,
+    kind: str,
+    token: str | None,
+) -> int:
+    """Open an activity entry for a compute that is about to do real work.
+
+    Called only after the cache has been consulted and missed. Resolving the
+    selection to build the per-cell item list is itself a handful of queries,
+    so a cached load should never reach here.
+    """
+    units, _ = engine.resolve_selection(db, spec)
+    kind_label = "time/capacity" if kind == "time_capacity" else "cycle"
+    return background_jobs.create_job(
+        kind="analysis_compute",
+        title=f"Preparing {analysis.title} ({kind_label} plot)",
+        description="Reading cell data",
+        total=len(units),
+        token=token,
+        items=[
+            {"id": index, "label": unit["label"], "status": "queued"}
+            for index, unit in enumerate(units, start=1)
+        ],
+    )
+
+
 @router.post("/analyses/{analysis_id}/compute-jobs")
 def create_analysis_compute_job(
     analysis_id: int,
@@ -376,18 +407,7 @@ def create_analysis_compute_job(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
-    units, _ = engine.resolve_selection(db, spec)
-    kind_label = "time/capacity" if req.kind == "time_capacity" else "cycle"
-    job_id = background_jobs.create_job(
-        kind="analysis_compute",
-        title=f"Preparing {analysis.title} ({kind_label} plot)",
-        description="Reading cell data",
-        total=len(units),
-        items=[
-            {"id": index, "label": unit["label"], "status": "queued"}
-            for index, unit in enumerate(units, start=1)
-        ],
-    )
+    job_id = _open_compute_job(db, analysis, spec, req.kind, None)
     return background_jobs.get_job(job_id)
 
 
@@ -406,23 +426,26 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
         # Availability is not part of the cache key; badges must reflect the
         # current source status rather than the state at compute time.
         engine.refresh_availability_badges(db, spec, result)
+    job_id = req.job_id
     try:
         if result is None:
             from ..services.process_priority import background_thread_priority
 
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(db, a, spec, "cycles", req.job_token)
             with background_thread_priority(req.background):
                 result = engine.compute(
                     db,
                     spec,
                     a.provenance,
                     use_current_versions=req.recompute,
-                    progress=_progress_callback(req.job_id),
+                    progress=_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
             analysis_cache.store_result("cycles", key, result)
-        _finish_job(req.job_id, cached=cached)
+        _finish_job(job_id, cached=cached)
     except Exception as exc:
-        _finish_job(req.job_id, error=str(exc))
+        _finish_job(job_id, error=str(exc))
         raise
     if req.save_provenance or req.recompute:
         a.provenance = engine.build_provenance(result)
@@ -457,10 +480,13 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
     )
     result = None if req.recompute else analysis_cache.load_result("time_capacity", key)
     cached = result is not None
+    job_id = req.job_id
     try:
         if result is None:
             from ..services.process_priority import background_thread_priority
 
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(db, a, spec, "time_capacity", req.job_token)
             with background_thread_priority(req.background):
                 result = engine.compute_time_capacity(
                     db,
@@ -470,14 +496,14 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     viewport_width=req.viewport_width,
                     precision=req.precision,
                     compact=req.compact,
-                    progress=_progress_callback(req.job_id),
+                    progress=_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
             analysis_cache.store_result("time_capacity", key, result)
-        _finish_job(req.job_id, cached=cached)
+        _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
-        _finish_job(req.job_id, error=str(exc))
+        _finish_job(job_id, error=str(exc))
         raise
 
 

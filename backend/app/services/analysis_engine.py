@@ -24,10 +24,10 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 from sqlalchemy import inspect as sa_inspect, select
-from sqlalchemy.orm import Session, object_session
+from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinload
 
 from ..config import CALC_VERSION
-from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile
+from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
 from . import cache, calc, parsing, protocol, stitch
 
 SPEC_VERSION = 7
@@ -112,6 +112,39 @@ def default_spec(title: str) -> dict:
 
 
 # ------------------------------------------------------------- resolution
+
+
+def preload_cell_sources(db: Session, cells: list[Cell]) -> None:
+    """Load tests, file links and source files for many cells in one round trip.
+
+    ``cell_ordered_hashes`` walks ``cell.tests -> test.file_links -> link.file``.
+    Through lazy loading that is roughly seven queries per cell, so building a
+    cache key for 25 cells issued 175 queries before a single cached byte was
+    read, and refreshing availability badges issued 100 more. Warming the
+    session's identity map first makes those walks free.
+
+    This is purely a loading strategy: the walks still sort in Python exactly as
+    before, so the resulting hash order — and therefore every cache key — is
+    unchanged.
+
+    ``header_meta`` is deferred. It holds the raw instrument header (~3 MB across
+    this database) and is only read when reconstructing protocols during an
+    actual compute, never on the cache-hit path; leaving it in meant decoding
+    all of it as JSON on every request that touched a source file.
+    """
+    ids = {cell.id for cell in cells if cell.id is not None}
+    if not ids:
+        return
+    db.execute(
+        select(Cell)
+        .where(Cell.id.in_(ids))
+        .options(
+            selectinload(Cell.tests)
+            .selectinload(Test.file_links)
+            .joinedload(TestFile.file)
+            .defer(SourceFile.header_meta)
+        )
+    ).unique().all()
 
 
 def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[SourceFile]]:
@@ -505,6 +538,36 @@ def _metadata_float(value: object) -> float | None:
     return number if number > 0 else None
 
 
+#: Every key the three scalar helpers below can read, so they can be fetched
+#: for a whole selection in one query.
+SCALAR_METADATA_KEYS = (
+    "override.active_mass_mg", "active_material_mg", "active_mass_mg",
+    "override.nominal_capacity_mah", "nominal_capacity_mah", "nominal_capacity",
+    "override.electrode_area_cm2", "electrode_area_cm2",
+)
+
+
+def load_scalar_metadata(db: Session, cells: list[Cell]) -> dict[int, dict[str, str]]:
+    """Fetch the scalar metadata keys for many cells in a single query.
+
+    Pass the result to the ``cell_*`` helpers to avoid three small queries per
+    cell. Returned explicitly rather than cached on the session so there is no
+    chance of serving a stale value after an edit.
+    """
+    ids = {cell.id for cell in cells if cell.id is not None}
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(CellMetadata.cell_id, CellMetadata.key, CellMetadata.value).where(
+            CellMetadata.cell_id.in_(ids), CellMetadata.key.in_(SCALAR_METADATA_KEYS)
+        )
+    ).all()
+    found: dict[int, dict[str, str]] = {cell_id: {} for cell_id in ids}
+    for cell_id, key, value in rows:
+        found[cell_id][key] = value
+    return found
+
+
 def _cell_metadata_values(cell: Cell, keys: tuple[str, ...]) -> dict[str, str]:
     """Read a few metadata values without materializing the whole collection.
 
@@ -529,9 +592,10 @@ def _cell_metadata_values(cell: Cell, keys: tuple[str, ...]) -> dict[str, str]:
     return dict(rows)
 
 
-def cell_active_mass_mg(cell: Cell) -> float | None:
+def cell_active_mass_mg(cell: Cell, metadata: dict[str, str] | None = None) -> float | None:
     keys = ("override.active_mass_mg", "active_material_mg", "active_mass_mg")
-    metadata = _cell_metadata_values(cell, keys)
+    if metadata is None:
+        metadata = _cell_metadata_values(cell, keys)
     for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
@@ -545,9 +609,10 @@ def cell_active_mass_mg(cell: Cell) -> float | None:
     return source_values[0] if source_values else None
 
 
-def cell_nominal_capacity_mah(cell: Cell) -> float | None:
+def cell_nominal_capacity_mah(cell: Cell, metadata: dict[str, str] | None = None) -> float | None:
     keys = ("override.nominal_capacity_mah", "nominal_capacity_mah", "nominal_capacity")
-    metadata = _cell_metadata_values(cell, keys)
+    if metadata is None:
+        metadata = _cell_metadata_values(cell, keys)
     for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
@@ -561,9 +626,10 @@ def cell_nominal_capacity_mah(cell: Cell) -> float | None:
     return source_values[0] if source_values else None
 
 
-def cell_electrode_area_cm2(cell: Cell) -> float | None:
+def cell_electrode_area_cm2(cell: Cell, metadata: dict[str, str] | None = None) -> float | None:
     keys = ("override.electrode_area_cm2", "electrode_area_cm2")
-    metadata = _cell_metadata_values(cell, keys)
+    if metadata is None:
+        metadata = _cell_metadata_values(cell, keys)
     for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
@@ -1101,6 +1167,7 @@ def refresh_availability_badges(db: Session, spec: dict, result: dict) -> None:
     availability_kinds = {"source_offline", "source_changed"}
     fresh: list[dict] = []
     units, _missing = resolve_selection(db, spec)
+    preload_cell_sources(db, [unit["cell"] for unit in units])
     for unit in units:
         cell = unit["cell"]
         _hashes, files = cell_ordered_hashes(db, cell)

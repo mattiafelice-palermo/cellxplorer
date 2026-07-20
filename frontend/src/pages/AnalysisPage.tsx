@@ -5867,15 +5867,46 @@ async function portableThumbnail(svg: string): Promise<string> {
   }
 }
 
+/** Identify a compute so the server can attach a job to it if it does work. */
+function newComputeToken(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 // Plotly image export is synchronous-heavy even though it returns a promise.
 // Serializing thumbnail work prevents several saved plots from blocking the UI
 // at the same time when a tab is opened for the first time.
 let portableSvgQueue: Promise<void> = Promise.resolve();
 
+/**
+ * Wait until the browser has drawn what it already has.
+ *
+ * Plotly image export blocks the main thread in long synchronous chunks, so
+ * starting it straight from an effect prevents React from committing — every
+ * *cached* thumbnail on the page keeps showing a spinner while one uncached
+ * plot is generated. Yielding to idle first lets the warm plots paint, so the
+ * spinner marks the plot actually being built rather than all of them.
+ */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    const start = () => {
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(() => resolve(), { timeout: 500 });
+      } else {
+        window.setTimeout(resolve, 32);
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(start));
+  });
+}
+
 function queuedPortableArtifactImages(
   figure: NonNullable<PortablePlotSnapshot["figure"]>
 ): Promise<{ svg: string; thumbnail: string }> {
   const task = portableSvgQueue.then(async () => {
+    await afterPaint();
     const svg = await portableSvg(figure);
     return { svg, thumbnail: await portableThumbnail(svg) };
   });
@@ -5889,7 +5920,10 @@ function queuedPortableArtifactImages(
 function queuedPortableThumbnail(
   svg: string
 ): Promise<string> {
-  const task = portableSvgQueue.then(() => portableThumbnail(svg));
+  const task = portableSvgQueue.then(async () => {
+    await afterPaint();
+    return portableThumbnail(svg);
+  });
   portableSvgQueue = task.then(
     () => undefined,
     () => undefined
@@ -6520,7 +6554,7 @@ function TimeCapacityPlotCardView({
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
-  const [computeJobId, setComputeJobId] = useState<number | null>(null);
+  const [computeToken, setComputeToken] = useState<string | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -6565,22 +6599,22 @@ function TimeCapacityPlotCardView({
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, dataSignature],
     queryFn: async () => {
-      const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
-        kind: "time_capacity",
-        spec,
-      });
-      setComputeJobId(job.id);
+      // The server opens an activity entry only if the cache misses, so send a
+      // token instead of pre-creating a job: a cached load costs one request
+      // and leaves no spurious "Preparing..." entry behind.
+      const token = newComputeToken();
+      setComputeToken(token);
       try {
         return await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec,
-          job_id: job.id,
+          job_token: token,
           viewport_width: viewportWidth,
           precision: "standard",
           compact: true,
         });
       } finally {
         window.setTimeout(
-          () => setComputeJobId((current) => (current === job.id ? null : current)),
+          () => setComputeToken((current) => (current === token ? null : current)),
           300
         );
       }
@@ -6591,10 +6625,12 @@ function TimeCapacityPlotCardView({
     placeholderData: (previous) => previous,
   });
   const computeJob = useQuery({
-    queryKey: ["background-job", computeJobId],
-    queryFn: () => get<BackgroundJob>(`/api/background-jobs/${computeJobId}`),
-    enabled: computeJobId !== null,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 300 : false),
+    queryKey: ["background-job-token", computeToken],
+    queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
+    enabled: computeToken !== null,
+    // null means the compute was served from cache and never opened a job.
+    refetchInterval: (query) =>
+      query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
@@ -6775,7 +6811,7 @@ function TimeCapacityPlotCardView({
         )}
         {timeResult.isLoading ? (
           <Center h={500}>
-            <ComputeProgress job={computeJob.data} label="Preparing time/capacity plot" />
+            <ComputeProgress job={computeJob.data ?? undefined} label="Preparing time/capacity plot" />
           </Center>
         ) : traces.length === 0 ? (
           <Center h={500}>
@@ -7102,7 +7138,7 @@ export function AnalysisPage() {
     stage: string;
     phase: "plots" | "packing" | "done";
   } | null>(null);
-  const [computeJobId, setComputeJobId] = useState<number | null>(null);
+  const [computeToken, setComputeToken] = useState<string | null>(null);
   const [saveDraft, setSaveDraft] = useState<{ name: string; description: string } | null>(null);
   const [leavePrompt, setLeavePrompt] = useState<{
     proceed: () => void;
@@ -7233,19 +7269,18 @@ export function AnalysisPage() {
   const compute = useQuery({
     queryKey: ["compute", aid, computeSignature(spec)],
     queryFn: async () => {
-      const job = await post<BackgroundJob>(`/api/analyses/${aid}/compute-jobs`, {
-        kind: "cycles",
-        spec,
-      });
-      setComputeJobId(job.id);
+      // See the time/capacity card: the job is opened server-side only on a
+      // cache miss, so a warm analysis makes exactly one request.
+      const token = newComputeToken();
+      setComputeToken(token);
       try {
         return await post<ComputeResult>(`/api/analyses/${aid}/compute`, {
           spec,
-          job_id: job.id,
+          job_token: token,
         });
       } finally {
         window.setTimeout(
-          () => setComputeJobId((current) => (current === job.id ? null : current)),
+          () => setComputeToken((current) => (current === token ? null : current)),
           300
         );
       }
@@ -7256,10 +7291,11 @@ export function AnalysisPage() {
     staleTime: 5 * 60_000,
   });
   const computeJob = useQuery({
-    queryKey: ["background-job", computeJobId],
-    queryFn: () => get<BackgroundJob>(`/api/background-jobs/${computeJobId}`),
-    enabled: computeJobId !== null,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 300 : false),
+    queryKey: ["background-job-token", computeToken],
+    queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
+    enabled: computeToken !== null,
+    refetchInterval: (query) =>
+      query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
 
   useEffect(() => {
@@ -8025,7 +8061,7 @@ export function AnalysisPage() {
                 update={update}
                 updating={plotUpdating}
                 error={compute.isError ? (compute.error as Error) : null}
-                computeJob={computeJob.data}
+                computeJob={computeJob.data ?? undefined}
               />
               {savedPlotsPanelFor("cycles")}
             </Stack>

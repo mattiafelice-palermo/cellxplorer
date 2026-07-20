@@ -6,10 +6,16 @@ user-facing impact.
 
 ## 0.11.1 - 2026-07-20
 
-- Opening an analysis whose cache is already built is now roughly three times faster for cycle
-  plots and four times faster for time/capacity plots. Reading a cell's mass, nominal capacity, or
-  electrode area used to load every metadata row for that cell — tens of thousands of rows — on
-  every request, and large results were serialized twice on the way out.
+- Opening an analysis whose cache is already built is now about four times faster for cycle plots
+  and closer to seven times faster for time/capacity plots. Several costs were paid on every
+  request even when nothing needed recomputing: reading a cell's mass, nominal capacity, or
+  electrode area loaded every metadata row for that cell, checking whether the cache was still
+  valid walked each cell's files one query at a time, the raw instrument headers were decoded and
+  discarded, and large results were serialized twice on the way out.
+- A cached plot no longer opens a "Preparing..." entry in Activity or costs an extra request; the
+  entry now appears only when real work starts.
+- Saved-plot thumbnails that are already cached now appear immediately instead of waiting behind
+  the generation of an uncached plot on the same page.
 - Global search now matches across entities: searching a cell name together with another term
   surfaces the analyses and saved plots that contain that cell. Results are grouped by kind, and an
   entry that matched through its contents lists the cell names responsible, so it is clear why it

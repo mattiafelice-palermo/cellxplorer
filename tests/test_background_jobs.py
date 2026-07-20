@@ -67,5 +67,33 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in job["items"]], ["first", "second"])
 
 
+    def test_jobs_are_findable_by_client_token(self):
+        """Compute endpoints open a job only when the cache misses.
+
+        The client cannot be handed an id up front, so it sends a token and
+        polls for it. Until real work starts there is deliberately no job, and
+        that absence must read as "nothing to show" rather than an error.
+        """
+        self.assertIsNone(background_jobs.find_by_token("never-used"))
+
+        job_id = background_jobs.create_job(
+            kind="analysis_compute",
+            title="Preparing Demo (cycle plot)",
+            description="Reading cell data",
+            total=1,
+            token="tok-1",
+        )
+        found = background_jobs.find_by_token("tok-1")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["id"], job_id)
+
+        # Tokens do not collide with untokenized jobs.
+        background_jobs.create_job(
+            kind="analysis_compute", title="Other", description="", total=1
+        )
+        self.assertEqual(background_jobs.find_by_token("tok-1")["id"], job_id)
+        self.assertIsNone(background_jobs.find_by_token(None))
+
+
 if __name__ == "__main__":
     unittest.main()

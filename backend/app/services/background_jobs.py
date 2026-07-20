@@ -20,6 +20,7 @@ def create_job(
     description: str,
     total: int,
     items: list[dict] | None = None,
+    token: str | None = None,
 ) -> int:
     global _next_id
     with _lock:
@@ -28,6 +29,7 @@ def create_job(
         _jobs[job_id] = {
             "id": job_id,
             "kind": kind,
+            "token": token,
             "title": title,
             "description": description,
             "status": "running",
@@ -51,6 +53,23 @@ def create_job(
         for old_id in sorted(_jobs)[:-30]:
             _jobs.pop(old_id, None)
         return job_id
+
+
+def find_by_token(token: str) -> dict | None:
+    """Look up a job a client asked for before the server had created it.
+
+    Compute endpoints only open a job when the cache misses, so the client
+    cannot be handed an id up front. It generates a token instead and polls
+    for it; until real work starts there is simply nothing to show.
+    """
+    if not token:
+        # Untokenized jobs carry token=None; an empty query must not match them.
+        return None
+    with _lock:
+        for job in reversed(_jobs.values()):
+            if job.get("token") == token:
+                return dict(job)
+    return None
 
 
 def update_job(job_id: int, **values) -> None:
