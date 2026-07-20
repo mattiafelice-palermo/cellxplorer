@@ -83,6 +83,57 @@ class DownloadRegistryTests(unittest.TestCase):
                 self.assertFalse(result["deleted_file"])
                 self.assertTrue(target.exists())
 
+    def test_file_endpoint_serves_recorded_downloads_only(self):
+        from fastapi import HTTPException
+
+        from app.routers import settings as settings_router
+
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with self._isolate(folder):
+                target = folder / "plot.png"
+                target.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+                entry = download_registry.record(filename="plot.png", path=str(target))
+
+                response = settings_router.read_download(entry["id"])
+                self.assertEqual(Path(response.path), target)
+
+                # Unknown ids are rejected: the path always comes from the
+                # registry, never from the request.
+                with self.assertRaises(HTTPException) as unknown:
+                    settings_router.read_download("not-a-real-id")
+                self.assertEqual(unknown.exception.status_code, 404)
+
+                # An entry whose file disappeared reports 404 rather than
+                # raising an OS error.
+                target.unlink()
+                with self.assertRaises(HTTPException) as gone:
+                    settings_router.read_download(entry["id"])
+                self.assertEqual(gone.exception.status_code, 404)
+
+    def test_mark_seen_clears_the_badge_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with self._isolate(folder):
+                entry = download_registry.record(filename="fresh.png", path=str(folder / "fresh.png"))
+                self.assertFalse(entry["seen"])
+
+                self.assertTrue(download_registry.mark_seen(entry["id"]))
+                self.assertTrue(download_registry.list_entries()[0]["seen"])
+                # Acknowledging twice is harmless, and unknown ids report False.
+                self.assertTrue(download_registry.mark_seen(entry["id"]))
+                self.assertFalse(download_registry.mark_seen("not-a-real-id"))
+
+    def test_entries_written_before_seen_existed_do_not_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            with self._isolate(folder):
+                download_registry._write(
+                    [{"id": "old", "filename": "legacy.csv", "path": "", "kind": "data",
+                      "bytes": None, "created_at": "2026-01-01T00:00:00+00:00"}]
+                )
+                self.assertTrue(download_registry.list_entries()[0]["seen"])
+
     def test_missing_entry_reports_not_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)

@@ -140,6 +140,7 @@ export const put = <T>(url: string, body: unknown) =>
 export const patch = <T>(url: string, body: unknown) =>
   request<T>(url, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T>(url: string) => request<T>(url, { method: "DELETE" });
+export const getBlob = (url: string) => requestBlob(url, { method: "GET" });
 export const postBlob = (url: string, body?: unknown) =>
   requestBlob(url, {
     method: "POST",
@@ -291,6 +292,7 @@ export interface DownloadEntry {
   bytes: number | null;
   created_at: string;
   exists: boolean;
+  seen: boolean;
 }
 
 export interface SavedDownload {
@@ -859,6 +861,11 @@ export interface AnalysisSavedPlotSummary {
   tab: string;
 }
 
+export interface AnalysisEntryRef {
+  kind: string;
+  ref_id: number;
+}
+
 export interface AnalysisSummary {
   id: number;
   title: string;
@@ -868,6 +875,7 @@ export interface AnalysisSummary {
   n_exclusions: number;
   quantity: string | null;
   saved_plots: AnalysisSavedPlotSummary[];
+  entry_refs: AnalysisEntryRef[];
   has_provenance: boolean;
   computed_at: string | null;
   parser_version: string | null;

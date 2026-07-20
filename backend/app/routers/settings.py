@@ -8,6 +8,7 @@ from shutil import copyfileobj
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -533,6 +534,32 @@ def register_download(payload: DownloadRegistration):
 @router.get("/downloads/history")
 def list_downloads():
     return download_registry.list_entries()
+
+
+@router.get("/downloads/history/{entry_id}/file")
+def read_download(entry_id: str):
+    """Serve a recorded download so the UI can place it on the clipboard.
+
+    Only paths this app itself recorded are reachable: the id is resolved
+    through the registry, never taken from the request.
+    """
+    entry = next(
+        (item for item in download_registry.list_entries() if item["id"] == entry_id),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No such download entry")
+    path = Path(entry.get("path") or "")
+    if not entry.get("exists") or not path.is_file():
+        raise HTTPException(status_code=404, detail="The file is no longer at this location.")
+    return FileResponse(path, filename=path.name)
+
+
+@router.post("/downloads/history/{entry_id}/seen")
+def acknowledge_download(entry_id: str):
+    if not download_registry.mark_seen(entry_id):
+        raise HTTPException(status_code=404, detail="No such download entry")
+    return {"ok": True}
 
 
 @router.delete("/downloads/history/{entry_id}")

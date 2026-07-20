@@ -24,6 +24,7 @@ from starlette.background import BackgroundTask
 
 from ..db import get_db
 from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
+from ..responses import fast_json
 from ..services import background_jobs
 from ..services.entity_ids import next_analysis_id
 from ..services.lazy_module import LazyModule
@@ -105,6 +106,14 @@ def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
             }
             for plot in (a.spec.get("saved_plots") or [])
             if plot.get("id")
+        ],
+        # Raw selection references (no joins): the palette expands these
+        # client-side against its cached cell and replicate-group lists so an
+        # analysis can be found by the name of a cell it contains.
+        "entry_refs": [
+            {"kind": str(entry.get("kind")), "ref_id": entry.get("ref_id")}
+            for entry in (a.spec.get("selection", {}).get("entries") or [])
+            if entry.get("kind") and entry.get("ref_id") is not None
         ],
         "has_provenance": a.provenance is not None,
         "computed_at": (a.provenance or {}).get("computed_at"),
@@ -422,7 +431,9 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
             a.spec = req.spec
         a.modified_at = datetime.now(timezone.utc)
         db.commit()
-    return result
+    # Results are plain JSON types and can reach tens of megabytes; bypass
+    # FastAPI's encoder rather than walking the whole payload twice.
+    return fast_json(result)
 
 
 @router.post("/analyses/{analysis_id}/time-capacity")
@@ -464,7 +475,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
             result["cache_status"] = "miss"
             analysis_cache.store_result("time_capacity", key, result)
         _finish_job(req.job_id, cached=cached)
-        return result
+        return fast_json(result)
     except Exception as exc:
         _finish_job(req.job_id, error=str(exc))
         raise
@@ -519,7 +530,8 @@ def get_plot_artifact(
     artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
     if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
-    return {"signature": signature, **artifact}
+    # An artifact carries the full SVG plus the portable figure — megabytes.
+    return fast_json({"signature": signature, **artifact})
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/lookup")
@@ -536,7 +548,7 @@ def lookup_plot_artifact(
     artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
     if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
-    return {"signature": req.signature, **artifact}
+    return fast_json({"signature": req.signature, **artifact})
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/thumbnail/lookup")

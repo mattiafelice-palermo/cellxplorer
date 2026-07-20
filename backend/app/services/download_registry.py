@@ -61,7 +61,9 @@ def _write(entries: list[dict]) -> None:
 def _decorate(entry: dict) -> dict:
     path = entry.get("path")
     exists = bool(path) and Path(path).is_file()
-    return {**entry, "exists": exists}
+    # Entries written before `seen` existed are treated as already seen so an
+    # upgrade does not resurrect a large badge count.
+    return {**entry, "exists": exists, "seen": bool(entry.get("seen", True))}
 
 
 def record(*, filename: str, path: str, kind: str | None = None, bytes_: int | None = None) -> dict:
@@ -72,6 +74,9 @@ def record(*, filename: str, path: str, kind: str | None = None, bytes_: int | N
         "kind": kind or kind_for_filename(filename),
         "bytes": int(bytes_) if bytes_ is not None else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        # New downloads count towards the header badge until the user acts on
+        # them (opens, reveals, or copies the file).
+        "seen": False,
     }
     with _lock:
         entries = _read()
@@ -108,6 +113,20 @@ def delete_entry(entry_id: str, *, delete_file: bool) -> dict:
                 removed_file = False
         _write([item for item in entries if item.get("id") != entry_id])
     return {"removed": True, "deleted_file": removed_file}
+
+
+def mark_seen(entry_id: str) -> bool:
+    """Acknowledge one download so it stops counting towards the badge."""
+    with _lock:
+        entries = _read()
+        target = next((item for item in entries if item.get("id") == entry_id), None)
+        if target is None:
+            return False
+        if target.get("seen"):
+            return True
+        target["seen"] = True
+        _write(entries)
+        return True
 
 
 def clear() -> None:

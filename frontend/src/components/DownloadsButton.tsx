@@ -5,7 +5,6 @@ import {
   Button,
   Group,
   Popover,
-  ScrollArea,
   Stack,
   Text,
   Tooltip,
@@ -25,7 +24,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 
-import { del, get, type DownloadEntry } from "../api";
+import { del, get, getBlob, post, type DownloadEntry } from "../api";
 import { DOWNLOAD_EVENT } from "../downloads";
 import { isTauriApp } from "../downloads";
 
@@ -123,7 +122,7 @@ function DownloadRow({
       <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
         {desktop && (
           <>
-            <Tooltip label="Copy path" withArrow>
+            <Tooltip label="Copy file" withArrow>
               <ActionIcon
                 variant="subtle"
                 color="teal"
@@ -132,7 +131,7 @@ function DownloadRow({
                   event.stopPropagation();
                   onCopy(entry);
                 }}
-                aria-label={`Copy path of ${entry.filename}`}
+                aria-label={`Copy ${entry.filename}`}
               >
                 <IconCopy size={16} />
               </ActionIcon>
@@ -212,7 +211,25 @@ export function DownloadsButton() {
     };
   }, [queryClient]);
 
+  /**
+   * Acting on a download acknowledges it: the header badge counts only the
+   * exports the user has not touched yet, the way a browser clears its
+   * downloads indicator once you open the file.
+   */
+  const acknowledge = async (entry: DownloadEntry) => {
+    if (entry.seen) return;
+    try {
+      await post(`/api/downloads/history/${entry.id}/seen`);
+      queryClient.setQueryData<DownloadEntry[]>(["downloads-history"], (current) =>
+        current?.map((item) => (item.id === entry.id ? { ...item, seen: true } : item)),
+      );
+    } catch {
+      // The badge is cosmetic; a failed acknowledgement is not worth a notice.
+    }
+  };
+
   const openFile = async (entry: DownloadEntry) => {
+    void acknowledge(entry);
     try {
       await tauriInvoke("open_download", entry.path);
     } catch (error) {
@@ -224,6 +241,7 @@ export function DownloadsButton() {
     }
   };
   const revealFile = async (entry: DownloadEntry) => {
+    void acknowledge(entry);
     try {
       await tauriInvoke("reveal_download", entry.path);
     } catch (error) {
@@ -234,12 +252,52 @@ export function DownloadsButton() {
       queryClient.invalidateQueries({ queryKey: ["downloads-history"] });
     }
   };
-  const copyPath = async (entry: DownloadEntry) => {
+  /**
+   * Copy PNGs as image bits so they paste straight into a presentation, and
+   * everything else (SVG, PDF, CSV, XLSX, HTML) as a real Windows file drop so
+   * it pastes into a folder or an app that accepts attachments. The web
+   * Clipboard API cannot produce a file drop — and Chromium refuses
+   * `image/svg+xml` outright — so the native command does that half.
+   */
+  const copyFile = async (entry: DownloadEntry) => {
+    const fallbackToPath = async (reason: string) => {
+      try {
+        await navigator.clipboard.writeText(entry.path);
+        notifications.show({ message: `${reason} Path copied instead.`, color: "teal" });
+      } catch {
+        notifications.show({ message: "Could not copy the file.", color: "red" });
+      }
+    };
+    if (!entry.exists || !entry.path) {
+      await fallbackToPath("The file is no longer at this location.");
+      return;
+    }
+    void acknowledge(entry);
+    const isPng = entry.filename.toLowerCase().endsWith(".png");
+    if (isPng && typeof ClipboardItem !== "undefined") {
+      try {
+        const blob = await getBlob(`/api/downloads/history/${entry.id}/file`);
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "image/png": blob.type === "image/png" ? blob : blob.slice(0, blob.size, "image/png"),
+          }),
+        ]);
+        notifications.show({ message: "Image copied — paste it anywhere.", color: "teal" });
+        return;
+      } catch {
+        // Fall through to the file copy: pasting the file is still useful.
+      }
+    }
     try {
-      await navigator.clipboard.writeText(entry.path);
-      notifications.show({ message: "Path copied to clipboard.", color: "teal" });
-    } catch {
-      notifications.show({ message: "Could not copy the path.", color: "red" });
+      await tauriInvoke("copy_download_file", entry.path);
+      notifications.show({
+        message: "File copied — paste it into a folder or an email.",
+        color: "teal",
+      });
+    } catch (error) {
+      await fallbackToPath(
+        error instanceof Error ? `Could not copy the file (${error.message}).` : "Could not copy the file.",
+      );
     }
   };
   const deleteFile = (entry: DownloadEntry) => {
@@ -248,7 +306,7 @@ export function DownloadsButton() {
   };
 
   const entries = history.data ?? [];
-  const recentCount = entries.length;
+  const recentCount = entries.filter((entry) => !entry.seen).length;
 
   return (
     <Popover
@@ -310,15 +368,7 @@ export function DownloadsButton() {
             No downloads yet.
           </Text>
         ) : (
-          <ScrollArea.Autosize
-            mah={336}
-            type="auto"
-            scrollbars="y"
-            scrollbarSize={8}
-            styles={{
-              thumb: { backgroundColor: "var(--mantine-color-teal-4)" },
-            }}
-          >
+          <Box className="cx-vertical-scroll" style={{ maxHeight: 336 }}>
             <Stack gap={2} style={{ maxWidth: "100%" }}>
               {entries.map((entry) => (
                 <DownloadRow
@@ -328,12 +378,12 @@ export function DownloadsButton() {
                   desktop={desktop}
                   onOpen={openFile}
                   onReveal={revealFile}
-                  onCopy={copyPath}
+                  onCopy={copyFile}
                   onDelete={deleteFile}
                 />
               ))}
             </Stack>
-          </ScrollArea.Autosize>
+          </Box>
         )}
       </Popover.Dropdown>
     </Popover>

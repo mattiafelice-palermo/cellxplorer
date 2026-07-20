@@ -301,6 +301,41 @@ fn open_download(app: AppHandle, path: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Put the file itself on the clipboard as a file reference (CF_HDROP), so it
+/// pastes into Explorer, mail, or a document exactly like copying it from a
+/// folder. The web clipboard cannot express this: it carries MIME payloads,
+/// and Chromium only allows a safe subset of those for writing.
+#[tauri::command]
+fn copy_download_file(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err("The file is no longer at this location.".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Single quotes are PowerShell's literal string; escape by doubling.
+        let escaped = path.replace('\'', "''");
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Set-Clipboard -LiteralPath '{escaped}'"),
+            ])
+            .creation_flags(0x08000000)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err("Windows refused to copy the file to the clipboard.".to_string());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Copying files to the clipboard is only supported on Windows.".to_string())
+    }
+}
+
 #[tauri::command]
 fn reveal_download(path: String) -> Result<(), String> {
     let target = std::path::Path::new(&path);
@@ -365,6 +400,7 @@ fn main() {
             is_main_window_visible,
             open_app_folder,
             open_download,
+            copy_download_file,
             reveal_download,
             quit_app,
             set_autostart_enabled,

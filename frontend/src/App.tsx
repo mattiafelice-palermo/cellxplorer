@@ -7,7 +7,6 @@ import {
   Button,
   Code,
   Group,
-  Kbd,
   Modal,
   NavLink,
   Paper,
@@ -31,7 +30,6 @@ import {
   IconFolderOpen,
   IconLayoutSidebar,
   IconLoader2,
-  IconSearch,
   IconSettings,
 } from "@tabler/icons-react";
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
@@ -469,16 +467,6 @@ export default function App() {
               style={{ width: 24, height: 24, display: "block" }}
             />
             <Title order={4}>CellXplorer</Title>
-            <Button
-              size="compact-sm"
-              variant="default"
-              ml="md"
-              leftSection={<IconSearch size={14} />}
-              rightSection={<Kbd size="xs">Ctrl+K</Kbd>}
-              onClick={() => setPaletteOpen(true)}
-            >
-              Search
-            </Button>
           </Group>
           <Group gap="xs">
             <Button

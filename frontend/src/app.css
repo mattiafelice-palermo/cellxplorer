@@ -63,3 +63,27 @@ body {
   white-space: nowrap;
   text-align: center;
 }
+
+/* Vertical-only scroll panel (downloads list, command palette results).
+   Mantine's ScrollArea.Autosize grows to its content width, which pushed row
+   actions outside a fixed-width dropdown, so these panels use a plain
+   scrollable box with a teal scrollbar instead. */
+.cx-vertical-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mantine-color-teal-4) transparent;
+}
+
+.cx-vertical-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cx-vertical-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cx-vertical-scroll::-webkit-scrollbar-thumb {
+  background: var(--mantine-color-teal-4);
+  border-radius: 4px;
+}

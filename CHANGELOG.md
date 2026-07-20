@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.11.1 - 2026-07-20
+
+- Opening an analysis whose cache is already built is now roughly three times faster for cycle
+  plots and four times faster for time/capacity plots. Reading a cell's mass, nominal capacity, or
+  electrode area used to load every metadata row for that cell — tens of thousands of rows — on
+  every request, and large results were serialized twice on the way out.
+- Global search now matches across entities: searching a cell name together with another term
+  surfaces the analyses and saved plots that contain that cell. Results are grouped by kind, and an
+  entry that matched through its contents lists the cell names responsible, so it is clear why it
+  appeared. The header search box is gone; Ctrl+K is the way in.
+- The downloads list no longer scrolls sideways, long filenames are truncated with the full name on
+  hover, and a row can be double-clicked to open the file.
+- The downloads copy button now places the file itself on the clipboard, so an exported plot can be
+  pasted into a presentation or a folder rather than pasting its location as text.
+- The downloads badge counts only exports that have not been acted on yet, and clears an entry once
+  it is opened, revealed, or copied.
+
 ## 0.11.0 - 2026-07-20
 
 - Added a downloads manager beside the activity indicator: every exported plot, data file, and

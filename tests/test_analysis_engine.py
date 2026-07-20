@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -525,6 +525,42 @@ class AnalysisEngineTests(unittest.TestCase):
         spec = self.spec_with([{"kind": "replicate_group", "ref_id": 999}])
         res = engine.compute(self.db, spec, None)
         self.assertEqual(res["badges"][0]["kind"], "missing_reference")
+
+    def test_scalar_metadata_reads_do_not_load_the_whole_collection(self):
+        """The three scalar lookups must stay O(keys), not O(metadata rows).
+
+        Cells accumulate thousands of metadata rows. Reading them through
+        ``cell.metadata_entries`` made every analysis request — including pure
+        cache hits — instantiate the entire collection as ORM objects, which
+        dominated the response time. Guard both the values and the access.
+        """
+        cell = self.cells["c1"]
+        self.db.add_all(
+            [CellMetadata(cell_id=cell.id, key=f"filler.{i}", value=str(i)) for i in range(300)]
+            + [
+                CellMetadata(cell_id=cell.id, key="active_mass_mg", value="12.5"),
+                CellMetadata(cell_id=cell.id, key="nominal_capacity_mah", value="3.4"),
+                CellMetadata(cell_id=cell.id, key="electrode_area_cm2", value="1.5"),
+            ]
+        )
+        self.db.commit()
+        self.db.expire_all()
+
+        fresh = self.db.get(Cell, cell.id)
+        self.assertEqual(engine.cell_active_mass_mg(fresh), 12.5)
+        self.assertEqual(engine.cell_nominal_capacity_mah(fresh), 3.4)
+        self.assertEqual(engine.cell_electrode_area_cm2(fresh), 1.5)
+        # The filler rows must never have been materialized.
+        self.assertIn("metadata_entries", inspect(fresh).unloaded)
+
+        # An override wins over the plain key, and the already-loaded path
+        # (some other request touched the collection first) agrees.
+        self.db.add(CellMetadata(cell_id=cell.id, key="override.active_mass_mg", value="99.0"))
+        self.db.commit()
+        self.db.expire_all()
+        loaded = self.db.get(Cell, cell.id)
+        self.assertEqual(len(loaded.metadata_entries), 304)
+        self.assertEqual(engine.cell_active_mass_mg(loaded), 99.0)
 
     def test_provenance_roundtrip_and_version_badge(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

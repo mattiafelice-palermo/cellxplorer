@@ -23,10 +23,11 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy.orm import Session, object_session
 
 from ..config import CALC_VERSION
-from ..models import Cell, ReplicateGroup, SourceFile
+from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile
 from . import cache, calc, parsing, protocol, stitch
 
 SPEC_VERSION = 7
@@ -504,9 +505,34 @@ def _metadata_float(value: object) -> float | None:
     return number if number > 0 else None
 
 
+def _cell_metadata_values(cell: Cell, keys: tuple[str, ...]) -> dict[str, str]:
+    """Read a few metadata values without materializing the whole collection.
+
+    Cells accumulate thousands of metadata rows (one per source-file field;
+    ~3,900 for the busiest cell here), but these lookups need at most three
+    keys. Touching ``cell.metadata_entries`` instantiated every row as an ORM
+    object on each analysis request — including pure cache hits, where it
+    dominated the response time. ``(cell_id, key)`` is unique, so selecting the
+    wanted keys is equivalent to building the full dict and indexing into it.
+    """
+    if "metadata_entries" not in sa_inspect(cell).unloaded:
+        # Already in memory (another code path loaded it) — no query needed.
+        return {e.key: e.value for e in cell.metadata_entries if e.key in keys}
+    session = object_session(cell)
+    if session is None:
+        return {e.key: e.value for e in cell.metadata_entries if e.key in keys}
+    rows = session.execute(
+        select(CellMetadata.key, CellMetadata.value).where(
+            CellMetadata.cell_id == cell.id, CellMetadata.key.in_(keys)
+        )
+    ).all()
+    return dict(rows)
+
+
 def cell_active_mass_mg(cell: Cell) -> float | None:
-    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
-    for key in ("override.active_mass_mg", "active_material_mg", "active_mass_mg"):
+    keys = ("override.active_mass_mg", "active_material_mg", "active_mass_mg")
+    metadata = _cell_metadata_values(cell, keys)
+    for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
             return value
@@ -520,8 +546,9 @@ def cell_active_mass_mg(cell: Cell) -> float | None:
 
 
 def cell_nominal_capacity_mah(cell: Cell) -> float | None:
-    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
-    for key in ("override.nominal_capacity_mah", "nominal_capacity_mah", "nominal_capacity"):
+    keys = ("override.nominal_capacity_mah", "nominal_capacity_mah", "nominal_capacity")
+    metadata = _cell_metadata_values(cell, keys)
+    for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
             return value
@@ -535,8 +562,9 @@ def cell_nominal_capacity_mah(cell: Cell) -> float | None:
 
 
 def cell_electrode_area_cm2(cell: Cell) -> float | None:
-    metadata = {entry.key: entry.value for entry in cell.metadata_entries}
-    for key in ("override.electrode_area_cm2", "electrode_area_cm2"):
+    keys = ("override.electrode_area_cm2", "electrode_area_cm2")
+    metadata = _cell_metadata_values(cell, keys)
+    for key in keys:
         value = _metadata_float(metadata.get(key))
         if value is not None:
             return value

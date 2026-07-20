@@ -92,6 +92,71 @@ export function fuzzyScore(target: string, query: string): FuzzyMatch | null {
   return { score: total, indices: [...indices].sort((a, b) => a - b) };
 }
 
+export interface SearchField {
+  text: string;
+  /** Multiplies this field's contribution; the title should score highest. */
+  weight: number;
+  /**
+   * Long aggregated fields (for example every cell name in an analysis) accept
+   * substring hits only. Scattered subsequence matching across a large blob
+   * would match almost anything and destroy precision.
+   */
+  substringOnly?: boolean;
+}
+
+/**
+ * Score a query against several fields of one object. Every term must match at
+ * least one field, but different terms may match different fields — so
+ * "<cell name> capacity" finds a plot named "…capacity…" that contains that
+ * cell. Highlight indices are reported for the first (title) field only.
+ */
+export function fuzzyScoreFields(fields: SearchField[], query: string): FuzzyMatch | null {
+  const trimmed = query.trim();
+  if (!trimmed) return { score: 0, indices: [] };
+  const terms = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+  const prepared = fields
+    .filter((field) => field.text)
+    .map((field) => ({ ...field, lower: field.text.toLowerCase() }));
+  if (prepared.length === 0) return null;
+
+  let total = 0;
+  const titleIndices = new Set<number>();
+  for (const term of terms) {
+    let bestScore: number | null = null;
+    let bestIndices: number[] = [];
+    let bestIsTitle = false;
+    prepared.forEach((field, position) => {
+      let match: FuzzyMatch | null;
+      if (field.substringOnly) {
+        const at = field.lower.indexOf(term);
+        match =
+          at < 0
+            ? null
+            : {
+                score: 90 + term.length * 3 + (isBoundary(field.text, at) ? 20 : 0),
+                indices: [],
+              };
+      } else {
+        match = scoreTerm(field.text, field.lower, term);
+      }
+      if (!match) return;
+      const weighted = match.score * field.weight;
+      if (bestScore === null || weighted > bestScore) {
+        bestScore = weighted;
+        bestIndices = match.indices;
+        bestIsTitle = position === 0;
+      }
+    });
+    // A term that matches nothing disqualifies the object entirely.
+    if (bestScore === null) return null;
+    total += bestScore;
+    if (bestIsTitle) bestIndices.forEach((index) => titleIndices.add(index));
+  }
+  const title = prepared[0];
+  if (terms.length > 1 && title && title.lower.includes(trimmed.toLowerCase())) total += 60;
+  return { score: Math.round(total), indices: [...titleIndices].sort((a, b) => a - b) };
+}
+
 /** Split a target into matched / unmatched segments for highlighting. */
 export function highlightSegments(
   target: string,

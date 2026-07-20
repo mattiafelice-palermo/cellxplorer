@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fuzzyScore, highlightSegments } from "../src/fuzzySearch.ts";
+import { fuzzyScore, fuzzyScoreFields, highlightSegments } from "../src/fuzzySearch.ts";
 
 const CELL = "ME_20260512_LFP_LPMoL_611_FM+CYFC_25C";
 
@@ -76,4 +76,69 @@ test("highlight segments reconstruct the original text", () => {
 
 test("highlight with no matches returns a single unmatched run", () => {
   assert.deepEqual(highlightSegments("abc", []), [{ text: "abc", matched: false }]);
+});
+
+// --- multi-field scoring: terms may match different fields of one object ---
+
+/** A saved plot named "…capacity…" belonging to an analysis over CELL. */
+const plotFields = [
+  { text: "Discharge capacity (mAh) comparison", weight: 1 },
+  { text: "Test analysis 2", weight: 0.6 },
+  { text: `${CELL} • NG_20251127_LFP_LP_MoL_376_FM_CY_FC`, weight: 0.45, substringOnly: true },
+];
+
+test("a cell name plus a plot word matches the plot containing that cell", () => {
+  // This is the case that previously found nothing: the terms live in
+  // different fields.
+  assert.ok(fuzzyScoreFields(plotFields, "LPMoL_611 capacity"));
+  assert.ok(fuzzyScoreFields(plotFields, "611 capacity"));
+  assert.ok(fuzzyScoreFields(plotFields, "capacity 611"));
+});
+
+test("a term matching no field disqualifies the object", () => {
+  assert.equal(fuzzyScoreFields(plotFields, "capacity zzz"), null);
+  assert.equal(fuzzyScoreFields(plotFields, "611 voltage"), null);
+});
+
+test("the parent analysis name is searchable from a plot", () => {
+  assert.ok(fuzzyScoreFields(plotFields, "test analysis capacity"));
+});
+
+test("aggregated fields accept substrings but not scattered subsequences", () => {
+  const fields = [
+    { text: "Some plot", weight: 1 },
+    { text: "ME_20260512_LFP_LPMoL_611_FM+CYFC_25C", weight: 0.45, substringOnly: true },
+  ];
+  // Real substring of the aggregated cell list.
+  assert.ok(fuzzyScoreFields(fields, "plot lpmol"));
+  // Scattered characters must NOT match a long aggregated blob.
+  assert.equal(fuzzyScoreFields(fields, "plot mlc"), null);
+});
+
+test("title matches outrank matches found only in context fields", () => {
+  const titleHit = fuzzyScoreFields(
+    [{ text: "Capacity overview", weight: 1 }, { text: "other", weight: 0.45 }],
+    "capacity",
+  );
+  const contextHit = fuzzyScoreFields(
+    [{ text: "Voltage overview", weight: 1 }, { text: "capacity", weight: 0.45 }],
+    "capacity",
+  );
+  assert.ok(titleHit!.score > contextHit!.score);
+});
+
+test("highlight indices come from the title field only", () => {
+  const match = fuzzyScoreFields(plotFields, "611 capacity");
+  assert.ok(match);
+  const title = plotFields[0].text;
+  // Every reported index must fall inside the title.
+  assert.ok(match!.indices.every((index) => index >= 0 && index < title.length));
+  const highlighted = match!.indices.map((index) => title[index]).join("");
+  assert.ok(highlighted.toLowerCase().includes("capacity".slice(0, 4)));
+});
+
+test("empty query matches every object", () => {
+  const match = fuzzyScoreFields(plotFields, "");
+  assert.ok(match);
+  assert.equal(match!.score, 0);
 });
