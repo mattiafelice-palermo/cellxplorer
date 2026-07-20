@@ -3,7 +3,9 @@ param(
     [switch]$SkipInstall,
     [switch]$SkipFrontend,
     [switch]$SkipBackend,
-    [switch]$SkipInstaller
+    [switch]$SkipInstaller,
+    # Rebuild the sidecar even when the Python sources are unchanged.
+    [switch]$ForceBackend
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +38,31 @@ function Invoke-Checked {
     }
 }
 
+function Get-BackendFingerprint {
+    <#
+        Hash everything PyInstaller bakes into the sidecar: the Python sources,
+        the entry point, the pinned requirements and the bundled assets. The
+        sidecar is by far the slowest stage (~70s) and changes least often, so
+        skipping it when nothing it contains has changed is the single biggest
+        saving on a repeat package. Hashing contents rather than trusting
+        timestamps means a stale sidecar cannot be shipped by accident.
+    #>
+    $roots = @("backend", "packaging") | ForEach-Object { Join-Path $repoRoot $_ } | Where-Object { Test-Path $_ }
+    $files = Get-ChildItem -Path $roots -Recurse -File -Include *.py, *.txt, *.js, *.json |
+        Where-Object { $_.FullName -notmatch '\\(__pycache__|\.pytest_cache)\\' } |
+        Sort-Object FullName
+    $lines = foreach ($file in $files) {
+        $relative = $file.FullName.Substring($repoRoot.Length).TrimStart('\')
+        "$relative=$((Get-FileHash $file.FullName -Algorithm SHA256).Hash)"
+    }
+    # The build command itself is part of the identity: changing PyInstaller
+    # flags must invalidate the stamp even when no source file moved.
+    $lines += "cmd=$((Get-Content (Join-Path $repoRoot 'package.json') -Raw))"
+    $joined = [string]::Join("`n", $lines)
+    $stream = [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($joined))
+    (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash
+}
+
 Write-Host "CellXplorer application build" -ForegroundColor Cyan
 Write-Host "Repository: $repoRoot"
 
@@ -53,16 +80,28 @@ if (-not $SkipFrontend) {
 }
 
 if (-not $SkipBackend) {
-    Write-Host "Building the Python backend sidecar..." -ForegroundColor Yellow
-    Invoke-Checked "npm.cmd" @("run", "build:backend") $repoRoot
+    $stampFile = "$sidecarExe.stamp"
+    $fingerprint = Get-BackendFingerprint
+    $current = if (Test-Path $stampFile) { (Get-Content $stampFile -Raw).Trim() } else { "" }
 
-    if (-not (Test-Path $backendExe)) {
-        throw "PyInstaller did not create $backendExe"
+    if (-not $ForceBackend -and (Test-Path $sidecarExe) -and $current -eq $fingerprint) {
+        Write-Host "Backend sidecar is up to date; skipping PyInstaller." -ForegroundColor Green
+        Write-Host "  (use -ForceBackend to rebuild it anyway)" -ForegroundColor DarkGray
     }
+    else {
+        Write-Host "Building the Python backend sidecar..." -ForegroundColor Yellow
+        Invoke-Checked "npm.cmd" @("run", "build:backend") $repoRoot
 
-    New-Item -ItemType Directory -Force (Split-Path $sidecarExe) | Out-Null
-    Copy-Item $backendExe $sidecarExe -Force
-    Write-Host "Copied backend sidecar to $sidecarExe" -ForegroundColor Green
+        if (-not (Test-Path $backendExe)) {
+            throw "PyInstaller did not create $backendExe"
+        }
+
+        New-Item -ItemType Directory -Force (Split-Path $sidecarExe) | Out-Null
+        Copy-Item $backendExe $sidecarExe -Force
+        # Stamp only after the copy succeeds, so an interrupted build re-runs.
+        Set-Content -Path $stampFile -Value $fingerprint -Encoding utf8
+        Write-Host "Copied backend sidecar to $sidecarExe" -ForegroundColor Green
+    }
 }
 elseif (-not (Test-Path $sidecarExe)) {
     throw "The sidecar is missing. Run without -SkipBackend first: $sidecarExe"

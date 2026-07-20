@@ -42,3 +42,6 @@ src-tauri/target/
 Thumbs.db
 .vscode/
 .idea/
+
+# Built Python sidecar and its freshness stamp (produced by scripts/build-app.ps1)
+src-tauri/binaries/
