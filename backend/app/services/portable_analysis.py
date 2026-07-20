@@ -42,7 +42,7 @@ from ..models import (
     Test,
     TestFile,
 )
-from . import analysis_engine, cache, parsing, scanner
+from . import analysis_engine, cache, diagnostic_cycles, parsing, scanner
 from .activity_log import record_activity
 from .entity_ids import next_analysis_id
 
@@ -237,6 +237,19 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
             if tab == "time_capacity"
             else analysis_engine.compute(db, spec, analysis.provenance)
         )
+        presentation = spec.get("presentation", {})
+        # A filtered plot must declare what it removed. The result itself always
+        # keeps every cycle, so re-importing this report can undo the choice even
+        # when the original source files are long gone.
+        hidden_cycles: list[int] = []
+        if presentation.get("hide_diagnostic_cycles") and tab != "time_capacity":
+            hidden_cycles = diagnostic_cycles.find_across(
+                result,
+                tolerance=float(
+                    presentation.get("diagnostic_tolerance")
+                    or diagnostic_cycles.DEFAULT_TOLERANCE
+                ),
+            )
         views.append(
             {
                 "id": str(plot.get("id") or uuid.uuid4()),
@@ -244,7 +257,9 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
                 "subtitle": plot.get("subtitle") or "",
                 "description": plot.get("description"),
                 "tab": tab,
-                "presentation": spec.get("presentation", {}),
+                "presentation": presentation,
+                "hidden_cycles": hidden_cycles,
+                "hidden_cycle_ranges": diagnostic_cycles.format_ranges(hidden_cycles),
                 "result": result,
             }
         )
@@ -582,6 +597,11 @@ dialog::backdrop{{background:#17212b55}} .dialog-head,.dialog-foot{{display:flex
 table{{border-collapse:collapse;width:100%}} th,td{{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:12px}}
 .warning{{background:#fff4e6;border:1px solid #ffd8a8;padding:9px;border-radius:5px;margin-top:8px}}
 .runtime-note{{background:#f7f8f9;border:1px solid var(--line);padding:9px;border-radius:5px;margin:8px 0;color:var(--muted)}}
+/* Unconditional, not a toggle: a reader who has zoomed to the healthy band
+   would see nothing change when un-hiding, and conclude nothing was hidden. */
+.hidden-chip{{margin:0 0 10px;padding:8px 12px;border-radius:8px;font-size:12px;
+  background:#fff4e6;color:#8a4b08;border:1px solid #ffd8a8}}
+@media print{{.hidden-chip{{background:#fff4e6 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}}}
 @media(max-width:800px){{main{{grid-template-columns:1fr}} #chart{{height:390px}}}}
 </style>
 </head>
@@ -593,8 +613,10 @@ table{{border-collapse:collapse;width:100%}} th,td{{border-bottom:1px solid var(
 <section>
 <div class="panel">
 <div class="toolbar"><div><h2 id="view-title"></h2><p class="muted" id="view-subtitle"></p></div><div class="toolbar"><select class="action" id="csv-precision" aria-label="CSV numeric precision"><option value="standard">Standard precision</option><option value="full">Full precision</option></select><button class="action" id="csv">Export CSV</button></div></div>
+<div id="hidden-chip" class="hidden-chip" hidden></div>
 <div id="chart" role="img" aria-label="Analysis plot"></div>
 </div>
+<div class="panel" id="hidden-panel" style="margin-top:16px" hidden><h2>Hidden cycles</h2><div id="hidden-report"></div></div>
 <div class="panel" style="margin-top:16px"><h2>Summary</h2><div id="summary"></div></div>
 <div class="panel" style="margin-top:16px"><h2>Cell metadata</h2><div id="metadata"></div></div>
 <div class="panel" style="margin-top:16px"><h2>Source files</h2><div id="sources"></div></div>
@@ -1037,7 +1059,42 @@ def _html_tail() -> str:
     text(byId("view-title"), view.name);
     text(byId("view-subtitle"), view.subtitle || view.tab.replaceAll("_"," "));
     document.querySelectorAll("#views button").forEach((button) => button.classList.toggle("active", button.dataset.id === view.id));
-    renderChart(view); renderSummary(view);
+    renderChart(view); renderSummary(view); renderHiddenCycles(view);
+  }
+  function renderHiddenCycles(view) {
+    const chip = byId("hidden-chip");
+    const panel = byId("hidden-panel");
+    const report = byId("hidden-report");
+    const hidden = Array.isArray(view.hidden_cycles) ? view.hidden_cycles : [];
+    if (!chip || !panel || !report) return;
+    if (hidden.length === 0) {
+      chip.hidden = true; panel.hidden = true; return;
+    }
+    const shown = new Set();
+    for (const series of (view.result?.cell_series || [])) {
+      if (series.excluded) continue;
+      for (const cycle of (series.x || [])) shown.add(cycle);
+    }
+    const total = shown.size;
+    chip.hidden = false;
+    text(chip,
+      hidden.length + " diagnostic cycle" + (hidden.length === 1 ? "" : "s") +
+      " are hidden from this plot (" + (total - hidden.length) + " shown). " +
+      "See \\u201cHidden cycles\\u201d below. The stored data is complete.");
+    panel.hidden = false;
+    report.replaceChildren();
+    const summary = document.createElement("p");
+    summary.className = "muted";
+    text(summary,
+      "Cycles removed from the plot because their charge or discharge time " +
+      "deviates from neighbouring cycles \\u2014 typically DCIR pulses and rate " +
+      "checks. This affects the plot only: the report still contains every " +
+      "cycle, so re-importing it into CellXplorer restores them.");
+    const list = document.createElement("p");
+    list.style.fontFamily = "ui-monospace,SFMono-Regular,Menlo,monospace";
+    list.style.fontSize = "12px";
+    text(list, view.hidden_cycle_ranges || hidden.join(", "));
+    report.append(summary, list);
   }
   function axisTitle(layout, trace, direction) {
     const reference = String(trace[direction + "axis"] || direction);

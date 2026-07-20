@@ -113,6 +113,52 @@ export function findDiagnosticCyclesInSeries(
  * quantity — capacity on the left axis, coulombic efficiency on the right —
  * drops exactly the same cycles and cannot fall out of step.
  */
+/** Collapse a sorted cycle list into contiguous runs. */
+export function cycleRanges(cycles: number[]): [number, number][] {
+  const sorted = [...new Set(cycles)].sort((a, b) => a - b);
+  const ranges: [number, number][] = [];
+  for (const cycle of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && cycle === last[1] + 1) last[1] = cycle;
+    else ranges.push([cycle, cycle]);
+  }
+  return ranges;
+}
+
+/**
+ * Render hidden cycles compactly.
+ *
+ * Diagnostics arrive in blocks, so runs are the natural summary: a report
+ * saying "87-93, 170-176" is auditable at a glance, where 123 loose numbers
+ * are not.
+ */
+export function formatCycleRanges(cycles: number[], limit = Infinity): string {
+  const ranges = cycleRanges(cycles);
+  const shown = ranges.slice(0, limit);
+  const text = shown.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)).join(", ");
+  const rest = ranges.length - shown.length;
+  return rest > 0 ? `${text}, and ${rest} more` : text;
+}
+
+export interface DiagnosticSummary {
+  hidden: number[];
+  hiddenCount: number;
+  shownCount: number;
+  ranges: [number, number][];
+}
+
+/** Report both sides of the split: what was removed and what remains. */
+export function summarizeHidden(allCycles: number[], hidden: Set<number>): DiagnosticSummary {
+  const present = [...new Set(allCycles)];
+  const removed = present.filter((c) => hidden.has(c)).sort((a, b) => a - b);
+  return {
+    hidden: removed,
+    hiddenCount: removed.length,
+    shownCount: present.length - removed.length,
+    ranges: cycleRanges(removed),
+  };
+}
+
 export function findDiagnosticCyclesAcross(
   series: { x: number[]; quantities: Record<string, (number | null)[]> }[],
   options: DiagnosticCycleOptions = {}

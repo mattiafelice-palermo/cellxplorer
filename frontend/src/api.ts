@@ -847,6 +847,14 @@ export interface AnalysisSpec {
     show_individual_cells: boolean;
     legend: boolean;
     hidden_protocol_segment_ids?: string[];
+    /**
+     * Hide protocol diagnostic cycles (DCIR pulses, rate checks) detected from
+     * cycle durations. Presentation-only: the computed result and every export
+     * keep the full data, so the choice is always reversible.
+     */
+    hide_diagnostic_cycles?: boolean;
+    /** Deviation from the local baseline that marks a cycle as diagnostic. */
+    diagnostic_tolerance?: number;
     /** Legacy single style shared by all tabs; superseded by plot_styles. */
     plot_style?: PlotStyle;
     /** One fully independent style per plot tab. */

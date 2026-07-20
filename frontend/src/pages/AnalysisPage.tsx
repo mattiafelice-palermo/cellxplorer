@@ -118,6 +118,12 @@ import {
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
 } from "../analysisPlotPolicy";
+import {
+  DIAGNOSTIC_DEFAULTS,
+  findDiagnosticCyclesAcross,
+  formatCycleRanges,
+  summarizeHidden,
+} from "../diagnosticCycles";
 import Plot from "../components/Plot";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
@@ -2077,7 +2083,75 @@ function interactivePlotTraces(traces: Plotly.Data[]): Plotly.Data[] {
   });
 }
 
-function tracesForResult(result: ComputeResult, spec: AnalysisSpec, compact = false): Plotly.Data[] {
+/**
+ * Drop diagnostic cycles from a computed result before it is plotted.
+ *
+ * Filtering the result rather than each trace is what makes the guarantee hold:
+ * capacity, coulombic efficiency, the replicate band and the below-minimum-n
+ * markers all read from these arrays, so they cannot fall out of step with one
+ * another. The input is never mutated — exports and the cache keep every cycle.
+ */
+function withoutDiagnosticCycles(result: ComputeResult, hidden: Set<number>): ComputeResult {
+  if (hidden.size === 0) return result;
+  const keptIndices = (x: number[]) =>
+    x.reduce<number[]>((acc, cycle, index) => {
+      if (!hidden.has(cycle)) acc.push(index);
+      return acc;
+    }, []);
+  const take = <T,>(values: T[] | null | undefined, indices: number[]): T[] =>
+    Array.isArray(values) ? indices.map((i) => values[i]) : [];
+
+  return {
+    ...result,
+    aggregates: result.aggregates.map((agg) => {
+      const indices = keptIndices(agg.x);
+      return {
+        ...agg,
+        x: take(agg.x, indices),
+        quantities: Object.fromEntries(
+          Object.entries(agg.quantities).map(([key, q]) => [
+            key,
+            {
+              ...q,
+              mean: take(q.mean, indices),
+              band_low: take(q.band_low, indices),
+              band_high: take(q.band_high, indices),
+              n: take(q.n, indices),
+            },
+          ])
+        ),
+      };
+    }),
+    cell_series: result.cell_series.map((series) => {
+      const indices = keptIndices(series.x);
+      return {
+        ...series,
+        x: take(series.x, indices),
+        quantities: Object.fromEntries(
+          Object.entries(series.quantities).map(([key, values]) => [key, take(values, indices)])
+        ),
+      };
+    }),
+  };
+}
+
+/** The diagnostic cycles this spec asks to hide, or an empty set when off. */
+function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): Set<number> {
+  if (!spec.presentation.hide_diagnostic_cycles) return new Set();
+  return findDiagnosticCyclesAcross(
+    result.cell_series.filter((s) => !s.excluded),
+    { tolerance: spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance }
+  );
+}
+
+function tracesForResult(
+  original: ComputeResult,
+  spec: AnalysisSpec,
+  compact = false
+): Plotly.Data[] {
+  // Filter here rather than at each call site so the live plot, the saved
+  // thumbnail and the exported figure cannot disagree about what is shown.
+  const result = withoutDiagnosticCycles(original, diagnosticCyclesFor(original, spec));
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const { column } = resolvedQuantity(result, spec);
   const showCeOverlay = !compact && (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
@@ -3536,6 +3610,30 @@ function CycleSettings({
                   update((s) => void (s.presentation.show_individual_cells = e.currentTarget.checked))
                 }
               />
+              <Tooltip
+                label={
+                  "Hides protocol diagnostics — DCIR pulses and rate checks — found from cycle " +
+                  "durations rather than capacity, so a genuinely degrading cell is never hidden. " +
+                  "Display only: exports keep every cycle."
+                }
+                multiline
+                maw={320}
+                withArrow
+                openDelay={300}
+              >
+                <Switch
+                  label="Hide diagnostic cycles"
+                  checked={spec.presentation.hide_diagnostic_cycles ?? false}
+                  onChange={(e) =>
+                    update((s) => {
+                      s.presentation.hide_diagnostic_cycles = e.currentTarget.checked;
+                      // The visible range collapses to the healthy band; a
+                      // manual range chosen for the unfiltered plot would crop it.
+                      resetManualAxis(s, "cycles", "y_axis");
+                    })
+                  }
+                />
+              </Tooltip>
               <Select
                 label="Replicates"
                 data={[
@@ -6366,6 +6464,10 @@ function CyclePlotCard({
         ce: spec.presentation.ce_overlay,
         individual: spec.presentation.show_individual_cells,
         legend: spec.presentation.legend,
+        // Hiding diagnostics drops points from every trace, so it belongs here
+        // for the same reason as normalize: it changes what is plotted.
+        hideDiagnostics: spec.presentation.hide_diagnostic_cycles ?? false,
+        diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
         style: currentPlotStyle(spec, "cycles"),
       }),
     [spec]
@@ -6375,6 +6477,17 @@ function CyclePlotCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const exportTraces = useMemo(() => (result ? tracesForResult(result, spec) : []), [result, viewSignature]);
   const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
+  // Reported next to the plot so a filtered view always states what it removed
+  // and what remains — the count is the disclosure, not a diagnostic aid.
+  const diagnostics = useMemo(() => {
+    if (!result || !spec.presentation.hide_diagnostic_cycles) return null;
+    const hidden = diagnosticCyclesFor(result, spec);
+    const everyCycle = result.cell_series
+      .filter((s) => !s.excluded)
+      .flatMap((s) => s.x);
+    return summarizeHidden(everyCycle, hidden);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, spec.presentation.hide_diagnostic_cycles, spec.presentation.diagnostic_tolerance]);
   const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
     spec.presentation.normalize_by_mass ? "g" : "abs"
   }`;
@@ -6523,6 +6636,44 @@ function CyclePlotCard({
           canExport={exportTraces.length > 0}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
+        {diagnostics && diagnostics.hiddenCount > 0 && (
+          <Group gap="xs" wrap="nowrap" align="center">
+            <Badge color="teal" variant="light" style={{ flexShrink: 0 }}>
+              {diagnostics.hiddenCount} hidden · {diagnostics.shownCount} shown
+            </Badge>
+            <Tooltip
+              label={`Hidden cycles: ${formatCycleRanges(diagnostics.hidden)}`}
+              multiline
+              maw={420}
+              withArrow
+              openDelay={200}
+            >
+              <Text size="xs" c="dimmed" truncate="end">
+                diagnostic cycles {formatCycleRanges(diagnostics.hidden, 4)}
+              </Text>
+            </Tooltip>
+            <NumberInput
+              size="xs"
+              w={132}
+              min={5}
+              max={90}
+              step={5}
+              suffix="%"
+              label={undefined}
+              aria-label="Diagnostic sensitivity"
+              value={Math.round(
+                (spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance) * 100
+              )}
+              onChange={(value) => {
+                const pct = typeof value === "number" ? value : Number(value);
+                if (!Number.isFinite(pct)) return;
+                update((s) => {
+                  s.presentation.diagnostic_tolerance = Math.min(0.9, Math.max(0.05, pct / 100));
+                });
+              }}
+            />
+          </Group>
+        )}
         {traces.length === 0 ? (
           // The height is held whether or not progress is showing, so a load
           // that beats the delay lands the plot without any reflow.

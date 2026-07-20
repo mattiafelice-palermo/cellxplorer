@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cycleRanges,
   findDiagnosticCycles,
   findDiagnosticCyclesAcross,
   findDiagnosticCyclesInSeries,
+  formatCycleRanges,
+  summarizeHidden,
 } from "../src/diagnosticCycles.ts";
 
 /**
@@ -155,4 +158,34 @@ test("reproduces a real diagnostic block end to end", () => {
 test("a series without the duration quantity contributes nothing", () => {
   const s = { x: [1, 2, 3], quantities: {} as Record<string, (number | null)[]> };
   assert.equal(findDiagnosticCyclesAcross([s]).size, 0);
+});
+
+test("hidden cycles are reported as compact runs", () => {
+  assert.deepEqual(cycleRanges([90, 87, 88, 89, 92, 91, 93]), [[87, 93]]);
+  assert.deepEqual(cycleRanges([3, 1, 7, 2, 8]), [[1, 3], [7, 8]]);
+  assert.deepEqual(cycleRanges([]), []);
+
+  assert.equal(formatCycleRanges([87, 88, 89, 170, 171]), "87–89, 170–171");
+  assert.equal(formatCycleRanges([5]), "5");
+  // Long reports stay readable rather than running to hundreds of numbers.
+  assert.equal(formatCycleRanges([1, 5, 9, 13], 2), "1, 5, and 2 more");
+});
+
+test("the summary reports both what went and what stayed", () => {
+  const all = Array.from({ length: 100 }, (_, i) => i + 1);
+  const hidden = new Set([10, 11, 12, 50]);
+  const summary = summarizeHidden(all, hidden);
+
+  assert.equal(summary.hiddenCount, 4);
+  assert.equal(summary.shownCount, 96);
+  assert.equal(summary.hiddenCount + summary.shownCount, all.length);
+  assert.deepEqual(summary.ranges, [[10, 12], [50, 50]]);
+});
+
+test("the summary ignores flagged cycles the series does not contain", () => {
+  // The hidden set is a union across series; a short series must not report
+  // negative or inflated counts because of cycles it never had.
+  const summary = summarizeHidden([1, 2, 3], new Set([2, 900, 901]));
+  assert.equal(summary.hiddenCount, 1);
+  assert.equal(summary.shownCount, 2);
 });
