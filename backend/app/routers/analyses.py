@@ -82,8 +82,15 @@ def analysis_name_exists(
     return query.first() is not None
 
 
-def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
+def analysis_dict(
+    db: Session,
+    a: Analysis,
+    full: bool = False,
+    current_hashes: dict[int, list[str]] | None = None,
+) -> dict:
     folder = db.get(Folder, a.folder_id) if a.folder_id is not None else None
+    if current_hashes is None:
+        current_hashes = engine.current_cell_hashes(db)
     d = {
         "id": a.id,
         "title": a.title,
@@ -116,6 +123,10 @@ def analysis_dict(db: Session, a: Analysis, full: bool = False) -> dict:
             if entry.get("kind") and entry.get("ref_id") is not None
         ],
         "has_provenance": a.provenance is not None,
+        # True when a source file changed after this analysis was computed, so
+        # the list can mark it as out of date. Derived from provenance, so
+        # recomputing clears it without any stored flag.
+        "sources_changed": engine.sources_changed_since_compute(a.provenance, current_hashes),
         "computed_at": (a.provenance or {}).get("computed_at"),
         "parser_version": (a.provenance or {}).get("parser_version"),
         "calc_version": (a.provenance or {}).get("calc_version"),
@@ -188,7 +199,13 @@ def list_analyses(search: str | None = None, db: Session = Depends(get_db)):
     q = db.query(Analysis)
     if search:
         q = q.filter(Analysis.title.ilike(f"%{search}%"))
-    return [analysis_dict(db, a) for a in q.order_by(Analysis.modified_at.desc()).all()]
+    # Resolved once for the whole list; per-analysis resolution here would be a
+    # per-cell query walk on a startup-path endpoint.
+    current_hashes = engine.current_cell_hashes(db)
+    return [
+        analysis_dict(db, a, current_hashes=current_hashes)
+        for a in q.order_by(Analysis.modified_at.desc()).all()
+    ]
 
 
 class AnalysisCreate(BaseModel):

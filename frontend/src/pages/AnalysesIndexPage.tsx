@@ -615,11 +615,29 @@ export function AnalysesIndexPage() {
           </Table.Thead>
           <Table.Tbody>
             {rows.map((a) => (
-              <Table.Tr key={a.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/analyses/${a.id}`)}>
+              <Table.Tr
+                key={a.id}
+                style={{
+                  cursor: "pointer",
+                  // Amber, not green: this matches the source-changed badge
+                  // language used elsewhere. It means "out of date", not "good".
+                  background: a.sources_changed ? "var(--mantine-color-yellow-0)" : undefined,
+                }}
+                onClick={() => navigate(`/analyses/${a.id}`)}
+              >
                 <Table.Td>
-                  <Text size="sm" fw={600}>
-                    {a.title}
-                  </Text>
+                  <Group gap={6} wrap="nowrap">
+                    <Text size="sm" fw={a.sources_changed ? 700 : 500}>
+                      {a.title}
+                    </Text>
+                    {a.sources_changed && (
+                      <Tooltip label="A source file changed after this analysis was last computed. Open it to recompute.">
+                        <Badge size="xs" variant="light" color="yellow" style={{ flexShrink: 0 }}>
+                          sources updated
+                        </Badge>
+                      </Tooltip>
+                    )}
+                  </Group>
                   {a.folder && (
                     <Text size="xs" c="dimmed">
                       filed in {a.folder.name}

@@ -87,6 +87,7 @@ import {
   BackgroundJob,
   CacheWarmupTask,
   CellMetrics,
+  AnalysisSummary,
   CellSummary,
   ComputeResult,
   ColorPaletteSettings,
@@ -124,6 +125,11 @@ import {
   formatCycleRanges,
   summarizeHidden,
 } from "../diagnosticCycles";
+import {
+  CellHoverCard,
+  RelatedAnalysesPopover,
+  relatedAnalysesForCell,
+} from "../components/CellSamplePopovers";
 import Plot from "../components/Plot";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
@@ -3385,10 +3391,13 @@ function SamplePanel({
   spec,
   groups,
   cells,
+  analysisId,
+  result,
   onAdd,
   onRemoveEntry,
   onToggleCell,
   onToggleReplicate,
+  onImportEntries,
 }: {
   spec: AnalysisSpec;
   groups: {
@@ -3398,14 +3407,69 @@ function SamplePanel({
     cells: Pick<CellSummary, "id" | "name">[];
   }[];
   cells: Pick<CellSummary, "id" | "name">[];
+  analysisId: number;
+  result: ComputeResult | undefined;
   onAdd: () => void;
   onRemoveEntry: (index: number) => void;
   onToggleCell: (cellId: number, context: VisibilityContext) => void;
   onToggleReplicate: (groupId: number) => void;
+  onImportEntries: (entries: { kind: "cell" | "replicate_group"; ref_id: number }[]) => void;
 }) {
   const hiddenGroups = new Set(spec.selection.hidden_replicate_group_ids ?? []);
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const cellById = new Map(cells.map((c) => [c.id, c]));
+  // Read the startup-persisted caches directly: the popovers must open without
+  // waiting on a request. `enabled: false` keeps this from issuing one.
+  const allAnalyses = useQuery({
+    queryKey: ["analyses", ""],
+    queryFn: () => get<AnalysisSummary[]>("/api/analyses"),
+    staleTime: 5 * 60_000,
+  });
+  const allCells = useQuery({
+    queryKey: ["cells", ""],
+    queryFn: () => get<CellSummary[]>("/api/cells"),
+    staleTime: 5 * 60_000,
+  });
+  const allGroups = useQuery({
+    queryKey: ["replicate-groups"],
+    queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),
+    staleTime: 5 * 60_000,
+  });
+  const cellFactsById = useMemo(
+    () => new Map((allCells.data ?? []).map((c) => [c.id, c])),
+    [allCells.data]
+  );
+  const lookupCells = useMemo(
+    () =>
+      new Map<number, { id: number; name: string }>(
+        (allCells.data ?? []).map((c) => [c.id, { id: c.id, name: c.name }])
+      ),
+    [allCells.data]
+  );
+  const lookupGroups = useMemo(
+    () =>
+      new Map(
+        (allGroups.data ?? []).map((g) => [
+          g.id,
+          { id: g.id, name: g.name, cell_ids: g.cell_ids ?? [] },
+        ])
+      ),
+    [allGroups.data]
+  );
+  const presentRefs = useMemo(
+    () =>
+      (spec.selection.entries ?? []).map((e) => ({ kind: String(e.kind), ref_id: e.ref_id })),
+    [spec.selection.entries]
+  );
+  const relatedFor = (cellId: number) =>
+    relatedAnalysesForCell(
+      cellId,
+      analysisId,
+      allAnalyses.data ?? [],
+      lookupCells,
+      lookupGroups,
+      presentRefs
+    );
 
   return (
     <Paper p="sm" withBorder>
@@ -3470,9 +3534,16 @@ function SamplePanel({
                       );
                       return (
                         <Group key={cell.id} justify="space-between" gap={6} wrap="nowrap">
-                          <Text size="xs" c={groupHidden || isHidden ? "dimmed" : undefined} truncate>
-                            {cell.name}
-                          </Text>
+                          <CellHoverCard cell={cellFactsById.get(cell.id) ?? cell} result={result}>
+                            <Text size="xs" c={groupHidden || isHidden ? "dimmed" : undefined} truncate>
+                              {cell.name}
+                            </Text>
+                          </CellHoverCard>
+                          <RelatedAnalysesPopover
+                            related={relatedFor(cell.id)}
+                            onImport={onImportEntries}
+                            label={`Other analyses using ${cell.name}`}
+                          />
                           <Tooltip label={groupHidden ? "Show the replicate before changing member visibility" : isHidden ? "Show in plot" : "Hide from plot"}>
                             <ActionIcon
                               size="xs"
@@ -3499,15 +3570,25 @@ function SamplePanel({
             );
             return (
               <Group key={`${entry.kind}-${entry.ref_id}-${index}`} justify="space-between" gap={6} wrap="nowrap">
-                <Box style={{ minWidth: 0 }}>
-                  <Text size="sm" fw={700} truncate>
-                    {cell?.name ?? `cell #${entry.ref_id}`}
-                  </Text>
-                  <Text size="10px" c="dimmed" tt="uppercase">
-                    Cell
-                  </Text>
-                </Box>
+                <CellHoverCard
+                  cell={cellFactsById.get(entry.ref_id) ?? cell ?? { id: entry.ref_id, name: `cell #${entry.ref_id}` }}
+                  result={result}
+                >
+                  <Box style={{ minWidth: 0 }}>
+                    <Text size="sm" fw={700} truncate>
+                      {cell?.name ?? `cell #${entry.ref_id}`}
+                    </Text>
+                    <Text size="10px" c="dimmed" tt="uppercase">
+                      Cell
+                    </Text>
+                  </Box>
+                </CellHoverCard>
                 <Group gap={2} wrap="nowrap">
+                  <RelatedAnalysesPopover
+                    related={relatedFor(entry.ref_id)}
+                    onImport={onImportEntries}
+                    label={`Other analyses using ${cell?.name ?? entry.ref_id}`}
+                  />
                   <Tooltip label={isHidden ? "Show in plot" : "Hide from plot"}>
                     <ActionIcon
                       size="sm"
@@ -7851,6 +7932,30 @@ export function AnalysisPage() {
     });
   };
 
+  /** Pull samples in from another analysis, skipping anything already here. */
+  const importAnalysisEntries = (
+    entries: { kind: "cell" | "replicate_group"; ref_id: number }[]
+  ) => {
+    let added = 0;
+    update((s) => {
+      for (const entry of entries) {
+        const present = s.selection.entries.some(
+          (existing) => existing.kind === entry.kind && existing.ref_id === entry.ref_id
+        );
+        if (present) continue;
+        s.selection.entries.push({ kind: entry.kind, ref_id: entry.ref_id });
+        added += 1;
+      }
+    });
+    notifications.show({
+      message:
+        added === 0
+          ? "Those samples are already in this analysis."
+          : `Added ${added} sample${added === 1 ? "" : "s"}.`,
+      color: added === 0 ? "gray" : "teal",
+    });
+  };
+
   const removeAnalysisEntry = (index: number) => {
     update((s) => {
       const [removed] = s.selection.entries.splice(index, 1);
@@ -8096,10 +8201,13 @@ export function AnalysisPage() {
         spec={spec}
         groups={sampleGroups}
         cells={currentAnalysis.selection_cells}
+        analysisId={aid}
+        result={rendered?.result}
         onAdd={() => setAddOpen(true)}
         onRemoveEntry={removeAnalysisEntry}
         onToggleCell={toggleCellVisibility}
         onToggleReplicate={toggleReplicateVisibility}
+        onImportEntries={importAnalysisEntries}
       />
       {(["cycles", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) && (
         <ProtocolSegmentsPanel

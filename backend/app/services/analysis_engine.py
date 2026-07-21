@@ -147,6 +147,46 @@ def preload_cell_sources(db: Session, cells: list[Cell]) -> None:
     ).unique().all()
 
 
+def current_cell_hashes(db: Session) -> dict[int, list[str]]:
+    """Ordered source-file hashes for every cell, in one query.
+
+    Same ordering as :func:`cell_ordered_hashes` (tests by id, files by
+    position) so the lists can be compared directly against the ``file_hashes``
+    an analysis recorded in its provenance. Built in bulk because the callers
+    are list endpoints: resolving this per analysis would reintroduce the
+    per-cell query walk that ``preload_cell_sources`` exists to avoid.
+    """
+    rows = db.execute(
+        select(Test.cell_id, SourceFile.hash)
+        .select_from(Test)
+        .join(TestFile, TestFile.test_id == Test.id)
+        .join(SourceFile, SourceFile.id == TestFile.file_id)
+        .order_by(Test.cell_id, Test.id, TestFile.position)
+    ).all()
+    hashes: dict[int, list[str]] = {}
+    for cell_id, file_hash in rows:
+        hashes.setdefault(cell_id, []).append(file_hash)
+    return hashes
+
+
+def sources_changed_since_compute(
+    provenance: dict | None, current: dict[int, list[str]]
+) -> bool:
+    """Whether an analysis's sources differ from what it was computed against.
+
+    Derived rather than stored: it clears itself when the analysis is
+    recomputed, so there is no "seen" state to maintain and no way for the
+    flag to drift from reality.
+    """
+    for source in (provenance or {}).get("sources") or []:
+        cell_id = source.get("cell_id")
+        if cell_id is None:
+            continue
+        if list(source.get("file_hashes") or []) != current.get(cell_id, []):
+            return True
+    return False
+
+
 def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[SourceFile]]:
     """All source files of a cell: tests in order, files in order."""
     hashes: list[str] = []

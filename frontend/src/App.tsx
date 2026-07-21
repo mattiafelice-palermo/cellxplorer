@@ -278,6 +278,9 @@ export default function App() {
     queryClient.invalidateQueries({ queryKey: ["tree"] });
     queryClient.invalidateQueries({ queryKey: ["activity"] });
     queryClient.invalidateQueries({ queryKey: ["analysis"] });
+    // The list carries sources_changed, so it must refresh too — this is what
+    // makes an analysis go bold right after an automatic source check.
+    queryClient.invalidateQueries({ queryKey: ["analyses"] });
     queryClient.invalidateQueries({ queryKey: ["compute"] });
     queryClient.invalidateQueries({ queryKey: ["time-capacity"] });
     queryClient.invalidateQueries({ queryKey: ["plot-thumbnail"] });

@@ -885,6 +885,8 @@ export interface AnalysisSummary {
   saved_plots: AnalysisSavedPlotSummary[];
   entry_refs: AnalysisEntryRef[];
   has_provenance: boolean;
+  /** A source file changed after this analysis was last computed. */
+  sources_changed: boolean;
   computed_at: string | null;
   parser_version: string | null;
   calc_version: string | null;
