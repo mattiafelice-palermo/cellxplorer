@@ -87,16 +87,47 @@ def analysis_dict(
     a: Analysis,
     full: bool = False,
     current_hashes: dict[int, list[str]] | None = None,
+    folder_by_id: dict[int, Folder] | None = None,
+    group_cell_ids: dict[int, set[int]] | None = None,
 ) -> dict:
-    folder = db.get(Folder, a.folder_id) if a.folder_id is not None else None
+    folder = (
+        folder_by_id.get(a.folder_id)
+        if folder_by_id is not None and a.folder_id is not None
+        else db.get(Folder, a.folder_id) if a.folder_id is not None else None
+    )
     if current_hashes is None:
         current_hashes = engine.current_cell_hashes(db)
+    entries = a.spec.get("selection", {}).get("entries", [])
+    direct_cell_ids = {
+        int(entry["ref_id"])
+        for entry in entries
+        if entry.get("kind") == "cell" and entry.get("ref_id") is not None
+    }
+    group_ids = {
+        int(entry["ref_id"])
+        for entry in entries
+        if entry.get("kind") == "replicate_group" and entry.get("ref_id") is not None
+    }
+    if group_cell_ids is None:
+        group_cell_ids = {}
+        if group_ids:
+            for group_id, cell_id in (
+                db.query(ReplicateGroupCell.group_id, ReplicateGroupCell.cell_id)
+                .filter(ReplicateGroupCell.group_id.in_(group_ids))
+                .all()
+            ):
+                group_cell_ids.setdefault(group_id, set()).add(cell_id)
+    selected_cell_ids = set(direct_cell_ids)
+    for group_id in group_ids:
+        selected_cell_ids.update(group_cell_ids.get(group_id, set()))
     d = {
         "id": a.id,
         "title": a.title,
         "type": a.spec.get("type", "cycling"),
         "folder": {"id": folder.id, "name": folder.name} if folder else None,
-        "n_entries": len(a.spec.get("selection", {}).get("entries", [])),
+        "n_entries": len(entries),
+        "n_cells": len(selected_cell_ids),
+        "n_replicate_groups": len(group_ids),
         "n_exclusions": (
             len(a.spec.get("selection", {}).get("exclusions", []))
             + len(a.spec.get("selection", {}).get("hidden_replicate_group_ids", []))
@@ -110,6 +141,10 @@ def analysis_dict(
                 "id": str(plot.get("id")),
                 "name": str(plot.get("name") or "Saved plot"),
                 "tab": str(plot.get("tab") or "cycles"),
+                "subtitle": str(plot.get("subtitle") or ""),
+                "quantity": str(
+                    (plot.get("presentation") or {}).get("quantity") or ""
+                ),
             }
             for plot in (a.spec.get("saved_plots") or [])
             if plot.get("id")
@@ -136,17 +171,7 @@ def analysis_dict(
     if full:
         d["spec"] = a.spec
         d["provenance"] = a.provenance
-        entries = a.spec.get("selection", {}).get("entries", [])
-        cell_ids = {
-            int(entry["ref_id"])
-            for entry in entries
-            if entry.get("kind") == "cell" and entry.get("ref_id") is not None
-        }
-        group_ids = {
-            int(entry["ref_id"])
-            for entry in entries
-            if entry.get("kind") == "replicate_group" and entry.get("ref_id") is not None
-        }
+        cell_ids = direct_cell_ids
         cells = (
             db.query(Cell).filter(Cell.id.in_(cell_ids)).order_by(Cell.name).all()
             if cell_ids
@@ -202,9 +227,37 @@ def list_analyses(search: str | None = None, db: Session = Depends(get_db)):
     # Resolved once for the whole list; per-analysis resolution here would be a
     # per-cell query walk on a startup-path endpoint.
     current_hashes = engine.current_cell_hashes(db)
+    analyses = q.order_by(Analysis.modified_at.desc()).all()
+    folder_ids = {analysis.folder_id for analysis in analyses if analysis.folder_id is not None}
+    folder_by_id = {
+        folder.id: folder
+        for folder in (
+            db.query(Folder).filter(Folder.id.in_(folder_ids)).all() if folder_ids else []
+        )
+    }
+    referenced_group_ids = {
+        int(entry["ref_id"])
+        for analysis in analyses
+        for entry in (analysis.spec.get("selection", {}).get("entries") or [])
+        if entry.get("kind") == "replicate_group" and entry.get("ref_id") is not None
+    }
+    group_cell_ids: dict[int, set[int]] = {}
+    if referenced_group_ids:
+        for group_id, cell_id in (
+            db.query(ReplicateGroupCell.group_id, ReplicateGroupCell.cell_id)
+            .filter(ReplicateGroupCell.group_id.in_(referenced_group_ids))
+            .all()
+        ):
+            group_cell_ids.setdefault(group_id, set()).add(cell_id)
     return [
-        analysis_dict(db, a, current_hashes=current_hashes)
-        for a in q.order_by(Analysis.modified_at.desc()).all()
+        analysis_dict(
+            db,
+            analysis,
+            current_hashes=current_hashes,
+            folder_by_id=folder_by_id,
+            group_cell_ids=group_cell_ids,
+        )
+        for analysis in analyses
     ]
 
 

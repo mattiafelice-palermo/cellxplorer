@@ -98,6 +98,51 @@ class AnalysisLifecycleTests(unittest.TestCase):
         self.assertEqual(created["selection_groups"][0]["name"], "Replicate A")
         self.assertEqual(created["selection_groups"][0]["cells"][0]["name"], "Grouped")
 
+    def test_analysis_index_summarizes_unique_cells_replicates_and_saved_plots(self):
+        db = self.make_session()
+        standalone = Cell(name="Standalone")
+        shared = Cell(name="Shared")
+        grouped = Cell(name="Grouped")
+        group = ReplicateGroup(name="Replicate A")
+        group.cell_links = [
+            ReplicateGroupCell(cell=shared),
+            ReplicateGroupCell(cell=grouped),
+        ]
+        db.add_all([standalone, shared, grouped, group])
+        db.commit()
+        spec = analyses.engine.default_spec("Index summary")
+        spec["selection"]["entries"] = [
+            {"kind": "cell", "ref_id": standalone.id},
+            {"kind": "cell", "ref_id": shared.id},
+            {"kind": "replicate_group", "ref_id": group.id},
+        ]
+        spec["saved_plots"] = [
+            {
+                "id": "capacity",
+                "name": "Capacity",
+                "tab": "cycles",
+                "subtitle": "Discharge capacity vs cycle",
+                "presentation": {"quantity": "discharge_capacity"},
+            },
+            {
+                "id": "voltage",
+                "name": "Voltage",
+                "tab": "time_capacity",
+                "subtitle": "Voltage vs time",
+                "presentation": {"quantity": "voltage"},
+            },
+        ]
+        analyses.create_analysis(
+            analyses.AnalysisCreate(title="Index summary", spec=spec), db=db
+        )
+
+        summary = analyses.list_analyses(db=db)[0]
+
+        self.assertEqual(summary["n_cells"], 3)
+        self.assertEqual(summary["n_replicate_groups"], 1)
+        self.assertEqual(summary["saved_plots"][0]["quantity"], "discharge_capacity")
+        self.assertEqual(summary["saved_plots"][1]["subtitle"], "Voltage vs time")
+
     def test_copying_folder_tree_uses_monotonic_analysis_ids(self):
         db = self.make_session()
         folder = Folder(name="Source")

@@ -867,6 +867,8 @@ export interface AnalysisSavedPlotSummary {
   id: string;
   name: string;
   tab: string;
+  subtitle: string;
+  quantity: string;
 }
 
 export interface AnalysisEntryRef {
@@ -880,6 +882,8 @@ export interface AnalysisSummary {
   type: string;
   folder: { id: number; name: string } | null;
   n_entries: number;
+  n_cells: number;
+  n_replicate_groups: number;
   n_exclusions: number;
   quantity: string | null;
   saved_plots: AnalysisSavedPlotSummary[];

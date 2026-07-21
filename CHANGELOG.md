@@ -4,6 +4,18 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.12.1 - 2026-07-21
+
+- Reworked the Analysis Database into a compact research table with sortable and filterable
+  columns, adjustable column widths, configurable visible fields, and multi-selection for bulk
+  removal.
+- Updated analyses are now identified by a restrained teal dot, subtle row tint, and stronger
+  title weight instead of the previous yellow warning treatment.
+- Analysis summaries now report the unique cells and replicate groups in each selection, count
+  saved plots, and reveal their quantities on hover alongside folder and creation/update dates.
+- Loading the analysis list now gathers replicate membership and folder context in bulk, avoiding
+  repeated database queries as the library grows.
+
 ## 0.12.0 - 2026-07-20
 
 - Added "Hide diagnostic cycles" to the cycles plot. Cycling protocols interleave DCIR pulses and

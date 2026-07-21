@@ -15,7 +15,6 @@ import {
   Select,
   Stack,
   Switch,
-  Table,
   Text,
   TextInput,
   Title,
@@ -32,7 +31,6 @@ import {
   IconFolderPlus,
   IconInfoCircle,
   IconPlus,
-  IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -52,6 +50,7 @@ import {
   Tree,
 } from "../api";
 import { clearAnalysisQueryCache } from "../analysisQueryCache";
+import { AnalysisDatabaseTable } from "../components/AnalysisDatabaseTable";
 
 function flattenFolders(nodes: FolderNode[], depth = 0): { value: string; label: string }[] {
   return nodes.flatMap((node) => [
@@ -312,7 +311,6 @@ export function AnalysesIndexPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
-  const [search, setSearch] = useState("");
   const [portableFile, setPortableFile] = useState<File | null>(null);
   const [portableReview, setPortableReview] = useState<PortableAnalysisInspection | null>(null);
   const [portableTitle, setPortableTitle] = useState("");
@@ -330,9 +328,8 @@ export function AnalysesIndexPage() {
   }, [searchParams]);
 
   const analyses = useQuery({
-    queryKey: ["analyses", search],
-    queryFn: () =>
-      get<AnalysisSummary[]>(`/api/analyses${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    queryKey: ["analyses", ""],
+    queryFn: () => get<AnalysisSummary[]>("/api/analyses"),
   });
   const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const folderOptions = flattenFolders(tree.data?.folders ?? []);
@@ -351,15 +348,32 @@ export function AnalysesIndexPage() {
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => del(`/api/analyses/${id}`),
-    onSuccess: async (_, id) => {
-      await clearAnalysisQueryCache(qc, id);
+    mutationFn: (ids: number[]) => Promise.all(ids.map((id) => del(`/api/analyses/${id}`))),
+    onSettled: async (_, __, ids) => {
+      if (!ids) return;
+      await Promise.all(ids.map((id) => clearAnalysisQueryCache(qc, id)));
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["analyses"] }),
         qc.invalidateQueries({ queryKey: ["tree"] }),
       ]);
     },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
+
+  const confirmRemove = (ids: number[]) => {
+    if (!ids.length) return;
+    modals.openConfirmModal({
+      title: ids.length === 1 ? "Remove analysis?" : `Remove ${ids.length} analyses?`,
+      children: (
+        <Text size="sm">
+          {ids.length === 1 ? "The analysis" : "The selected analyses"} will be removed. Cell data is untouched.
+        </Text>
+      ),
+      labels: { confirm: "Remove", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: () => remove.mutate(ids),
+    });
+  };
 
   const applyPortableReview = (review: PortableAnalysisInspection) => {
     setPortableReview(review);
@@ -583,13 +597,6 @@ export function AnalysesIndexPage() {
         An analysis is a saved recipe: which cells and replicate groups to compare, how to compute,
         and the provenance of the last saved result. It never changes unless you change it.
       </Text>
-      <TextInput
-        leftSection={<IconSearch size={14} />}
-        placeholder="Search titles"
-        value={search}
-        onChange={(e) => setSearch(e.currentTarget.value)}
-        maw={360}
-      />
       {analyses.isLoading && !analyses.data ? (
         <Group justify="center" py="xl">
           <Loader color="teal" />
@@ -602,94 +609,12 @@ export function AnalysesIndexPage() {
           capacities, efficiencies, retention and more.
         </Alert>
       ) : (
-        <Table highlightOnHover withTableBorder>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Title</Table.Th>
-              <Table.Th>Type</Table.Th>
-              <Table.Th>Selection</Table.Th>
-              <Table.Th>Quantity</Table.Th>
-              <Table.Th>Last computed</Table.Th>
-              <Table.Th w={44}></Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {rows.map((a) => (
-              <Table.Tr
-                key={a.id}
-                style={{
-                  cursor: "pointer",
-                  // Amber, not green: this matches the source-changed badge
-                  // language used elsewhere. It means "out of date", not "good".
-                  background: a.sources_changed ? "var(--mantine-color-yellow-0)" : undefined,
-                }}
-                onClick={() => navigate(`/analyses/${a.id}`)}
-              >
-                <Table.Td>
-                  <Group gap={6} wrap="nowrap">
-                    <Text size="sm" fw={a.sources_changed ? 700 : 500}>
-                      {a.title}
-                    </Text>
-                    {a.sources_changed && (
-                      <Tooltip label="A source file changed after this analysis was last computed. Open it to recompute.">
-                        <Badge size="xs" variant="light" color="yellow" style={{ flexShrink: 0 }}>
-                          sources updated
-                        </Badge>
-                      </Tooltip>
-                    )}
-                  </Group>
-                  {a.folder && (
-                    <Text size="xs" c="dimmed">
-                      filed in {a.folder.name}
-                    </Text>
-                  )}
-                </Table.Td>
-                <Table.Td>
-                  <Badge size="xs" variant="outline">
-                    {a.type}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs">
-                    {a.n_entries} entr{a.n_entries === 1 ? "y" : "ies"}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs">{a.quantity?.replace(/_/g, " ") ?? "—"}</Text>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="xs" c="dimmed">
-                    {a.computed_at
-                      ? `${new Date(a.computed_at).toLocaleString()} · parser ${a.parser_version} · calc ${a.calc_version}`
-                      : "never"}
-                  </Text>
-                </Table.Td>
-                <Table.Td onClick={(e) => e.stopPropagation()}>
-                  <Tooltip label="Delete analysis (data untouched)">
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color="red"
-                      onClick={() =>
-                        modals.openConfirmModal({
-                          title: `Delete “${a.title}”?`,
-                          children: (
-                            <Text size="sm">The recipe and provenance are removed. Data is untouched.</Text>
-                          ),
-                          labels: { confirm: "Delete", cancel: "Cancel" },
-                          confirmProps: { color: "red" },
-                          onConfirm: () => remove.mutate(a.id),
-                        })
-                      }
-                    >
-                      <IconTrash size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
+        <AnalysisDatabaseTable
+          rows={rows}
+          onOpen={(id) => navigate(`/analyses/${id}`)}
+          onRemove={confirmRemove}
+          removing={remove.isPending}
+        />
       )}
       <Modal
         opened={portableImportOpen}
