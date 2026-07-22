@@ -12,6 +12,7 @@ import {
   Modal,
   NumberInput,
   Paper,
+  Radio,
   ScrollArea,
   Select,
   Stack,
@@ -28,6 +29,8 @@ import {
   IconEye,
   IconEyeOff,
   IconFocus2,
+  IconChevronDown,
+  IconChevronRight,
   IconPlus,
   IconTrash,
   IconX,
@@ -350,6 +353,7 @@ function ProtocolGroupNode({
   byNumber,
   family,
   visibleSteps,
+  defaultOpen,
   onToggleSteps,
 }: {
   group: ProtocolGroup;
@@ -357,9 +361,10 @@ function ProtocolGroupNode({
   byNumber: Map<number, ProtocolStep>;
   family: ProtocolFamily;
   visibleSteps: Set<number> | null;
+  defaultOpen?: boolean;
   onToggleSteps: (steps: number[], checked: boolean) => void;
 }) {
-  const [open, setOpen] = useState(group.depth === 0);
+  const [open, setOpen] = useState(defaultOpen ?? group.depth === 0);
   const owned = group.all_step_numbers;
   const nSelected = owned.filter((step) => selectedSet.has(step)).length;
   const allSelected = owned.length > 0 && nSelected === owned.length;
@@ -374,12 +379,31 @@ function ProtocolGroupNode({
   return (
     <Box
       style={{
-        borderLeft: group.depth > 0 ? "2px solid var(--mantine-color-gray-3)" : undefined,
-        paddingLeft: group.depth > 0 ? 10 : 0,
-        marginLeft: group.depth > 0 ? 4 : 0,
+        border: "1px solid var(--mantine-color-gray-3)",
+        borderRadius: 8,
+        overflow: "hidden",
+        background: "var(--mantine-color-body)",
       }}
     >
-      <Group gap={6} wrap="nowrap" align="center">
+      <Group
+        gap={6}
+        wrap="nowrap"
+        align="center"
+        p={8}
+        style={{
+          background:
+            group.depth === 0 ? "var(--mantine-color-body)" : "var(--mantine-color-gray-0)",
+        }}
+      >
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color="gray"
+          onClick={() => setOpen((value) => !value)}
+          aria-label={open ? `Collapse ${group.summary}` : `Expand ${group.summary}`}
+        >
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+        </ActionIcon>
         <Checkbox
           size="xs"
           checked={allSelected}
@@ -392,19 +416,19 @@ function ProtocolGroupNode({
           style={{ cursor: "pointer", flex: 1, minWidth: 0 }}
         >
           <Group gap={6} wrap="nowrap">
-            <Text size="xs" fw={isBlock ? 700 : 500} truncate>
+            <Text size="xs" fw={isBlock ? 600 : 500} truncate>
               {group.summary}
             </Text>
             {isBlock && (
-              <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
+              <Badge size="xs" variant="light" color="teal" style={{ flexShrink: 0 }}>
                 x{group.repeat_count}
               </Badge>
             )}
-            <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>
-              {nSelected}/{owned.length}
-            </Text>
           </Group>
         </Box>
+        <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>
+          {nSelected}/{owned.length}
+        </Text>
       </Group>
       {open && (
         <Box mt={4}>
@@ -423,7 +447,7 @@ function ProtocolGroupNode({
               ))}
             </Box>
           )}
-          <Stack gap={4} pl="md">
+          <Stack gap={6} pl="md" pr={6} pb={6}>
             {group.children.map((child) => (
               <ProtocolGroupNode
                 key={child.id}
@@ -432,6 +456,7 @@ function ProtocolGroupNode({
                 byNumber={byNumber}
                 family={family}
                 visibleSteps={visibleSteps}
+                defaultOpen={defaultOpen}
                 onToggleSteps={onToggleSteps}
               />
             ))}
@@ -555,6 +580,106 @@ function observedStepSummary(family: ProtocolFamily, stepNumber: number) {
 }
 
 /**
+ * Choose which protocol to work on, and see which cells share it.
+ *
+ * Files are already grouped by protocol signature, so cells running byte-wise
+ * identical programs collapse into one entry. Showing them all at once made
+ * the list unreadable when an analysis holds several protocols; picking one
+ * keeps the step table about a single program.
+ */
+function ProtocolPicker({
+  families,
+  activeSignature,
+  onSelect,
+  targets,
+}: {
+  families: ProtocolFamily[];
+  activeSignature: string | null;
+  onSelect: (signature: string) => void;
+  targets: ProtocolSegmentTarget[];
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // An analysis can hold a dozen distinct protocols; without a ceiling the
+  // picker pushes the step table it is meant to control off the screen.
+  return (
+    <Box className="cx-vertical-scroll" style={{ maxHeight: 168 }}>
+      <Stack gap={4} pr={4}>
+      {families.map((family, index) => {
+        const active = family.signature === activeSignature;
+        const cells = [...new Set(family.files.map((file) => file.cellName))];
+        const chosen = selectedSteps(targets, family.signature).length;
+        const open = expanded === family.signature;
+        return (
+          <Paper
+            key={family.signature}
+            withBorder
+            radius="md"
+            p={8}
+            style={{
+              borderColor: active ? "var(--mantine-color-teal-4)" : undefined,
+              background: active ? "var(--mantine-color-teal-0)" : undefined,
+            }}
+          >
+            <Group gap={8} wrap="nowrap" align="center">
+              <Radio
+                size="xs"
+                checked={active}
+                onChange={() => onSelect(family.signature)}
+                aria-label={`Show protocol ${index + 1}`}
+              />
+              <Box
+                style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                onClick={() => onSelect(family.signature)}
+              >
+                <Group gap={6} wrap="nowrap">
+                  <Text size="xs" fw={600}>
+                    Protocol {index + 1}
+                  </Text>
+                  <Text size="10px" c="dimmed" ff="monospace">
+                    {shortSignature(family.signature)}
+                  </Text>
+                  {chosen > 0 && (
+                    <Badge size="xs" variant="light" color="teal">
+                      {chosen} selected
+                    </Badge>
+                  )}
+                </Group>
+                <Text size="10px" c="dimmed" truncate>
+                  {family.protocol?.n_executable_steps ?? 0} steps ·{" "}
+                  {cells.length === 0 ? "not in the current samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`}
+                </Text>
+              </Box>
+              {cells.length > 0 && (
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="gray"
+                  onClick={() => setExpanded(open ? null : family.signature)}
+                >
+                  {open ? "Hide cells" : "Cells"}
+                </Button>
+              )}
+            </Group>
+            {open && (
+              <Stack gap={2} mt={6} pl={26}>
+                {family.files.map((file) => (
+                  <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
+                    <Text size="10px" c="dimmed" truncate>
+                      {file.cellName} · {file.testName} / {file.filename}
+                    </Text>
+                  </Tooltip>
+                ))}
+              </Stack>
+            )}
+          </Paper>
+        );
+      })}
+      </Stack>
+    </Box>
+  );
+}
+
+/**
  * The capacity every C-rate on screen is derived from, and what it converts to.
  *
  * Rates are shown as C-fractions throughout, so without this the reader has to
@@ -568,6 +693,11 @@ function CapacityReference({ families }: { families: ProtocolFamily[] }) {
   const capacity = withCapacity[0].nominal_capacity_mah ?? null;
   const inferred = withCapacity[0].nominal_capacity_inferred;
   const mixed = new Set(withCapacity.map((p) => p.nominal_capacity_mah)).size > 1;
+  // Constant for a whole protocol, so it belongs here rather than on 100 rows.
+  const windows = withCapacity[0].summary?.protection_windows ?? [];
+  const protection = windows
+    .map((w) => `${w.lower_v ?? "?"}–${w.upper_v ?? "?"} V`)
+    .join(", ");
 
   return (
     <Paper p="xs" withBorder radius="md" bg="var(--mantine-color-gray-0)">
@@ -589,6 +719,16 @@ function CapacityReference({ families }: { families: ProtocolFamily[] }) {
             )}
           </Group>
         </Box>
+        {protection && (
+          <Box>
+            <Text size="10px" c="dimmed" tt="uppercase">
+              protection window
+            </Text>
+            <Text size="xs" ff="monospace">
+              {protection}
+            </Text>
+          </Box>
+        )}
         <Group gap="sm" wrap="wrap">
           {cRateExamples(capacity).map((example) => (
             <Box key={example.label}>
@@ -640,12 +780,21 @@ function StepFilterBar({
           size="compact-xs"
           variant="default"
           leftSection={<IconPlus size={12} />}
-          onClick={() =>
+          onClick={() => {
+            // Offer a field that is not already filtered, so stacking filters
+            // does not start by repeating the previous one.
+            const used = new Set(filters.map((f) => f.field));
+            const next = FILTER_FIELDS.find((entry) => !used.has(entry.value)) ?? FILTER_FIELDS[0];
             onFilters([
               ...filters,
-              { id: segmentId(), field: "rate", operator: ">=", value: "" },
-            ])
-          }
+              {
+                id: segmentId(),
+                field: next.value,
+                operator: operatorsFor(next.value)[0],
+                value: "",
+              },
+            ]);
+          }}
         >
           Filter
         </Button>
@@ -722,6 +871,13 @@ function SegmentEditor({
   const [ranges, setRanges] = useState<Record<string, RangeDraft>>({});
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<StepFilter[]>([]);
+  const [activeSignature, setActiveSignature] = useState<string | null>(null);
+  // Remounting the tree is how "expand all"/"collapse all" reaches nodes that
+  // own their own open state; the epoch changes the React key.
+  const [expandAll, setExpandAll] = useState<boolean | null>(null);
+  const [expandEpoch, setExpandEpoch] = useState(0);
+  const activeFamily =
+    families.find((f) => f.signature === activeSignature) ?? families[0] ?? null;
   const count = targetCount(targets);
 
   const setFamilySteps = (signature: string, steps: number[]) => {
@@ -764,9 +920,17 @@ function SegmentEditor({
           <Box pb={7} style={{ flexShrink: 0 }}>
             <Text size="xs" fw={700}>{count} selected steps</Text>
             <Text size="xs" c="dimmed">
-              {targets.length} selected {targets.length === 1 ? "family" : "families"}
+              {targets.length} selected {targets.length === 1 ? "protocol" : "protocols"}
             </Text>
           </Box>
+          <Group gap={8} pb={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Button variant="default" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!name.trim() || count === 0} onClick={save}>
+              {draft.id ? "Save changes" : "Create segment"}
+            </Button>
+          </Group>
         </Group>
 
         <CapacityReference families={families} />
@@ -784,20 +948,48 @@ function SegmentEditor({
           <Group gap="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Loading cell protocols...</Text></Group>
         )}
 
-        <ScrollArea h="min(58vh, 620px)" type="auto" offsetScrollbars>
+        {families.length > 0 && (
+          <ProtocolPicker
+            families={families}
+            activeSignature={activeFamily?.signature ?? null}
+            onSelect={setActiveSignature}
+            targets={targets}
+          />
+        )}
+        <Group gap={6} wrap="nowrap">
+          <Button
+            size="compact-xs"
+            variant="default"
+            onClick={() => {
+              setExpandAll(true);
+              setExpandEpoch((value) => value + 1);
+            }}
+          >
+            Expand all
+          </Button>
+          <Button
+            size="compact-xs"
+            variant="default"
+            onClick={() => {
+              setExpandAll(false);
+              setExpandEpoch((value) => value + 1);
+            }}
+          >
+            Collapse all
+          </Button>
+        </Group>
+
+        <ScrollArea h="min(52vh, 560px)" type="auto" offsetScrollbars>
           <Stack gap="md" pr="xs">
             {!loading && families.length === 0 && (
               <Alert color="gray">Add cells or replicates with protocol data before creating a segment.</Alert>
             )}
-            {families.map((family, familyIndex) => {
+            {activeFamily && (() => {
+              const family = activeFamily;
               const selected = selectedSteps(targets, family.signature);
               const selectedSet = new Set(selected);
               const groups = familyGroups(family);
               const allSteps = uniqueSorted(groupSteps(groups));
-              const range = ranges[family.signature] ?? {
-                from: allSteps[0] ?? null,
-                to: allSteps[allSteps.length - 1] ?? null,
-              };
               const byNumber = new Map(family.protocol?.steps.map((step) => [step.number, step]) ?? []);
               // Null means "not filtering", which keeps steps that carry no
               // protocol detail visible instead of silently dropping them.
@@ -810,34 +1002,19 @@ function SegmentEditor({
                     })
                   )
                 : null;
-              const cellNames = [...new Set(family.files.map((file) => file.cellName))];
               return (
-                <Box key={family.signature}>
-                  {familyIndex > 0 && <Divider mb="md" />}
-                  <Group justify="space-between" align="start" wrap="nowrap">
-                    <Box style={{ minWidth: 0 }}>
-                      <Group gap="xs">
-                        <Text size="sm" fw={700}>Protocol family {familyIndex + 1}</Text>
-                        <Badge size="xs" variant="light">{selected.length}/{allSteps.length} steps</Badge>
-                      </Group>
-                      <Tooltip label={family.signature}>
-                        <Text size="xs" c="dimmed" ff="monospace">{shortSignature(family.signature)}</Text>
-                      </Tooltip>
-                      {family.files.length > 0 ? (
-                        <>
-                          <Text size="xs" mt={3}>{cellNames.join(", ")}</Text>
-                          {family.files.map((file) => (
-                            <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} - ${file.filename}`}>
-                              <Text size="xs" c="dimmed" truncate>
-                                {file.cellName}: {file.testName} / {file.filename}
-                              </Text>
-                            </Tooltip>
-                          ))}
-                        </>
-                      ) : (
-                        <Text size="xs" c="yellow.8">Not present in the current samples</Text>
+                <Box>
+                  <Group justify="space-between" wrap="nowrap" mb={6}>
+                    <Group gap="xs" wrap="nowrap">
+                      <Badge size="sm" variant="light" color="teal">
+                        {selected.length}/{allSteps.length} steps
+                      </Badge>
+                      {visibleSteps && (
+                        <Text size="xs" c="dimmed">
+                          {visibleSteps.size} match the filters
+                        </Text>
                       )}
-                    </Box>
+                    </Group>
                     <Group gap={6} wrap="nowrap">
                       {visibleSteps && (
                         <Button
@@ -845,9 +1022,7 @@ function SegmentEditor({
                           variant="light"
                           color="teal"
                           disabled={visibleSteps.size === 0}
-                          onClick={() =>
-                            toggleSteps(family.signature, [...visibleSteps], true)
-                          }
+                          onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
                         >
                           Select {visibleSteps.size} matching
                         </Button>
@@ -859,82 +1034,31 @@ function SegmentEditor({
                         disabled={selected.length === 0}
                         onClick={() => setFamilySteps(family.signature, [])}
                       >
-                        Clear family
+                        Clear
                       </Button>
                     </Group>
                   </Group>
 
-                  <Group mt="sm" gap="xs" align="end" wrap="nowrap">
-                    <NumberInput
-                      label="From"
-                      value={range.from ?? ""}
-                      onChange={(value) =>
-                        setRanges((current) => ({
-                          ...current,
-                          [family.signature]: { ...range, from: typeof value === "number" ? value : null },
-                        }))
-                      }
-                      allowDecimal={false}
-                      min={allSteps[0]}
-                      max={allSteps[allSteps.length - 1]}
-                      size="xs"
-                      w={92}
-                    />
-                    <NumberInput
-                      label="To"
-                      value={range.to ?? ""}
-                      onChange={(value) =>
-                        setRanges((current) => ({
-                          ...current,
-                          [family.signature]: { ...range, to: typeof value === "number" ? value : null },
-                        }))
-                      }
-                      allowDecimal={false}
-                      min={allSteps[0]}
-                      max={allSteps[allSteps.length - 1]}
-                      size="xs"
-                      w={92}
-                    />
-                    <Button
-                      size="compact-xs"
-                      variant="default"
-                      disabled={range.from === null || range.to === null}
-                      onClick={() => {
-                        if (range.from === null || range.to === null) return;
-                        const low = Math.min(range.from, range.to);
-                        const high = Math.max(range.from, range.to);
-                        toggleSteps(family.signature, allSteps.filter((step) => step >= low && step <= high), true);
-                      }}
-                    >
-                      Select inclusive range
-                    </Button>
-                  </Group>
-
-                  <Stack gap={6} mt="sm">
+                  <Stack gap={8}>
                     {groups.map((group) => (
                       <ProtocolGroupNode
-                        key={`${family.signature}-${group.id}`}
+                        key={`${family.signature}-${group.id}-${expandEpoch}`}
                         group={group}
                         selectedSet={selectedSet}
                         byNumber={byNumber}
                         family={family}
                         visibleSteps={visibleSteps}
+                        defaultOpen={expandAll ?? group.depth === 0}
                         onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
                       />
                     ))}
                   </Stack>
                 </Box>
               );
-            })}
+            })()}
           </Stack>
         </ScrollArea>
 
-        <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>Cancel</Button>
-          <Button disabled={!name.trim() || count === 0} onClick={save}>
-            {draft.id ? "Save changes" : "Create segment"}
-          </Button>
-        </Group>
       </Stack>
     </Modal>
   );
