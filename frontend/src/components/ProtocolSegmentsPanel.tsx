@@ -37,6 +37,7 @@ import {
   FileProtocol,
   get,
   ProtocolSegment,
+  ProtocolGroup,
   ProtocolSegmentTarget,
   ProtocolStep,
 } from "../api";
@@ -122,24 +123,142 @@ function shortSignature(signature: string): string {
   return signature.length > 14 ? `${signature.slice(0, 12)}...` : signature;
 }
 
-function familyGroups(family: ProtocolFamily) {
+function familyGroups(family: ProtocolFamily): ProtocolGroup[] {
   if (family.protocol?.groups.length) return family.protocol.groups;
   const stepNumbers = family.unavailableSteps ?? family.protocol?.steps.map((step) => step.number) ?? [];
   if (stepNumbers.length === 0) return [];
   return [
     {
+      id: "fallback",
       kind: "sequence" as const,
       label: family.protocol ? "Protocol steps" : "Unavailable protocol steps",
       start_step: stepNumbers[0],
       end_step: stepNumbers[stepNumbers.length - 1],
       repeat_count: 1,
       control_step: null,
+      depth: 0,
       step_numbers: stepNumbers,
+      all_step_numbers: stepNumbers,
+      children: [],
       summary: family.protocol
         ? `Steps ${stepNumbers[0]}-${stepNumbers[stepNumbers.length - 1]}`
         : "This protocol is not present in the current analysis samples.",
     },
   ];
+}
+
+/** Every step in a block and everything nested inside it. */
+function groupSteps(groups: ProtocolGroup[]): number[] {
+  return groups.flatMap((group) => group.all_step_numbers);
+}
+
+/**
+ * One node of the protocol tree, with its nested blocks beneath it.
+ *
+ * Neware loops nest, so the panel has to as well: an ageing block sits inside
+ * the outer block that repeats it. Selecting a block selects everything it
+ * runs (`all_step_numbers`), while the step checkboxes listed under it are only
+ * the steps it owns directly — the nested blocks render their own.
+ */
+function ProtocolGroupNode({
+  group,
+  selectedSet,
+  byNumber,
+  family,
+  onToggleSteps,
+}: {
+  group: ProtocolGroup;
+  selectedSet: Set<number>;
+  byNumber: Map<number, ProtocolStep>;
+  family: ProtocolFamily;
+  onToggleSteps: (steps: number[], checked: boolean) => void;
+}) {
+  const [open, setOpen] = useState(group.depth === 0);
+  const owned = group.all_step_numbers;
+  const nSelected = owned.filter((step) => selectedSet.has(step)).length;
+  const allSelected = owned.length > 0 && nSelected === owned.length;
+  const isBlock = group.kind === "repeated_block";
+
+  return (
+    <Box
+      style={{
+        borderLeft: group.depth > 0 ? "2px solid var(--mantine-color-gray-3)" : undefined,
+        paddingLeft: group.depth > 0 ? 10 : 0,
+        marginLeft: group.depth > 0 ? 4 : 0,
+      }}
+    >
+      <Group gap={6} wrap="nowrap" align="center">
+        <Checkbox
+          size="xs"
+          checked={allSelected}
+          indeterminate={nSelected > 0 && !allSelected}
+          onChange={(event) => onToggleSteps(owned, event.currentTarget.checked)}
+          aria-label={`Select ${group.summary}`}
+        />
+        <Box
+          onClick={() => setOpen((value) => !value)}
+          style={{ cursor: "pointer", flex: 1, minWidth: 0 }}
+        >
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" fw={isBlock ? 700 : 500} truncate>
+              {group.summary}
+            </Text>
+            {isBlock && (
+              <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
+                x{group.repeat_count}
+              </Badge>
+            )}
+            <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>
+              {nSelected}/{owned.length}
+            </Text>
+          </Group>
+        </Box>
+      </Group>
+      {open && (
+        <Stack gap={4} mt={4} pl="lg">
+          {group.step_numbers.map((stepNumber) => {
+            const observed = observedStepSummary(family, stepNumber);
+            return (
+              <Checkbox
+                key={stepNumber}
+                size="xs"
+                checked={selectedSet.has(stepNumber)}
+                onChange={(event) => onToggleSteps([stepNumber], event.currentTarget.checked)}
+                label={
+                  <Box>
+                    <Text size="xs">{stepLabel(byNumber.get(stepNumber), stepNumber)}</Text>
+                    {observed.executionCount > 0 && (
+                      <Tooltip
+                        label={<Text style={{ whiteSpace: "pre-line" }}>{observed.detail}</Text>}
+                        multiline
+                      >
+                        <Text size="10px" c="dimmed">
+                          Observed {observed.executionCount}x in {observed.fileCount}{" "}
+                          {observed.fileCount === 1 ? "file" : "files"}; cycles{" "}
+                          {compactCycles(observed.cycles)}
+                        </Text>
+                      </Tooltip>
+                    )}
+                  </Box>
+                }
+                styles={{ label: { fontSize: 12 } }}
+              />
+            );
+          })}
+          {group.children.map((child) => (
+            <ProtocolGroupNode
+              key={child.id}
+              group={child}
+              selectedSet={selectedSet}
+              byNumber={byNumber}
+              family={family}
+              onToggleSteps={onToggleSteps}
+            />
+          ))}
+        </Stack>
+      )}
+    </Box>
+  );
 }
 
 function stepLabel(step: ProtocolStep | undefined, number: number): string {
@@ -268,7 +387,7 @@ function SegmentEditor({
               const selected = selectedSteps(targets, family.signature);
               const selectedSet = new Set(selected);
               const groups = familyGroups(family);
-              const allSteps = uniqueSorted(groups.flatMap((group) => group.step_numbers));
+              const allSteps = uniqueSorted(groupSteps(groups));
               const range = ranges[family.signature] ?? {
                 from: allSteps[0] ?? null,
                 to: allSteps[allSteps.length - 1] ?? null,
@@ -359,69 +478,18 @@ function SegmentEditor({
                     </Button>
                   </Group>
 
-                  <Accordion multiple variant="contained" mt="sm">
-                    {groups.map((group, groupIndex) => {
-                      const groupSteps = group.step_numbers;
-                      const nSelected = groupSteps.filter((step) => selectedSet.has(step)).length;
-                      const allSelected = groupSteps.length > 0 && nSelected === groupSteps.length;
-                      return (
-                        <Accordion.Item key={`${family.signature}-${group.start_step}-${groupIndex}`} value={`${family.signature}-${groupIndex}`}>
-                          <Group gap={0} wrap="nowrap">
-                            <Checkbox
-                              ml="md"
-                              checked={allSelected}
-                              indeterminate={nSelected > 0 && !allSelected}
-                              onChange={(event) =>
-                                toggleSteps(family.signature, groupSteps, event.currentTarget.checked)
-                              }
-                              aria-label={`Select ${group.label}`}
-                            />
-                            <Accordion.Control style={{ flex: 1 }}>
-                              <Group gap="xs" wrap="nowrap">
-                              <Box style={{ minWidth: 0 }}>
-                                <Text size="xs" fw={700}>{group.label}</Text>
-                                <Text size="xs" c="dimmed">{group.summary}</Text>
-                              </Box>
-                              {group.kind === "repeated_block" && <Badge size="xs" variant="light">x{group.repeat_count}</Badge>}
-                              </Group>
-                            </Accordion.Control>
-                          </Group>
-                          <Accordion.Panel>
-                            <Stack gap={5}>
-                              {groupSteps.map((stepNumber) => (
-                                (() => {
-                                  const observed = observedStepSummary(family, stepNumber);
-                                  return (
-                                    <Checkbox
-                                      key={stepNumber}
-                                      size="xs"
-                                      checked={selectedSet.has(stepNumber)}
-                                      onChange={(event) =>
-                                        toggleSteps(family.signature, [stepNumber], event.currentTarget.checked)
-                                      }
-                                      label={
-                                        <Box>
-                                          <Text size="xs">{stepLabel(byNumber.get(stepNumber), stepNumber)}</Text>
-                                          {observed.executionCount > 0 && (
-                                            <Tooltip label={<Text style={{ whiteSpace: "pre-line" }}>{observed.detail}</Text>} multiline>
-                                              <Text size="10px" c="dimmed">
-                                                Observed {observed.executionCount}x in {observed.fileCount} {observed.fileCount === 1 ? "file" : "files"}; cycles {compactCycles(observed.cycles)}
-                                              </Text>
-                                            </Tooltip>
-                                          )}
-                                        </Box>
-                                      }
-                                      styles={{ label: { fontSize: 12 } }}
-                                    />
-                                  );
-                                })()
-                              ))}
-                            </Stack>
-                          </Accordion.Panel>
-                        </Accordion.Item>
-                      );
-                    })}
-                  </Accordion>
+                  <Stack gap={6} mt="sm">
+                    {groups.map((group) => (
+                      <ProtocolGroupNode
+                        key={`${family.signature}-${group.id}`}
+                        group={group}
+                        selectedSet={selectedSet}
+                        byNumber={byNumber}
+                        family={family}
+                        onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
+                      />
+                    ))}
+                  </Stack>
                 </Box>
               );
             })}

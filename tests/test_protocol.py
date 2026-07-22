@@ -128,3 +128,123 @@ class ProtocolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def nested_header() -> dict:
+    """A protocol shaped like the real Alava test: loops three deep.
+
+    Formation, then an outer block repeated 999 times that holds a diagnostic
+    sequence followed by an ageing block repeated 19 times, whose own body
+    contains a further repeat. Mirrors JR_ME_LPMol_511_ALAVA-1-4FC.
+    """
+    header: dict[str, str] = {}
+
+    def measuring(number: int, type_id: str = "1") -> None:
+        header[f"Step.Step_Info.Step{number}.Step_Type"] = type_id
+        header[f"Step.Step_Info.Step{number}.Limit.Main.Curr.Value"] = "5"
+
+    def loop(number: int, start: int, count: int) -> None:
+        header[f"Step.Step_Info.Step{number}.Step_Type"] = "5"
+        header[f"Step.Step_Info.Step{number}.Limit.Other.Start_Step.Value"] = str(start)
+        header[f"Step.Step_Info.Step{number}.Limit.Other.Cycle_Count.Value"] = str(count)
+
+    for number in (1, 2, 3):          # formation
+        measuring(number)
+    for number in (4, 5, 6, 7):       # diagnostic sequence inside the outer loop
+        measuring(number)
+    for number in (8, 9):             # ageing body
+        measuring(number)
+    loop(10, 8, 3)                    # innermost: repeat 8-9 three times
+    measuring(11)                     # fast-charge style step after the inner repeat
+    loop(12, 8, 19)                   # ageing block: repeat 8-11 nineteen times
+    loop(13, 4, 999)                  # outer block: repeat 4-12 nine-hundred-ninety-nine times
+    measuring(14)
+    header["Step.Step_Info.Step15.Step_Type"] = "6"   # End
+    return header
+
+
+class NestedProtocolStructureTests(unittest.TestCase):
+    """Loops nest in Neware files; reporting them as peers is unusable.
+
+    The real protocol that motivated this is three deep, and flattening it put
+    an ageing block beside the outer block that contains it, with overlapping
+    step ranges and no way to select one phase.
+    """
+
+    def setUp(self):
+        self.groups = protocol.reconstruct_protocol(nested_header(), 5000.0)["groups"]
+
+    def find(self, nodes, summary_start):
+        for node in nodes:
+            if node["summary"].startswith(summary_start):
+                return node
+            found = self.find(node["children"], summary_start)
+            if found:
+                return found
+        return None
+
+    def test_top_level_holds_only_outermost_blocks(self):
+        summaries = [group["summary"] for group in self.groups]
+        self.assertEqual(
+            summaries,
+            ["Steps 1-3", "Steps 4-12, repeated 999 times", "Step 14"],
+        )
+
+    def test_inner_blocks_are_children_not_siblings(self):
+        outer = self.find(self.groups, "Steps 4-12, repeated 999")
+        child_summaries = [child["summary"] for child in outer["children"]]
+        self.assertEqual(
+            child_summaries, ["Steps 4-7", "Steps 8-11, repeated 19 times"]
+        )
+
+        ageing = self.find(self.groups, "Steps 8-11, repeated 19")
+        self.assertEqual(
+            [child["summary"] for child in ageing["children"]],
+            ["Steps 8-9, repeated 3 times", "Step 11"],
+        )
+        # The innermost block has no nested block, so it owns its steps outright
+        # rather than wrapping them in a child that restates its own range.
+        innermost = self.find(self.groups, "Steps 8-9, repeated 3")
+        self.assertEqual(innermost["children"], [])
+        self.assertEqual(innermost["step_numbers"], [8, 9])
+
+    def test_the_diagnostic_sequence_becomes_one_selectable_node(self):
+        # The steps between an outer loop's start and its first inner loop are
+        # exactly the diagnostic block, and must be selectable as a unit.
+        block = self.find(self.groups, "Steps 4-7")
+        self.assertEqual(block["kind"], "sequence")
+        self.assertEqual(block["step_numbers"], [4, 5, 6, 7])
+
+    def test_depth_reflects_real_nesting(self):
+        self.assertEqual(self.find(self.groups, "Steps 4-12")["depth"], 0)
+        self.assertEqual(self.find(self.groups, "Steps 8-11")["depth"], 1)
+        self.assertEqual(self.find(self.groups, "Steps 8-9, repeated")["depth"], 2)
+
+    def test_a_block_owns_every_step_it_runs(self):
+        outer = self.find(self.groups, "Steps 4-12, repeated 999")
+        # Selecting the outer block must select the nested steps too.
+        self.assertEqual(outer["all_step_numbers"], [4, 5, 6, 7, 8, 9, 11])
+        # while step_numbers stays the steps the block owns directly; here the
+        # diagnostic sequence and the ageing block are both children.
+        self.assertEqual(outer["step_numbers"], [])
+
+    def test_no_step_is_claimed_by_two_nodes(self):
+        seen: list[int] = []
+
+        def walk(nodes):
+            for node in nodes:
+                seen.extend(node["step_numbers"])
+                walk(node["children"])
+
+        walk(self.groups)
+        self.assertEqual(sorted(seen), sorted(set(seen)), "a step appears twice")
+        # Every measuring step is represented exactly once; control steps are not.
+        self.assertEqual(sorted(seen), [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 14])
+
+    def test_a_loop_pointing_forwards_is_ignored(self):
+        header = nested_header()
+        header["Step.Step_Info.Step13.Limit.Other.Start_Step.Value"] = "99"
+        groups = protocol.reconstruct_protocol(header, 5000.0)["groups"]
+        # Malformed loops must not swallow the protocol or crash the tree.
+        self.assertTrue(groups)
+        self.assertTrue(any(g["summary"].startswith("Steps 8-11") for g in groups))

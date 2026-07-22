@@ -262,59 +262,160 @@ def observed_step_coverage(frame: pd.DataFrame | None) -> list[dict]:
     ]
 
 
+# Control steps carry no measurement: 5 is a Cycle (loop) marker, 6 is End.
+_CONTROL_TYPE_IDS = {5, 6}
+
+
 def _structural_groups(steps: list[dict]) -> list[dict]:
+    """Describe the protocol as the nested block structure the file declares.
+
+    A Neware loop step repeats the range ``[loop_start_step, its own number - 1]``,
+    and those ranges nest: an ageing block sits inside an outer test block that
+    may itself repeat hundreds of times. Reporting every loop as a peer — as
+    this once did — flattens a three-deep structure into overlapping siblings,
+    where an inner block appears alongside the block that contains it.
+
+    Nesting them also makes the interesting parts selectable without guessing
+    what they mean. The steps between an outer loop's start and its first inner
+    loop become a sequence child of that outer loop, which is how a diagnostic
+    block or a single ageing cycle becomes one clickable node. No attempt is
+    made to name such nodes: protocols vary, and a wrong scientific label is
+    worse than a plain structural one.
+    """
     if not steps:
         return []
+    by_number = {step["number"]: step for step in steps}
     loops = [step for step in steps if step["type_id"] == 5 and step["loop_start_step"]]
-    covered: set[int] = set()
-    groups: list[dict] = []
-    for loop in loops:
-        start = loop["loop_start_step"]
-        end = loop["number"] - 1
-        member_ids = [step["number"] for step in steps if start <= step["number"] <= end]
-        covered.update(member_ids)
-        groups.append(
-            {
-                "kind": "repeated_block",
-                "label": "Repeated block",
-                "start_step": start,
-                "end_step": end,
-                "repeat_count": loop["loop_count"],
-                "control_step": loop["number"],
-                "step_numbers": member_ids,
-                "summary": f"Steps {start}-{end}, repeated {loop['loop_count']} times",
-            }
-        )
+    # A malformed loop pointing forwards would make the range logic meaningless.
+    loops = [loop for loop in loops if loop["loop_start_step"] < loop["number"]]
+    lo = min(by_number)
+    hi = max(by_number)
+    return _nodes_in_range(lo, hi, loops, by_number, depth=0, first_overall=lo)
 
-    # Preserve every uncovered executable step in neutral contiguous runs.
+
+def _loop_body(loop: dict) -> tuple[int, int]:
+    """The steps a loop repeats: from its start step up to just before itself."""
+    return loop["loop_start_step"], loop["number"] - 1
+
+
+def _nodes_in_range(
+    lo: int,
+    hi: int,
+    loops: list[dict],
+    by_number: dict[int, dict],
+    depth: int,
+    first_overall: int,
+) -> list[dict]:
+    """Build the nodes covering steps ``lo..hi``, nesting any loops within."""
+    enclosed = [
+        loop
+        for loop in loops
+        if lo <= loop["loop_start_step"] and loop["number"] <= hi
+    ]
+    # Keep only the loops not contained in another enclosed loop's body, so each
+    # recursion level handles one tier and hands the rest to its children.
+    direct: list[dict] = []
+    for loop in enclosed:
+        start, end = _loop_body(loop)
+        inside_another = any(
+            other is not loop
+            and other["loop_start_step"] <= start
+            and loop["number"] <= _loop_body(other)[1]
+            for other in enclosed
+        )
+        if not inside_another:
+            direct.append(loop)
+    direct.sort(key=lambda loop: loop["loop_start_step"])
+
+    nodes: list[dict] = []
+    cursor = lo
+    for loop in direct:
+        start, end = _loop_body(loop)
+        nodes.extend(_sequence_nodes(cursor, start - 1, by_number, depth, first_overall))
+        children = _nodes_in_range(start, end, loops, by_number, depth + 1, first_overall)
+        nodes.append(_loop_node(loop, children, by_number, depth))
+        cursor = loop["number"] + 1
+    nodes.extend(_sequence_nodes(cursor, hi, by_number, depth, first_overall))
+    return nodes
+
+
+def _executable_between(lo: int, hi: int, by_number: dict[int, dict]) -> list[int]:
+    return [
+        number
+        for number in range(lo, hi + 1)
+        if number in by_number and by_number[number]["type_id"] not in _CONTROL_TYPE_IDS
+    ]
+
+
+def _sequence_nodes(
+    lo: int,
+    hi: int,
+    by_number: dict[int, dict],
+    depth: int,
+    first_overall: int,
+) -> list[dict]:
+    """Contiguous runs of measuring steps, split where the numbering breaks."""
+    if lo > hi:
+        return []
+    nodes: list[dict] = []
     run: list[int] = []
-    for step in steps:
-        number = step["number"]
-        if step["type_id"] in {5, 6} or number in covered:
-            if run:
-                groups.append(_sequence_group(run, run[0] == steps[0]["number"]))
-                run = []
-            continue
+    for number in _executable_between(lo, hi, by_number):
         if run and number != run[-1] + 1:
-            groups.append(_sequence_group(run, run[0] == steps[0]["number"]))
+            nodes.append(_sequence_group(run, run[0] == first_overall, depth))
             run = []
         run.append(number)
     if run:
-        groups.append(_sequence_group(run, run[0] == steps[0]["number"]))
-    return sorted(groups, key=lambda group: (group["start_step"], group["kind"] != "repeated_block"))
+        nodes.append(_sequence_group(run, run[0] == first_overall, depth))
+    return nodes
 
 
-def _sequence_group(step_numbers: list[int], first: bool) -> dict:
+def _loop_node(
+    loop: dict, children: list[dict], by_number: dict[int, dict], depth: int
+) -> dict:
+    start, end = _loop_body(loop)
+    body = _executable_between(start, end, by_number)
+    # A block with no nested block owns its steps outright. Wrapping them in a
+    # lone sequence child would add a tier that says nothing: the child would
+    # simply restate the block's own range.
+    if not any(child["kind"] == "repeated_block" for child in children):
+        children = []
+    claimed = {number for child in children for number in child["all_step_numbers"]}
+    direct_steps = [number for number in body if number not in claimed]
+    all_steps = sorted(set(body) | claimed)
+    return {
+        "id": f"loop-{loop['number']}",
+        "kind": "repeated_block",
+        "label": "Repeated block",
+        "start_step": start,
+        "end_step": end,
+        "repeat_count": loop["loop_count"],
+        "control_step": loop["number"],
+        "depth": depth,
+        # Steps belonging to this block itself; nested blocks own the rest.
+        "step_numbers": direct_steps,
+        # Everything the block runs, including nested blocks — what a caller
+        # should select when it selects this block.
+        "all_step_numbers": all_steps,
+        "children": children,
+        "summary": f"Steps {start}-{end}, repeated {loop['loop_count']} times",
+    }
+
+
+def _sequence_group(step_numbers: list[int], first: bool, depth: int = 0) -> dict:
     start, end = step_numbers[0], step_numbers[-1]
     label = "Initial sequence" if first else "Step sequence"
     return {
+        "id": f"seq-{start}-{end}",
         "kind": "sequence",
         "label": label,
         "start_step": start,
         "end_step": end,
         "repeat_count": 1,
         "control_step": None,
+        "depth": depth,
         "step_numbers": step_numbers,
+        "all_step_numbers": list(step_numbers),
+        "children": [],
         "summary": f"Steps {start}-{end}" if start != end else f"Step {start}",
     }
 

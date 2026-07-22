@@ -455,21 +455,31 @@ export interface ProtocolStep {
   summary: string;
 }
 
+export interface ProtocolGroup {
+  id: string;
+  kind: "sequence" | "repeated_block";
+  label: string;
+  start_step: number;
+  end_step: number;
+  repeat_count: number;
+  control_step: number | null;
+  /** How deeply this block is nested; 0 is the outermost tier. */
+  depth: number;
+  /** Steps this node owns directly. Nested blocks own the rest. */
+  step_numbers: number[];
+  /** Everything the node runs, including nested blocks — use this to select it. */
+  all_step_numbers: number[];
+  children: ProtocolGroup[];
+  summary: string;
+}
+
 export interface FileProtocol {
   signature: string;
   n_steps: number;
   n_executable_steps: number;
   steps: ProtocolStep[];
-  groups: {
-    kind: "sequence" | "repeated_block";
-    label: string;
-    start_step: number;
-    end_step: number;
-    repeat_count: number;
-    control_step: number | null;
-    step_numbers: number[];
-    summary: string;
-  }[];
+  /** Nested block structure: loops contain the blocks and sequences they run. */
+  groups: ProtocolGroup[];
   summary: {
     charge_cutoffs: { voltage_v: number; step_count: number }[];
     discharge_cutoffs: { voltage_v: number; step_count: number }[];
