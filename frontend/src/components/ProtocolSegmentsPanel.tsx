@@ -13,6 +13,7 @@ import {
   NumberInput,
   Paper,
   ScrollArea,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -29,6 +30,7 @@ import {
   IconFocus2,
   IconPlus,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
@@ -41,6 +43,13 @@ import {
   ProtocolSegmentTarget,
   ProtocolStep,
 } from "../api";
+import {
+  cRateExamples,
+  FILTER_FIELDS,
+  operatorsFor,
+  type StepFilter,
+  stepMatches,
+} from "../protocolStepFilters";
 
 interface ProtocolFileRef {
   cellId: number;
@@ -183,17 +192,171 @@ function groupSteps(groups: ProtocolGroup[]): number[] {
  * runs (`all_step_numbers`), while the step checkboxes listed under it are only
  * the steps it owns directly — the nested blocks render their own.
  */
+const STEP_GRID = "26px 40px minmax(180px, 1fr) 78px 74px 68px 74px";
+
+function StepTableHeader() {
+  return (
+    <Box
+      style={{
+        display: "grid",
+        gridTemplateColumns: STEP_GRID,
+        gap: 8,
+        padding: "4px 8px",
+        fontSize: 11,
+        color: "var(--mantine-color-dimmed)",
+        borderBottom: "1px solid var(--mantine-color-gray-2)",
+      }}
+    >
+      <span />
+      <span>#</span>
+      <span>step / condition</span>
+      <span>rate</span>
+      <span>cut-off</span>
+      <span>until</span>
+      <span>max time</span>
+    </Box>
+  );
+}
+
+function factValue(step: ProtocolStep, keys: string[]): string | null {
+  for (const key of keys) {
+    const fact = (step.facts ?? []).find((entry) => entry.key === key);
+    if (fact) return fact.value;
+  }
+  return null;
+}
+
+/** One step as an aligned row, so values can be compared down the column. */
+function StepRow({
+  step,
+  number,
+  checked,
+  observed,
+  onToggle,
+}: {
+  step: ProtocolStep | undefined;
+  number: number;
+  checked: boolean;
+  observed: { executionCount: number; fileCount: number; cycles: number[]; detail: string };
+  onToggle: (checked: boolean) => void;
+}) {
+  const rate = step ? factValue(step, ["rate", "current"]) : null;
+  const rateFact = (step?.facts ?? []).find((f) => f.key === "rate" || f.key === "current");
+  const cutoff = step ? factValue(step, ["to", "hold"]) : null;
+  const until = step ? factValue(step, ["until"]) : null;
+  const maxTime = step ? factValue(step, ["limit", "duration"]) : null;
+  const conditions = step?.conditions ?? [];
+  const dash = (
+    <Text size="xs" c="dimmed">
+      —
+    </Text>
+  );
+
+  return (
+    <Box
+      style={{
+        display: "grid",
+        gridTemplateColumns: STEP_GRID,
+        gap: 8,
+        padding: "5px 8px",
+        alignItems: "start",
+        borderBottom: "1px solid var(--mantine-color-gray-1)",
+      }}
+    >
+      <Checkbox
+        size="xs"
+        checked={checked}
+        onChange={(event) => onToggle(event.currentTarget.checked)}
+        aria-label={`Select step ${number}`}
+        mt={2}
+      />
+      <Text size="xs" c="dimmed" ff="monospace" mt={2}>
+        {number}
+      </Text>
+      <Box style={{ minWidth: 0 }}>
+        <Group gap={6} wrap="nowrap">
+          <Box
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              flexShrink: 0,
+              background: DIRECTION_COLOR[step?.direction ?? "rest"],
+            }}
+          />
+          <Text size="xs" fw={500} truncate>
+            {step?.type ?? `Step ${number}`}
+          </Text>
+        </Group>
+        {conditions.map((condition, index) => (
+          <Tooltip
+            key={`${condition.expression}-${index}`}
+            label={
+              condition.name
+                ? `${condition.name}: ${condition.expression} (as written in the protocol file)`
+                : `${condition.expression} (as written in the protocol file)`
+            }
+            multiline
+            maw={320}
+          >
+            <Text size="10px" ff="monospace" c="teal.7" truncate pl={12}>
+              {condition.expression}
+            </Text>
+          </Tooltip>
+        ))}
+        {observed.executionCount > 0 && (
+          <Tooltip
+            label={<Text style={{ whiteSpace: "pre-line" }}>{observed.detail}</Text>}
+            multiline
+          >
+            <Text size="10px" c="dimmed" pl={12}>
+              {observed.executionCount}x · cycles {compactCycles(observed.cycles)}
+            </Text>
+          </Tooltip>
+        )}
+      </Box>
+      <Box mt={2}>
+        {rate ? (
+          <Text size="xs" ff="monospace">
+            {rate}
+            {rateFact?.note && (
+              <Tooltip label="Derived from the step current and the nominal capacity">
+                <Text component="span" c="dimmed">
+                  *
+                </Text>
+              </Tooltip>
+            )}
+          </Text>
+        ) : (
+          dash
+        )}
+      </Box>
+      <Text size="xs" ff="monospace" mt={2}>
+        {cutoff ?? dash}
+      </Text>
+      <Text size="xs" ff="monospace" mt={2}>
+        {until ?? dash}
+      </Text>
+      <Text size="xs" ff="monospace" mt={2}>
+        {maxTime ?? dash}
+      </Text>
+    </Box>
+  );
+}
+
 function ProtocolGroupNode({
   group,
   selectedSet,
   byNumber,
   family,
+  visibleSteps,
   onToggleSteps,
 }: {
   group: ProtocolGroup;
   selectedSet: Set<number>;
   byNumber: Map<number, ProtocolStep>;
   family: ProtocolFamily;
+  visibleSteps: Set<number> | null;
   onToggleSteps: (steps: number[], checked: boolean) => void;
 }) {
   const [open, setOpen] = useState(group.depth === 0);
@@ -201,6 +364,12 @@ function ProtocolGroupNode({
   const nSelected = owned.filter((step) => selectedSet.has(step)).length;
   const allSelected = owned.length > 0 && nSelected === owned.length;
   const isBlock = group.kind === "repeated_block";
+  const shownSteps = group.step_numbers.filter((n) => !visibleSteps || visibleSteps.has(n));
+  // A block whose every step was filtered out, and whose children are equally
+  // empty, is noise — drop it rather than leaving a header with nothing under it.
+  const hasVisible =
+    shownSteps.length > 0 || owned.some((n) => !visibleSteps || visibleSteps.has(n));
+  if (!hasVisible) return null;
 
   return (
     <Box
@@ -238,47 +407,36 @@ function ProtocolGroupNode({
         </Box>
       </Group>
       {open && (
-        <Stack gap={4} mt={4} pl="lg">
-          {group.step_numbers.map((stepNumber) => {
-            const observed = observedStepSummary(family, stepNumber);
-            return (
-              <Checkbox
-                key={stepNumber}
-                size="xs"
-                checked={selectedSet.has(stepNumber)}
-                onChange={(event) => onToggleSteps([stepNumber], event.currentTarget.checked)}
-                label={
-                  <Box>
-                    <StepDetail step={byNumber.get(stepNumber)} number={stepNumber} />
-                    {observed.executionCount > 0 && (
-                      <Tooltip
-                        label={<Text style={{ whiteSpace: "pre-line" }}>{observed.detail}</Text>}
-                        multiline
-                      >
-                        <Text size="10px" c="dimmed" pl={18}>
-                          Observed {observed.executionCount}x in {observed.fileCount}{" "}
-                          {observed.fileCount === 1 ? "file" : "files"}; cycles{" "}
-                          {compactCycles(observed.cycles)}
-                        </Text>
-                      </Tooltip>
-                    )}
-                  </Box>
-                }
-                styles={{ label: { fontSize: 12 } }}
+        <Box mt={4}>
+          {shownSteps.length > 0 && (
+            <Box mb={6}>
+              <StepTableHeader />
+              {shownSteps.map((stepNumber) => (
+                <StepRow
+                  key={stepNumber}
+                  step={byNumber.get(stepNumber)}
+                  number={stepNumber}
+                  checked={selectedSet.has(stepNumber)}
+                  observed={observedStepSummary(family, stepNumber)}
+                  onToggle={(checked) => onToggleSteps([stepNumber], checked)}
+                />
+              ))}
+            </Box>
+          )}
+          <Stack gap={4} pl="md">
+            {group.children.map((child) => (
+              <ProtocolGroupNode
+                key={child.id}
+                group={child}
+                selectedSet={selectedSet}
+                byNumber={byNumber}
+                family={family}
+                visibleSteps={visibleSteps}
+                onToggleSteps={onToggleSteps}
               />
-            );
-          })}
-          {group.children.map((child) => (
-            <ProtocolGroupNode
-              key={child.id}
-              group={child}
-              selectedSet={selectedSet}
-              byNumber={byNumber}
-              family={family}
-              onToggleSteps={onToggleSteps}
-            />
-          ))}
-        </Stack>
+            ))}
+          </Stack>
+        </Box>
       )}
     </Box>
   );
@@ -396,6 +554,154 @@ function observedStepSummary(family: ProtocolFamily, stepNumber: number) {
   };
 }
 
+/**
+ * The capacity every C-rate on screen is derived from, and what it converts to.
+ *
+ * Rates are shown as C-fractions throughout, so without this the reader has to
+ * do the arithmetic themselves to know what current a step actually applies.
+ */
+function CapacityReference({ families }: { families: ProtocolFamily[] }) {
+  const withCapacity = families
+    .map((family) => family.protocol)
+    .filter((protocol): protocol is FileProtocol => Boolean(protocol?.nominal_capacity_mah));
+  if (withCapacity.length === 0) return null;
+  const capacity = withCapacity[0].nominal_capacity_mah ?? null;
+  const inferred = withCapacity[0].nominal_capacity_inferred;
+  const mixed = new Set(withCapacity.map((p) => p.nominal_capacity_mah)).size > 1;
+
+  return (
+    <Paper p="xs" withBorder radius="md" bg="var(--mantine-color-gray-0)">
+      <Group gap="lg" wrap="wrap" align="center">
+        <Box>
+          <Text size="10px" c="dimmed" tt="uppercase">
+            nominal capacity
+          </Text>
+          <Group gap={6} wrap="nowrap">
+            <Text size="sm" fw={600} ff="monospace">
+              {capacity?.toFixed(2)} mAh
+            </Text>
+            {inferred && (
+              <Tooltip label="Reconstructed from the protocol's current and C-rate pairs, not declared by the file">
+                <Text size="10px" c="dimmed" fs="italic">
+                  inferred
+                </Text>
+              </Tooltip>
+            )}
+          </Group>
+        </Box>
+        <Group gap="sm" wrap="wrap">
+          {cRateExamples(capacity).map((example) => (
+            <Box key={example.label}>
+              <Text size="10px" c="dimmed">
+                {example.label}
+              </Text>
+              <Text size="xs" ff="monospace">
+                {example.current}
+              </Text>
+            </Box>
+          ))}
+        </Group>
+      </Group>
+      {mixed && (
+        <Text size="10px" c="dimmed" mt={4}>
+          Families differ in nominal capacity; the conversions above use the first.
+        </Text>
+      )}
+    </Paper>
+  );
+}
+
+/** Free-text search plus stacking field comparisons. */
+function StepFilterBar({
+  query,
+  onQuery,
+  filters,
+  onFilters,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  filters: StepFilter[];
+  onFilters: (filters: StepFilter[]) => void;
+}) {
+  const update = (id: string, patch: Partial<StepFilter>) =>
+    onFilters(filters.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  return (
+    <Stack gap={6}>
+      <Group gap="xs" wrap="nowrap">
+        <TextInput
+          size="xs"
+          placeholder="Search steps, rates, limits or conditions"
+          value={query}
+          onChange={(event) => onQuery(event.currentTarget.value)}
+          style={{ flex: 1 }}
+        />
+        <Button
+          size="compact-xs"
+          variant="default"
+          leftSection={<IconPlus size={12} />}
+          onClick={() =>
+            onFilters([
+              ...filters,
+              { id: segmentId(), field: "rate", operator: ">=", value: "" },
+            ])
+          }
+        >
+          Filter
+        </Button>
+      </Group>
+      {filters.map((filter) => {
+        const field = FILTER_FIELDS.find((entry) => entry.value === filter.field);
+        return (
+          <Group key={filter.id} gap={6} wrap="nowrap">
+            <Select
+              size="xs"
+              w={132}
+              data={FILTER_FIELDS.map((entry) => ({ value: entry.value, label: entry.label }))}
+              value={filter.field}
+              onChange={(value) => {
+                if (!value) return;
+                const next = value as StepFilter["field"];
+                // Keep the operator legal for the new field.
+                const allowed = operatorsFor(next);
+                update(filter.id, {
+                  field: next,
+                  operator: allowed.includes(filter.operator) ? filter.operator : allowed[0],
+                });
+              }}
+            />
+            <Select
+              size="xs"
+              w={84}
+              data={operatorsFor(filter.field).map((op) => ({ value: op, label: op }))}
+              value={filter.operator}
+              onChange={(value) =>
+                value && update(filter.id, { operator: value as StepFilter["operator"] })
+              }
+            />
+            <TextInput
+              size="xs"
+              placeholder={field?.hint ?? "value"}
+              value={filter.value}
+              onChange={(event) => update(filter.id, { value: event.currentTarget.value })}
+              style={{ flex: 1 }}
+            />
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              onClick={() => onFilters(filters.filter((f) => f.id !== filter.id))}
+              aria-label="Remove filter"
+            >
+              <IconX size={13} />
+            </ActionIcon>
+          </Group>
+        );
+      })}
+    </Stack>
+  );
+}
+
 function SegmentEditor({
   draft,
   families,
@@ -414,6 +720,8 @@ function SegmentEditor({
   const [name, setName] = useState(draft.name);
   const [targets, setTargets] = useState<ProtocolSegmentTarget[]>(draft.targets);
   const [ranges, setRanges] = useState<Record<string, RangeDraft>>({});
+  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<StepFilter[]>([]);
   const count = targetCount(targets);
 
   const setFamilySteps = (signature: string, steps: number[]) => {
@@ -461,6 +769,14 @@ function SegmentEditor({
           </Box>
         </Group>
 
+        <CapacityReference families={families} />
+        <StepFilterBar
+          query={query}
+          onQuery={setQuery}
+          filters={filters}
+          onFilters={setFilters}
+        />
+
         {hasErrors && (
           <Alert color="yellow">Some cell protocols could not be loaded. Available families are still selectable.</Alert>
         )}
@@ -483,6 +799,17 @@ function SegmentEditor({
                 to: allSteps[allSteps.length - 1] ?? null,
               };
               const byNumber = new Map(family.protocol?.steps.map((step) => [step.number, step]) ?? []);
+              // Null means "not filtering", which keeps steps that carry no
+              // protocol detail visible instead of silently dropping them.
+              const filtering = Boolean(query.trim() || filters.some((f) => f.value.trim()));
+              const visibleSteps = filtering
+                ? new Set(
+                    allSteps.filter((n) => {
+                      const step = byNumber.get(n);
+                      return step ? stepMatches(step, filters, query) : false;
+                    })
+                  )
+                : null;
               const cellNames = [...new Set(family.files.map((file) => file.cellName))];
               return (
                 <Box key={family.signature}>
@@ -511,15 +838,30 @@ function SegmentEditor({
                         <Text size="xs" c="yellow.8">Not present in the current samples</Text>
                       )}
                     </Box>
-                    <Button
-                      size="compact-xs"
-                      variant="subtle"
-                      color="gray"
-                      disabled={selected.length === 0}
-                      onClick={() => setFamilySteps(family.signature, [])}
-                    >
-                      Clear family
-                    </Button>
+                    <Group gap={6} wrap="nowrap">
+                      {visibleSteps && (
+                        <Button
+                          size="compact-xs"
+                          variant="light"
+                          color="teal"
+                          disabled={visibleSteps.size === 0}
+                          onClick={() =>
+                            toggleSteps(family.signature, [...visibleSteps], true)
+                          }
+                        >
+                          Select {visibleSteps.size} matching
+                        </Button>
+                      )}
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        color="gray"
+                        disabled={selected.length === 0}
+                        onClick={() => setFamilySteps(family.signature, [])}
+                      >
+                        Clear family
+                      </Button>
+                    </Group>
                   </Group>
 
                   <Group mt="sm" gap="xs" align="end" wrap="nowrap">
@@ -576,6 +918,7 @@ function SegmentEditor({
                         selectedSet={selectedSet}
                         byNumber={byNumber}
                         family={family}
+                        visibleSteps={visibleSteps}
                         onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
                       />
                     ))}

@@ -147,9 +147,55 @@ def _step_dict(step_number: int, data: dict[str, str], nominal_capacity_mah: flo
         "loop_start_step": int(_number(data.get("Limit.Other.Start_Step.Value")) or 0) or None,
         "loop_count": int(_number(data.get("Limit.Other.Cycle_Count.Value")) or 0) or None,
     }
+    result["conditions"] = _step_conditions(data)
     result["summary"] = _step_summary(result)
     result["facts"] = _step_facts(result)
     return result
+
+
+def _step_conditions(data: dict[str, str]) -> list[dict]:
+    """The step's limit conditions, reported exactly as the file states them.
+
+    Many steps are indistinguishable by their settings alone — seven C/3
+    discharges in the Alava protocol share a rate and a cutoff — and the
+    condition is the only thing separating "discharge fully" from "discharge
+    half the reference capacity". The expression references cycler variables
+    (``User1``, ``ChargeAh``), which are the protocol author's own words.
+
+    Values are passed through verbatim. In particular the comparison operator
+    is *not* translated: ``CmpType`` is an undocumented integer here, and
+    rendering a guessed ``<=`` beside a real expression would look precise
+    while risking being backwards.
+    """
+    conditions: list[dict] = []
+    for index in (1, 2):
+        prefix = f"Limit.Other.Cnd{index}."
+        expression = data.get(prefix + "Expression")
+        if not expression:
+            continue
+        jump = _number(data.get(prefix + "Jump_Line"))
+        conditions.append(
+            {
+                "expression": str(expression),
+                "name": str(data.get(prefix + "ExpressionName") or "") or None,
+                "value": _number(data.get(prefix + "Value")),
+                "comparator_id": int(_number(data.get(prefix + "CmpType")) or 0) or None,
+                # 65526 is a sentinel the cycler uses for "no jump", not a step.
+                "jump_step": int(jump) if jump and 0 < jump < 60000 else None,
+            }
+        )
+    for key, value in data.items():
+        if key.endswith("LimitCndData.Value2.Expression"):
+            conditions.append(
+                {
+                    "expression": str(value),
+                    "name": str(data.get("LimitCndData.Value2.ExpressionName") or "") or None,
+                    "value": None,
+                    "comparator_id": None,
+                    "jump_step": None,
+                }
+            )
+    return conditions
 
 
 def _format_duration(seconds: float) -> str:
@@ -522,6 +568,9 @@ def reconstruct_protocol(flat: dict[str, str] | None, nominal_capacity_mah: floa
         "signature": _protocol_signature(steps),
         "n_steps": len(steps),
         "n_executable_steps": len(executable),
+        # The basis for every C-rate shown, so a reader can convert back to mA.
+        "nominal_capacity_mah": effective_nominal,
+        "nominal_capacity_inferred": inferred_nominal and effective_nominal is not None,
         "steps": steps,
         "groups": _structural_groups(steps),
         "summary": {

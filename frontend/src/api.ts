@@ -455,6 +455,17 @@ export interface ProtocolStep {
   summary: string;
   /** The same settings as `summary`, split into labelled values for display. */
   facts?: { key: string; label: string; value: string; note: string | null }[];
+  /**
+   * Limit conditions exactly as the file states them. Often the only thing
+   * distinguishing steps that share a rate and a cutoff.
+   */
+  conditions?: {
+    expression: string;
+    name: string | null;
+    value: number | null;
+    comparator_id: number | null;
+    jump_step: number | null;
+  }[];
 }
 
 export interface ProtocolGroup {
@@ -482,6 +493,9 @@ export interface FileProtocol {
   steps: ProtocolStep[];
   /** Nested block structure: loops contain the blocks and sequences they run. */
   groups: ProtocolGroup[];
+  /** The basis for every C-rate shown, so a reader can convert back to mA. */
+  nominal_capacity_mah?: number | null;
+  nominal_capacity_inferred?: boolean;
   summary: {
     charge_cutoffs: { voltage_v: number; step_count: number }[];
     discharge_cutoffs: { voltage_v: number; step_count: number }[];
