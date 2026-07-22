@@ -29,6 +29,8 @@ import {
   IconEye,
   IconEyeOff,
   IconFocus2,
+  IconListCheck,
+  IconPencil,
   IconArrowRight,
   IconChevronDown,
   IconChevronRight,
@@ -130,6 +132,19 @@ function replaceTarget(
 
 function targetCount(targets: ProtocolSegmentTarget[]): number {
   return targets.reduce((total, target) => total + target.step_indices.length, 0);
+}
+
+/**
+ * The number a protocol is shown as.
+ *
+ * Both the picker and the segment list label protocols positionally, and when
+ * each derived that position independently they could disagree — a segment
+ * built against the first protocol was filed under a different number. One
+ * lookup, used by both, removes the possibility.
+ */
+function protocolNumber(families: ProtocolFamily[], signature: string): number | null {
+  const index = families.findIndex((family) => family.signature === signature);
+  return index >= 0 ? index + 1 : null;
 }
 
 function shortSignature(signature: string): string {
@@ -604,7 +619,6 @@ function SegmentSidePanel({
 }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const indexOf = new Map(families.map((family, index) => [family.signature, index + 1]));
 
   const byProtocol = new Map<string, ProtocolSegment[]>();
   for (const segment of segments) {
@@ -635,9 +649,14 @@ function SegmentSidePanel({
           <Stack gap={8} pr={4}>
             {[...byProtocol.entries()].map(([signature, list]) => (
               <Box key={signature}>
-                <Text size="10px" c="dimmed" tt="uppercase" mb={2}>
-                  Protocol {indexOf.get(signature) ?? "?"}
-                </Text>
+                <Group gap={6} align="baseline" mb={4}>
+                  <Text size="xs" fw={600} c="teal.7">
+                    Protocol {protocolNumber(families, signature) ?? "—"}
+                  </Text>
+                  <Text size="10px" c="dimmed" ff="monospace">
+                    {shortSignature(signature)}
+                  </Text>
+                </Group>
                 <Stack gap={4}>
                   {list.map((segment) => {
                     const steps = segment.targets.reduce(
@@ -691,10 +710,10 @@ function SegmentSidePanel({
                                 }}
                                 aria-label={`Rename ${segment.name}`}
                               >
-                                <IconEdit size={12} />
+                                <IconPencil size={12} />
                               </ActionIcon>
                             </Tooltip>
-                            <Tooltip label="Edit steps">
+                            <Tooltip label="Load its steps for editing">
                               <ActionIcon
                                 size="xs"
                                 variant="subtle"
@@ -702,7 +721,7 @@ function SegmentSidePanel({
                                 onClick={() => onEdit(segment)}
                                 aria-label={`Edit ${segment.name}`}
                               >
-                                <IconFocus2 size={12} />
+                                <IconListCheck size={12} />
                               </ActionIcon>
                             </Tooltip>
                             <Tooltip label="Delete">
@@ -752,12 +771,13 @@ function ProtocolPicker({
 }) {
   const [showCells, setShowCells] = useState(false);
   const active = families.find((f) => f.signature === activeSignature) ?? families[0];
-  const label = (family: ProtocolFamily, index: number) => {
+  const label = (family: ProtocolFamily) => {
     const cells = [...new Set(family.files.map((file) => file.cellName))];
     const steps = family.protocol?.n_executable_steps ?? 0;
     const chosen = selectedSteps(targets, family.signature).length;
     const where = cells.length === 0 ? "not in samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`;
-    return `Protocol ${index + 1} — ${steps} steps, ${where}${chosen ? ` · ${chosen} selected` : ""}`;
+    const number = protocolNumber(families, family.signature) ?? "—";
+    return `Protocol ${number} — ${steps} steps, ${where}${chosen ? ` · ${chosen} selected` : ""}`;
   };
 
   return (
@@ -767,9 +787,9 @@ function ProtocolPicker({
           size="xs"
           label="Protocol"
           style={{ flex: 1 }}
-          data={families.map((family, index) => ({
+          data={families.map((family) => ({
             value: family.signature,
-            label: label(family, index),
+            label: label(family),
           }))}
           value={active?.signature ?? null}
           onChange={(value) => value && onSelect(value)}
@@ -1056,7 +1076,8 @@ function SegmentEditor({
       size="min(1240px, calc(100vw - 3rem))"
       centered
     >
-      <Stack gap="sm">
+      <Group align="stretch" gap="sm" wrap="nowrap">
+      <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
         <Group align="end" wrap="nowrap">
           <TextInput
             label="Segment name"
@@ -1080,15 +1101,14 @@ function SegmentEditor({
               size="sm"
               disabled={!name.trim() || count === 0}
               onClick={save}
-              rightSection={<IconArrowRight size={15} />}
+              color={editingId ? "orange" : undefined}
+              rightSection={editingId ? undefined : <IconArrowRight size={15} />}
             >
               {editingId ? "Save changes" : "Add segment"}
             </Button>
           </Group>
         </Group>
 
-        <Group align="stretch" gap="sm" wrap="nowrap">
-        <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
         <CapacityReference families={families} />
         <StepFilterBar
           query={query}
@@ -1214,9 +1234,9 @@ function SegmentEditor({
             })()}
           </Stack>
         </ScrollArea>
-        </Stack>
-        <Divider orientation="vertical" />
-        <Box style={{ width: 268, flexShrink: 0, display: "flex" }}>
+      </Stack>
+      <Divider orientation="vertical" />
+      <Box style={{ width: 268, flexShrink: 0, display: "flex" }}>
           <SegmentSidePanel
             segments={segments}
             families={families}
@@ -1225,9 +1245,8 @@ function SegmentEditor({
             onDelete={onDelete}
             onRename={(segment, next) => onSave({ ...segment, name: next })}
           />
-        </Box>
-        </Group>
-      </Stack>
+      </Box>
+      </Group>
     </Modal>
   );
 }
