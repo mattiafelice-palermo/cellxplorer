@@ -148,6 +148,7 @@ def _step_dict(step_number: int, data: dict[str, str], nominal_capacity_mah: flo
         "loop_count": int(_number(data.get("Limit.Other.Cycle_Count.Value")) or 0) or None,
     }
     result["summary"] = _step_summary(result)
+    result["facts"] = _step_facts(result)
     return result
 
 
@@ -175,6 +176,58 @@ def _format_c_rate(value: float) -> str:
     if rounded >= 2 and abs(reciprocal - rounded) / rounded <= 0.02:
         return f"C/{rounded:g}"
     return f"{value:g}C"
+
+
+def _step_facts(step: dict) -> list[dict]:
+    """The same settings as ``summary``, split into labelled values.
+
+    ``summary`` packs a step into one pipe-separated line, which is dense to
+    read when a protocol runs to a hundred steps. These parts let a UI lay the
+    settings out with their meanings visible, without re-deriving C-rates or
+    durations client-side and risking a different rounding.
+
+    Every value here also appears in ``summary``; a test holds the two together.
+    """
+    facts: list[dict] = []
+
+    def add(key: str, label: str, value: str, note: str | None = None) -> None:
+        facts.append({"key": key, "label": label, "value": value, "note": note})
+
+    if step["c_rate"] is not None:
+        add(
+            "rate",
+            "Rate",
+            _format_c_rate(step["c_rate"]),
+            None if step["c_rate_source"] == "explicit" else "inferred",
+        )
+    elif step["current_ma"] is not None:
+        add("current", "Current", f"{step['current_ma']:g} mA")
+    if step["target_voltage_v"] is not None:
+        add("hold", "Hold at", f"{step['target_voltage_v']:g} V")
+    if step["stop_voltage_v"] is not None:
+        add("to", "To", f"{step['stop_voltage_v']:g} V")
+    if step["stop_c_rate"] is not None:
+        add(
+            "until",
+            "Until",
+            _format_c_rate(step["stop_c_rate"]),
+            "inferred" if step["stop_c_rate_source"] == "inferred" else None,
+        )
+    elif step["stop_current_ma"] is not None:
+        add("until", "Until", f"{step['stop_current_ma']:g} mA")
+    if step["time_limit_s"] is not None:
+        duration = _format_duration(step["time_limit_s"])
+        if step["direction"] == "rest":
+            add("duration", "Duration", duration)
+        else:
+            add("limit", "Time limit", duration)
+    if step["loop_start_step"] is not None:
+        add(
+            "repeat",
+            "Repeat",
+            f"steps {step['loop_start_step']}-{step['number'] - 1} x{step['loop_count']}",
+        )
+    return facts
 
 
 def _step_summary(step: dict) -> str:

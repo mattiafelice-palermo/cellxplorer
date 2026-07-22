@@ -453,6 +453,8 @@ export interface ProtocolStep {
   loop_start_step: number | null;
   loop_count: number | null;
   summary: string;
+  /** The same settings as `summary`, split into labelled values for display. */
+  facts?: { key: string; label: string; value: string; note: string | null }[];
 }
 
 export interface ProtocolGroup {

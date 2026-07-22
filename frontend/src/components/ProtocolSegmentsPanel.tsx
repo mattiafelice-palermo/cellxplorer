@@ -123,8 +123,31 @@ function shortSignature(signature: string): string {
   return signature.length > 14 ? `${signature.slice(0, 12)}...` : signature;
 }
 
+/**
+ * Fill in the nesting fields a group may lack.
+ *
+ * Protocol groups reach this panel from several places — a live backend, a
+ * cached analysis result, an imported portable report — and those can predate
+ * the nested-block fields. Deriving what is missing keeps an older payload
+ * rendering as a flat list instead of blanking the page.
+ */
+export function normalizeGroup(group: ProtocolGroup): ProtocolGroup {
+  const children = (group.children ?? []).map(normalizeGroup);
+  const own = group.step_numbers ?? [];
+  return {
+    ...group,
+    id: group.id ?? `${group.kind}-${group.start_step}-${group.end_step}`,
+    depth: group.depth ?? 0,
+    children,
+    step_numbers: own,
+    all_step_numbers:
+      group.all_step_numbers ??
+      uniqueSorted([...own, ...children.flatMap((child) => child.all_step_numbers)]),
+  };
+}
+
 function familyGroups(family: ProtocolFamily): ProtocolGroup[] {
-  if (family.protocol?.groups.length) return family.protocol.groups;
+  if (family.protocol?.groups.length) return family.protocol.groups.map(normalizeGroup);
   const stepNumbers = family.unavailableSteps ?? family.protocol?.steps.map((step) => step.number) ?? [];
   if (stepNumbers.length === 0) return [];
   return [
@@ -226,13 +249,13 @@ function ProtocolGroupNode({
                 onChange={(event) => onToggleSteps([stepNumber], event.currentTarget.checked)}
                 label={
                   <Box>
-                    <Text size="xs">{stepLabel(byNumber.get(stepNumber), stepNumber)}</Text>
+                    <StepDetail step={byNumber.get(stepNumber)} number={stepNumber} />
                     {observed.executionCount > 0 && (
                       <Tooltip
                         label={<Text style={{ whiteSpace: "pre-line" }}>{observed.detail}</Text>}
                         multiline
                       >
-                        <Text size="10px" c="dimmed">
+                        <Text size="10px" c="dimmed" pl={18}>
                           Observed {observed.executionCount}x in {observed.fileCount}{" "}
                           {observed.fileCount === 1 ? "file" : "files"}; cycles{" "}
                           {compactCycles(observed.cycles)}
@@ -264,6 +287,73 @@ function ProtocolGroupNode({
 function stepLabel(step: ProtocolStep | undefined, number: number): string {
   if (!step) return `Step ${number}`;
   return `Step ${number} - ${step.summary || step.type}`;
+}
+
+const DIRECTION_COLOR: Record<string, string> = {
+  charge: "var(--mantine-color-teal-6)",
+  discharge: "var(--mantine-color-indigo-5)",
+  rest: "var(--mantine-color-gray-4)",
+  control: "var(--mantine-color-grape-4)",
+};
+
+/**
+ * One protocol step: what it is, then its settings as labelled values.
+ *
+ * The single pipe-separated summary is hard to scan across a hundred steps, so
+ * the settings are laid out with their meanings visible. The parts come from
+ * the backend rather than being parsed out of the summary, so nothing here can
+ * round a C-rate differently from the rest of the app. Older payloads without
+ * them fall back to the original line.
+ */
+function StepDetail({ step, number }: { step: ProtocolStep | undefined; number: number }) {
+  if (!step) return <Text size="xs">Step {number}</Text>;
+  const facts = step.facts ?? [];
+  return (
+    <Box>
+      <Group gap={6} wrap="nowrap" align="center">
+        <Box
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            flexShrink: 0,
+            background: DIRECTION_COLOR[step.direction] ?? "var(--mantine-color-gray-4)",
+          }}
+        />
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          {number}
+        </Text>
+        <Text size="xs" fw={600}>
+          {step.type}
+        </Text>
+      </Group>
+      {facts.length > 0 ? (
+        <Group gap={10} wrap="wrap" mt={1} pl={18}>
+          {facts.map((fact) => (
+            <Group key={fact.key} gap={3} wrap="nowrap">
+              <Text size="10px" c="dimmed">
+                {fact.label}
+              </Text>
+              <Text size="10px" fw={600} ff="monospace">
+                {fact.value}
+              </Text>
+              {fact.note && (
+                <Tooltip label="Derived from the step current and the nominal capacity">
+                  <Text size="10px" c="dimmed" fs="italic">
+                    ({fact.note})
+                  </Text>
+                </Tooltip>
+              )}
+            </Group>
+          ))}
+        </Group>
+      ) : (
+        <Text size="10px" c="dimmed" pl={18}>
+          {step.summary}
+        </Text>
+      )}
+    </Box>
+  );
 }
 
 function compactCycles(values: number[]): string {

@@ -248,3 +248,45 @@ class NestedProtocolStructureTests(unittest.TestCase):
         # Malformed loops must not swallow the protocol or crash the tree.
         self.assertTrue(groups)
         self.assertTrue(any(g["summary"].startswith("Steps 8-11") for g in groups))
+
+
+class StepFactsTests(unittest.TestCase):
+    """Structured settings must say exactly what the summary line says."""
+
+    def test_facts_cover_the_same_values_as_the_summary(self):
+        for header in (synthetic_header(), nested_header()):
+            result = protocol.reconstruct_protocol(header, nominal_capacity_mah=10)
+            for step in result["steps"]:
+                for fact in step["facts"]:
+                    self.assertIn(
+                        fact["value"],
+                        step["summary"],
+                        f"step {step['number']} fact {fact['key']} missing from summary",
+                    )
+
+    def test_a_cccv_charge_is_split_into_readable_parts(self):
+        result = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        step = next(s for s in result["steps"] if s["type"] == "CCCV charge")
+        facts = {fact["key"]: fact for fact in step["facts"]}
+        self.assertEqual(facts["hold"]["label"], "Hold at")
+        self.assertEqual(facts["hold"]["value"], "4.2 V")
+        self.assertEqual(facts["until"]["value"], "C/20")
+
+    def test_an_inferred_rate_is_marked_as_such(self):
+        header = synthetic_header()
+        # Drop the explicit rate so it has to be derived from current.
+        del header["Step.Step_Info.Step1.Limit.Main.Rate.Value"]
+        result = protocol.reconstruct_protocol(header, nominal_capacity_mah=10)
+        rate = next(f for f in result["steps"][0]["facts"] if f["key"] == "rate")
+        self.assertEqual(rate["note"], "inferred")
+
+        explicit = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        rate = next(f for f in explicit["steps"][0]["facts"] if f["key"] == "rate")
+        self.assertIsNone(rate["note"])
+
+    def test_a_rest_reports_duration_rather_than_a_limit(self):
+        result = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        rest = next(s for s in result["steps"] if s["direction"] == "rest")
+        keys = {fact["key"] for fact in rest["facts"]}
+        self.assertIn("duration", keys)
+        self.assertNotIn("limit", keys)
