@@ -153,7 +153,13 @@ function parseFilterValue(field: FilterField, raw: string): number | null {
  */
 function equalityTolerance(field: FilterField, expected: number): number {
   const magnitude = Math.abs(expected);
-  if (field === "rate" || field === "until") return Math.max(magnitude * 0.02, 1e-9);
+  if (field === "rate" || field === "until") {
+    // Relative 2% handles the usual case — 1.49937 matches "1.5C" — and the
+    // small absolute floor catches rates written as coarse fractions. It is
+    // deliberately not the 0.05C a flat allowance would suggest: C/20 is
+    // itself 0.05, so that window would reach 0.1C and merge C/20 with C/10.
+    return Math.max(magnitude * 0.02, 0.02);
+  }
   return Math.max(magnitude * 1e-6, 1e-9);
 }
 

@@ -150,3 +150,14 @@ test("C-rate examples convert against the nominal capacity", () => {
   assert.deepEqual(cRateExamples(null), []);
   assert.deepEqual(cRateExamples(0), []);
 });
+
+test("rate equality is forgiving but never merges neighbouring fractions", () => {
+  // The reported case: an inferred 1.49937 must answer to "= 1.5C".
+  assert.ok(stepMatchesFilter(step({ c_rate: 1.49937 }), filter("rate", "=", "1.5C")));
+  assert.ok(stepMatchesFilter(step({ c_rate: 0.3335318 }), filter("rate", "=", "C/3")));
+
+  // A flat 0.05C allowance would make C/20 (0.05) reach C/10 (0.1). It must not.
+  assert.ok(!stepMatchesFilter(step({ c_rate: 0.1 }), filter("rate", "=", "C/20")));
+  assert.ok(!stepMatchesFilter(step({ c_rate: 0.05 }), filter("rate", "=", "C/10")));
+  assert.ok(stepMatchesFilter(step({ c_rate: 0.0503 }), filter("rate", "=", "C/20")));
+});

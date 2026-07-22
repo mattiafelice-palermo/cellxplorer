@@ -29,6 +29,7 @@ import {
   IconEye,
   IconEyeOff,
   IconFocus2,
+  IconArrowRight,
   IconChevronDown,
   IconChevronRight,
   IconPlus,
@@ -580,6 +581,157 @@ function observedStepSummary(family: ProtocolFamily, stepNumber: number) {
 }
 
 /**
+ * Segments saved so far, grouped by the protocol they target.
+ *
+ * Keeping this beside the step list is what lets several segments be built in
+ * one visit: previously each one meant saving, closing the modal, and opening
+ * it again from scratch.
+ */
+function SegmentSidePanel({
+  segments,
+  families,
+  editingId,
+  onEdit,
+  onDelete,
+  onRename,
+}: {
+  segments: ProtocolSegment[];
+  families: ProtocolFamily[];
+  editingId: string | null;
+  onEdit: (segment: ProtocolSegment) => void;
+  onDelete: (segmentId: string) => void;
+  onRename: (segment: ProtocolSegment, name: string) => void;
+}) {
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const indexOf = new Map(families.map((family, index) => [family.signature, index + 1]));
+
+  const byProtocol = new Map<string, ProtocolSegment[]>();
+  for (const segment of segments) {
+    // A segment can span protocols; list it under each one it touches.
+    for (const target of segment.targets) {
+      const list = byProtocol.get(target.protocol_signature) ?? [];
+      list.push(segment);
+      byProtocol.set(target.protocol_signature, list);
+    }
+  }
+
+  return (
+    <Paper
+      withBorder
+      radius="md"
+      p={8}
+      style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+    >
+      <Text size="xs" fw={600} mb={6}>
+        Segments ({segments.length})
+      </Text>
+      {segments.length === 0 ? (
+        <Text size="10px" c="dimmed">
+          Pick steps, name them, then choose Add segment. They collect here.
+        </Text>
+      ) : (
+        <Box className="cx-vertical-scroll" style={{ flex: 1, minHeight: 0 }}>
+          <Stack gap={8} pr={4}>
+            {[...byProtocol.entries()].map(([signature, list]) => (
+              <Box key={signature}>
+                <Text size="10px" c="dimmed" tt="uppercase" mb={2}>
+                  Protocol {indexOf.get(signature) ?? "?"}
+                </Text>
+                <Stack gap={4}>
+                  {list.map((segment) => {
+                    const steps = segment.targets.reduce(
+                      (total, target) => total + target.step_indices.length,
+                      0
+                    );
+                    return (
+                      <Paper
+                        key={`${signature}-${segment.id}`}
+                        withBorder
+                        radius="sm"
+                        p={6}
+                        style={{
+                          borderColor:
+                            segment.id === editingId ? "var(--mantine-color-teal-4)" : undefined,
+                        }}
+                      >
+                        {renaming === segment.id ? (
+                          <TextInput
+                            size="xs"
+                            value={renameValue}
+                            autoFocus
+                            onChange={(event) => setRenameValue(event.currentTarget.value)}
+                            onBlur={() => {
+                              if (renameValue.trim()) onRename(segment, renameValue.trim());
+                              setRenaming(null);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                              if (event.key === "Escape") setRenaming(null);
+                            }}
+                          />
+                        ) : (
+                          <Group gap={4} wrap="nowrap" align="center">
+                            <Box style={{ flex: 1, minWidth: 0 }}>
+                              <Text size="xs" fw={500} truncate>
+                                {segment.name}
+                              </Text>
+                              <Text size="10px" c="dimmed">
+                                {steps} step{steps === 1 ? "" : "s"}
+                              </Text>
+                            </Box>
+                            <Tooltip label="Rename">
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                onClick={() => {
+                                  setRenaming(segment.id);
+                                  setRenameValue(segment.name);
+                                }}
+                                aria-label={`Rename ${segment.name}`}
+                              >
+                                <IconEdit size={12} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="Edit steps">
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="teal"
+                                onClick={() => onEdit(segment)}
+                                aria-label={`Edit ${segment.name}`}
+                              >
+                                <IconFocus2 size={12} />
+                              </ActionIcon>
+                            </Tooltip>
+                            <Tooltip label="Delete">
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="red"
+                                onClick={() => onDelete(segment.id)}
+                                aria-label={`Delete ${segment.name}`}
+                              >
+                                <IconTrash size={12} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        )}
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+      )}
+    </Paper>
+  );
+}
+
+/**
  * Choose which protocol to work on, and see which cells share it.
  *
  * Files are already grouped by protocol signature, so cells running byte-wise
@@ -598,84 +750,57 @@ function ProtocolPicker({
   onSelect: (signature: string) => void;
   targets: ProtocolSegmentTarget[];
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  // An analysis can hold a dozen distinct protocols; without a ceiling the
-  // picker pushes the step table it is meant to control off the screen.
+  const [showCells, setShowCells] = useState(false);
+  const active = families.find((f) => f.signature === activeSignature) ?? families[0];
+  const label = (family: ProtocolFamily, index: number) => {
+    const cells = [...new Set(family.files.map((file) => file.cellName))];
+    const steps = family.protocol?.n_executable_steps ?? 0;
+    const chosen = selectedSteps(targets, family.signature).length;
+    const where = cells.length === 0 ? "not in samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`;
+    return `Protocol ${index + 1} — ${steps} steps, ${where}${chosen ? ` · ${chosen} selected` : ""}`;
+  };
+
   return (
-    <Box className="cx-vertical-scroll" style={{ maxHeight: 168 }}>
-      <Stack gap={4} pr={4}>
-      {families.map((family, index) => {
-        const active = family.signature === activeSignature;
-        const cells = [...new Set(family.files.map((file) => file.cellName))];
-        const chosen = selectedSteps(targets, family.signature).length;
-        const open = expanded === family.signature;
-        return (
-          <Paper
-            key={family.signature}
-            withBorder
-            radius="md"
-            p={8}
-            style={{
-              borderColor: active ? "var(--mantine-color-teal-4)" : undefined,
-              background: active ? "var(--mantine-color-teal-0)" : undefined,
-            }}
-          >
-            <Group gap={8} wrap="nowrap" align="center">
-              <Radio
-                size="xs"
-                checked={active}
-                onChange={() => onSelect(family.signature)}
-                aria-label={`Show protocol ${index + 1}`}
-              />
-              <Box
-                style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-                onClick={() => onSelect(family.signature)}
-              >
-                <Group gap={6} wrap="nowrap">
-                  <Text size="xs" fw={600}>
-                    Protocol {index + 1}
+    <Stack gap={4}>
+      <Group gap={8} wrap="nowrap" align="end">
+        <Select
+          size="xs"
+          label="Protocol"
+          style={{ flex: 1 }}
+          data={families.map((family, index) => ({
+            value: family.signature,
+            label: label(family, index),
+          }))}
+          value={active?.signature ?? null}
+          onChange={(value) => value && onSelect(value)}
+          allowDeselect={false}
+          comboboxProps={{ withinPortal: true }}
+        />
+        <Button
+          size="compact-xs"
+          variant="default"
+          onClick={() => setShowCells((value) => !value)}
+          disabled={!active || active.files.length === 0}
+        >
+          {showCells ? "Hide cells" : `Cells (${new Set(active?.files.map((f) => f.cellName)).size ?? 0})`}
+        </Button>
+      </Group>
+      {showCells && active && (
+        <Paper withBorder radius="md" p={6} bg="var(--mantine-color-gray-0)">
+          <Box className="cx-vertical-scroll" style={{ maxHeight: 96 }}>
+            <Stack gap={2}>
+              {active.files.map((file) => (
+                <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
+                  <Text size="10px" c="dimmed" truncate>
+                    {file.cellName} · {file.testName} / {file.filename}
                   </Text>
-                  <Text size="10px" c="dimmed" ff="monospace">
-                    {shortSignature(family.signature)}
-                  </Text>
-                  {chosen > 0 && (
-                    <Badge size="xs" variant="light" color="teal">
-                      {chosen} selected
-                    </Badge>
-                  )}
-                </Group>
-                <Text size="10px" c="dimmed" truncate>
-                  {family.protocol?.n_executable_steps ?? 0} steps ·{" "}
-                  {cells.length === 0 ? "not in the current samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`}
-                </Text>
-              </Box>
-              {cells.length > 0 && (
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="gray"
-                  onClick={() => setExpanded(open ? null : family.signature)}
-                >
-                  {open ? "Hide cells" : "Cells"}
-                </Button>
-              )}
-            </Group>
-            {open && (
-              <Stack gap={2} mt={6} pl={26}>
-                {family.files.map((file) => (
-                  <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
-                    <Text size="10px" c="dimmed" truncate>
-                      {file.cellName} · {file.testName} / {file.filename}
-                    </Text>
-                  </Tooltip>
-                ))}
-              </Stack>
-            )}
-          </Paper>
-        );
-      })}
-      </Stack>
-    </Box>
+                </Tooltip>
+              ))}
+            </Stack>
+          </Box>
+        </Paper>
+      )}
+    </Stack>
   );
 }
 
@@ -854,16 +979,20 @@ function StepFilterBar({
 function SegmentEditor({
   draft,
   families,
+  segments,
   loading,
   hasErrors,
   onClose,
+  onDelete,
   onSave,
 }: {
   draft: SegmentDraft;
   families: ProtocolFamily[];
+  segments: ProtocolSegment[];
   loading: boolean;
   hasErrors: boolean;
   onClose: () => void;
+  onDelete: (segmentId: string) => void;
   onSave: (segment: ProtocolSegment) => void;
 }) {
   const [name, setName] = useState(draft.name);
@@ -893,20 +1022,40 @@ function SegmentEditor({
     setFamilySteps(signature, [...current]);
   };
 
+  const [editingId, setEditingId] = useState<string | null>(draft.id);
+
+  /** Store the current draft and clear the bench for the next one. */
   const save = () => {
     if (!name.trim() || count === 0) return;
     onSave({
-      id: draft.id ?? segmentId(),
+      id: editingId ?? segmentId(),
       name: name.trim(),
       targets: targets.map((target) => ({
         ...target,
         step_indices: uniqueSorted(target.step_indices),
       })),
     });
+    setEditingId(null);
+    setName("");
+    setTargets([]);
+  };
+
+  const editSegment = (segment: ProtocolSegment) => {
+    setEditingId(segment.id);
+    setName(segment.name);
+    setTargets(segment.targets.map((target) => ({ ...target })));
   };
 
   return (
-    <Modal opened onClose={onClose} title={draft.id ? "Edit protocol segment" : "Create protocol segment"} size="xl" centered>
+    <Modal
+      opened
+      onClose={onClose}
+      title={draft.id ? "Edit protocol segment" : "Create protocol segment"}
+      // Wide enough that the segment list is an extra panel rather than a
+      // slice taken out of the step table.
+      size="min(1240px, calc(100vw - 3rem))"
+      centered
+    >
       <Stack gap="sm">
         <Group align="end" wrap="nowrap">
           <TextInput
@@ -925,14 +1074,21 @@ function SegmentEditor({
           </Box>
           <Group gap={8} pb={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             <Button variant="default" size="sm" onClick={onClose}>
-              Cancel
+              Done
             </Button>
-            <Button size="sm" disabled={!name.trim() || count === 0} onClick={save}>
-              {draft.id ? "Save changes" : "Create segment"}
+            <Button
+              size="sm"
+              disabled={!name.trim() || count === 0}
+              onClick={save}
+              rightSection={<IconArrowRight size={15} />}
+            >
+              {editingId ? "Save changes" : "Add segment"}
             </Button>
           </Group>
         </Group>
 
+        <Group align="stretch" gap="sm" wrap="nowrap">
+        <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
         <CapacityReference families={families} />
         <StepFilterBar
           query={query}
@@ -979,7 +1135,7 @@ function SegmentEditor({
           </Button>
         </Group>
 
-        <ScrollArea h="min(52vh, 560px)" type="auto" offsetScrollbars>
+        <ScrollArea h="min(52vh, 560px)" type="auto" offsetScrollbars style={{ flex: 1, minWidth: 0 }}>
           <Stack gap="md" pr="xs">
             {!loading && families.length === 0 && (
               <Alert color="gray">Add cells or replicates with protocol data before creating a segment.</Alert>
@@ -1058,7 +1214,19 @@ function SegmentEditor({
             })()}
           </Stack>
         </ScrollArea>
-
+        </Stack>
+        <Divider orientation="vertical" />
+        <Box style={{ width: 268, flexShrink: 0, display: "flex" }}>
+          <SegmentSidePanel
+            segments={segments}
+            families={families}
+            editingId={editingId}
+            onEdit={editSegment}
+            onDelete={onDelete}
+            onRename={(segment, next) => onSave({ ...segment, name: next })}
+          />
+        </Box>
+        </Group>
       </Stack>
     </Modal>
   );
@@ -1255,13 +1423,12 @@ export function ProtocolSegmentsPanel({
           key={`${draft.id ?? "new"}-${draft.targets.map((target) => target.protocol_signature).join("|")}`}
           draft={draft}
           families={editorFamilies}
+          segments={segments}
           loading={loading}
           hasErrors={hasErrors}
           onClose={() => setDraft(null)}
-          onSave={(segment) => {
-            onSaveSegment(segment);
-            setDraft(null);
-          }}
+          onDelete={onDeleteSegment}
+          onSave={onSaveSegment}
         />
       )}
     </>
