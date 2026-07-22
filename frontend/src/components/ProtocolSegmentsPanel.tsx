@@ -38,7 +38,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   CellProtocol,
@@ -1025,8 +1025,17 @@ function SegmentEditor({
   // own their own open state; the epoch changes the React key.
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [expandEpoch, setExpandEpoch] = useState(0);
-  const activeFamily =
-    families.find((f) => f.signature === activeSignature) ?? families[0] ?? null;
+  // Pin the choice once, rather than falling back to families[0] on every
+  // render. Protocol queries resolve one cell at a time and the list is kept
+  // sorted by signature, so "the first family" is a different protocol at
+  // 0.5s than at 2s. Steps selected before the list settled were being filed
+  // against whichever protocol happened to sort first at that instant, which
+  // then appeared under a different number once the rest arrived.
+  useEffect(() => {
+    if (loading || activeSignature !== null || families.length === 0) return;
+    setActiveSignature(families[0].signature);
+  }, [loading, activeSignature, families]);
+  const activeFamily = families.find((f) => f.signature === activeSignature) ?? null;
   const count = targetCount(targets);
 
   const setFamilySteps = (signature: string, steps: number[]) => {
@@ -1124,7 +1133,7 @@ function SegmentEditor({
           <Group gap="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Loading cell protocols...</Text></Group>
         )}
 
-        {families.length > 0 && (
+        {!loading && families.length > 0 && (
           <ProtocolPicker
             families={families}
             activeSignature={activeFamily?.signature ?? null}
@@ -1160,7 +1169,15 @@ function SegmentEditor({
             {!loading && families.length === 0 && (
               <Alert color="gray">Add cells or replicates with protocol data before creating a segment.</Alert>
             )}
-            {activeFamily && (() => {
+            {loading && (
+              <Group gap="xs" p="md">
+                <Loader size="xs" />
+                <Text size="xs" c="dimmed">
+                  Reading protocols…
+                </Text>
+              </Group>
+            )}
+            {!loading && activeFamily && (() => {
               const family = activeFamily;
               const selected = selectedSteps(targets, family.signature);
               const selectedSet = new Set(selected);
