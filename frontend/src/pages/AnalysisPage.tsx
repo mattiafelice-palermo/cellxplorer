@@ -138,7 +138,7 @@ import {
   relatedAnalysesForCell,
 } from "../components/CellSamplePopovers";
 import Plot from "../components/Plot";
-import { StepsPlotCard } from "../components/StepsPlotCard";
+import { StepsPlotCard, StepsSettings } from "../components/StepsPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
 import { saveDownload, shareDownload } from "../downloads";
@@ -841,7 +841,7 @@ function legacyScopedStyle(spec: AnalysisSpec, scope: AnalysisTabKey): PlotStyle
   };
 }
 
-function currentPlotStyle(spec: AnalysisSpec, scope: AnalysisTabKey = "cycles"): PlotStyle {
+export function currentPlotStyle(spec: AnalysisSpec, scope: AnalysisTabKey = "cycles"): PlotStyle {
   const scopedStyle = spec.presentation.plot_styles?.[scope];
   if (scopedStyle) return normalizePlotStyle(scopedStyle);
   return legacyScopedStyle(spec, scope);
@@ -889,13 +889,13 @@ function plotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   return "lines";
 }
 
-function plotPalette(style: PlotStyle): string[] {
+export function plotPalette(style: PlotStyle): string[] {
   return style.palette_colors?.length
     ? style.palette_colors
     : PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
 }
 
-function cePalette(style: PlotStyle): string[] {
+export function cePalette(style: PlotStyle): string[] {
   return style.ce_palette_colors?.length
     ? style.ce_palette_colors
     : PLOT_PALETTES.app;
@@ -1133,7 +1133,7 @@ function exportDecimalPlaces(header: string): number {
 // Export exactly what is plotted: one x/y column pair per visible trace
 // (works for any tab — traces need not share an x grid). Dispersion bands
 // (fill traces) are skipped.
-function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.Layout>): DataColumn[] {
+export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.Layout>): DataColumn[] {
   const axisTitle = (axis: unknown): string =>
     String((axis as { title?: { text?: string } })?.title?.text ?? "");
   const columns: DataColumn[] = [];
@@ -1182,7 +1182,7 @@ function buildDelimitedText(
   return "﻿" + lines.join("\r\n");
 }
 
-async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
+export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
   if (columns.length === 0) return;
   if (style.data_export_format === "xlsx") {
     const XLSX = await import("xlsx");
@@ -4340,7 +4340,7 @@ function plotColorTargets(
   return targets;
 }
 
-function PlotStylePanel({
+export function PlotStylePanel({
   opened,
   spec,
   result,
@@ -5606,7 +5606,7 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
   );
 }
 
-function PlotHeader({
+export function PlotHeader({
   analysisTitle,
   tabName,
   plotName,
@@ -8585,7 +8585,7 @@ function AnalysisPageView({
         onToggleReplicate={toggleReplicateVisibility}
         onImportEntries={importAnalysisEntries}
       />
-      {(["cycles", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) && (
+      {(["cycles", "steps", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) && (
         <ProtocolSegmentsPanel
           cellIds={protocolCellIds}
           segments={spec.protocol_segments ?? []}
@@ -8601,6 +8601,7 @@ function AnalysisPageView({
       )}
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
       {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}
+      {activeTab === "steps" && <StepsSettings analysisId={aid} spec={spec} update={update} />}
     </Stack>
   );
 
@@ -8745,7 +8746,13 @@ function AnalysisPageView({
           <Group align="start" wrap="nowrap">
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
-              <StepsPlotCard analysisId={aid} spec={spec} update={update} />
+              <StepsPlotCard
+                analysisId={aid}
+                analysisTitle={title}
+                plotName={activePlot?.tab === "steps" ? activePlot.name : "Unsaved plot"}
+                spec={spec}
+                update={update}
+              />
               {savedPlotsPanelFor("steps")}
             </Stack>
           </Group>
