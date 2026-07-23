@@ -114,6 +114,12 @@ import {
 } from "../api";
 import { clearAnalysisQueryCache } from "../analysisQueryCache";
 import {
+  clearAnalysisWorkspaceEditorState,
+  getAnalysisWorkspaceEditorState,
+  isAnalysisWorkspaceViewActive,
+  setAnalysisWorkspaceEditorState,
+} from "../analysisWorkspace";
+import {
   plotViewSignature,
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
@@ -297,6 +303,60 @@ const TAB_DEFS: {
   { value: "settings", label: "Settings", icon: IconSettings, plotTab: false },
 ];
 
+function AnalysisTabHeader({
+  value,
+  onCommit,
+}: {
+  value: AnalysisTabKey;
+  onCommit: (value: AnalysisTabKey) => void;
+}) {
+  const [visualValue, setVisualValue] = useState(value);
+  const frameRef = useRef<number | null>(null);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setVisualValue(value);
+  }, [value]);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  const selectTab = (nextValue: string | null) => {
+    if (!nextValue) return;
+    const next = nextValue as AnalysisTabKey;
+    setVisualValue(next);
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        onCommit(next);
+      }, 0);
+    });
+  };
+
+  return (
+    <Tabs value={visualValue} onChange={selectTab}>
+      <Tabs.List>
+        {TAB_DEFS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <Tabs.Tab key={tab.value} value={tab.value} leftSection={<Icon size={14} />}>
+              {tab.label}
+            </Tabs.Tab>
+          );
+        })}
+      </Tabs.List>
+    </Tabs>
+  );
+}
+
 type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
@@ -343,6 +403,7 @@ type PlotArtifact = {
   signature: string;
   svg: string;
   thumbnail?: string | null;
+  preview_thumbnail?: string | null;
   figure: PortableFigure;
   summary: PortableSummaryRow[];
 };
@@ -350,6 +411,7 @@ type PlotArtifact = {
 type PlotThumbnail = {
   signature: string;
   thumbnail: string;
+  preview_thumbnail?: string | null;
 };
 
 async function lookupPlotThumbnail(
@@ -2793,6 +2855,7 @@ function SavedPlotPreview({
   warmup = false,
   warmupTask,
   onWarmupComplete,
+  allowGeneration = true,
 }: {
   analysisId: number;
   baseSpec: AnalysisSpec;
@@ -2800,6 +2863,7 @@ function SavedPlotPreview({
   warmup?: boolean;
   warmupTask?: CacheWarmupTask;
   onWarmupComplete?: (error?: string, detail?: string) => void;
+  allowGeneration?: boolean;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
@@ -2814,6 +2878,9 @@ function SavedPlotPreview({
     staleTime: 60 * 60_000,
     retry: false,
   });
+  const thumbnailPairReady = Boolean(
+    thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
+  );
   const artifact = useQuery({
     queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
     queryFn: async () => {
@@ -2827,7 +2894,9 @@ function SavedPlotPreview({
         throw error;
       }
     },
-    enabled: thumbnail.isSuccess && thumbnail.data === null,
+    enabled:
+      thumbnail.isSuccess &&
+      (thumbnail.data === null || (warmup && !thumbnailPairReady)),
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -2840,7 +2909,12 @@ function SavedPlotPreview({
     // Warmup must not recompute plots that are already cached: the compute
     // only runs when neither a thumbnail nor a full artifact exists, exactly
     // like the visible path.
-    enabled: thumbnail.isSuccess && thumbnail.data === null && artifact.isSuccess && artifact.data === null,
+    enabled:
+      (warmup || allowGeneration) &&
+      thumbnail.isSuccess &&
+      (thumbnail.data === null || (warmup && !thumbnailPairReady)) &&
+      artifact.isSuccess &&
+      artifact.data === null,
     staleTime: 5 * 60_000,
   });
   const traces = useMemo(
@@ -2849,7 +2923,12 @@ function SavedPlotPreview({
   );
 
   useEffect(() => {
-    if (thumbnail.data || artifact.data || !preview.data || traces.length === 0) return;
+    if (
+      (warmup ? thumbnailPairReady : Boolean(thumbnail.data)) ||
+      artifact.data ||
+      !preview.data ||
+      traces.length === 0
+    ) return;
     let cancelled = false;
     setGenerationFailed(false);
     const layout = cyclePlotLayout(preview.data, previewSpec, traces);
@@ -2862,17 +2941,18 @@ function SavedPlotPreview({
     }));
     let generatedLocally = false;
     queuedPortableArtifactImages(figure)
-      .then(({ svg, thumbnail }) => {
+      .then(({ svg, thumbnail, preview_thumbnail }) => {
         const generated: PlotArtifact = {
           signature: previewSignature,
           svg,
           thumbnail,
+          preview_thumbnail,
           figure,
           summary,
         };
         generatedLocally = true;
         renderedFresh.current = true;
-        if (!cancelled) {
+        if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
             { signature: previewSignature, thumbnail }
@@ -2889,7 +2969,11 @@ function SavedPlotPreview({
           if (stored.thumbnail) {
             qc.setQueryData(
               ["plot-thumbnail", analysisId, plot.id, previewSignature],
-              { signature: previewSignature, thumbnail: stored.thumbnail }
+              {
+                signature: previewSignature,
+                thumbnail: stored.thumbnail,
+                preview_thumbnail: stored.preview_thumbnail,
+              }
             );
           }
           qc.setQueryData(
@@ -2899,23 +2983,27 @@ function SavedPlotPreview({
         }
       })
       .catch((error) => {
-        if (!cancelled && !generatedLocally) setGenerationFailed(true);
+        if (!cancelled && (!generatedLocally || warmup)) setGenerationFailed(true);
         console.warn("Could not persist the saved plot preview", error);
       });
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces, warmupTask]);
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, thumbnailPairReady, traces, warmup, warmupTask]);
 
   useEffect(() => {
     const current = artifact.data;
-    if (thumbnail.data || !current || current.thumbnail) return;
+    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data)) || !current) return;
     let cancelled = false;
-    queuedPortableThumbnail(current.svg)
-      .then((thumbnail) => {
-        const enriched = { ...current, thumbnail };
+    // The thumbnail embedded in an older full artifact belongs to that
+    // artifact's renderer generation. A miss in the dedicated versioned
+    // thumbnail cache means it must be rebuilt from the canonical SVG even
+    // when the legacy artifact happens to contain an image.
+    queuedPortableThumbnails(current.svg, current.figure)
+      .then(({ thumbnail, preview_thumbnail }) => {
+        const enriched = { ...current, thumbnail, preview_thumbnail };
         rebuiltThumbnail.current = true;
-        if (!cancelled) {
+        if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
             { signature: previewSignature, thumbnail }
@@ -2927,22 +3015,55 @@ function SavedPlotPreview({
         }
         return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
-      .catch((error) => console.warn("Could not cache the plot thumbnail", error));
+      .then((stored) => {
+        if (!cancelled && stored.thumbnail) {
+          qc.setQueryData(
+            ["plot-thumbnail", analysisId, plot.id, previewSignature],
+            {
+              signature: previewSignature,
+              thumbnail: stored.thumbnail,
+              preview_thumbnail: stored.preview_thumbnail,
+            }
+          );
+          qc.setQueryData(
+            ["plot-artifact", analysisId, plot.id, previewSignature],
+            stored
+          );
+        }
+      })
+      .catch((error) => {
+        if (!cancelled && warmup) setGenerationFailed(true);
+        console.warn("Could not cache the plot thumbnail", error);
+      });
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, warmupTask]);
+  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, thumbnailPairReady, warmup, warmupTask]);
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  const generationDeferred =
+    !warmup &&
+    !allowGeneration &&
+    thumbnail.isSuccess &&
+    thumbnail.data === null &&
+    artifact.isSuccess &&
+    artifact.data === null;
   const previewPending =
-    thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed);
+    thumbnail.isLoading ||
+    artifact.isLoading ||
+    preview.isLoading ||
+    generationDeferred ||
+    (traces.length > 0 && !generationFailed);
   const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
     // A cache hit (thumbnail or artifact) completes the task without any
     // compute; the compute path only runs when nothing was cached.
-    if (previewImage) {
+    if (generationFailed) {
+      warmupReported.current = true;
+      onWarmupComplete("Thumbnail generation failed");
+    } else if (thumbnailPairReady) {
       warmupReported.current = true;
       onWarmupComplete(
         undefined,
@@ -2955,11 +3076,11 @@ function SavedPlotPreview({
     } else if (preview.isError) {
       warmupReported.current = true;
       onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
-    } else if (preview.isSuccess && (traces.length === 0 || generationFailed)) {
+    } else if (preview.isSuccess && traces.length === 0) {
       warmupReported.current = true;
-      onWarmupComplete(generationFailed ? "Thumbnail generation failed" : undefined);
+      onWarmupComplete();
     }
-  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, previewImage, traces.length, warmup]);
+  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, thumbnailPairReady, traces.length, warmup]);
   if (previewImage) {
     return (
       <img
@@ -2994,6 +3115,7 @@ function SavedTimeCapacityPreview({
   warmup = false,
   warmupTask,
   onWarmupComplete,
+  allowGeneration = true,
 }: {
   analysisId: number;
   baseSpec: AnalysisSpec;
@@ -3001,6 +3123,7 @@ function SavedTimeCapacityPreview({
   warmup?: boolean;
   warmupTask?: CacheWarmupTask;
   onWarmupComplete?: (error?: string, detail?: string) => void;
+  allowGeneration?: boolean;
 }) {
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
@@ -3015,6 +3138,9 @@ function SavedTimeCapacityPreview({
     staleTime: 60 * 60_000,
     retry: false,
   });
+  const thumbnailPairReady = Boolean(
+    thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
+  );
   const artifact = useQuery({
     queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
     queryFn: async () => {
@@ -3028,7 +3154,9 @@ function SavedTimeCapacityPreview({
         throw error;
       }
     },
-    enabled: thumbnail.isSuccess && thumbnail.data === null,
+    enabled:
+      thumbnail.isSuccess &&
+      (thumbnail.data === null || (warmup && !thumbnailPairReady)),
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -3045,7 +3173,12 @@ function SavedTimeCapacityPreview({
     // Warmup must not recompute plots that are already cached: the compute
     // only runs when neither a thumbnail nor a full artifact exists, exactly
     // like the visible path.
-    enabled: thumbnail.isSuccess && thumbnail.data === null && artifact.isSuccess && artifact.data === null,
+    enabled:
+      (warmup || allowGeneration) &&
+      thumbnail.isSuccess &&
+      (thumbnail.data === null || (warmup && !thumbnailPairReady)) &&
+      artifact.isSuccess &&
+      artifact.data === null,
     staleTime: 5 * 60_000,
   });
   const traces = useMemo(
@@ -3054,7 +3187,12 @@ function SavedTimeCapacityPreview({
   );
 
   useEffect(() => {
-    if (thumbnail.data || artifact.data || !preview.data || traces.length === 0) return;
+    if (
+      (warmup ? thumbnailPairReady : Boolean(thumbnail.data)) ||
+      artifact.data ||
+      !preview.data ||
+      traces.length === 0
+    ) return;
     let cancelled = false;
     setGenerationFailed(false);
     const layout = timeCapacityLayout(preview.data, previewSpec, traces);
@@ -3067,17 +3205,18 @@ function SavedTimeCapacityPreview({
     }));
     let generatedLocally = false;
     queuedPortableArtifactImages(figure)
-      .then(({ svg, thumbnail }) => {
+      .then(({ svg, thumbnail, preview_thumbnail }) => {
         const generated: PlotArtifact = {
           signature: previewSignature,
           svg,
           thumbnail,
+          preview_thumbnail,
           figure,
           summary,
         };
         generatedLocally = true;
         renderedFresh.current = true;
-        if (!cancelled) {
+        if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
             { signature: previewSignature, thumbnail }
@@ -3094,7 +3233,11 @@ function SavedTimeCapacityPreview({
           if (stored.thumbnail) {
             qc.setQueryData(
               ["plot-thumbnail", analysisId, plot.id, previewSignature],
-              { signature: previewSignature, thumbnail: stored.thumbnail }
+              {
+                signature: previewSignature,
+                thumbnail: stored.thumbnail,
+                preview_thumbnail: stored.preview_thumbnail,
+              }
             );
           }
           qc.setQueryData(
@@ -3104,23 +3247,25 @@ function SavedTimeCapacityPreview({
         }
       })
       .catch((error) => {
-        if (!cancelled && !generatedLocally) setGenerationFailed(true);
+        if (!cancelled && (!generatedLocally || warmup)) setGenerationFailed(true);
         console.warn("Could not persist the saved time/capacity preview", error);
       });
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, traces, warmupTask]);
+  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, thumbnailPairReady, traces, warmup, warmupTask]);
 
   useEffect(() => {
     const current = artifact.data;
-    if (thumbnail.data || !current || current.thumbnail) return;
+    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data)) || !current) return;
     let cancelled = false;
-    queuedPortableThumbnail(current.svg)
-      .then((thumbnail) => {
-        const enriched = { ...current, thumbnail };
+    // See SavedPlotPreview: an artifact thumbnail is not proof that the
+    // current dedicated thumbnail generation has been persisted.
+    queuedPortableThumbnails(current.svg, current.figure)
+      .then(({ thumbnail, preview_thumbnail }) => {
+        const enriched = { ...current, thumbnail, preview_thumbnail };
         rebuiltThumbnail.current = true;
-        if (!cancelled) {
+        if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
             { signature: previewSignature, thumbnail }
@@ -3132,22 +3277,55 @@ function SavedTimeCapacityPreview({
         }
         return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
-      .catch((error) => console.warn("Could not cache the time/capacity thumbnail", error));
+      .then((stored) => {
+        if (!cancelled && stored.thumbnail) {
+          qc.setQueryData(
+            ["plot-thumbnail", analysisId, plot.id, previewSignature],
+            {
+              signature: previewSignature,
+              thumbnail: stored.thumbnail,
+              preview_thumbnail: stored.preview_thumbnail,
+            }
+          );
+          qc.setQueryData(
+            ["plot-artifact", analysisId, plot.id, previewSignature],
+            stored
+          );
+        }
+      })
+      .catch((error) => {
+        if (!cancelled && warmup) setGenerationFailed(true);
+        console.warn("Could not cache the time/capacity thumbnail", error);
+      });
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, warmupTask]);
+  }, [analysisId, artifact.data, plot.id, previewSignature, qc, thumbnail.data, thumbnailPairReady, warmup, warmupTask]);
 
   const previewImage = thumbnail.data?.thumbnail ?? artifact.data?.thumbnail ??
     (artifact.data ? svgDataUrl(artifact.data.svg) : null);
+  const generationDeferred =
+    !warmup &&
+    !allowGeneration &&
+    thumbnail.isSuccess &&
+    thumbnail.data === null &&
+    artifact.isSuccess &&
+    artifact.data === null;
   const previewPending =
-    thumbnail.isLoading || artifact.isLoading || preview.isLoading || (traces.length > 0 && !generationFailed);
+    thumbnail.isLoading ||
+    artifact.isLoading ||
+    preview.isLoading ||
+    generationDeferred ||
+    (traces.length > 0 && !generationFailed);
   const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
     // A cache hit (thumbnail or artifact) completes the task without any
     // compute; the compute path only runs when nothing was cached.
-    if (previewImage) {
+    if (generationFailed) {
+      warmupReported.current = true;
+      onWarmupComplete("Thumbnail generation failed");
+    } else if (thumbnailPairReady) {
       warmupReported.current = true;
       onWarmupComplete(
         undefined,
@@ -3160,11 +3338,11 @@ function SavedTimeCapacityPreview({
     } else if (preview.isError) {
       warmupReported.current = true;
       onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
-    } else if (preview.isSuccess && (traces.length === 0 || generationFailed)) {
+    } else if (preview.isSuccess && traces.length === 0) {
       warmupReported.current = true;
-      onWarmupComplete(generationFailed ? "Thumbnail generation failed" : undefined);
+      onWarmupComplete();
     }
-  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, previewImage, traces.length, warmup]);
+  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, thumbnailPairReady, traces.length, warmup]);
   if (previewImage) {
     return (
       <img
@@ -6002,27 +6180,54 @@ function portableFigure(
 }
 
 async function portableSvg(
-  figure: NonNullable<PortablePlotSnapshot["figure"]>
+  figure: NonNullable<PortablePlotSnapshot["figure"]>,
+  options: { width?: number; height?: number; hideLegend?: boolean } = {}
 ): Promise<string> {
+  const width = options.width ?? 1200;
+  const height = options.height ?? 720;
+  const sourceLayout = figure.layout as Record<string, unknown>;
+  const sourceMargin = (sourceLayout.margin ?? {}) as Record<string, number>;
+  const renderFigure = options.hideLegend
+    ? {
+        ...figure,
+        layout: {
+          ...sourceLayout,
+          autosize: false,
+          width,
+          height,
+          showlegend: false,
+          margin: {
+            ...sourceMargin,
+            l: Math.max(70, Math.min(sourceMargin.l ?? 80, 110)),
+            r: Math.max(55, Math.min(sourceMargin.r ?? 70, 110)),
+            t: Math.max(28, Math.min(sourceMargin.t ?? 40, 70)),
+            b: Math.max(62, Math.min(sourceMargin.b ?? 75, 100)),
+          },
+        },
+      }
+    : figure;
   const toImage = (
     PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
   ).toImage;
-  const dataUrl = await toImage(figure, {
+  const dataUrl = await toImage(renderFigure, {
     format: "svg",
-    width: 1200,
-    height: 720,
+    width,
+    height,
   });
   return textFromDataUrl(dataUrl);
 }
 
-async function portableThumbnail(svg: string): Promise<string> {
-  const width = 520;
-  const height = 260;
+async function rasterThumbnail(
+  svg: string,
+  width: number,
+  height: number,
+  sourceFontFloor: number,
+): Promise<string> {
   const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
   documentNode.querySelectorAll("g.legend").forEach((node) => node.remove());
   documentNode.querySelectorAll("text").forEach((node) => {
     const current = Number.parseFloat(node.style.fontSize || node.getAttribute("font-size") || "12");
-    node.style.fontSize = `${Math.max(28, current * 2.2)}px`;
+    node.style.fontSize = `${Math.max(sourceFontFloor, current * 1.5)}px`;
   });
   documentNode.querySelectorAll(".scatterlayer path.js-line").forEach((node) => {
     const path = node as SVGPathElement;
@@ -6039,12 +6244,12 @@ async function portableThumbnail(svg: string): Promise<string> {
     ) {
       return;
     }
-    path.style.strokeWidth = `${Math.max(3.5, current * 1.6)}px`;
+    path.style.strokeWidth = `${Math.max(2.5, current * 1.4)}px`;
   });
   documentNode
     .querySelectorAll("path.xlines-above, path.ylines-above, path.xlines-below, path.ylines-below")
     .forEach((node) => {
-      (node as SVGPathElement).style.strokeWidth = "5px";
+      (node as SVGPathElement).style.strokeWidth = "3.5px";
     });
   const thumbnailSvg = new XMLSerializer().serializeToString(documentNode.documentElement);
   const url = URL.createObjectURL(
@@ -6062,6 +6267,8 @@ async function portableThumbnail(svg: string): Promise<string> {
     canvas.height = height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Could not create the thumbnail canvas.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
     const sourceWidth = image.naturalWidth || 1200;
     const sourceHeight = image.naturalHeight || 720;
     const scale = Math.min(width / sourceWidth, height / sourceHeight);
@@ -6074,10 +6281,29 @@ async function portableThumbnail(svg: string): Promise<string> {
       drawWidth,
       drawHeight
     );
-    return canvas.toDataURL("image/png");
+    const webp = canvas.toDataURL("image/webp", 0.84);
+    return webp.startsWith("data:image/webp;base64,")
+      ? webp
+      : canvas.toDataURL("image/png");
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+async function savedRowThumbnail(svg: string): Promise<string> {
+  // The saved-plot list is deliberately compact and wide. It is derived from
+  // the canonical portable SVG, so this path is cheap when only the small
+  // row image needs rebuilding.
+  return rasterThumbnail(svg, 480, 288, 28);
+}
+
+async function hoverPreviewThumbnail(
+  figure: NonNullable<PortablePlotSnapshot["figure"]>
+): Promise<string> {
+  // A wide plot scaled into a 4:3 bitmap remains a wide plot with whitespace.
+  // Re-layout Plotly at 4:3 first so the hover panel receives a true preview.
+  const svg = await portableSvg(figure, { width: 640, height: 480, hideLegend: true });
+  return rasterThumbnail(svg, 480, 360, 18);
 }
 
 /** Identify a compute so the server can attach a job to it if it does work. */
@@ -6117,11 +6343,13 @@ function afterPaint(): Promise<void> {
 
 function queuedPortableArtifactImages(
   figure: NonNullable<PortablePlotSnapshot["figure"]>
-): Promise<{ svg: string; thumbnail: string }> {
+): Promise<{ svg: string; thumbnail: string; preview_thumbnail: string }> {
   const task = portableSvgQueue.then(async () => {
     await afterPaint();
     const svg = await portableSvg(figure);
-    return { svg, thumbnail: await portableThumbnail(svg) };
+    const thumbnail = await savedRowThumbnail(svg);
+    const preview_thumbnail = await hoverPreviewThumbnail(figure);
+    return { svg, thumbnail, preview_thumbnail };
   });
   portableSvgQueue = task.then(
     () => undefined,
@@ -6130,12 +6358,16 @@ function queuedPortableArtifactImages(
   return task;
 }
 
-function queuedPortableThumbnail(
-  svg: string
-): Promise<string> {
+function queuedPortableThumbnails(
+  svg: string,
+  figure: NonNullable<PortablePlotSnapshot["figure"]>,
+): Promise<{ thumbnail: string; preview_thumbnail: string }> {
   const task = portableSvgQueue.then(async () => {
     await afterPaint();
-    return portableThumbnail(svg);
+    return {
+      thumbnail: await savedRowThumbnail(svg),
+      preview_thumbnail: await hoverPreviewThumbnail(figure),
+    };
   });
   portableSvgQueue = task.then(
     () => undefined,
@@ -6269,6 +6501,7 @@ async function buildPortablePlotSnapshots(
                 signature: artifactSignature,
                 svg,
                 thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
                 figure,
                 summary,
               }
@@ -6317,6 +6550,7 @@ async function buildPortablePlotSnapshots(
                 signature: artifactSignature,
                 svg,
                 thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
                 figure,
                 summary,
               }
@@ -6569,6 +6803,13 @@ function CyclePlotCard({
     return summarizeHidden(everyCycle, hidden);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, spec.presentation.hide_diagnostic_cycles, spec.presentation.diagnostic_tolerance]);
+  // Any protocol-segment mode filters at the cycle level, never sub-cycle, so
+  // the plot must say so — a segment here changes which cycles appear, not the
+  // per-cycle quantity.
+  const segmentsActive =
+    (spec.computation.protocol_filter?.only_segment_ids?.length ?? 0) > 0 ||
+    (spec.computation.protocol_filter?.excluded_segment_ids?.length ?? 0) > 0 ||
+    (spec.presentation.hidden_protocol_segment_ids?.length ?? 0) > 0;
   const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
     spec.presentation.normalize_by_mass ? "g" : "abs"
   }`;
@@ -6717,6 +6958,18 @@ function CyclePlotCard({
           canExport={exportTraces.length > 0}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
+        {segmentsActive && (
+          <Alert
+            color="yellow"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            styles={{ message: { fontSize: 12 } }}
+          >
+            Protocol segments here select whole cycles: a cycle is plotted if it contains the
+            segment. Each point is still computed over the entire cycle — the segment does not
+            isolate a single step's quantity.
+          </Alert>
+        )}
         {diagnostics && diagnostics.hiddenCount > 0 && (
           <Group gap="xs" wrap="nowrap" align="center">
             <Badge color="teal" variant="light" style={{ flexShrink: 0 }}>
@@ -6815,6 +7068,7 @@ function TimeCapacityPlotCardView({
   subtitle,
   spec,
   update,
+  onReadyChange,
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -6822,6 +7076,7 @@ function TimeCapacityPlotCardView({
   subtitle: string;
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
+  onReadyChange?: (ready: boolean) => void;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -6904,6 +7159,9 @@ function TimeCapacityPlotCardView({
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   const showComputeProgress = useDelayedFlag(timeResult.isLoading);
+  useEffect(() => {
+    onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching);
+  }, [onReadyChange, timeResult.isFetching, timeResult.isLoading]);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -7176,6 +7434,7 @@ function SavedPlotsPanel({
   onUpdateActive,
   onOpen,
   onDelete,
+  allowPreviewGeneration,
 }: {
   analysisId: number;
   activeTab: AnalysisTabKey;
@@ -7188,8 +7447,48 @@ function SavedPlotsPanel({
   onUpdateActive: () => void;
   onOpen: (plot: SavedAnalysisPlot) => void;
   onDelete: (plotId: string) => void;
+  allowPreviewGeneration: boolean;
 }) {
   const visiblePlots = plots.filter((plot) => plot.tab === activeTab);
+  const visiblePlotKey = visiblePlots.map((plot) => plot.id).join("|");
+  const [generationPlotIds, setGenerationPlotIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+    let idleCallback: number | null = null;
+    const ids = visiblePlotKey ? visiblePlotKey.split("|") : [];
+    const prioritized = activeSavedPlotId && ids.includes(activeSavedPlotId)
+      ? activeSavedPlotId
+      : null;
+    setGenerationPlotIds(allowPreviewGeneration && prioritized ? new Set([prioritized]) : new Set());
+    if (!allowPreviewGeneration) return;
+
+    const queue = ids.filter((id) => id !== prioritized);
+    const schedule = () => {
+      if (cancelled || queue.length === 0) return;
+      const admitOne = () => {
+        if (cancelled) return;
+        const nextId = queue.shift();
+        if (nextId) setGenerationPlotIds((current) => new Set(current).add(nextId));
+        if (queue.length > 0) timer = window.setTimeout(schedule, 250);
+      };
+      if ("requestIdleCallback" in window) {
+        idleCallback = window.requestIdleCallback(admitOne, { timeout: 1500 });
+      } else {
+        timer = globalThis.setTimeout(admitOne, 250);
+      }
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+      if (idleCallback !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleCallback);
+      }
+    };
+  }, [activeSavedPlotId, allowPreviewGeneration, visiblePlotKey]);
+
   if (activeTab === "settings") return null;
 
   return (
@@ -7254,9 +7553,19 @@ function SavedPlotsPanel({
                 <Group align="stretch" wrap="nowrap">
                   <Box w={260} style={{ flexShrink: 0 }}>
                     {plot.tab === "time_capacity" ? (
-                      <SavedTimeCapacityPreview analysisId={analysisId} baseSpec={baseSpec} plot={plot} />
+                      <SavedTimeCapacityPreview
+                        analysisId={analysisId}
+                        baseSpec={baseSpec}
+                        plot={plot}
+                        allowGeneration={generationPlotIds.has(plot.id)}
+                      />
                     ) : plot.tab === "cycles" || plot.tab === "recap" ? (
-                      <SavedPlotPreview analysisId={analysisId} baseSpec={baseSpec} plot={plot} />
+                      <SavedPlotPreview
+                        analysisId={analysisId}
+                        baseSpec={baseSpec}
+                        plot={plot}
+                        allowGeneration={generationPlotIds.has(plot.id)}
+                      />
                     ) : (
                       <Center h={130}>
                         <Text size="xs" c="dimmed">
@@ -7362,9 +7671,14 @@ function AnalysisSettingsPanel({
   );
 }
 
-export function AnalysisPage() {
+function AnalysisPageView({
+  analysisIdOverride,
+}: {
+  analysisIdOverride?: number;
+} = {}) {
   const { analysisId } = useParams();
-  const aid = Number(analysisId);
+  const aid = analysisIdOverride ?? Number(analysisId);
+  const workspaceState = useRef(getAnalysisWorkspaceEditorState(aid)).current;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
@@ -7372,7 +7686,8 @@ export function AnalysisPage() {
   const analysis = useQuery({
     queryKey: ["analysis", aid],
     queryFn: () => get<AnalysisFull>(`/api/analyses/${aid}`),
-    refetchOnMount: "always",
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
   });
   const groupsQuery = useQuery({
     queryKey: ["replicate-groups"],
@@ -7388,14 +7703,22 @@ export function AnalysisPage() {
     staleTime: 5 * 60_000,
   });
 
-  const [spec, setSpec] = useState<AnalysisSpec | null>(null);
-  const [title, setTitle] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState<AnalysisTabKey>("cycles");
-  const [timeCapacityVisited, setTimeCapacityVisited] = useState(false);
-  const [activeSavedPlotId, setActiveSavedPlotId] = useState<string | null>(null);
-  const [activePlotBaselineSignature, setActivePlotBaselineSignature] = useState<string | null>(null);
-  const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(false);
+  const [spec, setSpec] = useState<AnalysisSpec | null>(workspaceState?.spec ?? null);
+  const [title, setTitle] = useState(workspaceState?.title ?? "");
+  const [dirty, setDirty] = useState(workspaceState?.dirty ?? false);
+  const [activeTab, setActiveTab] = useState<AnalysisTabKey>(workspaceState?.activeTab ?? "cycles");
+  const [timeCapacityVisited, setTimeCapacityVisited] = useState(
+    workspaceState?.timeCapacityVisited ?? workspaceState?.activeTab === "time_capacity",
+  );
+  const [activeSavedPlotId, setActiveSavedPlotId] = useState<string | null>(
+    workspaceState?.activeSavedPlotId ?? null,
+  );
+  const [activePlotBaselineSignature, setActivePlotBaselineSignature] = useState<string | null>(
+    workspaceState?.activePlotBaselineSignature ?? null,
+  );
+  const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(
+    workspaceState?.plotWorkspaceTouched ?? false,
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [portableExportOpen, setPortableExportOpen] = useState(false);
   const [portableExportAction, setPortableExportAction] = useState<"download" | "share">("download");
@@ -7426,6 +7749,7 @@ export function AnalysisPage() {
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const [initialComputeReady, setInitialComputeReady] = useState(false);
+  const [timeCapacityReady, setTimeCapacityReady] = useState(false);
   const portableEstimate = useQuery({
     queryKey: ["portable-analysis-estimate", aid],
     queryFn: () =>
@@ -7455,18 +7779,6 @@ export function AnalysisPage() {
   }, [autosaveSignature]);
 
   useEffect(() => {
-    setSpec(null);
-    setTitle("");
-    setDirty(false);
-    setRendered(null);
-    setTimeCapacityVisited(false);
-    setActiveSavedPlotId(null);
-    setActivePlotBaselineSignature(null);
-    setPlotWorkspaceTouched(false);
-    setInitialComputeReady(false);
-  }, [aid]);
-
-  useEffect(() => {
     if (activeTab === "time_capacity") setTimeCapacityVisited(true);
   }, [activeTab]);
 
@@ -7474,13 +7786,18 @@ export function AnalysisPage() {
   // ?plot=<id> restores that saved plot. Applied once the spec has loaded,
   // then stripped from the URL. Declared with the other hooks so it always
   // runs — the component returns early while the analysis is still loading.
-  const deepLinkApplied = useRef(false);
+  const deepLinkApplied = useRef<string | null>(null);
   useEffect(() => {
-    if (deepLinkApplied.current || !spec) return;
     const tabParam = searchParams.get("tab");
     const plotParam = searchParams.get("plot");
-    if (!tabParam && !plotParam) return;
-    deepLinkApplied.current = true;
+    if (!tabParam && !plotParam) {
+      deepLinkApplied.current = null;
+      return;
+    }
+    if (!isAnalysisWorkspaceViewActive(aid) || !spec) return;
+    const deepLinkKey = `${tabParam ?? ""}:${plotParam ?? ""}`;
+    if (deepLinkApplied.current === deepLinkKey) return;
+    deepLinkApplied.current = deepLinkKey;
     const plot = plotParam
       ? (spec.saved_plots ?? []).find((candidate) => candidate.id === plotParam)
       : undefined;
@@ -7495,7 +7812,7 @@ export function AnalysisPage() {
     setSearchParams(next, { replace: true });
     // openSavedPlot is declared below and stable for this one-shot deep link.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec, searchParams, setSearchParams]);
+  }, [aid, spec, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (analysis.data && spec === null) {
@@ -7511,22 +7828,12 @@ export function AnalysisPage() {
 
   useEffect(() => {
     if (!spec || initialComputeReady) return;
-
-    // Saved rows mount immediately. Their lightweight thumbnail queries are
-    // dispatched in this render; let those requests enter the queue before
-    // starting the substantially heavier live analysis request. Crucially,
-    // nothing here blocks the analysis shell from painting.
-    for (const plot of spec.saved_plots ?? []) {
-      const signature = savedPlotPreviewSignature(spec, plot);
-      void qc.prefetchQuery({
-        queryKey: ["plot-thumbnail", aid, plot.id, signature],
-        queryFn: () => lookupPlotThumbnail(aid, plot.id, signature),
-        staleTime: 60 * 60_000,
-      });
-    }
+    // Paint the editor shell, then prioritize its live plot. Saved rows may
+    // read existing thumbnails immediately, but uncached preview generation
+    // is admitted only after the live result is ready.
     const frame = window.requestAnimationFrame(() => setInitialComputeReady(true));
     return () => window.cancelAnimationFrame(frame);
-  }, [aid, initialComputeReady, qc, spec]);
+  }, [initialComputeReady, spec]);
 
   const update = useCallback((fn: (s: AnalysisSpec) => void) => {
     setSpec((s) => {
@@ -7572,6 +7879,10 @@ export function AnalysisPage() {
     refetchInterval: (query) =>
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
+  const cycleLivePlotReady =
+    initialComputeReady &&
+    !compute.isFetching &&
+    (spec?.selection.entries.length === 0 || compute.isSuccess || compute.isError);
   // Declared with the other hooks: the page has early returns below, and this
   // gates the one that renders while the analysis itself is being fetched.
   const showPageLoader = useDelayedFlag(analysis.isLoading || spec === null);
@@ -7618,6 +7929,7 @@ export function AnalysisPage() {
   const remove = useMutation({
     mutationFn: () => del(`/api/analyses/${aid}`),
     onSuccess: async () => {
+      clearAnalysisWorkspaceEditorState(aid);
       navigate("/analyses");
       await clearAnalysisQueryCache(qc, aid);
       await Promise.all([
@@ -7821,6 +8133,32 @@ export function AnalysisPage() {
   );
 
   useEffect(() => {
+    setAnalysisWorkspaceEditorState({
+      analysisId: aid,
+      spec,
+      title,
+      dirty,
+      hasUnsavedPlot,
+      activeTab,
+      timeCapacityVisited,
+      activeSavedPlotId,
+      activePlotBaselineSignature,
+      plotWorkspaceTouched,
+    });
+  }, [
+    activePlotBaselineSignature,
+    activeSavedPlotId,
+    activeTab,
+    aid,
+    dirty,
+    hasUnsavedPlot,
+    plotWorkspaceTouched,
+    spec,
+    timeCapacityVisited,
+    title,
+  ]);
+
+  useEffect(() => {
     if (!hasUnsavedPlot || !spec) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
@@ -7832,8 +8170,30 @@ export function AnalysisPage() {
 
   useEffect(() => {
     const onLeaveRequest = (event: Event) => {
+      if (!isAnalysisWorkspaceViewActive(aid)) return;
       const request = event as CustomEvent<AnalysisLeaveRequestDetail>;
-      if (!hasUnsavedPlot || !spec) return;
+      if (!spec) return;
+      if (!hasUnsavedPlot) {
+        if (!dirty || leaveSaving) return;
+        event.preventDefault();
+        setLeaveSaving(true);
+        setAutosaveStatus("saving");
+        put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec })
+          .then(() => {
+            setDirty(false);
+            setAutosaveStatus("saved");
+            qc.invalidateQueries({ queryKey: ["analysis", aid] });
+            qc.invalidateQueries({ queryKey: ["analyses"] });
+            setLeaveSaving(false);
+            request.detail.proceed();
+          })
+          .catch((error: Error) => {
+            setLeaveSaving(false);
+            setAutosaveStatus("error");
+            notifications.show({ message: error.message, color: "red" });
+          });
+        return;
+      }
       event.preventDefault();
       setLeavePrompt({
         proceed: request.detail.proceed,
@@ -7845,7 +8205,20 @@ export function AnalysisPage() {
     };
     window.addEventListener(ANALYSIS_LEAVE_EVENT, onLeaveRequest);
     return () => window.removeEventListener(ANALYSIS_LEAVE_EVENT, onLeaveRequest);
-  }, [activePlot?.name, activePlotDirty, activeTab, displayResult, hasUnsavedPlot, spec]);
+  }, [
+    activePlot?.description,
+    activePlot?.name,
+    activePlotDirty,
+    activeTab,
+    aid,
+    dirty,
+    displayResult,
+    hasUnsavedPlot,
+    leaveSaving,
+    qc,
+    spec,
+    title,
+  ]);
 
   if (analysis.isError) {
     return (
@@ -8252,6 +8625,13 @@ export function AnalysisPage() {
           setActivePlotBaselineSignature(null);
         }
       }}
+      allowPreviewGeneration={
+        tab === "time_capacity"
+          ? timeCapacityReady
+          : tab === "cycles" || tab === "recap"
+            ? cycleLivePlotReady
+            : true
+      }
     />
   );
 
@@ -8335,21 +8715,8 @@ export function AnalysisPage() {
           tab's plots, settings panels and saved-plot previews stay mounted
           at once (hidden Plotly instances at 0x0, duplicated inputs, one
           compute per preview per tab) — the source of the freezes. */}
-      <Tabs
-        value={activeTab}
-        onChange={(value) => value && setActiveTab(value as AnalysisTabKey)}
-        keepMounted={false}
-      >
-        <Tabs.List>
-          {TAB_DEFS.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <Tabs.Tab key={tab.value} value={tab.value} leftSection={<Icon size={14} />}>
-                {tab.label}
-              </Tabs.Tab>
-            );
-          })}
-        </Tabs.List>
+      <AnalysisTabHeader value={activeTab} onCommit={setActiveTab} />
+      <Tabs value={activeTab} keepMounted={false}>
 
         <Tabs.Panel value="cycles" pt="sm">
           <Group align="start" wrap="nowrap">
@@ -8399,6 +8766,7 @@ export function AnalysisPage() {
                   subtitle={plotSubtitle("time_capacity", undefined, spec)}
                   spec={spec}
                   update={update}
+                  onReadyChange={setTimeCapacityReady}
                 />
                 {activeTab === "time_capacity" ? savedPlotsPanelFor("time_capacity") : null}
               </Stack>
@@ -8838,3 +9206,5 @@ export function AnalysisPage() {
     </Stack>
   );
 }
+
+export const AnalysisPage = memo(AnalysisPageView);
