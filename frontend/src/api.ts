@@ -660,6 +660,7 @@ export interface Exclusion {
 export const ANALYSIS_TAB_KEYS = [
   "time_capacity",
   "cycles",
+  "steps",
   "polarization",
   "crate",
   "chargeability",

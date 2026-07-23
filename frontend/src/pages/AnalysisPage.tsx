@@ -39,6 +39,7 @@ import {
   IconActivity,
   IconBolt,
   IconChartLine,
+  IconStack2,
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
@@ -137,6 +138,7 @@ import {
   relatedAnalysesForCell,
 } from "../components/CellSamplePopovers";
 import Plot from "../components/Plot";
+import { StepsPlotCard } from "../components/StepsPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
 import { saveDownload, shareDownload } from "../downloads";
@@ -296,6 +298,7 @@ const TAB_DEFS: {
 }[] = [
   { value: "time_capacity", label: "Time / capacity", icon: IconClock, plotTab: true },
   { value: "cycles", label: "Cycles", icon: IconChartLine, plotTab: true },
+  { value: "steps", label: "Steps", icon: IconStack2, plotTab: true },
   { value: "crate", label: "C-rate", icon: IconGauge, plotTab: true },
   { value: "chargeability", label: "Chargeability", icon: IconBolt, plotTab: true },
   { value: "dcir", label: "DCIR", icon: IconActivity, plotTab: true },
@@ -8734,6 +8737,16 @@ function AnalysisPageView({
                 computeJob={computeJob.data ?? undefined}
               />
               {savedPlotsPanelFor("cycles")}
+            </Stack>
+          </Group>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="steps" pt="sm">
+          <Group align="start" wrap="nowrap">
+            {sidebar}
+            <Stack style={{ flex: 1, minWidth: 0 }}>
+              <StepsPlotCard analysisId={aid} spec={spec} update={update} />
+              {savedPlotsPanelFor("steps")}
             </Stack>
           </Group>
         </Tabs.Panel>
