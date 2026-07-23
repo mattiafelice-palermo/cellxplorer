@@ -27,23 +27,6 @@ from . import calc
 
 BLOCK_MODES = ("union", "contiguous")
 
-# Quantities that make sense per block. A subset of the cycle quantities: the
-# ratios that need a full charge/discharge pair (coulombic efficiency) are left
-# out, because a block is often one phase only.
-BLOCK_QUANTITIES = {
-    "block_duration": ("block_duration_h", "Block duration (h)"),
-    "active_time": ("active_time_h", "Active time (h)"),
-    "charge_time": ("charge_time_h", "Charge time (h)"),
-    "discharge_time": ("discharge_time_h", "Discharge time (h)"),
-    "rest_time": ("rest_time_h", "Rest time (h)"),
-    "cv_charge_time": ("cv_charge_time_h", "CV charge time (h)"),
-    "cv_charge_capacity": ("cv_charge_capacity_mah", "CV charge capacity (mAh)"),
-    "charge_capacity": ("charge_capacity_mah", "Charge capacity (mAh)"),
-    "discharge_capacity": ("discharge_capacity_mah", "Discharge capacity (mAh)"),
-    "mean_charge_voltage": ("mean_charge_voltage_v", "Mean charge voltage (V)"),
-    "mean_discharge_voltage": ("mean_discharge_voltage_v", "Mean discharge voltage (V)"),
-}
-
 BLOCK_COLUMNS = [
     "block",
     "occurrence",
@@ -51,8 +34,9 @@ BLOCK_COLUMNS = [
     "cycle_end",
     "step_start",
     "step_end",
+    "start_time_h",
     "block_duration_h",
-    "active_time_h",
+    "total_time_h",
     "charge_time_h",
     "discharge_time_h",
     "rest_time_h",
@@ -60,6 +44,7 @@ BLOCK_COLUMNS = [
     "cv_charge_capacity_mah",
     "charge_capacity_mah",
     "discharge_capacity_mah",
+    "mean_voltage_v",
     "mean_charge_voltage_v",
     "mean_discharge_voltage_v",
     "n_steps",
@@ -164,8 +149,18 @@ def _sum_step_capacity(frame: pd.DataFrame, column: str, step_col: str) -> float
     return total
 
 
-def per_block(df: pd.DataFrame, selected_steps: set[int], mode: str) -> pd.DataFrame:
+def per_block(
+    df: pd.DataFrame,
+    selected_steps: set[int],
+    mode: str,
+    *,
+    origin_timestamp: pd.Timestamp | None = None,
+) -> pd.DataFrame:
     """One row per block: durations, phase times, capacities and voltages."""
+    if origin_timestamp is None and "timestamp" in df.columns:
+        timestamps = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
+        if len(timestamps):
+            origin_timestamp = timestamps.min()
     assigned = assign_blocks(df, selected_steps, mode)
     if assigned.empty:
         return pd.DataFrame(columns=BLOCK_COLUMNS)
@@ -192,10 +187,15 @@ def per_block(df: pd.DataFrame, selected_steps: set[int], mode: str) -> pd.DataF
         mask_dchg = is_dchg.loc[group.index]
         mask_rest = is_rest.loc[group.index]
         duration_h = np.nan
+        start_time_h = np.nan
         if "timestamp" in group.columns:
-            stamps = group["timestamp"].dropna()
+            stamps = pd.to_datetime(group["timestamp"], errors="coerce").dropna()
             if len(stamps):
                 duration_h = (stamps.max() - stamps.min()).total_seconds() / 3600.0
+                if origin_timestamp is not None:
+                    start_time_h = (
+                        stamps.min() - origin_timestamp
+                    ).total_seconds() / 3600.0
 
         def mean_voltage(mask: pd.Series) -> float:
             if "voltage_v" not in group.columns:
@@ -203,6 +203,8 @@ def per_block(df: pd.DataFrame, selected_steps: set[int], mode: str) -> pd.DataF
             values = group.loc[mask, "voltage_v"].dropna()
             return float(values.mean()) if len(values) else np.nan
 
+        charge_time_h = _sum_step_time(group[mask_chg.to_numpy()], step_col)
+        discharge_time_h = _sum_step_time(group[mask_dchg.to_numpy()], step_col)
         rows.append(
             {
                 "block": int(block_id),
@@ -211,15 +213,17 @@ def per_block(df: pd.DataFrame, selected_steps: set[int], mode: str) -> pd.DataF
                 "cycle_end": int(group["cycle"].max()) if "cycle" in group else 0,
                 "step_start": int(group[step_col].min()),
                 "step_end": int(group[step_col].max()),
+                "start_time_h": start_time_h,
                 "block_duration_h": duration_h,
-                "active_time_h": _sum_step_time(group, step_col),
-                "charge_time_h": _sum_step_time(group[mask_chg.to_numpy()], step_col),
-                "discharge_time_h": _sum_step_time(group[mask_dchg.to_numpy()], step_col),
+                "total_time_h": charge_time_h + discharge_time_h,
+                "charge_time_h": charge_time_h,
+                "discharge_time_h": discharge_time_h,
                 "rest_time_h": _sum_step_time(group[mask_rest.to_numpy()], step_col),
                 "cv_charge_time_h": float(cv_by_block.get(block_id, 0.0)),
                 "cv_charge_capacity_mah": float(cvcap_by_block.get(block_id, 0.0)),
                 "charge_capacity_mah": _sum_step_capacity(group[mask_chg.to_numpy()], "charge_capacity_mah", step_col),
                 "discharge_capacity_mah": _sum_step_capacity(group[mask_dchg.to_numpy()], "discharge_capacity_mah", step_col),
+                "mean_voltage_v": mean_voltage(pd.Series(True, index=group.index)),
                 "mean_charge_voltage_v": mean_voltage(mask_chg),
                 "mean_discharge_voltage_v": mean_voltage(mask_dchg),
                 "n_steps": int(group[step_col].nunique()),

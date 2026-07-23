@@ -353,6 +353,13 @@ class ComputeRequest(BaseModel):
     background: bool = False
 
 
+class DcirProtocolRequest(BaseModel):
+    spec: dict | None = None
+    min_rest_s: float = Field(default=600, ge=1, le=86400)
+    max_pulse_s: float = Field(default=120, ge=0.1, le=3600)
+    min_ratio: float = Field(default=10, ge=1, le=10000)
+
+
 def _progress_callback(job_id: int | None):
     if job_id is None:
         return None
@@ -435,7 +442,7 @@ def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None =
 
 
 class AnalysisComputeJobCreate(BaseModel):
-    kind: Literal["cycles", "time_capacity", "steps"]
+    kind: Literal["cycles", "time_capacity", "steps", "dcir"]
     spec: dict | None = None
 
 
@@ -453,7 +460,11 @@ def _open_compute_job(
     so a cached load should never reach here.
     """
     units, _ = engine.resolve_selection(db, spec)
-    kind_label = {"time_capacity": "time/capacity", "steps": "steps"}.get(kind, "cycle")
+    kind_label = {
+        "time_capacity": "time/capacity",
+        "steps": "steps",
+        "dcir": "DCIR",
+    }.get(kind, "cycle")
     return background_jobs.create_job(
         kind="analysis_compute",
         title=f"Preparing {analysis.title} ({kind_label} plot)",
@@ -576,6 +587,124 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
                 )
             result["cache_status"] = "miss"
             analysis_cache.store_result("steps", key, result)
+        _finish_job(job_id, cached=cached)
+        return fast_json(result)
+    except Exception as exc:
+        _finish_job(job_id, error=str(exc))
+        raise
+
+
+@router.post("/analyses/{analysis_id}/dcir-protocols")
+def get_dcir_protocols(
+    analysis_id: int,
+    req: DcirProtocolRequest,
+    db: Session = Depends(get_db),
+):
+    """Return selected protocol families and assisted DCIR candidates."""
+    from ..services import dcir
+    from ..services import protocol as protocol_service
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    units, _missing = engine.resolve_selection(db, spec)
+    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+    engine.preload_cell_sources(db, cells)
+    scalar_metadata = engine.load_scalar_metadata(db, cells)
+    families: dict[str, dict] = {}
+    for cell in cells:
+        nominal = engine.cell_nominal_capacity_mah(
+            cell, scalar_metadata.get(cell.id)
+        )
+        _hashes, files = engine.cell_ordered_hashes(db, cell)
+        for source_file in files:
+            protocol = protocol_service.reconstruct_protocol(
+                source_file.header_meta, nominal
+            )
+            signature = str(protocol.get("signature") or "")
+            if not signature:
+                continue
+            family = families.setdefault(
+                signature,
+                {
+                    "signature": signature,
+                    "protocol": protocol,
+                    "cell_ids": [],
+                    "cell_names": [],
+                    "files": [],
+                },
+            )
+            if cell.id not in family["cell_ids"]:
+                family["cell_ids"].append(cell.id)
+                family["cell_names"].append(cell.name)
+            family["files"].append(
+                {
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "filename": source_file.filename,
+                }
+            )
+    candidates: list[dict] = []
+    for family in families.values():
+        for candidate in dcir.detect_candidates(
+            family["protocol"],
+            min_rest_s=req.min_rest_s,
+            max_pulse_s=req.max_pulse_s,
+            min_ratio=req.min_ratio,
+        ):
+            candidates.append(
+                {
+                    **candidate,
+                    "compatible_cell_ids": family["cell_ids"],
+                    "compatible_cell_names": family["cell_names"],
+                }
+            )
+    return fast_json(
+        {
+            "protocols": list(families.values()),
+            "candidates": candidates,
+        }
+    )
+
+
+@router.post("/analyses/{analysis_id}/dcir")
+def compute_dcir_analysis(
+    analysis_id: int,
+    req: ComputeRequest,
+    db: Session = Depends(get_db),
+):
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    key = analysis_cache.result_key(
+        db, "dcir", spec, analysis.provenance, use_current_versions=req.recompute
+    )
+    result = None if req.recompute else analysis_cache.load_result("dcir", key)
+    cached = result is not None
+    if cached:
+        engine.refresh_availability_badges(db, spec, result)
+        analysis_cache.upgrade_result_format("dcir", key, result)
+    job_id = req.job_id
+    try:
+        if result is None:
+            from ..services.process_priority import background_thread_priority
+
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(
+                    db, analysis, spec, "dcir", req.job_token
+                )
+            with background_thread_priority(req.background):
+                result = engine.compute_dcir(
+                    db,
+                    spec,
+                    analysis.provenance,
+                    use_current_versions=req.recompute,
+                    progress=_progress_callback(job_id),
+                )
+            result["cache_status"] = "miss"
+            analysis_cache.store_result("dcir", key, result)
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:

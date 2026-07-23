@@ -64,6 +64,7 @@ import {
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
+import { invalidateAnalysisQueries } from "../analysisQueryCache";
 import { ImportCellsLauncher } from "./InboxPage";
 
 function statusColor(status: string) {
@@ -277,6 +278,8 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      void invalidateAnalysisQueries(qc);
+      qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["files"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
@@ -359,7 +362,8 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview", group.id] });
       qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["analysis"] });
+      void invalidateAnalysisQueries(qc);
+      qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
@@ -536,6 +540,8 @@ export function LibraryPage() {
         qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
         qc.invalidateQueries({ queryKey: ["files"] }),
         qc.invalidateQueries({ queryKey: ["tree"] }),
+        invalidateAnalysisQueries(qc),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
       ]);
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),

@@ -58,6 +58,57 @@ def synth_raw(n_cycles: int, cap0: float, fade: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def dcir_protocol_header() -> dict[str, str]:
+    return {
+        "Step.Step_Info.Step1.Step_Type": "4",
+        "Step.Step_Info.Step1.Limit.Main.Time.Value": "1800000",
+        "Step.Step_Info.Step2.Step_Type": "2",
+        "Step.Step_Info.Step2.Limit.Main.Curr.Value": "-1",
+        "Step.Step_Info.Step2.Limit.Main.Time.Value": "30000",
+        "Step.Step_Info.Step3.Step_Type": "4",
+        "Step.Step_Info.Step3.Limit.Main.Time.Value": "1800000",
+        "Step.Step_Info.Step4.Step_Type": "1",
+        "Step.Step_Info.Step4.Limit.Main.Curr.Value": "1",
+        "Step.Step_Info.Step4.Limit.Main.Time.Value": "30000",
+    }
+
+
+def synth_dcir_raw(n_cycles: int = 3) -> pd.DataFrame:
+    rows: list[dict] = []
+    timestamp = pd.Timestamp("2026-01-01")
+    record_index = 0
+    for cycle in range(1, n_cycles + 1):
+        drop = 0.08 + 0.01 * (cycle - 1)
+        rise = 0.06 + 0.005 * (cycle - 1)
+        for step_index, status, current, voltages, durations in (
+            (1, "Rest", 0.0, (3.50, 3.50), (0.0, 1800.0)),
+            (2, "CC_DChg", -1.0, (3.48, 3.50 - drop), (0.0, 30.0)),
+            (3, "Rest", 0.0, (3.45, 3.45), (0.0, 1800.0)),
+            (4, "CC_Chg", 1.0, (3.47, 3.45 + rise), (0.0, 30.0)),
+        ):
+            for voltage, time_s in zip(voltages, durations):
+                record_index += 1
+                timestamp += pd.Timedelta(seconds=max(time_s - (durations[0] or 0), 1))
+                rows.append(
+                    {
+                        "record_index": record_index,
+                        "cycle": cycle,
+                        "step": step_index,
+                        "step_index": step_index,
+                        "status": status,
+                        "time_s": time_s,
+                        "voltage_v": voltage,
+                        "current_ma": current,
+                        "charge_capacity_mah": 0.0,
+                        "discharge_capacity_mah": 0.0,
+                        "charge_energy_mwh": 0.0,
+                        "discharge_energy_mwh": 0.0,
+                        "timestamp": timestamp,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 class AnalysisEngineTests(unittest.TestCase):
     HASHES = {"c1": "a1" * 32, "c2": "b2" * 32}
     FRAMES = {}
@@ -225,6 +276,188 @@ class AnalysisEngineTests(unittest.TestCase):
             "protocol_segment_unmatched",
             {badge["kind"] for badge in result["badges"]},
         )
+
+    def test_steps_compute_emits_one_series_per_cell_segment_pair(self):
+        cell = self.cells["c1"]
+        signature = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )["signature"]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["protocol_segments"] = [
+            {
+                "id": "charge",
+                "name": "Charge",
+                "targets": [
+                    {"protocol_signature": signature, "step_indices": [1]}
+                ],
+            },
+            {
+                "id": "discharge",
+                "name": "Discharge",
+                "targets": [
+                    {"protocol_signature": signature, "step_indices": [2]}
+                ],
+            },
+        ]
+        spec["computation"]["steps"] = {
+            "series": [
+                {"id": "charge-series", "cell_id": cell.id, "segment_id": "charge"},
+                {
+                    "id": "discharge-series",
+                    "cell_id": cell.id,
+                    "segment_id": "discharge",
+                },
+            ],
+            "mode": "union",
+        }
+
+        result = engine.compute_steps(self.db, spec, None)
+
+        self.assertEqual(result["type"], "steps")
+        self.assertEqual(len(result["cell_series"]), 2)
+        by_id = {series["series_id"]: series for series in result["cell_series"]}
+        self.assertEqual(by_id["charge-series"]["label"], "c1 \u2014 Charge")
+        self.assertEqual(by_id["discharge-series"]["label"], "c1 \u2014 Discharge")
+        self.assertEqual(by_id["charge-series"]["n_blocks"], 25)
+        self.assertEqual(by_id["discharge-series"]["n_blocks"], 50)
+        for series in by_id.values():
+            self.assertEqual(
+                series["x_occurrence"],
+                list(range(1, series["n_blocks"] + 1)),
+            )
+            self.assertEqual(len(series["x_cycle"]), series["n_blocks"])
+            self.assertEqual(len(series["x_time"]), series["n_blocks"])
+            self.assertIn("total_time_h", series["quantities"])
+            self.assertIn("mean_voltage_v", series["quantities"])
+            self.assertNotIn("active_time_h", series["quantities"])
+        self.assertAlmostEqual(by_id["charge-series"]["x_time"][0], 0.0)
+        self.assertAlmostEqual(by_id["discharge-series"]["x_time"][0], 1.0)
+
+    def test_steps_compute_expands_legacy_segment_to_selected_cells(self):
+        signature = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )["signature"]
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        spec["protocol_segments"] = [
+            {
+                "id": "discharge",
+                "name": "Discharge",
+                "targets": [
+                    {"protocol_signature": signature, "step_indices": [2]}
+                ],
+            }
+        ]
+        spec["computation"]["steps"] = {
+            "series": [],
+            "segment_id": "discharge",
+            "mode": "union",
+        }
+
+        result = engine.compute_steps(self.db, spec, None)
+
+        self.assertEqual(
+            {series["cell_id"] for series in result["cell_series"]},
+            {self.cells["c1"].id, self.cells["c2"].id},
+        )
+        self.assertTrue(
+            all(
+                series["series_id"].startswith("legacy-")
+                for series in result["cell_series"]
+            )
+        )
+
+    def test_dcir_compute_emits_explicit_cell_segment_series(self):
+        cell = self.cells["c1"]
+        source = cell.tests[0].file_links[0].file
+        original_frame = self.FRAMES[self.HASHES["c1"]]
+        original_header = source.header_meta
+        try:
+            self.FRAMES[self.HASHES["c1"]] = synth_dcir_raw()
+            source.header_meta = dcir_protocol_header()
+            self.db.flush()
+            cache_dir = cache.raw_path(self.HASHES["c1"]).parent
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            cache.build(self.HASHES["c1"], self.HASHES["c1"])
+            signature = protocol.reconstruct_protocol(
+                dcir_protocol_header(), nominal_capacity_mah=2.0
+            )["signature"]
+            spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+            spec["dcir_segments"] = [
+                {
+                    "id": "discharge-pulse",
+                    "name": "Discharge C/2",
+                    "targets": [
+                        {
+                            "protocol_signature": signature,
+                            "rest_step_index": 1,
+                            "pulse_step_index": 2,
+                            "direction": "discharge",
+                            "current_ma": -1.0,
+                            "c_rate": 0.5,
+                        }
+                    ],
+                },
+                {
+                    "id": "charge-pulse",
+                    "name": "Charge C/2",
+                    "targets": [
+                        {
+                            "protocol_signature": signature,
+                            "rest_step_index": 3,
+                            "pulse_step_index": 4,
+                            "direction": "charge",
+                            "current_ma": 1.0,
+                            "c_rate": 0.5,
+                        }
+                    ],
+                },
+            ]
+            spec["computation"]["dcir"] = {
+                "series": [
+                    {
+                        "id": "discharge-series",
+                        "cell_id": cell.id,
+                        "segment_id": "discharge-pulse",
+                    },
+                    {
+                        "id": "charge-series",
+                        "cell_id": cell.id,
+                        "segment_id": "charge-pulse",
+                    },
+                ]
+            }
+
+            result = engine.compute_dcir(self.db, spec, None)
+
+            self.assertEqual(result["type"], "dcir")
+            self.assertEqual(len(result["cell_series"]), 2)
+            by_id = {series["series_id"]: series for series in result["cell_series"]}
+            self.assertEqual(by_id["discharge-series"]["n_measurements"], 3)
+            self.assertEqual(by_id["charge-series"]["n_measurements"], 3)
+            self.assertEqual(by_id["discharge-series"]["x_occurrence"], [1, 2, 3])
+            self.assertEqual(by_id["charge-series"]["x_cycle"], [1, 2, 3])
+            self.assertEqual(by_id["discharge-series"]["direction"], "discharge")
+            self.assertEqual(by_id["charge-series"]["direction"], "charge")
+            self.assertAlmostEqual(
+                by_id["discharge-series"]["quantities"]["dcir_change_pct"][0],
+                0.0,
+            )
+            self.assertGreater(
+                by_id["discharge-series"]["quantities"]["dcir_change_pct"][2],
+                0.0,
+            )
+        finally:
+            self.FRAMES[self.HASHES["c1"]] = original_frame
+            source.header_meta = original_header
+            self.db.flush()
+            cache_dir = cache.raw_path(self.HASHES["c1"]).parent
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            cache.build(self.HASHES["c1"], self.HASHES["c1"])
 
     def test_time_protocol_filters_emit_null_gaps_without_dropping_rows(self):
         expected_non_null = {"excluded": 150, "hidden": 150, "only": 50}
@@ -428,6 +661,49 @@ class AnalysisEngineTests(unittest.TestCase):
         res = engine.compute_time_capacity(self.db, spec, None)
 
         self.assertAlmostEqual(res["cell_traces"][0]["nominal_capacity_mah"], 2.5, places=6)
+
+    def test_time_capacity_areal_axis_uses_metadata_and_custom_override(self):
+        cell = self.cells["c1"]
+        self.db.add(CellMetadata(cell_id=cell.id, key="electrode_area_cm2", value="2"))
+        self.db.flush()
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["computation"]["time_capacity"] = {
+            "x_axis": "capacity_mah_cm2",
+            "max_points_per_cell": 500,
+        }
+
+        metadata_result = engine.compute_time_capacity(
+            self.db, spec, None, compact=True
+        )
+        metadata_trace = metadata_result["cell_traces"][0]
+        raw_values = [
+            value for value in metadata_trace["capacity_mah_cm2"] if value is not None
+        ]
+        display_values = [
+            value for value in metadata_trace["display_x"] if value is not None
+        ]
+        self.assertGreater(len(raw_values), 0)
+        self.assertEqual(len(raw_values), len(display_values))
+        for raw_value, display_value in zip(raw_values, display_values):
+            self.assertAlmostEqual(
+                display_value, raw_value - raw_values[0], places=4
+            )
+
+        spec["computation"]["time_capacity"]["electrode_area_cm2"] = 4
+        override_result = engine.compute_time_capacity(
+            self.db, spec, None, compact=True
+        )
+        override_trace = override_result["cell_traces"][0]
+        metadata_values = [
+            value for value in metadata_trace["display_x"] if value is not None
+        ]
+        override_values = [
+            value for value in override_trace["display_x"] if value is not None
+        ]
+        self.assertGreater(len(metadata_values), 0)
+        self.assertEqual(len(metadata_values), len(override_values))
+        for metadata_value, override_value in zip(metadata_values, override_values):
+            self.assertAlmostEqual(override_value, metadata_value / 2, places=4)
 
     def test_sustained_cycles_to_80(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c2"].id}])

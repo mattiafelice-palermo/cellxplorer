@@ -9,6 +9,7 @@ import {
   Button,
   Center,
   Checkbox,
+  Collapse,
   ColorInput,
   Divider,
   Group,
@@ -139,6 +140,13 @@ import {
 } from "../components/CellSamplePopovers";
 import Plot from "../components/Plot";
 import { StepsPlotCard, StepsSettings } from "../components/StepsPlotCard";
+import {
+  DcirPlotCard,
+  DcirSettings,
+  dcirLayoutForSpec,
+  dcirTracesForResult,
+  type DcirResult,
+} from "../components/DcirPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
 import { saveDownload, shareDownload } from "../downloads";
@@ -493,6 +501,32 @@ function timeCapacityConfig(spec: AnalysisSpec): TimeCapacityConfig {
   return { ...DEFAULT_TIME_CAPACITY, ...(spec.computation.time_capacity ?? {}) };
 }
 
+const DEFAULT_STEPS_COMPUTATION: NonNullable<AnalysisSpec["computation"]["steps"]> = {
+  series: [],
+  mode: "union",
+};
+
+const DEFAULT_STEPS_VIEW: NonNullable<AnalysisSpec["presentation"]["steps_view"]> = {
+  quantity: "time",
+  direction: "charge",
+  include_rest: false,
+  x_axis: "occurrence",
+};
+
+const DEFAULT_DCIR_COMPUTATION: NonNullable<AnalysisSpec["computation"]["dcir"]> = {
+  series: [],
+};
+
+const DEFAULT_DCIR_VIEW: NonNullable<AnalysisSpec["presentation"]["dcir_view"]> = {
+  quantity: "absolute",
+  x_axis: "occurrence",
+  candidate_filter: {
+    min_rest_s: 600,
+    max_pulse_s: 120,
+    min_ratio: 10,
+  },
+};
+
 const DEFAULT_COMPUTATION: AnalysisSpec["computation"] = {
   cycle_range: { start: 1, end: null },
   exclude_check_cycles_every_n: 0,
@@ -507,6 +541,8 @@ const DEFAULT_COMPUTATION: AnalysisSpec["computation"] = {
     only_segment_ids: [],
   },
   time_capacity: DEFAULT_TIME_CAPACITY,
+  steps: DEFAULT_STEPS_COMPUTATION,
+  dcir: DEFAULT_DCIR_COMPUTATION,
 };
 
 const DEFAULT_AGGREGATION: AnalysisSpec["aggregation"] = {
@@ -615,6 +651,8 @@ const DEFAULT_PRESENTATION: AnalysisSpec["presentation"] = {
   show_individual_cells: true,
   legend: true,
   hidden_protocol_segment_ids: [],
+  steps_view: DEFAULT_STEPS_VIEW,
+  dcir_view: DEFAULT_DCIR_VIEW,
   plot_style: DEFAULT_PLOT_STYLE,
 };
 
@@ -733,12 +771,26 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
     const axis =
       cfg.x_axis === "capacity_mah_g"
         ? "specific capacity (mAh/g)"
+        : cfg.x_axis === "capacity_mah_cm2"
+        ? "areal capacity (mAh/cm²)"
         : cfg.x_axis === "capacity_mah"
         ? "capacity (mAh)"
         : `time (${cfg.time_unit})`;
     return `Voltage${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
   if (tab === "cycles") return `${quantityLabel(result, spec)} vs cycle`;
+  if (tab === "dcir") {
+    const view = { ...DEFAULT_DCIR_VIEW, ...(spec.presentation.dcir_view ?? {}) };
+    const quantity =
+      view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
+    const axis =
+      view.x_axis === "cycle"
+        ? "cycle"
+        : view.x_axis === "time"
+          ? "elapsed time"
+          : "occurrence";
+    return `${quantity} vs ${axis}`;
+  }
   if (tab === "recap") return "Recap table";
   if (tab === "settings") return "Analysis settings";
   return `${tabLabel(tab)} view`;
@@ -750,6 +802,11 @@ function isPolarizationQuantity(quantity: string): boolean {
 
 function suggestedPlotName(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
   if (tab === "time_capacity") return "Time / capacity comparison";
+  if (tab === "dcir") {
+    return spec.presentation.dcir_view?.quantity === "relative"
+      ? "DCIR change comparison"
+      : "DCIR comparison";
+  }
   return tab === "cycles" ? `${quantityLabel(result, spec)} comparison` : `${tabLabel(tab)} view`;
 }
 
@@ -1435,8 +1492,30 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
       ...DEFAULT_COMPUTATION,
       ...(plot.computation ?? {}),
       protocol_filter: protocolFilter,
+      steps: {
+        ...DEFAULT_STEPS_COMPUTATION,
+        ...(plot.computation?.steps ?? {}),
+      },
+      dcir: {
+        ...DEFAULT_DCIR_COMPUTATION,
+        ...(plot.computation?.dcir ?? {}),
+      },
     },
-    presentation,
+    presentation: {
+      ...presentation,
+      steps_view: {
+        ...DEFAULT_STEPS_VIEW,
+        ...(plot.presentation?.steps_view ?? {}),
+      },
+      dcir_view: {
+        ...DEFAULT_DCIR_VIEW,
+        ...(plot.presentation?.dcir_view ?? {}),
+        candidate_filter: {
+          ...DEFAULT_DCIR_VIEW.candidate_filter,
+          ...(plot.presentation?.dcir_view?.candidate_filter ?? {}),
+        },
+      },
+    },
   };
   return {
     ...normalizedPlot,
@@ -1460,6 +1539,19 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
         step_indices: [...new Set(target.step_indices ?? [])].sort((a, b) => a - b),
       }))
       .filter((target) => target.protocol_signature && target.step_indices.length > 0),
+  }));
+  spec.dcir_segments = (spec.dcir_segments ?? []).map((segment) => ({
+    id: segment.id,
+    name: segment.name,
+    targets: (segment.targets ?? [])
+      .filter(
+        (target) =>
+          target.protocol_signature &&
+          Number.isFinite(target.rest_step_index) &&
+          Number.isFinite(target.pulse_step_index) &&
+          (target.direction === "charge" || target.direction === "discharge")
+      )
+      .map((target) => ({ ...target })),
   }));
   const validSegmentIds = new Set(spec.protocol_segments.map((segment) => segment.id));
   spec.computation = {
@@ -1489,6 +1581,14 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       ...DEFAULT_TIME_CAPACITY,
       ...(spec.computation?.time_capacity ?? {}),
     },
+    steps: {
+      ...DEFAULT_STEPS_COMPUTATION,
+      ...(spec.computation?.steps ?? {}),
+    },
+    dcir: {
+      ...DEFAULT_DCIR_COMPUTATION,
+      ...(spec.computation?.dcir ?? {}),
+    },
   };
   spec.aggregation = { ...DEFAULT_AGGREGATION, ...(spec.aggregation ?? {}) };
   spec.presentation = {
@@ -1498,6 +1598,18 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       ...new Set(spec.presentation?.hidden_protocol_segment_ids ?? []),
     ].filter((id) => validSegmentIds.has(id)),
     plot_style: normalizePlotStyle(spec.presentation?.plot_style),
+    steps_view: {
+      ...DEFAULT_STEPS_VIEW,
+      ...(spec.presentation?.steps_view ?? {}),
+    },
+    dcir_view: {
+      ...DEFAULT_DCIR_VIEW,
+      ...(spec.presentation?.dcir_view ?? {}),
+      candidate_filter: {
+        ...DEFAULT_DCIR_VIEW.candidate_filter,
+        ...(spec.presentation?.dcir_view?.candidate_filter ?? {}),
+      },
+    },
   };
   const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[spec.presentation.quantity];
   if (legacyNormalized) {
@@ -1530,6 +1642,7 @@ function computeSignature(spec: AnalysisSpec | null): string {
   return JSON.stringify({
     selection: spec.selection,
     protocol_segments: spec.protocol_segments ?? [],
+    dcir_segments: spec.dcir_segments ?? [],
     computation: spec.computation,
     aggregation: spec.aggregation,
     hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
@@ -2420,6 +2533,9 @@ function timeCapacityX(trace: TimeCapacityTrace, spec: AnalysisSpec): { x: numbe
   if (cfg.x_axis === "capacity_mah_g") {
     raw = numeric(trace.capacity_mah_g);
     title = "Specific capacity (mAh/g)";
+  } else if (cfg.x_axis === "capacity_mah_cm2") {
+    raw = numeric(trace.capacity_mah_cm2 ?? []);
+    title = "Areal capacity (mAh/cm²)";
   } else if (cfg.x_axis === "capacity_mah") {
     raw = numeric(trace.capacity_mah);
     title = "Capacity (mAh)";
@@ -2903,12 +3019,18 @@ function SavedPlotPreview({
     staleTime: 5 * 60_000,
     retry: false,
   });
-  const preview = useQuery({
+  const preview = useQuery<ComputeResult | DcirResult>({
     queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
-    queryFn: () => post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
-      spec: previewSpec,
-      background: warmup,
-    }),
+    queryFn: () =>
+      plot.tab === "dcir"
+        ? post<DcirResult>(`/api/analyses/${analysisId}/dcir`, {
+            spec: previewSpec,
+            background: warmup,
+          })
+        : post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
+            spec: previewSpec,
+            background: warmup,
+          }),
     // Warmup must not recompute plots that are already cached: the compute
     // only runs when neither a thumbnail nor a full artifact exists, exactly
     // like the visible path.
@@ -2921,8 +3043,13 @@ function SavedPlotPreview({
     staleTime: 5 * 60_000,
   });
   const traces = useMemo(
-    () => (preview.data ? tracesForResult(preview.data, previewSpec) : []),
-    [preview.data, previewSpec]
+    () =>
+      preview.data
+        ? plot.tab === "dcir"
+          ? dcirTracesForResult(preview.data as DcirResult, previewSpec)
+          : tracesForResult(preview.data as ComputeResult, previewSpec)
+        : [],
+    [plot.tab, preview.data, previewSpec]
   );
 
   useEffect(() => {
@@ -2934,14 +3061,24 @@ function SavedPlotPreview({
     ) return;
     let cancelled = false;
     setGenerationFailed(false);
-    const layout = cyclePlotLayout(preview.data, previewSpec, traces);
+    const layout =
+      plot.tab === "dcir"
+        ? dcirLayoutForSpec(previewSpec)
+        : cyclePlotLayout(preview.data as ComputeResult, previewSpec, traces);
     const figure = portableFigure(traces, layout);
     if (!figure) return;
-    const summary = preview.data.cell_series.map((series) => ({
-      label: series.label,
-      cycles: series.metrics?.n_cycles ?? series.x.length,
-      status: series.excluded ? "Hidden" : "Visible",
-    }));
+    const summary =
+      plot.tab === "dcir"
+        ? (preview.data as DcirResult).cell_series.map((series) => ({
+            label: series.label,
+            cycles: series.n_measurements,
+            status: series.n_measurements > 0 ? "Visible" : "No measurements",
+          }))
+        : (preview.data as ComputeResult).cell_series.map((series) => ({
+            label: series.label,
+            cycles: series.metrics?.n_cycles ?? series.x.length,
+            status: series.excluded ? "Hidden" : "Visible",
+          }));
     let generatedLocally = false;
     queuedPortableArtifactImages(figure)
       .then(({ svg, thumbnail, preview_thumbnail }) => {
@@ -2992,7 +3129,7 @@ function SavedPlotPreview({
     return () => {
       cancelled = true;
     };
-  }, [analysisId, artifact.data, plot.id, preview.data, previewSignature, previewSpec, qc, thumbnail.data, thumbnailPairReady, traces, warmup, warmupTask]);
+  }, [analysisId, artifact.data, plot.id, plot.tab, preview.data, previewSignature, previewSpec, qc, thumbnail.data, thumbnailPairReady, traces, warmup, warmupTask]);
 
   useEffect(() => {
     const current = artifact.data;
@@ -3652,16 +3789,35 @@ function SamplePanel({
       presentRefs
     );
 
+  const [collapsed, setCollapsed] = useState(false);
+
   return (
     <Paper p="sm" withBorder>
-      <Group justify="space-between" mb="xs">
-        <Text fw={700} size="sm">
-          Analysis samples
-        </Text>
+      <Group justify="space-between" mb={collapsed ? 0 : "xs"} wrap="nowrap">
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label={collapsed ? "Expand samples" : "Collapse samples"}
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            {collapsed ? <IconChevronRight size={16} /> : <IconChevronDown size={16} />}
+          </ActionIcon>
+          <Text fw={700} size="sm">
+            Analysis samples
+          </Text>
+          {spec.selection.entries.length > 0 && (
+            <Badge size="xs" variant="light" color="gray">
+              {spec.selection.entries.length}
+            </Badge>
+          )}
+        </Group>
         <Button size="compact-xs" leftSection={<IconPlus size={12} />} onClick={onAdd}>
           Add
         </Button>
       </Group>
+      <Collapse in={!collapsed}>
       {spec.selection.entries.length === 0 ? (
         <Text size="xs" c="dimmed">
           No cells or replicates selected.
@@ -3797,6 +3953,7 @@ function SamplePanel({
           })}
         </Stack>
       )}
+      </Collapse>
     </Paper>
   );
 }
@@ -4111,6 +4268,7 @@ function TimeCapacitySettings({
                   { value: "time", label: "Time" },
                   { value: "capacity_mah", label: "Capacity (mAh)" },
                   { value: "capacity_mah_g", label: "Specific capacity (mAh/g)" },
+                  { value: "capacity_mah_cm2", label: "Areal capacity (mAh/cm2)" },
                 ]}
                 value={cfg.x_axis}
                 onChange={(value) =>
@@ -4124,6 +4282,20 @@ function TimeCapacitySettings({
                   })
                 }
               />
+              {cfg.x_axis === "capacity_mah_cm2" && (
+                <DebouncedNumberInput
+                  label="Electrode area (cm2)"
+                  description="Leave blank to use each cell's metadata area; set a value to override or supply a missing one."
+                  min={0}
+                  step={0.05}
+                  value={cfg.electrode_area_cm2}
+                  onCommit={(value) =>
+                    updateTime(
+                      (next) => void (next.electrode_area_cm2 = value && value > 0 ? value : null)
+                    )
+                  }
+                />
+              )}
               {cfg.x_axis === "time" && (
                 <Select
                   label="Time unit"
@@ -4189,9 +4361,10 @@ function TimeCapacitySettings({
                       updateTime((next) => void (next.current_right = value as TimeCapacityCurrentAxis))
                     }
                   />
-                  {needsArea && (
+                  {needsArea && cfg.x_axis !== "capacity_mah_cm2" && (
                     <DebouncedNumberInput
                       label="Electrode area (cm2)"
+                      description="Leave blank to use each cell's metadata area."
                       min={0}
                       step={0.05}
                       value={cfg.electrode_area_cm2}
@@ -6575,6 +6748,55 @@ async function buildPortablePlotSnapshots(
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
       }
+      if (view.tab === "dcir") {
+        const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
+          kind: "dcir",
+          spec: viewSpec,
+        });
+        const result = await post<DcirResult>(
+          `/api/analyses/${analysisId}/dcir`,
+          { spec: viewSpec, job_id: job.id }
+        );
+        const traces = dcirTracesForResult(result, viewSpec);
+        const layout = dcirLayoutForSpec(viewSpec);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const images = figure ? await queuedPortableArtifactImages(figure) : null;
+        const svg = images?.svg ?? null;
+        const summary = result.cell_series.map((series) => ({
+          label: series.label,
+          cycles: series.n_measurements,
+          status: series.n_measurements > 0 ? "Visible" : "No measurements",
+        }));
+        if (svg && figure && artifactSignature) {
+          try {
+            await post<PlotArtifact>(
+              `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+              {
+                signature: artifactSignature,
+                svg,
+                thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
+                figure,
+                summary,
+              }
+            );
+          } catch (error) {
+            console.warn("Could not cache the generated portable DCIR plot", error);
+          }
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary,
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
       snapshots.push({
         id: view.id,
         name: view.name,
@@ -7090,9 +7312,13 @@ function TimeCapacityPlotCardView({
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = 1200;
-  // Refetch ONLY when fields that change the returned data change. Display
-  // choices (stacked, x axis, units, current axes) are frontend renderings —
-  // refetching on them doubled every toggle into two full plot rebuilds.
+  // Refetch when fields that change the returned data change. The compact
+  // response ships only the canonical `display_x` (and the one raw array) for
+  // the *currently selected* x axis, so the x quantity, its unit, the display
+  // mode and the electrode area (areal capacity is area-normalised server-side)
+  // are all baked into the result and must be part of the identity — otherwise
+  // switching axis changes only the title while the plotted data stays stale.
+  // Purely client-side renderings (stacked, current axes) stay out.
   const dataSignature = useMemo(
     () =>
       JSON.stringify({
@@ -7104,6 +7330,10 @@ function TimeCapacityPlotCardView({
         start: cfg.cycle_start,
         end: cfg.cycle_end,
         points: cfg.max_points_per_cell,
+        xAxis: cfg.x_axis,
+        timeUnit: cfg.time_unit,
+        displayMode: cfg.display_mode,
+        electrodeArea: cfg.electrode_area_cm2,
         viewportWidth,
         derivative: cfg.view === "voltage_current" ? null : {
           view: cfg.view,
@@ -7122,6 +7352,15 @@ function TimeCapacityPlotCardView({
       cfg.cycle_start,
       cfg.cycle_end,
       cfg.max_points_per_cell,
+      cfg.x_axis,
+      cfg.time_unit,
+      cfg.display_mode,
+      cfg.electrode_area_cm2,
+      cfg.view,
+      cfg.derivative_phase,
+      cfg.derivative_specific,
+      cfg.derivative_absolute_discharge,
+      cfg.smoothing_window,
       viewportWidth,
     ]
   );
@@ -7324,7 +7563,9 @@ function TimeCapacityPlotCardView({
               ? `Time (${cfg.time_unit})`
               : cfg.x_axis === "capacity_mah_g"
                 ? "Specific capacity (mAh/g)"
-                : "Capacity (mAh)"
+                : cfg.x_axis === "capacity_mah_cm2"
+                  ? "Areal capacity (mAh/cm²)"
+                  : "Capacity (mAh)"
           }
           sampleSummary={`${spec.selection.entries.length} ${
             spec.selection.entries.length === 1 ? "sample" : "samples"
@@ -7562,7 +7803,7 @@ function SavedPlotsPanel({
                         plot={plot}
                         allowGeneration={generationPlotIds.has(plot.id)}
                       />
-                    ) : plot.tab === "cycles" || plot.tab === "recap" ? (
+                    ) : plot.tab === "cycles" || plot.tab === "recap" || plot.tab === "dcir" ? (
                       <SavedPlotPreview
                         analysisId={analysisId}
                         baseSpec={baseSpec}
@@ -8601,7 +8842,22 @@ function AnalysisPageView({
       )}
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
       {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}
-      {activeTab === "steps" && <StepsSettings analysisId={aid} spec={spec} update={update} />}
+      {activeTab === "steps" && (
+        <StepsSettings
+          analysisId={aid}
+          spec={spec}
+          cells={currentAnalysis.selection_cells}
+          update={update}
+        />
+      )}
+      {activeTab === "dcir" && (
+        <DcirSettings
+          analysisId={aid}
+          spec={spec}
+          cells={currentAnalysis.selection_cells}
+          update={update}
+        />
+      )}
     </Stack>
   );
 
@@ -8751,9 +9007,26 @@ function AnalysisPageView({
                 analysisTitle={title}
                 plotName={activePlot?.tab === "steps" ? activePlot.name : "Unsaved plot"}
                 spec={spec}
+                cells={currentAnalysis.selection_cells}
                 update={update}
               />
               {savedPlotsPanelFor("steps")}
+            </Stack>
+          </Group>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="dcir" pt="sm">
+          <Group align="start" wrap="nowrap">
+            {sidebar}
+            <Stack style={{ flex: 1, minWidth: 0 }}>
+              <DcirPlotCard
+                analysisId={aid}
+                analysisTitle={title}
+                plotName={activePlot?.tab === "dcir" ? activePlot.name : "Unsaved plot"}
+                spec={spec}
+                update={update}
+              />
+              {savedPlotsPanelFor("dcir")}
             </Stack>
           </Group>
         </Tabs.Panel>
@@ -8794,7 +9067,7 @@ function AnalysisPageView({
           </Tabs.Panel>
         )}
 
-        {(["crate", "chargeability", "dcir"] as AnalysisTabKey[]).map(
+        {(["crate", "chargeability"] as AnalysisTabKey[]).map(
           (tab) => (
             <Tabs.Panel key={tab} value={tab} pt="sm">
               <Group align="start" wrap="nowrap">

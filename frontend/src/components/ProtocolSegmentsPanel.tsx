@@ -35,6 +35,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconPlus,
+  IconSparkles,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
@@ -102,6 +103,22 @@ export interface ProtocolSegmentsPanelProps {
   onToggleHidden: (segmentId: string) => void;
   onToggleExcluded: (segmentId: string) => void;
   onUseOnly: (segmentId: string | null) => void;
+  title?: string;
+  subtitle?: string;
+  emptyText?: string;
+  showPlotControls?: boolean;
+  showSuggestions?: boolean;
+  suggestions?: ProtocolSegmentSuggestion[];
+  suggestionsLoading?: boolean;
+  suggestionsError?: boolean;
+  validateSegment?: (segment: ProtocolSegment) => string | null;
+}
+
+export interface ProtocolSegmentSuggestion {
+  id: string;
+  label: string;
+  description?: string;
+  segment: ProtocolSegment;
 }
 
 function segmentId(): string {
@@ -1005,6 +1022,11 @@ function SegmentEditor({
   onClose,
   onDelete,
   onSave,
+  suggestions,
+  suggestionsLoading,
+  suggestionsError,
+  showSuggestions,
+  validateSegment,
 }: {
   draft: SegmentDraft;
   families: ProtocolFamily[];
@@ -1014,6 +1036,11 @@ function SegmentEditor({
   onClose: () => void;
   onDelete: (segmentId: string) => void;
   onSave: (segment: ProtocolSegment) => void;
+  suggestions: ProtocolSegmentSuggestion[];
+  suggestionsLoading: boolean;
+  suggestionsError: boolean;
+  showSuggestions: boolean;
+  validateSegment?: (segment: ProtocolSegment) => string | null;
 }) {
   const [name, setName] = useState(draft.name);
   const [targets, setTargets] = useState<ProtocolSegmentTarget[]>(draft.targets);
@@ -1025,6 +1052,8 @@ function SegmentEditor({
   // own their own open state; the epoch changes the React key.
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [expandEpoch, setExpandEpoch] = useState(0);
+  const [suggestionId, setSuggestionId] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   // Pin the choice once, rather than falling back to families[0] on every
   // render. Protocol queries resolve one cell at a time and the list is kept
   // sorted by signature, so "the first family" is a different protocol at
@@ -1056,24 +1085,36 @@ function SegmentEditor({
   /** Store the current draft and clear the bench for the next one. */
   const save = () => {
     if (!name.trim() || count === 0) return;
-    onSave({
+    const segment = {
       id: editingId ?? segmentId(),
       name: name.trim(),
       targets: targets.map((target) => ({
         ...target,
         step_indices: uniqueSorted(target.step_indices),
       })),
-    });
+    };
+    const error = validateSegment?.(segment) ?? null;
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    onSave(segment);
     setEditingId(null);
     setName("");
     setTargets([]);
+    setValidationError(null);
   };
 
   const editSegment = (segment: ProtocolSegment) => {
     setEditingId(segment.id);
     setName(segment.name);
     setTargets(segment.targets.map((target) => ({ ...target })));
+    setValidationError(null);
   };
+
+  const selectedSuggestion = suggestions.find(
+    (suggestion) => suggestion.id === suggestionId
+  );
 
   return (
     <Modal
@@ -1118,6 +1159,75 @@ function SegmentEditor({
           </Group>
         </Group>
 
+        {showSuggestions && (
+          <Paper p="xs" withBorder bg="teal.0">
+            <Group align="end" wrap="nowrap">
+              <Box style={{ flex: 1, minWidth: 0 }}>
+                <Group gap={6} mb={4}>
+                  <IconSparkles size={15} color="var(--mantine-color-teal-6)" />
+                  <Text size="xs" fw={700}>Suggested DCIR pairs</Text>
+                </Group>
+                <Select
+                  size="xs"
+                  placeholder={
+                    suggestionsLoading
+                      ? "Looking for long-rest / short-pulse pairs..."
+                      : "Choose a detected rest / pulse pair"
+                  }
+                  searchable
+                  disabled={suggestionsLoading || suggestions.length === 0}
+                  data={suggestions.map((suggestion) => ({
+                    value: suggestion.id,
+                    label: suggestion.label,
+                  }))}
+                  value={suggestionId}
+                  onChange={setSuggestionId}
+                />
+              </Box>
+              <Button
+                size="xs"
+                variant="light"
+                disabled={!selectedSuggestion}
+                onClick={() => {
+                  if (!selectedSuggestion) return;
+                  setName(selectedSuggestion.segment.name);
+                  setTargets(
+                    selectedSuggestion.segment.targets.map((target) => ({
+                      ...target,
+                      step_indices: [...target.step_indices],
+                    }))
+                  );
+                  setActiveSignature(
+                    selectedSuggestion.segment.targets[0]?.protocol_signature ?? null
+                  );
+                  setValidationError(null);
+                }}
+              >
+                Select pair
+              </Button>
+            </Group>
+            {suggestionsError && (
+              <Text size="xs" c="red" mt={5}>
+                Automatic suggestions could not be loaded. You can still select the
+                rest and pulse steps manually below.
+              </Text>
+            )}
+            {!suggestionsLoading &&
+              !suggestionsError &&
+              suggestions.length === 0 && (
+                <Text size="xs" c="dimmed" mt={5}>
+                  No pair matches the current recognition limits. Manual step
+                  selection remains available below.
+                </Text>
+              )}
+            {selectedSuggestion?.description && (
+              <Text size="xs" c="dimmed" mt={5}>
+                {selectedSuggestion.description}
+              </Text>
+            )}
+          </Paper>
+        )}
+
         <CapacityReference families={families} />
         <StepFilterBar
           query={query}
@@ -1129,6 +1239,7 @@ function SegmentEditor({
         {hasErrors && (
           <Alert color="yellow">Some cell protocols could not be loaded. Available families are still selectable.</Alert>
         )}
+        {validationError && <Alert color="red">{validationError}</Alert>}
         {loading && (
           <Group gap="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Loading cell protocols...</Text></Group>
         )}
@@ -1279,6 +1390,15 @@ export function ProtocolSegmentsPanel({
   onToggleHidden,
   onToggleExcluded,
   onUseOnly,
+  title = "Protocol segments",
+  subtitle,
+  emptyText = "No custom segments.",
+  showPlotControls = true,
+  showSuggestions = false,
+  suggestions = [],
+  suggestionsLoading = false,
+  suggestionsError = false,
+  validateSegment,
 }: ProtocolSegmentsPanelProps) {
   const [draft, setDraft] = useState<SegmentDraft | null>(null);
   const protocolQueries = useQueries({
@@ -1352,7 +1472,8 @@ export function ProtocolSegmentsPanel({
       <Paper p="sm" withBorder>
         <Group justify="space-between" mb="xs">
           <Box>
-            <Text fw={700} size="sm">Protocol segments</Text>
+            <Text fw={700} size="sm">{title}</Text>
+            {subtitle && <Text size="xs" c="dimmed">{subtitle}</Text>}
             {onlySegmentIds.length > 0 && <Text size="xs" c="teal">Use-only filter active</Text>}
           </Box>
           <Tooltip label={cellIds.length === 0 ? "Add analysis samples first" : "Create protocol segment"}>
@@ -1365,7 +1486,7 @@ export function ProtocolSegmentsPanel({
         </Group>
 
         {segments.length === 0 ? (
-          <Text size="xs" c="dimmed">No custom segments.</Text>
+          <Text size="xs" c="dimmed">{emptyText}</Text>
         ) : (
           <Stack gap={4}>
             {segments.map((segment) => {
@@ -1387,40 +1508,44 @@ export function ProtocolSegmentsPanel({
                       </Text>
                     </Box>
                     <Group gap={1} wrap="nowrap">
-                      <Tooltip label={excluded ? "Excluded segments are not plotted" : filteredByOnly ? "Another segment is used exclusively" : hidden ? "Show in plot" : "Hide from plot"}>
-                        <ActionIcon
-                          size="sm"
-                          variant="subtle"
-                          color={effectivelyHidden ? "gray" : "teal"}
-                          disabled={excluded || filteredByOnly}
-                          onClick={() => onToggleHidden(segment.id)}
-                          aria-label={hidden ? `Show ${segment.name}` : `Hide ${segment.name}`}
-                        >
-                          {effectivelyHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={excluded ? "Include in calculations" : "Exclude from calculations and plot"}>
-                        <ActionIcon
-                          size="sm"
-                          variant="subtle"
-                          color={excluded ? "red" : "teal"}
-                          onClick={() => onToggleExcluded(segment.id)}
-                          aria-label={excluded ? `Include ${segment.name} in calculations` : `Exclude ${segment.name} from calculations`}
-                        >
-                          {excluded ? <IconCalculatorOff size={14} /> : <IconCalculator size={14} />}
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={only ? "Clear use-only filter" : `Use only ${segment.name}`}>
-                        <ActionIcon
-                          size="sm"
-                          variant={only ? "light" : "subtle"}
-                          color="teal"
-                          onClick={() => onUseOnly(only ? null : segment.id)}
-                          aria-label={only ? "Clear use-only filter" : `Use only ${segment.name}`}
-                        >
-                          <IconFocus2 size={14} />
-                        </ActionIcon>
-                      </Tooltip>
+                      {showPlotControls && (
+                        <>
+                          <Tooltip label={excluded ? "Excluded segments are not plotted" : filteredByOnly ? "Another segment is used exclusively" : hidden ? "Show in plot" : "Hide from plot"}>
+                            <ActionIcon
+                              size="sm"
+                              variant="subtle"
+                              color={effectivelyHidden ? "gray" : "teal"}
+                              disabled={excluded || filteredByOnly}
+                              onClick={() => onToggleHidden(segment.id)}
+                              aria-label={hidden ? `Show ${segment.name}` : `Hide ${segment.name}`}
+                            >
+                              {effectivelyHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label={excluded ? "Include in calculations" : "Exclude from calculations and plot"}>
+                            <ActionIcon
+                              size="sm"
+                              variant="subtle"
+                              color={excluded ? "red" : "teal"}
+                              onClick={() => onToggleExcluded(segment.id)}
+                              aria-label={excluded ? `Include ${segment.name} in calculations` : `Exclude ${segment.name} from calculations`}
+                            >
+                              {excluded ? <IconCalculatorOff size={14} /> : <IconCalculator size={14} />}
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label={only ? "Clear use-only filter" : `Use only ${segment.name}`}>
+                            <ActionIcon
+                              size="sm"
+                              variant={only ? "light" : "subtle"}
+                              color="teal"
+                              onClick={() => onUseOnly(only ? null : segment.id)}
+                              aria-label={only ? "Clear use-only filter" : `Use only ${segment.name}`}
+                            >
+                              <IconFocus2 size={14} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </>
+                      )}
                       <Tooltip label="Edit segment">
                         <ActionIcon size="sm" variant="subtle" color="gray" onClick={() => openEditor(segment)} aria-label={`Edit ${segment.name}`}>
                           <IconEdit size={14} />
@@ -1465,6 +1590,11 @@ export function ProtocolSegmentsPanel({
           onClose={() => setDraft(null)}
           onDelete={onDeleteSegment}
           onSave={onSaveSegment}
+          suggestions={suggestions}
+          suggestionsLoading={suggestionsLoading}
+          suggestionsError={suggestionsError}
+          showSuggestions={showSuggestions}
+          validateSegment={validateSegment}
         />
       )}
     </>

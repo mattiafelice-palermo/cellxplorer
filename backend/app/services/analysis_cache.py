@@ -22,8 +22,12 @@ from ..config import CACHE_DIR, CALC_VERSION
 from . import parsing
 
 ANALYSIS_CACHE_VERSION = 3
+RESULT_SCHEMA_VERSIONS = {
+    "steps": 2,
+    "dcir": 1,
+}
 PLOT_ARTIFACT_CACHE_VERSION = 2
-THUMBNAIL_CACHE_VERSION = 3
+THUMBNAIL_CACHE_VERSION = 5
 DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES = 1024 * 1024 * 1024
 ANALYSIS_CACHE_LIMIT_BYTES: int | None = DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES
 _ROOT = CACHE_DIR / "analysis"
@@ -58,6 +62,12 @@ def _atomic_gzip(path: Path, data: bytes) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _valid_thumbnail_data_url(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(
+        ("data:image/webp;base64,", "data:image/png;base64,")
+    )
 
 
 # Running total of the budgeted tiers (results + artifacts; thumbnails are
@@ -115,6 +125,7 @@ def _scientific_spec(spec: dict) -> dict:
         "computation": spec.get("computation") or {},
         "aggregation": spec.get("aggregation") or {},
         "protocol_segments": spec.get("protocol_segments") or [],
+        "dcir_segments": spec.get("dcir_segments") or [],
         "hidden_protocol_segment_ids": presentation.get("hidden_protocol_segment_ids") or [],
     }
 
@@ -173,6 +184,7 @@ def result_key(
     return _digest(
         {
             "cache_version": ANALYSIS_CACHE_VERSION,
+            "result_schema_version": RESULT_SCHEMA_VERSIONS.get(kind, 1),
             "kind": kind,
             "parser_version": parser_version,
             "calc_version": calc_version,
@@ -197,7 +209,16 @@ def saved_plot_data_signature(db: Session, analysis: Any, saved_plot: dict) -> s
     spec["computation"] = deepcopy(saved_plot.get("computation") or {})
     spec["aggregation"] = deepcopy(saved_plot.get("aggregation") or {})
     spec["presentation"] = deepcopy(saved_plot.get("presentation") or {})
-    kind = "time_capacity" if saved_plot.get("tab") == "time_capacity" else "cycles"
+    tab = saved_plot.get("tab")
+    kind = (
+        "time_capacity"
+        if tab == "time_capacity"
+        else "steps"
+        if tab == "steps"
+        else "dcir"
+        if tab == "dcir"
+        else "cycles"
+    )
     request_options = (
         {"viewport_width": 1200, "precision": "standard", "compact": True}
         if kind == "time_capacity"
@@ -373,8 +394,8 @@ def _thumbnail_index_path(analysis_id: int, plot_id: str, client_signature: str)
     )
 
 
-def load_thumbnail(analysis_id: int, plot_id: str, signature: str) -> str | None:
-    path = _thumbnail_path(analysis_id, plot_id, signature)
+def _load_thumbnail_value(path: Path, field: str) -> str | None:
+    """Read one derivative from a versioned thumbnail cache record."""
     if not path.is_file():
         return None
     try:
@@ -383,9 +404,8 @@ def load_thumbnail(analysis_id: int, plot_id: str, signature: str) -> str | None
         if value.get("cache_version") != THUMBNAIL_CACHE_VERSION:
             path.unlink(missing_ok=True)
             return None
-        thumbnail = value.get("thumbnail")
-        if not isinstance(thumbnail, str) or not thumbnail.startswith("data:image/png;base64,"):
-            path.unlink(missing_ok=True)
+        thumbnail = value.get(field)
+        if not _valid_thumbnail_data_url(thumbnail):
             return None
         try:
             os.utime(path, None)
@@ -397,7 +417,28 @@ def load_thumbnail(analysis_id: int, plot_id: str, signature: str) -> str | None
         return None
 
 
-def store_thumbnail(analysis_id: int, plot_id: str, signature: str, thumbnail: str) -> None:
+def load_thumbnail(analysis_id: int, plot_id: str, signature: str) -> str | None:
+    path = _thumbnail_path(analysis_id, plot_id, signature)
+    thumbnail = _load_thumbnail_value(path, "thumbnail")
+    if thumbnail is None or _load_thumbnail_value(path, "preview_thumbnail") is None:
+        return None
+    return thumbnail
+
+
+def load_preview_thumbnail(analysis_id: int, plot_id: str, signature: str) -> str | None:
+    return _load_thumbnail_value(
+        _thumbnail_path(analysis_id, plot_id, signature),
+        "preview_thumbnail",
+    )
+
+
+def store_thumbnail(
+    analysis_id: int,
+    plot_id: str,
+    signature: str,
+    thumbnail: str,
+    preview_thumbnail: str | None = None,
+) -> None:
     with _lock:
         _atomic_gzip(
             _thumbnail_path(analysis_id, plot_id, signature),
@@ -405,6 +446,7 @@ def store_thumbnail(analysis_id: int, plot_id: str, signature: str, thumbnail: s
                 {
                     "cache_version": THUMBNAIL_CACHE_VERSION,
                     "thumbnail": thumbnail,
+                    "preview_thumbnail": preview_thumbnail,
                 }
             ),
         )
@@ -418,26 +460,21 @@ def load_indexed_thumbnail(
 ) -> str | None:
     """Load a saved-plot thumbnail without rebuilding its scientific key."""
     path = _thumbnail_index_path(analysis_id, plot_id, client_signature)
-    if not path.is_file():
+    thumbnail = _load_thumbnail_value(path, "thumbnail")
+    if thumbnail is None or _load_thumbnail_value(path, "preview_thumbnail") is None:
         return None
-    try:
-        with gzip.open(path, "rb") as source:
-            value = json.loads(source.read())
-        if value.get("cache_version") != THUMBNAIL_CACHE_VERSION:
-            path.unlink(missing_ok=True)
-            return None
-        thumbnail = value.get("thumbnail")
-        if not isinstance(thumbnail, str) or not thumbnail.startswith("data:image/png;base64,"):
-            path.unlink(missing_ok=True)
-            return None
-        try:
-            os.utime(path, None)
-        except OSError:
-            pass
-        return thumbnail
-    except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
-        path.unlink(missing_ok=True)
-        return None
+    return thumbnail
+
+
+def load_indexed_preview_thumbnail(
+    analysis_id: int,
+    plot_id: str,
+    client_signature: str,
+) -> str | None:
+    return _load_thumbnail_value(
+        _thumbnail_index_path(analysis_id, plot_id, client_signature),
+        "preview_thumbnail",
+    )
 
 
 def store_indexed_thumbnail(
@@ -445,6 +482,7 @@ def store_indexed_thumbnail(
     plot_id: str,
     client_signature: str,
     thumbnail: str,
+    preview_thumbnail: str | None = None,
 ) -> None:
     with _lock:
         _atomic_gzip(
@@ -453,6 +491,7 @@ def store_indexed_thumbnail(
                 {
                     "cache_version": THUMBNAIL_CACHE_VERSION,
                     "thumbnail": thumbnail,
+                    "preview_thumbnail": preview_thumbnail,
                 }
             ),
         )
@@ -496,6 +535,7 @@ def store_prepared_marker(
                 {
                     "data_signature": data_signature,
                     "plot_modified_at": plot_modified_at,
+                    "thumbnail_cache_version": THUMBNAIL_CACHE_VERSION,
                 }
             )
         )
@@ -518,7 +558,11 @@ def has_indexed_thumbnails(analysis_id: int, plot_id: str) -> bool:
     return directory.is_dir() and any(directory.glob("*.json.gz"))
 
 
-def load_latest_thumbnail(analysis_id: int, plot_id: str) -> str | None:
+def load_latest_thumbnail(
+    analysis_id: int,
+    plot_id: str,
+    variant: str = "saved",
+) -> str | None:
     """Adopt the newest legacy thumbnail when its direct index is absent."""
     safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)
     directory = _THUMBNAILS / str(analysis_id) / safe_plot
@@ -533,11 +577,16 @@ def load_latest_thumbnail(analysis_id: int, plot_id: str) -> str | None:
         try:
             with gzip.open(path, "rb") as source:
                 value = json.loads(source.read())
-            thumbnail = value.get("thumbnail")
+            thumbnail = value.get(
+                "preview_thumbnail" if variant == "preview" else "thumbnail"
+            )
+            counterpart = value.get(
+                "thumbnail" if variant == "preview" else "preview_thumbnail"
+            )
             if (
                 value.get("cache_version") == THUMBNAIL_CACHE_VERSION
-                and isinstance(thumbnail, str)
-                and thumbnail.startswith("data:image/png;base64,")
+                and _valid_thumbnail_data_url(thumbnail)
+                and _valid_thumbnail_data_url(counterpart)
             ):
                 return thumbnail
         except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
@@ -562,10 +611,12 @@ def load_artifact(analysis_id: int, plot_id: str, signature: str) -> dict | None
             path.unlink(missing_ok=True)
             return None
         thumbnail = load_thumbnail(analysis_id, plot_id, signature)
+        preview_thumbnail = load_preview_thumbnail(analysis_id, plot_id, signature)
         # Embedded thumbnails predate the compact, legend-free thumbnail
         # renderer. Do not migrate them; the frontend can cheaply rebuild the
         # small image from this already-cached SVG once.
         artifact["thumbnail"] = thumbnail
+        artifact["preview_thumbnail"] = preview_thumbnail
         try:
             os.utime(path, None)
         except OSError:
@@ -593,14 +644,30 @@ def store_artifact(
         value = dict(artifact)
         if value.get("thumbnail") is None and existing is not None:
             value["thumbnail"] = existing.get("thumbnail")
+        if value.get("preview_thumbnail") is None and existing is not None:
+            value["preview_thumbnail"] = existing.get("preview_thumbnail")
         thumbnail = value.get("thumbnail")
+        preview_thumbnail = value.get("preview_thumbnail")
         if isinstance(thumbnail, str):
-            store_thumbnail(analysis_id, plot_id, signature, thumbnail)
+            store_thumbnail(
+                analysis_id,
+                plot_id,
+                signature,
+                thumbnail,
+                preview_thumbnail if isinstance(preview_thumbnail, str) else None,
+            )
             if client_signature is not None:
-                store_indexed_thumbnail(analysis_id, plot_id, client_signature, thumbnail)
+                store_indexed_thumbnail(
+                    analysis_id,
+                    plot_id,
+                    client_signature,
+                    thumbnail,
+                    preview_thumbnail if isinstance(preview_thumbnail, str) else None,
+                )
         # The saved-plot rows only need the small thumbnail. Keep it in its
         # own file so page reloads never decompress the full Plotly figure.
         value["thumbnail"] = None
+        value["preview_thumbnail"] = None
         _store_budgeted(
             _artifact_path(analysis_id, plot_id, signature),
             _json_bytes(

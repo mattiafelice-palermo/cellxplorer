@@ -136,6 +136,7 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
       lastPoll.current = Date.now();
       queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
       queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis-database-thumbnail"] });
     }
   }, [queryClient, task]);
 

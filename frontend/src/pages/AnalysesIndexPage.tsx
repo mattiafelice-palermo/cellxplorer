@@ -51,6 +51,14 @@ import {
 } from "../api";
 import { clearAnalysisQueryCache } from "../analysisQueryCache";
 import { AnalysisDatabaseTable } from "../components/AnalysisDatabaseTable";
+import {
+  ANALYSIS_WORKSPACE_TABS_EVENT,
+  loadAnalysisWorkspace,
+  markAnalysisWorkspaceMounted,
+  openAnalysisWorkspaceTab,
+  showAnalysisWorkspaceView,
+  type AnalysisWorkspaceSnapshot,
+} from "../analysisWorkspace";
 
 function flattenFolders(nodes: FolderNode[], depth = 0): { value: string; label: string }[] {
   return nodes.flatMap((node) => [
@@ -322,6 +330,16 @@ export function AnalysesIndexPage() {
     () => searchParams.get("portableImport") === "1"
   );
   const handledPortableSource = useRef<string | null>(null);
+  const createRequestHandled = useRef(false);
+  const [workspace, setWorkspace] = useState<AnalysisWorkspaceSnapshot>(loadAnalysisWorkspace);
+
+  useEffect(() => {
+    const onTabsChange = (event: Event) => {
+      setWorkspace((event as CustomEvent<AnalysisWorkspaceSnapshot>).detail);
+    };
+    window.addEventListener(ANALYSIS_WORKSPACE_TABS_EVENT, onTabsChange);
+    return () => window.removeEventListener(ANALYSIS_WORKSPACE_TABS_EVENT, onTabsChange);
+  }, []);
 
   useEffect(() => {
     if (searchParams.get("portableImport") === "1") setPortableImportOpen(true);
@@ -333,6 +351,19 @@ export function AnalysesIndexPage() {
   });
   const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const folderOptions = flattenFolders(tree.data?.folders ?? []);
+
+  const openCreateAnalysis = () => {
+    modals.open({
+      title: "New analysis",
+      children: (
+        <AnalysisCreateForm
+          folders={folderOptions}
+          loading={create.isPending}
+          onSubmit={(payload) => create.mutate(payload)}
+        />
+      ),
+    });
+  };
 
   const create = useMutation({
     mutationFn: (body: { title: string; folder_id: number | null }) =>
@@ -542,6 +573,19 @@ export function AnalysesIndexPage() {
   });
 
   const rows = analyses.data ?? [];
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") {
+      createRequestHandled.current = false;
+      return;
+    }
+    if (createRequestHandled.current) return;
+    createRequestHandled.current = true;
+    openCreateAnalysis();
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const portableUnresolved = Boolean(
     portableReview?.sources.some(
       (source) =>
@@ -575,18 +619,7 @@ export function AnalysesIndexPage() {
           </Button>
           <Button
             leftSection={<IconPlus size={16} />}
-            onClick={() =>
-              modals.open({
-                title: "New analysis",
-                children: (
-                  <AnalysisCreateForm
-                    folders={folderOptions}
-                    loading={create.isPending}
-                    onSubmit={(payload) => create.mutate(payload)}
-                  />
-                ),
-              })
-            }
+            onClick={openCreateAnalysis}
             loading={create.isPending}
           >
             New analysis
@@ -611,7 +644,30 @@ export function AnalysesIndexPage() {
       ) : (
         <AnalysisDatabaseTable
           rows={rows}
-          onOpen={(id) => navigate(`/analyses/${id}`)}
+          openIds={new Set(workspace.tabs.map((tab) => tab.id))}
+          onOpen={(analysis, background) => {
+            const tab = {
+              id: analysis.id,
+              title: analysis.title,
+              path: `/analyses/${analysis.id}`,
+            };
+            openAnalysisWorkspaceTab(tab);
+    if (!background) {
+      markAnalysisWorkspaceMounted(analysis.id);
+      showAnalysisWorkspaceView(analysis.id);
+      window.requestAnimationFrame(() => navigate(tab.path));
+            }
+          }}
+          onOpenPlot={(analysis, plot, background) => {
+            const path = `/analyses/${analysis.id}?plot=${encodeURIComponent(plot.id)}`;
+            openAnalysisWorkspaceTab({ id: analysis.id, title: analysis.title, path });
+            if (!background) {
+              markAnalysisWorkspaceMounted(analysis.id);
+              showAnalysisWorkspaceView(analysis.id);
+              window.requestAnimationFrame(() => navigate(path));
+            }
+          }}
+          onOpenFolder={(folderId) => navigate(`/projects?folder=${folderId}`)}
           onRemove={confirmRemove}
           removing={remove.isPending}
         />

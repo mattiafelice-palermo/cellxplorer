@@ -324,6 +324,16 @@ class WarmupCoordinator:
                     marker
                     and marker.get("data_signature") == expected_signature
                     and marker.get("plot_modified_at") == plot.get("modified_at")
+                    and marker.get("thumbnail_cache_version")
+                    == analysis_cache.THUMBNAIL_CACHE_VERSION
+                    and analysis_cache.load_latest_thumbnail(
+                        analysis.id, str(plot.get("id")), "saved"
+                    )
+                    is not None
+                    and analysis_cache.load_latest_thumbnail(
+                        analysis.id, str(plot.get("id")), "preview"
+                    )
+                    is not None
                 ):
                     continue
                 tasks.append(
@@ -359,11 +369,16 @@ class WarmupCoordinator:
         """Cheap change indicator: avoids re-fingerprinting every plot on
         every idle poll. Source/cell changes bypass this via direct
         enqueue_analyses calls, so analysis count + latest modification is a
-        sufficient trigger for a full rescan."""
+        sufficient trigger for a full rescan. Include the thumbnail renderer
+        version so an application upgrade cannot reuse an all-ready probe
+        created for an obsolete preview format."""
         from sqlalchemy import func
 
         count, latest = db.query(func.count(Analysis.id), func.max(Analysis.modified_at)).one()
-        return f"{count}:{latest.isoformat() if latest else ''}"
+        return (
+            f"thumbnail-v{analysis_cache.THUMBNAIL_CACHE_VERSION}:"
+            f"{count}:{latest.isoformat() if latest else ''}"
+        )
 
     def start(self, db: Session) -> dict[str, Any]:
         probe = self._analysis_probe(db)
@@ -695,6 +710,23 @@ class WarmupCoordinator:
             job_id = self._job_id
             completed_task = self._active
             self._active = None
+            if status == "ready" and not error:
+                has_saved = analysis_cache.load_latest_thumbnail(
+                    completed_task["analysis_id"], completed_task["plot_id"], "saved"
+                )
+                has_preview = analysis_cache.load_latest_thumbnail(
+                    completed_task["analysis_id"], completed_task["plot_id"], "preview"
+                )
+                if has_saved is None or has_preview is None:
+                    status = "failed"
+                    detail = "Thumbnail pair was not persisted"
+                    error = "Saved-row and hover thumbnails are both required"
+            if error:
+                # A completed scan is only reusable when every item actually
+                # reached durable storage. Let the next idle pass rebuild the
+                # missing item instead of returning this failed job forever.
+                self._fingerprint = None
+                self._probe = None
             if job_id is not None:
                 background_jobs.record_result(
                     job_id,

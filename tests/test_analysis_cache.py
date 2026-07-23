@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 import sys
 import tempfile
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services import analysis_cache
+from app.services import analysis_cache, analysis_engine
 
 
 class AnalysisCacheTests(unittest.TestCase):
@@ -47,6 +48,7 @@ class AnalysisCacheTests(unittest.TestCase):
         artifact = {
             "svg": svg,
             "thumbnail": "data:image/png;base64,iVBORw0KGgo=",
+            "preview_thumbnail": "data:image/webp;base64,UklGRg==",
             "figure": {"data": [], "layout": {}, "config": {}},
             "summary": [{"label": "Cell A", "cycles": 3, "status": "Visible"}],
         }
@@ -64,6 +66,10 @@ class AnalysisCacheTests(unittest.TestCase):
             artifact["thumbnail"],
         )
         self.assertEqual(
+            analysis_cache.load_preview_thumbnail(7, "plot-one", "signature-a"),
+            artifact["preview_thumbnail"],
+        )
+        self.assertEqual(
             analysis_cache.load_indexed_thumbnail(7, "plot-one", "client-signature-a"),
             artifact["thumbnail"],
         )
@@ -71,6 +77,10 @@ class AnalysisCacheTests(unittest.TestCase):
         self.assertEqual(
             analysis_cache.load_latest_thumbnail(7, "plot-one"),
             artifact["thumbnail"],
+        )
+        self.assertEqual(
+            analysis_cache.load_latest_thumbnail(7, "plot-one", "preview"),
+            artifact["preview_thumbnail"],
         )
         self.assertIsNone(analysis_cache.load_artifact(7, "plot-one", "signature-b"))
 
@@ -101,6 +111,7 @@ class AnalysisCacheTests(unittest.TestCase):
             {
                 "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>',
                 "thumbnail": "data:image/png;base64,iVBORw0KGgo=",
+                "preview_thumbnail": "data:image/webp;base64,UklGRg==",
                 "figure": {"data": [{"x": list(range(100)), "y": list(range(100))}]},
                 "summary": [],
             },
@@ -115,6 +126,253 @@ class AnalysisCacheTests(unittest.TestCase):
             analysis_cache.load_indexed_thumbnail(8, "plot-two", "client-signature-b"),
             "data:image/png;base64,iVBORw0KGgo=",
         )
+
+    def test_webp_thumbnail_is_persisted(self):
+        thumbnail = "data:image/webp;base64,UklGRg=="
+        preview = "data:image/png;base64,iVBORw0KGgo="
+        analysis_cache.store_thumbnail(
+            7, "plot-webp", "signature-webp", thumbnail, preview
+        )
+        analysis_cache.store_indexed_thumbnail(
+            7, "plot-webp", "client-webp", thumbnail, preview
+        )
+
+        self.assertEqual(
+            analysis_cache.load_thumbnail(7, "plot-webp", "signature-webp"),
+            thumbnail,
+        )
+        self.assertEqual(
+            analysis_cache.load_indexed_thumbnail(7, "plot-webp", "client-webp"),
+            thumbnail,
+        )
+        self.assertEqual(
+            analysis_cache.load_preview_thumbnail(7, "plot-webp", "signature-webp"),
+            preview,
+        )
+
+    def test_incomplete_thumbnail_pair_is_not_treated_as_prepared(self):
+        thumbnail = "data:image/webp;base64,UklGRg=="
+        analysis_cache.store_thumbnail(7, "plot-partial", "signature", thumbnail)
+        analysis_cache.store_indexed_thumbnail(7, "plot-partial", "client", thumbnail)
+
+        self.assertIsNone(analysis_cache.load_thumbnail(7, "plot-partial", "signature"))
+        self.assertIsNone(
+            analysis_cache.load_indexed_thumbnail(7, "plot-partial", "client")
+        )
+
+    def test_steps_view_does_not_change_scientific_cache_spec(self):
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {
+                "steps": {
+                    "series": [
+                        {"id": "s1", "cell_id": 7, "segment_id": "fast-charge"}
+                    ],
+                    "mode": "union",
+                }
+            },
+            "aggregation": {},
+            "protocol_segments": [],
+            "presentation": {
+                "steps_view": {
+                    "quantity": "time",
+                    "direction": "charge",
+                    "include_rest": False,
+                    "x_axis": "occurrence",
+                }
+            },
+        }
+        changed_view = {
+            **base,
+            "presentation": {
+                "steps_view": {
+                    "quantity": "voltage",
+                    "direction": "total",
+                    "include_rest": True,
+                    "x_axis": "time",
+                }
+            },
+        }
+
+        self.assertEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_view),
+        )
+
+    def test_steps_series_and_mode_change_scientific_cache_spec(self):
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {
+                "steps": {
+                    "series": [
+                        {"id": "s1", "cell_id": 7, "segment_id": "fast-charge"}
+                    ],
+                    "mode": "union",
+                }
+            },
+            "aggregation": {},
+            "protocol_segments": [],
+            "presentation": {},
+        }
+        changed_series = {
+            **base,
+            "computation": {
+                "steps": {
+                    "series": [
+                        {"id": "s2", "cell_id": 7, "segment_id": "formation"}
+                    ],
+                    "mode": "union",
+                }
+            },
+        }
+        changed_mode = {
+            **base,
+            "computation": {
+                "steps": {
+                    "series": base["computation"]["steps"]["series"],
+                    "mode": "contiguous",
+                }
+            },
+        }
+
+        self.assertNotEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_series),
+        )
+        self.assertNotEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_mode),
+        )
+
+    def test_dcir_view_does_not_change_scientific_cache_spec(self):
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {
+                "dcir": {
+                    "series": [
+                        {"id": "s1", "cell_id": 7, "segment_id": "dcir-discharge"}
+                    ]
+                }
+            },
+            "aggregation": {},
+            "protocol_segments": [],
+            "dcir_segments": [
+                {
+                    "id": "dcir-discharge",
+                    "name": "Discharge pulse",
+                    "targets": [
+                        {
+                            "protocol_signature": "protocol-a",
+                            "rest_step_index": 12,
+                            "pulse_step_index": 13,
+                        }
+                    ],
+                }
+            ],
+            "presentation": {
+                "dcir_view": {
+                    "quantity": "absolute",
+                    "x_axis": "occurrence",
+                    "candidate_filter": {
+                        "min_rest_s": 600,
+                        "max_pulse_s": 120,
+                        "min_ratio": 10,
+                    },
+                }
+            },
+        }
+        changed_view = deepcopy(base)
+        changed_view["presentation"]["dcir_view"] = {
+            "quantity": "relative",
+            "x_axis": "time",
+            "candidate_filter": {
+                "min_rest_s": 1800,
+                "max_pulse_s": 30,
+                "min_ratio": 60,
+            },
+        }
+
+        self.assertEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_view),
+        )
+
+    def test_dcir_series_and_private_targets_change_scientific_cache_spec(self):
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {
+                "dcir": {
+                    "series": [
+                        {"id": "s1", "cell_id": 7, "segment_id": "dcir-discharge"}
+                    ]
+                }
+            },
+            "aggregation": {},
+            "protocol_segments": [
+                {
+                    "id": "shared-rpt",
+                    "name": "Shared RPT",
+                    "targets": [],
+                }
+            ],
+            "dcir_segments": [
+                {
+                    "id": "dcir-discharge",
+                    "name": "Discharge pulse",
+                    "targets": [
+                        {
+                            "protocol_signature": "protocol-a",
+                            "rest_step_index": 12,
+                            "pulse_step_index": 13,
+                        }
+                    ],
+                }
+            ],
+            "presentation": {},
+        }
+        changed_series = deepcopy(base)
+        changed_series["computation"]["dcir"]["series"][0]["cell_id"] = 8
+        changed_target = deepcopy(base)
+        changed_target["dcir_segments"][0]["targets"][0]["pulse_step_index"] = 15
+
+        self.assertNotEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_series),
+        )
+        self.assertNotEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_target),
+        )
+
+    def test_steps_result_schema_version_only_invalidates_steps_results(self):
+        spec = {
+            "selection": {"units": []},
+            "computation": {},
+            "aggregation": {},
+            "presentation": {},
+        }
+        db = object()
+        with (
+            patch.object(analysis_engine, "resolve_selection", return_value=([], [])),
+            patch.object(analysis_engine, "preload_cell_sources"),
+            patch.object(analysis_engine, "load_scalar_metadata", return_value={}),
+        ):
+            cycles_before = analysis_cache.result_key(
+                db, "cycles", spec, None, use_current_versions=True
+            )
+            steps_before = analysis_cache.result_key(
+                db, "steps", spec, None, use_current_versions=True
+            )
+            with patch.dict(analysis_cache.RESULT_SCHEMA_VERSIONS, {"steps": 3}):
+                cycles_after = analysis_cache.result_key(
+                    db, "cycles", spec, None, use_current_versions=True
+                )
+                steps_after = analysis_cache.result_key(
+                    db, "steps", spec, None, use_current_versions=True
+                )
+
+        self.assertEqual(cycles_before, cycles_after)
+        self.assertNotEqual(steps_before, steps_after)
 
 
 class ResultBodySplitTests(AnalysisCacheTests):

@@ -46,16 +46,18 @@ import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
+import { AnalysisWorkspaceTabs } from "./components/AnalysisWorkspaceTabs";
+import { AnalysisWorkspaceContent } from "./components/AnalysisWorkspaceContent";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
 import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
-import { AnalysisPage } from "./pages/AnalysisPage";
 import { InboxPage } from "./pages/InboxPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
+import { invalidateAnalysisQueries } from "./analysisQueryCache";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -277,16 +279,14 @@ export default function App() {
     queryClient.invalidateQueries({ queryKey: ["files"] });
     queryClient.invalidateQueries({ queryKey: ["tree"] });
     queryClient.invalidateQueries({ queryKey: ["activity"] });
-    queryClient.invalidateQueries({ queryKey: ["analysis"] });
     // The list carries sources_changed, so it must refresh too — this is what
     // makes an analysis go bold right after an automatic source check.
     queryClient.invalidateQueries({ queryKey: ["analyses"] });
-    queryClient.invalidateQueries({ queryKey: ["compute"] });
-    queryClient.invalidateQueries({ queryKey: ["time-capacity"] });
-    queryClient.invalidateQueries({ queryKey: ["plot-thumbnail"] });
-    queryClient.invalidateQueries({ queryKey: ["plot-artifact"] });
-    queryClient.invalidateQueries({ queryKey: ["saved-plot-preview"] });
-    queryClient.invalidateQueries({ queryKey: ["saved-time-preview"] });
+    const activeAnalysisMatch = location.pathname.match(/^\/analyses\/(\d+)$/);
+    void invalidateAnalysisQueries(
+      queryClient,
+      activeAnalysisMatch ? Number(activeAnalysisMatch[1]) : null,
+    );
     if (job.status === "failed") {
       notifications.show({ message: job.error || "Source check failed.", color: "red" });
     } else {
@@ -312,7 +312,7 @@ export default function App() {
         invoke("set_tray_status", { message: null }),
       );
     }
-  }, [queryClient, sourceCheckJob.data]);
+  }, [location.pathname, queryClient, sourceCheckJob.data]);
   const guardedNavigate = (path: string) => {
     const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
       cancelable: true,
@@ -566,18 +566,19 @@ export default function App() {
             padding: "var(--mantine-spacing-md)",
           }}
         >
+          {location.pathname.startsWith("/analyses") ? <AnalysisWorkspaceTabs /> : null}
           <RouteErrorBoundary routeKey={location.pathname}>
             <Routes>
               <Route path="/" element={<LibraryPage />} />
               <Route path="/inbox" element={<InboxPage />} />
               <Route path="/projects" element={<ProjectsPage />} />
-              <Route path="/analyses" element={<AnalysesIndexPage />} />
-              <Route path="/analyses/:analysisId" element={<AnalysisPage />} />
+              <Route path="/analyses/*" element={<AnalysisWorkspaceContent />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/monitoring" element={<SettingsPage />} />
               <Route path="/settings/metadata" element={<SettingsPage />} />
               <Route path="/settings/plots" element={<SettingsPage />} />
               <Route path="/settings/desktop" element={<SettingsPage />} />
+              <Route path="/settings/performance" element={<SettingsPage />} />
               <Route path="/settings/cache" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />
             </Routes>

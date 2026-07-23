@@ -132,9 +132,59 @@ class AggregationTests(unittest.TestCase):
         self.assertAlmostEqual(row["charge_time_h"], 1.5)  # cc + cccv
         self.assertAlmostEqual(row["discharge_time_h"], 2.0)
         self.assertAlmostEqual(row["rest_time_h"], 0.25)
-        self.assertAlmostEqual(row["active_time_h"], 3.75)  # every step
+        self.assertAlmostEqual(row["total_time_h"], 3.5)  # charge + discharge
         self.assertEqual(row["step_start"], 84)
         self.assertEqual(row["step_end"], 87)
+
+    def test_elapsed_start_total_time_and_overall_voltage(self):
+        frame = pd.DataFrame(
+            [
+                {
+                    "record_index": 0,
+                    "cycle": 1,
+                    "step_index": 1,
+                    "status": "cc_chg",
+                    "time_s": 3600,
+                    "voltage_v": 3.0,
+                    "charge_capacity_mah": 1.0,
+                    "discharge_capacity_mah": 0.0,
+                    "timestamp": pd.Timestamp("2026-01-01 01:00:00"),
+                },
+                {
+                    "record_index": 1,
+                    "cycle": 1,
+                    "step_index": 2,
+                    "status": "rest",
+                    "time_s": 1800,
+                    "voltage_v": 3.5,
+                    "charge_capacity_mah": 0.0,
+                    "discharge_capacity_mah": 0.0,
+                    "timestamp": pd.Timestamp("2026-01-01 01:30:00"),
+                },
+                {
+                    "record_index": 2,
+                    "cycle": 1,
+                    "step_index": 3,
+                    "status": "cc_dchg",
+                    "time_s": 7200,
+                    "voltage_v": 4.0,
+                    "charge_capacity_mah": 0.0,
+                    "discharge_capacity_mah": 1.0,
+                    "timestamp": pd.Timestamp("2026-01-01 03:00:00"),
+                },
+            ]
+        )
+        out = step_blocks.per_block(
+            frame,
+            {1, 2, 3},
+            "union",
+            origin_timestamp=pd.Timestamp("2026-01-01"),
+        )
+        row = out.iloc[0]
+        self.assertAlmostEqual(row["start_time_h"], 1.0)
+        self.assertAlmostEqual(row["block_duration_h"], 2.0)
+        self.assertAlmostEqual(row["total_time_h"], 3.0)
+        self.assertAlmostEqual(row["mean_voltage_v"], 3.5)
 
     def test_cumulative_cv_time_across_separated_cv_steps(self):
         # The union use case: two explicit CV steps split by a rest. The block's

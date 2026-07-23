@@ -30,7 +30,7 @@ from ..config import CALC_VERSION
 from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
 from . import cache, calc, parsing, protocol, stitch
 
-SPEC_VERSION = 7
+SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
 
 # quantities served to the client: every cached per-cycle column plus
@@ -85,6 +85,7 @@ def default_spec(title: str) -> dict:
         "modified_at": now,
         "selection": {"entries": [], "exclusions": [], "hidden_replicate_group_ids": []},
         "protocol_segments": [],
+        "dcir_segments": [],
         "computation": {
             "cycle_range": {"start": 1, "end": None},
             "exclude_check_cycles_every_n": 0,
@@ -98,6 +99,8 @@ def default_spec(title: str) -> dict:
                 "direction": "charge_minus_discharge",
             },
             "protocol_filter": {"excluded_segment_ids": [], "only_segment_ids": []},
+            "steps": {"series": [], "mode": "union"},
+            "dcir": {"series": []},
         },
         "aggregation": {"mode": "replicate_mean", "dispersion": "std", "min_n_for_band": 2},
         "presentation": {
@@ -106,6 +109,21 @@ def default_spec(title: str) -> dict:
             "show_individual_cells": True,
             "legend": True,
             "hidden_protocol_segment_ids": [],
+            "steps_view": {
+                "quantity": "time",
+                "direction": "charge",
+                "include_rest": False,
+                "x_axis": "occurrence",
+            },
+            "dcir_view": {
+                "quantity": "absolute",
+                "x_axis": "occurrence",
+                "candidate_filter": {
+                    "min_rest_s": 600,
+                    "max_pulse_s": 120,
+                    "min_ratio": 10,
+                },
+            },
         },
         "saved_plots": [],
     }
@@ -862,10 +880,13 @@ def _time_capacity_display_x(
     phases: list[str],
     capacity: np.ndarray,
     capacity_g: np.ndarray,
+    capacity_area: np.ndarray,
     settings: dict,
 ) -> np.ndarray:
     if settings["x_axis"] == "capacity_mah_g":
         values = capacity_g.copy()
+    elif settings["x_axis"] == "capacity_mah_cm2":
+        values = capacity_area.copy()
     elif settings["x_axis"] == "capacity_mah":
         values = capacity.copy()
     else:
@@ -1460,26 +1481,51 @@ def compute(
     }
 
 
-def _segment_steps_by_signature(spec: dict) -> tuple[str | None, dict[str, set[int]]]:
-    """The chosen steps segment resolved to a step set per protocol signature."""
-    steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
-    segment_id = steps_cfg.get("segment_id")
-    if not segment_id:
-        return None, {}
-    segments = {
-        str(seg["id"]): seg
-        for seg in (spec.get("protocol_segments") or [])
-        if isinstance(seg, dict) and seg.get("id") is not None
+def _step_segments(spec: dict) -> dict[str, dict]:
+    return {
+        str(segment["id"]): segment
+        for segment in (spec.get("protocol_segments") or [])
+        if isinstance(segment, dict) and segment.get("id") is not None
     }
-    segment = segments.get(str(segment_id))
-    if segment is None:
-        return str(segment_id), {}
-    by_signature: dict[str, set[int]] = {}
-    for target in segment.get("targets", []) or []:
-        signature = target.get("protocol_signature")
-        if signature:
-            by_signature[str(signature)] = {int(s) for s in target.get("step_indices", [])}
-    return str(segment_id), by_signature
+
+
+def _step_series_config(spec: dict, cells: dict[int, Cell]) -> list[dict]:
+    """Normalize explicit step series, including the legacy single-segment form."""
+    steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
+    configured = steps_cfg.get("series")
+    legacy_segment_id = steps_cfg.get("segment_id")
+    if isinstance(configured, list) and (configured or not legacy_segment_id):
+        series: list[dict] = []
+        seen_ids: set[str] = set()
+        for index, item in enumerate(configured):
+            if not isinstance(item, dict):
+                continue
+            try:
+                cell_id = int(item.get("cell_id"))
+            except (TypeError, ValueError):
+                continue
+            segment_id = str(item.get("segment_id") or "")
+            series_id = str(item.get("id") or f"steps-{cell_id}-{segment_id}-{index}")
+            if cell_id not in cells or not segment_id or series_id in seen_ids:
+                continue
+            seen_ids.add(series_id)
+            series.append(
+                {"id": series_id, "cell_id": cell_id, "segment_id": segment_id}
+            )
+        return series
+
+    # Analyses saved before the series-builder redesign selected one segment
+    # globally. Preserve that view by expanding it to every unique selected cell.
+    if not legacy_segment_id:
+        return []
+    return [
+        {
+            "id": f"legacy-{cell_id}-{legacy_segment_id}",
+            "cell_id": cell_id,
+            "segment_id": str(legacy_segment_id),
+        }
+        for cell_id in sorted(cells)
+    ]
 
 
 def compute_steps(
@@ -1506,108 +1552,162 @@ def compute_steps(
         calc_version = provenance.get("calc_version") or calc_version
 
     steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
-    mode = steps_cfg.get("mode") if steps_cfg.get("mode") in step_blocks.BLOCK_MODES else "union"
-    x_axis = "cycle" if steps_cfg.get("x_axis") == "cycle" else "occurrence"
-    segment_id, steps_by_signature = _segment_steps_by_signature(spec)
-
-    quantity_cols = [col for col, _ in step_blocks.BLOCK_QUANTITIES.values()]
-    selection = spec.get("selection", {})
-    exclusions = selection.get("exclusions", [])
-    hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
-    aggregation = spec.get("aggregation", {})
+    mode = (
+        steps_cfg.get("mode")
+        if steps_cfg.get("mode") in step_blocks.BLOCK_MODES
+        else "union"
+    )
     units, missing_refs = resolve_selection(db, spec)
-    preload_cell_sources(db, [unit["cell"] for unit in units])
+    cell_by_id = {unit["cell"].id: unit["cell"] for unit in units}
+    preload_cell_sources(db, list(cell_by_id.values()))
+    configured_series = _step_series_config(spec, cell_by_id)
+    segments = _step_segments(spec)
+    quantity_cols = [
+        column
+        for column in step_blocks.BLOCK_COLUMNS
+        if column
+        not in {
+            "block",
+            "occurrence",
+            "cycle_start",
+            "cycle_end",
+            "step_start",
+            "step_end",
+            "n_steps",
+        }
+    ]
 
     cell_series: list[dict] = []
-    sources: list[dict] = []
+    sources_by_cell: dict[int, dict] = {}
     badges: list[dict] = []
-    if segment_id is None:
+    if not configured_series:
         badges.append(
             {
-                "kind": "steps_no_segment",
-                "detail": "Choose a protocol segment to define the step block to analyse.",
+                "kind": "steps_no_series",
+                "detail": "Add a cell and protocol segment to define a step series.",
             }
         )
 
-    total_units = len(units)
-    for unit_index, unit in enumerate(units, start=1):
-        cell: Cell = unit["cell"]
+    total_units = len(configured_series)
+    for unit_index, series_cfg in enumerate(configured_series, start=1):
+        cell = cell_by_id[series_cfg["cell_id"]]
+        segment_id = series_cfg["segment_id"]
+        segment = segments.get(segment_id)
+        segment_name = (
+            str(segment.get("name") or segment_id) if segment else segment_id
+        )
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading step data")
         hashes, files = cell_ordered_hashes(db, cell)
         nominal = cell_nominal_capacity_mah(cell)
-        selected: set[int] = set()
-        for source_file in files:
-            signature = protocol_service.reconstruct_protocol(
-                source_file.header_meta, nominal
-            ).get("signature")
-            if signature:
-                selected |= steps_by_signature.get(str(signature), set())
+        targets = {
+            str(target.get("protocol_signature")): {
+                int(step) for step in (target.get("step_indices") or [])
+            }
+            for target in ((segment or {}).get("targets") or [])
+            if target.get("protocol_signature")
+        }
 
-        exclusion = exclusion_for_unit(exclusions, unit)
-        group_hidden = unit["group_id"] in hidden_group_ids
-        excluded = exclusion is not None or group_hidden
-        x: list[int] = []
+        x_occurrence: list[int] = []
+        x_cycle: list[int | None] = []
+        x_time: list[float | None] = []
         quantities: dict[str, list] = {c: [] for c in quantity_cols}
         block_meta: list[dict] = []
+        raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
+        block_frames: list[pd.DataFrame] = []
+        if segment and not raw.empty:
+            raw_timestamps = (
+                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                if "timestamp" in raw.columns
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+            for source_index, source_file in enumerate(files):
+                signature = protocol_service.reconstruct_protocol(
+                    source_file.header_meta, nominal
+                ).get("signature")
+                selected = targets.get(str(signature), set()) if signature else set()
+                if not selected:
+                    continue
+                source_raw = raw.loc[raw["segment"] == source_index].copy()
+                if source_raw.empty:
+                    continue
+                source_raw = source_raw.reset_index(drop=True)
+                source_raw["record_index"] = np.arange(len(source_raw))
+                source_blocks = step_blocks.per_block(
+                    source_raw,
+                    selected,
+                    mode,
+                    origin_timestamp=raw_start,
+                )
+                if not source_blocks.empty:
+                    block_frames.append(source_blocks)
 
-        if selected:
-            raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
-            if not raw.empty:
-                # A single monotonic order across the stitched files so block
-                # segmentation is not confused by per-file record-index resets.
-                raw = raw.reset_index(drop=True)
-                raw["record_index"] = np.arange(len(raw))
-                blocks_df = step_blocks.per_block(raw, selected, mode)
-                if not blocks_df.empty:
-                    key = "cycle_start" if x_axis == "cycle" else "occurrence"
-                    x = [int(v) for v in blocks_df[key]]
-                    quantities = {
-                        c: _jsonsafe(blocks_df[c].to_numpy(dtype="float64"))
-                        if c in blocks_df.columns
-                        else [None] * len(x)
-                        for c in quantity_cols
-                    }
-                    block_meta = blocks_df[
-                        ["block", "occurrence", "cycle_start", "cycle_end", "step_start", "step_end"]
-                    ].to_dict("records")
-        elif segment_id is not None:
+        if block_frames:
+            blocks_df = pd.concat(block_frames, ignore_index=True)
+            blocks_df["block"] = np.arange(1, len(blocks_df) + 1)
+            blocks_df["occurrence"] = np.arange(1, len(blocks_df) + 1)
+            x_occurrence = list(range(1, len(blocks_df) + 1))
+            x_cycle = [
+                int(value) if pd.notna(value) else None
+                for value in blocks_df["cycle_start"]
+            ]
+            x_time = _jsonsafe(blocks_df["start_time_h"].to_numpy(dtype="float64"))
+            quantities = {
+                column: _jsonsafe(blocks_df[column].to_numpy(dtype="float64"))
+                if column in blocks_df.columns
+                else [None] * len(blocks_df)
+                for column in quantity_cols
+            }
+            block_meta = blocks_df[
+                [
+                    "block",
+                    "occurrence",
+                    "cycle_start",
+                    "cycle_end",
+                    "step_start",
+                    "step_end",
+                ]
+            ].to_dict("records")
+        else:
             badges.append(
                 {
                     "kind": "steps_no_match",
+                    "series_id": series_cfg["id"],
                     "cell_id": cell.id,
                     "cell_name": cell.name,
-                    "detail": f"{cell.name} runs a protocol the chosen segment does not target.",
+                    "segment_id": segment_id,
+                    "segment_name": segment_name,
+                    "detail": (
+                        f"{cell.name} has no source matching the protocol targets "
+                        f"for {segment_name}."
+                    ),
                 }
             )
 
         cell_series.append(
             {
+                "series_id": series_cfg["id"],
                 "cell_id": cell.id,
                 "cell_name": cell.name,
-                "label": unit["label"],
-                "group_id": unit["group_id"],
-                "group_name": unit["group_name"],
-                "excluded": excluded,
-                "exclusion_reason": "Replicate hidden"
-                if group_hidden
-                else (exclusion or {}).get("reason"),
-                "archived": cell.archived,
-                "x": x,
+                "segment_id": segment_id,
+                "segment_name": segment_name,
+                "label": f"{cell.name} \u2014 {segment_name}",
+                "x_occurrence": x_occurrence,
+                "x_cycle": x_cycle,
+                "x_time": x_time,
                 "quantities": quantities,
-                "metrics": {"n_blocks": len(x)},
-                "retention_reference_mah": None,
-                "active_mass_mg": cell_active_mass_mg(cell),
+                "n_blocks": len(x_occurrence),
                 "block_meta": block_meta,
-                "segments": [],
             }
         )
-        sources.append(
+        sources_by_cell.setdefault(
+            cell.id,
             {
                 "cell_id": cell.id,
                 "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
                 "file_hashes": hashes,
-            }
+            },
         )
         if progress:
             progress(unit_index, total_units, cell.name, "Grouped step blocks")
@@ -1620,20 +1720,6 @@ def compute_steps(
             }
         )
 
-    aggregates: list[dict] = []
-    if (aggregation.get("mode") or "replicate_mean") == "replicate_mean":
-        by_group: dict[int, list[dict]] = {}
-        group_names: dict[int, str] = {}
-        for s in cell_series:
-            if s["group_id"] is not None and not s["excluded"] and len(s["x"]):
-                by_group.setdefault(s["group_id"], []).append(s)
-                group_names[s["group_id"]] = s["group_name"]
-        for gid, members in by_group.items():
-            agg = aggregate_series(members, quantity_cols, aggregation)
-            agg["group_id"] = gid
-            agg["group_name"] = group_names[gid]
-            aggregates.append(agg)
-
     return {
         "computed_at": now_iso(),
         "type": "steps",
@@ -1641,16 +1727,244 @@ def compute_steps(
         "calc_version": calc_version,
         "current_parser_version": parsing.PARSER_VERSION,
         "current_calc_version": CALC_VERSION,
-        "steps": {"segment_id": segment_id, "mode": mode, "x_axis": x_axis},
-        "quantities": [
-            {"key": key, "column": col, "label": label}
-            for key, (col, label) in step_blocks.BLOCK_QUANTITIES.items()
-        ],
+        "steps": {"series": configured_series, "mode": mode},
         "cell_series": cell_series,
-        "aggregates": aggregates,
-        "group_metrics": [],
         "badges": badges,
-        "sources": sources,
+        "sources": list(sources_by_cell.values()),
+    }
+
+
+def _dcir_segments(spec: dict) -> dict[str, dict]:
+    return {
+        str(segment["id"]): segment
+        for segment in (spec.get("dcir_segments") or [])
+        if isinstance(segment, dict) and segment.get("id") is not None
+    }
+
+
+def _dcir_series_config(spec: dict, cells: dict[int, Cell]) -> list[dict]:
+    configured = (
+        ((spec.get("computation") or {}).get("dcir") or {}).get("series") or []
+    )
+    series: list[dict] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(configured if isinstance(configured, list) else []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            cell_id = int(item.get("cell_id"))
+        except (TypeError, ValueError):
+            continue
+        segment_id = str(item.get("segment_id") or "")
+        series_id = str(item.get("id") or f"dcir-{cell_id}-{segment_id}-{index}")
+        if cell_id not in cells or not segment_id or series_id in seen_ids:
+            continue
+        seen_ids.add(series_id)
+        series.append({"id": series_id, "cell_id": cell_id, "segment_id": segment_id})
+    return series
+
+
+def compute_dcir(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    use_current_versions: bool = False,
+    progress: ProgressCallback | None = None,
+) -> dict:
+    """Compute one DCIR line for every explicit (cell, DCIR segment) pair."""
+    from . import dcir
+    from . import protocol as protocol_service
+
+    parser_version = parsing.PARSER_VERSION
+    calc_version = CALC_VERSION
+    if provenance and not use_current_versions:
+        parser_version = provenance.get("parser_version") or parser_version
+        calc_version = provenance.get("calc_version") or calc_version
+
+    units, missing_refs = resolve_selection(db, spec)
+    cell_by_id = {unit["cell"].id: unit["cell"] for unit in units}
+    preload_cell_sources(db, list(cell_by_id.values()))
+    configured_series = _dcir_series_config(spec, cell_by_id)
+    segments = _dcir_segments(spec)
+    badges: list[dict] = []
+    cell_series: list[dict] = []
+    sources_by_cell: dict[int, dict] = {}
+    if not configured_series:
+        badges.append(
+            {
+                "kind": "dcir_no_series",
+                "detail": "Add a cell and DCIR segment to define a resistance series.",
+            }
+        )
+
+    for series_index, series_cfg in enumerate(configured_series, start=1):
+        cell = cell_by_id[series_cfg["cell_id"]]
+        segment = segments.get(series_cfg["segment_id"])
+        segment_name = str(
+            (segment or {}).get("name") or series_cfg["segment_id"]
+        )
+        if progress:
+            progress(
+                series_index - 1,
+                len(configured_series),
+                cell.name,
+                "Reading DCIR pulse data",
+            )
+        hashes, files = cell_ordered_hashes(db, cell)
+        nominal = cell_nominal_capacity_mah(cell)
+        targets = {
+            str(target.get("protocol_signature")): target
+            for target in ((segment or {}).get("targets") or [])
+            if isinstance(target, dict) and target.get("protocol_signature")
+        }
+        raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
+        raw_timestamps = (
+            pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+            if not raw.empty and "timestamp" in raw.columns
+            else pd.Series(dtype="datetime64[ns]")
+        )
+        raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+        occurrence_frames: list[pd.DataFrame] = []
+        matched_target: dict | None = None
+        for source_index, source_file in enumerate(files):
+            signature = protocol_service.reconstruct_protocol(
+                source_file.header_meta, nominal
+            ).get("signature")
+            target = targets.get(str(signature)) if signature else None
+            if not target or raw.empty:
+                continue
+            try:
+                rest_step = int(target.get("rest_step_index"))
+                pulse_step = int(target.get("pulse_step_index"))
+            except (TypeError, ValueError):
+                continue
+            direction = str(target.get("direction") or "")
+            if direction not in {"charge", "discharge"}:
+                continue
+            source_raw = raw.loc[raw["segment"] == source_index].copy()
+            occurrences = dcir.per_occurrence(
+                source_raw,
+                rest_step_index=rest_step,
+                pulse_step_index=pulse_step,
+                direction=direction,
+                nominal_capacity_mah=nominal,
+                origin_timestamp=raw_start,
+            )
+            if not occurrences.empty:
+                occurrence_frames.append(occurrences)
+                matched_target = target
+
+        if occurrence_frames:
+            occurrences = pd.concat(occurrence_frames, ignore_index=True)
+            occurrences["occurrence"] = np.arange(1, len(occurrences) + 1)
+            absolute = occurrences["dcir_mohm"].to_numpy(dtype="float64")
+            relative = np.full(len(absolute), np.nan, dtype="float64")
+            finite = np.flatnonzero(np.isfinite(absolute))
+            if len(finite) and abs(absolute[finite[0]]) > 1e-12:
+                reference = absolute[finite[0]]
+                relative = 100.0 * (absolute - reference) / reference
+            x_occurrence = list(range(1, len(occurrences) + 1))
+            x_cycle = _jsonsafe_int(occurrences["cycle"])
+            x_time = _jsonsafe(occurrences["start_time_h"])
+            dcir_mohm = _jsonsafe(absolute)
+            dcir_change_pct = _jsonsafe(relative)
+            measurement_meta = occurrences[
+                [
+                    "occurrence",
+                    "cycle",
+                    "start_time_h",
+                    "v_rest_v",
+                    "v_pulse_v",
+                    "current_ma",
+                    "c_rate",
+                    "rest_duration_s",
+                    "pulse_duration_s",
+                ]
+            ].to_dict("records")
+        else:
+            x_occurrence = []
+            x_cycle = []
+            x_time = []
+            dcir_mohm = []
+            dcir_change_pct = []
+            measurement_meta = []
+            badges.append(
+                {
+                    "kind": "dcir_no_match",
+                    "series_id": series_cfg["id"],
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "segment_id": series_cfg["segment_id"],
+                    "segment_name": segment_name,
+                    "detail": (
+                        f"{cell.name} has no valid adjacent rest/pulse occurrences "
+                        f"for {segment_name}."
+                    ),
+                }
+            )
+
+        direction = str((matched_target or {}).get("direction") or "")
+        c_rate = (matched_target or {}).get("c_rate")
+        current_ma = (matched_target or {}).get("current_ma")
+        cell_series.append(
+            {
+                "series_id": series_cfg["id"],
+                "cell_id": cell.id,
+                "cell_name": cell.name,
+                "segment_id": series_cfg["segment_id"],
+                "segment_name": segment_name,
+                "label": f"{cell.name} \u2014 {segment_name}",
+                "direction": direction or None,
+                "c_rate": c_rate,
+                "current_ma": current_ma,
+                "x_occurrence": x_occurrence,
+                "x_cycle": x_cycle,
+                "x_time": x_time,
+                "quantities": {
+                    "dcir_mohm": dcir_mohm,
+                    "dcir_change_pct": dcir_change_pct,
+                },
+                "n_measurements": len(x_occurrence),
+                "measurement_meta": measurement_meta,
+            }
+        )
+        sources_by_cell.setdefault(
+            cell.id,
+            {
+                "cell_id": cell.id,
+                "test_ids": [test.id for test in sorted(cell.tests, key=lambda t: t.id)],
+                "file_hashes": hashes,
+            },
+        )
+        if progress:
+            progress(
+                series_index,
+                len(configured_series),
+                cell.name,
+                "Calculated DCIR measurements",
+            )
+
+    for miss in missing_refs:
+        badges.append(
+            {
+                "kind": "missing_reference",
+                "detail": (
+                    f"Selection references {miss['kind']} #{miss['ref_id']}, "
+                    "which no longer exists."
+                ),
+            }
+        )
+    return {
+        "computed_at": now_iso(),
+        "type": "dcir",
+        "parser_version": parser_version,
+        "calc_version": calc_version,
+        "current_parser_version": parsing.PARSER_VERSION,
+        "current_calc_version": CALC_VERSION,
+        "dcir": {"series": configured_series},
+        "cell_series": cell_series,
+        "badges": badges,
+        "sources": list(sources_by_cell.values()),
     }
 
 
@@ -1766,6 +2080,12 @@ def compute_time_capacity(
         electrode_area_cm2 = cell_electrode_area_cm2(cell)
         active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
         capacity_g = capacity / active_mass_g if active_mass_g and active_mass_g > 0 else np.full(len(raw), np.nan)
+        # A user-supplied area overrides the metadata; areal capacity is
+        # area-normalised here so switching to it needs no client-side area.
+        area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
+        capacity_area = (
+            capacity / area_cm2 if area_cm2 and area_cm2 > 0 else np.full(len(raw), np.nan)
+        )
         derivative_x, derivative_y = _derivative_curve(
             raw, phases, capacity, capacity_g, settings
         )
@@ -1809,7 +2129,11 @@ def compute_time_capacity(
         for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
             values[plot_mask] = np.nan
 
-        display_x = _time_capacity_display_x(raw, phases, capacity, capacity_g, settings)
+        for values in (capacity_area,):
+            values[plot_mask] = np.nan
+        display_x = _time_capacity_display_x(
+            raw, phases, capacity, capacity_g, capacity_area, settings
+        )
         if len(raw) > configured_max:
             envelope_series = (
                 [derivative_x, derivative_y]
@@ -1828,6 +2152,7 @@ def compute_time_capacity(
             current = current[take]
             capacity = capacity[take]
             capacity_g = capacity_g[take]
+            capacity_area = capacity_area[take]
             derivative_x = derivative_x[take]
             derivative_y = derivative_y[take]
 
@@ -1864,6 +2189,11 @@ def compute_time_capacity(
                 "capacity_mah_g": (
                     _jsonsafe_plot(capacity_g, None if full_precision else 5)
                     if not compact or (not is_derivative and x_axis == "capacity_mah_g")
+                    else []
+                ),
+                "capacity_mah_cm2": (
+                    _jsonsafe_plot(capacity_area, None if full_precision else 5)
+                    if not compact or (not is_derivative and x_axis == "capacity_mah_cm2")
                     else []
                 ),
                 "voltage_v": _jsonsafe_plot(voltage, None if full_precision else 5) if not compact or not is_derivative else [],

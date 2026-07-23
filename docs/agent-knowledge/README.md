@@ -12,12 +12,15 @@ that matches the change, then follow its links to the authoritative implementati
   React Query persistence, analysis rendering, and performance failure modes.
 - [`change-playbooks.md`](change-playbooks.md): checklists for schema, scientific calculations,
   frontend server state, releases, and Windows packaging.
+- [`dcir-analysis.md`](dcir-analysis.md): DCIR rest/pulse recognition, calculation rules, private
+  segment ownership, series structure, and cache boundaries.
 
 Existing specialist references:
 
 - [`../database-migrations.md`](../database-migrations.md)
 - [`../parser-capacity-findings.md`](../parser-capacity-findings.md)
 - [`../portable-analysis-html.md`](../portable-analysis-html.md)
+- [`../steps-tab-series-redesign.md`](../steps-tab-series-redesign.md)
 - [`../local-development.md`](../local-development.md)
 - [`../windows-packaging.md`](../windows-packaging.md)
 - [`../tauri-packaging-lessons.md`](../tauri-packaging-lessons.md)

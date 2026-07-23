@@ -1,9 +1,7 @@
-# Steps tab — series-builder redesign (handoff)
+# Steps tab series-builder architecture
 
-Design agreed with the user, partially started. **The working state is committed at
-`700bb6c`**; the only uncommitted change is one edit to `backend/app/services/step_blocks.py`
-(BLOCK_COLUMNS extended — see "In-progress edit" below). Decide whether to keep or revert that
-before starting.
+The Steps tab is implemented around explicit `(cell, protocol segment)` series. This document
+records the data contract and the decisions that must remain stable when the tab is extended.
 
 ## What exists today (committed, working, verified)
 
@@ -11,16 +9,16 @@ before starting.
   `union` (whole selected block per occurrence) and `contiguous` (each uninterrupted run). Verified
   on cell 12 (`JR_ME_LPMol_511_ALAVA-1-4FC`), fast-charge block 84–90 → 38 occurrences, CV time
   0.110→0.045 h. Tests: `tests/test_step_blocks.py` (10, passing).
-- `analysis_engine.compute_steps` — one series **per cell**, using a single global
-  `spec.computation.steps.segment_id` matched to each cell by protocol signature. Result shape
-  mirrors `compute` (cell_series with `x`/`quantities`, aggregates, quantities catalogue).
+- `analysis_engine.compute_steps` — one series per explicit `(cell, segment)` pair, matched to
+  each source file by protocol signature. Older specs with a single global `segment_id` are
+  expanded to every selected cell for compatibility.
 - `POST /api/analyses/{id}/steps` — cached under kind `"steps"`.
 - Frontend `frontend/src/components/StepsPlotCard.tsx` — `StepsPlotCard` + `StepsSettings`, reusing
   the exported `PlotHeader`/`PlotStylePanel`/`currentPlotStyle`/`plotPalette`/`tracesToColumns`/
   `downloadDataExport` from `AnalysisPage.tsx`. Tab wired into `AnalysisPage.tsx` (tab key `"steps"`
   in `api.ts` ANALYSIS_TAB_KEYS, tab def, sidebar `StepsSettings`, `Tabs.Panel value="steps"`).
 
-## The redesign (what to build)
+## Series model
 
 The steps tab's unit of a **line is a (cell, segment) pair**, not a cell. This lets you plot the
 same cell under two segments, or two cells whose FC segments have *different* step structures
@@ -81,7 +79,7 @@ Frontend maps (base, direction, include_rest) → a backend column:
 |---|---|---|
 | Time | charge | `charge_time_h` |
 | Time | discharge | `discharge_time_h` |
-| Time | total, rest on | `active_time_h` |
+| Time | total, rest on | `block_duration_h` |
 | Time | total, rest off | `total_time_h` |
 | CV charge time | — | `cv_charge_time_h` |
 | Voltage | charge | `mean_charge_voltage_v` |
@@ -94,6 +92,10 @@ Frontend maps (base, direction, include_rest) → a backend column:
 Rationale for keeping "total" off capacity: charge and discharge capacity are physically distinct,
 not two halves of a sum — a "total capacity" number would be untrustworthy. (User agreed.)
 
+`active_time_h` is intentionally not part of the model. The total-time selector already expresses
+both useful meanings: elapsed block duration when rest is included, and summed charge plus
+discharge phase time when it is excluded.
+
 ### 3. X-axis dropdown: occurrence / cycle / time
 
 Replace the occurrence/cycle segmented toggle with a **3-way dropdown adding "time"**. Time =
@@ -101,7 +103,7 @@ elapsed hours at the block's start, relative to the cell's raw start (`start_tim
 compares cleanly across protocols (both start at 1); cycle and time put differing protocols on
 different scales — that's fine, keep all three.
 
-## Backend column additions needed (per_block)
+## Backend block columns
 
 Add three columns so the view controls have data:
 - `total_time_h` = `charge_time_h + discharge_time_h` (excludes rest).
@@ -110,19 +112,8 @@ Add three columns so the view controls have data:
   raw start once from the full `df["timestamp"].min()` inside `per_block` before segmentation, then
   per block use its own `timestamp.min()`.
 
-Extend `BLOCK_COLUMNS` and populate these in the `per_block` row dict. Add tests mirroring the
-existing ones (a synthetic block with known charge/discharge/rest and two timestamps → known
-`total_time_h`, `start_time_h`, `mean_voltage_v`). Keep `BLOCK_QUANTITIES` only if still referenced;
-the frontend now drives quantity selection, so the catalogue may be dropped or repurposed to label
-the base quantities.
-
-### In-progress edit (uncommitted)
-
-`step_blocks.py` `BLOCK_COLUMNS` was already extended with `start_time_h`, `total_time_h`,
-`mean_voltage_v` and `BLOCK_QUANTITIES` was removed in the same edit. **`per_block` does not yet
-populate the three new columns**, so it will raise/emit NaN for them until you add them, and
-`compute_steps` still imports `BLOCK_QUANTITIES` (will break). Either finish the population + fix
-the `compute_steps` import, or `git checkout backend/app/services/step_blocks.py` to start clean.
+`BLOCK_COLUMNS` and `per_block` expose all three. `BLOCK_QUANTITIES` was removed because the
+frontend owns the user-facing base-quantity and direction mapping.
 
 ## Frontend build
 

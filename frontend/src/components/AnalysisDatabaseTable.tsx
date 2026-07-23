@@ -23,6 +23,8 @@ import {
   IconColumns3,
   IconDotsVertical,
   IconFilter,
+  IconFolder,
+  IconLayoutSidebarRight,
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
@@ -35,8 +37,13 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 
-import type { AnalysisSummary } from "../api";
+import { get, type AnalysisFull, type AnalysisSavedPlotSummary, type AnalysisSummary } from "../api";
+import {
+  AnalysisSamplePreviewModal,
+  type AnalysisSamplePreview,
+} from "./AnalysisSamplePreviewModal";
 
 type ColumnKey = "title" | "samples" | "plots" | "folder" | "created" | "modified";
 type SortDirection = "asc" | "desc";
@@ -168,12 +175,51 @@ function sortValue(row: AnalysisSummary, column: ColumnKey): string | number {
   return new Date(row.modified_at).getTime();
 }
 
-function PlotSummary({ analysis }: { analysis: AnalysisSummary }) {
+function CachedPlotThumbnail({ analysisId, plotId }: { analysisId: number; plotId: string }) {
+  const thumbnail = useQuery({
+    queryKey: ["analysis-database-thumbnail", analysisId, plotId],
+    queryFn: () =>
+      get<{ thumbnail: string }>(
+        `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}/thumbnail/latest`
+          + "?variant=preview"
+    ),
+    staleTime: Infinity,
+    retry: false,
+    refetchInterval: (query) => query.state.data?.thumbnail ? false : 3_000,
+  });
+  if (thumbnail.data?.thumbnail) {
+    return (
+      <Box
+        component="img"
+        src={thumbnail.data.thumbnail}
+        alt="Cached plot preview"
+        w="100%"
+        h="100%"
+        style={{ display: "block", objectFit: "contain" }}
+      />
+    );
+  }
+  return (
+    <Text size="xs" c="dimmed" ta="center">
+      {thumbnail.isLoading ? "Loading preview..." : "Preview not cached"}
+    </Text>
+  );
+}
+
+function PlotSummary({
+  analysis,
+  onOpenPlot,
+}: {
+  analysis: AnalysisSummary;
+  onOpenPlot: (analysis: AnalysisSummary, plot: AnalysisSavedPlotSummary, background: boolean) => void;
+}) {
   const plots = savedPlots(analysis);
   const count = plots.length;
+  const [hoveredPlotId, setHoveredPlotId] = useState(plots[0]?.id ?? null);
+  const hoveredPlot = plots.find((plot) => plot.id === hoveredPlotId) ?? plots[0];
   if (!count) return <Text size="sm" c="dimmed">No plots</Text>;
   return (
-    <HoverCard width={360} shadow="md" position="right" openDelay={180} withinPortal>
+    <HoverCard width={760} shadow="md" position="right" openDelay={160} closeDelay={120} withinPortal>
       <HoverCard.Target>
         <UnstyledButton onClick={(event) => event.stopPropagation()}>
           <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
@@ -182,16 +228,127 @@ function PlotSummary({ analysis }: { analysis: AnalysisSummary }) {
         </UnstyledButton>
       </HoverCard.Target>
       <HoverCard.Dropdown>
-        <Stack gap={8} mah={300} style={{ overflowY: "auto" }}>
-          {plots.map((plot) => (
-            <Box key={plot.id}>
-              <Text size="sm" fw={600}>{plot.name}</Text>
-              <Text size="xs" c="dimmed">
-                {formatTab(plot.tab)} - {plot.subtitle || humanize(plot.quantity)}
-              </Text>
+        <Group align="stretch" gap="md" wrap="nowrap">
+          <Stack gap={4} w={330} mah={330} style={{ overflowY: "auto" }}>
+            {plots.map((plot) => (
+              <UnstyledButton
+                key={plot.id}
+                p="xs"
+                onMouseEnter={() => setHoveredPlotId(plot.id)}
+                onFocus={() => setHoveredPlotId(plot.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenPlot(analysis, plot, event.ctrlKey || event.metaKey);
+                }}
+                style={{
+                  borderRadius: 5,
+                  background: hoveredPlot?.id === plot.id ? "var(--mantine-color-teal-0)" : undefined,
+                }}
+              >
+                <Text size="sm" fw={600}>{plot.name}</Text>
+                <Text size="xs" c="dimmed">
+                  {formatTab(plot.tab)} - {plot.subtitle || humanize(plot.quantity)}
+                </Text>
+              </UnstyledButton>
+            ))}
+          </Stack>
+          <Box w={390} style={{ flexShrink: 0 }}>
+            <Box
+              bg="gray.0"
+              style={{ aspectRatio: "4 / 3", display: "grid", placeItems: "center", overflow: "hidden" }}
+            >
+              {hoveredPlot ? (
+                <CachedPlotThumbnail analysisId={analysis.id} plotId={hoveredPlot.id} />
+              ) : null}
             </Box>
-          ))}
-        </Stack>
+            <Text size="xs" c="dimmed" mt={6} truncate>{hoveredPlot?.name}</Text>
+          </Box>
+        </Group>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
+function SampleSummary({
+  analysis,
+  onPreview,
+}: {
+  analysis: AnalysisSummary;
+  onPreview: (sample: NonNullable<AnalysisSamplePreview>) => void;
+}) {
+  const [activated, setActivated] = useState(false);
+  const detail = useQuery({
+    queryKey: ["analysis", analysis.id],
+    queryFn: () => get<AnalysisFull>(`/api/analyses/${analysis.id}`),
+    enabled: activated,
+    staleTime: 60_000,
+  });
+  const count = sampleCount(analysis);
+  return (
+    <HoverCard width={380} shadow="md" position="right" openDelay={160} closeDelay={120} withinPortal>
+      <HoverCard.Target>
+        <UnstyledButton
+          onMouseEnter={() => setActivated(true)}
+          onFocus={() => setActivated(true)}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
+            {count} cell{count === 1 ? "" : "s"}
+          </Text>
+          {(analysis.n_replicate_groups ?? 0) > 0 && (
+            <Text size="xs" c="dimmed">
+              {analysis.n_replicate_groups} replicate{analysis.n_replicate_groups === 1 ? "" : "s"}
+            </Text>
+          )}
+        </UnstyledButton>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        {detail.isLoading ? (
+          <Text size="sm" c="dimmed">Loading samples...</Text>
+        ) : detail.isError ? (
+          <Text size="sm" c="red">Could not load samples.</Text>
+        ) : (
+          <Stack gap="sm" mah={360} style={{ overflowY: "auto" }}>
+            {(detail.data?.selection_groups.length ?? 0) > 0 && (
+              <Stack gap={3}>
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase">Replicates</Text>
+                {detail.data!.selection_groups.map((group) => (
+                  <UnstyledButton
+                    key={group.id}
+                    p="xs"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onPreview({ kind: "replicate", id: group.id, name: group.name });
+                    }}
+                    style={{ borderRadius: 5 }}
+                  >
+                    <Text size="sm" fw={600}>{group.name}</Text>
+                    <Text size="xs" c="dimmed">{group.cells.length} cells</Text>
+                  </UnstyledButton>
+                ))}
+              </Stack>
+            )}
+            {(detail.data?.selection_cells.length ?? 0) > 0 && (
+              <Stack gap={3}>
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase">Individual cells</Text>
+                {detail.data!.selection_cells.map((cell) => (
+                  <UnstyledButton
+                    key={cell.id}
+                    p="xs"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onPreview({ kind: "cell", id: cell.id, name: cell.name });
+                    }}
+                    style={{ borderRadius: 5 }}
+                  >
+                    <Text size="sm" fw={600}>{cell.name}</Text>
+                    {cell.description ? <Text size="xs" c="dimmed" lineClamp={1}>{cell.description}</Text> : null}
+                  </UnstyledButton>
+                ))}
+              </Stack>
+            )}
+          </Stack>
+        )}
       </HoverCard.Dropdown>
     </HoverCard>
   );
@@ -365,14 +522,21 @@ export function AnalysisDatabaseTable({
   onOpen,
   onRemove,
   removing,
+  openIds,
+  onOpenPlot,
+  onOpenFolder,
 }: {
   rows: AnalysisSummary[];
-  onOpen: (id: number) => void;
+  onOpen: (analysis: AnalysisSummary, background: boolean) => void;
   onRemove: (ids: number[]) => void;
   removing: boolean;
+  openIds: Set<number>;
+  onOpenPlot: (analysis: AnalysisSummary, plot: AnalysisSavedPlotSummary, background: boolean) => void;
+  onOpenFolder: (folderId: number) => void;
 }) {
   const preferences = useMemo(loadPreferences, []);
   const [search, setSearch] = useState("");
+  const [openOnly, setOpenOnly] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [lastSelected, setLastSelected] = useState<number | null>(null);
   const [sort, setSortState] = useState<{ column: ColumnKey; direction: SortDirection }>({
@@ -382,6 +546,7 @@ export function AnalysisDatabaseTable({
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [widths, setWidths] = useState(preferences.widths);
   const [visible, setVisible] = useState(preferences.visible);
+  const [samplePreview, setSamplePreview] = useState<AnalysisSamplePreview>(null);
   const resizeCleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -405,6 +570,7 @@ export function AnalysisDatabaseTable({
     const searchText = search.trim().toLocaleLowerCase();
     const titleFilter = filters.title.trim().toLocaleLowerCase();
     const filtered = rows.filter((row) => {
+      if (openOnly && !openIds.has(row.id)) return false;
       if (searchText && !row.title.toLocaleLowerCase().includes(searchText)) return false;
       if (titleFilter && !row.title.toLocaleLowerCase().includes(titleFilter)) return false;
       if (filters.samplesMin !== null && sampleCount(row) < filters.samplesMin) return false;
@@ -427,7 +593,7 @@ export function AnalysisDatabaseTable({
         : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
       return sort.direction === "asc" ? comparison : -comparison;
     });
-  }, [filters, rows, search, sort]);
+  }, [filters, openIds, openOnly, rows, search, sort]);
 
   const visibleColumns = (Object.keys(DEFAULT_WIDTHS) as ColumnKey[]).filter((key) => visible[key]);
   const displayedIds = displayed.map((row) => row.id);
@@ -494,6 +660,14 @@ export function AnalysisDatabaseTable({
           w="min(420px, 100%)"
         />
         <Group gap="xs" wrap="nowrap">
+          <Button
+            variant={openOnly ? "light" : "default"}
+            color={openOnly ? "teal" : "gray"}
+            leftSection={<IconLayoutSidebarRight size={16} />}
+            onClick={() => setOpenOnly((current) => !current)}
+          >
+            Open only
+          </Button>
           <Menu closeOnItemClick={false} withinPortal position="bottom-end" shadow="md">
             <Menu.Target>
               <Button variant="default" leftSection={<IconColumns3 size={16} />}>Columns</Button>
@@ -577,7 +751,7 @@ export function AnalysisDatabaseTable({
             {displayed.map((analysis) => (
               <Table.Tr
                 key={analysis.id}
-                onClick={() => onOpen(analysis.id)}
+                onClick={(event) => onOpen(analysis, event.ctrlKey || event.metaKey)}
                 style={{
                   cursor: "pointer",
                   background: analysis.sources_changed ? "rgba(18, 184, 134, 0.045)" : undefined,
@@ -609,22 +783,36 @@ export function AnalysisDatabaseTable({
                       <Text size="sm" fw={analysis.sources_changed ? 700 : 500} truncate>
                         {analysis.title}
                       </Text>
+                      {openIds.has(analysis.id) ? (
+                        <Tooltip label="Open in analysis workspace">
+                          <IconLayoutSidebarRight
+                            aria-label="Open analysis"
+                            size={15}
+                            color="var(--mantine-color-teal-6)"
+                            style={{ flexShrink: 0 }}
+                          />
+                        </Tooltip>
+                      ) : null}
                     </Group>
                   </Table.Td>
                 )}
-                {visible.samples && (
-                  <Table.Td>
-                    <Text size="sm">{sampleCount(analysis)} cell{sampleCount(analysis) === 1 ? "" : "s"}</Text>
-                    {(analysis.n_replicate_groups ?? 0) > 0 && (
-                      <Text size="xs" c="dimmed">
-                        {analysis.n_replicate_groups} replicate{analysis.n_replicate_groups === 1 ? "" : "s"}
-                      </Text>
-                    )}
-                  </Table.Td>
-                )}
-                {visible.plots && <Table.Td><PlotSummary analysis={analysis} /></Table.Td>}
+                {visible.samples && <Table.Td><SampleSummary analysis={analysis} onPreview={setSamplePreview} /></Table.Td>}
+                {visible.plots && <Table.Td><PlotSummary analysis={analysis} onOpenPlot={onOpenPlot} /></Table.Td>}
                 {visible.folder && (
-                  <Table.Td><Text size="sm" c={analysis.folder ? undefined : "dimmed"} truncate>{analysis.folder?.name ?? "No folder"}</Text></Table.Td>
+                  <Table.Td>
+                    {analysis.folder ? (
+                      <UnstyledButton
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenFolder(analysis.folder!.id);
+                        }}
+                        style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%" }}
+                      >
+                        <IconFolder size={14} color="var(--mantine-color-teal-6)" />
+                        <Text size="sm" td="underline" truncate>{analysis.folder.name}</Text>
+                      </UnstyledButton>
+                    ) : <Text size="sm" c="dimmed">No folder</Text>}
+                  </Table.Td>
                 )}
                 {visible.created && <Table.Td><Text size="xs" c="dimmed">{formatDate(analysis.created_at)}</Text></Table.Td>}
                 {visible.modified && <Table.Td><Text size="xs" c="dimmed">{formatDate(analysis.modified_at)}</Text></Table.Td>}
@@ -650,6 +838,7 @@ export function AnalysisDatabaseTable({
       {displayed.length === 0 && (
         <Text size="sm" c="dimmed" ta="center" py="lg">No analyses match the current filters.</Text>
       )}
+      <AnalysisSamplePreviewModal selection={samplePreview} onClose={() => setSamplePreview(null)} />
     </Stack>
   );
 }

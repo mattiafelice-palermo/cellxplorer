@@ -24,7 +24,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconActivityHeartbeat, IconChartLine, IconDatabaseCog, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconHistory, IconInfoCircle, IconPlus, IconRefresh, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
+import { IconActivityHeartbeat, IconChartLine, IconDatabaseCog, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconGauge, IconHistory, IconInfoCircle, IconPlus, IconRefresh, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -50,6 +50,11 @@ import {
 import { isTauriApp } from "../downloads";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { WARMUP_NOW_EVENT } from "../components/CacheWarmupCoordinator";
+import {
+  loadAnalysisWorkspaceMemoryPolicy,
+  saveAnalysisWorkspaceMemoryPolicy,
+  type AnalysisWorkspaceMemoryPolicy,
+} from "../analysisWorkspace";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -102,6 +107,9 @@ export function SettingsPage() {
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
+  const [analysisMemoryPolicy, setAnalysisMemoryPolicy] = useState<AnalysisWorkspaceMemoryPolicy>(
+    loadAnalysisWorkspaceMemoryPolicy,
+  );
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -114,6 +122,8 @@ export function SettingsPage() {
       ? "plots"
     : location.pathname.endsWith("/desktop")
       ? "desktop"
+    : location.pathname.endsWith("/performance")
+      ? "performance"
       : "downloads";
   const settings = useQuery({
     queryKey: ["settings"],
@@ -605,6 +615,8 @@ export function SettingsPage() {
                 ? "/settings/plots"
               : value === "desktop"
                 ? "/settings/desktop"
+              : value === "performance"
+                ? "/settings/performance"
                 : "/settings",
         )}
       >
@@ -614,6 +626,7 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
+          <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
         </Tabs.List>
@@ -1433,6 +1446,40 @@ export function SettingsPage() {
               <Text size="sm" c="dimmed">
                 Right-click the tray icon to open CellXplorer, check and update active-cell sources, or quit completely.
               </Text>
+            </Stack>
+          </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="performance" pt="lg">
+          <Paper withBorder p="lg">
+            <Stack gap="md">
+              <div>
+                <Title order={4}>Analysis tabs</Title>
+                <Text c="dimmed" size="sm">
+                  Choose whether analyses remain ready in memory while you switch between tabs.
+                </Text>
+              </div>
+              <SegmentedControl
+                fullWidth
+                value={analysisMemoryPolicy}
+                onChange={(value) => {
+                  const policy = value as AnalysisWorkspaceMemoryPolicy;
+                  setAnalysisMemoryPolicy(policy);
+                  saveAnalysisWorkspaceMemoryPolicy(policy);
+                }}
+                data={[
+                  { value: "keep-mounted", label: "Keep open analyses in memory" },
+                  { value: "unmount", label: "Release inactive analyses" },
+                ]}
+              />
+              <Text size="sm">
+                {analysisMemoryPolicy === "keep-mounted"
+                  ? "Recommended for fast switching. Analyses visited in this session stay mounted and may use additional RAM and graphics memory."
+                  : "Uses fewer resources. Returning to an analysis may briefly rebuild its interactive plot from cache."}
+              </Text>
+              <Alert color="teal" variant="light">
+                Hidden analyses do not recompute together after a source update. The visible analysis refreshes first; another tab refreshes when you open it.
+              </Alert>
             </Stack>
           </Paper>
         </Tabs.Panel>

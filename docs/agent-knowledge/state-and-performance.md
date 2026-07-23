@@ -55,10 +55,83 @@ fallbacks are persisted artifacts. Updating a saved plot must invalidate and reg
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
 
+Each saved plot has two lightweight, legend-free image derivatives stored in the same cache record:
+a compact wide thumbnail for saved-plot rows and portable-report selection, plus a separately
+laid-out 4:3 preview for analysis-database hover panels. Do not make a 4:3 preview by fitting the
+wide portable SVG into a 4:3 canvas; Plotly must first re-layout the figure at 4:3 or the result is
+only a letterboxed wide plot. The renderer writes WebP when the browser supports it and falls back
+to PNG. A cache record is prepared only when both derivatives exist. A thumbnail-rendering change
+must bump both
+`SAVED_PLOT_THUMBNAIL_RENDER_VERSION` in `frontend/src/analysisPlotPolicy.ts` and
+`THUMBNAIL_CACHE_VERSION` in `backend/app/services/analysis_cache.py`. Prepared markers record the
+backend version, so the idle coordinator requeues obsolete thumbnails while reusing an existing
+full plot artifact whenever possible. The coordinator's cheap analysis probe must include that
+renderer version; otherwise a previously completed all-ready scan can suppress the migration.
+Likewise, a thumbnail embedded in an older full artifact is not proof that the dedicated current-
+version thumbnail exists: rebuild from the cached SVG and complete warmup only after the versioned
+thumbnail cache has been written.
+
 Time/capacity views limit each displayed trace to a bounded number of representative points. CSV
 exports and scientific calculations must not silently inherit display-only downsampling. Portable
 reports keep serialized Plotly figures for interactive browsers and frozen SVG fallbacks for
 restricted viewers. See `docs/portable-analysis-html.md`.
+
+Compact time/capacity responses are specific to the selected X-axis and display mode: the backend
+ships `display_x` plus only the raw X array needed for that request. Therefore the frontend query
+signature must include every setting that changes those values, including `x_axis`, `time_unit`,
+`display_mode`, and an electrode-area override. Excluding one while changing only the displayed
+axis title produces a convincing but scientifically wrong stale plot. Areal capacity resolves the
+cell's `electrode_area_cm2` metadata unless the analysis supplies a positive override; keep both
+the metadata value and override in the scientific/cache inputs.
+
+## Analysis workspace tabs
+
+- The process-level mounted-analysis registry can outlive the `/analyses/*` route, but its React
+  editor instances cannot. `AnalysisWorkspaceContent` must therefore initialize from only the
+  currently visible analysis (or none on the database home), then remount restored hidden tabs in
+  idle slices. Initializing directly from the global registry makes navigation back to the Analysis
+  Database synchronously reconstruct every remembered editor before the home table can paint.
+
+`frontend/src/components/AnalysisWorkspaceTabs.tsx` persists open analysis IDs, labels, order,
+routes, and a bounded newest-first closed-tab history in local storage. Reordering changes that
+persisted order. `frontend/src/analysisWorkspace.ts` keeps editor drafts and the set of analyses
+visited during the current process in memory. React Query remains the owner of fetched server data
+and computed-result caching.
+
+The performance setting has two policies. `keep-mounted` is the default: analyses actually visited
+in this session remain mounted but visually hidden without collapsing their layout, preserving
+their Plotly/WebGL dimensions and state for fast switching. After a reload, the active editor paints
+first and the analyses represented by restored open tabs are remounted one at a time during browser
+idle periods. This repopulates their React and Plotly state without creating a simultaneous startup
+spike. `unmount` keeps only the active editor mounted to reduce RAM and graphics-memory use. Never
+persist editor drafts or mounted DOM state across app restarts.
+
+Switching through the workspace tab strip is a context switch and preserves the in-memory draft.
+Reveal the selected mounted view before synchronizing the React Router URL or refreshing stale
+queries; doing route work in the click's first paint produces a perceptible 200-300 ms dead period
+on large editors. Tab reordering uses explicit pointer tracking across the whole tab surface (apart
+from the close button) rather than native HTML drag-and-drop, which is unreliable in Windows
+WebView.
+
+The tab families inside one analysis deliberately use a lightweight controlled header separate
+from the expensive panel container. The header acknowledges selection in its own render, then
+commits the panel switch after that paint. Do not recombine their state into one Mantine `Tabs`
+root: building the next Plotly/settings panel otherwise delays the selected-tab underline. Keep
+inactive panels unmounted except for the explicitly retained time/capacity view; mounting every
+hidden Plotly panel previously caused freezes and unnecessary graphics-memory use.
+Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
+and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
+sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail
+ahead of the live compute: on a cold cache that makes the visible plot wait behind work the user did
+not ask to see yet.
+Closing a tab or leaving the analysis workspace uses the normal unsaved-change flow. Open tab
+identities survive reload/restart, but unsaved editor drafts intentionally do not. Tests for the
+storage parser live in `frontend/tests/analysisWorkspace.test.ts`.
+
+Source changes must not make every hidden mounted editor recompute at once. Invalidate all
+analysis-related React Query entries without refetching, refresh the visible analysis immediately,
+and refetch a stale hidden analysis when its tab is activated. The backend remains responsible for
+invalidating affected artifacts and queuing saved-plot warmup.
 
 ## Cache tiers, budgets, and background preparation
 
@@ -102,6 +175,13 @@ all-prepared scan must not spawn an empty job. Markers are wiped by
 `invalidate_cell_dependents`, by per-analysis artifact cleanup, and by the visual cache category
 cleanups (but not by cleaning computed results, which does not affect plot preparedness).
 
+Treat prepared markers as hints rather than proof that the image payloads exist. Queue discovery
+must verify that both the saved-row thumbnail and 4:3 hover preview are physically readable before
+skipping a plot. On the frontend, do not publish a newly rendered warmup thumbnail into React Query
+or report the task complete until the authorized backend artifact write succeeds. Publishing it
+first creates a race where completion retires the warmup token and the following store request is
+rejected, leaving a matching marker with no persisted images.
+
 Analysis cache keys cover the scientific inputs only. Source `location_status` is deliberately
 excluded: results are computed from the cached Parquet, which transient offline/changed flips do
 not touch, so a drive reconnect or a still-cycling source file must not invalidate every cached
@@ -109,6 +189,12 @@ result for the cell. Availability badges are therefore refreshed at response tim
 database status fields (`analysis_engine.refresh_availability_badges`) whenever a cached result
 is served. Warmup tasks must never recompute a plot whose thumbnail or artifact is already
 cached; the background compute is gated exactly like the visible preview path.
+
+When one analysis endpoint changes its cached response schema, bump only that entry in
+`analysis_cache.RESULT_SCHEMA_VERSIONS`. The per-kind schema version is part of `result_key`, so
+legacy payloads cannot be mistaken for the new result shape without invalidating unrelated cycle
+or time/capacity caches. Reserve `ANALYSIS_CACHE_VERSION` for changes that genuinely affect every
+analysis result family.
 
 When a source file adopts new bytes, its scientific and numerical analysis keys change naturally
 because they include the source checksum. In addition, `cache_maintenance.invalidate_cell_dependents`

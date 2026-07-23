@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -31,6 +32,8 @@ from app.routers import analyses as analyses_router
 
 
 class CacheMaintenanceTests(unittest.TestCase):
+    _THUMBNAIL = "data:image/webp;base64,AA=="
+
     def setUp(self):
         background_jobs.clear_jobs()
         # Prepared markers persist on disk; stale ones from earlier runs
@@ -423,6 +426,13 @@ class CacheMaintenanceTests(unittest.TestCase):
         ):
             started = coordinator.start(db)
             task = coordinator.next_task(db)
+            cache_maintenance.analysis_cache.store_thumbnail(
+                analysis.id,
+                task["plot_id"],
+                "probe-short-circuit-test",
+                self._THUMBNAIL,
+                self._THUMBNAIL,
+            )
             coordinator.complete(task["id"], status="ready", detail=None, error=None)
             after_first = calls["count"]
             self.assertGreater(after_first, 0)
@@ -482,7 +492,11 @@ class CacheMaintenanceTests(unittest.TestCase):
 
                 # Thumbnails never count toward, nor are evicted by, the budget.
                 analysis_cache.store_thumbnail(
-                    5, "plot", "sig", "data:image/png;base64," + "A" * 8192
+                    5,
+                    "plot",
+                    "sig",
+                    "data:image/png;base64," + "A" * 8192,
+                    "data:image/webp;base64,UklGRg==",
                 )
                 self.assertTrue(
                     analysis_cache.load_thumbnail(5, "plot", "sig")
@@ -517,6 +531,13 @@ class CacheMaintenanceTests(unittest.TestCase):
         cache_maintenance.analysis_cache.store_prepared_marker(
             analysis.id, "old", old_signature, None
         )
+        cache_maintenance.analysis_cache.store_thumbnail(
+            analysis.id,
+            "old",
+            "prepared-test",
+            self._THUMBNAIL,
+            self._THUMBNAIL,
+        )
 
         coordinator = cache_maintenance.WarmupCoordinator()
         started = coordinator.start(db)
@@ -525,6 +546,87 @@ class CacheMaintenanceTests(unittest.TestCase):
         task = coordinator.next_task(db)
         self.assertEqual(task["plot_id"], "new")
         self.assertIn(analysis.title, started["items"][0]["label"])
+
+    def test_warmup_requeues_plot_after_thumbnail_renderer_upgrade(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Old thumbnail",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "old", "name": "Old plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        plot = analysis.spec["saved_plots"][0]
+        signature = cache_maintenance.analysis_cache.saved_plot_data_signature(
+            db, analysis, plot
+        )
+        cache_maintenance.analysis_cache.store_prepared_marker(
+            analysis.id, "old", signature, None
+        )
+        cache_maintenance.analysis_cache.store_thumbnail(
+            analysis.id,
+            "old",
+            "upgrade-test",
+            self._THUMBNAIL,
+            self._THUMBNAIL,
+        )
+        marker_path = cache_maintenance.analysis_cache._prepared_marker_path(
+            analysis.id, "old"
+        )
+        marker = json.loads(marker_path.read_text())
+        marker["thumbnail_cache_version"] -= 1
+        marker_path.write_text(json.dumps(marker))
+
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+
+        self.assertEqual(started["total"], 1)
+        self.assertEqual(coordinator.next_task(db)["plot_id"], "old")
+
+    def test_completed_probe_is_invalidated_by_thumbnail_renderer_upgrade(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Prepared before upgrade",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Prepared plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        plot = analysis.spec["saved_plots"][0]
+        signature = cache_maintenance.analysis_cache.saved_plot_data_signature(
+            db, analysis, plot
+        )
+        cache_maintenance.analysis_cache.store_prepared_marker(
+            analysis.id, "plot", signature, None
+        )
+        cache_maintenance.analysis_cache.store_thumbnail(
+            analysis.id,
+            "plot",
+            "probe-test",
+            self._THUMBNAIL,
+            self._THUMBNAIL,
+        )
+
+        coordinator = cache_maintenance.WarmupCoordinator()
+        ready = coordinator.start(db)
+        self.assertEqual(ready["total"], 0)
+
+        old_version = cache_maintenance.analysis_cache.THUMBNAIL_CACHE_VERSION
+        with patch.object(
+            cache_maintenance.analysis_cache,
+            "THUMBNAIL_CACHE_VERSION",
+            old_version + 1,
+        ):
+            upgraded = coordinator.start(db)
+            task = coordinator.next_task(db)
+
+        self.assertNotEqual(upgraded["id"], ready["id"])
+        self.assertEqual(upgraded["total"], 1)
+        self.assertEqual(task["plot_id"], "plot")
 
     def test_ready_completion_writes_prepared_marker_and_empties_next_queue(self):
         db = self.make_session()
@@ -540,11 +642,22 @@ class CacheMaintenanceTests(unittest.TestCase):
         coordinator = cache_maintenance.WarmupCoordinator()
         started = coordinator.start(db)
         task = coordinator.next_task(db)
+        cache_maintenance.analysis_cache.store_thumbnail(
+            analysis.id,
+            "solo",
+            "completion-test",
+            self._THUMBNAIL,
+            self._THUMBNAIL,
+        )
         coordinator.complete(task["id"], status="ready", detail="Already cached", error=None)
 
         marker = cache_maintenance.analysis_cache.load_prepared_marker(analysis.id, "solo")
         self.assertIsNotNone(marker)
         self.assertEqual(marker["data_signature"], task["expected_data_signature"])
+        self.assertEqual(
+            marker["thumbnail_cache_version"],
+            cache_maintenance.analysis_cache.THUMBNAIL_CACHE_VERSION,
+        )
 
         # A later scan with unchanged data finds nothing to queue and does
         # not spawn a fresh job.
@@ -554,6 +667,66 @@ class CacheMaintenanceTests(unittest.TestCase):
         db.commit()
         again = coordinator.start(db)
         self.assertEqual(again["id"], started["id"])
+
+    def test_prepared_marker_without_thumbnail_pair_requeues_plot(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Incomplete preview",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        plot = analysis.spec["saved_plots"][0]
+        signature = cache_maintenance.analysis_cache.saved_plot_data_signature(db, analysis, plot)
+        cache_maintenance.analysis_cache.store_prepared_marker(
+            analysis.id, "plot", signature, None
+        )
+
+        coordinator = cache_maintenance.WarmupCoordinator()
+        with patch.object(
+            cache_maintenance.analysis_cache,
+            "load_latest_thumbnail",
+            return_value=None,
+        ):
+            started = coordinator.start(db)
+
+        self.assertEqual(started["total"], 1)
+        self.assertEqual(coordinator.next_task(db)["plot_id"], "plot")
+
+    def test_ready_completion_without_thumbnail_pair_is_rejected(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Incomplete completion",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+
+        coordinator = cache_maintenance.WarmupCoordinator()
+        started = coordinator.start(db)
+        task = coordinator.next_task(db)
+        coordinator.complete(
+            task["id"], status="ready", detail="Reported ready", error=None
+        )
+
+        self.assertIsNone(
+            cache_maintenance.analysis_cache.load_prepared_marker(
+                analysis.id, "plot"
+            )
+        )
+        job = background_jobs.get_job(started["id"])
+        self.assertEqual(job["items"][0]["status"], "failed")
+
+        retried = coordinator.start(db)
+        self.assertNotEqual(retried["id"], started["id"])
+        self.assertEqual(retried["total"], 1)
+        self.assertEqual(coordinator.next_task(db)["plot_id"], "plot")
 
     def test_invalidation_clears_markers_so_plots_requeue(self):
         db = self.make_session()

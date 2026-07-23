@@ -189,7 +189,7 @@ export function getCycleQuantityExplainer(quantity: string, normalizeByMass: boo
 }
 
 export function getTimeCapacityExplainer(
-  xAxis: "time" | "capacity_mah" | "capacity_mah_g",
+  xAxis: "time" | "capacity_mah" | "capacity_mah_g" | "capacity_mah_cm2",
   currentAxis: "none" | "current_ma" | "current_density" | "c_rate",
   view: "voltage_current" | "dqdv" | "dvdq" = "voltage_current",
   derivativeSpecific = false,
@@ -230,11 +230,17 @@ export function getTimeCapacityExplainer(
             formula: "Capacity is the raw cumulative capacity reported during each half-cycle, in mAh.",
             requires: ["capacity_mah", "voltage_v", "current_ma"],
           }
-        : {
-            title: "Voltage/current vs specific capacity",
-            formula: "Specific capacity (mAh/g) = capacity (mAh) / active material mass (g).",
-            requires: ["capacity_mah", "active_material_mg", "voltage_v", "current_ma"],
-          };
+        : xAxis === "capacity_mah_cm2"
+          ? {
+              title: "Voltage/current vs areal capacity",
+              formula: "Areal capacity (mAh/cm2) = capacity (mAh) / electrode area (cm2).",
+              requires: ["capacity_mah", "electrode_area_cm2", "voltage_v", "current_ma"],
+            }
+          : {
+              title: "Voltage/current vs specific capacity",
+              formula: "Specific capacity (mAh/g) = capacity (mAh) / active material mass (g).",
+              requires: ["capacity_mah", "active_material_mg", "voltage_v", "current_ma"],
+            };
 
   const currentFormula =
     currentAxis === "current_density"

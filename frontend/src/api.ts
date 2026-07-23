@@ -657,6 +657,54 @@ export interface Exclusion {
   excluded_at?: string;
 }
 
+export interface StepsSeriesSpec {
+  id: string;
+  cell_id: number;
+  segment_id: string;
+}
+
+export interface StepsViewSpec {
+  quantity: "time" | "cv_charge_time" | "voltage" | "capacity" | "block_duration";
+  direction: "charge" | "discharge" | "total";
+  include_rest: boolean;
+  x_axis: "occurrence" | "cycle" | "time";
+}
+
+export interface DcirSegmentTarget {
+  protocol_signature: string;
+  rest_step_index: number;
+  pulse_step_index: number;
+  direction: "charge" | "discharge";
+  current_ma: number | null;
+  c_rate: number | null;
+  rest_duration_s: number | null;
+  pulse_duration_s: number | null;
+}
+
+export interface DcirSegment {
+  id: string;
+  name: string;
+  targets: DcirSegmentTarget[];
+}
+
+export interface DcirSeriesSpec {
+  id: string;
+  cell_id: number;
+  segment_id: string;
+}
+
+export interface DcirCandidateFilter {
+  min_rest_s: number;
+  max_pulse_s: number;
+  min_ratio: number;
+}
+
+export interface DcirViewSpec {
+  quantity: "absolute" | "relative";
+  x_axis: "occurrence" | "cycle" | "time";
+  candidate_filter: DcirCandidateFilter;
+}
+
 export const ANALYSIS_TAB_KEYS = [
   "time_capacity",
   "cycles",
@@ -825,6 +873,8 @@ export interface AnalysisSpec {
     hidden_replicate_group_ids?: number[];
   };
   protocol_segments?: ProtocolSegment[];
+  /** DCIR-only rest/pulse definitions. Never shared with other analysis tabs. */
+  dcir_segments?: DcirSegment[];
   computation: {
     cycle_range: { start: number | null; end: number | null };
     exclude_check_cycles_every_n: number;
@@ -844,7 +894,7 @@ export interface AnalysisSpec {
       only_segment_ids: string[];
     };
     time_capacity?: {
-      x_axis: "time" | "capacity_mah" | "capacity_mah_g";
+      x_axis: "time" | "capacity_mah" | "capacity_mah_g" | "capacity_mah_cm2";
       time_unit: "s" | "min" | "h";
       display_mode: "consecutive" | "overlap_reset" | "overlap_mirror";
       stacked: boolean;
@@ -861,6 +911,15 @@ export interface AnalysisSpec {
       cycles: number[];
       max_points_per_cell: number;
     };
+    steps?: {
+      series: StepsSeriesSpec[];
+      mode: "union" | "contiguous";
+      /** Legacy single-segment setting, normalized by the Steps UI/backend. */
+      segment_id?: string | null;
+    };
+    dcir?: {
+      series: DcirSeriesSpec[];
+    };
   };
   aggregation: {
     mode: "replicate_mean" | "none";
@@ -874,6 +933,8 @@ export interface AnalysisSpec {
     show_individual_cells: boolean;
     legend: boolean;
     hidden_protocol_segment_ids?: string[];
+    steps_view?: StepsViewSpec;
+    dcir_view?: DcirViewSpec;
     /**
      * Hide protocol diagnostic cycles (DCIR pulses, rate checks) detected from
      * cycle durations. Presentation-only: the computed result and every export
@@ -1127,6 +1188,7 @@ export interface TimeCapacityTrace {
   time_s: (number | null)[];
   capacity_mah: (number | null)[];
   capacity_mah_g: (number | null)[];
+  capacity_mah_cm2?: (number | null)[];
   voltage_v: (number | null)[];
   current_ma: (number | null)[];
   phase: string[];
