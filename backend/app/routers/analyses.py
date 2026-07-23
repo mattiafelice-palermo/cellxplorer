@@ -435,7 +435,7 @@ def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None =
 
 
 class AnalysisComputeJobCreate(BaseModel):
-    kind: Literal["cycles", "time_capacity"]
+    kind: Literal["cycles", "time_capacity", "steps"]
     spec: dict | None = None
 
 
@@ -453,7 +453,7 @@ def _open_compute_job(
     so a cached load should never reach here.
     """
     units, _ = engine.resolve_selection(db, spec)
-    kind_label = "time/capacity" if kind == "time_capacity" else "cycle"
+    kind_label = {"time_capacity": "time/capacity", "steps": "steps"}.get(kind, "cycle")
     return background_jobs.create_job(
         kind="analysis_compute",
         title=f"Preparing {analysis.title} ({kind_label} plot)",
@@ -545,6 +545,44 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     return fast_json(result)
 
 
+@router.post("/analyses/{analysis_id}/steps")
+def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
+    a = db.get(Analysis, analysis_id)
+    if a is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or a.spec
+    key = analysis_cache.result_key(
+        db, "steps", spec, a.provenance, use_current_versions=req.recompute
+    )
+    result = None if req.recompute else analysis_cache.load_result("steps", key)
+    cached = result is not None
+    if cached:
+        engine.refresh_availability_badges(db, spec, result)
+        analysis_cache.upgrade_result_format("steps", key, result)
+    job_id = req.job_id
+    try:
+        if result is None:
+            from ..services.process_priority import background_thread_priority
+
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(db, a, spec, "steps", req.job_token)
+            with background_thread_priority(req.background):
+                result = engine.compute_steps(
+                    db,
+                    spec,
+                    a.provenance,
+                    use_current_versions=req.recompute,
+                    progress=_progress_callback(job_id),
+                )
+            result["cache_status"] = "miss"
+            analysis_cache.store_result("steps", key, result)
+        _finish_job(job_id, cached=cached)
+        return fast_json(result)
+    except Exception as exc:
+        _finish_job(job_id, error=str(exc))
+        raise
+
+
 @router.post("/analyses/{analysis_id}/time-capacity")
 def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
     a = db.get(Analysis, analysis_id)
@@ -610,6 +648,7 @@ class PlotArtifactRequest(BaseModel):
     signature: str = Field(min_length=1, max_length=20_000)
     svg: str = Field(min_length=10, max_length=100_000_000)
     thumbnail: str | None = Field(default=None, max_length=2_500_000)
+    preview_thumbnail: str | None = Field(default=None, max_length=2_500_000)
     figure: dict
     summary: list[dict] = Field(default_factory=list)
     warmup_task_id: str | None = Field(default=None, max_length=500)
@@ -692,7 +731,13 @@ def lookup_plot_thumbnail(
         req.signature,
     )
     if thumbnail is not None:
-        return {"signature": req.signature, "thumbnail": thumbnail}
+        return {
+            "signature": req.signature,
+            "thumbnail": thumbnail,
+            "preview_thumbnail": analysis_cache.load_indexed_preview_thumbnail(
+                analysis_id, plot_id, req.signature
+            ),
+        }
 
     # Once a plot has signature-indexed thumbnails, an unknown client
     # signature means the plot changed. Do not relabel an older scientific
@@ -705,21 +750,35 @@ def lookup_plot_thumbnail(
     # this is a constant-time disk lookup rather than a 25-cell fingerprint.
     thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id)
     if thumbnail is not None:
+        preview_thumbnail = analysis_cache.load_latest_thumbnail(
+            analysis_id, plot_id, "preview"
+        )
         analysis_cache.store_indexed_thumbnail(
             analysis_id,
             plot_id,
             req.signature,
             thumbnail,
+            preview_thumbnail,
         )
-        return {"signature": req.signature, "thumbnail": thumbnail}
+        return {
+            "signature": req.signature,
+            "thumbnail": thumbnail,
+            "preview_thumbnail": preview_thumbnail,
+        }
 
     cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
     thumbnail = analysis_cache.load_thumbnail(analysis_id, plot_id, cache_signature)
+    preview_thumbnail = analysis_cache.load_preview_thumbnail(
+        analysis_id, plot_id, cache_signature
+    )
     if thumbnail is None:
         # One-time migration for artifacts created before thumbnails were
         # split into lightweight files.
         artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
         thumbnail = artifact.get("thumbnail") if artifact is not None else None
+        preview_thumbnail = (
+            artifact.get("preview_thumbnail") if artifact is not None else None
+        )
     if thumbnail is None:
         raise HTTPException(404, "No cached plot thumbnail")
     analysis_cache.store_indexed_thumbnail(
@@ -727,8 +786,30 @@ def lookup_plot_thumbnail(
         plot_id,
         req.signature,
         thumbnail,
+        preview_thumbnail,
     )
-    return {"signature": req.signature, "thumbnail": thumbnail}
+    return {
+        "signature": req.signature,
+        "thumbnail": thumbnail,
+        "preview_thumbnail": preview_thumbnail,
+    }
+
+
+@router.get("/analyses/{analysis_id}/plot-artifacts/{plot_id}/thumbnail/latest")
+def latest_plot_thumbnail(
+    analysis_id: int,
+    plot_id: str,
+    variant: Literal["saved", "preview"] = "saved",
+    db: Session = Depends(get_db),
+):
+    """Return an already-rendered saved-plot thumbnail without computing data."""
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id, variant)
+    if thumbnail is None:
+        raise HTTPException(404, "No cached plot thumbnail")
+    return {"thumbnail": thumbnail}
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}")
@@ -746,8 +827,14 @@ def store_plot_artifact(
         r"<(?:script|iframe|object|embed|foreignObject)\b", normalized, re.IGNORECASE
     ):
         raise HTTPException(422, "Only self-contained SVG plot artifacts are accepted")
-    if req.thumbnail is not None and not req.thumbnail.startswith("data:image/png;base64,"):
-        raise HTTPException(422, "Only PNG plot thumbnails are accepted")
+    if req.thumbnail is not None and not req.thumbnail.startswith(
+        ("data:image/webp;base64,", "data:image/png;base64,")
+    ):
+        raise HTTPException(422, "Only WebP or PNG plot thumbnails are accepted")
+    if req.preview_thumbnail is not None and not req.preview_thumbnail.startswith(
+        ("data:image/webp;base64,", "data:image/png;base64,")
+    ):
+        raise HTTPException(422, "Only WebP or PNG plot previews are accepted")
     saved_plot = next(
         (
             plot
@@ -783,6 +870,7 @@ def store_plot_artifact(
     artifact = {
         "svg": req.svg,
         "thumbnail": req.thumbnail,
+        "preview_thumbnail": req.preview_thumbnail,
         "figure": req.figure,
         "summary": req.summary,
     }
@@ -795,12 +883,13 @@ def store_plot_artifact(
     )
     # This plot is now prepared for its current data signature and revision;
     # idle warmup can leave it out of future queues.
-    analysis_cache.store_prepared_marker(
-        analysis_id,
-        plot_id,
-        current_data_signature,
-        saved_plot.get("modified_at"),
-    )
+    if req.thumbnail is not None and req.preview_thumbnail is not None:
+        analysis_cache.store_prepared_marker(
+            analysis_id,
+            plot_id,
+            current_data_signature,
+            saved_plot.get("modified_at"),
+        )
     if req.warmup_task_id is None:
         from ..services import cache_maintenance
 

@@ -1460,6 +1460,200 @@ def compute(
     }
 
 
+def _segment_steps_by_signature(spec: dict) -> tuple[str | None, dict[str, set[int]]]:
+    """The chosen steps segment resolved to a step set per protocol signature."""
+    steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
+    segment_id = steps_cfg.get("segment_id")
+    if not segment_id:
+        return None, {}
+    segments = {
+        str(seg["id"]): seg
+        for seg in (spec.get("protocol_segments") or [])
+        if isinstance(seg, dict) and seg.get("id") is not None
+    }
+    segment = segments.get(str(segment_id))
+    if segment is None:
+        return str(segment_id), {}
+    by_signature: dict[str, set[int]] = {}
+    for target in segment.get("targets", []) or []:
+        signature = target.get("protocol_signature")
+        if signature:
+            by_signature[str(signature)] = {int(s) for s in target.get("step_indices", [])}
+    return str(segment_id), by_signature
+
+
+def compute_steps(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    use_current_versions: bool = False,
+    progress: ProgressCallback | None = None,
+) -> dict:
+    """One point per execution of a chosen step block, rather than per cycle.
+
+    A protocol segment defines the steps; each occurrence of that block becomes
+    a point, so a sub-cycle quantity — CV time inside fast charge — can be
+    plotted in isolation, which the cycle path cannot do. See
+    ``services/step_blocks.py`` for the block definitions.
+    """
+    from . import protocol as protocol_service
+    from . import step_blocks
+
+    parser_version = parsing.PARSER_VERSION
+    calc_version = CALC_VERSION
+    if provenance and not use_current_versions:
+        parser_version = provenance.get("parser_version") or parser_version
+        calc_version = provenance.get("calc_version") or calc_version
+
+    steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
+    mode = steps_cfg.get("mode") if steps_cfg.get("mode") in step_blocks.BLOCK_MODES else "union"
+    x_axis = "cycle" if steps_cfg.get("x_axis") == "cycle" else "occurrence"
+    segment_id, steps_by_signature = _segment_steps_by_signature(spec)
+
+    quantity_cols = [col for col, _ in step_blocks.BLOCK_QUANTITIES.values()]
+    selection = spec.get("selection", {})
+    exclusions = selection.get("exclusions", [])
+    hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
+    aggregation = spec.get("aggregation", {})
+    units, missing_refs = resolve_selection(db, spec)
+    preload_cell_sources(db, [unit["cell"] for unit in units])
+
+    cell_series: list[dict] = []
+    sources: list[dict] = []
+    badges: list[dict] = []
+    if segment_id is None:
+        badges.append(
+            {
+                "kind": "steps_no_segment",
+                "detail": "Choose a protocol segment to define the step block to analyse.",
+            }
+        )
+
+    total_units = len(units)
+    for unit_index, unit in enumerate(units, start=1):
+        cell: Cell = unit["cell"]
+        if progress:
+            progress(unit_index - 1, total_units, cell.name, "Reading step data")
+        hashes, files = cell_ordered_hashes(db, cell)
+        nominal = cell_nominal_capacity_mah(cell)
+        selected: set[int] = set()
+        for source_file in files:
+            signature = protocol_service.reconstruct_protocol(
+                source_file.header_meta, nominal
+            ).get("signature")
+            if signature:
+                selected |= steps_by_signature.get(str(signature), set())
+
+        exclusion = exclusion_for_unit(exclusions, unit)
+        group_hidden = unit["group_id"] in hidden_group_ids
+        excluded = exclusion is not None or group_hidden
+        x: list[int] = []
+        quantities: dict[str, list] = {c: [] for c in quantity_cols}
+        block_meta: list[dict] = []
+
+        if selected:
+            raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
+            if not raw.empty:
+                # A single monotonic order across the stitched files so block
+                # segmentation is not confused by per-file record-index resets.
+                raw = raw.reset_index(drop=True)
+                raw["record_index"] = np.arange(len(raw))
+                blocks_df = step_blocks.per_block(raw, selected, mode)
+                if not blocks_df.empty:
+                    key = "cycle_start" if x_axis == "cycle" else "occurrence"
+                    x = [int(v) for v in blocks_df[key]]
+                    quantities = {
+                        c: _jsonsafe(blocks_df[c].to_numpy(dtype="float64"))
+                        if c in blocks_df.columns
+                        else [None] * len(x)
+                        for c in quantity_cols
+                    }
+                    block_meta = blocks_df[
+                        ["block", "occurrence", "cycle_start", "cycle_end", "step_start", "step_end"]
+                    ].to_dict("records")
+        elif segment_id is not None:
+            badges.append(
+                {
+                    "kind": "steps_no_match",
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "detail": f"{cell.name} runs a protocol the chosen segment does not target.",
+                }
+            )
+
+        cell_series.append(
+            {
+                "cell_id": cell.id,
+                "cell_name": cell.name,
+                "label": unit["label"],
+                "group_id": unit["group_id"],
+                "group_name": unit["group_name"],
+                "excluded": excluded,
+                "exclusion_reason": "Replicate hidden"
+                if group_hidden
+                else (exclusion or {}).get("reason"),
+                "archived": cell.archived,
+                "x": x,
+                "quantities": quantities,
+                "metrics": {"n_blocks": len(x)},
+                "retention_reference_mah": None,
+                "active_mass_mg": cell_active_mass_mg(cell),
+                "block_meta": block_meta,
+                "segments": [],
+            }
+        )
+        sources.append(
+            {
+                "cell_id": cell.id,
+                "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
+                "file_hashes": hashes,
+            }
+        )
+        if progress:
+            progress(unit_index, total_units, cell.name, "Grouped step blocks")
+
+    for miss in missing_refs:
+        badges.append(
+            {
+                "kind": "missing_reference",
+                "detail": f"Selection references {miss['kind']} #{miss['ref_id']}, which no longer exists.",
+            }
+        )
+
+    aggregates: list[dict] = []
+    if (aggregation.get("mode") or "replicate_mean") == "replicate_mean":
+        by_group: dict[int, list[dict]] = {}
+        group_names: dict[int, str] = {}
+        for s in cell_series:
+            if s["group_id"] is not None and not s["excluded"] and len(s["x"]):
+                by_group.setdefault(s["group_id"], []).append(s)
+                group_names[s["group_id"]] = s["group_name"]
+        for gid, members in by_group.items():
+            agg = aggregate_series(members, quantity_cols, aggregation)
+            agg["group_id"] = gid
+            agg["group_name"] = group_names[gid]
+            aggregates.append(agg)
+
+    return {
+        "computed_at": now_iso(),
+        "type": "steps",
+        "parser_version": parser_version,
+        "calc_version": calc_version,
+        "current_parser_version": parsing.PARSER_VERSION,
+        "current_calc_version": CALC_VERSION,
+        "steps": {"segment_id": segment_id, "mode": mode, "x_axis": x_axis},
+        "quantities": [
+            {"key": key, "column": col, "label": label}
+            for key, (col, label) in step_blocks.BLOCK_QUANTITIES.items()
+        ],
+        "cell_series": cell_series,
+        "aggregates": aggregates,
+        "group_metrics": [],
+        "badges": badges,
+        "sources": sources,
+    }
+
+
 def _stitch_raw(
     ordered_hashes: list[str], parser_version: str
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
