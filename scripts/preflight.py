@@ -31,6 +31,7 @@ class Stage:
     name: str
     command: list[str] | None = None
     skipped: bool = False
+    cwd: Path | None = None
 
 
 def repo_root(start: Path | None = None) -> Path:
@@ -38,8 +39,7 @@ def repo_root(start: Path | None = None) -> Path:
 
 
 def default_backend_jobs() -> int:
-    cpu = os.cpu_count() or 4
-    return max(1, min(16, cpu))
+    return max(1, min(16, os.cpu_count() or 4))
 
 
 def discover_frontend_test_files(root: Path) -> list[Path]:
@@ -89,6 +89,39 @@ def iter_frontend_build_inputs(root: Path) -> Iterable[Path]:
                 yield path
 
 
+def frontend_toolchain_fingerprint(root: Path) -> str:
+    parts: list[str] = []
+    node_executable = find_node_executable()
+    if node_executable:
+        try:
+            completed = subprocess.run(
+                [node_executable, "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                shell=False,
+            )
+            if completed.stdout.strip():
+                parts.append(f"node={completed.stdout.strip()}")
+        except OSError:
+            parts.append("node=unavailable")
+
+    installed_lock = root / "frontend" / "node_modules" / ".package-lock.json"
+    if installed_lock.is_file():
+        parts.append(f"installed-lock={hashlib.sha256(installed_lock.read_bytes()).hexdigest()}")
+
+    for package in ("typescript", "vite"):
+        package_json = root / "frontend" / "node_modules" / package / "package.json"
+        if package_json.is_file():
+            try:
+                version = json.loads(package_json.read_text(encoding="utf-8")).get("version")
+            except (OSError, json.JSONDecodeError):
+                version = None
+            if isinstance(version, str) and version:
+                parts.append(f"{package}={version}")
+    return "\n".join(parts)
+
+
 def frontend_build_input_hash(root: Path) -> str:
     digest = hashlib.sha256()
     for path in iter_frontend_build_inputs(root):
@@ -96,6 +129,11 @@ def frontend_build_input_hash(root: Path) -> str:
         digest.update(relative)
         digest.update(b"\0")
         digest.update(path.read_bytes())
+        digest.update(b"\0")
+    toolchain = frontend_toolchain_fingerprint(root)
+    if toolchain:
+        digest.update(b"toolchain\0")
+        digest.update(toolchain.encode("utf-8"))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -224,12 +262,14 @@ def build_stages(
             "Frontend type check",
             npm_exec_command(npm_executable, "tsc", "-b"),
             skipped=skip_frontend_build,
+            cwd=root / "frontend",
         ),
         Stage(
             5,
             "Frontend production bundle",
             npm_exec_command(npm_executable, "vite", "build"),
             skipped=skip_frontend_build,
+            cwd=root / "frontend",
         ),
     ]
     return stages
@@ -261,7 +301,7 @@ def run_stage(
     if stage.command is None:
         raise RuntimeError(f"Stage {stage.name!r} has no command.")
     try:
-        exit_code = run_command(stage.command, root, env)
+        exit_code = run_command(stage.command, stage.cwd or root, env)
     except KeyboardInterrupt:
         raise
     if exit_code != 0:
@@ -312,6 +352,8 @@ def run_preflight(
     with tempfile.TemporaryDirectory(prefix="cellxplorer-preflight-") as temp_data_dir:
         env = os.environ.copy()
         env["CELLXPLORER_DATA"] = temp_data_dir
+        if "CELLXPLORER_PREFLIGHT_CPU_BUDGET" not in env:
+            env["CELLXPLORER_PREFLIGHT_CPU_BUDGET"] = str(os.cpu_count() or 4)
 
         version_stage = stages[0]
         try:

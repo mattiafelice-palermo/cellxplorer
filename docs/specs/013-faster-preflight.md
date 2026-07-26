@@ -11,11 +11,33 @@ Branch: `feature/build-performance`.
 - Parallelised NDAX parity comparisons in `test_fast_neware.py`.
 - Added `.preflight-cache.json` skip logic with `--no-cache` override.
 
-Verification (2026-07-26):
+Manual UI verification not yet run in a live session.
+
+## Review of the implementation — follow-up tasks
+
+Review document: `013-014-build-performance-review.md`.  
+Status after follow-ups: **addressed in working tree** (2026-07-26).
+
+| Task | Priority | Status |
+|---|---|---|
+| R1 — Use stacked base or cherry-pick onto current `main` | High | documented (merge after library specs) |
+| R2 — Preserve per-module `CELLXPLORER_DATA` with `setdefault` | High | addressed |
+| R3 — Bound nested parallelism worker budget | Medium | addressed |
+| R4 — Include installed frontend toolchain in cache hash | Medium | addressed |
+| R5 — Complete NDAX pool serial fallback | Medium | addressed |
+| R6 — Record end-to-end verification timings | Medium | addressed below |
+
+## End-to-end verification record
+
+Recorded on the development machine after review follow-ups (2026-07-26):
 
 ```text
-python -m unittest tests.test_preflight_script tests.test_check_versions_script tests.test_fast_neware -v
+python -m unittest tests.test_run_backend_tests tests.test_preflight_script tests.test_check_versions_script tests.test_fast_neware -v
+python scripts/preflight.py --no-cache   # ~79 s, 5/5 stages
+python scripts/preflight.py              # ~41 s, frontend type check + bundle skipped
 ```
+
+Cache skip confirmed: second run reports `SKIP: frontend build (unchanged since last successful run)` for stages 4–5. Touching `frontend/src/` invalidates the skip on the next run.
 
 ## 0. Dependency: the parallel preflight branch
 

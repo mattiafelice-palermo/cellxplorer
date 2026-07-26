@@ -288,8 +288,13 @@ class PreflightScriptTests(unittest.TestCase):
 
     def test_repository_root_is_used_as_cwd(self):
         self.run_preflight(no_cache=True)
-        for _command, cwd, _env in self.calls:
-            self.assertEqual(cwd, self.repo)
+        frontend_cwd = self.repo / "frontend"
+        for command, cwd, _env in self.calls:
+            command_text = " ".join(command)
+            if "tsc" in command_text or "vite" in command_text:
+                self.assertEqual(cwd, frontend_cwd)
+            else:
+                self.assertEqual(cwd, self.repo)
 
 
 class PreflightRepoRootTests(unittest.TestCase):

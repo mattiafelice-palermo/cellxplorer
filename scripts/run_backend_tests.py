@@ -19,9 +19,28 @@ def discover_test_modules(tests_dir: Path) -> list[str]:
     return sorted(f"tests.{path.stem}" for path in tests_dir.glob("test_*.py"))
 
 
+def cpu_budget() -> int:
+    raw = os.environ.get("CELLXPLORER_PREFLIGHT_CPU_BUDGET")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return os.cpu_count() or 4
+
+
 def default_jobs() -> int:
-    cpu = os.cpu_count() or 4
-    return max(1, min(16, cpu))
+    return max(1, min(16, cpu_budget()))
+
+
+def effective_backend_jobs(requested: int, module_count: int) -> int:
+    return max(1, min(requested, module_count, cpu_budget()))
+
+
+def ndax_worker_budget(backend_jobs: int) -> int:
+    """Reserve capacity for parallel backend modules and frontend stages."""
+    reserve = backend_jobs + 2
+    return max(1, min(12, cpu_budget() - reserve))
 
 
 def run_module(
@@ -30,9 +49,13 @@ def run_module(
     root: Path,
     module: str,
     data_dir: Path,
-) -> tuple[str, int, str]:
+    backend_jobs: int,
+) -> tuple[str, int, str, str]:
     env = os.environ.copy()
     env["CELLXPLORER_DATA"] = str(data_dir)
+    env["CELLXPLORER_BACKEND_TEST_PARALLEL"] = "1"
+    env["CELLXPLORER_BACKEND_TEST_JOBS"] = str(backend_jobs)
+    env["CELLXPLORER_NDAX_MAX_WORKERS"] = str(ndax_worker_budget(backend_jobs))
     completed = subprocess.run(
         [python_executable, "-m", "unittest", module],
         cwd=root,
@@ -46,7 +69,7 @@ def run_module(
         if output and not output.endswith("\n"):
             output += "\n"
         output += completed.stderr
-    return module, completed.returncode, output
+    return module, completed.returncode, output, env["CELLXPLORER_DATA"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,8 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     data_root = args.data_root or Path(os.environ.get("CELLXPLORER_DATA", root / ".test-cellxplorer"))
     data_root.mkdir(parents=True, exist_ok=True)
 
-    jobs = max(1, min(args.jobs, len(modules)))
-    print(f"Running {len(modules)} backend test modules with {jobs} workers.")
+    jobs = effective_backend_jobs(args.jobs, len(modules))
+    print(
+        f"Running {len(modules)} backend test modules with {jobs} workers "
+        f"(CPU budget {cpu_budget()}, NDAX cap {ndax_worker_budget(jobs)})."
+    )
 
     failures: list[tuple[str, str]] = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -91,11 +117,12 @@ def main(argv: list[str] | None = None) -> int:
                 root=root,
                 module=module,
                 data_dir=data_root / module.replace(".", "-"),
+                backend_jobs=jobs,
             ): module
             for module in modules
         }
         for future in as_completed(futures):
-            module, exit_code, output = future.result()
+            module, exit_code, output, _data_dir = future.result()
             if exit_code == 0:
                 print(f"PASS {module}")
                 continue

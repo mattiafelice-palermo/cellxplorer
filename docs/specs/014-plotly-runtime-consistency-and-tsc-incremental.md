@@ -17,6 +17,12 @@ python -m unittest tests.test_check_versions_script -v
 python scripts/check_versions.py
 ```
 
+## Review of the implementation — follow-up tasks
+
+See `013-014-build-performance-review.md`. Plotly runtime parity and incremental
+type-checking items were confirmed; worker-budget and cache-hash follow-ups live
+in Spec 013.
+
 Two unrelated items that both belong to the build/verify toolchain:
 
 - **A** — guard against version drift between the Plotly the app bundles and the Plotly embedded

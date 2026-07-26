@@ -2,6 +2,15 @@ import os
 import sys
 import unittest
 from concurrent.futures import ProcessPoolExecutor
+
+try:
+    from concurrent.futures.process import BrokenProcessPool
+except ImportError:  # pragma: no cover - older Python builds
+    class BrokenProcessPool(RuntimeError):
+        pass
+
+
+POOL_INFRA_ERRORS = (OSError, PermissionError, RuntimeError, BrokenProcessPool)
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +72,28 @@ def _compare_ndax_combination(task: tuple[str, str, str, bool]) -> tuple[str, st
     if not orig.equals(fast):
         return path.name, mode, softcyc, f"{path.name} mode={mode} soft={softcyc}"
     return path.name, mode, softcyc, None
+
+
+def ndax_worker_count(task_count: int) -> int:
+    override = os.environ.get("CELLXPLORER_NDAX_MAX_WORKERS")
+    if override:
+        try:
+            return max(1, min(task_count, int(override)))
+        except ValueError:
+            pass
+    if os.environ.get("CELLXPLORER_BACKEND_TEST_PARALLEL"):
+        jobs = max(1, int(os.environ.get("CELLXPLORER_BACKEND_TEST_JOBS", "1")))
+        cpu = os.cpu_count() or 1
+        return max(1, min(task_count, max(1, cpu // jobs)))
+    return max(1, min(task_count, os.cpu_count() or 1))
+
+
+def _run_sample_comparisons_serial(test_case, found) -> None:
+    for path in found:
+        for mode in ("chg", "dchg", "auto"):
+            for softcyc in (True, False):
+                with test_case.subTest(file=path.name, mode=mode, soft=softcyc):
+                    test_case.compare(path, mode, softcyc)
 
 
 class FastCycleNumberTests(unittest.TestCase):
@@ -138,24 +169,16 @@ class FastNdaxReadTests(unittest.TestCase):
             for mode in ("chg", "dchg", "auto")
             for softcyc in (True, False)
         ]
-        workers = min(len(tasks), os.cpu_count() or 1)
+        workers = ndax_worker_count(len(tasks))
         if workers <= 1:
-            for path in found:
-                for mode in ("chg", "dchg", "auto"):
-                    for softcyc in (True, False):
-                        with self.subTest(file=path.name, mode=mode, soft=softcyc):
-                            self.compare(path, mode, softcyc)
+            _run_sample_comparisons_serial(self, found)
             return
 
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
                 results = list(pool.map(_compare_ndax_combination, tasks))
-        except (OSError, PermissionError):
-            for path in found:
-                for mode in ("chg", "dchg", "auto"):
-                    for softcyc in (True, False):
-                        with self.subTest(file=path.name, mode=mode, soft=softcyc):
-                            self.compare(path, mode, softcyc)
+        except POOL_INFRA_ERRORS:
+            _run_sample_comparisons_serial(self, found)
             return
 
         for path_name, mode, softcyc, error in results:
