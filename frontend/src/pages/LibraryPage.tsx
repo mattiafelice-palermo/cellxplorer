@@ -1100,19 +1100,6 @@ export function LibraryPage() {
     });
   };
 
-  const totals = useMemo(() => {
-    const rows = cells.data ?? [];
-    return {
-      cells: rows.length,
-      active: rows.filter((cell) => cell.cycling_status !== "complete").length,
-      complete: rows.filter((cell) => cell.cycling_status === "complete").length,
-      parsing: rows.filter((cell) => cell.has_parsing).length,
-      needUpdate: rows.filter((cell) => cell.has_changed).length,
-      changing: rows.filter((cell) => cell.has_changing).length,
-      offline: rows.filter((cell) => cell.has_offline).length,
-    };
-  }, [cells.data]);
-
   const selectedIds = useMemo(() => Array.from(selectedCellIds), [selectedCellIds]);
   const selectedCells = useMemo(
     () => (cells.data ?? []).filter((cell) => selectedCellIds.has(cell.id)),
@@ -1164,6 +1151,21 @@ export function LibraryPage() {
   const pageRows = filteredSortedRows.slice(pageStart, pageStart + cellPageSize);
   const pageCells = pageRows.map((row) => row.cell);
   const pageEnd = pageStart + pageCells.length;
+  const totals = useMemo(() => {
+    const rows = filteredSortedRows.map((row) => row.cell);
+    return {
+      cells: rows.length,
+      active: rows.filter((cell) => cell.cycling_status !== "complete").length,
+      complete: rows.filter((cell) => cell.cycling_status === "complete").length,
+      parsing: rows.filter((cell) => cell.has_parsing).length,
+      needUpdate: rows.filter((cell) => cell.has_changed).length,
+      changing: rows.filter((cell) => cell.has_changing).length,
+      offline: rows.filter((cell) => cell.has_offline).length,
+    };
+  }, [filteredSortedRows]);
+  const filteredResultCount = filteredSortedRows.length;
+  const searchResultCount = allCells.length;
+  const showSearchScope = filteredResultCount !== searchResultCount;
 
   useEffect(() => {
     setCellPage(1);
@@ -1711,6 +1713,9 @@ export function LibraryPage() {
                         {totals.complete} complete - {totals.parsing} parsing - {totals.needUpdate} need update
                         {totals.changing ? ` - ${totals.changing} changing` : ""}
                         {totals.offline ? ` - ${totals.offline} offline` : ""}
+                        {showSearchScope
+                          ? ` (filtered from ${searchResultCount} matching search)`
+                          : ""}
                       </Text>
                       {selectedCellIds.size > 0 && (
                         <Text size="xs" c="teal">
@@ -1727,8 +1732,8 @@ export function LibraryPage() {
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text size="sm" c="dimmed">
             {pageCells.length === 0
-              ? `0 of ${allCells.length}`
-              : `Showing ${pageStart + 1}–${pageEnd} of ${allCells.length}`}
+              ? `0 of ${filteredResultCount}`
+              : `Showing ${pageStart + 1}–${pageEnd} of ${filteredResultCount}`}
           </Text>
           <Group gap="sm" align="center">
             <Group gap={6} align="center">

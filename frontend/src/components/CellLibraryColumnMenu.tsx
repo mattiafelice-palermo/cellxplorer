@@ -117,6 +117,7 @@ export function CellLibraryColumnMenu({
   const sorted = sort.column === column;
   const labels = sortLabels(column);
   const replicateDisabled = column === "replicates" && !replicateFiltersEnabled;
+  const replicateSortDisabled = column === "replicates" && !replicateFiltersEnabled;
 
   return (
     <Menu closeOnItemClick={false} withinPortal position="bottom-start" shadow="md">
@@ -149,10 +150,15 @@ export function CellLibraryColumnMenu({
         </UnstyledButton>
       </Menu.Target>
       <Menu.Dropdown onClick={(event) => event.stopPropagation()} miw={250}>
-        <Menu.Item onClick={() => setSort(column, "asc")} leftSection={<IconChevronUp size={14} />}>
+        <Menu.Item
+          disabled={replicateSortDisabled}
+          onClick={() => setSort(column, "asc")}
+          leftSection={<IconChevronUp size={14} />}
+        >
           {labels.asc}
         </Menu.Item>
         <Menu.Item
+          disabled={replicateSortDisabled}
           onClick={() => setSort(column, "desc")}
           leftSection={<IconChevronDown size={14} />}
         >
