@@ -15,7 +15,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 _PRIOR_DATA = os.environ.get("CELLXPLORER_DATA")
-_MODULE_DATA_ROOT = Path(tempfile.mkdtemp(prefix="cellxplorer-golden-test-"))
+_MODULE_DATA_ROOT = Path(tempfile.mkdtemp(prefix="cellxplorer-golden-test-")).resolve()
 os.environ["CELLXPLORER_DATA"] = str(_MODULE_DATA_ROOT)
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "tests"))
@@ -247,8 +247,8 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
 
     def test_live_database_is_not_used(self):
         live_root = (Path.home() / ".cellxplorer").resolve()
-        self.assertNotEqual(_MODULE_DATA_ROOT.resolve(), live_root)
-        self.assertTrue(str(self.env.data_root).startswith(str(_MODULE_DATA_ROOT)))
+        self.assertNotEqual(_MODULE_DATA_ROOT, live_root)
+        self.assertEqual(self.env.data_root.resolve(), _MODULE_DATA_ROOT)
 
     def test_caches_stay_under_module_data_root(self):
         cache_root = _MODULE_DATA_ROOT / "cache"
