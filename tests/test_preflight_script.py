@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -29,9 +30,18 @@ preflight = load_preflight()
 def make_repo() -> Path:
     root = Path(tempfile.mkdtemp(prefix="cellxplorer-preflight-"))
     (root / "frontend" / "tests").mkdir(parents=True)
+    (root / "frontend" / "src").mkdir(parents=True)
     (root / "frontend" / "node_modules").mkdir(parents=True)
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "check_versions.py").write_text("# stub\n", encoding="utf-8")
+    (root / "scripts" / "run_backend_tests.py").write_text("# stub\n", encoding="utf-8")
+    (root / "scripts" / "preflight.py").write_text("# stub\n", encoding="utf-8")
+    (root / "frontend" / "index.html").write_text("<html></html>\n", encoding="utf-8")
+    (root / "frontend" / "package.json").write_text('{"name":"cellxplorer-frontend"}\n', encoding="utf-8")
+    (root / "frontend" / "package-lock.json").write_text('{"name":"cellxplorer-frontend"}\n', encoding="utf-8")
+    (root / "frontend" / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
+    (root / "frontend" / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+    (root / "frontend" / "src" / "main.tsx").write_text("export {}\n", encoding="utf-8")
     (root / "frontend" / "tests" / "b.test.ts").write_text("", encoding="utf-8")
     (root / "frontend" / "tests" / "a.test.ts").write_text("", encoding="utf-8")
     return root
@@ -46,10 +56,6 @@ class PreflightScriptTests(unittest.TestCase):
         self.calls.append((command, cwd, env))
         return 0
 
-    def failing_run(self, command, cwd, env):
-        self.calls.append((command, cwd, env))
-        return 1
-
     def run_preflight(self, **kwargs):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -60,39 +66,114 @@ class PreflightScriptTests(unittest.TestCase):
                 node_executable=r"C:\Node\node.exe",
                 npm_executable=r"C:\Node\npm.cmd",
                 run_command=kwargs.get("run_command", self.mock_run),
+                no_cache=kwargs.get("no_cache", False),
             )
         return code, stdout.getvalue(), stderr.getvalue()
 
-    def test_stages_use_required_order(self):
-        code, stdout, _stderr = self.run_preflight()
-        self.assertEqual(code, 0)
-        self.assertEqual(len(self.calls), 4)
-        names = [
-            "Version consistency",
-            "Backend tests",
-            "Frontend policy tests",
-            "Frontend production build",
-        ]
-        for index, name in enumerate(names, start=1):
-            self.assertIn(f"[{index}/4] {name}", stdout)
-            self.assertIn(f"PASS: {name}", stdout)
+    def command_for(self, needle: str) -> list[str]:
+        for command, _cwd, _env in self.calls:
+            if any(needle in part for part in command):
+                return command
+        self.fail(f"No command containing {needle!r}")
 
-        version_cmd, backend_cmd, frontend_cmd, build_cmd = [call[0] for call in self.calls]
-        self.assertTrue(version_cmd[1].endswith("scripts\\check_versions.py") or version_cmd[1].endswith("scripts/check_versions.py"))
-        self.assertEqual(backend_cmd[:5], [r"C:\Python\python.exe", "-m", "unittest", "discover", "tests"])
+    def npm_exec_commands(self) -> list[list[str]]:
+        return [
+            command
+            for command, _, _ in self.calls
+            if command[:4] == [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec"]
+        ]
+
+    def test_stages_use_required_order(self):
+        code, stdout, _stderr = self.run_preflight(no_cache=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.calls), 5)
+        self.assertIn("[1/5] Version consistency", stdout)
+        self.assertIn("PASS: Version consistency", stdout)
+        self.assertIn("PASS: Backend tests", stdout)
+        self.assertIn("PASS: Frontend policy tests", stdout)
+        self.assertIn("PASS: Frontend type check", stdout)
+        self.assertIn("PASS: Frontend production bundle", stdout)
+        self.assertIn("Running 4 verification stages in parallel", stdout)
+
+        version_cmd = self.command_for("check_versions.py")
+        backend_cmd = self.command_for("run_backend_tests.py")
+        frontend_cmd = self.command_for("--test")
+        npm_cmds = self.npm_exec_commands()
+        self.assertEqual(len(npm_cmds), 2)
+        self.assertEqual(npm_cmds[0], [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec", "--", "tsc", "-b"])
+        self.assertEqual(
+            npm_cmds[1],
+            [r"C:\Node\npm.cmd", "--prefix", "frontend", "exec", "--", "vite", "build"],
+        )
+        self.assertEqual(version_cmd[0], r"C:\Python\python.exe")
+        self.assertEqual(backend_cmd[0], r"C:\Python\python.exe")
+        self.assertEqual(backend_cmd[2], "--jobs")
+        self.assertTrue(backend_cmd[3].isdigit())
         self.assertEqual(frontend_cmd[:2], [r"C:\Node\node.exe", "--test"])
-        self.assertEqual(build_cmd, [r"C:\Node\npm.cmd", "--prefix", "frontend", "run", "build"])
+
+    def test_frontend_build_cache_skips_repeat_run(self):
+        first_code, first_stdout, _stderr = self.run_preflight(no_cache=True)
+        self.assertEqual(first_code, 0)
+        self.assertEqual(len(self.calls), 5)
+
+        self.calls.clear()
+        second_code, second_stdout, _stderr = self.run_preflight()
+        self.assertEqual(second_code, 0)
+        self.assertEqual(len(self.calls), 3)
+        self.assertIn(preflight.SKIP_FRONTEND_BUILD_MESSAGE, second_stdout)
+        self.assertNotIn("tsc", " ".join(" ".join(cmd) for cmd, _, _ in self.calls))
+
+    def test_frontend_build_cache_invalidated_by_source_change(self):
+        self.run_preflight(no_cache=True)
+        self.calls.clear()
+        (self.repo / "frontend" / "src" / "touch.ts").write_text("export {}\n", encoding="utf-8")
+        code, _stdout, _stderr = self.run_preflight()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.calls), 5)
+
+    def test_no_cache_forces_frontend_build(self):
+        cache_path = self.repo / preflight.PREFLIGHT_CACHE_FILE
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "frontend_build_hash": preflight.frontend_build_input_hash(self.repo),
+                    "last_run_passed": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, _stdout, _stderr = self.run_preflight(no_cache=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.calls), 5)
+
+    def test_failed_run_never_skips_frontend_build(self):
+        def fail_on_bundle(command, cwd, env):
+            self.calls.append((command, cwd, env))
+            if command[-2:] == ["vite", "build"]:
+                return 1
+            return 0
+
+        code, _stdout, _stderr = self.run_preflight(run_command=fail_on_bundle, no_cache=True)
+        self.assertEqual(code, 1)
+        cache = json.loads((self.repo / preflight.PREFLIGHT_CACHE_FILE).read_text(encoding="utf-8"))
+        self.assertFalse(cache["last_run_passed"])
+
+        self.calls.clear()
+        second_code, _stdout, second_stdout = self.run_preflight()
+        self.assertEqual(second_code, 0)
+        self.assertEqual(len(self.calls), 5)
+        self.assertNotIn(preflight.SKIP_FRONTEND_BUILD_MESSAGE, second_stdout)
 
     def test_current_python_executable_is_used(self):
-        self.run_preflight()
-        version_cmd = self.calls[0][0]
-        backend_cmd = self.calls[1][0]
+        self.run_preflight(no_cache=True)
+        version_cmd = self.command_for("check_versions.py")
+        backend_cmd = self.command_for("run_backend_tests.py")
         self.assertEqual(version_cmd[0], r"C:\Python\python.exe")
         self.assertEqual(backend_cmd[0], r"C:\Python\python.exe")
 
     def test_frontend_test_paths_are_sorted_and_explicit(self):
-        self.run_preflight()
-        frontend_cmd = self.calls[2][0]
+        self.run_preflight(no_cache=True)
+        frontend_cmd = self.command_for("--test")
         test_paths = frontend_cmd[2:]
         self.assertEqual(
             test_paths,
@@ -154,30 +235,42 @@ class PreflightScriptTests(unittest.TestCase):
             return 0
 
         with mock.patch.dict("os.environ", {"CELLXPLORER_DATA": original}, clear=False):
-            self.run_preflight(run_command=capture_env)
-        self.assertEqual(len(observed), 4)
+            self.run_preflight(run_command=capture_env, no_cache=True)
+        self.assertEqual(len(observed), 5)
         self.assertEqual(len(set(observed)), 1)
 
-    def test_first_failed_stage_stops_later_stages(self):
-        def fail_on_backend(command, cwd, env):
+    def test_version_failure_skips_parallel_wave(self):
+        def fail_on_version(command, cwd, env):
             self.calls.append((command, cwd, env))
-            if command[1:3] == ["-m", "unittest"]:
+            if "check_versions.py" in command[1]:
                 return 1
             return 0
 
-        code, stdout, stderr = self.run_preflight(run_command=fail_on_backend)
+        code, stdout, stderr = self.run_preflight(run_command=fail_on_version)
         self.assertEqual(code, 1)
-        self.assertEqual(len(self.calls), 2)
-        self.assertIn("FAIL: command exited with code 1", stderr)
+        self.assertEqual(len(self.calls), 1)
         self.assertIn("Preflight stopped. Later stages were not run.", stderr)
-        self.assertNotIn("[3/4] Frontend policy tests", stdout)
+        self.assertNotIn("PREFLIGHT PASSED", stdout)
+
+    def test_parallel_wave_failure_reports_failed_stage(self):
+        def fail_on_backend(command, cwd, env):
+            self.calls.append((command, cwd, env))
+            if "run_backend_tests.py" in command[1]:
+                return 1
+            return 0
+
+        code, stdout, stderr = self.run_preflight(run_command=fail_on_backend, no_cache=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.calls), 5)
+        self.assertIn("Preflight failed:", stderr)
+        self.assertIn("Backend tests", stderr)
         self.assertNotIn("PREFLIGHT PASSED", stdout)
 
     def test_successful_stages_return_zero(self):
-        code, stdout, _stderr = self.run_preflight()
+        code, stdout, _stderr = self.run_preflight(no_cache=True)
         self.assertEqual(code, 0)
         self.assertIn("PREFLIGHT PASSED", stdout)
-        self.assertIn("4/4 stages completed successfully", stdout)
+        self.assertIn("5/5 stages completed successfully", stdout)
 
     def test_interruption_returns_130(self):
         def interrupt(_command, _cwd, _env):
@@ -194,7 +287,7 @@ class PreflightScriptTests(unittest.TestCase):
         self.assertIs(run_mock.call_args.kwargs.get("shell"), False)
 
     def test_repository_root_is_used_as_cwd(self):
-        self.run_preflight()
+        self.run_preflight(no_cache=True)
         for _command, cwd, _env in self.calls:
             self.assertEqual(cwd, self.repo)
 

@@ -6,10 +6,18 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+
+PLOTLY_ASSET_MIN_BYTES = 1_000_000
+PLOTLY_COPY_COMMAND = (
+    "Copy-Item frontend\\node_modules\\plotly.js-dist-min\\plotly.min.js "
+    "backend\\app\\assets\\plotly.min.js"
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +29,58 @@ class VersionSource:
 
 class VersionCheckError(Exception):
     """Raised when a version declaration is missing or malformed."""
+
+
+class PlotlyVersionSkip(Exception):
+    """Plotly runtime check skipped because frontend dependencies are absent."""
+
+
+def _read_plotly_npm_version(root: Path) -> str:
+    package_json = root / "frontend" / "node_modules" / "plotly.js-dist-min" / "package.json"
+    if not package_json.is_file():
+        raise PlotlyVersionSkip(
+            "Plotly runtime check skipped: frontend/node_modules/plotly.js-dist-min is not installed."
+        )
+    return _read_json_version(package_json)
+
+
+def _read_plotly_asset_version(path: Path) -> str:
+    if not path.is_file():
+        raise VersionCheckError(
+            f"{path.as_posix()}: portable-report Plotly runtime is missing."
+        )
+    if path.stat().st_size < PLOTLY_ASSET_MIN_BYTES:
+        raise VersionCheckError(
+            f"{path.as_posix()}: portable-report Plotly runtime is unexpectedly small."
+        )
+    header = path.read_text(encoding="utf-8", errors="replace")[:2048]
+    match = re.search(r"v(\d+\.\d+\.\d+)", header)
+    if not match:
+        raise VersionCheckError(
+            f"{path.as_posix()}: could not parse Plotly version from runtime header."
+        )
+    return match.group(1)
+
+
+def check_plotly_runtime_versions(root: Path | None = None) -> tuple[list[str], list[str]]:
+    root = root or _repo_root()
+    asset_path = root / "backend" / "app" / "assets" / "plotly.min.js"
+    try:
+        npm_version = _read_plotly_npm_version(root)
+    except PlotlyVersionSkip as exc:
+        return [], [str(exc)]
+    try:
+        asset_version = _read_plotly_asset_version(asset_path)
+    except VersionCheckError as exc:
+        return [str(exc)], []
+    if npm_version != asset_version:
+        return [
+            "Plotly runtime versions do not match: "
+            f"frontend/node_modules/plotly.js-dist-min is {npm_version}, "
+            f"backend/app/assets/plotly.min.js is {asset_version}. "
+            f"Refresh the asset with:\n  {PLOTLY_COPY_COMMAND}"
+        ], []
+    return [], []
 
 
 def _repo_root(start: Path | None = None) -> Path:
@@ -140,12 +200,12 @@ def normalize_expected_version(value: str) -> str:
 def check_versions(
     repo_root: Path | None = None,
     expected_version: str | None = None,
-) -> tuple[list[VersionSource], list[str]]:
-    """Return collected sources and human-readable failure messages."""
+) -> tuple[list[VersionSource], list[str], list[str]]:
+    """Return collected sources, failure messages, and informational skips."""
     try:
         sources = collect_version_sources(repo_root)
     except VersionCheckError as exc:
-        return [], [str(exc)]
+        return [], [str(exc)], []
 
     versions = {source.version for source in sources}
     errors: list[str] = []
@@ -159,7 +219,9 @@ def check_versions(
             )
         elif len(versions) != 1:
             errors.append(f"expected version {normalized}")
-    return sources, errors
+    plotly_errors, plotly_skips = check_plotly_runtime_versions(repo_root)
+    errors.extend(plotly_errors)
+    return sources, errors, plotly_skips
 
 
 def _format_table(sources: list[VersionSource]) -> str:
@@ -187,12 +249,14 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return 2 if exc.code == 2 else int(exc.code or 2)
 
-    sources, errors = check_versions(args.repo_root, args.expected_version)
+    sources, errors, plotly_skips = check_versions(args.repo_root, args.expected_version)
     if not sources:
         print("FAIL:", errors[0], file=sys.stderr)
         return 1
 
     print(_format_table(sources))
+    for message in plotly_skips:
+        print(message)
     if errors:
         print("\nFAIL:", errors[0], file=sys.stderr)
         if "do not match" in errors[0]:
@@ -203,10 +267,14 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 seen.add(key)
                 print(f"{source.path:<28} {source.version}", file=sys.stderr)
+        elif errors[0].startswith("Plotly runtime versions do not match"):
+            print(errors[0], file=sys.stderr)
         return 1
 
     version = sources[0].version
     print(f"\nPASS: all version declarations match {version}")
+    if not plotly_skips:
+        print("PASS: portable-report Plotly runtime matches the installed frontend bundle.")
     return 0
 
 

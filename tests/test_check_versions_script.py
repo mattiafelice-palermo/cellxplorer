@@ -86,13 +86,14 @@ class CheckVersionsScriptTests(unittest.TestCase):
 
     def test_all_versions_match(self):
         write_repo(self.repo, "1.2.3")
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(errors, [])
+        self.assertTrue(plotly_skips)
         self.assertEqual({source.version for source in sources}, {"1.2.3"})
 
     def test_one_version_differs(self):
         write_repo(self.repo, "1.2.3", frontend_version="1.2.2")
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertTrue(errors)
         self.assertIn("1.2.3", {source.version for source in sources})
         self.assertIn("1.2.2", {source.version for source in sources})
@@ -103,7 +104,7 @@ class CheckVersionsScriptTests(unittest.TestCase):
         data = json.loads(path.read_text(encoding="utf-8"))
         del data["version"]
         path.write_text(json.dumps(data), encoding="utf-8")
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(sources, [])
         self.assertEqual(len(errors), 1)
         self.assertIn("version", errors[0])
@@ -111,14 +112,14 @@ class CheckVersionsScriptTests(unittest.TestCase):
     def test_malformed_json(self):
         write_repo(self.repo, "1.2.3")
         (self.repo / "package.json").write_text("{not-json", encoding="utf-8")
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(sources, [])
         self.assertIn("malformed JSON", errors[0])
 
     def test_malformed_toml(self):
         write_repo(self.repo, "1.2.3")
         (self.repo / "src-tauri" / "Cargo.toml").write_text("[package\n", encoding="utf-8")
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(sources, [])
         self.assertIn("malformed TOML", errors[0])
 
@@ -128,7 +129,7 @@ class CheckVersionsScriptTests(unittest.TestCase):
             'VERSION = "1.2.3"\n',
             encoding="utf-8",
         )
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(sources, [])
         self.assertIn("APP_VERSION is missing", errors[0])
 
@@ -138,26 +139,26 @@ class CheckVersionsScriptTests(unittest.TestCase):
             '[[package]]\nname = "other"\nversion = "9.9.9"\n',
             encoding="utf-8",
         )
-        sources, errors = check_versions.check_versions(self.repo)
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
         self.assertEqual(sources, [])
         self.assertIn("no package named", errors[0])
         self.assertIn("cellxplorer", errors[0])
 
     def test_matching_expected_version(self):
         write_repo(self.repo, "1.2.3")
-        sources, errors = check_versions.check_versions(self.repo, "1.2.3")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo, "1.2.3")
         self.assertEqual(errors, [])
         self.assertTrue(sources)
 
     def test_expected_version_with_leading_v(self):
         write_repo(self.repo, "1.2.3")
-        sources, errors = check_versions.check_versions(self.repo, "v1.2.3")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo, "v1.2.3")
         self.assertEqual(errors, [])
         self.assertTrue(sources)
 
     def test_mismatching_expected_version(self):
         write_repo(self.repo, "1.2.3")
-        sources, errors = check_versions.check_versions(self.repo, "1.2.4")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo, "1.2.4")
         self.assertTrue(errors)
         self.assertTrue(sources)
         self.assertIn("expected version 1.2.4", errors[0])
@@ -167,7 +168,40 @@ class CheckVersionsScriptTests(unittest.TestCase):
         with redirect_stdout(stdout):
             code = check_versions.main(["--repo-root", str(ROOT)])
         self.assertEqual(code, 0)
-        self.assertIn("PASS:", stdout.getvalue())
+        output = stdout.getvalue()
+        self.assertIn("PASS:", output)
+        if (ROOT / "frontend" / "node_modules" / "plotly.js-dist-min" / "package.json").is_file():
+            self.assertIn("portable-report Plotly runtime matches", output)
+
+    def test_plotly_runtime_mismatch_fails(self):
+        write_repo(self.repo, "1.2.3")
+        asset = self.repo / "backend" / "app" / "assets"
+        asset.mkdir(parents=True, exist_ok=True)
+        (asset / "plotly.min.js").write_text("* plotly.js v9.9.9\n" + ("x" * 1_100_000), encoding="utf-8")
+        plotly_pkg = self.repo / "frontend" / "node_modules" / "plotly.js-dist-min"
+        plotly_pkg.mkdir(parents=True, exist_ok=True)
+        (plotly_pkg / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
+        self.assertTrue(sources)
+        self.assertTrue(any("Plotly runtime versions do not match" in error for error in errors))
+
+    def test_plotly_runtime_missing_asset_fails(self):
+        write_repo(self.repo, "1.2.3")
+        plotly_pkg = self.repo / "frontend" / "node_modules" / "plotly.js-dist-min"
+        plotly_pkg.mkdir(parents=True, exist_ok=True)
+        (plotly_pkg / "package.json").write_text('{"version":"1.2.3"}', encoding="utf-8")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
+        self.assertTrue(sources)
+        self.assertTrue(any("Plotly runtime is missing" in error for error in errors))
+
+    def test_plotly_runtime_skips_without_node_modules(self):
+        write_repo(self.repo, "1.2.3")
+        sources, errors, plotly_skips = check_versions.check_versions(self.repo)
+        self.assertTrue(sources)
+        self.assertEqual(errors, [])
+        self.assertTrue(
+            any(message.startswith("Plotly runtime check skipped") for message in plotly_skips)
+        )
 
     def test_main_invalid_arguments(self):
         stderr = io.StringIO()

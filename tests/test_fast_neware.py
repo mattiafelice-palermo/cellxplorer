@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,50 @@ SAMPLE_FILES = [
     ROOT / "NG_20260317_LFP_LP_MoL_530_FM+CY.ndax",
     ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax",
 ]
+
+
+def _compare_ndax_combination(task: tuple[str, str, str, bool]) -> tuple[str, str, bool, str | None]:
+    root_str, path_str, mode, softcyc = task
+    root = Path(root_str)
+    path = Path(path_str)
+    local_root = str(root / "backend")
+    if local_root not in sys.path:
+        sys.path.insert(0, local_root)
+    os.environ.setdefault("CELLXPLORER_DATA", str(root / ".test-cellxplorer"))
+
+    import NewareNDA as worker_neware
+    from app.services import fast_neware as worker_fast_neware
+
+    worker_fast_neware.uninstall()
+    orig = worker_neware.read(
+        str(path),
+        software_cycle_number=softcyc,
+        cycle_mode=mode,
+        log_level="ERROR",
+    )
+    worker_fast_neware.install()
+    try:
+        fast = worker_neware.read(
+            str(path),
+            software_cycle_number=softcyc,
+            cycle_mode=mode,
+            log_level="ERROR",
+        )
+    finally:
+        worker_fast_neware.uninstall()
+
+    if list(orig.columns) != list(fast.columns):
+        return path.name, mode, softcyc, f"columns differ: {list(orig.columns)} vs {list(fast.columns)}"
+    if not (orig.dtypes == fast.dtypes).all():
+        return (
+            path.name,
+            mode,
+            softcyc,
+            f"dtypes differ: {orig.dtypes} vs {fast.dtypes}",
+        )
+    if not orig.equals(fast):
+        return path.name, mode, softcyc, f"{path.name} mode={mode} soft={softcyc}"
+    return path.name, mode, softcyc, None
 
 
 class FastCycleNumberTests(unittest.TestCase):
@@ -87,11 +132,35 @@ class FastNdaxReadTests(unittest.TestCase):
         found = [p for p in SAMPLE_FILES if p.exists()]
         if not found:
             self.skipTest("no sample .ndax files present")
-        for path in found:
-            for mode in ("chg", "dchg", "auto"):
-                for softcyc in (True, False):
-                    with self.subTest(file=path.name, mode=mode, soft=softcyc):
-                        self.compare(path, mode, softcyc)
+        tasks = [
+            (str(ROOT), str(path), mode, softcyc)
+            for path in found
+            for mode in ("chg", "dchg", "auto")
+            for softcyc in (True, False)
+        ]
+        workers = min(len(tasks), os.cpu_count() or 1)
+        if workers <= 1:
+            for path in found:
+                for mode in ("chg", "dchg", "auto"):
+                    for softcyc in (True, False):
+                        with self.subTest(file=path.name, mode=mode, soft=softcyc):
+                            self.compare(path, mode, softcyc)
+            return
+
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(_compare_ndax_combination, tasks))
+        except (OSError, PermissionError):
+            for path in found:
+                for mode in ("chg", "dchg", "auto"):
+                    for softcyc in (True, False):
+                        with self.subTest(file=path.name, mode=mode, soft=softcyc):
+                            self.compare(path, mode, softcyc)
+            return
+
+        for path_name, mode, softcyc, error in results:
+            with self.subTest(file=path_name, mode=mode, soft=softcyc):
+                self.assertIsNone(error, error)
 
 
 if __name__ == "__main__":

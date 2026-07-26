@@ -109,6 +109,29 @@ Ask if a task is ambiguous rather than guessing.
 The result comes back for review, which appends `R*` outcomes to the same file — the loop
 continues until the section is clean.
 
+### When to run `vite build`
+
+`npx vite build` costs ~43 s and is the slowest check in the repo, so do not run it reflexively —
+but do not skip it on a hunch either. It catches what `tsc` cannot: Rollup-level module
+resolution, missing or renamed static assets, `index.html` references, CSS/asset pipeline
+failures, dynamic `import()` of a non-existent path, and plugin/config errors.
+
+**Required** when any of these changed:
+`frontend/src/**` · `frontend/index.html` · `frontend/public/**` · `frontend/vite.config.ts` ·
+`frontend/tsconfig.json` · `frontend/package.json` / `package-lock.json`.
+
+**Not required** for: `frontend/tests/**` (not in the tsc program — `include` is `["src"]` — and
+not in the Vite entry graph, so these need only `node --test`) · `backend/**` · Python `tests/**`
+· `scripts/**` · `src-tauri/**` (validated by `cargo` / a Tauri build) · `docs/**` and Markdown.
+
+`tsc --noEmit` is separate and much cheaper: run it for any `frontend/src/**` or `tsconfig.json`
+change even when a full build is not warranted.
+
+**When in doubt, build** — an unnecessary build is cheap; shipping an unbuildable tree is not.
+Never skip the build for a release or packaging artefact. The authoritative table lives in
+[`013-faster-preflight.md`](013-faster-preflight.md) §2.4, which also binds it to the automated
+skip cache; keep the two in sync.
+
 ### Review effort
 
 Reviews are **code reading first**. The implementer has normally already run `tsc`, the build,
@@ -189,6 +212,17 @@ edits. Keep the index below in order.
 - [012-cell-library-sort-and-filter.md](012-cell-library-sort-and-filter.md)
   — add Excel-style header menus with typed filters and one-column sorting to the Cell Database,
   applied before pagination with tested selection safety.
+  **Implemented.**
+- [013-faster-preflight.md](013-faster-preflight.md)
+  — second round of preflight speedups from measured timings: split the serial `tsc && vite`
+  stage into two parallel stages, parallelise the one backend test that is 47 % of the suite,
+  and skip the frontend build when no frontend input changed. Also carries the normative
+  **when-to-run-`vite build`** rule (§2.4). Tooling only.
+  **Implemented.**
+- [014-plotly-runtime-consistency-and-tsc-incremental.md](014-plotly-runtime-consistency-and-tsc-incremental.md)
+  — (A) fail preflight when the bundled Plotly and the Plotly embedded in portable HTML reports
+  drift apart, a silent correctness hazard today; (B) enable incremental type-checking, measured
+  at ~15 s → ~6 s warm. Tooling/config only.
   **Implemented.**
 
 ## Assets

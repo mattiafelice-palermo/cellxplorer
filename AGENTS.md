@@ -157,7 +157,8 @@ Cellxplorer/
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
 │   ├── check_versions.py           Read-only version declaration consistency check
-│   └── preflight.py                Canonical local verification command
+│   ├── preflight.py                Canonical local verification command
+│   └── run_backend_tests.py        Parallel backend unittest runner for preflight
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 ├── run.py                          Runs FastAPI with the built frontend

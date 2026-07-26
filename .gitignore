@@ -13,6 +13,7 @@ frontend/dist/
 
 # Local app data and generated caches
 .test-cellxplorer/
+.preflight-cache.json
 data/
 cache/
 *.db
