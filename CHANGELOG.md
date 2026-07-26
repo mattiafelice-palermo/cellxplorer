@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.14.2 - 2026-07-26
+
+- Fixed the Cycles plot **Reindex remaining cycles** toggle so it immediately closes gaps,
+  renumbers the visible cycles, and resets zoom when diagnostic cycles are hidden.
+
 ## 0.14.1 - 2026-07-26
 
 - Polished the Cell Database table: fixed column widths across pages, debounced search,

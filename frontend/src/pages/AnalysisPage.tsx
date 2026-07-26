@@ -6989,7 +6989,9 @@ function cyclePlotLayout(
     // the data or the plotted quantity changes — otherwise switching e.g.
     // from CE (~99) to capacity (~120 mAh) kept the old ranges and showed
     // an empty plot
-    uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${spec.presentation.normalize_by_mass ? "g" : "abs"}`,
+    uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${spec.presentation.normalize_by_mass ? "g" : "abs"}|${
+      spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"
+    }`,
     xaxis: {
       ...axisBase(style.x_axis),
       title: {
@@ -7883,6 +7885,11 @@ function CyclePlotCard({
   // Rebuild traces/layout only when the fields they actually read change —
   // unrelated spec edits (other tabs' styles, autosave echoes) must not
   // trigger a full Plotly re-render.
+  //
+  // Any presentation field that changes what is plotted (not merely how it is
+  // styled) must appear here, in zoomSignature, and in cyclePlotLayout
+  // uirevision. A flag that changes the data but not these keys silently does
+  // nothing.
   const viewSignature = useMemo(
     () =>
       JSON.stringify({
@@ -7896,6 +7903,7 @@ function CyclePlotCard({
         // Hiding diagnostics drops points from every trace, so it belongs here
         // for the same reason as normalize: it changes what is plotted.
         hideDiagnostics: spec.presentation.hide_diagnostic_cycles ?? false,
+        reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
         diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
         style: currentPlotStyle(spec, "cycles"),
       }),
@@ -7926,7 +7934,7 @@ function CyclePlotCard({
     (spec.presentation.hidden_protocol_segment_ids?.length ?? 0) > 0;
   const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
     spec.presentation.normalize_by_mass ? "g" : "abs"
-  }`;
+  }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}`;
   const zoom = useZoomMemory(zoomSignature);
   const layout = useMemo(
     () => zoom.apply(cyclePlotLayout(result, spec, exportTraces)),
