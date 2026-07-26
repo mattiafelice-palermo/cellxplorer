@@ -14,6 +14,10 @@ that matches the change, then follow its links to the authoritative implementati
   frontend server state, releases, and Windows packaging.
 - [`dcir-analysis.md`](dcir-analysis.md): DCIR rest/pulse recognition, calculation rules, private
   segment ownership, series structure, and cache boundaries.
+- [`chargeability-analysis.md`](chargeability-analysis.md): semantic SoC-window matching, safe
+  protocol-formula parsing, reference-capacity resolution, axes, and cache/UI ownership.
+- [`rate-capability-analysis.md`](rate-capability-analysis.md): automatic charge/discharge sweep
+  recognition, CC-only capacity, cutoff validation, pattern rules, axes, and cache/UI ownership.
 
 Existing specialist references:
 

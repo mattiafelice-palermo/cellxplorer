@@ -200,6 +200,161 @@ class SourceAndReplicateTests(unittest.TestCase):
             )
         self.assertEqual(empty.exception.status_code, 400)
 
+    def test_create_replicate_group_files_group_and_removes_cell_refs_atomically(self):
+        db = self.make_session()
+        folder = Folder(name="Batch A")
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        db.add_all([folder, cell_a, cell_b])
+        db.flush()
+        db.add_all(
+            [
+                FolderCell(folder_id=folder.id, cell_id=cell_a.id, position=0),
+                FolderCell(folder_id=folder.id, cell_id=cell_b.id, position=1),
+            ]
+        )
+        db.commit()
+
+        result = replicates.create_replicate_group(
+            replicates.ReplicateGroupCreate(
+                name="A replicates",
+                cell_ids=[cell_a.id, cell_b.id],
+                folder_ids=[folder.id],
+                remove_folder_cells=[
+                    replicates.FolderCellRef(folder_id=folder.id, cell_id=cell_a.id),
+                    replicates.FolderCellRef(folder_id=folder.id, cell_id=cell_b.id),
+                ],
+            ),
+            db=db,
+        )
+
+        self.assertEqual(result["cell_ids"], [cell_a.id, cell_b.id])
+        self.assertEqual(result["folder_ids"], [folder.id])
+        self.assertEqual(db.query(FolderCell).count(), 0)
+        self.assertEqual(
+            db.query(FolderReplicateGroup)
+            .filter(
+                FolderReplicateGroup.folder_id == folder.id,
+                FolderReplicateGroup.group_id == result["id"],
+            )
+            .count(),
+            1,
+        )
+
+    def test_create_replicate_group_validation_leaves_no_partial_group(self):
+        db = self.make_session()
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        db.add_all([cell_a, cell_b])
+        db.commit()
+
+        with self.assertRaises(HTTPException) as missing_folder:
+            replicates.create_replicate_group(
+                replicates.ReplicateGroupCreate(
+                    name="Should not exist",
+                    cell_ids=[cell_a.id, cell_b.id],
+                    folder_ids=[999],
+                ),
+                db=db,
+            )
+
+        self.assertEqual(missing_folder.exception.status_code, 404)
+        self.assertEqual(db.query(ReplicateGroup).count(), 0)
+        self.assertEqual(db.query(ReplicateGroupCell).count(), 0)
+
+    def test_explode_replicate_refiles_cells_and_deletes_group_atomically(self):
+        db = self.make_session()
+        folder = Folder(name="Batch A")
+        other_folder = Folder(name="Batch B")
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        group = ReplicateGroup(name="A replicates")
+        db.add_all([folder, other_folder, cell_a, cell_b, group])
+        db.flush()
+        group_id = group.id
+        db.add_all(
+            [
+                ReplicateGroupCell(group_id=group_id, cell_id=cell_a.id, position=0),
+                ReplicateGroupCell(group_id=group_id, cell_id=cell_b.id, position=1),
+                FolderReplicateGroup(folder_id=folder.id, group_id=group_id, position=0),
+                FolderReplicateGroup(folder_id=other_folder.id, group_id=group_id, position=0),
+            ]
+        )
+        db.commit()
+
+        result = replicates.explode_replicate_groups(
+            replicates.ReplicateExplodeRequest(
+                groups=[
+                    replicates.ReplicateExplodeTarget(
+                        group_id=group_id,
+                        folder_ids=[folder.id],
+                    )
+                ]
+            ),
+            db=db,
+        )
+
+        self.assertEqual(result["deleted_empty_groups"], [group_id])
+        self.assertIsNone(db.get(ReplicateGroup, group_id))
+        self.assertEqual(
+            [
+                row.cell_id
+                for row in db.query(FolderCell)
+                .filter(FolderCell.folder_id == folder.id)
+                .order_by(FolderCell.position)
+                .all()
+            ],
+            [cell_a.id, cell_b.id],
+        )
+        self.assertEqual(
+            {
+                row.cell_id
+                for row in db.query(FolderCell)
+                .filter(FolderCell.folder_id == other_folder.id)
+                .all()
+            },
+            {cell_a.id, cell_b.id},
+        )
+
+    def test_explode_validation_leaves_group_untouched(self):
+        db = self.make_session()
+        cell_a = Cell(name="A")
+        cell_b = Cell(name="B")
+        group = ReplicateGroup(name="A replicates")
+        db.add_all([cell_a, cell_b, group])
+        db.flush()
+        group_id = group.id
+        db.add_all(
+            [
+                ReplicateGroupCell(group_id=group_id, cell_id=cell_a.id, position=0),
+                ReplicateGroupCell(group_id=group_id, cell_id=cell_b.id, position=1),
+            ]
+        )
+        db.commit()
+
+        with self.assertRaises(HTTPException) as missing_folder:
+            replicates.explode_replicate_groups(
+                replicates.ReplicateExplodeRequest(
+                    groups=[
+                        replicates.ReplicateExplodeTarget(
+                            group_id=group_id,
+                            folder_ids=[999],
+                        )
+                    ]
+                ),
+                db=db,
+            )
+
+        self.assertEqual(missing_folder.exception.status_code, 404)
+        self.assertIsNotNone(db.get(ReplicateGroup, group_id))
+        self.assertEqual(
+            db.query(ReplicateGroupCell)
+            .filter(ReplicateGroupCell.group_id == group_id)
+            .count(),
+            2,
+        )
+        self.assertEqual(db.query(FolderCell).count(), 0)
+
     def test_delete_cell_removes_folder_refs_but_keeps_nonempty_replicates(self):
         db = self.make_session()
         folder = Folder(name="Batch A")

@@ -4,6 +4,40 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.14.0 - 2026-07-26
+
+- Added a Chargeability analysis tab that finds voltage-controlled charge events from protocol
+  meaning (SoC window, current ceiling, and voltage mode) rather than fixed step numbers, then
+  plots matched raw curves with SoC, time, current, and capacity axes.
+- Added a C-rate (rate-capability) analysis tab that recognizes charge- and discharge-rate sweeps,
+  validates executed voltage cutoffs, normalizes retention to a shared reference rate across
+  selected cells, and reports charge/discharge asymmetry when both families are present.
+- Automatic recognition for C-rate and Chargeability now shows realistic progress, and a read-only
+  protocol-structure viewer can highlight the steps that were detected.
+- Redesigned Place in folders into a two-pane additive picker with a collapsible folder tree and a
+  clear impact summary of what will be filed where.
+- Cell Database and Projects folder/replicate workflows gained clearer place-in-folders and
+  group/ungroup/explode paths, including converting selections between cells and replicate groups
+  without duplicating scientific data.
+- Before removing cells or exploding/ungrouping replicates, CellXplorer previews the impact on
+  analyses and saved plots. Exploding or deleting a replicate group also strips that group from
+  analysis samples so selections do not keep dangling references.
+- Unsaved analysis plots are session drafts: cold open restores a saved plot or an empty workspace,
+  “Unsaved plot” appears only after New, and leaving a dirty draft prompts Save or Discard.
+- Fixed per-cycle capacity and energy aggregation for Neware’s per-step counter reset. CC+CV
+  charges now include the CV portion, which corrects understated charge capacity and coulombic
+  efficiencies that could previously exceed 100%.
+- Added a header quick-settings menu for reload interface, desktop restart, Appearance
+  (Auto/Light/Dark for app chrome; plots stay light), and pausing background automation such as
+  source monitoring and idle cache warmup.
+- Production builds no longer show the browser context menu except on text inputs and explicitly
+  marked native menus.
+- Fixed a background warmup deadlock where one failed thumbnail lookup could stall saved-plot
+  preview generation for the rest of the session.
+- Paginated the Cell Database table (25 / 50 / 100 rows per page) with sticky search/actions and a
+  second sticky row for the Cells header plus page controls, so paging stays available while
+  scrolling; the replicate section keeps its own sticky action row.
+
 ## 0.13.0 - 2026-07-23
 
 - Added a dedicated Steps analysis tab built around explicit cell-and-protocol-segment series.

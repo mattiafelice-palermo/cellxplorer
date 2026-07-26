@@ -196,7 +196,7 @@ function PortableFolderTree({
           cursor: "pointer",
           borderRadius: 5,
           background:
-            value === String(folder.id) ? "var(--mantine-color-teal-0)" : "transparent",
+            value === String(folder.id) ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "transparent",
         }}
       >
         <ActionIcon
@@ -256,7 +256,7 @@ function PortableFolderTree({
         style={{
           cursor: "pointer",
           borderRadius: 5,
-          background: value === "none" ? "var(--mantine-color-teal-0)" : "transparent",
+          background: value === "none" ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "transparent",
         }}
       >
         <Box w={22} />

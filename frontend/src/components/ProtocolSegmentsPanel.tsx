@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Collapse,
   Divider,
   Group,
   Loader,
@@ -107,6 +108,12 @@ export interface ProtocolSegmentsPanelProps {
   subtitle?: string;
   emptyText?: string;
   showPlotControls?: boolean;
+  /**
+   * Show just the show/hide eye per segment without the calculation
+   * exclude / use-only controls. The series tabs (DCIR) want segment
+   * visibility but not the cycle-tab computation filters.
+   */
+  showVisibilityToggle?: boolean;
   showSuggestions?: boolean;
   suggestions?: ProtocolSegmentSuggestion[];
   suggestionsLoading?: boolean;
@@ -425,7 +432,7 @@ function ProtocolGroupNode({
         p={8}
         style={{
           background:
-            group.depth === 0 ? "var(--mantine-color-body)" : "var(--mantine-color-gray-0)",
+            group.depth === 0 ? "var(--mantine-color-body)" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
         }}
       >
         <ActionIcon
@@ -823,7 +830,7 @@ function ProtocolPicker({
         </Button>
       </Group>
       {showCells && active && (
-        <Paper withBorder radius="md" p={6} bg="var(--mantine-color-gray-0)">
+        <Paper withBorder radius="md" p={6} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
           <Box className="cx-vertical-scroll" style={{ maxHeight: 96 }}>
             <Stack gap={2}>
               {active.files.map((file) => (
@@ -862,7 +869,7 @@ function CapacityReference({ families }: { families: ProtocolFamily[] }) {
     .join(", ");
 
   return (
-    <Paper p="xs" withBorder radius="md" bg="var(--mantine-color-gray-0)">
+    <Paper p="xs" withBorder radius="md" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
       <Group gap="lg" wrap="wrap" align="center">
         <Box>
           <Text size="10px" c="dimmed" tt="uppercase">
@@ -1116,6 +1123,86 @@ function SegmentEditor({
     (suggestion) => suggestion.id === suggestionId
   );
 
+  // Rendering the nested step tree is the expensive part of this modal. Keeping
+  // it out of the name field's render path is what makes typing the segment
+  // name fast: the memo excludes `name`, so a keystroke no longer rebuilds every
+  // ProtocolGroupNode. It still recomputes when the actual inputs (active
+  // family, selection, filters, expand state) change.
+  const treeContent = useMemo(() => {
+    if (loading || !activeFamily) return null;
+    const family = activeFamily;
+    const selected = selectedSteps(targets, family.signature);
+    const selectedSet = new Set(selected);
+    const groups = familyGroups(family);
+    const allSteps = uniqueSorted(groupSteps(groups));
+    const byNumber = new Map(family.protocol?.steps.map((step) => [step.number, step]) ?? []);
+    // Null means "not filtering", which keeps steps that carry no protocol
+    // detail visible instead of silently dropping them.
+    const filtering = Boolean(query.trim() || filters.some((f) => f.value.trim()));
+    const visibleSteps = filtering
+      ? new Set(
+          allSteps.filter((n) => {
+            const step = byNumber.get(n);
+            return step ? stepMatches(step, filters, query) : false;
+          })
+        )
+      : null;
+    return (
+      <Box>
+        <Group justify="space-between" wrap="nowrap" mb={6}>
+          <Group gap="xs" wrap="nowrap">
+            <Badge size="sm" variant="light" color="teal">
+              {selected.length}/{allSteps.length} steps
+            </Badge>
+            {visibleSteps && (
+              <Text size="xs" c="dimmed">
+                {visibleSteps.size} match the filters
+              </Text>
+            )}
+          </Group>
+          <Group gap={6} wrap="nowrap">
+            {visibleSteps && (
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="teal"
+                disabled={visibleSteps.size === 0}
+                onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
+              >
+                Select {visibleSteps.size} matching
+              </Button>
+            )}
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              disabled={selected.length === 0}
+              onClick={() => setFamilySteps(family.signature, [])}
+            >
+              Clear
+            </Button>
+          </Group>
+        </Group>
+
+        <Stack gap={8}>
+          {groups.map((group) => (
+            <ProtocolGroupNode
+              key={`${family.signature}-${group.id}-${expandEpoch}`}
+              group={group}
+              selectedSet={selectedSet}
+              byNumber={byNumber}
+              family={family}
+              visibleSteps={visibleSteps}
+              defaultOpen={expandAll ?? group.depth === 0}
+              onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
+            />
+          ))}
+        </Stack>
+      </Box>
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, activeFamily, targets, filters, query, expandEpoch, expandAll]);
+
   return (
     <Modal
       opened
@@ -1128,6 +1215,17 @@ function SegmentEditor({
     >
       <Group align="stretch" gap="sm" wrap="nowrap">
       <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
+        <Box
+          // Keep the name field and the Add/Done actions in view while the
+          // step list scrolls — otherwise a long protocol scrolls them away.
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 3,
+            background: "var(--mantine-color-body)",
+            paddingBottom: 8,
+          }}
+        >
         <Group align="end" wrap="nowrap">
           <TextInput
             label="Segment name"
@@ -1136,14 +1234,17 @@ function SegmentEditor({
             onChange={(event) => setName(event.currentTarget.value)}
             style={{ flex: 1 }}
             autoFocus
+            // When steps are picked but the name is still blank, point the user
+            // at the one field that keeps the Add button disabled.
+            error={count > 0 && !name.trim() ? "Name this segment to add it" : undefined}
           />
-          <Box pb={7} style={{ flexShrink: 0 }}>
+          <Box pb={count > 0 && !name.trim() ? 27 : 7} style={{ flexShrink: 0 }}>
             <Text size="xs" fw={700}>{count} selected steps</Text>
             <Text size="xs" c="dimmed">
               {targets.length} selected {targets.length === 1 ? "protocol" : "protocols"}
             </Text>
           </Box>
-          <Group gap={8} pb={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <Group gap={8} pb={count > 0 && !name.trim() ? 24 : 4} wrap="nowrap" style={{ flexShrink: 0 }}>
             <Button variant="default" size="sm" onClick={onClose}>
               Done
             </Button>
@@ -1158,9 +1259,10 @@ function SegmentEditor({
             </Button>
           </Group>
         </Group>
+        </Box>
 
         {showSuggestions && (
-          <Paper p="xs" withBorder bg="teal.0">
+          <Paper p="xs" withBorder bg="light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))">
             <Group align="end" wrap="nowrap">
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={6} mb={4}>
@@ -1288,78 +1390,7 @@ function SegmentEditor({
                 </Text>
               </Group>
             )}
-            {!loading && activeFamily && (() => {
-              const family = activeFamily;
-              const selected = selectedSteps(targets, family.signature);
-              const selectedSet = new Set(selected);
-              const groups = familyGroups(family);
-              const allSteps = uniqueSorted(groupSteps(groups));
-              const byNumber = new Map(family.protocol?.steps.map((step) => [step.number, step]) ?? []);
-              // Null means "not filtering", which keeps steps that carry no
-              // protocol detail visible instead of silently dropping them.
-              const filtering = Boolean(query.trim() || filters.some((f) => f.value.trim()));
-              const visibleSteps = filtering
-                ? new Set(
-                    allSteps.filter((n) => {
-                      const step = byNumber.get(n);
-                      return step ? stepMatches(step, filters, query) : false;
-                    })
-                  )
-                : null;
-              return (
-                <Box>
-                  <Group justify="space-between" wrap="nowrap" mb={6}>
-                    <Group gap="xs" wrap="nowrap">
-                      <Badge size="sm" variant="light" color="teal">
-                        {selected.length}/{allSteps.length} steps
-                      </Badge>
-                      {visibleSteps && (
-                        <Text size="xs" c="dimmed">
-                          {visibleSteps.size} match the filters
-                        </Text>
-                      )}
-                    </Group>
-                    <Group gap={6} wrap="nowrap">
-                      {visibleSteps && (
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          color="teal"
-                          disabled={visibleSteps.size === 0}
-                          onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
-                        >
-                          Select {visibleSteps.size} matching
-                        </Button>
-                      )}
-                      <Button
-                        size="compact-xs"
-                        variant="subtle"
-                        color="gray"
-                        disabled={selected.length === 0}
-                        onClick={() => setFamilySteps(family.signature, [])}
-                      >
-                        Clear
-                      </Button>
-                    </Group>
-                  </Group>
-
-                  <Stack gap={8}>
-                    {groups.map((group) => (
-                      <ProtocolGroupNode
-                        key={`${family.signature}-${group.id}-${expandEpoch}`}
-                        group={group}
-                        selectedSet={selectedSet}
-                        byNumber={byNumber}
-                        family={family}
-                        visibleSteps={visibleSteps}
-                        defaultOpen={expandAll ?? group.depth === 0}
-                        onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
-                      />
-                    ))}
-                  </Stack>
-                </Box>
-              );
-            })()}
+            {treeContent}
           </Stack>
         </ScrollArea>
       </Stack>
@@ -1394,6 +1425,7 @@ export function ProtocolSegmentsPanel({
   subtitle,
   emptyText = "No custom segments.",
   showPlotControls = true,
+  showVisibilityToggle = false,
   showSuggestions = false,
   suggestions = [],
   suggestionsLoading = false,
@@ -1401,6 +1433,7 @@ export function ProtocolSegmentsPanel({
   validateSegment,
 }: ProtocolSegmentsPanelProps) {
   const [draft, setDraft] = useState<SegmentDraft | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
   const protocolQueries = useQueries({
     queries: cellIds.map((cellId) => ({
       queryKey: ["cell-protocol", cellId, "with-observed-steps"],
@@ -1470,12 +1503,30 @@ export function ProtocolSegmentsPanel({
   return (
     <>
       <Paper p="sm" withBorder>
-        <Group justify="space-between" mb="xs">
-          <Box>
-            <Text fw={700} size="sm">{title}</Text>
-            {subtitle && <Text size="xs" c="dimmed">{subtitle}</Text>}
-            {onlySegmentIds.length > 0 && <Text size="xs" c="teal">Use-only filter active</Text>}
-          </Box>
+        <Group justify="space-between" mb={collapsed ? 0 : "xs"} wrap="nowrap">
+          <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {collapsed ? <IconChevronRight size={16} /> : <IconChevronDown size={16} />}
+            </ActionIcon>
+            <Box style={{ minWidth: 0 }}>
+              <Group gap={6} wrap="nowrap">
+                <Text fw={700} size="sm" truncate>{title}</Text>
+                {segments.length > 0 && (
+                  <Badge size="xs" variant="light" color="gray">
+                    {segments.length}
+                  </Badge>
+                )}
+              </Group>
+              {subtitle && <Text size="xs" c="dimmed">{subtitle}</Text>}
+              {onlySegmentIds.length > 0 && <Text size="xs" c="teal">Use-only filter active</Text>}
+            </Box>
+          </Group>
           <Tooltip label={cellIds.length === 0 ? "Add analysis samples first" : "Create protocol segment"}>
             <span>
               <ActionIcon size="sm" variant="light" disabled={cellIds.length === 0} onClick={() => openEditor()} aria-label="Create protocol segment">
@@ -1485,11 +1536,12 @@ export function ProtocolSegmentsPanel({
           </Tooltip>
         </Group>
 
-        {segments.length === 0 ? (
-          <Text size="xs" c="dimmed">{emptyText}</Text>
-        ) : (
-          <Stack gap={4}>
-            {segments.map((segment) => {
+        <Collapse in={!collapsed}>
+          {segments.length === 0 ? (
+            <Text size="xs" c="dimmed">{emptyText}</Text>
+          ) : (
+            <Stack gap={4}>
+              {segments.map((segment) => {
               const hidden = hiddenSegmentIds.includes(segment.id);
               const excluded = excludedSegmentIds.includes(segment.id);
               const only = onlySegmentIds.includes(segment.id);
@@ -1508,20 +1560,22 @@ export function ProtocolSegmentsPanel({
                       </Text>
                     </Box>
                     <Group gap={1} wrap="nowrap">
+                      {(showPlotControls || showVisibilityToggle) && (
+                        <Tooltip label={excluded ? "Excluded segments are not plotted" : filteredByOnly ? "Another segment is used exclusively" : hidden ? "Show in plot" : "Hide from plot"}>
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color={effectivelyHidden ? "gray" : "teal"}
+                            disabled={excluded || filteredByOnly}
+                            onClick={() => onToggleHidden(segment.id)}
+                            aria-label={hidden ? `Show ${segment.name}` : `Hide ${segment.name}`}
+                          >
+                            {effectivelyHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
                       {showPlotControls && (
                         <>
-                          <Tooltip label={excluded ? "Excluded segments are not plotted" : filteredByOnly ? "Another segment is used exclusively" : hidden ? "Show in plot" : "Hide from plot"}>
-                            <ActionIcon
-                              size="sm"
-                              variant="subtle"
-                              color={effectivelyHidden ? "gray" : "teal"}
-                              disabled={excluded || filteredByOnly}
-                              onClick={() => onToggleHidden(segment.id)}
-                              aria-label={hidden ? `Show ${segment.name}` : `Hide ${segment.name}`}
-                            >
-                              {effectivelyHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                            </ActionIcon>
-                          </Tooltip>
                           <Tooltip label={excluded ? "Include in calculations" : "Exclude from calculations and plot"}>
                             <ActionIcon
                               size="sm"
@@ -1574,9 +1628,10 @@ export function ProtocolSegmentsPanel({
                   </Group>
                 </Box>
               );
-            })}
-          </Stack>
-        )}
+              })}
+            </Stack>
+          )}
+        </Collapse>
       </Paper>
 
       {draft && (

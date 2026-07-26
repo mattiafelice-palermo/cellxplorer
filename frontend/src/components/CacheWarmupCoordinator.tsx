@@ -23,6 +23,18 @@ async function mainWindowIsHidden(): Promise<boolean> {
 
 export const WARMUP_NOW_EVENT = "cellxplorer:warmup-now";
 
+/**
+ * Hard ceiling on a single warmup task.
+ *
+ * The completion logic in warmupCompletion.ts covers every state we know of,
+ * but a task that never reports leaves `busy` latched and silently stalls the
+ * queue for the rest of the session. This backstop guarantees the queue always
+ * advances. Deliberately generous: a cold compute that re-parses several large
+ * sources can legitimately take minutes, and a false timeout is cheap — the
+ * plot keeps no prepared marker, so the next pass simply queues it again.
+ */
+const WARMUP_TASK_TIMEOUT_MS = 5 * 60_000;
+
 export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
   const queryClient = useQueryClient();
   const lastInteraction = useRef(Date.now());
@@ -30,6 +42,7 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
   const lastPoll = useRef(0);
   const pauseRequested = useRef(false);
   const forceRun = useRef(false);
+  const finishedTaskId = useRef<string | null>(null);
   const [task, setTask] = useState<CacheWarmupTask | null>(null);
   const settings = useQuery({
     queryKey: ["cache-settings"],
@@ -102,6 +115,10 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
         await post("/api/cache/warmup/start");
         const response = await get<{ task: CacheWarmupTask | null }>("/api/cache/warmup/next");
         if (response.task) {
+          // Fresh activation: clear the double-finish guard. The backend hands
+          // the same task id back when a previous `complete` never registered
+          // (e.g. its POST failed), and that retry must be allowed to report.
+          finishedTaskId.current = null;
           setTask(response.task);
         } else {
           busy.current = false;
@@ -122,7 +139,10 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
   );
 
   const finish = useCallback(async (error?: string, detail?: string) => {
-    if (!task) return;
+    // Idempotent per task: the watchdog and a late renderer callback must not
+    // both report the same task.
+    if (!task || finishedTaskId.current === task.id) return;
+    finishedTaskId.current = task.id;
     try {
       await post("/api/cache/warmup/complete", {
         task_id: task.id,
@@ -139,6 +159,16 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
       queryClient.invalidateQueries({ queryKey: ["analysis-database-thumbnail"] });
     }
   }, [queryClient, task]);
+
+  // Backstop: no task may hold the queue open indefinitely. Re-armed whenever
+  // the active task changes, cleared on unmount.
+  useEffect(() => {
+    if (!task) return;
+    const timer = window.setTimeout(() => {
+      void finish("Preparation timed out");
+    }, WARMUP_TASK_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [finish, task]);
 
   useEffect(() => {
     if (!task || !analysis.isError) return;

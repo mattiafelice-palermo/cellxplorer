@@ -146,12 +146,18 @@ def _running_background_work() -> bool:
 
 def _run_scheduler() -> None:
     from ..routers import library
+    from . import automation
 
     while not _stop_event.is_set():
         db = SessionLocal()
         try:
             config = load_config(db)
-            if not config["enabled"]:
+            if automation.is_paused(db):
+                # Pause prevents *starting* work; do not advance NEXT_RUN_KEY.
+                _set(db, LAST_STATUS_KEY, "paused")
+                db.commit()
+                wait_seconds = 30
+            elif not config["enabled"]:
                 wait_seconds = 30
             else:
                 now = datetime.now(timezone.utc)

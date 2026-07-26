@@ -7,7 +7,6 @@ import {
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconChartLine,
@@ -123,6 +122,20 @@ export function AnalysisWorkspaceTabs() {
         navigate(path);
       }, 0);
     });
+  };
+
+  /** Leave the visible analysis without closing its tab (auto-draft on navigate). */
+  const leaveActiveThenNavigate = (path: string, analysisId: number | null) => {
+    const proceed = () => navigateAfterPaint(path, analysisId);
+    if (visibleId === null || analysisId !== null) {
+      proceed();
+      return;
+    }
+    const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
+      cancelable: true,
+      detail: { proceed, reason: "navigate" },
+    });
+    if (window.dispatchEvent(event)) proceed();
   };
 
   useEffect(() => {
@@ -341,7 +354,7 @@ export function AnalysisWorkspaceTabs() {
       }
       if (key === "t") {
         event.preventDefault();
-        navigateAfterPaint("/analyses?new=1", null);
+        leaveActiveThenNavigate("/analyses?new=1", null);
         return;
       }
       if (key !== "tab") return;
@@ -351,7 +364,7 @@ export function AnalysisWorkspaceTabs() {
       const direction = event.shiftKey ? -1 : 1;
       const nextIndex = (current + direction + destinations.length) % destinations.length;
       const nextId = destinations[nextIndex];
-      if (nextId === null) navigateAfterPaint("/analyses", null);
+      if (nextId === null) leaveActiveThenNavigate("/analyses", null);
       else {
         const tab = tabs.find((candidate) => candidate.id === nextId);
         if (tab) activateTab(tab);
@@ -362,13 +375,19 @@ export function AnalysisWorkspaceTabs() {
   }, [closedTabs, navigate, onHome, tabs, visibleId]);
 
   const closeTab = (id: number) => {
+    const finishClose = () => removeTab(id);
     if (id !== visibleId && dirtyIds.has(id)) {
+      // Activate first so AnalysisPage's leave listener can open the same prompts
+      // used for navigation — do not show a second, different dialog.
       const tab = tabs.find((candidate) => candidate.id === id);
       if (tab) activateTab(tab);
-      notifications.show({
-        message: "This analysis has unsaved plot changes. Review it before closing the tab.",
-        color: "orange",
-      });
+      window.setTimeout(() => {
+        const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
+          cancelable: true,
+          detail: { proceed: finishClose, reason: "close-tab" },
+        });
+        if (window.dispatchEvent(event)) finishClose();
+      }, 0);
       return;
     }
     if (id !== visibleId) {
@@ -377,9 +396,9 @@ export function AnalysisWorkspaceTabs() {
     }
     const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
       cancelable: true,
-      detail: { proceed: () => removeTab(id) },
+      detail: { proceed: finishClose, reason: "close-tab" },
     });
-    if (window.dispatchEvent(event)) removeTab(id);
+    if (window.dispatchEvent(event)) finishClose();
   };
 
   const tabButton = (tab: AnalysisWorkspaceTab) => {
@@ -428,10 +447,10 @@ export function AnalysisWorkspaceTabs() {
           borderBottom: active ? "2px solid var(--mantine-color-teal-6)" : "2px solid transparent",
           background:
             dragTargetId === tab.id && draggedId !== tab.id
-              ? "var(--mantine-color-teal-0)"
+              ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
               : active
-                ? "white"
-                : "var(--mantine-color-gray-0)",
+                ? "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))"
+                : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
           opacity: draggedId === tab.id ? 0.78 : 1,
           outline: draggedId === tab.id ? "1px solid var(--mantine-color-teal-5)" : undefined,
           boxShadow:
@@ -503,7 +522,7 @@ export function AnalysisWorkspaceTabs() {
         top: "var(--app-shell-header-height, 52px)",
         zIndex: 90,
         borderBottom: "1px solid var(--mantine-color-gray-3)",
-        background: "var(--mantine-color-gray-0)",
+        background: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
       }}
     >
       <Box
@@ -524,12 +543,12 @@ export function AnalysisWorkspaceTabs() {
             flexShrink: 0,
             borderRight: "1px solid var(--mantine-color-gray-3)",
             borderBottom: onHome ? "2px solid var(--mantine-color-teal-6)" : "2px solid transparent",
-            background: onHome ? "white" : "var(--mantine-color-gray-0)",
+            background: onHome ? "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
           }}
         >
           <UnstyledButton
             aria-label="Open analysis database"
-            onClick={() => navigateAfterPaint("/analyses", null)}
+            onClick={() => leaveActiveThenNavigate("/analyses", null)}
             px="md"
           >
             <Group gap="xs" wrap="nowrap">
@@ -555,7 +574,7 @@ export function AnalysisWorkspaceTabs() {
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Item leftSection={<IconChartLine size={15} />} onClick={() => navigateAfterPaint("/analyses", null)}>
+          <Menu.Item leftSection={<IconChartLine size={15} />} onClick={() => leaveActiveThenNavigate("/analyses", null)}>
             Analyses
           </Menu.Item>
           {tabs.length ? <Menu.Divider /> : null}

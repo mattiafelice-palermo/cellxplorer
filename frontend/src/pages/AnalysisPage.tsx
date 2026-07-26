@@ -98,6 +98,8 @@ import {
   FolderNode,
   get,
   PortableAnalysisEstimate,
+  PortableSourcePreflight,
+  PortableSourceUpdateResult,
   post,
   postBlob,
   put,
@@ -105,6 +107,7 @@ import {
   PlotExportFormat,
   ProtocolSegment,
   ReplicateGroupSummary,
+  AnalysisDraftPlot,
   SavedAnalysisPlot,
   SelectionEntry,
   PlotStyle,
@@ -114,7 +117,10 @@ import {
   TimeCapacityTrace,
   Tree,
 } from "../api";
-import { clearAnalysisQueryCache } from "../analysisQueryCache";
+import {
+  clearAnalysisQueryCache,
+  invalidateAnalysisQueries,
+} from "../analysisQueryCache";
 import {
   clearAnalysisWorkspaceEditorState,
   getAnalysisWorkspaceEditorState,
@@ -122,11 +128,29 @@ import {
   setAnalysisWorkspaceEditorState,
 } from "../analysisWorkspace";
 import {
+  buildCommitSavedPlotSpec,
+  buildDiscardEditedSavedPlotSpec,
+  buildDiscardNewPlotSpec,
+  buildStablePersistSpec,
+  captureNormalWorkspace,
+  draftAsSavedPlot,
+  draftPlotFromWorkspace,
+  isDraftPreviewPlotId,
+  plotSessionBelongsToTab,
+  resolveColdOpenWorkspace,
+  savedPlotFromDraftSource,
+  stripDraftPlots,
+  type DraftSaveSource,
+  type NormalWorkspaceSnapshot,
+} from "../analysisDraftPolicy";
+import {
   plotViewSignature,
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
 } from "../analysisPlotPolicy";
+import { DraftPlotCard } from "../components/DraftPlotCard";
+import { resolveWarmup } from "../warmupCompletion";
 import {
   DIAGNOSTIC_DEFAULTS,
   findDiagnosticCyclesAcross,
@@ -139,7 +163,13 @@ import {
   relatedAnalysesForCell,
 } from "../components/CellSamplePopovers";
 import Plot from "../components/Plot";
-import { StepsPlotCard, StepsSettings } from "../components/StepsPlotCard";
+import {
+  StepsPlotCard,
+  StepsSettings,
+  stepsLayoutForSpec,
+  stepsTracesForResult,
+  type StepsResult,
+} from "../components/StepsPlotCard";
 import {
   DcirPlotCard,
   DcirSettings,
@@ -147,6 +177,22 @@ import {
   dcirTracesForResult,
   type DcirResult,
 } from "../components/DcirPlotCard";
+import {
+  ChargeabilityPlotCard,
+  ChargeabilitySettings,
+  chargeabilityLayoutForSpec,
+  chargeabilityTracesForResult,
+  chargeabilityViewFor,
+  type ChargeabilityResult,
+} from "../components/ChargeabilityPlotCard";
+import {
+  RateCapabilityPlotCard,
+  RateCapabilitySettings,
+  rateCapabilityLayoutForSpec,
+  rateCapabilityTracesForResult,
+  rateCapabilityViewFor,
+  type RateCapabilityResult,
+} from "../components/RateCapabilityPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
 import { saveDownload, shareDownload } from "../downloads";
@@ -430,10 +476,29 @@ async function lookupPlotThumbnail(
   plotId: string,
   signature: string
 ): Promise<PlotThumbnail | null> {
+  // Draft previews are session-only — never hit the saved-plot artifact API.
+  if (isDraftPreviewPlotId(plotId)) return null;
   try {
     return await post<PlotThumbnail>(
       `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}/thumbnail/lookup`,
       { signature }
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+async function lookupPlotArtifact(
+  analysisId: number,
+  plotId: string,
+  signature: string,
+): Promise<PlotArtifact | null> {
+  if (isDraftPreviewPlotId(plotId)) return null;
+  try {
+    return await post<PlotArtifact>(
+      `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}/lookup`,
+      { signature },
     );
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return null;
@@ -461,7 +526,7 @@ function jobProgress(job: BackgroundJob | undefined): number {
  * matters as much as the delay — without it a 300ms load would show a 50ms
  * flash, moving the problem rather than fixing it.
  */
-function useDelayedFlag(active: boolean, delay = 250, minimum = 400): boolean {
+export function useDelayedFlag(active: boolean, delay = 250, minimum = 400): boolean {
   const [visible, setVisible] = useState(false);
   const shownAt = useRef(0);
   useEffect(() => {
@@ -527,6 +592,55 @@ const DEFAULT_DCIR_VIEW: NonNullable<AnalysisSpec["presentation"]["dcir_view"]> 
   },
 };
 
+const DEFAULT_CHARGEABILITY_COMPUTATION: NonNullable<
+  AnalysisSpec["computation"]["chargeability"]
+> = {
+  initial_soc_max_pct: 20,
+  final_soc_min_pct: 80,
+  min_current_ceiling_c: 7,
+  soc_tolerance_pct: 2,
+};
+
+const DEFAULT_CHARGEABILITY_VIEW: NonNullable<
+  AnalysisSpec["presentation"]["chargeability_view"]
+> = {
+  x_axis: "soc_pct",
+  y_axis: "c_rate",
+  time_unit: "min",
+};
+
+const DEFAULT_RATE_CAPABILITY_FAMILY = {
+  enabled: true,
+  charge_structure: "auto" as const,
+  fixed_rate_c: null,
+  selected_rates_c: [] as number[],
+  monotonic: "prefer" as const,
+  scaffold: "prefer" as const,
+};
+
+const DEFAULT_RATE_CAPABILITY_COMPUTATION: NonNullable<
+  AnalysisSpec["computation"]["rate_capability"]
+> = {
+  min_points: 3,
+  cutoff_tolerance_v: 0.03,
+  rate_tolerance_fraction: 0.03,
+  families: {
+    charge: { ...DEFAULT_RATE_CAPABILITY_FAMILY },
+    discharge: { ...DEFAULT_RATE_CAPABILITY_FAMILY },
+  },
+};
+
+const DEFAULT_RATE_CAPABILITY_VIEW: NonNullable<
+  AnalysisSpec["presentation"]["rate_capability_view"]
+> = {
+  x_axis: "c_rate",
+  y_axis: "capacity_mah",
+  show_charge: true,
+  show_discharge: true,
+  x_spacing: "equal",
+  visualization: "line",
+};
+
 const DEFAULT_COMPUTATION: AnalysisSpec["computation"] = {
   cycle_range: { start: 1, end: null },
   exclude_check_cycles_every_n: 0,
@@ -543,6 +657,8 @@ const DEFAULT_COMPUTATION: AnalysisSpec["computation"] = {
   time_capacity: DEFAULT_TIME_CAPACITY,
   steps: DEFAULT_STEPS_COMPUTATION,
   dcir: DEFAULT_DCIR_COMPUTATION,
+  chargeability: DEFAULT_CHARGEABILITY_COMPUTATION,
+  rate_capability: DEFAULT_RATE_CAPABILITY_COMPUTATION,
 };
 
 const DEFAULT_AGGREGATION: AnalysisSpec["aggregation"] = {
@@ -560,6 +676,8 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   line_dash: "solid",
   marker_mode: "none",
   marker_size: 5,
+  marker_symbol: "circle",
+  marker_open: false,
   individual_opacity: 0.35,
   band_opacity: 0.18,
   low_n_color: "#868e96",
@@ -621,6 +739,8 @@ const DEFAULT_PLOT_STYLE: PlotStyle = {
   ce_line_dash: "dot",
   ce_marker_mode: "none",
   ce_marker_size: 5,
+  ce_marker_symbol: "circle",
+  ce_marker_open: false,
   ce_opacity: 0.7,
   legend_position: "bottom",
   legend_mode: "outside",
@@ -653,6 +773,8 @@ const DEFAULT_PRESENTATION: AnalysisSpec["presentation"] = {
   hidden_protocol_segment_ids: [],
   steps_view: DEFAULT_STEPS_VIEW,
   dcir_view: DEFAULT_DCIR_VIEW,
+  chargeability_view: DEFAULT_CHARGEABILITY_VIEW,
+  rate_capability_view: DEFAULT_RATE_CAPABILITY_VIEW,
   plot_style: DEFAULT_PLOT_STYLE,
 };
 
@@ -791,6 +913,50 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
           : "occurrence";
     return `${quantity} vs ${axis}`;
   }
+  if (tab === "crate") {
+    const view = rateCapabilityViewFor(spec);
+    const xAxis =
+      view.y_axis === "asymmetry_ratio" || view.x_axis === "c_rate"
+        ? "C-rate"
+        : view.x_axis === "current_ma"
+          ? "current"
+          : view.x_axis === "current_ma_g"
+            ? "specific current"
+            : "areal current density";
+    const yAxis =
+      view.y_axis === "capacity_mah"
+        ? "CC capacity"
+        : view.y_axis === "capacity_mah_g"
+          ? "specific CC capacity"
+          : view.y_axis === "capacity_mah_cm2"
+            ? "areal CC capacity"
+            : view.y_axis === "retention_pct"
+              ? "retention from lowest common rate"
+              : "rate-capability asymmetry";
+    return `${yAxis} vs ${xAxis}`;
+  }
+  if (tab === "chargeability") {
+    const view = chargeabilityViewFor(spec);
+    const xAxis =
+      view.x_axis === "soc_pct"
+        ? "capacity-based SoC"
+        : view.x_axis === "capacity_mah"
+          ? "capacity"
+          : view.x_axis === "capacity_mah_g"
+            ? "specific capacity"
+            : view.x_axis === "capacity_mah_cm2"
+              ? "areal capacity"
+              : `elapsed time (${view.time_unit})`;
+    const yAxis =
+      view.y_axis === "c_rate"
+        ? "C-rate"
+        : view.y_axis === "current_ma"
+          ? "current"
+          : view.y_axis === "current_ma_g"
+            ? "specific current"
+            : "areal current density";
+    return `${yAxis} vs ${xAxis}`;
+  }
   if (tab === "recap") return "Recap table";
   if (tab === "settings") return "Analysis settings";
   return `${tabLabel(tab)} view`;
@@ -807,7 +973,71 @@ function suggestedPlotName(tab: AnalysisTabKey, result: ComputeResult | undefine
       ? "DCIR change comparison"
       : "DCIR comparison";
   }
+  if (tab === "chargeability") {
+    const y = spec.presentation.chargeability_view?.y_axis ?? DEFAULT_CHARGEABILITY_VIEW.y_axis;
+    if (y === "current_ma") return "Chargeability current comparison";
+    if (y === "current_ma_g") return "Chargeability specific current comparison";
+    if (y === "current_ma_cm2") return "Chargeability areal current comparison";
+    return "Chargeability comparison";
+  }
+  if (tab === "crate") {
+    const quantity = rateCapabilityViewFor(spec).y_axis;
+    return quantity === "asymmetry_ratio"
+      ? "Rate-capability asymmetry"
+      : quantity === "retention_pct"
+        ? "Rate-capability retention"
+        : "Rate capability comparison";
+  }
+  if (tab === "steps") {
+    const quantity = spec.presentation.steps_view?.quantity ?? DEFAULT_STEPS_VIEW.quantity;
+    if (quantity === "cv_charge_time") return "Steps CV charge time comparison";
+    if (quantity === "voltage") return "Steps voltage comparison";
+    if (quantity === "capacity") return "Steps capacity comparison";
+    if (quantity === "block_duration") return "Steps block duration comparison";
+    return "Steps time comparison";
+  }
   return tab === "cycles" ? `${quantityLabel(result, spec)} comparison` : `${tabLabel(tab)} view`;
+}
+
+/** Quantity (and related options) that drive the default plot name. */
+function plotNamingQuantityKey(
+  tab: AnalysisTabKey,
+  presentation: AnalysisSpec["presentation"],
+): string {
+  if (tab === "cycles" || tab === "recap") {
+    return JSON.stringify({
+      quantity: presentation.quantity ?? "discharge_capacity",
+      normalize_by_mass: Boolean(presentation.normalize_by_mass),
+    });
+  }
+  if (tab === "dcir") {
+    return JSON.stringify({
+      quantity: presentation.dcir_view?.quantity ?? DEFAULT_DCIR_VIEW.quantity,
+    });
+  }
+  if (tab === "crate") {
+    return JSON.stringify({
+      y_axis: presentation.rate_capability_view?.y_axis ?? DEFAULT_RATE_CAPABILITY_VIEW.y_axis,
+    });
+  }
+  if (tab === "steps") {
+    const view = { ...DEFAULT_STEPS_VIEW, ...(presentation.steps_view ?? {}) };
+    return JSON.stringify({
+      quantity: view.quantity,
+      direction: view.direction,
+      include_rest: view.include_rest,
+    });
+  }
+  if (tab === "chargeability") {
+    const view = { ...DEFAULT_CHARGEABILITY_VIEW, ...(presentation.chargeability_view ?? {}) };
+    return JSON.stringify({
+      x_axis: view.x_axis,
+      y_axis: view.y_axis,
+      time_unit: view.time_unit,
+    });
+  }
+  // Time/capacity plot name is not quantity-driven today.
+  return tab;
 }
 
 function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
@@ -957,6 +1187,106 @@ export function cePalette(style: PlotStyle): string[] {
     ? style.ce_palette_colors
     : PLOT_PALETTES.app;
 }
+
+/**
+ * The grid / frame / zero-line axis props shared by every simple plot tab
+ * (DCIR, steps, rate capability, chargeability). Those cards each build a
+ * minimal layout by hand and were missing the frame (Border) and zero-line
+ * colour wiring, so those style toggles did nothing. Spread this onto each
+ * axis and the Border/Grid/Zero-line switches all take effect. Pass
+ * `zeroLine: false` for the x axis, where a zero line rarely makes sense.
+ */
+/**
+ * Whether an analysis sample (cell) has been hidden from the sidebar. The
+ * series-based tabs (DCIR, steps, rate capability, chargeability) reference a
+ * cell directly, so any exclusion touching that cell hides its lines — this is
+ * what makes the "Analysis samples" eye toggle affect those tabs too.
+ */
+export function isCellHiddenInAnalysis(spec: AnalysisSpec, cellId: number): boolean {
+  return (spec.selection.exclusions ?? []).some((exclusion) => exclusion.cell_id === cellId);
+}
+
+/** Display-only: has this DCIR/steps segment been hidden across all cells? */
+export function isAnalysisSegmentHidden(spec: AnalysisSpec, segmentId: string): boolean {
+  return (spec.presentation.hidden_analysis_segment_ids ?? []).includes(segmentId);
+}
+
+/** Display-only: has this individual (cell, segment) series line been hidden? */
+export function isSeriesHidden(spec: AnalysisSpec, seriesId: string): boolean {
+  return (spec.presentation.hidden_series_ids ?? []).includes(seriesId);
+}
+
+export function plotAxisStyle(
+  style: PlotStyle,
+  opts: { zeroLine?: boolean; axis?: PlotStyle["x_axis"] } = {}
+): Partial<Plotly.LayoutAxis> {
+  const zeroLine = opts.zeroLine ?? false;
+  const axis = opts.axis;
+  return {
+    showgrid: style.show_grid,
+    gridcolor: "#edf2f7",
+    zeroline: zeroLine && style.show_zero_line,
+    zerolinecolor: "#adb5bd",
+    showline: style.show_frame,
+    mirror: style.show_frame,
+    linecolor: style.frame_color,
+    linewidth: style.frame_width,
+    // Tick marks + tick-label font, so the style panel's tick and font
+    // controls reach these simpler tabs too (not just the cycle tab).
+    ticks: style.tick_marks === "none" ? "" : style.tick_marks,
+    ticklen: style.tick_length,
+    tickwidth: style.tick_width,
+    tickcolor: style.frame_color,
+    tickfont: { size: style.tick_font_size },
+    ...(axis ? { ticklabelstandoff: axis.tick_label_standoff } : {}),
+  };
+}
+
+/**
+ * Layout-level style shared by the simpler plot tabs: base tick font, legend
+ * visibility + font, and backgrounds. Axis titles still get their own font
+ * (`axisTitleFont`) at the call site since they carry the title text too.
+ */
+export function plotLayoutStyle(
+  style: PlotStyle,
+  spec: AnalysisSpec
+): Partial<Plotly.Layout> {
+  return {
+    font: { size: style.tick_font_size },
+    showlegend: spec.presentation.legend,
+    paper_bgcolor: style.paper_bgcolor,
+    plot_bgcolor: style.plot_bgcolor,
+  };
+}
+
+/** The font Plotly wants on an axis `title` object. */
+export function axisTitleFont(style: PlotStyle) {
+  return { size: style.axis_title_size };
+}
+
+/**
+ * The Plotly marker `symbol` for the main series, honouring the shape and the
+ * open/filled choice. Plotly draws an outline-only marker when the symbol name
+ * carries the "-open" suffix.
+ */
+export function markerSymbol(style: PlotStyle): string {
+  return style.marker_open ? `${style.marker_symbol}-open` : style.marker_symbol;
+}
+
+/** The marker `symbol` for the CE overlay series (its own shape/open control). */
+export function ceMarkerSymbol(style: PlotStyle): string {
+  const symbol = style.ce_marker_symbol ?? "circle";
+  return style.ce_marker_open ? `${symbol}-open` : symbol;
+}
+
+const MARKER_SYMBOL_OPTIONS = [
+  { value: "circle", label: "Circle" },
+  { value: "square", label: "Square" },
+  { value: "diamond", label: "Diamond" },
+  { value: "triangle-up", label: "Triangle" },
+  { value: "cross", label: "Cross" },
+  { value: "x", label: "X" },
+];
 
 function cePlotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   if (style.ce_marker_mode === "points") return "markers";
@@ -1197,7 +1527,10 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
   for (const raw of traces) {
     const t = raw as Record<string, unknown>;
     if (t.fill === "toself") continue;
-    const xs = (t.x as (number | null)[]) ?? [];
+    const exportXs = (
+      t.meta as { cellxplorer_export_x?: (number | null)[] } | undefined
+    )?.cellxplorer_export_x;
+    const xs = exportXs ?? ((t.x as (number | null)[]) ?? []);
     const ys = (t.y as (number | null)[]) ?? [];
     if (!ys.length) continue;
     const name = String(t.name ?? "series");
@@ -1400,7 +1733,7 @@ function layoutMargins(
   return margin;
 }
 
-function resolveExportPlan(
+export function resolveExportPlan(
   style: PlotStyle,
   viewSize: { width: number; height: number } | null,
   layout: Partial<Plotly.Layout>
@@ -1439,7 +1772,7 @@ function resolveExportPlan(
   };
 }
 
-function exportFigure(
+export function exportFigure(
   traces: Plotly.Data[],
   layout: Partial<Plotly.Layout>,
   style: PlotStyle,
@@ -1457,6 +1790,70 @@ function exportFigure(
     exportLayout.title = { text: plotName, font: { size: style.axis_title_size + 3 } };
   }
   return { data: traces, layout: exportLayout };
+}
+
+export async function styledPlotExportPreview(
+  traces: Plotly.Data[],
+  layout: Partial<Plotly.Layout>,
+  style: PlotStyle,
+  plotName: string,
+  viewSize: { width: number; height: number } | null,
+): Promise<string | null> {
+  if (traces.length === 0) return null;
+  const plan = resolveExportPlan(style, viewSize, layout);
+  const toImage = (
+    PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
+  ).toImage;
+  return toImage(exportFigure(traces, layout, style, plotName, plan), {
+    format: "png",
+    width: plan.layoutWidth,
+    height: plan.layoutHeight,
+    scale: Math.min(1, 420 / plan.layoutWidth),
+  });
+}
+
+export async function downloadStyledPlotExport(
+  traces: Plotly.Data[],
+  layout: Partial<Plotly.Layout>,
+  style: PlotStyle,
+  plotName: string,
+  format: PlotExportFormat,
+  baseName: string,
+  viewSize: { width: number; height: number } | null,
+): Promise<void> {
+  if (traces.length === 0) return;
+  const plan = resolveExportPlan(style, viewSize, layout);
+  const toImage = (
+    PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
+  ).toImage;
+  const figure = exportFigure(traces, layout, style, plotName, plan);
+  if (format === "pdf") {
+    const svgUrl = await toImage(figure, {
+      format: "svg",
+      width: plan.layoutWidth,
+      height: plan.layoutHeight,
+    });
+    await downloadBlob(
+      await makeVectorPdf(
+        svgUrl,
+        plan.pixelWidth / plan.pixelHeight,
+        style.export_aspect_ratio,
+      ),
+      `${slugFilename(baseName)}.pdf`,
+    );
+    return;
+  }
+  const dataUrl = await toImage(figure, {
+    format,
+    width: plan.layoutWidth,
+    height: plan.layoutHeight,
+    scale: plan.scale,
+  });
+  const blob =
+    format === "png"
+      ? pngWithPpi(dataUrl, Math.max(36, style.export_ppi ?? 96))
+      : blobFromDataUrl(dataUrl, "image/svg+xml");
+  await downloadBlob(blob, `${slugFilename(baseName)}.${format}`);
 }
 
 
@@ -1500,6 +1897,24 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
         ...DEFAULT_DCIR_COMPUTATION,
         ...(plot.computation?.dcir ?? {}),
       },
+      chargeability: {
+        ...DEFAULT_CHARGEABILITY_COMPUTATION,
+        ...(plot.computation?.chargeability ?? {}),
+      },
+      rate_capability: {
+        ...DEFAULT_RATE_CAPABILITY_COMPUTATION,
+        ...(plot.computation?.rate_capability ?? {}),
+        families: {
+          charge: {
+            ...DEFAULT_RATE_CAPABILITY_FAMILY,
+            ...(plot.computation?.rate_capability?.families?.charge ?? {}),
+          },
+          discharge: {
+            ...DEFAULT_RATE_CAPABILITY_FAMILY,
+            ...(plot.computation?.rate_capability?.families?.discharge ?? {}),
+          },
+        },
+      },
     },
     presentation: {
       ...presentation,
@@ -1514,6 +1929,14 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
           ...DEFAULT_DCIR_VIEW.candidate_filter,
           ...(plot.presentation?.dcir_view?.candidate_filter ?? {}),
         },
+      },
+      chargeability_view: {
+        ...DEFAULT_CHARGEABILITY_VIEW,
+        ...(plot.presentation?.chargeability_view ?? {}),
+      },
+      rate_capability_view: {
+        ...DEFAULT_RATE_CAPABILITY_VIEW,
+        ...(plot.presentation?.rate_capability_view ?? {}),
       },
     },
   };
@@ -1589,6 +2012,24 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       ...DEFAULT_DCIR_COMPUTATION,
       ...(spec.computation?.dcir ?? {}),
     },
+    chargeability: {
+      ...DEFAULT_CHARGEABILITY_COMPUTATION,
+      ...(spec.computation?.chargeability ?? {}),
+    },
+    rate_capability: {
+      ...DEFAULT_RATE_CAPABILITY_COMPUTATION,
+      ...(spec.computation?.rate_capability ?? {}),
+      families: {
+        charge: {
+          ...DEFAULT_RATE_CAPABILITY_FAMILY,
+          ...(spec.computation?.rate_capability?.families?.charge ?? {}),
+        },
+        discharge: {
+          ...DEFAULT_RATE_CAPABILITY_FAMILY,
+          ...(spec.computation?.rate_capability?.families?.discharge ?? {}),
+        },
+      },
+    },
   };
   spec.aggregation = { ...DEFAULT_AGGREGATION, ...(spec.aggregation ?? {}) };
   spec.presentation = {
@@ -1610,6 +2051,14 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
         ...(spec.presentation?.dcir_view?.candidate_filter ?? {}),
       },
     },
+    chargeability_view: {
+      ...DEFAULT_CHARGEABILITY_VIEW,
+      ...(spec.presentation?.chargeability_view ?? {}),
+    },
+    rate_capability_view: {
+      ...DEFAULT_RATE_CAPABILITY_VIEW,
+      ...(spec.presentation?.rate_capability_view ?? {}),
+    },
   };
   const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[spec.presentation.quantity];
   if (legacyNormalized) {
@@ -1617,6 +2066,9 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
     spec.presentation.normalize_by_mass = true;
   }
   spec.saved_plots = (spec.saved_plots ?? []).map((plot) => normalizeSavedPlot(plot, spec));
+  // Drafts are session-only; never hydrate persisted draft_plots into the editor.
+  spec.draft_plots = null;
+  spec.draft_plot = null;
   return spec;
 }
 
@@ -2275,7 +2727,11 @@ function interactivePlotTraces(traces: Plotly.Data[]): Plotly.Data[] {
  * markers all read from these arrays, so they cannot fall out of step with one
  * another. The input is never mutated — exports and the cache keep every cycle.
  */
-function withoutDiagnosticCycles(result: ComputeResult, hidden: Set<number>): ComputeResult {
+function withoutDiagnosticCycles(
+  result: ComputeResult,
+  hidden: Set<number>,
+  reindex = false
+): ComputeResult {
   if (hidden.size === 0) return result;
   const keptIndices = (x: number[]) =>
     x.reduce<number[]>((acc, cycle, index) => {
@@ -2285,13 +2741,27 @@ function withoutDiagnosticCycles(result: ComputeResult, hidden: Set<number>): Co
   const take = <T,>(values: T[] | null | undefined, indices: number[]): T[] =>
     Array.isArray(values) ? indices.map((i) => values[i]) : [];
 
+  // A single map from surviving cycle number to its 1-based position, built from
+  // the union across every series so cells stay aligned after the gaps close.
+  const remap = (() => {
+    if (!reindex) return null;
+    const surviving = new Set<number>();
+    for (const series of result.cell_series)
+      for (const cycle of series.x) if (!hidden.has(cycle)) surviving.add(cycle);
+    for (const agg of result.aggregates)
+      for (const cycle of agg.x) if (!hidden.has(cycle)) surviving.add(cycle);
+    const sorted = [...surviving].sort((a, b) => a - b);
+    return new Map(sorted.map((cycle, index) => [cycle, index + 1]));
+  })();
+  const remapX = (x: number[]) => (remap ? x.map((cycle) => remap.get(cycle) ?? cycle) : x);
+
   return {
     ...result,
     aggregates: result.aggregates.map((agg) => {
       const indices = keptIndices(agg.x);
       return {
         ...agg,
-        x: take(agg.x, indices),
+        x: remapX(take(agg.x, indices)),
         quantities: Object.fromEntries(
           Object.entries(agg.quantities).map(([key, q]) => [
             key,
@@ -2310,7 +2780,7 @@ function withoutDiagnosticCycles(result: ComputeResult, hidden: Set<number>): Co
       const indices = keptIndices(series.x);
       return {
         ...series,
-        x: take(series.x, indices),
+        x: remapX(take(series.x, indices)),
         quantities: Object.fromEntries(
           Object.entries(series.quantities).map(([key, values]) => [key, take(values, indices)])
         ),
@@ -2335,7 +2805,11 @@ function tracesForResult(
 ): Plotly.Data[] {
   // Filter here rather than at each call site so the live plot, the saved
   // thumbnail and the exported figure cannot disagree about what is shown.
-  const result = withoutDiagnosticCycles(original, diagnosticCyclesFor(original, spec));
+  const result = withoutDiagnosticCycles(
+    original,
+    diagnosticCyclesFor(original, spec),
+    spec.presentation.reindex_diagnostic_cycles ?? false
+  );
   const quantity = spec.presentation.quantity ?? "discharge_capacity";
   const { column } = resolvedQuantity(result, spec);
   const showCeOverlay = !compact && (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
@@ -2381,7 +2855,7 @@ function tracesForResult(
       y: q.mean,
       name: compact ? agg.group_name : `${agg.group_name} mean`,
       line: { color, width: compact ? 2 : style.line_width, dash: compact ? "solid" : style.line_dash },
-      marker: { color, size: compact ? 3 : style.marker_size },
+      marker: { color, size: compact ? 3 : style.marker_size, symbol: markerSymbol(style) },
       type: "scatter",
       mode,
       customdata: q.n,
@@ -2435,7 +2909,7 @@ function tracesForResult(
         name: `${agg.group_name} CE`,
         yaxis: "y2",
         line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
-        marker: { color: ceColor, size: style.ce_marker_size },
+        marker: { color: ceColor, size: style.ce_marker_size, symbol: ceMarkerSymbol(style) },
         type: "scatter",
         mode: cePlotMode(style),
         opacity: style.ce_opacity,
@@ -2462,7 +2936,7 @@ function tracesForResult(
         width: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
         dash: compact ? "solid" : style.line_dash,
       },
-      marker: { color, size: compact ? 3 : style.marker_size },
+      marker: { color, size: compact ? 3 : style.marker_size, symbol: markerSymbol(style) },
       opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
       type: "scatter",
       mode,
@@ -2476,7 +2950,7 @@ function tracesForResult(
         name: `${s.label} CE`,
         yaxis: "y2",
         line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
-        marker: { color: ceColor, size: style.ce_marker_size },
+        marker: { color: ceColor, size: style.ce_marker_size, symbol: ceMarkerSymbol(style) },
         type: "scatter",
         mode: cePlotMode(style),
         opacity: style.ce_opacity,
@@ -2714,7 +3188,7 @@ function tracesForTimeCapacity(
         legendgroup: seriesKey,
         showlegend,
         line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size },
+        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
         mode: plotMode(style),
         type: traceType,
         connectgaps: false,
@@ -2987,15 +3461,31 @@ function SavedPlotPreview({
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const qc = useQueryClient();
+  const draftPreview = isDraftPreviewPlotId(plot.id);
   const [generationFailed, setGenerationFailed] = useState(false);
   const warmupReported = useRef(false);
   const renderedFresh = useRef(false);
   const rebuiltThumbnail = useRef(false);
   const thumbnail = useQuery({
     queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
-    queryFn: () => lookupPlotThumbnail(analysisId, plot.id, previewSignature),
-    staleTime: 60 * 60_000,
-    retry: false,
+    queryFn: async () => {
+      if (draftPreview) {
+        // Keep any client-rendered draft thumbnail; never ask the server.
+        return (
+          qc.getQueryData<PlotThumbnail>([
+            "plot-thumbnail",
+            analysisId,
+            plot.id,
+            previewSignature,
+          ]) ?? null
+        );
+      }
+      return lookupPlotThumbnail(analysisId, plot.id, previewSignature);
+    },
+    staleTime: draftPreview ? Infinity : 60 * 60_000,
+    refetchOnWindowFocus: !draftPreview,
+    refetchOnReconnect: !draftPreview,
+    retry: draftPreview ? false : 1,
   });
   const thumbnailPairReady = Boolean(
     thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
@@ -3003,30 +3493,61 @@ function SavedPlotPreview({
   const artifact = useQuery({
     queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
     queryFn: async () => {
-      try {
-        return await post<PlotArtifact>(
-          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}/lookup`,
-          { signature: previewSignature }
+      if (draftPreview) {
+        return (
+          qc.getQueryData<PlotArtifact>([
+            "plot-artifact",
+            analysisId,
+            plot.id,
+            previewSignature,
+          ]) ?? null
         );
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return null;
-        throw error;
       }
+      return lookupPlotArtifact(analysisId, plot.id, previewSignature);
     },
     enabled:
       thumbnail.isSuccess &&
       (thumbnail.data === null || (warmup && !thumbnailPairReady)),
-    staleTime: 5 * 60_000,
-    retry: false,
+    staleTime: draftPreview ? Infinity : 5 * 60_000,
+    refetchOnWindowFocus: !draftPreview,
+    refetchOnReconnect: !draftPreview,
+    retry: draftPreview ? false : 1,
   });
-  const preview = useQuery<ComputeResult | DcirResult>({
+  const preview = useQuery<
+    | ComputeResult
+    | DcirResult
+    | StepsResult
+    | ChargeabilityResult
+    | RateCapabilityResult
+  >({
     queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
     queryFn: () =>
-      plot.tab === "dcir"
+      plot.tab === "steps"
+        ? post<StepsResult>(`/api/analyses/${analysisId}/steps`, {
+            spec: previewSpec,
+            background: warmup,
+          })
+        : plot.tab === "dcir"
         ? post<DcirResult>(`/api/analyses/${analysisId}/dcir`, {
             spec: previewSpec,
             background: warmup,
           })
+        : plot.tab === "chargeability"
+        ? post<ChargeabilityResult>(
+            `/api/analyses/${analysisId}/chargeability`,
+            {
+              spec: previewSpec,
+              background: warmup,
+            }
+          )
+        : plot.tab === "crate"
+        ? post<RateCapabilityResult>(
+            `/api/analyses/${analysisId}/rate-capability`,
+            {
+              spec: previewSpec,
+              background: warmup,
+            }
+          )
         : post<ComputeResult>(`/api/analyses/${analysisId}/compute`, {
             spec: previewSpec,
             background: warmup,
@@ -3045,8 +3566,20 @@ function SavedPlotPreview({
   const traces = useMemo(
     () =>
       preview.data
-        ? plot.tab === "dcir"
+        ? plot.tab === "steps"
+          ? stepsTracesForResult(preview.data as StepsResult, previewSpec)
+          : plot.tab === "dcir"
           ? dcirTracesForResult(preview.data as DcirResult, previewSpec)
+          : plot.tab === "chargeability"
+          ? chargeabilityTracesForResult(
+              preview.data as ChargeabilityResult,
+              previewSpec
+            )
+          : plot.tab === "crate"
+          ? rateCapabilityTracesForResult(
+              preview.data as RateCapabilityResult,
+              previewSpec
+            )
           : tracesForResult(preview.data as ComputeResult, previewSpec)
         : [],
     [plot.tab, preview.data, previewSpec]
@@ -3054,7 +3587,7 @@ function SavedPlotPreview({
 
   useEffect(() => {
     if (
-      (warmup ? thumbnailPairReady : Boolean(thumbnail.data)) ||
+      (warmup ? thumbnailPairReady : Boolean(thumbnail.data?.thumbnail)) ||
       artifact.data ||
       !preview.data ||
       traces.length === 0
@@ -3062,18 +3595,58 @@ function SavedPlotPreview({
     let cancelled = false;
     setGenerationFailed(false);
     const layout =
-      plot.tab === "dcir"
+      plot.tab === "steps"
+        ? stepsLayoutForSpec(previewSpec)
+        : plot.tab === "dcir"
         ? dcirLayoutForSpec(previewSpec)
+        : plot.tab === "chargeability"
+        ? chargeabilityLayoutForSpec(
+            previewSpec,
+            preview.data as ChargeabilityResult
+          )
+        : plot.tab === "crate"
+        ? rateCapabilityLayoutForSpec(
+            previewSpec,
+            preview.data as RateCapabilityResult
+          )
         : cyclePlotLayout(preview.data as ComputeResult, previewSpec, traces);
     const figure = portableFigure(traces, layout);
     if (!figure) return;
     const summary =
-      plot.tab === "dcir"
+      plot.tab === "steps"
+        ? (preview.data as StepsResult).cell_series.map((series) => ({
+            label: series.label,
+            cycles: series.n_blocks,
+            status: series.n_blocks > 0 ? "Visible" : "No matching blocks",
+          }))
+        : plot.tab === "dcir"
         ? (preview.data as DcirResult).cell_series.map((series) => ({
             label: series.label,
             cycles: series.n_measurements,
             status: series.n_measurements > 0 ? "Visible" : "No measurements",
           }))
+        : plot.tab === "chargeability"
+        ? (preview.data as ChargeabilityResult).cells.map((cell) => ({
+            label: cell.cell_name,
+            cycles: cell.match_count,
+            status:
+              cell.match_count > 0
+                ? "Matched"
+                : cell.status === "no_candidates"
+                  ? "No candidates"
+                  : "No matching event",
+          }))
+        : plot.tab === "crate"
+        ? (preview.data as RateCapabilityResult).cells.map((cell) => {
+            const points =
+              cell.families.charge.point_count +
+              cell.families.discharge.point_count;
+            return {
+              label: cell.cell_name,
+              cycles: points,
+              status: points > 0 ? "Matched" : "No sweep detected",
+            };
+          })
         : (preview.data as ComputeResult).cell_series.map((series) => ({
             label: series.label,
             cycles: series.metrics?.n_cycles ?? series.x.length,
@@ -3095,7 +3668,11 @@ function SavedPlotPreview({
         if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            { signature: previewSignature, thumbnail }
+            {
+              signature: previewSignature,
+              thumbnail,
+              preview_thumbnail,
+            }
           );
           qc.setQueryData(
             ["plot-artifact", analysisId, plot.id, previewSignature],
@@ -3133,7 +3710,7 @@ function SavedPlotPreview({
 
   useEffect(() => {
     const current = artifact.data;
-    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data)) || !current) return;
+    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data?.thumbnail)) || !current) return;
     let cancelled = false;
     // The thumbnail embedded in an older full artifact belongs to that
     // artifact's renderer generation. A miss in the dedicated versioned
@@ -3146,7 +3723,11 @@ function SavedPlotPreview({
         if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            { signature: previewSignature, thumbnail }
+            {
+              signature: previewSignature,
+              thumbnail,
+              preview_thumbnail,
+            }
           );
           qc.setQueryData(
             ["plot-artifact", analysisId, plot.id, previewSignature],
@@ -3198,36 +3779,50 @@ function SavedPlotPreview({
   const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
-    // A cache hit (thumbnail or artifact) completes the task without any
-    // compute; the compute path only runs when nothing was cached.
-    if (generationFailed) {
-      warmupReported.current = true;
-      onWarmupComplete("Thumbnail generation failed");
-    } else if (thumbnailPairReady) {
-      warmupReported.current = true;
-      onWarmupComplete(
-        undefined,
-        renderedFresh.current
-          ? "Computed data and rendered thumbnail"
-          : rebuiltThumbnail.current
-            ? "Thumbnail rebuilt from cached plot"
-            : "Already cached"
-      );
-    } else if (preview.isError) {
-      warmupReported.current = true;
-      onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
-    } else if (preview.isSuccess && traces.length === 0) {
-      warmupReported.current = true;
-      onWarmupComplete();
-    }
-  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, thumbnailPairReady, traces.length, warmup]);
+    // Shared resolver: a failed thumbnail/artifact lookup leaves the compute
+    // query disabled, so without an explicit terminal state for it the task
+    // never reports and stalls the whole warmup queue. See warmupCompletion.ts.
+    const resolution = resolveWarmup({
+      generationFailed,
+      thumbnailPairReady,
+      thumbnailErrored: thumbnail.isError,
+      thumbnailError: thumbnail.error,
+      artifactErrored: artifact.isError,
+      artifactError: artifact.error,
+      previewErrored: preview.isError,
+      previewError: preview.error,
+      previewSucceeded: preview.isSuccess,
+      traceCount: traces.length,
+      renderedFresh: renderedFresh.current,
+      rebuiltThumbnail: rebuiltThumbnail.current,
+    });
+    if (resolution.status !== "done") return;
+    warmupReported.current = true;
+    onWarmupComplete(resolution.error, resolution.detail);
+  }, [
+    artifact.error,
+    artifact.isError,
+    generationFailed,
+    onWarmupComplete,
+    preview.error,
+    preview.isError,
+    preview.isSuccess,
+    thumbnail.error,
+    thumbnail.isError,
+    thumbnailPairReady,
+    traces.length,
+    warmup,
+  ]);
   if (previewImage) {
     return (
-      <img
-        src={previewImage}
-        alt=""
-        style={{ width: "100%", height: 130, objectFit: "contain", display: "block" }}
-      />
+      <Center className="cx-plot-thumbnail-frame" h={130}>
+        <img
+          className="cx-plot-thumbnail"
+          src={previewImage}
+          alt=""
+          style={{ maxWidth: "100%", maxHeight: 130, display: "block" }}
+        />
+      </Center>
     );
   }
 
@@ -3268,15 +3863,30 @@ function SavedTimeCapacityPreview({
   const previewSpec = useMemo(() => specForSavedPlot(baseSpec, plot), [baseSpec, plot]);
   const previewSignature = useMemo(() => savedPlotPreviewSignature(baseSpec, plot), [baseSpec, plot]);
   const qc = useQueryClient();
+  const draftPreview = isDraftPreviewPlotId(plot.id);
   const [generationFailed, setGenerationFailed] = useState(false);
   const warmupReported = useRef(false);
   const renderedFresh = useRef(false);
   const rebuiltThumbnail = useRef(false);
   const thumbnail = useQuery({
     queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
-    queryFn: () => lookupPlotThumbnail(analysisId, plot.id, previewSignature),
-    staleTime: 60 * 60_000,
-    retry: false,
+    queryFn: async () => {
+      if (draftPreview) {
+        return (
+          qc.getQueryData<PlotThumbnail>([
+            "plot-thumbnail",
+            analysisId,
+            plot.id,
+            previewSignature,
+          ]) ?? null
+        );
+      }
+      return lookupPlotThumbnail(analysisId, plot.id, previewSignature);
+    },
+    staleTime: draftPreview ? Infinity : 60 * 60_000,
+    refetchOnWindowFocus: !draftPreview,
+    refetchOnReconnect: !draftPreview,
+    retry: draftPreview ? false : 1,
   });
   const thumbnailPairReady = Boolean(
     thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
@@ -3284,21 +3894,25 @@ function SavedTimeCapacityPreview({
   const artifact = useQuery({
     queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
     queryFn: async () => {
-      try {
-        return await post<PlotArtifact>(
-          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plot.id)}/lookup`,
-          { signature: previewSignature }
+      if (draftPreview) {
+        return (
+          qc.getQueryData<PlotArtifact>([
+            "plot-artifact",
+            analysisId,
+            plot.id,
+            previewSignature,
+          ]) ?? null
         );
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return null;
-        throw error;
       }
+      return lookupPlotArtifact(analysisId, plot.id, previewSignature);
     },
     enabled:
       thumbnail.isSuccess &&
       (thumbnail.data === null || (warmup && !thumbnailPairReady)),
-    staleTime: 5 * 60_000,
-    retry: false,
+    staleTime: draftPreview ? Infinity : 5 * 60_000,
+    refetchOnWindowFocus: !draftPreview,
+    refetchOnReconnect: !draftPreview,
+    retry: draftPreview ? false : 1,
   });
   const preview = useQuery({
     queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
@@ -3328,7 +3942,7 @@ function SavedTimeCapacityPreview({
 
   useEffect(() => {
     if (
-      (warmup ? thumbnailPairReady : Boolean(thumbnail.data)) ||
+      (warmup ? thumbnailPairReady : Boolean(thumbnail.data?.thumbnail)) ||
       artifact.data ||
       !preview.data ||
       traces.length === 0
@@ -3359,7 +3973,11 @@ function SavedTimeCapacityPreview({
         if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            { signature: previewSignature, thumbnail }
+            {
+              signature: previewSignature,
+              thumbnail,
+              preview_thumbnail,
+            }
           );
           qc.setQueryData(
             ["plot-artifact", analysisId, plot.id, previewSignature],
@@ -3397,7 +4015,7 @@ function SavedTimeCapacityPreview({
 
   useEffect(() => {
     const current = artifact.data;
-    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data)) || !current) return;
+    if ((warmup ? thumbnailPairReady : Boolean(thumbnail.data?.thumbnail)) || !current) return;
     let cancelled = false;
     // See SavedPlotPreview: an artifact thumbnail is not proof that the
     // current dedicated thumbnail generation has been persisted.
@@ -3408,7 +4026,11 @@ function SavedTimeCapacityPreview({
         if (!cancelled && !warmup) {
           qc.setQueryData(
             ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            { signature: previewSignature, thumbnail }
+            {
+              signature: previewSignature,
+              thumbnail,
+              preview_thumbnail,
+            }
           );
           qc.setQueryData(
             ["plot-artifact", analysisId, plot.id, previewSignature],
@@ -3460,36 +4082,50 @@ function SavedTimeCapacityPreview({
   const showPreviewLoader = useDelayedFlag(previewPending);
   useEffect(() => {
     if (!warmup || warmupReported.current || !onWarmupComplete) return;
-    // A cache hit (thumbnail or artifact) completes the task without any
-    // compute; the compute path only runs when nothing was cached.
-    if (generationFailed) {
-      warmupReported.current = true;
-      onWarmupComplete("Thumbnail generation failed");
-    } else if (thumbnailPairReady) {
-      warmupReported.current = true;
-      onWarmupComplete(
-        undefined,
-        renderedFresh.current
-          ? "Computed data and rendered thumbnail"
-          : rebuiltThumbnail.current
-            ? "Thumbnail rebuilt from cached plot"
-            : "Already cached"
-      );
-    } else if (preview.isError) {
-      warmupReported.current = true;
-      onWarmupComplete(preview.error instanceof Error ? preview.error.message : "Plot computation failed");
-    } else if (preview.isSuccess && traces.length === 0) {
-      warmupReported.current = true;
-      onWarmupComplete();
-    }
-  }, [generationFailed, onWarmupComplete, preview.error, preview.isError, preview.isSuccess, thumbnailPairReady, traces.length, warmup]);
+    // Shared resolver: a failed thumbnail/artifact lookup leaves the compute
+    // query disabled, so without an explicit terminal state for it the task
+    // never reports and stalls the whole warmup queue. See warmupCompletion.ts.
+    const resolution = resolveWarmup({
+      generationFailed,
+      thumbnailPairReady,
+      thumbnailErrored: thumbnail.isError,
+      thumbnailError: thumbnail.error,
+      artifactErrored: artifact.isError,
+      artifactError: artifact.error,
+      previewErrored: preview.isError,
+      previewError: preview.error,
+      previewSucceeded: preview.isSuccess,
+      traceCount: traces.length,
+      renderedFresh: renderedFresh.current,
+      rebuiltThumbnail: rebuiltThumbnail.current,
+    });
+    if (resolution.status !== "done") return;
+    warmupReported.current = true;
+    onWarmupComplete(resolution.error, resolution.detail);
+  }, [
+    artifact.error,
+    artifact.isError,
+    generationFailed,
+    onWarmupComplete,
+    preview.error,
+    preview.isError,
+    preview.isSuccess,
+    thumbnail.error,
+    thumbnail.isError,
+    thumbnailPairReady,
+    traces.length,
+    warmup,
+  ]);
   if (previewImage) {
     return (
-      <img
-        src={previewImage}
-        alt=""
-        style={{ width: "100%", height: 130, objectFit: "contain", display: "block" }}
-      />
+      <Center className="cx-plot-thumbnail-frame" h={130}>
+        <img
+          className="cx-plot-thumbnail"
+          src={previewImage}
+          alt=""
+          style={{ maxWidth: "100%", maxHeight: 130, display: "block" }}
+        />
+      </Center>
     );
   }
 
@@ -3564,11 +4200,14 @@ function CachedSavedPlotPreview({
 
   if (thumbnail.data) {
     return (
-      <img
-        src={thumbnail.data.thumbnail}
-        alt=""
-        style={{ width: "100%", height: 130, objectFit: "contain", display: "block" }}
-      />
+      <Center className="cx-plot-thumbnail-frame" h={130}>
+        <img
+          className="cx-plot-thumbnail"
+          src={thumbnail.data.thumbnail}
+          alt=""
+          style={{ maxWidth: "100%", maxHeight: 130, display: "block" }}
+        />
+      </Center>
     );
   }
   return (
@@ -4053,6 +4692,31 @@ function CycleSettings({
                   }
                 />
               </Tooltip>
+              {(spec.presentation.hide_diagnostic_cycles ?? false) && (
+                <Tooltip
+                  label={
+                    "Close the gaps the hidden cycles leave: drop them from the x-axis and " +
+                    "renumber the remaining cycles 1..N. Display only — exports keep the real " +
+                    "cycle numbers."
+                  }
+                  multiline
+                  maw={320}
+                  withArrow
+                  openDelay={300}
+                >
+                  <Switch
+                    ml="md"
+                    label="Reindex remaining cycles"
+                    checked={spec.presentation.reindex_diagnostic_cycles ?? false}
+                    onChange={(e) =>
+                      update((s) => {
+                        s.presentation.reindex_diagnostic_cycles = e.currentTarget.checked;
+                        resetManualAxis(s, "cycles", "x_axis");
+                      })
+                    }
+                  />
+                </Tooltip>
+              )}
               <Select
                 label="Replicates"
                 data={[
@@ -4852,6 +5516,27 @@ export function PlotStylePanel({
                   }
                 />
               </Group>
+              {style.marker_mode !== "none" && (
+                <Group grow align="flex-end">
+                  <Select
+                    label="Marker shape"
+                    data={MARKER_SYMBOL_OPTIONS}
+                    value={style.marker_symbol}
+                    onChange={(value) =>
+                      value &&
+                      setStyle((next) => void (next.marker_symbol = value as PlotStyle["marker_symbol"]))
+                    }
+                  />
+                  <Switch
+                    label="Open (outline only)"
+                    checked={style.marker_open}
+                    onChange={(event) =>
+                      setStyle((next) => void (next.marker_open = event.currentTarget.checked))
+                    }
+                    mb={8}
+                  />
+                </Group>
+              )}
               <Group grow>
                 <DebouncedNumberInput
                   label="Cells opacity"
@@ -5077,6 +5762,27 @@ export function PlotStylePanel({
                     onCommit={(value) => setStyle((next) => void (next.ce_marker_size = value ?? 5))}
                   />
                 </Group>
+                {style.ce_marker_mode !== "none" && (
+                  <Group grow align="flex-end">
+                    <Select
+                      label="Marker shape"
+                      data={MARKER_SYMBOL_OPTIONS}
+                      value={style.ce_marker_symbol ?? "circle"}
+                      onChange={(value) =>
+                        value &&
+                        setStyle((next) => void (next.ce_marker_symbol = value as PlotStyle["ce_marker_symbol"]))
+                      }
+                    />
+                    <Switch
+                      label="Open (outline only)"
+                      checked={style.ce_marker_open ?? false}
+                      onChange={(event) =>
+                        setStyle((next) => void (next.ce_marker_open = event.currentTarget.checked))
+                      }
+                      mb={8}
+                    />
+                  </Group>
+                )}
                 <DebouncedNumberInput
                   label="Opacity"
                   min={0.05}
@@ -5796,6 +6502,11 @@ export function PlotHeader({
   viewSize,
   layout,
   canExport = false,
+  edited = false,
+  onNewPlot,
+  newPlotEnabled = false,
+  onUpdatePlot,
+  updatePlotEnabled = false,
 }: {
   analysisTitle?: string;
   tabName?: string;
@@ -5813,6 +6524,14 @@ export function PlotHeader({
   viewSize?: { width: number; height: number } | null;
   layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
+  /** Amber chip when the open saved plot has unsaved edits. */
+  edited?: boolean;
+  onNewPlot?: () => void;
+  /** Green and clickable when the analysis has samples. */
+  newPlotEnabled?: boolean;
+  onUpdatePlot?: () => void;
+  /** Amber/active when the open saved plot has unsaved edits. */
+  updatePlotEnabled?: boolean;
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
   const selectedFormat = exportStyle.export_format ?? "png";
@@ -5907,9 +6626,16 @@ export function PlotHeader({
     <>
     <Group justify="space-between" mb="xs" align="start">
       <div>
-        <Text fw={800} size="lg">
-          {plotName}
-        </Text>
+        <Group gap={8} align="center" wrap="nowrap">
+          <Text fw={800} size="lg">
+            {plotName}
+          </Text>
+          {edited ? (
+            <Badge size="xs" variant="light" color="yellow">
+              Edited
+            </Badge>
+          ) : null}
+        </Group>
         <Text size="sm" c="dimmed">
           {subtitle}
         </Text>
@@ -6028,7 +6754,7 @@ export function PlotHeader({
                     value={filenameTemplate}
                     onChange={setFilenameTemplate}
                   />
-                  <Paper withBorder p="xs" bg="gray.0">
+                  <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                     <Text size="xs" c="dimmed">Result</Text>
                     <Text size="sm" fw={600} lineClamp={2}>
                       {renderedFilename}.{exportStyle.data_export_format}
@@ -6209,7 +6935,7 @@ export function PlotHeader({
                         value={filenameTemplate}
                         onChange={setFilenameTemplate}
                       />
-                      <Paper withBorder p="xs" bg="gray.0">
+                      <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                         <Text size="xs" c="dimmed">Result</Text>
                         <Text size="sm" fw={600} lineClamp={2}>
                           {renderedFilename}.{selectedFormat}
@@ -6228,9 +6954,67 @@ export function PlotHeader({
             </Popover>
           </Button.Group>
         )}
+        {onUpdatePlot ? (
+          <Button
+            size="xs"
+            color="yellow"
+            variant={updatePlotEnabled ? "filled" : "light"}
+            disabled={!updatePlotEnabled}
+            onClick={onUpdatePlot}
+          >
+            Update
+          </Button>
+        ) : null}
+        {onNewPlot ? (
+          <Button
+            size="xs"
+            color="teal"
+            variant={newPlotEnabled ? "filled" : "light"}
+            leftSection={<IconPlus size={14} />}
+            disabled={!newPlotEnabled}
+            onClick={onNewPlot}
+          >
+            New
+          </Button>
+        ) : null}
       </Group>
     </Group>
     </>
+  );
+}
+
+function PlotWorkspaceEmpty({
+  hasSamples,
+  onNewPlot,
+}: {
+  hasSamples: boolean;
+  onNewPlot: () => void;
+}) {
+  return (
+    <Paper p="sm" withBorder style={{ minHeight: 420 }}>
+      <Group justify="flex-end" mb="md">
+        <Button
+          size="xs"
+          color="teal"
+          variant={hasSamples ? "filled" : "light"}
+          leftSection={<IconPlus size={14} />}
+          disabled={!hasSamples}
+          onClick={onNewPlot}
+        >
+          New
+        </Button>
+      </Group>
+      <Center h={320}>
+        <Stack gap={6} align="center" maw={420}>
+          <Text fw={700}>No plot yet</Text>
+          <Text size="sm" c="dimmed" ta="center">
+            {hasSamples
+              ? "Click New to start a draft for this tab."
+              : "Add cells or replicates to this analysis, then click New."}
+          </Text>
+        </Stack>
+      </Center>
+    </Paper>
   );
 }
 
@@ -6558,6 +7342,9 @@ async function storePlotArtifactWithRetry(
   artifact: PlotArtifact,
   warmupTask?: CacheWarmupTask,
 ): Promise<PlotArtifact> {
+  // Draft cards keep thumbnails in React Query only — posting `__draft__:*`
+  // always 404s (not in saved_plots) and previously retry-stormed the API.
+  if (isDraftPreviewPlotId(plotId)) return artifact;
   const delays = [0, 800, 1600, 2600];
   let lastError: unknown = null;
   for (const delay of delays) {
@@ -6748,6 +7535,55 @@ async function buildPortablePlotSnapshots(
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
       }
+      if (view.tab === "steps") {
+        const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
+          kind: "steps",
+          spec: viewSpec,
+        });
+        const result = await post<StepsResult>(
+          `/api/analyses/${analysisId}/steps`,
+          { spec: viewSpec, job_id: job.id }
+        );
+        const traces = stepsTracesForResult(result, viewSpec);
+        const layout = stepsLayoutForSpec(viewSpec);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const images = figure ? await queuedPortableArtifactImages(figure) : null;
+        const svg = images?.svg ?? null;
+        const summary = result.cell_series.map((series) => ({
+          label: series.label,
+          cycles: series.n_blocks,
+          status: series.n_blocks > 0 ? "Visible" : "No matching blocks",
+        }));
+        if (svg && figure && artifactSignature) {
+          try {
+            await post<PlotArtifact>(
+              `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+              {
+                signature: artifactSignature,
+                svg,
+                thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
+                figure,
+                summary,
+              }
+            );
+          } catch (error) {
+            console.warn("Could not cache the generated portable Steps plot", error);
+          }
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary,
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
       if (view.tab === "dcir") {
         const job = await post<BackgroundJob>(`/api/analyses/${analysisId}/compute-jobs`, {
           kind: "dcir",
@@ -6782,6 +7618,126 @@ async function buildPortablePlotSnapshots(
             );
           } catch (error) {
             console.warn("Could not cache the generated portable DCIR plot", error);
+          }
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary,
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
+      if (view.tab === "chargeability") {
+        const job = await post<BackgroundJob>(
+          `/api/analyses/${analysisId}/compute-jobs`,
+          {
+            kind: "chargeability",
+            spec: viewSpec,
+          }
+        );
+        const result = await post<ChargeabilityResult>(
+          `/api/analyses/${analysisId}/chargeability`,
+          { spec: viewSpec, job_id: job.id }
+        );
+        const traces = chargeabilityTracesForResult(result, viewSpec);
+        const layout = chargeabilityLayoutForSpec(viewSpec, result);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const images = figure ? await queuedPortableArtifactImages(figure) : null;
+        const svg = images?.svg ?? null;
+        const summary = result.cells.map((cell) => ({
+          label: cell.cell_name,
+          cycles: cell.match_count,
+          status:
+            cell.match_count > 0
+              ? "Matched"
+              : cell.status === "no_candidates"
+                ? "No candidates"
+                : "No matching event",
+        }));
+        if (svg && figure && artifactSignature) {
+          try {
+            await post<PlotArtifact>(
+              `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+              {
+                signature: artifactSignature,
+                svg,
+                thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
+                figure,
+                summary,
+              }
+            );
+          } catch (error) {
+            console.warn(
+              "Could not cache the generated portable Chargeability plot",
+              error
+            );
+          }
+        }
+        snapshots.push({
+          id: view.id,
+          name: view.name,
+          subtitle: view.subtitle,
+          description: view.description,
+          tab: view.tab,
+          figure,
+          svg,
+          summary,
+        });
+        onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
+        continue;
+      }
+      if (view.tab === "crate") {
+        const job = await post<BackgroundJob>(
+          `/api/analyses/${analysisId}/compute-jobs`,
+          {
+            kind: "rate_capability",
+            spec: viewSpec,
+          }
+        );
+        const result = await post<RateCapabilityResult>(
+          `/api/analyses/${analysisId}/rate-capability`,
+          { spec: viewSpec, job_id: job.id }
+        );
+        const traces = rateCapabilityTracesForResult(result, viewSpec);
+        const layout = rateCapabilityLayoutForSpec(viewSpec, result);
+        const figure = traces.length ? portableFigure(traces, layout) : null;
+        const images = figure ? await queuedPortableArtifactImages(figure) : null;
+        const svg = images?.svg ?? null;
+        const summary = result.cells.map((cell) => {
+          const points =
+            cell.families.charge.point_count +
+            cell.families.discharge.point_count;
+          return {
+            label: cell.cell_name,
+            cycles: points,
+            status: points > 0 ? "Matched" : "No sweep detected",
+          };
+        });
+        if (svg && figure && artifactSignature) {
+          try {
+            await post<PlotArtifact>(
+              `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
+              {
+                signature: artifactSignature,
+                svg,
+                thumbnail: images?.thumbnail ?? null,
+                preview_thumbnail: images?.preview_thumbnail ?? null,
+                figure,
+                summary,
+              }
+            );
+          } catch (error) {
+            console.warn(
+              "Could not cache the generated portable rate-capability plot",
+              error
+            );
           }
         }
         snapshots.push({
@@ -6908,7 +7864,7 @@ function useZoomMemory(signature: string, enabled = true): ZoomMemory {
   return { onRelayout, apply, armOnPointerDown };
 }
 
-function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
+export function usePlotSizeSync(plotDivRef: { current: HTMLElement | null }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -6975,6 +7931,11 @@ function CyclePlotCard({
   updating,
   error,
   computeJob,
+  edited = false,
+  onNewPlot,
+  newPlotEnabled = false,
+  onUpdatePlot,
+  updatePlotEnabled = false,
 }: {
   analysisTitle: string;
   plotName: string;
@@ -6984,6 +7945,11 @@ function CyclePlotCard({
   update: (fn: (s: AnalysisSpec) => void) => void;
   updating: boolean;
   error: Error | null;
+  edited?: boolean;
+  onNewPlot?: () => void;
+  newPlotEnabled?: boolean;
+  onUpdatePlot?: () => void;
+  updatePlotEnabled?: boolean;
   computeJob: BackgroundJob | undefined;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
@@ -7181,6 +8147,11 @@ function CyclePlotCard({
           viewSize={plotSize}
           layout={layout}
           canExport={exportTraces.length > 0}
+          edited={edited}
+          onNewPlot={onNewPlot}
+          newPlotEnabled={newPlotEnabled}
+          onUpdatePlot={onUpdatePlot}
+          updatePlotEnabled={updatePlotEnabled}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {segmentsActive && (
@@ -7294,6 +8265,11 @@ function TimeCapacityPlotCardView({
   spec,
   update,
   onReadyChange,
+  edited = false,
+  onNewPlot,
+  newPlotEnabled = false,
+  onUpdatePlot,
+  updatePlotEnabled = false,
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -7302,6 +8278,11 @@ function TimeCapacityPlotCardView({
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
   onReadyChange?: (ready: boolean) => void;
+  edited?: boolean;
+  onNewPlot?: () => void;
+  newPlotEnabled?: boolean;
+  onUpdatePlot?: () => void;
+  updatePlotEnabled?: boolean;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -7579,6 +8560,11 @@ function TimeCapacityPlotCardView({
           viewSize={plotSize}
           layout={layout}
           canExport={exportTraces.length > 0}
+          edited={edited}
+          onNewPlot={onNewPlot}
+          newPlotEnabled={newPlotEnabled}
+          onUpdatePlot={onUpdatePlot}
+          updatePlotEnabled={updatePlotEnabled}
         />
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
@@ -7646,23 +8632,85 @@ function TimeCapacityPlotCardView({
 
 const TimeCapacityPlotCard = memo(TimeCapacityPlotCardView);
 
-function FamilyPlaceholder({ tab }: { tab: AnalysisTabKey }) {
-  const def = TAB_DEFS.find((item) => item.value === tab)!;
-  const Icon = def.icon;
-  return (
-    <Paper p="lg" withBorder h={590}>
-      <Center h="100%">
-        <Stack align="center" gap="xs" maw={520}>
-          <Icon size={34} color="#12b886" />
-          <Text fw={700}>{def.label}</Text>
-          <Text size="sm" c="dimmed" ta="center">
-            This analysis family needs protocol-specific extraction from the raw cache. The saved
-            plot workflow is ready here; the calculator can be added without changing the cycle
-            analysis model.
-          </Text>
-        </Stack>
+/** Per-tab draft card with the same thumbnail pipeline as saved plots. */
+function TabDraftPlotCard({
+  analysisId,
+  tab,
+  baseSpec,
+  draft,
+  liveUnsaved,
+  allowPreviewGeneration,
+  onOpen,
+  onSave,
+}: {
+  analysisId: number;
+  tab: AnalysisTabKey;
+  baseSpec: AnalysisSpec;
+  draft: AnalysisDraftPlot | null;
+  liveUnsaved: boolean;
+  allowPreviewGeneration: boolean;
+  onOpen: () => void;
+  onSave: () => void;
+}) {
+  const previewSource = useMemo(() => {
+    if (liveUnsaved) {
+      return draftPlotFromWorkspace(baseSpec, tab, draft?.name ?? null, draft?.updated_at ?? "1970-01-01T00:00:00.000Z");
+    }
+    return draft;
+  }, [baseSpec, draft, liveUnsaved, tab]);
+
+  const [stableDraft, setStableDraft] = useState(previewSource);
+  useEffect(() => {
+    if (!liveUnsaved) {
+      setStableDraft(previewSource);
+      return;
+    }
+    const timer = window.setTimeout(() => setStableDraft(previewSource), 700);
+    return () => window.clearTimeout(timer);
+  }, [liveUnsaved, previewSource]);
+
+  const previewPlot = useMemo(
+    () => (stableDraft ? draftAsSavedPlot(stableDraft) : null),
+    [stableDraft],
+  );
+
+  const preview =
+    previewPlot == null ? null : tab === "time_capacity" ? (
+      <SavedTimeCapacityPreview
+        analysisId={analysisId}
+        baseSpec={baseSpec}
+        plot={previewPlot}
+        allowGeneration={allowPreviewGeneration}
+      />
+    ) : tab === "cycles" ||
+      tab === "recap" ||
+      tab === "dcir" ||
+      tab === "steps" ||
+      tab === "crate" ||
+      tab === "chargeability" ? (
+      <SavedPlotPreview
+        analysisId={analysisId}
+        baseSpec={baseSpec}
+        plot={previewPlot}
+        allowGeneration={allowPreviewGeneration}
+      />
+    ) : (
+      <Center h={130}>
+        <Text size="xs" c="dimmed">
+          Draft preview
+        </Text>
       </Center>
-    </Paper>
+    );
+
+  return (
+    <DraftPlotCard
+      draft={draft}
+      liveUnsaved={liveUnsaved}
+      activeTab={tab}
+      preview={preview}
+      onOpen={onOpen}
+      onSave={onSave}
+    />
   );
 }
 
@@ -7673,12 +8721,12 @@ function SavedPlotsPanel({
   plots,
   activeSavedPlotId,
   activePlotDirty,
-  onNewPlot,
   onSaveNew,
-  onUpdateActive,
   onOpen,
   onDelete,
   allowPreviewGeneration,
+  hasSamples,
+  canSaveNew,
 }: {
   analysisId: number;
   activeTab: AnalysisTabKey;
@@ -7686,12 +8734,12 @@ function SavedPlotsPanel({
   plots: SavedAnalysisPlot[];
   activeSavedPlotId: string | null;
   activePlotDirty: boolean;
-  onNewPlot: () => void;
   onSaveNew: () => void;
-  onUpdateActive: () => void;
   onOpen: (plot: SavedAnalysisPlot) => void;
   onDelete: (plotId: string) => void;
   allowPreviewGeneration: boolean;
+  hasSamples: boolean;
+  canSaveNew: boolean;
 }) {
   const visiblePlots = plots.filter((plot) => plot.tab === activeTab);
   const visiblePlotKey = visiblePlots.map((plot) => plot.id).join("|");
@@ -7749,16 +8797,10 @@ function SavedPlotsPanel({
         <Group gap="xs">
           <Button
             size="xs"
-            variant="default"
-            leftSection={<IconPlus size={14} />}
-            onClick={onNewPlot}
+            leftSection={<IconDeviceFloppy size={14} />}
+            disabled={!hasSamples || !canSaveNew}
+            onClick={onSaveNew}
           >
-            New plot
-          </Button>
-          <Button size="xs" variant="default" disabled={!activeSavedPlotId || !activePlotDirty} onClick={onUpdateActive}>
-            Update plot
-          </Button>
-          <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} onClick={onSaveNew}>
             Save new plot
           </Button>
         </Group>
@@ -7789,13 +8831,17 @@ function SavedPlotsPanel({
                   border: active
                     ? "1px solid var(--mantine-color-teal-3)"
                     : "1px solid var(--mantine-color-gray-2)",
-                  background: active ? "var(--mantine-color-teal-0)" : "#fcfcfd",
+                  background: active ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
                   borderRadius: 8,
                   cursor: "pointer",
                 }}
               >
                 <Group align="stretch" wrap="nowrap">
-                  <Box w={260} style={{ flexShrink: 0 }}>
+                  <Box
+                    className="cx-plot-thumbnail-frame"
+                    w={260}
+                    style={{ flexShrink: 0 }}
+                  >
                     {plot.tab === "time_capacity" ? (
                       <SavedTimeCapacityPreview
                         analysisId={analysisId}
@@ -7803,7 +8849,12 @@ function SavedPlotsPanel({
                         plot={plot}
                         allowGeneration={generationPlotIds.has(plot.id)}
                       />
-                    ) : plot.tab === "cycles" || plot.tab === "recap" || plot.tab === "dcir" ? (
+                    ) : plot.tab === "cycles" ||
+                      plot.tab === "recap" ||
+                      plot.tab === "dcir" ||
+                      plot.tab === "steps" ||
+                      plot.tab === "crate" ||
+                      plot.tab === "chargeability" ? (
                       <SavedPlotPreview
                         analysisId={analysisId}
                         baseSpec={baseSpec}
@@ -7826,6 +8877,11 @@ function SavedPlotsPanel({
                       <Text fw={700} truncate>
                         {plot.name}
                       </Text>
+                      {active && activePlotDirty ? (
+                        <Badge size="xs" variant="light" color="yellow">
+                          Edited
+                        </Badge>
+                      ) : null}
                     </Group>
                     <Text size="xs" c="dimmed" truncate>
                       {plot.subtitle}
@@ -7846,7 +8902,17 @@ function SavedPlotsPanel({
                       color="red"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onDelete(plot.id);
+                        modals.openConfirmModal({
+                          title: "Delete this saved plot?",
+                          children: (
+                            <Text size="sm">
+                              &quot;{plot.name}&quot; will be removed from this analysis. This cannot be undone.
+                            </Text>
+                          ),
+                          labels: { confirm: "Delete", cancel: "Cancel" },
+                          confirmProps: { color: "red" },
+                          onConfirm: () => onDelete(plot.id),
+                        });
                       }}
                     >
                       Delete
@@ -7963,6 +9029,19 @@ function AnalysisPageView({
   const [plotWorkspaceTouched, setPlotWorkspaceTouched] = useState(
     workspaceState?.plotWorkspaceTouched ?? false,
   );
+  /** False until the user opens a saved plot or clicks New plot. */
+  const [plotSessionActive, setPlotSessionActive] = useState(
+    Boolean(workspaceState?.activeSavedPlotId || workspaceState?.plotWorkspaceTouched),
+  );
+  const normalWorkspaceRef = useRef<NormalWorkspaceSnapshot | null>(
+    workspaceState?.normalWorkspace ?? null,
+  );
+  /** Last opened saved plot per family tab — preferred when switching back. */
+  const lastPlotIdByTabRef = useRef<Partial<Record<AnalysisTabKey, string>>>(
+    workspaceState?.activeSavedPlotId && workspaceState?.activeTab
+      ? { [workspaceState.activeTab]: workspaceState.activeSavedPlotId }
+      : {},
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [portableExportOpen, setPortableExportOpen] = useState(false);
   const [portableExportAction, setPortableExportAction] = useState<"download" | "share">("download");
@@ -7974,6 +9053,11 @@ function AnalysisPageView({
   const [preparedShareBusy, setPreparedShareBusy] = useState(false);
   const [includePortableOriginals, setIncludePortableOriginals] = useState(false);
   const [portablePlotIds, setPortablePlotIds] = useState<string[]>([]);
+  const [portableSourceDecision, setPortableSourceDecision] =
+    useState<PortableSourcePreflight | null>(null);
+  const [pendingPortableExport, setPendingPortableExport] = useState<{
+    action: "download" | "share";
+  } | null>(null);
   const [portableProgress, setPortableProgress] = useState<{
     completed: number;
     total: number;
@@ -7981,25 +9065,44 @@ function AnalysisPageView({
     phase: "plots" | "packing" | "done";
   } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
-  const [saveDraft, setSaveDraft] = useState<{ name: string; description: string } | null>(null);
+  const [saveDraft, setSaveDraft] = useState<{
+    name: string;
+    description: string;
+    source: DraftSaveSource;
+    afterSave?: "none" | "new_plot";
+  } | null>(null);
   const [leavePrompt, setLeavePrompt] = useState<{
     proceed: () => void;
-    mode: "new" | "update";
+    mode: "new" | "update" | "copy";
     name: string;
     description: string;
     stage: "confirm" | "details";
+  } | null>(null);
+  const [quantityRenamePrompt, setQuantityRenamePrompt] = useState<{
+    name: string;
+    suggestedName: string;
+    afterUpdate?: () => void;
   } | null>(null);
   const [leaveSaving, setLeaveSaving] = useState(false);
   const [rendered, setRendered] = useState<{ result: ComputeResult; spec: AnalysisSpec } | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const [initialComputeReady, setInitialComputeReady] = useState(false);
   const [timeCapacityReady, setTimeCapacityReady] = useState(false);
+  const [chargeabilityReady, setChargeabilityReady] = useState(false);
+  const [rateCapabilityReady, setRateCapabilityReady] = useState(false);
   const portableEstimate = useQuery({
     queryKey: ["portable-analysis-estimate", aid],
     queryFn: () =>
       get<PortableAnalysisEstimate>(`/api/analyses/${aid}/portable-estimate`),
     enabled: portableExportOpen,
     staleTime: 30_000,
+  });
+  const portableSourcePreflight = useMutation({
+    mutationFn: () =>
+      post<PortableSourcePreflight>(
+        `/api/analyses/${aid}/portable-source-preflight`,
+        {}
+      ),
   });
   const autosaveSignature = useMemo(
     () => (spec ? JSON.stringify({ title, spec }) : "no-spec"),
@@ -8061,14 +9164,99 @@ function AnalysisPageView({
   useEffect(() => {
     if (analysis.data && spec === null) {
       const loadedSpec = normalizeSpec(analysis.data.spec);
-      const matchingPlot = findMatchingSavedPlot(loadedSpec, activeTab);
-      setSpec(loadedSpec);
+      const opened = resolveColdOpenWorkspace({
+        spec: loadedSpec,
+        tab: activeTab,
+        viewSignature: snapshotSignature,
+      });
+      const nextSpec = opened.spec;
+      setSpec(nextSpec);
       setTitle(analysis.data.title);
-      setActiveSavedPlotId(matchingPlot?.id ?? null);
-      setActivePlotBaselineSignature(matchingPlot ? snapshotSignature(loadedSpec) : null);
+      setActiveSavedPlotId(opened.activeSavedPlotId);
+      setActivePlotBaselineSignature(
+        opened.activeSavedPlotId ? snapshotSignature(nextSpec) : null,
+      );
       setPlotWorkspaceTouched(false);
+      setPlotSessionActive(opened.plotSessionActive);
+      setDirty(opened.changed);
+      if (opened.activeSavedPlotId) {
+        lastPlotIdByTabRef.current[activeTab] = opened.activeSavedPlotId;
+      }
+      if (!normalWorkspaceRef.current) {
+        normalWorkspaceRef.current = captureNormalWorkspace(nextSpec, activeTab);
+      }
     }
   }, [activeTab, analysis.data, spec]);
+
+  // Explode/ungroup deletes the group and strips it server-side; keep-mounted
+  // editors still hold the old selection until we drop those dead entries.
+  useEffect(() => {
+    if (!spec || !groupsQuery.isSuccess) return;
+    const liveGroupIds = new Set(groupsQuery.data.map((group) => group.id));
+    const deadGroupIds = new Set(
+      (spec.selection.entries ?? [])
+        .filter(
+          (entry) =>
+            entry.kind === "replicate_group" && !liveGroupIds.has(entry.ref_id),
+        )
+        .map((entry) => entry.ref_id),
+    );
+    if (deadGroupIds.size === 0) return;
+
+    const serverSpec = analysis.data ? normalizeSpec(analysis.data.spec) : null;
+    const serverAlreadyClean =
+      serverSpec != null &&
+      !(serverSpec.selection.entries ?? []).some(
+        (entry) =>
+          entry.kind === "replicate_group" && deadGroupIds.has(entry.ref_id),
+      );
+
+    setSpec((current) => {
+      if (!current) return current;
+      if (serverAlreadyClean && serverSpec) {
+        const next = clone(current);
+        next.selection = clone(serverSpec.selection);
+        next.saved_plots = clone(serverSpec.saved_plots ?? []);
+        return next;
+      }
+      const next = clone(current);
+      next.selection.entries = (next.selection.entries ?? []).filter(
+        (entry) =>
+          !(entry.kind === "replicate_group" && deadGroupIds.has(entry.ref_id)),
+      );
+      next.selection.exclusions = (next.selection.exclusions ?? []).filter(
+        (exclusion) =>
+          !(
+            exclusion.entry_kind === "replicate_group" &&
+            exclusion.entry_ref_id != null &&
+            deadGroupIds.has(exclusion.entry_ref_id)
+          ),
+      );
+      next.selection.hidden_replicate_group_ids = (
+        next.selection.hidden_replicate_group_ids ?? []
+      ).filter((groupId) => !deadGroupIds.has(groupId));
+      next.saved_plots = (next.saved_plots ?? []).map((plot) => ({
+        ...plot,
+        selection: {
+          ...plot.selection,
+          exclusions: (plot.selection?.exclusions ?? []).filter(
+            (exclusion) =>
+              !(
+                exclusion.entry_kind === "replicate_group" &&
+                exclusion.entry_ref_id != null &&
+                deadGroupIds.has(exclusion.entry_ref_id)
+              ),
+          ),
+          hidden_replicate_group_ids: (
+            plot.selection?.hidden_replicate_group_ids ?? []
+          ).filter((groupId) => !deadGroupIds.has(groupId)),
+        },
+      }));
+      return next;
+    });
+    setDirty(!serverAlreadyClean);
+    if (serverAlreadyClean) setAutosaveStatus("saved");
+  }, [analysis.data, groupsQuery.data, groupsQuery.isSuccess, spec]);
 
   useEffect(() => {
     if (!spec || initialComputeReady) return;
@@ -8111,9 +9299,22 @@ function AnalysisPageView({
         );
       }
     },
-    // Time/capacity has its own raw-data query. Running the cycle engine at
-    // the same time doubled cache reads and JSON work on large analyses.
-    enabled: spec !== null && initialComputeReady && activeTab !== "time_capacity",
+    // These tabs each own a dedicated scientific query.
+    // Running the cycle engine beside those queries duplicates cache reads,
+    // result decoding, and sometimes full computation without feeding the
+    // visible plot.
+    enabled:
+      spec !== null &&
+      initialComputeReady &&
+      !(
+        [
+          "time_capacity",
+          "steps",
+          "dcir",
+          "chargeability",
+          "crate",
+        ] as AnalysisTabKey[]
+      ).includes(activeTab),
     staleTime: 5 * 60_000,
   });
   const computeJob = useQuery({
@@ -8184,10 +9385,15 @@ function AnalysisPageView({
   });
 
   const portableExport = useMutation({
-    mutationFn: async (action: "download" | "share") => {
+    mutationFn: async ({
+      action,
+      includeOriginalFiles,
+    }: {
+      action: "download" | "share";
+      includeOriginalFiles: boolean;
+    }) => {
       if (!spec) throw new Error("The analysis is not ready.");
       if (portablePlotIds.length === 0) throw new Error("Select at least one saved plot.");
-      await put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec });
       setPortableProgress({
         completed: 0,
         total: portablePlotIds.length,
@@ -8212,11 +9418,11 @@ function AnalysisPageView({
       setPortableProgress({
         completed: portablePlotIds.length,
         total: portablePlotIds.length,
-        stage: includePortableOriginals ? "Packing report and source files" : "Packing report",
+        stage: includeOriginalFiles ? "Packing report and source files" : "Packing report",
         phase: "packing",
       });
       const blob = await postBlob(`/api/analyses/${aid}/portable-export`, {
-        include_original_files: includePortableOriginals,
+        include_original_files: includeOriginalFiles,
         views,
       });
       setPortableProgress({
@@ -8243,8 +9449,6 @@ function AnalysisPageView({
     },
     onSuccess: (result) => {
       setPortableProgress(null);
-      setDirty(false);
-      setAutosaveStatus("saved");
       if ("prepared" in result && result.prepared) {
         notifications.show({
           message: "Portable analysis ready. Open the Windows share sheet to continue.",
@@ -8254,6 +9458,8 @@ function AnalysisPageView({
       }
       if (!result.cancelled) {
         setPortableExportOpen(false);
+        setPortableSourceDecision(null);
+        setPendingPortableExport(null);
         notifications.show({
           message: result.shared
             ? "Portable analysis shared."
@@ -8264,18 +9470,96 @@ function AnalysisPageView({
         });
       }
     },
-    onError: (error: Error) => {
+    onError: (
+      error: Error,
+      variables: { action: "download" | "share"; includeOriginalFiles: boolean }
+    ) => {
       setPortableProgress(null);
+      if (
+        variables.includeOriginalFiles &&
+        error instanceof ApiError &&
+        error.status === 409
+      ) {
+        setPendingPortableExport({ action: variables.action });
+        void portableSourcePreflight
+          .mutateAsync()
+          .then(setPortableSourceDecision)
+          .catch((preflightError: Error) =>
+            notifications.show({ message: preflightError.message, color: "red" })
+          );
+      }
       notifications.show({ message: error.message, color: "red" });
     },
   });
+
+  const updatePortableSources = useMutation({
+    mutationFn: (preflight: PortableSourcePreflight) =>
+      post<PortableSourceUpdateResult>(
+        `/api/analyses/${aid}/portable-source-update`,
+        {
+          sources: preflight.sources
+            .filter(
+              (source) =>
+                source.status === "changed" &&
+                source.expected_size !== null &&
+                source.expected_mtime_ns !== null
+            )
+            .map((source) => ({
+              source_id: source.source_id,
+              expected_size: source.expected_size,
+              expected_mtime_ns: source.expected_mtime_ns,
+            })),
+        }
+      ),
+    onError: (error: Error) =>
+      notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const buildPersistPayload = useCallback(() => {
+    if (!spec) return null;
+    const activePlotForPersist = activeSavedPlotId
+      ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
+      : null;
+    const baselineDirty = Boolean(
+      activePlotForPersist &&
+        activePlotBaselineSignature &&
+        snapshotSignature(spec) !== activePlotBaselineSignature,
+    );
+    const liveDraftSession = Boolean(
+      plotSessionActive && activeSavedPlotId === null && plotWorkspaceTouched,
+    );
+    if (baselineDirty && activePlotForPersist) {
+      return buildStablePersistSpec({
+        current: spec,
+        mode: "edited_saved",
+        savedPlot: activePlotForPersist,
+      });
+    }
+    if (liveDraftSession) {
+      return buildStablePersistSpec({
+        current: spec,
+        mode: "draft_session",
+        normal: normalWorkspaceRef.current ?? captureNormalWorkspace(spec, activeTab),
+      });
+    }
+    return buildStablePersistSpec({ current: spec, mode: "stable" });
+  }, [
+    activePlotBaselineSignature,
+    activeSavedPlotId,
+    activeTab,
+    plotSessionActive,
+    plotWorkspaceTouched,
+    spec,
+  ]);
 
   useEffect(() => {
     if (!spec || !dirty) return;
     const signatureAtSchedule = autosaveSignature;
     const timer = window.setTimeout(() => {
+      const persistSpec = buildPersistPayload();
+      if (!persistSpec) return;
       setAutosaveStatus("saving");
-      put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec })
+      put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: persistSpec })
         .then(() => {
           qc.invalidateQueries({ queryKey: ["analysis", aid] });
           qc.invalidateQueries({ queryKey: ["analyses"] });
@@ -8292,7 +9576,7 @@ function AnalysisPageView({
         });
     }, 1800);
     return () => window.clearTimeout(timer);
-  }, [aid, autosaveSignature, dirty, qc, spec, title]);
+  }, [aid, autosaveSignature, buildPersistPayload, dirty, qc, spec, title]);
 
   const displayResult = rendered?.result ?? compute.data;
   const portablePlotOptions = spec?.saved_plots?.length
@@ -8309,6 +9593,8 @@ function AnalysisPageView({
     setPortableExportAction(action);
     setPreparedPortableShare(null);
     setPreparedShareBusy(false);
+    setPortableSourceDecision(null);
+    setPendingPortableExport(null);
     setPortablePlotIds(portablePlotOptions.map((plot) => plot.id));
     setPortableExportOpen(true);
   };
@@ -8350,6 +9636,115 @@ function AnalysisPageView({
       )
       .finally(() => setPreparedShareBusy(false));
   };
+  const beginPortableExport = async (action: "download" | "share") => {
+    if (!spec || portablePlotIds.length === 0) return;
+    try {
+      const persistSpec = buildPersistPayload();
+      if (!persistSpec) return;
+      await put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: persistSpec });
+      if (!includePortableOriginals) {
+        setPortableSourceDecision(null);
+        setPendingPortableExport(null);
+        portableExport.mutate({ action, includeOriginalFiles: false });
+        return;
+      }
+      setPendingPortableExport({ action });
+      const preflight = await portableSourcePreflight.mutateAsync();
+      if (!preflight.ready) {
+        setPortableSourceDecision(preflight);
+        return;
+      }
+      setPortableSourceDecision(null);
+      setPendingPortableExport(null);
+      portableExport.mutate({ action, includeOriginalFiles: true });
+    } catch (error) {
+      notifications.show({
+        message: error instanceof Error ? error.message : "Could not prepare the export.",
+        color: "red",
+      });
+    }
+  };
+  const continuePortableWithoutSources = () => {
+    const pending = pendingPortableExport;
+    if (!pending) return;
+    setPortableSourceDecision(null);
+    setPendingPortableExport(null);
+    portableExport.mutate({
+      action: pending.action,
+      includeOriginalFiles: false,
+    });
+  };
+  const updatePortableSourcesAndContinue = async () => {
+    const decision = portableSourceDecision;
+    const pending = pendingPortableExport;
+    if (!decision || !pending) return;
+    try {
+      const result = await updatePortableSources.mutateAsync(decision);
+      result.errors.forEach((error) =>
+        notifications.show({
+          message: `${error.filename}: ${error.error}`,
+          color: "red",
+        })
+      );
+      const affectedIds = new Set([
+        ...decision.affected_analysis_ids,
+        ...result.preflight.affected_analysis_ids,
+        aid,
+      ]);
+      for (const analysisId of affectedIds) {
+        for (const root of [
+          "saved-plot-preview",
+          "saved-time-preview",
+          "plot-thumbnail",
+          "plot-artifact",
+        ]) {
+          qc.removeQueries({ queryKey: [root, analysisId] });
+        }
+      }
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["cells"] }),
+        qc.invalidateQueries({ queryKey: ["cell"] }),
+        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
+        qc.invalidateQueries({ queryKey: ["files"] }),
+        qc.invalidateQueries({ queryKey: ["tree"] }),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+        qc.invalidateQueries({ queryKey: ["activity"] }),
+        invalidateAnalysisQueries(qc, aid),
+      ]);
+      if (!result.preflight.ready) {
+        setPortableSourceDecision(result.preflight);
+        return;
+      }
+      setPortableSourceDecision(null);
+      setPendingPortableExport(null);
+      notifications.show({
+        message: `Updated ${result.updated} source file${result.updated === 1 ? "" : "s"}; rebuilding the selected plots for export.`,
+        color: "teal",
+      });
+      portableExport.mutate({
+        action: pending.action,
+        includeOriginalFiles: true,
+      });
+    } catch {
+      // The mutation displays the error and keeps the decision available.
+    }
+  };
+  const portableExportBusy =
+    portableExport.isPending ||
+    portableSourcePreflight.isPending ||
+    updatePortableSources.isPending ||
+    preparedShareBusy;
+  const portableSourceBlockers =
+    portableSourceDecision?.sources.filter((source) => source.status !== "current") ?? [];
+  const canUpdatePortableSources = Boolean(
+    portableSourceDecision &&
+      portableSourceDecision.changed > 0 &&
+      portableSourceDecision.unavailable === 0 &&
+      portableSourceDecision.changing === 0 &&
+      portableSourceDecision.error === 0
+  );
   const portableEstimatedBytes = portableEstimate.data
     ? portableEstimate.data.runtime_embedded_bytes +
       portableEstimate.data.report_shell_bytes +
@@ -8366,15 +9761,100 @@ function AnalysisPageView({
   );
   const plotTabs = TAB_DEFS.filter((tab) => tab.plotTab).map((tab) => tab.value);
   const isPlotTab = plotTabs.includes(activeTab);
-  const matchingSavedPlot = spec && isPlotTab ? findMatchingSavedPlot(spec, activeTab) : null;
-  const currentPlotSaved = Boolean(matchingSavedPlot);
-  const hasUnsavedPlot = Boolean(
+  // A New-plot session is a draft whenever no saved plot is open — even if the
+  // default settings happen to signature-match an existing saved plot.
+  const isLiveDraft = Boolean(
     spec &&
       isPlotTab &&
-      spec.selection.entries.length > 0 &&
-      !currentPlotSaved &&
-      (plotWorkspaceTouched || activePlotDirty)
+      plotSessionActive &&
+      activeSavedPlotId === null &&
+      plotWorkspaceTouched &&
+      spec.selection.entries.length > 0,
   );
+  const hasUnsavedPlot = Boolean(isLiveDraft || activePlotDirty);
+
+  const applyTabWorkspace = useCallback(
+    (tab: AnalysisTabKey) => {
+      if (!spec) {
+        setActiveTab(tab);
+        return;
+      }
+      const currentPlot =
+        (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null;
+      if (currentPlot?.tab === tab) {
+        setActiveTab(tab);
+        setPlotSessionActive(true);
+        return;
+      }
+      // Stay on an in-progress draft for this tab.
+      if (
+        activeSavedPlotId === null &&
+        plotWorkspaceTouched &&
+        plotSessionActive &&
+        activeTab === tab
+      ) {
+        setActiveTab(tab);
+        return;
+      }
+      const opened = resolveColdOpenWorkspace({
+        spec,
+        tab,
+        viewSignature: snapshotSignature,
+        preferredPlotId: lastPlotIdByTabRef.current[tab] ?? null,
+      });
+      setActiveTab(tab);
+      setActiveSavedPlotId(opened.activeSavedPlotId);
+      setPlotSessionActive(opened.plotSessionActive);
+      setPlotWorkspaceTouched(false);
+      if (opened.activeSavedPlotId) {
+        lastPlotIdByTabRef.current[tab] = opened.activeSavedPlotId;
+        setActivePlotBaselineSignature(snapshotSignature(opened.spec));
+        normalWorkspaceRef.current = captureNormalWorkspace(opened.spec, tab);
+        setSpec(opened.spec);
+        if (opened.changed) setDirty(true);
+      } else {
+        setActivePlotBaselineSignature(null);
+      }
+    },
+    [
+      activeSavedPlotId,
+      activeTab,
+      plotSessionActive,
+      plotWorkspaceTouched,
+      spec,
+    ],
+  );
+
+  // Family tabs must never show another tab's plot as a fake "Unsaved plot".
+  useEffect(() => {
+    if (!spec || activeTab === "settings" || isLiveDraft) return;
+    const sessionOnTab = plotSessionBelongsToTab({
+      tab: activeTab,
+      activeTab,
+      plotSessionActive,
+      activeSavedPlotId,
+      activePlotTab: activePlot?.tab ?? null,
+      plotWorkspaceTouched,
+    });
+    if (sessionOnTab) return;
+    const hasTabPlots = (spec.saved_plots ?? []).some((plot) => plot.tab === activeTab);
+    const sessionElsewhere = Boolean(
+      plotSessionActive && activePlot && activePlot.tab !== activeTab,
+    );
+    const emptyButHasPlots = !plotSessionActive && activeSavedPlotId == null && hasTabPlots;
+    if (sessionElsewhere || emptyButHasPlots) {
+      applyTabWorkspace(activeTab);
+    }
+  }, [
+    activePlot,
+    activeSavedPlotId,
+    activeTab,
+    applyTabWorkspace,
+    isLiveDraft,
+    plotSessionActive,
+    plotWorkspaceTouched,
+    spec,
+  ]);
 
   useEffect(() => {
     setAnalysisWorkspaceEditorState({
@@ -8388,6 +9868,7 @@ function AnalysisPageView({
       activeSavedPlotId,
       activePlotBaselineSignature,
       plotWorkspaceTouched,
+      normalWorkspace: normalWorkspaceRef.current,
     });
   }, [
     activePlotBaselineSignature,
@@ -8412,46 +9893,88 @@ function AnalysisPageView({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [hasUnsavedPlot, spec]);
 
+  const persistWorkspaceAndProceed = (
+    proceed: () => void,
+    options?: { wait?: boolean },
+  ) => {
+    if (!spec) {
+      proceed();
+      return;
+    }
+    const wait = options?.wait ?? true;
+    const persistSpec = buildPersistPayload() ?? stripDraftPlots(spec);
+    const payload = { title, spec: persistSpec };
+    setDirty(false);
+    setAutosaveStatus("saving");
+    if (wait) setLeaveSaving(true);
+    else proceed();
+    put<AnalysisFull>(`/api/analyses/${aid}`, payload)
+      .then((saved) => {
+        setAutosaveStatus("saved");
+        qc.setQueryData(["analysis", aid], saved);
+        qc.invalidateQueries({ queryKey: ["analyses"] });
+        if (wait) {
+          setLeaveSaving(false);
+          proceed();
+        }
+      })
+      .catch((error: Error) => {
+        if (wait) setLeaveSaving(false);
+        setDirty(true);
+        setAutosaveStatus("error");
+        notifications.show({ message: error.message, color: "red" });
+      });
+  };
+
   useEffect(() => {
     const onLeaveRequest = (event: Event) => {
       if (!isAnalysisWorkspaceViewActive(aid)) return;
       const request = event as CustomEvent<AnalysisLeaveRequestDetail>;
-      if (!spec) return;
-      if (!hasUnsavedPlot) {
-        if (!dirty || leaveSaving) return;
-        event.preventDefault();
-        setLeaveSaving(true);
-        setAutosaveStatus("saving");
-        put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec })
-          .then(() => {
-            setDirty(false);
-            setAutosaveStatus("saved");
-            qc.invalidateQueries({ queryKey: ["analysis", aid] });
-            qc.invalidateQueries({ queryKey: ["analyses"] });
-            setLeaveSaving(false);
-            request.detail.proceed();
-          })
-          .catch((error: Error) => {
-            setLeaveSaving(false);
-            setAutosaveStatus("error");
-            notifications.show({ message: error.message, color: "red" });
-          });
+      if (!spec || leaveSaving) return;
+      const reason = request.detail.reason ?? "navigate";
+
+      // Keep-mounted navigate: keep the in-memory draft/edits; only flush stable
+      // analysis state (membership, etc.) in the background.
+      if (reason === "navigate") {
+        if (dirty) {
+          event.preventDefault();
+          persistWorkspaceAndProceed(request.detail.proceed, { wait: false });
+        }
         return;
       }
-      event.preventDefault();
-      setLeavePrompt({
-        proceed: request.detail.proceed,
-        mode: activePlotDirty ? "update" : "new",
-        name: activePlot?.name ?? suggestedPlotName(activeTab, displayResult, spec),
-        description: activePlot?.description ?? "",
-        stage: "confirm",
-      });
+
+      // Tab close: drafts and dirty saved plots must be saved or discarded.
+      if (activePlotDirty && activePlot) {
+        event.preventDefault();
+        setLeavePrompt({
+          proceed: request.detail.proceed,
+          mode: "update",
+          name: activePlot.name,
+          description: activePlot.description ?? "",
+          stage: "confirm",
+        });
+        return;
+      }
+      if (hasUnsavedPlot && !activePlotDirty) {
+        event.preventDefault();
+        setLeavePrompt({
+          proceed: request.detail.proceed,
+          mode: "new",
+          name: suggestedPlotName(activeTab, displayResult, spec),
+          description: "",
+          stage: "confirm",
+        });
+        return;
+      }
+      if (dirty) {
+        event.preventDefault();
+        persistWorkspaceAndProceed(request.detail.proceed);
+      }
     };
     window.addEventListener(ANALYSIS_LEAVE_EVENT, onLeaveRequest);
     return () => window.removeEventListener(ANALYSIS_LEAVE_EVENT, onLeaveRequest);
   }, [
-    activePlot?.description,
-    activePlot?.name,
+    activePlot,
     activePlotDirty,
     activeTab,
     aid,
@@ -8461,8 +9984,11 @@ function AnalysisPageView({
     leaveSaving,
     qc,
     spec,
+    timeCapacityVisited,
     title,
   ]);
+
+  const liveUnsavedDraft = isLiveDraft;
 
   if (analysis.isError) {
     return (
@@ -8486,7 +10012,8 @@ function AnalysisPageView({
   const currentAnalysis = analysis.data!;
   const sampleGroups = groupsQuery.data ?? currentAnalysis.selection_groups;
   const displaySubtitle = plotSubtitle(activeTab, displayResult, spec);
-  const displayPlotName = activePlot?.name ?? "Unsaved plot";
+  const displayPlotName =
+    activePlot && activePlot.tab === activeTab ? activePlot.name : "Unsaved plot";
   const folderOptions = flattenFolders(treeQuery.data);
   const plotUpdating = Boolean(compute.isFetching && rendered && activeTab === "cycles");
 
@@ -8608,6 +10135,17 @@ function AnalysisPageView({
     });
   };
 
+  // Display-only segment visibility for the series-based tabs (steps / DCIR):
+  // hides every series that plots the segment, across cells, without recompute.
+  const toggleAnalysisSegmentHidden = (segmentId: string) => {
+    update((s) => {
+      const hidden = s.presentation.hidden_analysis_segment_ids ?? [];
+      s.presentation.hidden_analysis_segment_ids = hidden.includes(segmentId)
+        ? hidden.filter((id) => id !== segmentId)
+        : [...hidden, segmentId];
+    });
+  };
+
   const toggleProtocolSegmentExcluded = (segmentId: string) => {
     update((s) => {
       const filter = s.computation.protocol_filter ?? {
@@ -8672,10 +10210,53 @@ function AnalysisPageView({
     });
   };
 
-  const openSavedPlot = (plot: SavedAnalysisPlot) => {
+  const applyUpdateActivePlot = (name: string) => {
+    if (!activePlot || !spec) return;
+    const subtitle = plotSubtitle(activeTab, displayResult, spec);
+    const trimmed = name.trim() || activePlot.name;
+    setActivePlotBaselineSignature(snapshotSignature(spec));
+    normalWorkspaceRef.current = captureNormalWorkspace(spec, activeTab);
+    update((s) => {
+      s.saved_plots = (s.saved_plots ?? []).map((plot) =>
+        plot.id === activePlot.id
+          ? savedPlotFromSpec(s, activeTab, trimmed, subtitle, plot.description, plot)
+          : plot
+      );
+    });
+    setPlotWorkspaceTouched(false);
+  };
+
+  const updateActivePlot = (options?: { afterUpdate?: () => void }) => {
+    if (!activePlot || !spec) return;
+    const quantityChanged =
+      plotNamingQuantityKey(activeTab, activePlot.presentation) !==
+      plotNamingQuantityKey(activeTab, spec.presentation);
+    if (quantityChanged) {
+      setQuantityRenamePrompt({
+        name: activePlot.name,
+        suggestedName: suggestedPlotName(activeTab, displayResult, spec),
+        afterUpdate: options?.afterUpdate,
+      });
+      return;
+    }
+    applyUpdateActivePlot(activePlot.name);
+    options?.afterUpdate?.();
+  };
+
+  const confirmQuantityRenameUpdate = () => {
+    if (!quantityRenamePrompt) return;
+    const { name, afterUpdate } = quantityRenamePrompt;
+    setQuantityRenamePrompt(null);
+    applyUpdateActivePlot(name);
+    afterUpdate?.();
+  };
+
+  const openSavedPlotDirect = (plot: SavedAnalysisPlot) => {
     const restoredForBaseline = specForSavedPlot(spec, plot);
     setActiveSavedPlotId(plot.id);
     setActivePlotBaselineSignature(snapshotSignature(restoredForBaseline));
+    normalWorkspaceRef.current = captureNormalWorkspace(restoredForBaseline, plot.tab);
+    lastPlotIdByTabRef.current[plot.tab] = plot.id;
     update((s) => {
       const restored = specForSavedPlot(s, plot);
       s.selection = restored.selection;
@@ -8684,112 +10265,375 @@ function AnalysisPageView({
       s.presentation = restored.presentation;
     });
     setPlotWorkspaceTouched(false);
+    setPlotSessionActive(true);
     setActiveTab(plot.tab);
   };
 
-  const updateActivePlot = () => {
-    if (!activePlot) return;
-    const subtitle = plotSubtitle(activeTab, displayResult, spec);
-    setActivePlotBaselineSignature(snapshotSignature(spec));
-    update((s) => {
-      s.saved_plots = (s.saved_plots ?? []).map((plot) =>
-        plot.id === activePlot.id
-          ? savedPlotFromSpec(s, activeTab, plot.name, subtitle, plot.description, plot)
-          : plot
-      );
+  const activateAnalysisTab = (next: AnalysisTabKey) => {
+    if (next === activeTab) return;
+    if (next === "settings") {
+      setActiveTab(next);
+      return;
+    }
+    const leavingDraft = Boolean(isLiveDraft && activeTab !== next);
+    const leavingDirtySaved = Boolean(
+      activePlotDirty && activePlot && activePlot.tab === activeTab && next !== activeTab,
+    );
+    if (!leavingDraft && !leavingDirtySaved) {
+      applyTabWorkspace(next);
+      return;
+    }
+    modals.open({
+      title: leavingDraft ? "Discard the current draft?" : "Discard unsaved edits?",
+      children: (
+        <Stack gap="md">
+          <Text size="sm">
+            {leavingDraft
+              ? "Switching tabs will discard this unsaved draft."
+              : "Switching tabs will discard edits that were not written back."}
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => modals.closeAll()}>
+              Cancel
+            </Button>
+            {leavingDraft ? (
+              <Button
+                variant="light"
+                onClick={() => {
+                  modals.closeAll();
+                  setSaveDraft({
+                    name: suggestedPlotName(activeTab, displayResult, spec),
+                    description: "",
+                    source: "live",
+                    afterSave: "none",
+                  });
+                }}
+              >
+                Save as new plot…
+              </Button>
+            ) : (
+              <Button
+                variant="light"
+                onClick={() => {
+                  modals.closeAll();
+                  updateActivePlot({ afterUpdate: () => applyTabWorkspace(next) });
+                }}
+              >
+                Save changes
+              </Button>
+            )}
+            <Button
+              color="red"
+              onClick={() => {
+                modals.closeAll();
+                applyTabWorkspace(next);
+              }}
+            >
+              Discard and switch
+            </Button>
+          </Group>
+        </Stack>
+      ),
     });
-    setPlotWorkspaceTouched(false);
+  };
+
+  const openSavedPlot = (plot: SavedAnalysisPlot) => {
+    const switchingAwayFromDraft = Boolean(
+      hasUnsavedPlot && activeSavedPlotId === null && plotSessionActive,
+    );
+    const switchingAwayFromDirtySaved = Boolean(
+      activePlotDirty && activeSavedPlotId && activeSavedPlotId !== plot.id,
+    );
+    if (!switchingAwayFromDraft && !switchingAwayFromDirtySaved) {
+      openSavedPlotDirect(plot);
+      return;
+    }
+    modals.open({
+      title: switchingAwayFromDraft ? "Discard the current draft?" : "Discard unsaved edits?",
+      children: (
+        <Stack gap="md">
+          <Text size="sm">
+            {switchingAwayFromDraft
+              ? "Opening another plot will discard this unsaved draft."
+              : "Opening another plot will discard edits that were not written back."}
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => modals.closeAll()}>
+              Cancel
+            </Button>
+            {switchingAwayFromDraft ? (
+              <Button
+                variant="light"
+                onClick={() => {
+                  modals.closeAll();
+                  setSaveDraft({
+                    name: suggestedPlotName(activeTab, displayResult, spec),
+                    description: "",
+                    source: "live",
+                    afterSave: "none",
+                  });
+                }}
+              >
+                Save as new plot…
+              </Button>
+            ) : (
+              <Button
+                variant="light"
+                onClick={() => {
+                  modals.closeAll();
+                  updateActivePlot({ afterUpdate: () => openSavedPlotDirect(plot) });
+                }}
+              >
+                Save changes
+              </Button>
+            )}
+            <Button
+              color="red"
+              onClick={() => {
+                modals.closeAll();
+                openSavedPlotDirect(plot);
+              }}
+            >
+              Discard and open
+            </Button>
+          </Group>
+        </Stack>
+      ),
+    });
   };
 
   const commitSavedPlot = () => {
-    if (!saveDraft) return;
+    if (!saveDraft || !spec) return;
+    const afterSave = saveDraft.afterSave ?? "none";
+    const source = saveDraft.source;
+    const draftName = saveDraft.name;
+    const draftDescription = saveDraft.description;
+    const now = new Date().toISOString();
     const subtitle = plotSubtitle(activeTab, displayResult, spec);
-    const plot = savedPlotFromSpec(spec, activeTab, saveDraft.name, subtitle, saveDraft.description);
-    update((s) => {
-      s.saved_plots = [...(s.saved_plots ?? []), plot];
-    });
-    setActiveSavedPlotId(plot.id);
-    setActivePlotBaselineSignature(snapshotSignature(spec));
-    setPlotWorkspaceTouched(false);
+    const plot =
+      source === "draft"
+        ? savedPlotFromDraftSource({
+            draft: draftPlotFromWorkspace(spec, activeTab, draftName, now),
+            name: draftName,
+            subtitle: "",
+            description: draftDescription,
+            id: uid(),
+            modifiedAt: now,
+          })
+        : savedPlotFromSpec(spec, activeTab, draftName, subtitle, draftDescription);
     setSaveDraft(null);
+    const next = buildCommitSavedPlotSpec({
+      current: spec,
+      plot,
+      source,
+      afterSave: "none",
+    });
+    const restored = specForSavedPlot(next, plot);
+    next.selection = restored.selection;
+    next.computation = restored.computation;
+    next.aggregation = restored.aggregation;
+    next.presentation = restored.presentation;
+    setSpec(next);
+    setDirty(true);
+    setActiveSavedPlotId(plot.id);
+    setActiveTab(plot.tab);
+    setActivePlotBaselineSignature(snapshotSignature(next));
+    normalWorkspaceRef.current = captureNormalWorkspace(next, plot.tab);
+    setPlotWorkspaceTouched(false);
+    setPlotSessionActive(true);
+    if (afterSave === "new_plot") {
+      queueMicrotask(() => startNewPlotReset());
+    }
+  };
+
+  const startNewPlotReset = () => {
+    if (spec && !(hasUnsavedPlot && activeSavedPlotId === null)) {
+      normalWorkspaceRef.current = captureNormalWorkspace(spec, activeTab);
+    }
+    const family =
+      activeTab === "time_capacity"
+        ? "time_capacity"
+        : activeTab === "cycles"
+          ? "cycles"
+          : "all";
+    const defaults = plotPresetQuery.data?.presets ?? [];
+    const preset =
+      defaults.find(
+        (item) => item.is_default && item.plot_family === family,
+      ) ??
+      defaults.find(
+        (item) => item.is_default && item.plot_family === "all",
+      );
+    const initialStyle = preset
+      ? normalizePlotStyle(preset.style)
+      : normalizePlotStyle(DEFAULT_PLOT_STYLE);
+    update((s) => {
+      const entries = clone(s.selection.entries);
+      const savedPlots = clone(s.saved_plots ?? []);
+      const existingStyles = { ...(s.presentation.plot_styles ?? {}) };
+      s.selection = {
+        entries,
+        exclusions: [],
+        hidden_replicate_group_ids: [],
+      };
+      s.computation = clone(DEFAULT_COMPUTATION);
+      s.aggregation = clone(DEFAULT_AGGREGATION);
+      s.presentation = {
+        ...clone(DEFAULT_PRESENTATION),
+        plot_style: initialStyle,
+        plot_styles: {
+          ...existingStyles,
+          [activeTab]: initialStyle,
+        },
+      };
+      s.saved_plots = savedPlots;
+      s.draft_plots = null;
+      s.draft_plot = null;
+    });
+    setActiveSavedPlotId(null);
+    setActivePlotBaselineSignature(null);
+    setPlotWorkspaceTouched(true);
+    setPlotSessionActive(true);
   };
 
   const startNewPlot = () => {
-    const reset = () => {
-      const family =
-        activeTab === "time_capacity"
-          ? "time_capacity"
-          : activeTab === "cycles"
-            ? "cycles"
-            : "all";
-      const defaults = plotPresetQuery.data?.presets ?? [];
-      const preset =
-        defaults.find(
-          (item) => item.is_default && item.plot_family === family,
-        ) ??
-        defaults.find(
-          (item) => item.is_default && item.plot_family === "all",
-        );
-      const initialStyle = preset
-        ? normalizePlotStyle(preset.style)
-        : normalizePlotStyle(DEFAULT_PLOT_STYLE);
-      update((s) => {
-        const entries = clone(s.selection.entries);
-        const savedPlots = clone(s.saved_plots ?? []);
-        const existingStyles = { ...(s.presentation.plot_styles ?? {}) };
-        s.selection = {
-          entries,
-          exclusions: [],
-          hidden_replicate_group_ids: [],
-        };
-        s.computation = clone(DEFAULT_COMPUTATION);
-        s.aggregation = clone(DEFAULT_AGGREGATION);
-        s.presentation = {
-          ...clone(DEFAULT_PRESENTATION),
-          plot_style: initialStyle,
-          plot_styles: {
-            ...existingStyles,
-            [activeTab]: initialStyle,
-          },
-        };
-        s.saved_plots = savedPlots;
-      });
-      setActiveSavedPlotId(null);
-      setActivePlotBaselineSignature(null);
-      setPlotWorkspaceTouched(false);
-    };
-    if (hasUnsavedPlot) {
-      modals.openConfirmModal({
-        title: "Start a new plot?",
+    if (!spec || spec.selection.entries.length === 0) return;
+    const hasDraft = Boolean(hasUnsavedPlot && activeSavedPlotId === null);
+    if (hasDraft) {
+      modals.open({
+        title: "Discard the current draft?",
         children: (
-          <Text size="sm">
-            Unsaved changes in the current plot will be discarded. Saved plots are not affected.
-          </Text>
+          <Stack gap="md">
+            <Text size="sm">
+              Starting a new plot will discard the current unsaved draft.
+            </Text>
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => modals.closeAll()}>
+                Cancel
+              </Button>
+              <Button
+                variant="light"
+                onClick={() => {
+                  modals.closeAll();
+                  setSaveDraft({
+                    name: suggestedPlotName(activeTab, displayResult, spec),
+                    description: "",
+                    source: "live",
+                    afterSave: "new_plot",
+                  });
+                }}
+              >
+                Save as new plot…
+              </Button>
+              <Button
+                color="red"
+                onClick={() => {
+                  modals.closeAll();
+                  startNewPlotReset();
+                }}
+              >
+                Discard and start new
+              </Button>
+            </Group>
+          </Stack>
         ),
-        labels: { confirm: "Start new plot", cancel: "Go back" },
-        onConfirm: reset,
       });
       return;
     }
-    reset();
+    startNewPlotReset();
+  };
+
+  const discardLeaveChanges = () => {
+    if (!leavePrompt || !spec) {
+      const proceed = leavePrompt?.proceed;
+      setLeavePrompt(null);
+      proceed?.();
+      return;
+    }
+    const proceed = leavePrompt.proceed;
+    const mode = leavePrompt.mode;
+    if ((mode === "update" || mode === "copy") && activePlot) {
+      const restoredView = specForSavedPlot(spec, activePlot);
+      const next = buildDiscardEditedSavedPlotSpec(spec, restoredView);
+      setLeaveSaving(true);
+      put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
+        .then(() => {
+          setSpec(next);
+          setActivePlotBaselineSignature(snapshotSignature(next));
+          normalWorkspaceRef.current = captureNormalWorkspace(next, activePlot.tab);
+          setPlotWorkspaceTouched(false);
+          setDirty(false);
+          setAutosaveStatus("saved");
+          qc.invalidateQueries({ queryKey: ["analysis", aid] });
+          qc.invalidateQueries({ queryKey: ["analyses"] });
+          setLeaveSaving(false);
+          setLeavePrompt(null);
+          proceed();
+        })
+        .catch((error: Error) => {
+          setLeaveSaving(false);
+          notifications.show({ message: error.message, color: "red" });
+        });
+      return;
+    }
+    const normal = normalWorkspaceRef.current ?? captureNormalWorkspace(spec, activeTab);
+    let next = buildDiscardNewPlotSpec(spec, normal);
+    const tabPlots = (next.saved_plots ?? []).filter((plot) => plot.tab === normal.tab);
+    const reopen = tabPlots[0] ?? null;
+    if (reopen) next = specForSavedPlot(next, reopen);
+    setLeaveSaving(true);
+    put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
+      .then(() => {
+        setSpec(next);
+        setActiveTab(normal.tab);
+        setActiveSavedPlotId(reopen?.id ?? null);
+        setActivePlotBaselineSignature(reopen ? snapshotSignature(next) : null);
+        setPlotSessionActive(Boolean(reopen));
+        normalWorkspaceRef.current = normal;
+        setPlotWorkspaceTouched(false);
+        setDirty(false);
+        setAutosaveStatus("saved");
+        qc.invalidateQueries({ queryKey: ["analysis", aid] });
+        qc.invalidateQueries({ queryKey: ["analyses"] });
+        setLeaveSaving(false);
+        setLeavePrompt(null);
+        proceed();
+      })
+      .catch((error: Error) => {
+        setLeaveSaving(false);
+        notifications.show({ message: error.message, color: "red" });
+      });
   };
 
   const savePlotAndLeave = () => {
     if (!leavePrompt) return;
     const subtitle = plotSubtitle(activeTab, displayResult, spec);
-    const next = clone(spec);
-    const plot = activePlot
-      ? savedPlotFromSpec(next, activeTab, activePlot.name, subtitle, activePlot.description, activePlot)
-      : savedPlotFromSpec(
-          next,
-          activeTab,
-          leavePrompt.name,
-          subtitle,
-          leavePrompt.description || null,
-        );
-    next.saved_plots = activePlot
-      ? (next.saved_plots ?? []).map((item) => (item.id === activePlot.id ? plot : item))
-      : [...(next.saved_plots ?? []), plot];
+    const next = stripDraftPlots(clone(spec));
+    const mode = leavePrompt.mode;
+    const plot =
+      mode === "update" && activePlot
+        ? savedPlotFromSpec(
+            next,
+            activeTab,
+            activePlot.name,
+            subtitle,
+            activePlot.description,
+            activePlot,
+          )
+        : savedPlotFromSpec(
+            next,
+            activeTab,
+            leavePrompt.name,
+            subtitle,
+            leavePrompt.description || null,
+          );
+    if (mode === "update" && activePlot) {
+      next.saved_plots = (next.saved_plots ?? []).map((item) =>
+        item.id === activePlot.id ? plot : item,
+      );
+    } else {
+      next.saved_plots = [...(next.saved_plots ?? []), plot];
+    }
     setLeaveSaving(true);
     put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: next })
       .then(() => {
@@ -8799,6 +10643,7 @@ function AnalysisPageView({
         setActiveSavedPlotId(plot.id);
         setActivePlotBaselineSignature(snapshotSignature(next));
         setPlotWorkspaceTouched(false);
+        setPlotSessionActive(true);
         qc.invalidateQueries({ queryKey: ["analysis", aid] });
         qc.invalidateQueries({ queryKey: ["analyses"] });
         const proceed = leavePrompt.proceed;
@@ -8830,12 +10675,24 @@ function AnalysisPageView({
         <ProtocolSegmentsPanel
           cellIds={protocolCellIds}
           segments={spec.protocol_segments ?? []}
-          hiddenSegmentIds={spec.presentation.hidden_protocol_segment_ids ?? []}
+          // On the steps tab, hiding a segment hides the series that plot it —
+          // a display-only filter (hidden_analysis_segment_ids). On the cycle /
+          // time-capacity tabs it masks those steps in the computed data
+          // (hidden_protocol_segment_ids), which is a different, cached effect.
+          hiddenSegmentIds={
+            activeTab === "steps"
+              ? spec.presentation.hidden_analysis_segment_ids ?? []
+              : spec.presentation.hidden_protocol_segment_ids ?? []
+          }
           excludedSegmentIds={spec.computation.protocol_filter?.excluded_segment_ids ?? []}
           onlySegmentIds={spec.computation.protocol_filter?.only_segment_ids ?? []}
           onSaveSegment={saveProtocolSegment}
           onDeleteSegment={deleteProtocolSegment}
-          onToggleHidden={toggleProtocolSegmentHidden}
+          onToggleHidden={
+            activeTab === "steps"
+              ? toggleAnalysisSegmentHidden
+              : toggleProtocolSegmentHidden
+          }
           onToggleExcluded={toggleProtocolSegmentExcluded}
           onUseOnly={useOnlyProtocolSegment}
         />
@@ -8858,45 +10715,142 @@ function AnalysisPageView({
           update={update}
         />
       )}
+      {activeTab === "chargeability" && (
+        <ChargeabilitySettings
+          analysisId={aid}
+          spec={spec}
+          update={update}
+        />
+      )}
+      {activeTab === "crate" && (
+        <RateCapabilitySettings
+          analysisId={aid}
+          spec={spec}
+          update={update}
+        />
+      )}
     </Stack>
   );
 
+  const hasSamples = spec.selection.entries.length > 0;
+  const activeTabPlotSession = plotSessionBelongsToTab({
+    tab: activeTab,
+    activeTab,
+    plotSessionActive,
+    activeSavedPlotId,
+    activePlotTab: activePlot?.tab ?? null,
+    plotWorkspaceTouched,
+  });
+  const newPlotHeaderProps = {
+    onNewPlot: startNewPlot,
+    newPlotEnabled: hasSamples,
+    onUpdatePlot: updateActivePlot,
+    updatePlotEnabled: Boolean(
+      activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab,
+    ),
+  };
+
+  const plotSurfaceFor = (tab: AnalysisTabKey, card: ReactNode) => {
+    const sessionOnTab = plotSessionBelongsToTab({
+      tab,
+      activeTab,
+      plotSessionActive,
+      activeSavedPlotId,
+      activePlotTab: activePlot?.tab ?? null,
+      plotWorkspaceTouched,
+    });
+    return (
+      <>
+        {sessionOnTab ? (
+          card
+        ) : (
+          <PlotWorkspaceEmpty hasSamples={hasSamples} onNewPlot={startNewPlot} />
+        )}
+      </>
+    );
+  };
+
   const savedPlotsPanelFor = (tab: AnalysisTabKey) => (
-    <SavedPlotsPanel
+    <>
+      <TabDraftPlotCard
+        analysisId={aid}
+        tab={tab}
+        baseSpec={spec}
+        draft={null}
+        liveUnsaved={liveUnsavedDraft && tab === activeTab}
+        allowPreviewGeneration={
+          tab === "time_capacity"
+            ? timeCapacityReady
+            : tab === "chargeability"
+              ? chargeabilityReady
+              : tab === "crate"
+                ? rateCapabilityReady
+                : true
+        }
+        onOpen={() => {
+          setActiveSavedPlotId(null);
+          setActivePlotBaselineSignature(null);
+          setPlotWorkspaceTouched(true);
+          setPlotSessionActive(true);
+          setActiveTab(tab);
+        }}
+        onSave={() => {
+          setSaveDraft({
+            name: suggestedPlotName(tab, displayResult, spec),
+            description: "",
+            source: "live",
+          });
+        }}
+      />
+      <SavedPlotsPanel
       analysisId={aid}
       activeTab={tab}
       baseSpec={spec}
       plots={spec.saved_plots ?? []}
       activeSavedPlotId={activeSavedPlotId}
       activePlotDirty={activePlotDirty}
-      onNewPlot={startNewPlot}
+      hasSamples={hasSamples}
+      canSaveNew={activeTabPlotSession && tab === activeTab}
       onSaveNew={() =>
         setSaveDraft({
           name: suggestedPlotName(tab, displayResult, spec),
           description: "",
+          source: "live",
         })
       }
-      onUpdateActive={updateActivePlot}
       onOpen={openSavedPlot}
       onDelete={(plotId) => {
         update((s) => void (s.saved_plots = (s.saved_plots ?? []).filter((plot) => plot.id !== plotId)));
         if (activeSavedPlotId === plotId) {
-          setActiveSavedPlotId(null);
-          setActivePlotBaselineSignature(null);
+          const remaining = (spec.saved_plots ?? []).filter(
+            (plot) => plot.id !== plotId && plot.tab === tab,
+          );
+          if (remaining[0]) {
+            openSavedPlot(remaining[0]);
+          } else {
+            setActiveSavedPlotId(null);
+            setActivePlotBaselineSignature(null);
+            setPlotSessionActive(false);
+          }
         }
       }}
       allowPreviewGeneration={
         tab === "time_capacity"
           ? timeCapacityReady
+          : tab === "chargeability"
+            ? chargeabilityReady
+          : tab === "crate"
+            ? rateCapabilityReady
           : tab === "cycles" || tab === "recap"
             ? cycleLivePlotReady
             : true
       }
-    />
+      />
+    </>
   );
 
   return (
-    <Stack gap="sm">
+    <Stack gap="sm" data-analysis-editor={aid}>
       <Group justify="space-between" align="start">
         <TextInput
           value={title}
@@ -8975,24 +10929,29 @@ function AnalysisPageView({
           tab's plots, settings panels and saved-plot previews stay mounted
           at once (hidden Plotly instances at 0x0, duplicated inputs, one
           compute per preview per tab) — the source of the freezes. */}
-      <AnalysisTabHeader value={activeTab} onCommit={setActiveTab} />
+      <AnalysisTabHeader value={activeTab} onCommit={activateAnalysisTab} />
       <Tabs value={activeTab} keepMounted={false}>
 
         <Tabs.Panel value="cycles" pt="sm">
           <Group align="start" wrap="nowrap">
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
-              <CyclePlotCard
-                analysisTitle={title}
-                plotName={displayPlotName}
-                subtitle={displaySubtitle}
-                result={displayResult}
-                spec={spec}
-                update={update}
-                updating={plotUpdating}
-                error={compute.isError ? (compute.error as Error) : null}
-                computeJob={computeJob.data ?? undefined}
-              />
+              {plotSurfaceFor(
+                "cycles",
+                <CyclePlotCard
+                  analysisTitle={title}
+                  plotName={displayPlotName}
+                  subtitle={displaySubtitle}
+                  result={displayResult}
+                  spec={spec}
+                  update={update}
+                  updating={plotUpdating}
+                  error={compute.isError ? (compute.error as Error) : null}
+                  computeJob={computeJob.data ?? undefined}
+                  edited={activePlotDirty && activePlot?.tab === "cycles"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
               {savedPlotsPanelFor("cycles")}
             </Stack>
           </Group>
@@ -9002,14 +10961,19 @@ function AnalysisPageView({
           <Group align="start" wrap="nowrap">
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
-              <StepsPlotCard
-                analysisId={aid}
-                analysisTitle={title}
-                plotName={activePlot?.tab === "steps" ? activePlot.name : "Unsaved plot"}
-                spec={spec}
-                cells={currentAnalysis.selection_cells}
-                update={update}
-              />
+              {plotSurfaceFor(
+                "steps",
+                <StepsPlotCard
+                  analysisId={aid}
+                  analysisTitle={title}
+                  plotName={displayPlotName}
+                  spec={spec}
+                  cells={currentAnalysis.selection_cells}
+                  update={update}
+                  edited={activePlotDirty && activePlot?.tab === "steps"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
               {savedPlotsPanelFor("steps")}
             </Stack>
           </Group>
@@ -9019,14 +10983,41 @@ function AnalysisPageView({
           <Group align="start" wrap="nowrap">
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
-              <DcirPlotCard
-                analysisId={aid}
-                analysisTitle={title}
-                plotName={activePlot?.tab === "dcir" ? activePlot.name : "Unsaved plot"}
-                spec={spec}
-                update={update}
-              />
+              {plotSurfaceFor(
+                "dcir",
+                <DcirPlotCard
+                  analysisId={aid}
+                  analysisTitle={title}
+                  plotName={displayPlotName}
+                  spec={spec}
+                  update={update}
+                  edited={activePlotDirty && activePlot?.tab === "dcir"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
               {savedPlotsPanelFor("dcir")}
+            </Stack>
+          </Group>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="chargeability" pt="sm">
+          <Group align="start" wrap="nowrap">
+            {sidebar}
+            <Stack style={{ flex: 1, minWidth: 0 }}>
+              {plotSurfaceFor(
+                "chargeability",
+                <ChargeabilityPlotCard
+                  analysisId={aid}
+                  analysisTitle={title}
+                  plotName={displayPlotName}
+                  spec={spec}
+                  update={update}
+                  onReadyChange={setChargeabilityReady}
+                  edited={activePlotDirty && activePlot?.tab === "chargeability"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
+              {savedPlotsPanelFor("chargeability")}
             </Stack>
           </Group>
         </Tabs.Panel>
@@ -9035,11 +11026,19 @@ function AnalysisPageView({
           <Group align="start" wrap="nowrap">
             {sidebar}
             <Stack style={{ flex: 1, minWidth: 0 }}>
-              <Paper p="sm" withBorder style={{ minHeight: 590 }}>
-                <PlotHeader plotName={displayPlotName} subtitle="Recap table" />
-                <Divider mb="sm" />
-                <MetricsTable result={displayResult} />
-              </Paper>
+              {plotSurfaceFor(
+                "recap",
+                <Paper p="sm" withBorder style={{ minHeight: 590 }}>
+                  <PlotHeader
+                    plotName={displayPlotName}
+                    subtitle="Recap table"
+                    edited={activePlotDirty && activePlot?.tab === "recap"}
+                    {...newPlotHeaderProps}
+                  />
+                  <Divider mb="sm" />
+                  <MetricsTable result={displayResult} />
+                </Paper>,
+              )}
               {savedPlotsPanelFor("recap")}
             </Stack>
           </Group>
@@ -9052,34 +11051,47 @@ function AnalysisPageView({
             <Group align="start" wrap="nowrap">
               {activeTab === "time_capacity" ? sidebar : null}
               <Stack style={{ flex: 1, minWidth: 0 }}>
-                <TimeCapacityPlotCard
-                  analysisId={aid}
-                  analysisTitle={title}
-                  plotName={activePlot?.tab === "time_capacity" ? activePlot.name : "Unsaved plot"}
-                  subtitle={plotSubtitle("time_capacity", undefined, spec)}
-                  spec={spec}
-                  update={update}
-                  onReadyChange={setTimeCapacityReady}
-                />
+                {plotSurfaceFor(
+                  "time_capacity",
+                  <TimeCapacityPlotCard
+                    analysisId={aid}
+                    analysisTitle={title}
+                    plotName={displayPlotName}
+                    subtitle={plotSubtitle("time_capacity", undefined, spec)}
+                    spec={spec}
+                    update={update}
+                    onReadyChange={setTimeCapacityReady}
+                    edited={activePlotDirty && activePlot?.tab === "time_capacity"}
+                    {...newPlotHeaderProps}
+                  />,
+                )}
                 {activeTab === "time_capacity" ? savedPlotsPanelFor("time_capacity") : null}
               </Stack>
             </Group>
           </Tabs.Panel>
         )}
 
-        {(["crate", "chargeability"] as AnalysisTabKey[]).map(
-          (tab) => (
-            <Tabs.Panel key={tab} value={tab} pt="sm">
-              <Group align="start" wrap="nowrap">
-                {sidebar}
-                <Stack style={{ flex: 1, minWidth: 0 }}>
-                  <FamilyPlaceholder tab={tab} />
-                  {savedPlotsPanelFor(tab)}
-                </Stack>
-              </Group>
-            </Tabs.Panel>
-          )
-        )}
+        <Tabs.Panel value="crate" pt="sm">
+          <Group align="start" wrap="nowrap">
+            {sidebar}
+            <Stack style={{ flex: 1, minWidth: 0 }}>
+              {plotSurfaceFor(
+                "crate",
+                <RateCapabilityPlotCard
+                  analysisId={aid}
+                  analysisTitle={title}
+                  plotName={displayPlotName}
+                  spec={spec}
+                  update={update}
+                  onReadyChange={setRateCapabilityReady}
+                  edited={activePlotDirty && activePlot?.tab === "crate"}
+                  {...newPlotHeaderProps}
+                />,
+              )}
+              {savedPlotsPanelFor("crate")}
+            </Stack>
+          </Group>
+        </Tabs.Panel>
 
         <Tabs.Panel value="settings" pt="sm">
           <Stack gap="sm">
@@ -9150,15 +11162,17 @@ function AnalysisPageView({
       <Modal
         opened={portableExportOpen}
         onClose={() => {
-          if (!portableExport.isPending && !preparedShareBusy) {
+          if (!portableExportBusy) {
             setPortableExportOpen(false);
             setPreparedPortableShare(null);
+            setPortableSourceDecision(null);
+            setPendingPortableExport(null);
           }
         }}
         title={portableExportAction === "share" ? "Share portable analysis" : "Export portable analysis"}
         size="xl"
-        closeOnClickOutside={!portableExport.isPending}
-        closeOnEscape={!portableExport.isPending}
+        closeOnClickOutside={!portableExportBusy}
+        closeOnEscape={!portableExportBusy}
       >
         <Stack>
           <Text size="sm">
@@ -9208,7 +11222,11 @@ function AnalysisPageView({
                       key={plot.id}
                       withBorder
                       p="xs"
-                      bg={selected ? "var(--mantine-color-teal-0)" : "#fcfcfd"}
+                      bg={
+                        selected
+                          ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
+                          : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+                      }
                       style={{
                         borderColor: selected
                           ? "var(--mantine-color-teal-3)"
@@ -9231,7 +11249,11 @@ function AnalysisPageView({
                           {"selection" in plot ? (
                             plot.tab === "time_capacity" ||
                             plot.tab === "cycles" ||
-                            plot.tab === "recap" ? (
+                            plot.tab === "recap" ||
+                            plot.tab === "dcir" ||
+                            plot.tab === "steps" ||
+                            plot.tab === "chargeability" ||
+                            plot.tab === "crate" ? (
                               <CachedSavedPlotPreview
                                 analysisId={aid}
                                 baseSpec={spec}
@@ -9273,7 +11295,7 @@ function AnalysisPageView({
           {portableEstimate.isError ? (
             <Alert color="red">Could not estimate the export size.</Alert>
           ) : (
-            <Paper withBorder p="sm" bg="#fbfbfc">
+            <Paper withBorder p="sm" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
               <Group justify="space-between" align="start">
                 <div>
                   <Text size="sm" fw={700}>
@@ -9303,6 +11325,7 @@ function AnalysisPageView({
           <Switch
             checked={includePortableOriginals}
             onChange={(event) => setIncludePortableOriginals(event.currentTarget.checked)}
+            disabled={portableExportBusy}
             label="Include original .nda/.ndax files"
             description={
               portableEstimate.data
@@ -9314,7 +11337,8 @@ function AnalysisPageView({
             <Alert color="orange">
               {portableEstimate.data.missing_originals} original source{" "}
               {portableEstimate.data.missing_originals === 1 ? "is" : "are"} unavailable and
-              cannot be embedded. The report will retain its source reference and frozen plots.
+              cannot be embedded. CellXplorer will check again before export and let you continue
+              without source files.
             </Alert>
           ) : null}
           <Alert color="gray">
@@ -9353,22 +11377,24 @@ function AnalysisPageView({
           <Group justify="flex-end">
             <Button
               variant="default"
-              disabled={portableExport.isPending || preparedShareBusy}
+              disabled={portableExportBusy}
               onClick={() => {
                 setPortableExportOpen(false);
                 setPreparedPortableShare(null);
+                setPortableSourceDecision(null);
+                setPendingPortableExport(null);
               }}
             >
               Cancel
             </Button>
             <Button
               leftSection={<IconFileExport size={16} />}
-              loading={portableExport.isPending || preparedShareBusy}
+              loading={portableExportBusy}
               disabled={portablePlotIds.length === 0}
               onClick={() =>
                 preparedPortableShare
                   ? sharePreparedPortable()
-                  : portableExport.mutate(portableExportAction)
+                  : void beginPortableExport(portableExportAction)
               }
             >
               {preparedPortableShare
@@ -9376,6 +11402,110 @@ function AnalysisPageView({
                 : portableExportAction === "share"
                   ? "Prepare HTML"
                   : "Export HTML"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={portableSourceDecision !== null}
+        onClose={() => {
+          if (!updatePortableSources.isPending) {
+            setPortableSourceDecision(null);
+            setPendingPortableExport(null);
+          }
+        }}
+        title="Source files changed"
+        size="lg"
+        closeOnClickOutside={!updatePortableSources.isPending}
+        closeOnEscape={!updatePortableSources.isPending}
+      >
+        <Stack>
+          <Alert color="orange" title="The requested source files cannot be embedded yet">
+            CellXplorer compared the current file bytes with the versions used by the analysis.
+            Export has paused before rebuilding any plots, so it cannot silently omit a changed
+            file.
+          </Alert>
+          <ScrollArea.Autosize mah={320}>
+            <Stack gap="xs">
+              {portableSourceBlockers.map((source) => (
+                <Paper key={source.source_id} withBorder p="sm">
+                  <Group justify="space-between" align="start" wrap="nowrap">
+                    <div style={{ minWidth: 0 }}>
+                      <Text size="sm" fw={700} truncate>
+                        {source.filename}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {source.cell_name}
+                      </Text>
+                    </div>
+                    <Badge
+                      color={
+                        source.status === "changed"
+                          ? "orange"
+                          : source.status === "changing"
+                            ? "yellow"
+                            : "red"
+                      }
+                      variant="light"
+                    >
+                      {source.status === "changed"
+                        ? "Changed"
+                        : source.status === "changing"
+                          ? "Still changing"
+                          : source.status === "unavailable"
+                            ? "Unavailable"
+                            : "Read error"}
+                    </Badge>
+                  </Group>
+                  <Text size="xs" mt={6}>
+                    {source.message}
+                  </Text>
+                </Paper>
+              ))}
+            </Stack>
+          </ScrollArea.Autosize>
+          {canUpdatePortableSources ? (
+            <Alert color="teal">
+              Updating adopts the new stable file version, rebuilds its scientific cache, and
+              invalidates {portableSourceDecision?.affected_analyses ?? 0} dependent{" "}
+              {(portableSourceDecision?.affected_analyses ?? 0) === 1
+                ? "analysis"
+                : "analyses"}. The selected plots are then regenerated before the report is
+              packaged.
+            </Alert>
+          ) : (
+            <Alert color="gray">
+              Automatic update is available once every source is present, readable, and no longer
+              being written. You can cancel and retry later, or export a fully viewable report
+              without the original source files.
+            </Alert>
+          )}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={updatePortableSources.isPending}
+              onClick={() => {
+                setPortableSourceDecision(null);
+                setPendingPortableExport(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="light"
+              color="gray"
+              disabled={updatePortableSources.isPending}
+              onClick={continuePortableWithoutSources}
+            >
+              Export without .nda/.ndax
+            </Button>
+            <Button
+              loading={updatePortableSources.isPending}
+              disabled={!canUpdatePortableSources}
+              onClick={() => void updatePortableSourcesAndContinue()}
+            >
+              Update sources, refresh plots & export
             </Button>
           </Group>
         </Stack>
@@ -9416,17 +11546,93 @@ function AnalysisPageView({
       </Modal>
 
       <Modal
+        opened={quantityRenamePrompt !== null}
+        onClose={() => setQuantityRenamePrompt(null)}
+        title="Quantity changed"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            You changed the quantity shown on this plot. Update the plot name to match the new
+            quantity?
+          </Text>
+          <TextInput
+            label="Plot name"
+            value={quantityRenamePrompt?.name ?? ""}
+            onChange={(event) =>
+              setQuantityRenamePrompt((prompt) =>
+                prompt ? { ...prompt, name: event.currentTarget.value } : prompt
+              )
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && quantityRenamePrompt?.name.trim()) {
+                confirmQuantityRenameUpdate();
+              }
+            }}
+          />
+          {quantityRenamePrompt &&
+          quantityRenamePrompt.suggestedName.trim() &&
+          quantityRenamePrompt.suggestedName !== quantityRenamePrompt.name ? (
+            <Stack gap={6}>
+              <Text size="xs" c="dimmed">
+                Suggested name — click to use, then edit if you like
+              </Text>
+              <Button
+                variant="light"
+                justify="flex-start"
+                onClick={() =>
+                  setQuantityRenamePrompt((prompt) =>
+                    prompt ? { ...prompt, name: prompt.suggestedName } : prompt
+                  )
+                }
+              >
+                {quantityRenamePrompt.suggestedName}
+              </Button>
+            </Stack>
+          ) : null}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setQuantityRenamePrompt(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!quantityRenamePrompt?.name.trim()}
+              onClick={confirmQuantityRenameUpdate}
+            >
+              Update plot
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
         opened={leavePrompt !== null}
         onClose={() => setLeavePrompt(null)}
-        title={leavePrompt?.stage === "details" ? "Save new plot" : "Unsaved plot"}
+        size={640}
+        title={
+          leavePrompt?.stage === "details"
+            ? leavePrompt.mode === "copy"
+              ? "Save as a copy"
+              : "Save new plot"
+            : leavePrompt?.mode === "update"
+              ? "Unsaved edits"
+              : "Unsaved plot"
+        }
         closeOnClickOutside={!leaveSaving}
         closeOnEscape={!leaveSaving}
       >
         <Stack>
           {leavePrompt?.stage === "confirm" ? (
-            <Text size="sm" c="dimmed">
-              Save this plot before leaving the analysis?
-            </Text>
+            <>
+              <Text size="sm" c="dimmed">
+                {leavePrompt.mode === "update"
+                  ? "This saved plot has edits that are not written back yet."
+                  : "This draft is temporary. Save it now, or it will be discarded."}
+              </Text>
+              {leavePrompt.mode === "update" && activePlot ? (
+                <Text size="sm" fw={700}>
+                  {activePlot.name}
+                </Text>
+              ) : null}
+            </>
           ) : (
             <>
               <TextInput
@@ -9459,40 +11665,66 @@ function AnalysisPageView({
               />
             </>
           )}
-          {leavePrompt?.stage === "confirm" && leavePrompt.mode === "update" && activePlot && (
-            <Text size="sm" fw={700}>
-              {activePlot.name}
-            </Text>
-          )}
-          <Group justify="flex-end">
-            <Button variant="default" disabled={leaveSaving} onClick={() => setLeavePrompt(null)}>
-              Go back
-            </Button>
+          <Group justify="space-between" wrap="nowrap" gap="sm" preventGrowOverflow={false}>
             <Button
               variant="subtle"
               color="red"
               disabled={leaveSaving}
-              onClick={() => {
-                const proceed = leavePrompt?.proceed;
-                setLeavePrompt(null);
-                proceed?.();
-              }}
-            >
-              Discard
-            </Button>
-            <Button
               loading={leaveSaving}
-              disabled={leavePrompt?.stage === "details" && !leavePrompt.name.trim()}
-              onClick={() => {
-                if (leavePrompt?.mode === "new" && leavePrompt.stage === "confirm") {
-                  setLeavePrompt({ ...leavePrompt, stage: "details" });
-                  return;
-                }
-                savePlotAndLeave();
-              }}
+              style={{ flexShrink: 0 }}
+              onClick={discardLeaveChanges}
             >
-              {leavePrompt?.stage === "details" ? "Save and leave" : "Save"}
+              {leavePrompt?.mode === "update" ? "Discard changes" : "Discard"}
             </Button>
+            <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+              {leavePrompt?.stage === "confirm" && leavePrompt.mode === "new" ? (
+                <Button
+                  loading={leaveSaving}
+                  onClick={() =>
+                    setLeavePrompt((prompt) =>
+                      prompt ? { ...prompt, stage: "details", mode: "new" } : prompt
+                    )
+                  }
+                >
+                  Save as new plot…
+                </Button>
+              ) : null}
+              {leavePrompt?.stage === "confirm" && leavePrompt.mode === "update" ? (
+                <>
+                  <Button
+                    variant="light"
+                    disabled={leaveSaving}
+                    onClick={() =>
+                      setLeavePrompt((prompt) =>
+                        prompt
+                          ? {
+                              ...prompt,
+                              mode: "copy",
+                              stage: "details",
+                              name: `${activePlot?.name ?? "Plot"} (copy)`,
+                              description: activePlot?.description ?? "",
+                            }
+                          : prompt
+                      )
+                    }
+                  >
+                    Save as a copy…
+                  </Button>
+                  <Button loading={leaveSaving} onClick={savePlotAndLeave}>
+                    Save changes
+                  </Button>
+                </>
+              ) : null}
+              {leavePrompt?.stage === "details" ? (
+                <Button
+                  loading={leaveSaving}
+                  disabled={!leavePrompt.name.trim()}
+                  onClick={savePlotAndLeave}
+                >
+                  Save and leave
+                </Button>
+              ) : null}
+            </Group>
           </Group>
         </Stack>
       </Modal>

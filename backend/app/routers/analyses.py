@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 from ..db import get_db
 from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
 from ..responses import fast_json
-from ..services import background_jobs
+from ..services import analysis_usage, background_jobs
 from ..services.entity_ids import next_analysis_id
 from ..services.lazy_module import LazyModule
 
@@ -282,6 +282,34 @@ def create_analysis(req: AnalysisCreate, db: Session = Depends(get_db)):
     return analysis_dict(db, a, full=True)
 
 
+class AnalysisUsageRequest(BaseModel):
+    cell_ids: list[int] = Field(default_factory=list)
+    group_ids: list[int] = Field(default_factory=list)
+
+
+@router.post("/analyses/usage")
+def analyses_usage(req: AnalysisUsageRequest, db: Session = Depends(get_db)):
+    """Read-only preview of analyses/plots affected by removing cells or groups."""
+    return analysis_usage.preview_removal_usage(
+        db,
+        cell_ids=req.cell_ids,
+        group_ids=req.group_ids,
+    )
+
+
+class AnalysisPurgeEmptyRequest(BaseModel):
+    analysis_ids: list[int] = Field(default_factory=list)
+
+
+@router.post("/analyses/purge-empty-candidates")
+def purge_empty_analysis_candidates(
+    req: AnalysisPurgeEmptyRequest,
+    db: Session = Depends(get_db),
+):
+    """After a destructive mutation, delete preflight candidates that are empty now."""
+    return analysis_usage.purge_empty_candidates(db, req.analysis_ids)
+
+
 @router.get("/analyses/{analysis_id}")
 def get_analysis(analysis_id: int, db: Session = Depends(get_db)):
     a = db.get(Analysis, analysis_id)
@@ -399,6 +427,32 @@ def _progress_callback(job_id: int | None):
     return report
 
 
+def _recognition_progress_callback(job_id: int | None):
+    """Progress reporter for recognition tabs (C-rate / chargeability / DCIR).
+
+    Unlike the cycle-plot callback, these paths report fine-grained stage units
+    (``completed``/``total`` may exceed the cell count) and do not classify
+    outcomes as cached vs re-parsed.
+    """
+    if job_id is None:
+        return None
+    job = background_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "No such background job")
+
+    def report(completed: int, total: int, label: str, detail: str) -> None:
+        safe_total = max(1, int(total))
+        safe_completed = max(0, min(int(completed), safe_total))
+        background_jobs.update_job(
+            job_id,
+            completed=safe_completed,
+            total=safe_total,
+            description=f"{detail} — {label} ({safe_completed}/{safe_total})",
+        )
+
+    return report
+
+
 def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None = None) -> None:
     if job_id is None:
         return
@@ -408,21 +462,33 @@ def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None =
     if error is not None:
         background_jobs.update_job(job_id, status="failed", error=error, description="Plot preparation failed")
         return
-    if cached:
-        for item in job.get("items", []):
-            if item.get("status") == "queued":
-                background_jobs.record_result(
-                    job_id,
-                    item["id"],
-                    status="ready",
-                    detail="Loaded from persistent cache",
-                    counter="cached",
-                )
+    # Clear any leftover "queued" rows so Activity never shows a completed
+    # header above still-queued per-cell badges. Cached cycle loads use
+    # record_result (and the cached counter); recognition paths must not.
+    for item in job.get("items", []):
+        if item.get("status") != "queued":
+            continue
+        if cached:
+            background_jobs.record_result(
+                job_id,
+                item["id"],
+                status="ready",
+                detail="Loaded from persistent cache",
+                counter="cached",
+            )
+        else:
+            background_jobs.update_item(
+                job_id,
+                item["id"],
+                status="ready",
+                detail="Recognition complete",
+            )
     if cached:
         description = "Loaded cached plot data"
     else:
         # Summarize how much real work happened: the re-parse count is the
-        # part that mattered; the rest were fast cache reads.
+        # part that mattered; the rest were fast cache reads. Recognition jobs
+        # skip those counters and finish with a generic label.
         counters = background_jobs.get_job(job_id).get("counters", {}) if background_jobs.get_job(job_id) else {}
         reparsed = counters.get("reparsed", 0)
         cached_reads = counters.get("cached", 0)
@@ -431,18 +497,29 @@ def _finish_job(job_id: int | None, *, cached: bool = False, error: str | None =
                 f"Re-parsed {reparsed} source file{'s' if reparsed != 1 else ''}, "
                 f"read {cached_reads} from cache"
             )
-        else:
+        elif cached_reads:
             description = f"Read {cached_reads} cell{'s' if cached_reads != 1 else ''} from cache"
+        else:
+            description = "Recognition complete"
+    # Re-read so recognition's enlarged total (stages × cells) is respected.
+    latest = background_jobs.get_job(job_id) or job
     background_jobs.update_job(
         job_id,
-        completed=job.get("total", 0),
+        completed=latest.get("total", 0),
         status="completed",
         description=description,
     )
 
 
 class AnalysisComputeJobCreate(BaseModel):
-    kind: Literal["cycles", "time_capacity", "steps", "dcir"]
+    kind: Literal[
+        "cycles",
+        "time_capacity",
+        "steps",
+        "dcir",
+        "chargeability",
+        "rate_capability",
+    ]
     spec: dict | None = None
 
 
@@ -464,6 +541,8 @@ def _open_compute_job(
         "time_capacity": "time/capacity",
         "steps": "steps",
         "dcir": "DCIR",
+        "chargeability": "chargeability",
+        "rate_capability": "rate capability",
     }.get(kind, "cycle")
     return background_jobs.create_job(
         kind="analysis_compute",
@@ -701,10 +780,122 @@ def compute_dcir_analysis(
                     spec,
                     analysis.provenance,
                     use_current_versions=req.recompute,
-                    progress=_progress_callback(job_id),
+                    progress=_recognition_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
             analysis_cache.store_result("dcir", key, result)
+        _finish_job(job_id, cached=cached)
+        return fast_json(result)
+    except Exception as exc:
+        _finish_job(job_id, error=str(exc))
+        raise
+
+
+@router.post("/analyses/{analysis_id}/chargeability")
+def compute_chargeability_analysis(
+    analysis_id: int,
+    req: ComputeRequest,
+    db: Session = Depends(get_db),
+):
+    from ..services import chargeability
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    key = analysis_cache.result_key(
+        db,
+        "chargeability",
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+    )
+    result = (
+        None
+        if req.recompute
+        else analysis_cache.load_result("chargeability", key)
+    )
+    cached = result is not None
+    if cached:
+        engine.refresh_availability_badges(db, spec, result)
+        analysis_cache.upgrade_result_format("chargeability", key, result)
+    job_id = req.job_id
+    try:
+        if result is None:
+            from ..services.process_priority import background_thread_priority
+
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(
+                    db, analysis, spec, "chargeability", req.job_token
+                )
+            with background_thread_priority(req.background):
+                result = chargeability.compute(
+                    db,
+                    spec,
+                    analysis.provenance,
+                    use_current_versions=req.recompute,
+                    progress=_recognition_progress_callback(job_id),
+                )
+            result["cache_status"] = "miss"
+            analysis_cache.store_result("chargeability", key, result)
+        _finish_job(job_id, cached=cached)
+        return fast_json(result)
+    except Exception as exc:
+        _finish_job(job_id, error=str(exc))
+        raise
+
+
+@router.post("/analyses/{analysis_id}/rate-capability")
+def compute_rate_capability_analysis(
+    analysis_id: int,
+    req: ComputeRequest,
+    db: Session = Depends(get_db),
+):
+    from ..services import rate_capability
+
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    key = analysis_cache.result_key(
+        db,
+        "rate_capability",
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+    )
+    result = (
+        None
+        if req.recompute
+        else analysis_cache.load_result("rate_capability", key)
+    )
+    cached = result is not None
+    if cached:
+        engine.refresh_availability_badges(db, spec, result)
+        analysis_cache.upgrade_result_format("rate_capability", key, result)
+    job_id = req.job_id
+    try:
+        if result is None:
+            from ..services.process_priority import background_thread_priority
+
+            if job_id is None and req.job_token:
+                job_id = _open_compute_job(
+                    db,
+                    analysis,
+                    spec,
+                    "rate_capability",
+                    req.job_token,
+                )
+            with background_thread_priority(req.background):
+                result = rate_capability.compute(
+                    db,
+                    spec,
+                    analysis.provenance,
+                    use_current_versions=req.recompute,
+                    progress=_recognition_progress_callback(job_id),
+                )
+            result["cache_status"] = "miss"
+            analysis_cache.store_result("rate_capability", key, result)
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -1079,6 +1270,16 @@ class PortableExportRequest(BaseModel):
     views: list[dict] = Field(default_factory=list)
 
 
+class PortableSourceUpdateItem(BaseModel):
+    source_id: int
+    expected_size: int
+    expected_mtime_ns: int
+
+
+class PortableSourceUpdateRequest(BaseModel):
+    sources: list[PortableSourceUpdateItem] = Field(default_factory=list)
+
+
 class PortableSourceResolution(BaseModel):
     action: str
     library_source_file_id: int | None = None
@@ -1136,6 +1337,30 @@ def portable_analysis_estimate(analysis_id: int, db: Session = Depends(get_db)):
     return portable_analysis.estimate_export(db, analysis)
 
 
+@router.post("/analyses/{analysis_id}/portable-source-preflight")
+def portable_source_preflight(analysis_id: int, db: Session = Depends(get_db)):
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    return portable_analysis.preflight_original_sources(db, analysis)
+
+
+@router.post("/analyses/{analysis_id}/portable-source-update")
+def portable_source_update(
+    analysis_id: int,
+    req: PortableSourceUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    return portable_analysis.update_original_sources(
+        db,
+        analysis,
+        [item.model_dump() for item in req.sources],
+    )
+
+
 @router.post("/analyses/{analysis_id}/portable-export")
 def export_portable_analysis(
     analysis_id: int,
@@ -1158,8 +1383,12 @@ def export_portable_analysis(
             analysis,
             destination,
             include_original_files=req.include_original_files,
+            strict_original_files=req.include_original_files,
             views=req.views or None,
         )
+    except portable_analysis.PortableOriginalSourceError as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception:
         destination.unlink(missing_ok=True)
         raise

@@ -18,6 +18,23 @@ exports. Version 1 packages containing caches remain importable.
 The export dialog lets the user include any subset of the analysis's saved plots. Metadata,
 analysis settings and source references remain part of the package so it can still be imported.
 
+## Original-source preflight
+
+When original files are requested, export hashes every selected `.nda`/`.ndax` source before it
+generates plot snapshots. A source is ready only when its current bytes match the checksum stored
+by CellXplorer and its size and modification time remain stable throughout the check.
+
+If a checksum changed, export pauses and offers two explicit choices:
+
+- adopt the stable file version, rebuild its scientific cache, invalidate every dependent
+  analysis, regenerate the selected plots, and export with the matching originals;
+- export the report without any original files.
+
+Unavailable, unreadable, or still-growing sources cannot be adopted until they become stable, but
+the report-only option remains available. The final packaging pass checks each embedded payload
+against the stored checksum again. If a file changes after preflight, the sources-included export
+fails instead of silently omitting that file.
+
 ## Plot snapshots
 
 The frontend generates each saved view with the same trace and layout functions used by the

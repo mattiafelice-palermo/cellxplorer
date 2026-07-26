@@ -55,6 +55,12 @@ fallbacks are persisted artifacts. Updating a saved plot must invalidate and reg
 artifact derived from that plot's final figure and styling signature. Do not regenerate thumbnails
 during every report export when the valid saved artifact already exists.
 
+Plot cards that remember their rendered size for export settings must guard the `setPlotSize`
+update by comparing width and height with the current state. Plotly's `onUpdate` fires again after
+React rerenders; storing an equivalent new size object on every callback creates an update loop
+that becomes visible when opening or closing the style panel resizes the plot. Follow the guarded
+`rememberPlotDiv` pattern used by the Cycles and Time/Capacity cards.
+
 Each saved plot has two lightweight, legend-free image derivatives stored in the same cache record:
 a compact wide thumbnail for saved-plot rows and portable-report selection, plus a separately
 laid-out 4:3 preview for analysis-database hover panels. Do not make a 4:3 preview by fitting the
@@ -119,6 +125,11 @@ commits the panel switch after that paint. Do not recombine their state into one
 root: building the next Plotly/settings panel otherwise delays the selected-tab underline. Keep
 inactive panels unmounted except for the explicitly retained time/capacity view; mounting every
 hidden Plotly panel previously caused freezes and unnecessary graphics-memory use.
+Steps, DCIR, Chargeability, Rate Capability, and Time/Capacity own dedicated scientific queries.
+The generic cycle query must stay disabled while any of those tabs is active; otherwise a
+saved-plot change starts an unrelated cycle computation beside the visible request. Their query
+observers should retain previous data during a key change, and a delayed loading indicator should
+appear only when no plot is available.
 Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
 and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
 sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail

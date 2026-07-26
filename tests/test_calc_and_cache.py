@@ -80,6 +80,103 @@ class PerCycleTests(unittest.TestCase):
         out = calc.per_cycle(df)
         self.assertTrue(out["mean_charge_voltage_v"].isna().all())
 
+
+def stepped_frame(charge_steps, discharge=2.546):
+    """One cycle whose charge spans several steps, each restarting the counter.
+
+    Mirrors real Neware data: capacity and energy accumulate inside a step and
+    reset to 0 at the next one.
+    """
+    rows = []
+    step = 1
+    for total in charge_steps:
+        for fraction in (0.0, 0.5, 1.0):
+            rows.append(
+                {
+                    "cycle": 1,
+                    "step": step,
+                    "status": "CC_Chg" if step == 1 else "CV_Chg",
+                    "charge_capacity_mah": total * fraction,
+                    "discharge_capacity_mah": 0.0,
+                    "charge_energy_mwh": total * fraction * 3.6,
+                    "discharge_energy_mwh": 0.0,
+                    "voltage_v": 3.6,
+                }
+            )
+        step += 1
+    for fraction in (0.0, 0.5, 1.0):
+        rows.append(
+            {
+                "cycle": 1,
+                "step": step,
+                "status": "CC_DChg",
+                "charge_capacity_mah": 0.0,
+                "discharge_capacity_mah": discharge * fraction,
+                "charge_energy_mwh": 0.0,
+                "discharge_energy_mwh": discharge * fraction * 3.4,
+                "voltage_v": 3.4,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+class StepResetCapacityTests(unittest.TestCase):
+    """Neware's counters reset each step, so a phase total is a sum of steps.
+
+    A per-cycle maximum kept only the largest step: a CC+CV charge silently
+    lost its CV portion, which inflated coulombic efficiency past 100%.
+    """
+
+    def test_cc_plus_cv_charge_sums_both_steps(self):
+        out = calc.per_cycle(stepped_frame([2.551021, 0.181603]))
+        np.testing.assert_allclose(out["charge_capacity_mah"], [2.732624], rtol=1e-6)
+        np.testing.assert_allclose(out["discharge_capacity_mah"], [2.546], rtol=1e-6)
+        # 2.546 / 2.7326 = 93.2%, not the 99.8% a per-cycle max produced.
+        np.testing.assert_allclose(
+            out["coulombic_efficiency_pct"], [2.546 / 2.732624 * 100], rtol=1e-6
+        )
+
+    def test_evenly_split_charge_does_not_report_100_percent(self):
+        # The pathological real case: two equal charge steps halved the total.
+        out = calc.per_cycle(stepped_frame([0.632768, 0.632524], discharge=1.055))
+        np.testing.assert_allclose(out["charge_capacity_mah"], [1.265292], rtol=1e-6)
+        ce = float(out["coulombic_efficiency_pct"].iloc[0])
+        self.assertAlmostEqual(ce, 1.055 / 1.265292 * 100, places=6)
+        self.assertLess(ce, 90.0)
+
+    def test_energy_is_summed_per_step_too(self):
+        out = calc.per_cycle(stepped_frame([2.551021, 0.181603]))
+        np.testing.assert_allclose(
+            out["charge_energy_mwh"], [2.732624 * 3.6], rtol=1e-6
+        )
+        np.testing.assert_allclose(
+            out["energy_efficiency_pct"],
+            [(2.546 * 3.4) / (2.732624 * 3.6) * 100],
+            rtol=1e-6,
+        )
+
+    def test_single_combined_step_is_unchanged(self):
+        # A protocol written as one CCCV step never resets mid-charge.
+        out = calc.per_cycle(stepped_frame([2.732624]))
+        np.testing.assert_allclose(out["charge_capacity_mah"], [2.732624], rtol=1e-6)
+
+    def test_rest_and_opposite_phase_steps_contribute_nothing(self):
+        df = stepped_frame([2.551021, 0.181603])
+        rest = df.iloc[:3].copy()
+        rest["step"] = 99
+        rest["status"] = "Rest"
+        rest["charge_capacity_mah"] = 0.0
+        out = calc.per_cycle(pd.concat([df, rest], ignore_index=True))
+        np.testing.assert_allclose(out["charge_capacity_mah"], [2.732624], rtol=1e-6)
+
+    def test_charge_time_is_unaffected(self):
+        # Time already summed per step; guard against regressing it.
+        df = stepped_frame([2.551021, 0.181603])
+        df["time_s"] = [0, 100, 200, 0, 50, 100, 0, 300, 600]
+        out = calc.per_cycle(df)
+        np.testing.assert_allclose(out["charge_time_h"], [(200 + 100) / 3600.0])
+        np.testing.assert_allclose(out["discharge_time_h"], [600 / 3600.0])
+
     def test_explicit_cv_charge_metrics(self):
         df = pd.DataFrame(
             {

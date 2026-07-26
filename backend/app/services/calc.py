@@ -117,7 +117,10 @@ def _cv_charge_by_cycle(df: pd.DataFrame, cycle_index: pd.Index) -> tuple[np.nda
             capacities = region["charge_capacity_mah"].to_numpy(dtype="float64")
             finite = capacities[np.isfinite(capacities)]
             if len(finite):
-                capacity_mah = float(finite.max()) if not combined else max(0.0, float(finite.max() - finite.min()))
+                # The step's own delta. A dedicated CV step restarts the counter
+                # at 0, so this equals its max; taking the delta also stays
+                # correct if a file ever carries the count over from the CC step.
+                capacity_mah = max(0.0, float(finite.max() - finite.min()))
         cycle_id = int(cycle)
         cycle_time[cycle_id] = cycle_time.get(cycle_id, 0.0) + duration_h
         cycle_capacity[cycle_id] = cycle_capacity.get(cycle_id, 0.0) + capacity_mah
@@ -167,13 +170,46 @@ def per_cycle(df: pd.DataFrame) -> pd.DataFrame:
         has_chg = df["status"].str.contains("Chg", case=False)
         has_dchg = df["status"].str.contains("DChg", case=False)
         is_chg, is_dchg = has_chg & ~has_dchg, has_dchg
+        chg_rows, dchg_rows = is_chg, is_dchg
     else:
         is_chg = is_dchg = pd.Series(False, index=df.index)
+        # Without a status column the phase cannot be identified, but each
+        # capacity/energy column is phase-specific and reads 0 outside its own
+        # phase, so summing every step is safe.
+        chg_rows = dchg_rows = pd.Series(True, index=df.index)
 
-    chg_cap = group_max("charge_capacity_mah")
-    dchg_cap = group_max("discharge_capacity_mah")
-    chg_e = group_max("charge_energy_mwh")
-    dchg_e = group_max("discharge_energy_mwh")
+    def phase_total(col: str, mask: pd.Series) -> np.ndarray:
+        """Charge/energy delivered in one phase per cycle.
+
+        Neware's capacity and energy counters accumulate within a step and
+        reset to zero at each step boundary: a CCCV charge written as separate
+        CC and CV steps restarts the counter at the CV hold. A per-cycle
+        maximum therefore reports only the largest single step, dropping the
+        rest of the phase — which understates capacity and, because the
+        discharge is usually a single step while the charge is not, inflates
+        coulombic efficiency above 100%.
+
+        Summing each step's (max - min) delta is correct whether or not the
+        counter resets: on reset the min is 0, and without one the delta is
+        still that step's own contribution.
+        """
+        if col not in df.columns:
+            return np.full(len(index), np.nan)
+        if "step" not in df.columns:
+            # No step boundaries available; the per-cycle max is the best guess.
+            return grouped[col].max().to_numpy(dtype="float64")
+        sub = df.loc[mask, ["cycle", "step", col]]
+        if sub.empty:
+            return np.zeros(len(index), dtype="float64")
+        per_step = sub.groupby(["cycle", "step"], sort=False)[col].agg(["min", "max"])
+        delta = (per_step["max"] - per_step["min"]).clip(lower=0.0)
+        totals = delta.groupby(level="cycle").sum()
+        return totals.reindex(index).fillna(0.0).to_numpy(dtype="float64")
+
+    chg_cap = phase_total("charge_capacity_mah", chg_rows)
+    dchg_cap = phase_total("discharge_capacity_mah", dchg_rows)
+    chg_e = phase_total("charge_energy_mwh", chg_rows)
+    dchg_e = phase_total("discharge_energy_mwh", dchg_rows)
     cv_time, cv_capacity, cv_events = _cv_charge_by_cycle(df, index)
     with np.errstate(divide="ignore", invalid="ignore"):
         ce = np.where(chg_cap != 0, dchg_cap / chg_cap * 100.0, np.nan)

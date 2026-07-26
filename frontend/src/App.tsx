@@ -38,6 +38,7 @@ import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   get,
   post,
+  type AutomationPauseState,
   type BackgroundJob,
   type DatabaseStatus,
   type SourceCheckJob,
@@ -46,6 +47,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
+import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
 import { AnalysisWorkspaceTabs } from "./components/AnalysisWorkspaceTabs";
 import { AnalysisWorkspaceContent } from "./components/AnalysisWorkspaceContent";
 import { addDebugEvent, getDebugEvents } from "./debug";
@@ -260,6 +262,28 @@ export default function App() {
     enabled: databaseStatus.data?.compatible === true,
     refetchInterval: (query) => (query.state.data?.status === "running" ? 600 : false),
   });
+  const automationPause = useQuery({
+    queryKey: PAUSE_QUERY_KEY,
+    queryFn: () => get<AutomationPauseState>("/api/automation/pause"),
+    enabled: databaseStatus.data?.compatible === true,
+    refetchInterval: 60_000,
+  });
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      if (import.meta.env.DEV) return;
+      const el = event.target as HTMLElement | null;
+      if (
+        el?.closest(
+          "input, textarea, [contenteditable=''], [contenteditable='true'], [data-native-menu='true']",
+        )
+      ) {
+        return;
+      }
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, []);
   useEffect(() => {
     const job = sourceCheckJob.data;
     if (!job) return;
@@ -316,7 +340,7 @@ export default function App() {
   const guardedNavigate = (path: string) => {
     const event = new CustomEvent<AnalysisLeaveRequestDetail>(ANALYSIS_LEAVE_EVENT, {
       cancelable: true,
-      detail: { proceed: () => navigate(path) },
+      detail: { proceed: () => navigate(path), reason: "navigate" },
     });
     if (window.dispatchEvent(event)) navigate(path);
   };
@@ -364,7 +388,7 @@ export default function App() {
       }
     };
     return (
-      <Group h="100vh" justify="center" p="xl" bg="gray.0">
+      <Group h="100vh" justify="center" p="xl" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
         <Paper withBorder p="xl" maw={760} w="100%">
           <Stack gap="lg">
             <Group gap="sm">
@@ -380,7 +404,7 @@ export default function App() {
               </div>
             </Group>
             <Alert color="orange">{status.message}</Alert>
-            <Paper withBorder p="md" bg="gray.0">
+            <Paper withBorder p="md" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
               <Stack gap={6}>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">Application version</Text>
@@ -443,7 +467,11 @@ export default function App() {
       }}
       padding={0}
     >
-      <CacheWarmupCoordinator enabled={databaseStatus.data?.compatible === true} />
+      <CacheWarmupCoordinator
+        enabled={
+          databaseStatus.data?.compatible === true && !automationPause.data?.paused
+        }
+      />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"
@@ -503,6 +531,7 @@ export default function App() {
               )}
             </Button>
             <DownloadsButton />
+            <QuickSettingsMenu />
             <Button
               size="compact-sm"
               variant="subtle"
@@ -675,7 +704,7 @@ export default function App() {
                         <ScrollArea h={Math.min(300, Math.max(90, job.items.length * 43))} type="auto">
                           <Stack gap={6}>
                             {job.items.map((item) => (
-                              <Paper key={item.id} withBorder px="sm" py={8} bg="#fbfbfc">
+                              <Paper key={item.id} withBorder px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                                 <Group justify="space-between" wrap="nowrap">
                                   <div style={{ minWidth: 0 }}>
                                     <Text size="sm" truncate title={item.label}>{item.label}</Text>

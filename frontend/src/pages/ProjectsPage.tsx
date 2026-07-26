@@ -38,6 +38,7 @@ import {
   IconLayersIntersect,
   IconSearch,
   IconTrash,
+  IconUnlink,
 } from "@tabler/icons-react";
 import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -56,10 +57,25 @@ import {
   ReplicateGroupSummary,
   Tree,
 } from "../api";
-import { clearAnalysisQueryCache } from "../analysisQueryCache";
+import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
 import { CellDetailTabs } from "../components/CellDetailTabs";
+import {
+  deleteEmptyAnalysesIfRequested,
+  DestructiveImpactModal,
+  type DestructiveImpactConfirmOptions,
+} from "../components/DestructiveImpactModal";
+import { PlaceInFoldersModal } from "../components/PlaceInFoldersModal";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { ImportCellsLauncher } from "./InboxPage";
+
+type ProjectImpactRequest = {
+  title: string;
+  confirmLabel: string;
+  plainMessage: string;
+  cellIds: number[];
+  groupIds: number[];
+  run: (options: DestructiveImpactConfirmOptions) => Promise<void>;
+};
 
 type PreviewSelection =
   | { kind: "cell"; id: number }
@@ -444,10 +460,12 @@ export function ProjectsPage() {
   const [editingAnalysisTitle, setEditingAnalysisTitle] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [addReferencesOpen, setAddReferencesOpen] = useState(false);
+  const [placeItemsOpen, setPlaceItemsOpen] = useState(false);
   const [previewWidth, setPreviewWidth] = useState(390);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [preview, setPreview] = useState<PreviewSelection>(null);
   const [dropTargetFolderId, setDropTargetFolderId] = useState<number | null>(null);
+  const [impactRequest, setImpactRequest] = useState<ProjectImpactRequest | null>(null);
 
   const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const folders = tree.data?.folders ?? [];
@@ -636,6 +654,91 @@ export function ProjectsPage() {
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
+  // Turn a multi-cell selection into a replicate group, filed into the same
+  // folder(s) the cells already sit in. Source cells are then removed from
+  // those folders so only the replicate remains.
+  const groupAsReplicate = useMutation({
+    mutationFn: async (payload: {
+      name: string;
+      cellIds: number[];
+      folderIds: number[];
+      cells: { id: number; folderId: number }[];
+    }) => {
+      return post<ReplicateGroupSummary>("/api/replicate-groups", {
+        name: payload.name,
+        cell_ids: payload.cellIds,
+        folder_ids: payload.folderIds,
+        remove_folder_cells: payload.cells.map((cell) => ({
+          cell_id: cell.id,
+          folder_id: cell.folderId,
+        })),
+      });
+    },
+    onSuccess: (group) => {
+      notifications.show({ message: `Grouped as replicate ${group.name}`, color: "teal" });
+      setSelectedKeys(new Set());
+      invalidateTree();
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["cells"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  // Explode a replicate group and replace every filed group reference with
+  // its cells, so no project placement is lost when the shared group is deleted.
+  const explodeReplicate = useMutation({
+    mutationFn: (groups: { groupId: number; folderIds: number[] }[]) =>
+      post<{ removed: number; deleted_empty_groups: number[] }>(
+        "/api/replicate-groups/explode",
+        {
+          groups: groups.map((group) => ({
+            group_id: group.groupId,
+            folder_ids: group.folderIds,
+          })),
+        }
+      ),
+    onSuccess: () => {
+      notifications.show({ message: "Replicate exploded into its cells", color: "teal" });
+      setSelectedKeys(new Set());
+      invalidateTree();
+      qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      qc.invalidateQueries({ queryKey: ["cells"] });
+      void invalidateAnalysisQueries(qc);
+      qc.invalidateQueries({ queryKey: ["analyses"] });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+
+  const requestExplode = (groups: TreeItem[]) => {
+    const payload = buildExplodePayload(groups);
+    if (payload.length === 0) return;
+    const groupIds = payload.map((group) => group.groupId);
+    setImpactRequest({
+      title: groupIds.length === 1 ? "Explode replicate?" : `Explode ${groupIds.length} replicates?`,
+      confirmLabel: "Explode",
+      plainMessage:
+        groupIds.length === 1
+          ? "Explode this replicate into its cells everywhere it is filed?"
+          : `Explode ${groupIds.length} replicates into their cells everywhere they are filed?`,
+      cellIds: [],
+      groupIds,
+      run: async (options) => {
+        await explodeReplicate.mutateAsync(payload);
+        const deleted = await deleteEmptyAnalysesIfRequested(options);
+        if (deleted.length) {
+          notifications.show({
+            message: `Deleted ${deleted.length} empty ${deleted.length === 1 ? "analysis" : "analyses"}.`,
+            color: "orange",
+          });
+          qc.invalidateQueries({ queryKey: ["analyses"] });
+          invalidateTree();
+          qc.invalidateQueries({ queryKey: ["cells"] });
+          qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+          void invalidateAnalysisQueries(qc);
+        }
+      },
+    });
+  };
+
   const createAnalysis = useMutation({
     mutationFn: (body: { title: string; folder_id: number | null }) =>
       post<AnalysisFull>("/api/analyses", body),
@@ -779,6 +882,7 @@ export function ProjectsPage() {
     });
   };
 
+
   const handleSelect = (event: MouseEvent, item: TreeItem) => {
     if (event.shiftKey && lastSelectedKey) {
       const start = visibleItems.findIndex((candidate) => candidate.key === lastSelectedKey);
@@ -840,6 +944,65 @@ export function ProjectsPage() {
     selectedCells.length + selectedGroups.length > 0 &&
     selectedCells.length + selectedGroups.length === selectedActionItems.length;
   const hasSingleFolder = selectedFolders.length === 1 && selectedActionItems.length === 1;
+  // Two or more plain cells (no groups/folders/analyses) can become a replicate.
+  const canGroupAsReplicate =
+    selectedCells.length >= 2 && selectedCells.length === selectedActionItems.length;
+  // One or more replicate groups selected (and nothing else) can be exploded.
+  const canExplodeReplicate =
+    selectedGroups.length > 0 && selectedGroups.length === selectedActionItems.length;
+  // Toolbar uses the current tree selection (not the context-menu override).
+  const toolbarCells = selectedItems.filter((item) => item.kind === "cell");
+  const toolbarGroups = selectedItems.filter((item) => item.kind === "replicate_group");
+  const toolbarCanGroupAsReplicate =
+    toolbarCells.length >= 2 && toolbarCells.length === selectedItems.length;
+  const toolbarCanExplodeReplicate =
+    toolbarGroups.length > 0 && toolbarGroups.length === selectedItems.length;
+
+  const buildGroupAsReplicatePayload = (cells: TreeItem[]) => ({
+    name: `${cells[0].label} replicates`,
+    cellIds: cells.map((item) => item.id),
+    folderIds: [...new Set(cells.map((item) => item.folderId))],
+    cells: cells.map((item) => ({ id: item.id, folderId: item.folderId })),
+  });
+
+  const buildExplodePayload = (groups: TreeItem[]) =>
+    [...groups.reduce((byGroup, item) => {
+      const current = byGroup.get(item.id) ?? {
+        groupId: item.id,
+        folderIds: [] as number[],
+      };
+      if (!current.folderIds.includes(item.folderId)) {
+        current.folderIds.push(item.folderId);
+      }
+      byGroup.set(item.id, current);
+      return byGroup;
+    }, new Map<number, { groupId: number; folderIds: number[] }>()).values()];
+
+  // Folder ids currently selected in the tree, for the "…selected only" actions.
+  const selectedFolderIds = (() => {
+    const ids = selectedActionItems
+      .filter((item) => item.kind === "folder")
+      .map((item) => item.id);
+    if (ids.length) return ids;
+    return selectedFolderId != null ? [selectedFolderId] : [];
+  })();
+  const expandAll = () => setExpandedFolders(new Set(collectFolderIds(folders)));
+  const collapseAll = () => setExpandedFolders(new Set());
+  const branchIds = (targets: number[]) => {
+    const ids = new Set<number>();
+    for (const id of targets) {
+      const node = findFolder(folders, id);
+      if (node) collectFolderIds([node]).forEach((value) => ids.add(value));
+    }
+    return ids;
+  };
+  const expandSelected = () =>
+    setExpandedFolders((current) => new Set([...current, ...branchIds(selectedFolderIds)]));
+  const collapseSelected = () =>
+    setExpandedFolders((current) => {
+      const remove = branchIds(selectedFolderIds);
+      return new Set([...current].filter((id) => !remove.has(id)));
+    });
   const hasOnlyAnalyses =
     selectedAnalyses.length > 0 && selectedAnalyses.length === selectedActionItems.length;
   const hasSingleAnalysis = selectedAnalyses.length === 1 && selectedActionItems.length === 1;
@@ -896,6 +1059,10 @@ export function ProjectsPage() {
 
   const handleDropOnFolder = (event: DragEvent, folder: FolderNode) => {
     event.preventDefault();
+    // The drop zone wraps the whole folder subtree, so a drop on a child row
+    // still files into this folder. stopPropagation lets the innermost folder
+    // under the cursor win instead of every ancestor also handling it.
+    event.stopPropagation();
     setDropTargetFolderId(null);
     const raw = event.dataTransfer.getData("application/x-cellxplorer-items");
     if (!raw) return;
@@ -1016,6 +1183,24 @@ export function ProjectsPage() {
             )}
           </ImportCellsLauncher>
           <Button
+            variant="default"
+            leftSection={<IconLayersIntersect size={15} />}
+            disabled={!toolbarCanGroupAsReplicate}
+            loading={groupAsReplicate.isPending}
+            onClick={() => groupAsReplicate.mutate(buildGroupAsReplicatePayload(toolbarCells))}
+          >
+            Group as replicate
+          </Button>
+          <Button
+            variant="default"
+            leftSection={<IconUnlink size={15} />}
+            disabled={!toolbarCanExplodeReplicate}
+            loading={explodeReplicate.isPending}
+            onClick={() => requestExplode(toolbarGroups)}
+          >
+            Explode replicate
+          </Button>
+          <Button
             leftSection={<IconChartLine size={15} />}
             onClick={openCreateAnalysis}
           >
@@ -1027,15 +1212,57 @@ export function ProjectsPage() {
       <Group align="stretch" wrap="nowrap" gap={0}>
         <Paper withBorder p="sm" style={{ flex: 1 }}>
           <Stack gap="xs">
-            <Group justify="space-between">
+            <Group justify="space-between" wrap="nowrap">
               <Text size="sm" fw={700}>
                 Folders
               </Text>
-              <Tooltip label="New root folder">
-                <ActionIcon variant="subtle" onClick={() => openCreateFolder(null)}>
-                  <IconFolderPlus size={17} />
-                </ActionIcon>
-              </Tooltip>
+              <Group gap={6} wrap="nowrap">
+                <Button.Group>
+                  <Button size="compact-xs" variant="default" onClick={expandAll}>
+                    Expand all
+                  </Button>
+                  <Menu withinPortal position="bottom-end">
+                    <Menu.Target>
+                      <ActionIcon size="22" variant="default" aria-label="Expand options">
+                        <IconChevronDown size={13} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        disabled={selectedFolderIds.length === 0}
+                        onClick={expandSelected}
+                      >
+                        Expand selected only
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                </Button.Group>
+                <Button.Group>
+                  <Button size="compact-xs" variant="default" onClick={collapseAll}>
+                    Collapse all
+                  </Button>
+                  <Menu withinPortal position="bottom-end">
+                    <Menu.Target>
+                      <ActionIcon size="22" variant="default" aria-label="Collapse options">
+                        <IconChevronDown size={13} />
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        disabled={selectedFolderIds.length === 0}
+                        onClick={collapseSelected}
+                      >
+                        Collapse selected only
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                </Button.Group>
+                <Tooltip label="New root folder">
+                  <ActionIcon variant="subtle" onClick={() => openCreateFolder(null)}>
+                    <IconFolderPlus size={17} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
             </Group>
             <ScrollArea h={650} type="auto">
               {tree.isLoading ? (
@@ -1127,6 +1354,31 @@ export function ProjectsPage() {
               Rename
             </Menu.Item>
           )}
+          {(hasOnlyReferences || hasOnlyFolders || hasOnlyAnalyses) && (
+            <Menu.Item
+              leftSection={<IconFolder size={14} />}
+              onClick={() => setPlaceItemsOpen(true)}
+              disabled={selectedCells.length === 0 && selectedGroups.length === 0}
+            >
+              Place in folders...
+            </Menu.Item>
+          )}
+          {canGroupAsReplicate && (
+            <Menu.Item
+              leftSection={<IconLayersIntersect size={14} />}
+              onClick={() => groupAsReplicate.mutate(buildGroupAsReplicatePayload(selectedCells))}
+            >
+              Group as replicate
+            </Menu.Item>
+          )}
+          {canExplodeReplicate && (
+            <Menu.Item
+              leftSection={<IconUnlink size={14} />}
+              onClick={() => requestExplode(selectedGroups)}
+            >
+              Explode replicate{selectedGroups.length === 1 ? "" : "s"}
+            </Menu.Item>
+          )}
           {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && <Menu.Item onClick={moveTo}>Move to...</Menu.Item>}
           {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && <Menu.Item leftSection={<IconCopy size={14} />} onClick={copyTo}>Copy to...</Menu.Item>}
           {(hasOnlyFolders || hasOnlyReferences || hasOnlyAnalyses) && (
@@ -1144,6 +1396,30 @@ export function ProjectsPage() {
         opened={addReferencesOpen}
         onClose={() => setAddReferencesOpen(false)}
       />
+      <PlaceInFoldersModal
+        opened={placeItemsOpen}
+        onClose={() => setPlaceItemsOpen(false)}
+        cellIds={selectedCells.map((item) => item.id)}
+        groupIds={selectedGroups.map((item) => item.id)}
+        title="Place selection in folders"
+      />
+      <DestructiveImpactModal
+        opened={impactRequest !== null}
+        onClose={() => setImpactRequest(null)}
+        title={impactRequest?.title ?? ""}
+        confirmLabel={impactRequest?.confirmLabel ?? "Confirm"}
+        plainMessage={impactRequest?.plainMessage ?? ""}
+        cellIds={impactRequest?.cellIds ?? []}
+        groupIds={impactRequest?.groupIds ?? []}
+        onConfirm={(options) => {
+          const request = impactRequest;
+          setImpactRequest(null);
+          if (!request) return;
+          void request.run(options).catch((error: Error) =>
+            notifications.show({ message: error.message, color: "red" }),
+          );
+        }}
+      />
     </Stack>
   );
 
@@ -1160,7 +1436,22 @@ export function ProjectsPage() {
     const dropTarget = dropTargetFolderId === folder.id;
     const item: TreeItem = { key, kind: "folder", id: folder.id, folderId: folder.id, label: folder.name };
     return (
-      <div key={folder.id}>
+      <div
+        key={folder.id}
+        // The drop zone wraps the whole subtree so a drop onto any child row
+        // (cell, replicate, nested folder, analysis) still files into this
+        // folder — previously only a hit on the folder's own row registered.
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDropTargetFolderId(folder.id);
+        }}
+        onDragLeave={(event) => {
+          event.stopPropagation();
+          if (dropTargetFolderId === folder.id) setDropTargetFolderId(null);
+        }}
+        onDrop={(event) => handleDropOnFolder(event, folder)}
+      >
         <Group
           className="project-tree-row"
           justify="space-between"
@@ -1168,12 +1459,6 @@ export function ProjectsPage() {
           p={6}
           draggable
           onDragStart={(event) => handleDragStart(event, item)}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDropTargetFolderId(folder.id);
-          }}
-          onDragLeave={() => setDropTargetFolderId(null)}
-          onDrop={(event) => handleDropOnFolder(event, folder)}
           onDoubleClick={() => toggleFolder(folder.id)}
           onContextMenu={(event) => handleContextMenu(event, item)}
           style={{
@@ -1183,13 +1468,27 @@ export function ProjectsPage() {
             background: dropTarget
               ? "var(--mantine-color-teal-1)"
               : selected
-                ? "var(--mantine-color-teal-0)"
+                ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
                 : undefined,
             outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
           }}
           onClick={(event) => handleSelect(event, item)}
         >
-          <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+          <Group gap={4} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              disabled={!hasChildren}
+              aria-label={expanded ? "Collapse folder" : "Expand folder"}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleFolder(folder.id);
+              }}
+              style={{ visibility: hasChildren ? "visible" : "hidden" }}
+            >
+              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+            </ActionIcon>
             <IconFolder size={16} color="var(--mantine-color-teal-6)" />
             {editingFolderId === folder.id ? (
               <TextInput
@@ -1245,17 +1544,6 @@ export function ProjectsPage() {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-            <ActionIcon
-              size="sm"
-              variant="subtle"
-              disabled={!hasChildren}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleFolder(folder.id);
-              }}
-            >
-              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-            </ActionIcon>
           </Group>
         </Group>
 
@@ -1305,7 +1593,7 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "var(--mantine-color-teal-0)" : undefined,
+          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
           outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}
@@ -1364,7 +1652,7 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "var(--mantine-color-teal-0)" : undefined,
+          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
           outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}
@@ -1430,7 +1718,7 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "var(--mantine-color-teal-0)" : undefined,
+          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
           outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}

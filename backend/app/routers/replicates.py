@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from ..db import get_db
 from ..models import (
     Cell,
     Folder,
+    FolderCell,
     FolderReplicateGroup,
     ReplicateGroup,
     ReplicateGroupCell,
@@ -74,11 +75,17 @@ stitch = LazyModule(_load_stitch)
 router = APIRouter(prefix="/api", tags=["replicates"])
 
 
+class FolderCellRef(BaseModel):
+    folder_id: int
+    cell_id: int
+
+
 class ReplicateGroupCreate(BaseModel):
     name: str
     description: str | None = None
     cell_ids: list[int]
-    folder_ids: list[int] = []
+    folder_ids: list[int] = Field(default_factory=list)
+    remove_folder_cells: list[FolderCellRef] = Field(default_factory=list)
 
 
 class ReplicateGroupUpdate(BaseModel):
@@ -91,6 +98,15 @@ class ReplicateGroupUpdate(BaseModel):
 class ReplicateUngroupRequest(BaseModel):
     cell_ids: list[int] | None = None
     group_ids: list[int] | None = None
+
+
+class ReplicateExplodeTarget(BaseModel):
+    group_id: int
+    folder_ids: list[int] = Field(default_factory=list)
+
+
+class ReplicateExplodeRequest(BaseModel):
+    groups: list[ReplicateExplodeTarget]
 
 
 class ReplicateGroupCellsAdd(BaseModel):
@@ -198,17 +214,35 @@ def list_replicate_groups(search: str | None = None, db: Session = Depends(get_d
 @router.post("/replicate-groups")
 def create_replicate_group(req: ReplicateGroupCreate, db: Session = Depends(get_db)):
     name = req.name.strip()
+    cell_ids = list(dict.fromkeys(req.cell_ids))
+    folder_ids = list(dict.fromkeys(req.folder_ids))
     if not name:
         raise HTTPException(400, "Replicate group needs a name")
-    if len(set(req.cell_ids)) < 2:
+    if len(cell_ids) < 2:
         raise HTTPException(400, "A replicate group needs at least two cells")
     if db.query(ReplicateGroup).filter(ReplicateGroup.name == name).first() is not None:
         raise HTTPException(409, "Replicate group already exists")
+    if any(db.get(Cell, cell_id) is None for cell_id in cell_ids):
+        raise HTTPException(404, "No such cell")
+    if any(db.get(Folder, folder_id) is None for folder_id in folder_ids):
+        raise HTTPException(404, "No such folder")
+    selected_cells = set(cell_ids)
+    for ref in req.remove_folder_cells:
+        if ref.cell_id not in selected_cells:
+            raise HTTPException(400, "Folder cell removal must belong to the new replicate group")
+        if db.get(Folder, ref.folder_id) is None:
+            raise HTTPException(404, "No such folder")
+
     group = ReplicateGroup(name=name, description=(req.description or "").strip() or None)
     db.add(group)
     db.flush()
-    replace_group_cells(db, group.id, req.cell_ids)
-    add_group_to_folders(db, group.id, req.folder_ids)
+    replace_group_cells(db, group.id, cell_ids)
+    add_group_to_folders(db, group.id, folder_ids)
+    for ref in req.remove_folder_cells:
+        db.query(FolderCell).filter(
+            FolderCell.folder_id == ref.folder_id,
+            FolderCell.cell_id == ref.cell_id,
+        ).delete(synchronize_session=False)
     db.commit()
     db.refresh(group)
     return group_dict(group)
@@ -306,16 +340,24 @@ def add_cells_to_replicate_group(
 
 @router.delete("/replicate-groups/{group_id}")
 def delete_replicate_group(group_id: int, db: Session = Depends(get_db)):
+    from ..services import analysis_usage
+
     group = db.get(ReplicateGroup, group_id)
     if group is None:
         raise HTTPException(404, "No such replicate group")
     db.delete(group)
+    stripped = analysis_usage.strip_replicate_groups_from_analyses(db, [group_id])
     db.commit()
-    return {"ok": True}
+    return {"ok": True, **stripped}
 
 
 @router.post("/replicate-groups/ungroup")
 def ungroup_replicates(req: ReplicateUngroupRequest, db: Session = Depends(get_db)):
+    from ..services import analysis_usage
+
+    # Groups requested for explode/ungroup — strip these from analyses even if
+    # a partial cell ungroup left the group row alive briefly.
+    requested_group_ids = list(req.group_ids or [])
     q = db.query(ReplicateGroupCell)
     if req.group_ids:
         q = q.filter(ReplicateGroupCell.group_id.in_(req.group_ids))
@@ -333,8 +375,90 @@ def ungroup_replicates(req: ReplicateUngroupRequest, db: Session = Depends(get_d
         db.query(ReplicateGroup).filter(ReplicateGroup.id.in_(empty_ids)).delete(
             synchronize_session=False
         )
+    strip_ids = sorted({*requested_group_ids, *empty_ids})
+    stripped = analysis_usage.strip_replicate_groups_from_analyses(db, strip_ids)
     db.commit()
-    return {"removed": removed, "deleted_empty_groups": empty_ids}
+    return {
+        "removed": removed,
+        "deleted_empty_groups": empty_ids,
+        **stripped,
+    }
+
+
+@router.post("/replicate-groups/explode")
+def explode_replicate_groups(req: ReplicateExplodeRequest, db: Session = Depends(get_db)):
+    """Replace filed replicate-group references with their member cells atomically."""
+    from ..services import analysis_usage
+
+    if not req.groups:
+        raise HTTPException(400, "No replicate groups selected")
+
+    target_folders: dict[int, set[int]] = {}
+    requested: dict[int, ReplicateGroup] = {}
+    for target in req.groups:
+        group = db.get(ReplicateGroup, target.group_id)
+        if group is None:
+            raise HTTPException(404, "No such replicate group")
+        requested[group.id] = group
+        target_folders.setdefault(group.id, set()).update(
+            {
+                *target.folder_ids,
+                *(link.folder_id for link in group.folder_links),
+            }
+        )
+
+    all_folder_ids = {
+        folder_id
+        for folder_ids in target_folders.values()
+        for folder_id in folder_ids
+    }
+    if any(db.get(Folder, folder_id) is None for folder_id in all_folder_ids):
+        raise HTTPException(404, "No such folder")
+
+    cells_by_folder: dict[int, list[int]] = {}
+    removed = 0
+    for group_id, group in requested.items():
+        cell_ids = [
+            link.cell_id
+            for link in sorted(group.cell_links, key=lambda link: (link.position, link.id))
+        ]
+        removed += len(cell_ids)
+        for folder_id in target_folders[group_id]:
+            cells_by_folder.setdefault(folder_id, []).extend(cell_ids)
+
+    for folder_id, cell_ids in cells_by_folder.items():
+        existing = {
+            row[0]
+            for row in db.query(FolderCell.cell_id)
+            .filter(FolderCell.folder_id == folder_id)
+            .all()
+        }
+        position = max(
+            (
+                row[0]
+                for row in db.query(FolderCell.position)
+                .filter(FolderCell.folder_id == folder_id)
+                .all()
+            ),
+            default=-1,
+        ) + 1
+        for cell_id in dict.fromkeys(cell_ids):
+            if cell_id in existing:
+                continue
+            db.add(FolderCell(folder_id=folder_id, cell_id=cell_id, position=position))
+            existing.add(cell_id)
+            position += 1
+
+    group_ids = sorted(requested)
+    stripped = analysis_usage.strip_replicate_groups_from_analyses(db, group_ids)
+    for group in requested.values():
+        db.delete(group)
+    db.commit()
+    return {
+        "removed": removed,
+        "deleted_empty_groups": group_ids,
+        **stripped,
+    }
 
 
 def cell_cycle_frame(db: Session, cell: Cell) -> pd.DataFrame:

@@ -45,11 +45,13 @@ import {
   type ElectrodeAreaPreset,
   type ElectrodeAreaPresetSettings,
   type PlotStylePresetSettings,
+  type AutomationPauseState,
   type SourceMonitoringSettings,
 } from "../api";
 import { isTauriApp } from "../downloads";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { WARMUP_NOW_EVENT } from "../components/CacheWarmupCoordinator";
+import { PAUSE_QUERY_KEY } from "../components/QuickSettingsMenu";
 import {
   loadAnalysisWorkspaceMemoryPolicy,
   saveAnalysisWorkspaceMemoryPolicy,
@@ -144,6 +146,20 @@ export function SettingsPage() {
     queryKey: ["source-monitor-settings"],
     queryFn: () => get<SourceMonitoringSettings>("/api/source-monitor/settings"),
     enabled: activeTab === "monitoring",
+  });
+  const automationPause = useQuery({
+    queryKey: PAUSE_QUERY_KEY,
+    queryFn: () => get<AutomationPauseState>("/api/automation/pause"),
+    enabled: activeTab === "monitoring",
+    refetchInterval: 60_000,
+  });
+  const resumeAutomation = useMutation({
+    mutationFn: () => post<AutomationPauseState>("/api/automation/pause", { minutes: null }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(PAUSE_QUERY_KEY, data);
+      notifications.show({ message: "Automatic updates resumed.", color: "teal" });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
   const areaPresets = useQuery({
     queryKey: ["electrode-area-presets"],
@@ -1210,7 +1226,29 @@ export function SettingsPage() {
 
               {monitoring.isError ? <Alert color="red">Could not load source monitoring settings.</Alert> : null}
 
-              <Paper withBorder p="md" bg="#fbfbfc">
+              {automationPause.data?.paused ? (
+                <Alert color="yellow" title="Automatic updates paused">
+                  <Stack gap="xs">
+                    <Text size="sm">
+                      Scheduled source checks and cache warmup stay paused until the deadline or you resume.
+                      Manual checks still run.
+                    </Text>
+                    <Group>
+                      <Button
+                        size="compact-xs"
+                        variant="light"
+                        color="yellow"
+                        loading={resumeAutomation.isPending}
+                        onClick={() => resumeAutomation.mutate()}
+                      >
+                        Resume now
+                      </Button>
+                    </Group>
+                  </Stack>
+                </Alert>
+              ) : null}
+
+              <Paper withBorder p="md" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                 <Group justify="space-between" wrap="nowrap">
                   <div>
                     <Text fw={600}>Enable automatic checks</Text>
@@ -1293,7 +1331,7 @@ export function SettingsPage() {
                 </Group>
               )}
 
-              <Paper withBorder p="md" bg="#fbfbfc">
+              <Paper withBorder p="md" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                 <Group justify="space-between" wrap="nowrap">
                   <div>
                     <Text fw={600}>Update stable changed files automatically</Text>
@@ -1427,7 +1465,7 @@ export function SettingsPage() {
               {!isTauriApp() ? (
                 <Alert color="gray">These controls are available in the installed Windows application.</Alert>
               ) : (
-                <Paper withBorder p="md" bg="#fbfbfc">
+                <Paper withBorder p="md" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                   <Group justify="space-between" wrap="nowrap">
                     <div>
                       <Text fw={600}>Launch when Windows starts</Text>
@@ -1758,7 +1796,7 @@ export function SettingsPage() {
                 <ScrollArea h="calc(100vh - 260px)" mih={360} type="auto">
                   <Stack gap="xs" pr="sm">
                     {(activity.data ?? []).map((event) => (
-                      <Paper key={event.id} p="sm" withBorder bg="#fbfbfc">
+                      <Paper key={event.id} p="sm" withBorder bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                         <Group gap="xs" mb={4}>
                           <Badge
                             size="sm"

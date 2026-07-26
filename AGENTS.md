@@ -76,6 +76,76 @@ production migrations. See `docs/database-migrations.md`.
 - `packaging/`, `src-tauri/`, and `docs/windows-packaging.md`: Windows desktop packaging
 - `docs/portable-analysis-html.md`: portable report format, security, and round-trip rules
 
+## Maintained repository tree
+
+This is the source-oriented repository map. It intentionally excludes generated dependencies and
+outputs such as `node_modules/`, `frontend/dist/`, `build/`, `dist/`, `src-tauri/target/`,
+`tmp/`, Python bytecode, and test application data.
+
+```text
+Cellxplorer/
+├── backend/
+│   ├── requirements.txt
+│   └── app/
+│       ├── main.py, config.py, db.py, models.py, responses.py
+│       ├── assets/                 Bundled browser assets for portable reports
+│       ├── migrations/             Forward-only database migration registry and revisions
+│       ├── routers/                FastAPI `/api` endpoint modules
+│       │   └── automation.py       Pause/resume for background automation
+│       └── services/               Parsing, caches, calculations, analysis, imports, jobs
+│           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
+│           ├── automation.py       Durable automation_paused_until helpers
+│           ├── chargeability.py    Semantic chargeability matching and curve extraction
+│           └── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+├── frontend/
+│   ├── package.json, vite.config.ts, tsconfig.json, index.html
+│   ├── public/                     Static application assets
+│   ├── src/
+│   │   ├── main.tsx, App.tsx, app.css
+│   │   ├── api.ts                  Typed backend client
+│   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── ChargeabilityPlotCard.tsx
+│   │   │   ├── RateCapabilityPlotCard.tsx
+│   │   │   ├── DestructiveImpactModal.tsx
+│   │   │   ├── DraftPlotCard.tsx
+│   │   │   ├── FolderTree.tsx
+│   │   │   ├── PlaceInFoldersModal.tsx
+│   │   │   ├── ProtocolStructureViewer.tsx
+│   │   │   ├── QuickSettingsMenu.tsx
+│   │   │   └── RecognitionProgress.tsx
+│   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
+│   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
+│   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
+│   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
+│   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
+│   └── tests/                      Lightweight TypeScript policy tests
+├── tests/                          Python backend and domain tests
+│   ├── fixtures/
+│   │   └── rate_capability_corpus.json  Synthetic positive/negative protocol families
+│   ├── test_analysis_usage.py      Impact preview for cell/group removal
+│   ├── test_automation.py          Automation pause endpoint and source-monitor skip
+│   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
+│   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
+│   └── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
+├── docs/
+│   └── agent-knowledge/            Durable architecture and change playbooks
+│       ├── chargeability-analysis.md
+│       └── rate-capability-analysis.md
+├── scripts/                        Development and Windows build launchers
+├── packaging/                      PyInstaller backend sidecar entry point
+├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
+├── run.py                          Runs FastAPI with the built frontend
+├── README.md                       Project overview and quick-start commands
+├── spec.md                         Original domain specification
+├── CHANGELOG.md                    User-facing version history
+└── AGENTS.md                       This guide
+```
+
+Keep this tree accurate. When a change creates, deletes, moves, renames, or meaningfully
+repurposes a tracked source, test, documentation, packaging, or configuration file/folder,
+update this section in the same change when the map would otherwise become misleading. Do not add
+one-off generated output, caches, build artifacts, or temporary files to the tree.
+
 ## Development commands
 
 Use the repository helper scripts for the normal Windows workflows:

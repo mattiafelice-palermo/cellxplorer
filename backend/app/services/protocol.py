@@ -174,6 +174,14 @@ def _step_conditions(data: dict[str, str]) -> list[dict]:
         if not expression:
             continue
         jump = _number(data.get(prefix + "Jump_Line"))
+        global_user_id = int(
+            _number(data.get(prefix + "GlobleUserID")) or 0
+        ) or None
+        stores_as = (
+            f"User{global_user_id - 70}"
+            if global_user_id is not None and 71 <= global_user_id <= 170
+            else None
+        )
         conditions.append(
             {
                 "expression": str(expression),
@@ -182,6 +190,14 @@ def _step_conditions(data: dict[str, str]) -> list[dict]:
                 "comparator_id": int(_number(data.get(prefix + "CmpType")) or 0) or None,
                 # 65526 is a sentinel the cycler uses for "no jump", not a step.
                 "jump_step": int(jump) if jump and 0 < jump < 60000 else None,
+                # Neware records a capacity expression into a numbered global
+                # user variable through this field. The file calls it
+                # ``GlobleUserID``; IDs 71, 72, ... correspond to User1,
+                # User2, ... . Exposing the relationship lets scientific
+                # matchers trace formulas without depending on the author's
+                # chosen variable number.
+                "global_user_id": global_user_id,
+                "stores_as": stores_as,
             }
         )
     for key, value in data.items():
@@ -193,6 +209,8 @@ def _step_conditions(data: dict[str, str]) -> list[dict]:
                     "value": None,
                     "comparator_id": None,
                     "jump_step": None,
+                    "global_user_id": None,
+                    "stores_as": None,
                 }
             )
     return conditions

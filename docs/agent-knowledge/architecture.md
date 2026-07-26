@@ -59,6 +59,28 @@ Application shortcuts live in one keydown listener in `App.tsx`: Ctrl+K toggles 
 Ctrl+B collapses the navbar, and Ctrl +/-/0 plus Ctrl+wheel control UI zoom. Ctrl+A is
 deliberately never bound so "select all" keeps working in every input.
 
+## App shell utilities
+
+The header strip hosts Activity, Downloads, a quick-settings menu (`QuickSettingsMenu.tsx`), and
+Debug. Quick settings covers reload interface, desktop-only restart (`restart_app` in
+`src-tauri/src/main.rs`: schedule a delayed relaunch, then `stop_backend` and `app.exit` —
+never `AppHandle::restart()`, which races `tauri_plugin_single_instance`), Appearance
+(Auto/Light/Dark via Mantine `defaultColorScheme="auto"`), and pause of background automation.
+
+Chrome surfaces that need a subtle raised/hover fill must use
+`light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the teal
+equivalent for selection). Numbered Mantine shades such as `gray.0` / `teal.0` do **not**
+flip with the colour scheme.
+
+Pause is durable in `app_settings.automation_paused_until` (`services/automation.py`,
+`GET|POST /api/automation/pause`). It stops *starting* scheduled source-monitor work and gates
+`CacheWarmupCoordinator`; user-triggered checks and imports keep working. Expiry is implicit from
+the timestamp — do not clear it with a timer. Dark mode themes chrome only; Plotly surfaces stay
+light because plot colours are persisted scientific presentation data.
+
+Production builds suppress the browser context menu except on text inputs and
+`[data-native-menu]`; `import.meta.env.DEV` keeps Inspect Element available.
+
 ## Downloads and exports
 
 Every export (plot PNG/PDF/SVG, CSV/XLSX data, portable HTML, diagnostics) funnels through
@@ -91,6 +113,45 @@ slow". `useDelayedFlag` in `AnalysisPage.tsx` gates them — nothing for the fir
 Hold the container's height whether or not the indicator is showing, so a fast result lands without
 reflow. Note that a route can carry more than one indicator: the page-level spinner that fires while
 the analysis record itself loads is separate from each plot's, and it is usually the most visible.
+
+## Destructive removal vs analyses
+
+Before cell delete or replicate explode/ungroup, the UI calls `POST /api/analyses/usage`
+(`services/analysis_usage.py`) and shows `DestructiveImpactModal`. Analyses left with no
+samples are never auto-deleted; the user may opt in via an unchecked checkbox, after which
+empty ids are recomputed and deleted.
+
+Cell delete still leaves dangling cell refs as `missing_refs` at resolve time. Replicate
+explode/ungroup/delete **does** strip those `replicate_group` entries (and related
+exclusions/hidden ids) from analysis specs via `strip_replicate_groups_from_analyses`, so the
+editor is not left showing a dead replicate the user already acknowledged in the modal.
+
+Project-tree replicate conversions are backend transactions, not frontend request chains.
+`POST /api/replicate-groups` accepts `folder_ids` plus exact `remove_folder_cells` references so
+creating, filing, and replacing the selected cell references commit together.
+`POST /api/replicate-groups/explode` derives group members server-side, replaces every folder
+reference to each group with its cells, strips the group from analyses, and deletes the group in
+one commit. Keep these workflows atomic when their UI changes.
+
+## Draft plots
+
+Drafts are **session-only**. They live in the open analysis editor (including keep-mounted
+navigate-away) and are never written to the server. Closing the analysis tab, or opening
+another plot while a draft is active, prompts **Save** or **Discard**. Killing the app loses
+the draft. Server PUTs use `buildStablePersistSpec` so unsaved draft/edited-plot view settings
+are not persisted; `selection.entries` (membership) still are. Any legacy `draft_plots` /
+`draft_plot` fields are stripped on load and on persist. Portable export also strips them.
+
+Plot sessions are **per family tab**. Opening an analysis or switching to a plot tab uses
+`resolveColdOpenWorkspace`: keep a live draft on that tab if one exists; else open a saved
+plot on that tab (preferring the last one opened there); else show the empty “No plot yet”
+surface. A draft titled “Unsaved plot” appears only after **New**. Never show another tab’s
+saved plot under that label. Switching tabs while a draft or dirty saved plot is active
+prompts save/discard. **New** lives in `PlotHeader` (right of export). Draft card thumbnails
+reuse the saved-plot preview renderer under ids `__draft__:<tab>`, stay in the React Query
+memory cache only (`isDraftPreviewPlotId` skips artifact lookup/store), and must not enter
+the idle warmup queue or the server plot-artifact API (those endpoints 404 for non-saved
+ids and previously retry-stormed until the frontend died).
 
 ## Domain ownership
 

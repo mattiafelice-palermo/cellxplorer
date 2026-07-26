@@ -2,7 +2,7 @@ import type { AnalysisSpec, SavedAnalysisPlot } from "./api";
 
 // Increment when thumbnail generation changes in a way that makes persisted
 // PNG/SVG artifacts visually incompatible with the live plot renderer.
-export const SAVED_PLOT_THUMBNAIL_RENDER_VERSION = 5;
+export const SAVED_PLOT_THUMBNAIL_RENDER_VERSION = 6;
 
 function clone<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value);

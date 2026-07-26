@@ -8,16 +8,14 @@ import {
   Collapse,
   Divider,
   Group,
-  Loader,
-  LoadingOverlay,
   Modal,
   NumberInput,
   Paper,
-  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
@@ -25,12 +23,14 @@ import { useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconChevronRight,
+  IconEye,
+  IconEyeOff,
   IconPencil,
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   post,
@@ -44,20 +44,37 @@ import {
   type PlotExportFormat,
   type ProtocolSegment,
 } from "../api";
-import { saveDownload } from "../downloads";
 import {
+  axisTitleFont,
   currentPlotStyle,
+  downloadStyledPlotExport,
   downloadDataExport,
+  isAnalysisSegmentHidden,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  plotAxisStyle,
+  markerSymbol,
+  plotLayoutStyle,
   plotPalette,
   PlotHeader,
   PlotStylePanel,
+  styledPlotExportPreview,
   tracesToColumns,
+  usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import {
+  clearRecognitionToken,
+  newRecognitionToken,
+  setRecognitionToken,
+  useDelayedRecognitionProgress,
+  useSharedRecognitionToken,
+} from "../recognitionProgress";
 import Plot from "./Plot";
 import {
   ProtocolSegmentsPanel,
   type ProtocolSegmentSuggestion,
 } from "./ProtocolSegmentsPanel";
+import { RecognitionProgress } from "./RecognitionProgress";
 
 interface DcirCandidate extends DcirSegmentTarget {
   id: string;
@@ -148,6 +165,25 @@ export function dcirXTitle(axis: DcirViewSpec["x_axis"]) {
   return "DCIR occurrence";
 }
 
+/**
+ * The series that actually draw: they have measurements and none of the three
+ * visibility layers (cell hidden in the sidebar, DCIR segment hidden, or this
+ * line individually hidden) is switched off. The plot and the sidebar row
+ * swatches both palette over this list so their colours stay in lock-step.
+ */
+export function dcirVisibleSeries(
+  result: DcirResult,
+  spec: AnalysisSpec,
+): DcirResultSeries[] {
+  return (result.cell_series ?? []).filter(
+    (item) =>
+      item.n_measurements > 0 &&
+      !isCellHiddenInAnalysis(spec, item.cell_id) &&
+      !isAnalysisSegmentHidden(spec, item.segment_id) &&
+      !isSeriesHidden(spec, item.series_id)
+  );
+}
+
 export function dcirTracesForResult(
   result: DcirResult,
   spec: AnalysisSpec,
@@ -164,8 +200,7 @@ export function dcirTracesForResult(
       : style.marker_mode === "points"
         ? "markers"
         : "lines+markers";
-  return (result.cell_series ?? [])
-    .filter((item) => item.n_measurements > 0)
+  return dcirVisibleSeries(result, spec)
     .map((item, index) => {
       const color =
         style.custom_colors[`dcir-${item.series_id}`] ??
@@ -183,7 +218,7 @@ export function dcirTracesForResult(
         y: item.quantities[yColumn],
         name: item.label,
         line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size },
+        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
         customdata: x.map(() => [item.direction, item.c_rate, item.current_ma]),
         hovertemplate:
           `%{fullData.name}<br>${defaultXTitle}: %{x}<br>${yTitle}: %{y:.4g}` +
@@ -198,22 +233,18 @@ export function dcirLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
   const yTitle = view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
   const defaultXTitle = dcirXTitle(view.x_axis);
   return {
+    ...plotLayoutStyle(style, spec),
     margin: { l: 72, r: 20, t: 12, b: 56 },
     xaxis: {
-      title: { text: style.x_title ?? defaultXTitle },
-      showgrid: style.show_grid,
-      zeroline: style.show_zero_line,
+      ...plotAxisStyle(style, { axis: style.x_axis }),
+      title: { text: style.x_title ?? defaultXTitle, font: axisTitleFont(style) },
     },
     yaxis: {
-      title: { text: style.y_title ?? yTitle },
-      showgrid: style.show_grid,
-      zeroline: style.show_zero_line,
+      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
+      title: { text: style.y_title ?? yTitle, font: axisTitleFont(style) },
     },
-    showlegend: spec.presentation.legend,
-    legend: { orientation: "h", y: -0.22 },
+    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
     hovermode: "closest",
-    paper_bgcolor: style.paper_bgcolor,
-    plot_bgcolor: style.plot_bgcolor,
   };
 }
 
@@ -225,18 +256,39 @@ export function useDcirResult(
   const signature = useMemo(
     () =>
       JSON.stringify({
-        selection: spec.selection,
+        // Only the sample set (not display-only exclusions) changes the data,
+        // so hiding a line or a cell filters client-side without a recompute.
+        entries: spec.selection.entries,
         segments: spec.dcir_segments ?? [],
         series,
       }),
-    [spec.selection, spec.dcir_segments, series]
+    [spec.selection.entries, spec.dcir_segments, series]
   );
-  return useQuery({
+  const tokenKey = `dcir:${analysisId}:${signature}`;
+  const result = useQuery({
     queryKey: ["dcir", analysisId, signature],
-    queryFn: () => post<DcirResult>(`/api/analyses/${analysisId}/dcir`, { spec }),
+    queryFn: async () => {
+      const token = newRecognitionToken();
+      setRecognitionToken(tokenKey, token);
+      try {
+        return await post<DcirResult>(`/api/analyses/${analysisId}/dcir`, {
+          spec,
+          job_token: token,
+        });
+      } finally {
+        window.setTimeout(() => {
+          clearRecognitionToken(tokenKey, token);
+        }, 300);
+      }
+    },
     enabled: series.length > 0,
     staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
+  const computeToken = useSharedRecognitionToken(
+    result.isLoading || result.isFetching ? tokenKey : null,
+  );
+  return { ...result, computeToken };
 }
 
 function useDcirProtocols(analysisId: number, spec: AnalysisSpec) {
@@ -382,6 +434,32 @@ export function DcirSettings({
       .map((badge) => badge.series_id!)
   );
   const protocolFamilies = protocols.data?.protocols ?? [];
+  const protocolSignaturesByCell = useMemo(() => {
+    const signatures = new Map<number, Set<string>>();
+    for (const family of protocolFamilies) {
+      for (const cellId of family.cell_ids) {
+        const cellSignatures = signatures.get(cellId) ?? new Set<string>();
+        cellSignatures.add(family.signature);
+        signatures.set(cellId, cellSignatures);
+      }
+    }
+    return signatures;
+  }, [protocolFamilies]);
+  const applicableSegments = (cellId: number | null) => {
+    if (cellId == null) return [];
+    const signatures = protocolSignaturesByCell.get(cellId);
+    if (!signatures) return [];
+    return segments.filter((segment) =>
+      segment.targets.some((target) => signatures.has(target.protocol_signature))
+    );
+  };
+  const firstValidPair = () => {
+    for (const cell of cells) {
+      const segment = applicableSegments(cell.id)[0];
+      if (segment) return { cellId: cell.id, segmentId: segment.id };
+    }
+    return { cellId: cells[0]?.id ?? null, segmentId: null };
+  };
   const protocolSegments = useMemo<ProtocolSegment[]>(
     () =>
       segments.map((segment) => ({
@@ -441,6 +519,14 @@ export function DcirSettings({
       draft.computation.dcir = { series: next };
     });
 
+  const toggleSeriesHidden = (seriesId: string) =>
+    update((draft) => {
+      const hidden = new Set(draft.presentation.hidden_series_ids ?? []);
+      if (hidden.has(seriesId)) hidden.delete(seriesId);
+      else hidden.add(seriesId);
+      draft.presentation.hidden_series_ids = [...hidden];
+    });
+
   const [seriesCollapsed, setSeriesCollapsed] = useState(false);
   const [editor, setEditor] = useState<{
     open: boolean;
@@ -450,16 +536,15 @@ export function DcirSettings({
     error: string | null;
   }>({ open: false, id: null, cellId: null, segmentId: null, error: null });
 
-  // Colour each series row with the exact swatch the plot draws for it: the
-  // plot palettes by the order of drawable (n_measurements > 0) result series,
-  // so the dot only matches if it reads that same order rather than the spec's.
+  // Colour each series row with the exact swatch the plot draws for it. The
+  // plot palettes over the *visible* series (drawable and not hidden by any
+  // layer), so the dot only matches if it reads that same filtered order.
   const seriesColor = useMemo(() => {
     const style = currentPlotStyle(spec, "dcir");
     const palette = plotPalette(style);
     const map = new Map<string, string>();
-    (result.data?.cell_series ?? [])
-      .filter((item) => item.n_measurements > 0)
-      .forEach((item, index) => {
+    (result.data ? dcirVisibleSeries(result.data, spec) : []).forEach(
+      (item, index) => {
         map.set(
           item.series_id,
           style.custom_colors[`dcir-${item.series_id}`] ??
@@ -469,14 +554,22 @@ export function DcirSettings({
     return map;
   }, [result.data, spec]);
 
-  const openSeriesEditor = (item: DcirSeriesSpec | null) =>
+  const openSeriesEditor = (item: DcirSeriesSpec | null) => {
+    const fallback = firstValidPair();
+    const cellId = item?.cell_id ?? fallback.cellId;
+    const validSegments = applicableSegments(cellId);
+    const segmentId =
+      item && validSegments.some((segment) => segment.id === item.segment_id)
+        ? item.segment_id
+        : validSegments[0]?.id ?? fallback.segmentId;
     setEditor({
       open: true,
       id: item?.id ?? null,
-      cellId: item?.cell_id ?? cells[0]?.id ?? null,
-      segmentId: item?.segment_id ?? segments[0]?.id ?? null,
+      cellId,
+      segmentId,
       error: null,
     });
+  };
 
   const closeSeriesEditor = () =>
     setEditor((current) => ({ ...current, open: false, error: null }));
@@ -582,7 +675,7 @@ export function DcirSettings({
       <ProtocolSegmentsPanel
         cellIds={cells.map((cell) => cell.id)}
         segments={protocolSegments}
-        hiddenSegmentIds={[]}
+        hiddenSegmentIds={spec.presentation.hidden_analysis_segment_ids ?? []}
         excludedSegmentIds={[]}
         onlySegmentIds={[]}
         onSaveSegment={saveProtocolSegment}
@@ -598,13 +691,21 @@ export function DcirSettings({
             };
           })
         }
-        onToggleHidden={() => undefined}
+        onToggleHidden={(segmentId) =>
+          update((draft) => {
+            const hidden = new Set(draft.presentation.hidden_analysis_segment_ids ?? []);
+            if (hidden.has(segmentId)) hidden.delete(segmentId);
+            else hidden.add(segmentId);
+            draft.presentation.hidden_analysis_segment_ids = [...hidden];
+          })
+        }
         onToggleExcluded={() => undefined}
         onUseOnly={() => undefined}
         title="DCIR segments"
         subtitle="Private to this tab"
         emptyText="No DCIR segments. Add one to select a rest and pulse pair."
         showPlotControls={false}
+        showVisibilityToggle
         showSuggestions
         suggestions={suggestions}
         suggestionsLoading={protocols.isLoading}
@@ -641,7 +742,12 @@ export function DcirSettings({
             size="compact-xs"
             variant="light"
             leftSection={<IconPlus size={14} />}
-            disabled={!cells.length || !segments.length}
+            disabled={
+              !cells.length ||
+              !segments.length ||
+              protocols.isLoading ||
+              !cells.some((cell) => applicableSegments(cell.id).length > 0)
+            }
             onClick={() => openSeriesEditor(null)}
           >
             Add series
@@ -653,7 +759,7 @@ export function DcirSettings({
               Each cell and DCIR segment pair becomes one independent line.
             </Text>
           ) : (
-            <ScrollArea.Autosize mah={280} type="auto" offsetScrollbars>
+            <Box className="cx-vertical-scroll" style={{ maxHeight: 280 }}>
               <Stack gap={4} pr={4}>
                 {series.map((item) => {
                   const cellName =
@@ -663,6 +769,11 @@ export function DcirSettings({
                     segments.find((segment) => segment.id === item.segment_id)?.name ??
                     "Unknown segment";
                   const noMatch = unmatched.has(item.id);
+                  const cellHidden = isCellHiddenInAnalysis(spec, item.cell_id);
+                  const segmentHidden = isAnalysisSegmentHidden(spec, item.segment_id);
+                  const selfHidden = isSeriesHidden(spec, item.id);
+                  const hidden = cellHidden || segmentHidden || selfHidden;
+                  const forcedHidden = cellHidden || segmentHidden;
                   return (
                     <Group
                       key={item.id}
@@ -673,6 +784,7 @@ export function DcirSettings({
                         border: "1px solid var(--mantine-color-gray-2)",
                         borderRadius: 6,
                         padding: "5px 8px",
+                        opacity: hidden ? 0.5 : 1,
                       }}
                     >
                       <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
@@ -682,26 +794,55 @@ export function DcirSettings({
                             height: 10,
                             borderRadius: 5,
                             flexShrink: 0,
-                            background:
-                              seriesColor.get(item.id) ??
-                              "var(--mantine-color-gray-4)",
+                            background: hidden
+                              ? "var(--mantine-color-gray-4)"
+                              : seriesColor.get(item.id) ??
+                                "var(--mantine-color-gray-4)",
                           }}
                         />
-                        <Box style={{ minWidth: 0 }}>
-                          <Text size="xs" fw={600} truncate>
-                            {cellName}
-                          </Text>
-                          <Text
-                            size="10px"
-                            c={noMatch ? "red" : "dimmed"}
-                            truncate
-                          >
-                            {segmentName}
-                            {noMatch ? " · no match" : ""}
-                          </Text>
-                        </Box>
+                        <Tooltip
+                          label={`${cellName} — ${segmentName}`}
+                          openDelay={400}
+                          withArrow
+                          multiline
+                        >
+                          <Box style={{ minWidth: 0 }}>
+                            <Text size="xs" fw={600} truncate>
+                              {cellName}
+                            </Text>
+                            <Text
+                              size="10px"
+                              c={noMatch ? "red" : "dimmed"}
+                              truncate
+                            >
+                              {segmentName}
+                              {noMatch ? " · no match" : ""}
+                            </Text>
+                          </Box>
+                        </Tooltip>
                       </Group>
                       <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
+                        <Tooltip
+                          label={
+                            forcedHidden
+                              ? "Hidden with its cell or segment"
+                              : hidden
+                                ? "Show series"
+                                : "Hide series"
+                          }
+                          openDelay={300}
+                          withArrow
+                        >
+                          <ActionIcon
+                            variant="subtle"
+                            color={hidden ? "gray" : "teal"}
+                            size="sm"
+                            aria-label={hidden ? "Show DCIR series" : "Hide DCIR series"}
+                            onClick={() => toggleSeriesHidden(item.id)}
+                          >
+                            {hidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
                         <ActionIcon
                           variant="subtle"
                           color="gray"
@@ -727,7 +868,7 @@ export function DcirSettings({
                   );
                 })}
               </Stack>
-            </ScrollArea.Autosize>
+            </Box>
           )}
         </Collapse>
       </Paper>
@@ -749,16 +890,20 @@ export function DcirSettings({
             }))}
             value={editor.cellId != null ? String(editor.cellId) : null}
             onChange={(value) =>
-              setEditor((current) => ({
-                ...current,
-                cellId: value ? Number(value) : null,
-                error: null,
-              }))
+              setEditor((current) => {
+                const cellId = value ? Number(value) : null;
+                return {
+                  ...current,
+                  cellId,
+                  segmentId: applicableSegments(cellId)[0]?.id ?? null,
+                  error: null,
+                };
+              })
             }
           />
           <Select
             label="DCIR segment"
-            data={segments.map((segment) => ({
+            data={applicableSegments(editor.cellId).map((segment) => ({
               value: segment.id,
               label: segment.name,
             }))}
@@ -769,6 +914,14 @@ export function DcirSettings({
                 segmentId: value,
                 error: null,
               }))
+            }
+            disabled={editor.cellId == null || protocols.isLoading}
+            description={
+              editor.cellId != null &&
+              !protocols.isLoading &&
+              applicableSegments(editor.cellId).length === 0
+                ? "No DCIR segments apply to this cell."
+                : undefined
             }
           />
           {editor.error && (
@@ -878,14 +1031,27 @@ export function DcirPlotCard({
   plotName,
   spec,
   update,
+  edited = false,
+  onNewPlot,
+  newPlotEnabled = false,
+  onUpdatePlot,
+  updatePlotEnabled = false,
 }: {
   analysisId: number;
   analysisTitle: string;
   plotName: string;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
+  edited?: boolean;
+  onNewPlot?: () => void;
+  newPlotEnabled?: boolean;
+  onUpdatePlot?: () => void;
+  updatePlotEnabled?: boolean;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
+  const plotDivRef = useRef<HTMLElement | null>(null);
+  const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const view = dcirViewFor(spec);
   const style = currentPlotStyle(spec, "dcir");
   const result = useDcirResult(analysisId, spec);
@@ -897,20 +1063,34 @@ export function DcirPlotCard({
     [result.data, spec]
   );
   const layout = useMemo(() => dcirLayoutForSpec(spec), [spec]);
+  const recognitionProgress = useDelayedRecognitionProgress(
+    result.computeToken,
+    result.isLoading,
+  );
+  const plotUpdating = result.isFetching && traces.length > 0;
+  const rememberPlotDiv = (graphDiv: unknown) => {
+    const element = graphDiv as HTMLElement;
+    plotDivRef.current = element;
+    const rect = element.getBoundingClientRect();
+    const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+    setPlotSize((current) =>
+      current && current.width === next.width && current.height === next.height
+        ? current
+        : next
+    );
+  };
 
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
-    if (!traces.length) return;
     try {
-      const dataUrl = await (
-        Plotly as unknown as {
-          toImage: (figure: unknown, options: unknown) => Promise<string>;
-        }
-      ).toImage(
-        { data: traces, layout: { ...layout, title: { text: plotName } } },
-        { format: format === "pdf" ? "svg" : format, width: 1000, height: 600, scale: 2 }
+      await downloadStyledPlotExport(
+        traces,
+        layout,
+        style,
+        plotName,
+        format,
+        baseName,
+        plotSize,
       );
-      const blob = await (await fetch(dataUrl)).blob();
-      await saveDownload(blob, `${baseName}.${format === "pdf" ? "svg" : format}`);
     } catch (error) {
       notifications.show({
         color: "red",
@@ -918,6 +1098,9 @@ export function DcirPlotCard({
       });
     }
   };
+
+  const getExportPreview = () =>
+    styledPlotExportPreview(traces, layout, style, plotName, plotSize);
 
   const dataExport = async (baseName: string) => {
     try {
@@ -937,11 +1120,6 @@ export function DcirPlotCard({
         withBorder
         style={{ minHeight: 590, position: "relative", flex: 1, minWidth: 520, overflow: "hidden" }}
       >
-        <LoadingOverlay
-          visible={result.isFetching && traces.length === 0}
-          overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
-          loaderProps={{ size: "sm", color: "teal" }}
-        />
         <PlotHeader
           analysisTitle={analysisTitle}
           tabName="DCIR"
@@ -952,7 +1130,13 @@ export function DcirPlotCard({
           sampleSummary={`${traces.length} ${traces.length === 1 ? "series" : "series"}`}
           onExport={exportPlot}
           onDataExport={dataExport}
+          getExportPreview={getExportPreview}
           style={style}
+          edited={edited}
+          onNewPlot={onNewPlot}
+          newPlotEnabled={newPlotEnabled}
+          onUpdatePlot={onUpdatePlot}
+          updatePlotEnabled={updatePlotEnabled}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=
@@ -963,6 +1147,7 @@ export function DcirPlotCard({
             })
           }
           layout={layout}
+          viewSize={plotSize}
           canExport={traces.length > 0}
         />
         {result.isError && (
@@ -984,7 +1169,15 @@ export function DcirPlotCard({
             </Text>
           </Center>
         ) : result.isLoading ? (
-          <Center h={480}><Loader size="sm" /></Center>
+          <Center h={480}>
+            {recognitionProgress.show ? (
+              <RecognitionProgress
+                percent={recognitionProgress.percent}
+                label={recognitionProgress.label}
+                waiting={recognitionProgress.active && !recognitionProgress.job}
+              />
+            ) : null}
+          </Center>
         ) : !traces.length ? (
           <Center h={480}>
             <Text size="sm" c="dimmed">No valid DCIR occurrences were found.</Text>
@@ -995,13 +1188,29 @@ export function DcirPlotCard({
               Each point uses the final rest voltage, final pulse voltage, and median absolute
               pulse current.
             </Text>
-            <Box style={{ width: "100%", minWidth: 0 }}>
+            <Box
+              ref={containerRef}
+              style={{
+                width: "100%",
+                minWidth: 0,
+                opacity: plotUpdating ? 0.42 : 1,
+                transition: "opacity 160ms ease",
+              }}
+            >
               <Plot
                 data={traces}
                 layout={layout}
                 config={{ displaylogo: false, responsive: true }}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
+                onInitialized={(_, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                }}
+                onUpdate={(_, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                }}
               />
             </Box>
           </>

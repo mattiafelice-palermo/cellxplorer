@@ -25,7 +25,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 
 # Version of our derived per-cycle calculation code. Bump when the
 # calculation in services/calc.py changes meaning.
@@ -35,6 +35,11 @@ APP_VERSION = "0.13.0"
 # 1.3.0: added charge/discharge first/last voltage endpoints and
 #        render-time polarization.
 # 1.4.0: added CV-charge time, capacity, fraction, and event counts.
-CALC_VERSION = "1.4.0"
+# 1.5.0: capacity and energy are summed per step instead of taking a per-cycle
+#        maximum. Neware's counters reset at every step boundary, so the old
+#        maximum kept only the largest step of a phase — a CC+CV charge lost its
+#        CV portion, which understated charge capacity and pushed coulombic
+#        efficiency above 100%.
+CALC_VERSION = "1.5.0"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

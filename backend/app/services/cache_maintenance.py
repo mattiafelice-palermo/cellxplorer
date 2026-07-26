@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -806,6 +807,28 @@ def _analysis_title_summary(titles: list[str], limit: int = 3) -> str:
     if len(titles) > limit:
         quoted.append(f"{len(titles) - limit} more")
     return ", ".join(quoted)
+
+
+def dependent_analysis_ids(db: Session, cell_ids: Iterable[int]) -> list[int]:
+    """Return every analysis whose live or saved selection references the cells."""
+    requested = {int(cell_id) for cell_id in cell_ids}
+    if not requested:
+        return []
+    analyses = db.query(Analysis).all()
+    affected: set[int] = set()
+    for cell_id in requested:
+        replicate_group_ids = {
+            row[0]
+            for row in db.query(ReplicateGroupCell.group_id)
+            .filter(ReplicateGroupCell.cell_id == cell_id)
+            .all()
+        }
+        affected.update(
+            analysis.id
+            for analysis in analyses
+            if _analysis_references_cell(analysis, cell_id, replicate_group_ids)
+        )
+    return sorted(affected)
 
 
 def invalidate_cell_dependents(

@@ -25,6 +25,8 @@ ANALYSIS_CACHE_VERSION = 3
 RESULT_SCHEMA_VERSIONS = {
     "steps": 2,
     "dcir": 1,
+    "chargeability": 1,
+    "rate_capability": 3,
 }
 PLOT_ARTIFACT_CACHE_VERSION = 2
 THUMBNAIL_CACHE_VERSION = 5

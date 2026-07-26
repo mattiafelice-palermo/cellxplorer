@@ -94,6 +94,57 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertEqual(background_jobs.find_by_token("tok-1")["id"], job_id)
         self.assertIsNone(background_jobs.find_by_token(None))
 
+    def test_finish_job_marks_recognition_items_ready_without_cache_counters(self):
+        """Uncached recognition must not leave Activity rows badged 'queued'."""
+        from app.routers.analyses import _finish_job, _recognition_progress_callback
+
+        job_id = background_jobs.create_job(
+            kind="analysis_compute",
+            title="Preparing Demo (rate capability plot)",
+            description="Reading cell data",
+            total=2,
+            items=[
+                {"id": 1, "label": "Cell A", "status": "queued"},
+                {"id": 2, "label": "Cell B", "status": "queued"},
+            ],
+        )
+        progress = _recognition_progress_callback(job_id)
+        progress(4, 8, "Cell A", "Building blocks")
+        progress(8, 8, "Cell B", "Rate sweeps detected")
+
+        _finish_job(job_id, cached=False)
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["completed"], job["total"])
+        self.assertEqual(job["description"], "Recognition complete")
+        self.assertEqual(job["counters"], {})
+        for item in job["items"]:
+            self.assertEqual(item["status"], "ready")
+            self.assertEqual(item["detail"], "Recognition complete")
+
+    def test_finish_job_cached_path_still_counts_cached_reads(self):
+        """Cycle-tab cache hits must keep the cached/re-parsed Activity summary."""
+        from app.routers.analyses import _finish_job
+
+        job_id = background_jobs.create_job(
+            kind="analysis_compute",
+            title="Preparing Demo (cycle plot)",
+            description="Reading cell data",
+            total=2,
+            items=[
+                {"id": 1, "label": "Cell A", "status": "queued"},
+                {"id": 2, "label": "Cell B", "status": "queued"},
+            ],
+        )
+        _finish_job(job_id, cached=True)
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["description"], "Loaded cached plot data")
+        self.assertEqual(job["counters"], {"cached": 2})
+        for item in job["items"]:
+            self.assertEqual(item["status"], "ready")
+            self.assertEqual(item["detail"], "Loaded from persistent cache")
+
 
 if __name__ == "__main__":
     unittest.main()

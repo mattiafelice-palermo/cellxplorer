@@ -90,6 +90,19 @@ class PortableAnalysisTests(unittest.TestCase):
         *,
         include_saved_plots: bool = False,
     ):
+        db, analysis, _, _, source_hash = self.create_analysis(
+            include_saved_plots=include_saved_plots
+        )
+        destination = self.root / "portable.html"
+        portable_analysis.export_analysis_html(
+            db,
+            analysis,
+            destination,
+            include_original_files=include_original_files,
+        )
+        return destination, source_hash
+
+    def create_analysis(self, *, include_saved_plots: bool = False):
         db = self.make_session()
         source_path = self.root / "cell.ndax"
         source_path.write_bytes(b"portable-neware-source")
@@ -149,15 +162,7 @@ class PortableAnalysisTests(unittest.TestCase):
         analysis = Analysis(title="Portable study", spec=spec)
         db.add(analysis)
         db.commit()
-
-        destination = self.root / "portable.html"
-        portable_analysis.export_analysis_html(
-            db,
-            analysis,
-            destination,
-            include_original_files=include_original_files,
-        )
-        return destination, source_hash
+        return db, analysis, source, source_path, source_hash
 
     def read_report(self, destination: Path) -> dict:
         bounds = portable_analysis._index_script_bounds(destination)
@@ -183,6 +188,66 @@ class PortableAnalysisTests(unittest.TestCase):
             "total_charge_capacity_mah": 1.0,
             "total_discharge_capacity_mah": 0.95,
         }
+
+    def test_source_preflight_detects_changed_and_unavailable_originals(self):
+        db, analysis, source, source_path, _ = self.create_analysis()
+
+        current = portable_analysis.preflight_original_sources(db, analysis)
+        self.assertTrue(current["ready"])
+        self.assertEqual(current["current"], 1)
+
+        source_path.write_bytes(b"changed-portable-neware-source")
+        changed = portable_analysis.preflight_original_sources(db, analysis)
+        self.assertFalse(changed["ready"])
+        self.assertEqual(changed["changed"], 1)
+        self.assertEqual(changed["sources"][0]["source_id"], source.id)
+        self.assertEqual(changed["affected_analysis_ids"], [analysis.id])
+
+        source_path.unlink()
+        unavailable = portable_analysis.preflight_original_sources(db, analysis)
+        self.assertFalse(unavailable["ready"])
+        self.assertEqual(unavailable["unavailable"], 1)
+
+    def test_source_update_adopts_stable_bytes_and_makes_preflight_ready(self):
+        db, analysis, source, source_path, original_hash = self.create_analysis()
+        source_path.write_bytes(b"updated-portable-neware-source")
+        preflight = portable_analysis.preflight_original_sources(db, analysis)
+        item = preflight["sources"][0]
+
+        with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
+            result = portable_analysis.update_original_sources(
+                db,
+                analysis,
+                [
+                    {
+                        "source_id": source.id,
+                        "expected_size": item["expected_size"],
+                        "expected_mtime_ns": item["expected_mtime_ns"],
+                    }
+                ],
+            )
+
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], [])
+        self.assertTrue(result["preflight"]["ready"])
+        self.assertNotEqual(source.hash, original_hash)
+        self.assertEqual(source.hash, portable_analysis._sha256_file(source_path))
+
+    def test_strict_export_refuses_to_silently_omit_changed_original(self):
+        db, analysis, _, source_path, _ = self.create_analysis()
+        source_path.write_bytes(b"changed-before-final-packaging")
+        destination = self.root / "strict-portable.html"
+
+        with self.assertRaises(portable_analysis.PortableOriginalSourceError):
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                destination,
+                include_original_files=True,
+                strict_original_files=True,
+            )
+
+        self.assertFalse(destination.exists())
 
     def test_linked_round_trip_reuses_recorded_path_and_rebuilds_caches(self):
         destination, source_hash = self.create_export(include_original_files=False)
@@ -303,6 +368,38 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(cycle_view["result"]["cell_series"][0]["x"], [1])
         self.assertEqual(time_view["result"]["cell_traces"][0]["label"], "Portable cell")
         self.assertGreater(len(time_view["result"]["cell_traces"][0]["time_s"]), 0)
+
+    def test_draft_plot_is_not_exported(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+        spec = deepcopy(analysis.spec)
+        draft = {
+            "tab": "cycles",
+            "name": "Secret draft",
+            "selection": deepcopy(spec["selection"]),
+            "computation": deepcopy(spec["computation"]),
+            "aggregation": deepcopy(spec["aggregation"]),
+            "presentation": deepcopy(spec["presentation"]),
+            "updated_at": "2026-07-25T00:00:00+00:00",
+        }
+        spec["draft_plot"] = draft
+        spec["draft_plots"] = {"cycles": draft, "steps": {**draft, "tab": "steps", "name": "Steps draft"}}
+        analysis.spec = spec
+        db.commit()
+
+        destination = self.root / "draft-export.html"
+        portable_analysis.export_analysis_html(
+            db,
+            analysis,
+            destination,
+            include_original_files=False,
+        )
+        report = self.read_report(destination)
+        self.assertNotIn("draft_plot", report["analysis"]["spec"])
+        self.assertNotIn("draft_plots", report["analysis"]["spec"])
+        self.assertEqual(len(report["views"]), 2)
+        self.assertTrue(
+            all(view.get("name") != "Secret draft" for view in report["views"])
+        )
 
     def test_inspection_reports_exact_match_and_import_reuses_library_cell(self):
         destination, source_hash = self.create_export(include_original_files=True)

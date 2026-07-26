@@ -1,13 +1,13 @@
 .protocolFlow {
   border: 1px solid var(--mantine-color-gray-3);
   border-radius: 6px;
-  background: #fbfbf8;
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
   padding: 14px;
 }
 
 .protocolFlow[data-repeated="true"] {
   border-color: var(--mantine-color-gray-3);
-  background: #fbfbf8;
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
   box-shadow: inset 5px 0 0 var(--mantine-color-teal-5);
   padding-left: 18px;
 }
@@ -18,7 +18,7 @@
   min-height: 116px;
   padding: 10px 11px;
   text-align: left;
-  background: var(--mantine-color-white);
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
   border: 1px solid var(--mantine-color-gray-3);
   border-top: 3px solid var(--mantine-color-gray-5);
   border-radius: 6px;

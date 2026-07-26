@@ -189,14 +189,17 @@ function CachedPlotThumbnail({ analysisId, plotId }: { analysisId: number; plotI
   });
   if (thumbnail.data?.thumbnail) {
     return (
-      <Box
-        component="img"
-        src={thumbnail.data.thumbnail}
-        alt="Cached plot preview"
-        w="100%"
-        h="100%"
-        style={{ display: "block", objectFit: "contain" }}
-      />
+      <Box className="cx-plot-thumbnail-frame" w="100%" h="100%" style={{ display: "grid", placeItems: "center" }}>
+        <Box
+          component="img"
+          className="cx-plot-thumbnail"
+          src={thumbnail.data.thumbnail}
+          alt="Cached plot preview"
+          maw="100%"
+          mah="100%"
+          style={{ display: "block" }}
+        />
+      </Box>
     );
   }
   return (
@@ -242,7 +245,7 @@ function PlotSummary({
                 }}
                 style={{
                   borderRadius: 5,
-                  background: hoveredPlot?.id === plot.id ? "var(--mantine-color-teal-0)" : undefined,
+                  background: hoveredPlot?.id === plot.id ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
                 }}
               >
                 <Text size="sm" fw={600}>{plot.name}</Text>
@@ -254,7 +257,7 @@ function PlotSummary({
           </Stack>
           <Box w={390} style={{ flexShrink: 0 }}>
             <Box
-              bg="gray.0"
+              bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
               style={{ aspectRatio: "4 / 3", display: "grid", placeItems: "center", overflow: "hidden" }}
             >
               {hoveredPlot ? (

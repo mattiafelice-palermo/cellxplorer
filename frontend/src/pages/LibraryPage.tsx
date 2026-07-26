@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Center,
   Checkbox,
@@ -14,6 +15,7 @@ import {
   Modal,
   MultiSelect,
   NumberInput,
+  Pagination,
   Paper,
   ScrollArea,
   Select,
@@ -34,6 +36,7 @@ import {
   IconDatabase,
   IconDeviceFloppy,
   IconEye,
+  IconFolder,
   IconLayersIntersect,
   IconPlayerPlay,
   IconPencil,
@@ -53,6 +56,7 @@ import {
   CellSummary,
   ElectrodeAreaPresetSettings,
   del,
+  FolderNode,
   get,
   patch,
   post,
@@ -60,12 +64,41 @@ import {
   ReplicateGroupSummary,
   SourceCheckJob,
   SourceFile,
+  Tree,
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
+import {
+  deleteEmptyAnalysesIfRequested,
+  DestructiveImpactModal,
+  type DestructiveImpactConfirmOptions,
+} from "../components/DestructiveImpactModal";
+import { FolderTree } from "../components/FolderTree";
+import { PlaceInFoldersModal } from "../components/PlaceInFoldersModal";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
 import { invalidateAnalysisQueries } from "../analysisQueryCache";
 import { ImportCellsLauncher } from "./InboxPage";
+
+type LibraryImpactRequest = {
+  title: string;
+  confirmLabel: string;
+  plainMessage: string;
+  cellIds: number[];
+  groupIds: number[];
+  run: (options: DestructiveImpactConfirmOptions) => Promise<void>;
+};
+
+/** Union of folder ids that currently contain any of the given cells. */
+function foldersContainingCells(nodes: FolderNode[], cellIds: number[]): Set<number> {
+  const wanted = new Set(cellIds);
+  const found = new Set<number>();
+  const walk = (folder: FolderNode) => {
+    if (folder.cell_ids.some((id) => wanted.has(id))) found.add(folder.id);
+    folder.children.forEach(walk);
+  };
+  nodes.forEach(walk);
+  return found;
+}
 
 function statusColor(status: string) {
   if (status === "parsed" || status === "online") return "teal";
@@ -110,18 +143,49 @@ function cellsUrl(search: string) {
   return `/api/cells${search ? `?search=${encodeURIComponent(search)}` : ""}`;
 }
 
+const CELL_PAGE_SIZE_OPTIONS = ["25", "50", "100"] as const;
+type CellPageSize = 25 | 50 | 100;
+const CELL_PAGE_SIZE_STORAGE_KEY = "cellxplorer-library-page-size";
+
+function loadCellPageSize(): CellPageSize {
+  if (typeof window === "undefined") return 25;
+  const raw = window.localStorage.getItem(CELL_PAGE_SIZE_STORAGE_KEY);
+  if (raw === "25" || raw === "50" || raw === "100") return Number(raw) as CellPageSize;
+  return 25;
+}
+
+const LIBRARY_STICKY_BAR_STYLE = {
+  position: "sticky" as const,
+  top: "var(--app-shell-header-height, 52px)",
+  zIndex: 40,
+  marginInline: "calc(-1 * var(--mantine-spacing-md))",
+  paddingInline: "var(--mantine-spacing-md)",
+  paddingBlock: 8,
+  borderBottom: "1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))",
+  background: "light-dark(var(--mantine-color-body), var(--mantine-color-dark-7))",
+};
+
 export function LibraryPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
+  const [cellPage, setCellPage] = useState(1);
+  const [cellPageSize, setCellPageSize] = useState<CellPageSize>(() => loadCellPageSize());
   const [replicateSearch, setReplicateSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedCellIds, setSelectedCellIds] = useState<Set<number>>(new Set());
   const [lastSelectedCellId, setLastSelectedCellId] = useState<number | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [placeCellsOpen, setPlaceCellsOpen] = useState(false);
+  const [placeCellOpen, setPlaceCellOpen] = useState(false);
   const [addToGroupDialogOpen, setAddToGroupDialogOpen] = useState(false);
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
+  const [groupFolderIds, setGroupFolderIds] = useState<Set<number>>(new Set());
+  // Prefill from the tree must not overwrite ticks made while a cold fetch settles.
+  const groupFoldersTouched = useRef(false);
+  const [groupFolderSearch, setGroupFolderSearch] = useState("");
+  const [groupFolderSessionKey, setGroupFolderSessionKey] = useState(0);
   const [previewGroupId, setPreviewGroupId] = useState<number | null>(null);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<number>>(new Set());
@@ -162,6 +226,7 @@ export function LibraryPage() {
   const [editGroupName, setEditGroupName] = useState("");
   const [editGroupDescription, setEditGroupDescription] = useState("");
   const [editGroupCellIds, setEditGroupCellIds] = useState<string[]>([]);
+  const [impactRequest, setImpactRequest] = useState<LibraryImpactRequest | null>(null);
   const handledSourceCheckJob = useRef<number | null>(null);
 
   const cells = useQuery({
@@ -193,6 +258,11 @@ export function LibraryPage() {
           replicateSearch ? `?search=${encodeURIComponent(replicateSearch)}` : ""
         }`
       ),
+  });
+  const tree = useQuery({
+    queryKey: ["tree"],
+    queryFn: () => get<Tree>("/api/tree"),
+    enabled: groupDialogOpen,
   });
 
   const replicateEditCells = useQuery({
@@ -306,22 +376,33 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      void invalidateAnalysisQueries(qc);
+      qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["files"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
 
   const createReplicateGroup = useMutation({
-    mutationFn: (body: { name: string; cell_ids: number[] }) =>
-      post<ReplicateGroupSummary>("/api/replicate-groups", body),
+    mutationFn: async (body: { name: string; cell_ids: number[]; folder_ids: number[] }) => {
+      return post<ReplicateGroupSummary>("/api/replicate-groups", {
+        name: body.name,
+        cell_ids: body.cell_ids,
+        folder_ids: body.folder_ids,
+      });
+    },
     onSuccess: (group) => {
       notifications.show({ message: `Created replicate group ${group.name}`, color: "teal" });
       setGroupDialogOpen(false);
       setGroupName("");
+      setGroupFolderIds(new Set());
+      groupFoldersTouched.current = false;
+      setGroupFolderSearch("");
       setSelectedCellIds(new Set());
       setPreviewGroupId(group.id);
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["cells"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -393,9 +474,20 @@ export function LibraryPage() {
       setSelectedGroupIds(new Set());
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["cells"] });
+      void invalidateAnalysisQueries(qc);
+      qc.invalidateQueries({ queryKey: ["analyses"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
+
+  const invalidateAfterImpact = () => {
+    qc.invalidateQueries({ queryKey: ["analyses"] });
+    qc.invalidateQueries({ queryKey: ["tree"] });
+    qc.invalidateQueries({ queryKey: ["cells"] });
+    qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+    void invalidateAnalysisQueries(qc);
+  };
 
   const updateSource = useMutation({
     mutationFn: (file: SourceFile) =>
@@ -570,13 +662,28 @@ export function LibraryPage() {
       (group) => group.cell_ids.includes(cell.id) && group.cell_ids.length === 1
     );
     const suffix = emptiedGroups.length
-      ? `\n\nThis will also remove empty replicate group${emptiedGroups.length === 1 ? "" : "s"}: ${emptiedGroups
+      ? ` This will also remove empty replicate group${emptiedGroups.length === 1 ? "" : "s"}: ${emptiedGroups
           .map((group) => group.name)
           .join(", ")}.`
       : "";
-    if (window.confirm(`Remove ${cell.name} from the library?${suffix}`)) {
-      removeCell.mutate(cell);
-    }
+    setImpactRequest({
+      title: `Remove ${cell.name}?`,
+      confirmLabel: "Remove",
+      plainMessage: `Remove ${cell.name} from the library?${suffix}`,
+      cellIds: [cell.id],
+      groupIds: [],
+      run: async (options) => {
+        await removeCell.mutateAsync(cell);
+        const deleted = await deleteEmptyAnalysesIfRequested(options);
+        if (deleted.length) {
+          notifications.show({
+            message: `Deleted ${deleted.length} empty ${deleted.length === 1 ? "analysis" : "analyses"}.`,
+            color: "orange",
+          });
+          invalidateAfterImpact();
+        }
+      },
+    });
   };
 
   const startEditingCell = (cell: CellSummary | CellDetail) => {
@@ -683,17 +790,55 @@ export function LibraryPage() {
       (group) => group.cell_ids.length > 0 && group.cell_ids.every((cellId) => selected.has(cellId))
     );
     const suffix = emptiedGroups.length
-      ? `\n\nThis will also remove empty replicate group${emptiedGroups.length === 1 ? "" : "s"}: ${emptiedGroups
+      ? ` This will also remove empty replicate group${emptiedGroups.length === 1 ? "" : "s"}: ${emptiedGroups
           .map((group) => group.name)
           .join(", ")}.`
       : "";
-    if (
-      window.confirm(
-        `Remove ${selectedCells.length} selected cell${selectedCells.length === 1 ? "" : "s"} from the library?${suffix}`
-      )
-    ) {
-      removeCells.mutate(selectedIds);
-    }
+    const cellIds = [...selectedIds];
+    setImpactRequest({
+      title: `Remove ${cellIds.length} cell${cellIds.length === 1 ? "" : "s"}?`,
+      confirmLabel: "Remove",
+      plainMessage: `Remove ${cellIds.length} selected cell${cellIds.length === 1 ? "" : "s"} from the library?${suffix}`,
+      cellIds,
+      groupIds: [],
+      run: async (options) => {
+        await removeCells.mutateAsync(cellIds);
+        const deleted = await deleteEmptyAnalysesIfRequested(options);
+        if (deleted.length) {
+          notifications.show({
+            message: `Deleted ${deleted.length} empty ${deleted.length === 1 ? "analysis" : "analyses"}.`,
+            color: "orange",
+          });
+          invalidateAfterImpact();
+        }
+      },
+    });
+  };
+
+  const confirmUngroup = (groupIds: number[]) => {
+    if (groupIds.length === 0) return;
+    setImpactRequest({
+      title:
+        groupIds.length === 1 ? "Separate replicate?" : `Separate ${groupIds.length} replicates?`,
+      confirmLabel: "Separate",
+      plainMessage:
+        groupIds.length === 1
+          ? "Remove this replicate grouping? Cells remain in the library."
+          : `Remove grouping for ${groupIds.length} replicates? Cells remain in the library.`,
+      cellIds: [],
+      groupIds,
+      run: async (options) => {
+        await ungroupReplicates.mutateAsync({ group_ids: groupIds });
+        const deleted = await deleteEmptyAnalysesIfRequested(options);
+        if (deleted.length) {
+          notifications.show({
+            message: `Deleted ${deleted.length} empty ${deleted.length === 1 ? "analysis" : "analyses"}.`,
+            color: "orange",
+          });
+          invalidateAfterImpact();
+        }
+      },
+    });
   };
 
   const totals = useMemo(() => {
@@ -734,8 +879,23 @@ export function LibraryPage() {
         : selectedAnyComplete
           ? "Mark complete"
           : "Mark complete";
+  const allCells = cells.data ?? [];
+  const cellPageCount = Math.max(1, Math.ceil(allCells.length / cellPageSize));
+  const safeCellPage = Math.min(cellPage, cellPageCount);
+  const pageStart = (safeCellPage - 1) * cellPageSize;
+  const pageCells = allCells.slice(pageStart, pageStart + cellPageSize);
+  const pageEnd = pageStart + pageCells.length;
+
+  useEffect(() => {
+    setCellPage(1);
+  }, [search, cellPageSize]);
+
+  useEffect(() => {
+    if (cellPage > cellPageCount) setCellPage(cellPageCount);
+  }, [cellPage, cellPageCount]);
+
   const allVisibleSelected =
-    (cells.data?.length ?? 0) > 0 && (cells.data ?? []).every((cell) => selectedCellIds.has(cell.id));
+    pageCells.length > 0 && pageCells.every((cell) => selectedCellIds.has(cell.id));
   const groupsByCellId = useMemo(() => {
     const map = new Map<number, ReplicateGroupSummary[]>();
     (replicateGroups.data ?? []).forEach((group) => {
@@ -753,8 +913,19 @@ export function LibraryPage() {
     [replicateGroups.data]
   );
 
+  const setPageSize = (value: string | null) => {
+    if (value !== "25" && value !== "50" && value !== "100") return;
+    const next = Number(value) as CellPageSize;
+    setCellPageSize(next);
+    try {
+      window.localStorage.setItem(CELL_PAGE_SIZE_STORAGE_KEY, value);
+    } catch {
+      // Ignoring persistence failure must not block pagination.
+    }
+  };
+
   const toggleCellSelection = (cellId: number, range = false) => {
-    const visible = cells.data ?? [];
+    const visible = pageCells;
     setSelectedCellIds((current) => {
       const next = new Set(current);
       if (range && lastSelectedCellId !== null) {
@@ -788,128 +959,184 @@ export function LibraryPage() {
         </div>
       </Group>
 
-      <Group gap="xs" justify="end" align="center">
-        <ImportCellsLauncher
-          targetFolderId={null}
-          onSaved={() => {
-            qc.invalidateQueries({ queryKey: ["cells"] });
-            qc.invalidateQueries({ queryKey: ["replicate-groups"] });
-            qc.invalidateQueries({ queryKey: ["tree"] });
-          }}
-        >
-          {({ open, loading }) => (
-            <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
-              Load cells
-            </Button>
-          )}
-        </ImportCellsLauncher>
-        <Button
-          variant="default"
-          size="sm"
-          leftSection={<IconRefresh size={15} />}
-          loading={checkSources.isPending || sourceCheckJob.data?.status === "running"}
-          disabled={(cells.data ?? []).length === 0 || sourceCheckJob.data?.status === "running"}
-          onClick={() => checkSources.mutate(selectedIds)}
-        >
-          Check sources
-        </Button>
-        <Button
-          variant="default"
-          size="sm"
-          leftSection={<IconRefresh size={15} />}
-          loading={updateChangedSources.isPending}
-          disabled={changedCellsInScope === 0}
-          onClick={() => updateChangedSources.mutate(selectedIds)}
-        >
-          Update changed{changedCellsInScope ? ` (${changedCellsInScope})` : ""}
-        </Button>
-        <Menu withinPortal position="bottom-end">
-          <Menu.Target>
-            <Button
-              variant="default"
-              size="sm"
-              rightSection={<IconChevronDown size={14} />}
-              leftSection={<IconLayersIntersect size={15} />}
-            >
-              Replicate
-            </Button>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item
-              leftSection={<IconLayersIntersect size={14} />}
-              disabled={selectedCellIds.size < 2}
-              onClick={() => {
-                setGroupName(
-                  selectedCells.length > 0
-                    ? `${selectedCells[0].name} replicates`
-                    : "Replicate group"
-                );
-                setGroupDialogOpen(true);
-              }}
-            >
-              Group selected as replicate
-            </Menu.Item>
-            <Menu.Item
-              leftSection={<IconLayersIntersect size={14} />}
-              disabled={selectedCellIds.size === 0 || (replicateGroups.data ?? []).length === 0}
-              onClick={() => {
-                setTargetGroupId(null);
-                setAddToGroupDialogOpen(true);
-              }}
-            >
-              Add selected to replicate
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-        <Button
-          variant="default"
-          size="sm"
-          leftSection={nextStatus === "complete" ? <IconCircleCheck size={15} /> : <IconPlayerPlay size={15} />}
-          loading={setCellStatus.isPending}
-          disabled={selectedCellIds.size === 0}
-          onClick={() => setCellStatus.mutate({ cellIds: selectedIds, cyclingStatus: nextStatus })}
-        >
-          {statusButtonLabel}
-        </Button>
-        <Button
-          variant="default"
-          color="red"
-          size="sm"
-          leftSection={<IconTrash size={15} />}
-          loading={removeCells.isPending}
-          disabled={selectedCellIds.size === 0}
-          onClick={confirmRemoveSelected}
-        >
-          Remove selected
-        </Button>
-        <TextInput
-          leftSection={<IconSearch size={15} />}
-          placeholder="Search cells"
-          value={search}
-          onChange={(event) => setSearch(event.currentTarget.value)}
-        />
-      </Group>
-
       <Stack gap="xs">
-        <Group justify="space-between" align="center">
-          <Group gap={8}>
+      <Stack gap={6} style={LIBRARY_STICKY_BAR_STYLE}>
+        <Group gap="xs" align="center" wrap="nowrap" justify="flex-start">
+          <TextInput
+            size="sm"
+            w={220}
+            style={{ flexShrink: 0 }}
+            leftSection={<IconSearch size={15} />}
+            placeholder="Search cells"
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+          />
+          <ImportCellsLauncher
+            targetFolderId={null}
+            onSaved={() => {
+              qc.invalidateQueries({ queryKey: ["cells"] });
+              qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+              qc.invalidateQueries({ queryKey: ["tree"] });
+            }}
+          >
+            {({ open, loading }) => (
+              <Button size="sm" leftSection={<IconUpload size={15} />} loading={loading} onClick={open}>
+                Load cells
+              </Button>
+            )}
+          </ImportCellsLauncher>
+          <Button
+            variant="default"
+            size="sm"
+            leftSection={<IconRefresh size={15} />}
+            loading={checkSources.isPending || sourceCheckJob.data?.status === "running"}
+            disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
+            onClick={() => checkSources.mutate(selectedIds)}
+          >
+            Check sources
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            leftSection={<IconRefresh size={15} />}
+            loading={updateChangedSources.isPending}
+            disabled={changedCellsInScope === 0}
+            onClick={() => updateChangedSources.mutate(selectedIds)}
+          >
+            Update changed{changedCellsInScope ? ` (${changedCellsInScope})` : ""}
+          </Button>
+          <Menu withinPortal position="bottom-end">
+            <Menu.Target>
+              <Button
+                variant="default"
+                size="sm"
+                rightSection={<IconChevronDown size={14} />}
+                leftSection={<IconLayersIntersect size={15} />}
+              >
+                Replicate
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<IconLayersIntersect size={14} />}
+                disabled={selectedCellIds.size < 2}
+                onClick={() => {
+                  setGroupName(
+                    selectedCells.length > 0
+                      ? `${selectedCells[0].name} replicates`
+                      : "Replicate group"
+                  );
+                  groupFoldersTouched.current = false;
+                  setGroupFolderSearch("");
+                  setGroupFolderSessionKey((value) => value + 1);
+                  setGroupFolderIds(
+                    foldersContainingCells(tree.data?.folders ?? [], selectedIds)
+                  );
+                  // Ensure tree is fresh when the dialog opens. Do not overwrite
+                  // any folder the user already toggled while this fetch settles.
+                  void qc.ensureQueryData({
+                    queryKey: ["tree"],
+                    queryFn: () => get<Tree>("/api/tree"),
+                  }).then((data) => {
+                    if (groupFoldersTouched.current) return;
+                    setGroupFolderIds(foldersContainingCells(data.folders ?? [], selectedIds));
+                  });
+                  setGroupDialogOpen(true);
+                }}
+              >
+                Group selected as replicate
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconLayersIntersect size={14} />}
+                disabled={selectedCellIds.size === 0 || (replicateGroups.data ?? []).length === 0}
+                onClick={() => {
+                  setTargetGroupId(null);
+                  setAddToGroupDialogOpen(true);
+                }}
+              >
+                Add selected to replicate
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+          <Button
+            variant="default"
+            size="sm"
+            leftSection={<IconFolder size={15} />}
+            disabled={selectedCellIds.size === 0}
+            onClick={() => setPlaceCellsOpen(true)}
+          >
+            Place in folders
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            leftSection={nextStatus === "complete" ? <IconCircleCheck size={15} /> : <IconPlayerPlay size={15} />}
+            loading={setCellStatus.isPending}
+            disabled={selectedCellIds.size === 0}
+            onClick={() => setCellStatus.mutate({ cellIds: selectedIds, cyclingStatus: nextStatus })}
+          >
+            {statusButtonLabel}
+          </Button>
+          <Tooltip label="Remove selected">
+            <ActionIcon
+              variant="default"
+              color="red"
+              size={30}
+              aria-label="Remove selected"
+              loading={removeCells.isPending}
+              disabled={selectedCellIds.size === 0}
+              onClick={confirmRemoveSelected}
+            >
+              <IconTrash size={15} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+        <Group gap="sm" justify="space-between" align="center" wrap="nowrap">
+          <Group gap={8} align="center" wrap="nowrap">
             <IconDatabase size={18} color="var(--mantine-color-teal-6)" />
             <Title order={4}>Cells</Title>
+            {selectedCellIds.size > 0 && (
+              <Badge color="teal" variant="light">
+                {selectedCellIds.size} selected
+              </Badge>
+            )}
           </Group>
-          {selectedCellIds.size > 0 && (
-            <Badge color="teal" variant="light">
-              {selectedCellIds.size} selected
-            </Badge>
+          {allCells.length > 0 && (
+            <Group gap="sm" align="center" wrap="nowrap">
+              <Group gap={6} align="center" wrap="nowrap">
+                <Text size="xs" c="dimmed">
+                  Per page
+                </Text>
+                <Select
+                  size="xs"
+                  w={80}
+                  allowDeselect={false}
+                  data={[...CELL_PAGE_SIZE_OPTIONS]}
+                  value={String(cellPageSize)}
+                  onChange={setPageSize}
+                  aria-label="Cells per page"
+                />
+              </Group>
+              <Pagination
+                size="sm"
+                value={safeCellPage}
+                onChange={setCellPage}
+                total={cellPageCount}
+                disabled={cellPageCount <= 1}
+              />
+            </Group>
           )}
         </Group>
+      </Stack>
 
+      <Stack gap="xs">
       {cells.isLoading ? (
         <Center h={360}>
           <Loader color="teal" />
         </Center>
       ) : cells.isError && !cells.data ? (
         <Alert color="red">Could not load the cell library.</Alert>
-      ) : (cells.data ?? []).length === 0 ? (
+      ) : allCells.length === 0 ? (
         <Paper withBorder p="lg">
           <Group gap="lg" align="start">
             <IconDatabase size={34} color="var(--mantine-color-teal-6)" />
@@ -923,6 +1150,7 @@ export function LibraryPage() {
           </Group>
         </Paper>
       ) : (
+        <>
         <Paper withBorder>
           <ScrollArea type="auto">
             <Table highlightOnHover>
@@ -930,19 +1158,23 @@ export function LibraryPage() {
                 <Table.Tr>
                   <Table.Th w={42}>
                     <Checkbox
-                      aria-label="Select visible cells"
+                      aria-label="Select cells on this page"
                       checked={allVisibleSelected}
-                      indeterminate={selectedCellIds.size > 0 && !allVisibleSelected}
-                      onChange={(event) =>
-                        {
-                          setSelectedCellIds(
-                            event.currentTarget.checked
-                              ? new Set((cells.data ?? []).map((cell) => cell.id))
-                              : new Set()
-                          );
-                          setLastSelectedCellId(null);
-                        }
+                      indeterminate={
+                        pageCells.some((cell) => selectedCellIds.has(cell.id)) && !allVisibleSelected
                       }
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setSelectedCellIds((current) => {
+                          const next = new Set(current);
+                          pageCells.forEach((cell) => {
+                            if (checked) next.add(cell.id);
+                            else next.delete(cell.id);
+                          });
+                          return next;
+                        });
+                        setLastSelectedCellId(null);
+                      }}
                     />
                   </Table.Th>
                   <Table.Th>Cell</Table.Th>
@@ -951,13 +1183,13 @@ export function LibraryPage() {
                   <Table.Th>Cycles</Table.Th>
                   <Table.Th>Total charge</Table.Th>
                   <Table.Th>Total discharge</Table.Th>
-                  <Table.Th>Status</Table.Th>
+                  <Table.Th style={{ whiteSpace: "nowrap" }}>Status</Table.Th>
                   <Table.Th>Created</Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {(cells.data ?? []).map((cell) => {
+                {pageCells.map((cell) => {
                   const cellGroups = groupsByCellId.get(cell.id) ?? [];
                   return (
                   <Table.Tr key={cell.id} bg={selectedCellIds.has(cell.id) ? "teal.0" : undefined}>
@@ -996,8 +1228,8 @@ export function LibraryPage() {
                     <Table.Td>
                       <CapacityValue value={cell.total_discharge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
                     </Table.Td>
-                    <Table.Td>
-                      <Group gap={4}>
+                    <Table.Td style={{ whiteSpace: "nowrap" }}>
+                      <Group gap={4} wrap="nowrap">
                         {cell.cycling_status === "complete" && (
                           <Badge color="gray" variant="light">
                             complete
@@ -1057,7 +1289,7 @@ export function LibraryPage() {
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap="xs" justify="end">
+                      <Group gap="xs" justify="end" wrap="nowrap">
                       <Tooltip label="Edit cell details">
                         <ActionIcon
                           variant="default"
@@ -1078,16 +1310,17 @@ export function LibraryPage() {
                       >
                         Open
                       </Button>
-                      <Button
-                        size="xs"
-                        variant="subtle"
-                        color="red"
-                        leftSection={<IconTrash size={14} />}
-                        loading={removeCell.isPending || removeCells.isPending}
-                        onClick={() => confirmRemove(cell)}
-                      >
-                        Remove
-                      </Button>
+                      <Tooltip label="Remove">
+                        <ActionIcon
+                          variant="subtle"
+                          color="red"
+                          aria-label={`Remove ${cell.name}`}
+                          loading={removeCell.isPending || removeCells.isPending}
+                          onClick={() => confirmRemove(cell)}
+                        >
+                          <IconTrash size={14} />
+                        </ActionIcon>
+                      </Tooltip>
                       </Group>
                     </Table.Td>
                   </Table.Tr>
@@ -1116,12 +1349,44 @@ export function LibraryPage() {
             </Table>
           </ScrollArea>
         </Paper>
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+          <Text size="sm" c="dimmed">
+            {pageCells.length === 0
+              ? `0 of ${allCells.length}`
+              : `Showing ${pageStart + 1}–${pageEnd} of ${allCells.length}`}
+          </Text>
+          <Group gap="sm" align="center">
+            <Group gap={6} align="center">
+              <Text size="xs" c="dimmed">
+                Per page
+              </Text>
+              <Select
+                size="xs"
+                w={80}
+                allowDeselect={false}
+                data={[...CELL_PAGE_SIZE_OPTIONS]}
+                value={String(cellPageSize)}
+                onChange={setPageSize}
+                aria-label="Cells per page"
+              />
+            </Group>
+            <Pagination
+              size="sm"
+              value={safeCellPage}
+              onChange={setCellPage}
+              total={cellPageCount}
+              disabled={cellPageCount <= 1}
+            />
+          </Group>
+        </Group>
+        </>
       )}
+      </Stack>
       </Stack>
 
       {((replicateGroups.data?.length ?? 0) > 0 || replicateSearch) && (
         <Stack gap="xs" mt="xl">
-          <Group justify="space-between" align="center">
+          <Group justify="space-between" align="center" style={LIBRARY_STICKY_BAR_STYLE}>
             <Group gap={6}>
               <IconLayersIntersect size={16} color="var(--mantine-color-teal-6)" />
               <Title order={4}>Replicate groups</Title>
@@ -1134,12 +1399,7 @@ export function LibraryPage() {
                 leftSection={<IconUnlink size={14} />}
                 disabled={selectedGroupIds.size === 0}
                 loading={ungroupReplicates.isPending}
-                onClick={() =>
-                  ungroupReplicates.mutate(
-                    { group_ids: [...selectedGroupIds] },
-                    { onSuccess: () => setSelectedGroupIds(new Set()) }
-                  )
-                }
+                onClick={() => confirmUngroup([...selectedGroupIds])}
               >
                 Separate selected{selectedGroupIds.size > 0 ? ` (${selectedGroupIds.size})` : ""}
               </Button>
@@ -1248,7 +1508,7 @@ export function LibraryPage() {
                           color="red"
                           leftSection={<IconUnlink size={14} />}
                           loading={ungroupReplicates.isPending}
-                          onClick={() => ungroupReplicates.mutate({ group_ids: [group.id] })}
+                          onClick={() => confirmUngroup([group.id])}
                         >
                           Separate
                         </Button>
@@ -1272,6 +1532,19 @@ export function LibraryPage() {
         </Stack>
       )}
 
+      <PlaceInFoldersModal
+        opened={placeCellsOpen}
+        onClose={() => setPlaceCellsOpen(false)}
+        cellIds={selectedIds}
+        title={`Place ${selectedIds.length} cell${selectedIds.length === 1 ? "" : "s"} in folders`}
+      />
+      <PlaceInFoldersModal
+        opened={placeCellOpen}
+        onClose={() => setPlaceCellOpen(false)}
+        cellIds={selectedId !== null ? [selectedId] : []}
+        title={`Place ${detail.data?.name ?? "cell"} in folders`}
+      />
+
       <Modal
         opened={groupDialogOpen}
         onClose={() => setGroupDialogOpen(false)}
@@ -1288,11 +1561,57 @@ export function LibraryPage() {
             onChange={(event) => setGroupName(event.currentTarget.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && selectedCellIds.size >= 2 && groupName.trim()) {
-                createReplicateGroup.mutate({ name: groupName.trim(), cell_ids: selectedIds });
+                createReplicateGroup.mutate({
+                  name: groupName.trim(),
+                  cell_ids: selectedIds,
+                  folder_ids: [...groupFolderIds],
+                });
               }
             }}
             data-autofocus
           />
+          <div>
+            <Text size="sm" fw={500} mb={4}>
+              Place in folders
+            </Text>
+            <Text size="xs" c="dimmed" mb="xs">
+              Folders already holding the selected cells are pre-checked.
+            </Text>
+            <Box
+              style={{
+                border: "1px solid var(--mantine-color-gray-2)",
+                borderRadius: 8,
+                overflow: "hidden",
+              }}
+            >
+              <FolderTree
+                folders={tree.data?.folders ?? []}
+                loading={tree.isLoading}
+                checkedState={(node) =>
+                  groupFolderIds.has(node.id) ? "all" : "none"
+                }
+                onToggle={(node) => {
+                  groupFoldersTouched.current = true;
+                  setGroupFolderIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(node.id)) next.delete(node.id);
+                    else next.add(node.id);
+                    return next;
+                  });
+                }}
+                search={groupFolderSearch}
+                onSearch={setGroupFolderSearch}
+                presentFolderIds={foldersContainingCells(
+                  tree.data?.folders ?? [],
+                  selectedIds,
+                )}
+                stagedIds={groupFolderIds}
+                maxHeight={220}
+                sessionKey={groupFolderSessionKey}
+                emptyMessage="No folders yet. Create a folder in the Projects view first."
+              />
+            </Box>
+          </div>
           <Button
             disabled={selectedCellIds.size < 2 || !groupName.trim()}
             loading={createReplicateGroup.isPending}
@@ -1300,6 +1619,7 @@ export function LibraryPage() {
               createReplicateGroup.mutate({
                 name: groupName.trim(),
                 cell_ids: selectedIds,
+                folder_ids: [...groupFolderIds],
               })
             }
           >
@@ -1484,6 +1804,14 @@ export function LibraryPage() {
             <Group justify="end">
               {editingCell ? (
                 <>
+                  <Button
+                    variant="default"
+                    leftSection={<IconFolder size={15} />}
+                    disabled={editCell.isPending || selectedId === null}
+                    onClick={() => setPlaceCellOpen(true)}
+                  >
+                    Place in folders
+                  </Button>
                   <Button
                     variant="default"
                     leftSection={<IconX size={15} />}
@@ -1686,6 +2014,24 @@ export function LibraryPage() {
           </Stack>
         ) : null}
       </Modal>
+
+      <DestructiveImpactModal
+        opened={impactRequest !== null}
+        onClose={() => setImpactRequest(null)}
+        title={impactRequest?.title ?? ""}
+        confirmLabel={impactRequest?.confirmLabel ?? "Confirm"}
+        plainMessage={impactRequest?.plainMessage ?? ""}
+        cellIds={impactRequest?.cellIds ?? []}
+        groupIds={impactRequest?.groupIds ?? []}
+        onConfirm={(options) => {
+          const request = impactRequest;
+          setImpactRequest(null);
+          if (!request) return;
+          void request.run(options).catch((error: Error) =>
+            notifications.show({ message: error.message, color: "red" }),
+          );
+        }}
+      />
     </Stack>
   );
 }

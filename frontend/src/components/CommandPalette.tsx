@@ -387,7 +387,7 @@ export function CommandPalette({
                           borderRadius: 8,
                           cursor: "pointer",
                           background:
-                            index === active ? "var(--mantine-color-teal-0)" : undefined,
+                            index === active ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
                         }}
                       >
                         <Box

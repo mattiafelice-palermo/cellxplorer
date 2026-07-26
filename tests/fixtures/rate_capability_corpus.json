@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "cc_cv_charge_ascending_with_rest_control",
+      "family": "charge",
+      "structure": "cc_cv",
+      "swept_rates": [0.1, 0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 3.65,
+      "lower_voltage_v": 2.8,
+      "step_start": 83,
+      "expect_match": true,
+      "expected_rates": [0.1, 0.2, 0.5, 1.0, 2.0]
+    },
+    {
+      "name": "cccv_discharge_descending_without_scaffold",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [5.0, 3.0, 1.0, 0.5, 0.2],
+      "fixed_rate": 0.333333,
+      "scaffold": "none",
+      "upper_voltage_v": 4.2,
+      "lower_voltage_v": 3.0,
+      "step_start": 407,
+      "expect_match": true,
+      "expected_rates": [5.0, 3.0, 1.0, 0.5, 0.2]
+    },
+    {
+      "name": "cc_only_charge_descending_with_rests",
+      "family": "charge",
+      "structure": "cc",
+      "swept_rates": [3.0, 2.0, 1.0, 0.5],
+      "fixed_rate": 0.2,
+      "scaffold": "rest_only",
+      "upper_voltage_v": 4.1,
+      "lower_voltage_v": 2.7,
+      "step_start": 1203,
+      "expect_match": true,
+      "expected_rates": [3.0, 2.0, 1.0, 0.5]
+    },
+    {
+      "name": "charge_repeated_rate_points",
+      "family": "charge",
+      "structure": "cc_cv",
+      "swept_rates": [0.2, 0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.5,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 3.6,
+      "lower_voltage_v": 2.5,
+      "step_start": 11,
+      "expect_match": true,
+      "expected_rates": [0.2, 0.5, 1.0, 2.0],
+      "expected_point_count": 5
+    },
+    {
+      "name": "non_monotonic_discharge_when_order_is_ignored",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [0.2, 1.0, 0.5, 2.0],
+      "fixed_rate": 0.25,
+      "scaffold": "none",
+      "upper_voltage_v": 4.15,
+      "lower_voltage_v": 2.9,
+      "step_start": 211,
+      "rules": {
+        "monotonic": "ignore"
+      },
+      "expect_match": true,
+      "expected_rates": [0.2, 1.0, 0.5, 2.0]
+    },
+    {
+      "name": "charge_fixed_rate_with_small_programming_jitter",
+      "family": "charge",
+      "structure": "cc_cv",
+      "swept_rates": [0.25, 0.5, 1.0, 2.0],
+      "fixed_rates": [0.333333, 0.334, 0.3325, 0.3338],
+      "scaffold": "rest_only",
+      "upper_voltage_v": 4.0,
+      "lower_voltage_v": 2.6,
+      "step_start": 9001,
+      "expect_match": true,
+      "expected_rates": [0.25, 0.5, 1.0, 2.0]
+    },
+    {
+      "name": "too_few_distinct_rates",
+      "family": "charge",
+      "structure": "cc_cv",
+      "swept_rates": [0.5, 1.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 3.65,
+      "lower_voltage_v": 2.8,
+      "step_start": 301,
+      "expect_match": false
+    },
+    {
+      "name": "both_charge_and_discharge_rates_change",
+      "family": "charge",
+      "structure": "cc_cv",
+      "swept_rates": [0.2, 0.5, 1.0, 2.0],
+      "fixed_rates": [0.2, 0.5, 1.0, 2.0],
+      "scaffold": "rest_control",
+      "upper_voltage_v": 3.65,
+      "lower_voltage_v": 2.8,
+      "step_start": 601,
+      "expect_match": false
+    },
+    {
+      "name": "changing_voltage_window",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_only",
+      "upper_voltage_v": 4.2,
+      "lower_voltages_v": [2.8, 3.1, 2.8, 3.1],
+      "step_start": 701,
+      "expect_match": false
+    },
+    {
+      "name": "all_measurements_interrupted_before_cutoff",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 4.2,
+      "lower_voltage_v": 2.8,
+      "step_start": 801,
+      "complete": false,
+      "expect_match": false
+    },
+    {
+      "name": "mixed_charge_structures_inside_candidate",
+      "family": "charge",
+      "structures": ["cc", "cc_cv", "cccv", "cc"],
+      "swept_rates": [0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 4.2,
+      "lower_voltage_v": 2.8,
+      "step_start": 1001,
+      "expect_match": false
+    },
+    {
+      "name": "required_scaffold_is_not_consistent",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [0.2, 0.5, 1.0, 2.0],
+      "fixed_rate": 0.333333,
+      "scaffolds": ["rest_control", "none", "rest_only", "none"],
+      "upper_voltage_v": 4.2,
+      "lower_voltage_v": 2.8,
+      "step_start": 1401,
+      "rules": {
+        "scaffold": "require"
+      },
+      "expect_match": false
+    },
+    {
+      "name": "constant_rate_cycling_is_not_a_sweep",
+      "family": "discharge",
+      "structure": "cccv",
+      "swept_rates": [1.0, 1.0, 1.0, 1.0],
+      "fixed_rate": 0.333333,
+      "scaffold": "rest_control",
+      "upper_voltage_v": 4.2,
+      "lower_voltage_v": 2.8,
+      "step_start": 1601,
+      "expect_match": false
+    }
+  ]
+}

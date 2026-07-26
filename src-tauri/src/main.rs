@@ -158,6 +158,54 @@ fn quit_app(app: AppHandle) {
     quit_application(&app);
 }
 
+/// Schedule a fresh process to start after this one has exited far enough to
+/// release `tauri_plugin_single_instance`'s lock. `AppHandle::restart()` spawns
+/// *before* exit, so the replacement can see the lock, hand off to the dying
+/// instance, and exit — leaving no app and no backend.
+fn schedule_relaunch() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // PowerShell quoting: double any single quotes inside the path.
+        let exe_arg = exe.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "Start-Sleep -Seconds 1; Start-Process -FilePath '{}'",
+            exe_arg
+        );
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            // CREATE_NO_WINDOW — same flag used by stop_backend's taskkill.
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|error| format!("could not schedule relaunch: {error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("sleep 1; exec '{}'", exe.display()))
+            .spawn()
+            .map_err(|error| format!("could not schedule relaunch: {error}"))?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn restart_app(app: AppHandle) -> Result<(), String> {
+    // Schedule first so a failed spawn leaves the running backend intact.
+    schedule_relaunch()?;
+    if let Some(lifecycle) = app.try_state::<LifecycleState>() {
+        lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    // Kill the Python sidecar before exiting; otherwise it keeps the
+    // loopback port and the new instance fails to bind.
+    stop_backend(&app);
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn startup_mode() -> String {
     if std::env::args().any(|arg| arg == "--hidden") {
@@ -403,6 +451,7 @@ fn main() {
             copy_download_file,
             reveal_download,
             quit_app,
+            restart_app,
             set_autostart_enabled,
             set_tray_status,
             startup_mode,

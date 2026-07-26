@@ -284,6 +284,12 @@ export interface SourceMonitoringSettings {
   last_status: string | null;
 }
 
+export interface AutomationPauseState {
+  paused: boolean;
+  paused_until: string | null;
+  seconds_remaining: number | null;
+}
+
 export interface DownloadEntry {
   id: string;
   filename: string;
@@ -705,6 +711,61 @@ export interface DcirViewSpec {
   candidate_filter: DcirCandidateFilter;
 }
 
+export interface ChargeabilityComputationSpec {
+  initial_soc_max_pct: number;
+  final_soc_min_pct: number;
+  min_current_ceiling_c: number;
+  soc_tolerance_pct: number;
+}
+
+export interface ChargeabilityViewSpec {
+  x_axis:
+    | "time"
+    | "soc_pct"
+    | "capacity_mah"
+    | "capacity_mah_g"
+    | "capacity_mah_cm2";
+  y_axis:
+    | "c_rate"
+    | "current_ma"
+    | "current_ma_g"
+    | "current_ma_cm2";
+  time_unit: "s" | "min" | "h";
+}
+
+export interface RateCapabilityFamilyPatternSpec {
+  enabled: boolean;
+  charge_structure: "auto" | "cc_cv" | "cccv" | "cc";
+  fixed_rate_c: number | null;
+  selected_rates_c: number[];
+  monotonic: "ignore" | "prefer" | "require";
+  scaffold: "ignore" | "prefer" | "require";
+}
+
+export interface RateCapabilityComputationSpec {
+  min_points: number;
+  cutoff_tolerance_v: number;
+  rate_tolerance_fraction: number;
+  families: {
+    charge: RateCapabilityFamilyPatternSpec;
+    discharge: RateCapabilityFamilyPatternSpec;
+  };
+}
+
+export interface RateCapabilityViewSpec {
+  x_axis: "c_rate" | "current_ma" | "current_ma_g" | "current_ma_cm2";
+  y_axis:
+    | "capacity_mah"
+    | "capacity_mah_g"
+    | "capacity_mah_cm2"
+    | "retention_pct"
+    | "asymmetry_ratio";
+  show_charge: boolean;
+  show_discharge: boolean;
+  x_spacing: "equal" | "proportional";
+  visualization: "line" | "bar";
+}
+
 export const ANALYSIS_TAB_KEYS = [
   "time_capacity",
   "cycles",
@@ -789,6 +850,9 @@ export interface PlotStyle {
   line_dash: "solid" | "dot" | "dash" | "longdash";
   marker_mode: "none" | "points" | "lines_points";
   marker_size: number;
+  marker_symbol: "circle" | "square" | "diamond" | "triangle-up" | "cross" | "x";
+  /** Draw markers as open (outline only) rather than filled. */
+  marker_open: boolean;
   individual_opacity: number;
   band_opacity: number;
   low_n_color: string;
@@ -824,6 +888,8 @@ export interface PlotStyle {
   ce_line_dash: "solid" | "dot" | "dash" | "longdash";
   ce_marker_mode: "none" | "points" | "lines_points";
   ce_marker_size: number;
+  ce_marker_symbol: "circle" | "square" | "diamond" | "triangle-up" | "cross" | "x";
+  ce_marker_open: boolean;
   ce_opacity: number;
   /** Legacy single-field position; superseded by legend_mode/side/custom. */
   legend_position: "bottom" | "right" | "top" | "inside";
@@ -920,6 +986,8 @@ export interface AnalysisSpec {
     dcir?: {
       series: DcirSeriesSpec[];
     };
+    chargeability?: ChargeabilityComputationSpec;
+    rate_capability?: RateCapabilityComputationSpec;
   };
   aggregation: {
     mode: "replicate_mean" | "none";
@@ -933,14 +1001,29 @@ export interface AnalysisSpec {
     show_individual_cells: boolean;
     legend: boolean;
     hidden_protocol_segment_ids?: string[];
+    /**
+     * Display-only visibility for the series-based tabs (DCIR, steps). Kept out
+     * of the compute cache key (see analysis_cache._scientific_spec) so toggling
+     * a line on or off never triggers a recompute.
+     */
+    hidden_series_ids?: string[];
+    /** Display-only: segment ids hidden across DCIR/steps series (all cells). */
+    hidden_analysis_segment_ids?: string[];
     steps_view?: StepsViewSpec;
     dcir_view?: DcirViewSpec;
+    chargeability_view?: ChargeabilityViewSpec;
+    rate_capability_view?: RateCapabilityViewSpec;
     /**
      * Hide protocol diagnostic cycles (DCIR pulses, rate checks) detected from
      * cycle durations. Presentation-only: the computed result and every export
      * keep the full data, so the choice is always reversible.
      */
     hide_diagnostic_cycles?: boolean;
+    /**
+     * With diagnostic cycles hidden, also close the gaps they leave: drop the
+     * points from the axis and renumber the survivors 1..N (display only).
+     */
+    reindex_diagnostic_cycles?: boolean;
     /** Deviation from the local baseline that marks a cycle as diagnostic. */
     diagnostic_tolerance?: number;
     /** Legacy single style shared by all tabs; superseded by plot_styles. */
@@ -949,6 +1032,24 @@ export interface AnalysisSpec {
     plot_styles?: Partial<Record<AnalysisTabKey, Partial<PlotStyle>>>;
   };
   saved_plots?: SavedAnalysisPlot[];
+  /**
+   * At most one unsaved draft plot per plot tab. Kept outside `saved_plots` so
+   * warmup, the command palette, and portable export cannot pick them up.
+   */
+  draft_plots?: Partial<Record<AnalysisTabKey, AnalysisDraftPlot>> | null;
+  /** @deprecated Migrated into `draft_plots` on load. */
+  draft_plot?: AnalysisDraftPlot | null;
+}
+
+/** Session-only draft snapshot (thumbnails / save dialog). Not persisted. */
+export interface AnalysisDraftPlot {
+  tab: AnalysisTabKey;
+  name: string | null;
+  selection: SavedAnalysisPlot["selection"];
+  computation: AnalysisSpec["computation"];
+  aggregation: AnalysisSpec["aggregation"];
+  presentation: AnalysisSpec["presentation"];
+  updated_at: string;
 }
 
 export interface AnalysisSavedPlotSummary {
@@ -986,6 +1087,33 @@ export interface AnalysisSummary {
   modified_at: string;
 }
 
+export interface AnalysisUsageMatchedRef {
+  kind: "cell" | "replicate_group" | string;
+  ref_id: number;
+  name: string;
+}
+
+export interface AnalysisUsagePlot {
+  id: string;
+  name: string;
+  tab: string;
+  affected: boolean;
+}
+
+export interface AnalysisUsageItem {
+  id: number;
+  title: string;
+  matched: AnalysisUsageMatchedRef[];
+  remaining_entry_count: number;
+  becomes_empty: boolean;
+  plots: AnalysisUsagePlot[];
+}
+
+export interface AnalysisUsageResponse {
+  analyses: AnalysisUsageItem[];
+  empty_after: number[];
+}
+
 export interface AnalysisFull extends AnalysisSummary {
   spec: AnalysisSpec;
   provenance: Provenance | null;
@@ -1012,6 +1140,45 @@ export interface PortableAnalysisEstimate {
   missing_originals: number;
   estimated_without_originals: number;
   estimated_with_originals: number;
+}
+
+export type PortableSourcePreflightStatus =
+  | "current"
+  | "changed"
+  | "unavailable"
+  | "changing"
+  | "error";
+
+export interface PortableSourcePreflightItem {
+  source_id: number;
+  filename: string;
+  path: string;
+  cell_id: number;
+  cell_name: string;
+  status: PortableSourcePreflightStatus;
+  expected_size: number | null;
+  expected_mtime_ns: string | null;
+  message: string | null;
+}
+
+export interface PortableSourcePreflight {
+  ready: boolean;
+  sources: PortableSourcePreflightItem[];
+  current: number;
+  changed: number;
+  unavailable: number;
+  changing: number;
+  error: number;
+  affected_analysis_ids: number[];
+  affected_analyses: number;
+}
+
+export interface PortableSourceUpdateResult {
+  updated: number;
+  updated_source_ids: number[];
+  updated_cell_ids: number[];
+  errors: { source_id: number; filename: string; error: string }[];
+  preflight: PortableSourcePreflight;
 }
 
 export interface PortableAnalysisImportResult {

@@ -1,0 +1,24 @@
+.row {
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.row:hover:not(.highlighted) {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+}
+
+.highlighted {
+  background: light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9));
+  box-shadow: inset 3px 0 0 var(--mantine-color-teal-6);
+}
+
+.highlighted:hover {
+  background: light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9));
+}
+
+.chevronCell {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

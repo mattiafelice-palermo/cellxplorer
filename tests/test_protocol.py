@@ -125,6 +125,17 @@ class ProtocolTests(unittest.TestCase):
         result = protocol.reconstruct_protocol(header, nominal_capacity_mah=10)
         self.assertIn("C/3", result["steps"][0]["summary"])
 
+    def test_exposes_neware_global_user_capacity_assignment(self):
+        header = synthetic_header()
+        header["Step.Step_Info.Step3.Limit.Other.Cnd1.Expression"] = "DischargeAh"
+        header["Step.Step_Info.Step3.Limit.Other.Cnd1.GlobleUserID"] = "71"
+
+        result = protocol.reconstruct_protocol(header, nominal_capacity_mah=10)
+        condition = result["steps"][2]["conditions"][0]
+
+        self.assertEqual(condition["global_user_id"], 71)
+        self.assertEqual(condition["stores_as"], "User1")
+
 
 if __name__ == "__main__":
     unittest.main()

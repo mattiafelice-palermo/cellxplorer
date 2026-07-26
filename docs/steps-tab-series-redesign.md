@@ -15,8 +15,10 @@ records the data contract and the decisions that must remain stable when the tab
 - `POST /api/analyses/{id}/steps` — cached under kind `"steps"`.
 - Frontend `frontend/src/components/StepsPlotCard.tsx` — `StepsPlotCard` + `StepsSettings`, reusing
   the exported `PlotHeader`/`PlotStylePanel`/`currentPlotStyle`/`plotPalette`/`tracesToColumns`/
-  `downloadDataExport` from `AnalysisPage.tsx`. Tab wired into `AnalysisPage.tsx` (tab key `"steps"`
-  in `api.ts` ANALYSIS_TAB_KEYS, tab def, sidebar `StepsSettings`, `Tabs.Panel value="steps"`).
+  `downloadDataExport` from `AnalysisPage.tsx`. Its canonical trace and layout builders are also
+  used by the live card and saved-plot thumbnail path; saved previews must call `POST /steps`, not
+  the cycle-compute endpoint. Tab wired into `AnalysisPage.tsx` (tab key `"steps"` in `api.ts`
+  ANALYSIS_TAB_KEYS, tab def, sidebar `StepsSettings`, `Tabs.Panel value="steps"`).
 
 ## Series model
 

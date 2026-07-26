@@ -8,6 +8,11 @@ const ANALYSIS_QUERY_ROOTS = new Set([
   "saved-time-preview",
   "plot-thumbnail",
   "plot-artifact",
+  "steps",
+  "dcir",
+  "dcir-protocols",
+  "chargeability",
+  "rate-capability",
 ]);
 
 function belongsToAnalysis(queryKey: readonly unknown[], analysisId: number): boolean {

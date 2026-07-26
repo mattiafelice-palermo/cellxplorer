@@ -782,7 +782,7 @@ function ImportFilesystemPickerModal({
                   wrap="nowrap"
                   px="sm"
                   py={8}
-                  bg="gray.0"
+                  bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
                   style={{ borderBottom: "1px solid var(--mantine-color-gray-3)" }}
                 >
                   <Checkbox
@@ -1447,7 +1447,7 @@ function ImportModal({
                                 })}
                               </Stack>
                             ) : (
-                              <Paper withBorder p="xs" bg="gray.0">
+                              <Paper withBorder p="xs" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                                 <Text size="xs" c="dimmed" ta="center">
                                   Drop selected cells here
                                 </Text>
@@ -1457,7 +1457,7 @@ function ImportModal({
                         </Paper>
                       ))}
                       {replicateGroups.length === 0 && (
-                        <Paper withBorder p="sm" bg="gray.0">
+                        <Paper withBorder p="sm" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                           <Text size="xs" c="dimmed" ta="center">
                             Create a group, then assign selected cells.
                           </Text>
@@ -1494,7 +1494,7 @@ function ImportModal({
                               cursor: "pointer",
                               borderColor:
                                 index === active ? "var(--mantine-color-teal-5)" : undefined,
-                              background: checked ? "var(--mantine-color-teal-0)" : undefined,
+                              background: checked ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
                             }}
                             onClick={() => onActive(index)}
                           >
@@ -1575,7 +1575,7 @@ function ImportModal({
                 </Group>
               </Group>
 
-              <Paper withBorder p="sm" bg="gray.0">
+              <Paper withBorder p="sm" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
                 <Stack gap={4}>
                   <Text size="xs" c="dimmed">
                     Source file

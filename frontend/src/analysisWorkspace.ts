@@ -1,4 +1,5 @@
 import type { AnalysisSpec, AnalysisTabKey } from "./api";
+import type { NormalWorkspaceSnapshot } from "./analysisDraftPolicy";
 
 export const ANALYSIS_WORKSPACE_CHANGED_EVENT = "cellxplorer:analysis-workspace-changed";
 export const ANALYSIS_WORKSPACE_TABS_EVENT = "cellxplorer:analysis-workspace-tabs";
@@ -33,6 +34,8 @@ export interface AnalysisWorkspaceEditorState {
   activeSavedPlotId: string | null;
   activePlotBaselineSignature: string | null;
   plotWorkspaceTouched: boolean;
+  /** Last stable top-level view to restore when leaving/discarding a draft. */
+  normalWorkspace: NormalWorkspaceSnapshot | null;
 }
 
 const editorStates = new Map<number, AnalysisWorkspaceEditorState>();

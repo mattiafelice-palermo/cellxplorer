@@ -9,43 +9,56 @@ import {
   Collapse,
   Group,
   Loader,
-  LoadingOverlay,
   Modal,
   Paper,
-  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconChevronRight,
+  IconEye,
+  IconEyeOff,
   IconPencil,
   IconPlus,
   IconTrash,
 } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
+  get,
   post,
   type AnalysisSpec,
+  type CellProtocol,
   type CellSummary,
   type PlotExportFormat,
   type StepsSeriesSpec,
   type StepsViewSpec,
 } from "../api";
-import { saveDownload } from "../downloads";
 import {
+  axisTitleFont,
   currentPlotStyle,
+  downloadStyledPlotExport,
   downloadDataExport,
+  isAnalysisSegmentHidden,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  plotAxisStyle,
+  markerSymbol,
+  plotLayoutStyle,
   plotPalette,
   PlotHeader,
   PlotStylePanel,
+  styledPlotExportPreview,
   tracesToColumns,
+  useDelayedFlag,
+  usePlotSizeSync,
 } from "../pages/AnalysisPage";
 import Plot from "./Plot";
 
@@ -177,18 +190,21 @@ export function useStepsResult(
   const signature = useMemo(
     () =>
       JSON.stringify({
-        selection: spec.selection,
+        // Only the sample set (not display-only exclusions) changes the data,
+        // so hiding a line or a cell filters client-side without a recompute.
+        entries: spec.selection.entries,
         segments: spec.protocol_segments,
         series,
         mode,
       }),
-    [spec.selection, spec.protocol_segments, series, mode]
+    [spec.selection.entries, spec.protocol_segments, series, mode]
   );
   return useQuery({
     queryKey: ["steps", analysisId, signature],
     queryFn: () => post<StepsResult>(`/api/analyses/${analysisId}/steps`, { spec }),
     enabled: series.length > 0,
     staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
 }
 
@@ -207,6 +223,47 @@ export function StepsSettings({
   const view = readStepsView(spec);
   const segments = spec.protocol_segments ?? [];
   const result = useStepsResult(analysisId, spec, cells);
+  const protocolQueries = useQueries({
+    queries: cells.map((cell) => ({
+      queryKey: ["cell-protocol", cell.id],
+      queryFn: () => get<CellProtocol>(`/api/cells/${cell.id}/protocol`),
+      staleTime: 5 * 60_000,
+    })),
+  });
+  const protocolSignaturesByCell = useMemo(() => {
+    const signatures = new Map<number, Set<string>>();
+    protocolQueries.forEach((query, index) => {
+      const cellId = cells[index]?.id;
+      if (cellId == null || !query.data) return;
+      signatures.set(
+        cellId,
+        new Set(
+          query.data.tests.flatMap((test) =>
+            test.files
+              .map((file) => file.protocol.signature)
+              .filter((signature): signature is string => Boolean(signature))
+          )
+        )
+      );
+    });
+    return signatures;
+  }, [cells, protocolQueries]);
+  const protocolsLoading = protocolQueries.some((query) => query.isPending);
+  const applicableSegments = (cellId: number | null) => {
+    if (cellId == null) return [];
+    const signatures = protocolSignaturesByCell.get(cellId);
+    if (!signatures) return [];
+    return segments.filter((segment) =>
+      segment.targets.some((target) => signatures.has(target.protocol_signature))
+    );
+  };
+  const firstValidPair = () => {
+    for (const cell of cells) {
+      const segment = applicableSegments(cell.id)[0];
+      if (segment) return { cellId: cell.id, segmentId: segment.id };
+    }
+    return { cellId: cells[0]?.id ?? null, segmentId: null };
+  };
   const unmatched = new Set(
     (result.data?.badges ?? [])
       .filter((badge) => badge.kind === "steps_no_match" && badge.series_id)
@@ -216,6 +273,13 @@ export function StepsSettings({
   const writeSeries = (next: StepsSeriesSpec[]) =>
     update((draft) => {
       draft.computation.steps = { series: next, mode };
+    });
+  const toggleSeriesHidden = (seriesId: string) =>
+    update((draft) => {
+      const hidden = new Set(draft.presentation.hidden_series_ids ?? []);
+      if (hidden.has(seriesId)) hidden.delete(seriesId);
+      else hidden.add(seriesId);
+      draft.presentation.hidden_series_ids = [...hidden];
     });
   const patchView = (patch: Partial<StepsViewSpec>) =>
     update((draft) => {
@@ -235,14 +299,13 @@ export function StepsSettings({
     error: string | null;
   }>({ open: false, id: null, cellId: null, segmentId: null, error: null });
 
-  // Match each row's dot to the swatch the plot draws, which palettes by the
-  // order of drawable (n_blocks > 0) result series rather than the spec order.
+  // Match each row's dot to the swatch the plot draws, which palettes over the
+  // visible series (drawable and not hidden by any layer).
   const seriesColor = useMemo(() => {
     const style = currentPlotStyle(spec, "steps");
     const palette = plotPalette(style);
     const map = new Map<string, string>();
-    (result.data?.cell_series ?? [])
-      .filter((item) => item.n_blocks > 0)
+    (result.data ? stepsVisibleSeries(result.data, spec) : [])
       .forEach((item, index) => {
         map.set(
           item.series_id,
@@ -253,14 +316,22 @@ export function StepsSettings({
     return map;
   }, [result.data, spec]);
 
-  const openSeriesEditor = (item: StepsSeriesSpec | null) =>
+  const openSeriesEditor = (item: StepsSeriesSpec | null) => {
+    const fallback = firstValidPair();
+    const cellId = item?.cell_id ?? fallback.cellId;
+    const validSegments = applicableSegments(cellId);
+    const segmentId =
+      item && validSegments.some((segment) => segment.id === item.segment_id)
+        ? item.segment_id
+        : validSegments[0]?.id ?? fallback.segmentId;
     setEditor({
       open: true,
       id: item?.id ?? null,
-      cellId: item?.cell_id ?? cells[0]?.id ?? null,
-      segmentId: item?.segment_id ?? segments[0]?.id ?? null,
+      cellId,
+      segmentId,
       error: null,
     });
+  };
 
   const closeSeriesEditor = () =>
     setEditor((current) => ({ ...current, open: false, error: null }));
@@ -329,7 +400,12 @@ export function StepsSettings({
             variant="light"
             leftSection={<IconPlus size={14} />}
             onClick={() => openSeriesEditor(null)}
-            disabled={!cells.length || !segments.length}
+            disabled={
+              !cells.length ||
+              !segments.length ||
+              protocolsLoading ||
+              !cells.some((cell) => applicableSegments(cell.id).length > 0)
+            }
           >
             Add series
           </Button>
@@ -340,7 +416,7 @@ export function StepsSettings({
               Add a cell and segment pair to plot one line per block series.
             </Text>
           ) : (
-            <ScrollArea.Autosize mah={280} type="auto" offsetScrollbars>
+            <Box className="cx-vertical-scroll" style={{ maxHeight: 280 }}>
               <Stack gap={4} pr={4}>
                 {series.map((item) => {
                   const cellName =
@@ -350,6 +426,11 @@ export function StepsSettings({
                     segments.find((segment) => segment.id === item.segment_id)?.name ??
                     "Unknown segment";
                   const noMatch = unmatched.has(item.id);
+                  const cellHidden = isCellHiddenInAnalysis(spec, item.cell_id);
+                  const segmentHidden = isAnalysisSegmentHidden(spec, item.segment_id);
+                  const selfHidden = isSeriesHidden(spec, item.id);
+                  const hidden = cellHidden || segmentHidden || selfHidden;
+                  const forcedHidden = cellHidden || segmentHidden;
                   return (
                     <Group
                       key={item.id}
@@ -360,6 +441,7 @@ export function StepsSettings({
                         border: "1px solid var(--mantine-color-gray-2)",
                         borderRadius: 6,
                         padding: "5px 8px",
+                        opacity: hidden ? 0.5 : 1,
                       }}
                     >
                       <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
@@ -369,22 +451,51 @@ export function StepsSettings({
                             height: 10,
                             borderRadius: 5,
                             flexShrink: 0,
-                            background:
-                              seriesColor.get(item.id) ??
-                              "var(--mantine-color-gray-4)",
+                            background: hidden
+                              ? "var(--mantine-color-gray-4)"
+                              : seriesColor.get(item.id) ??
+                                "var(--mantine-color-gray-4)",
                           }}
                         />
-                        <Box style={{ minWidth: 0 }}>
-                          <Text size="xs" fw={600} truncate>
-                            {cellName}
-                          </Text>
-                          <Text size="10px" c={noMatch ? "red" : "dimmed"} truncate>
-                            {segmentName}
-                            {noMatch ? " · no match" : ""}
-                          </Text>
-                        </Box>
+                        <Tooltip
+                          label={`${cellName} — ${segmentName}`}
+                          openDelay={400}
+                          withArrow
+                          multiline
+                        >
+                          <Box style={{ minWidth: 0 }}>
+                            <Text size="xs" fw={600} truncate>
+                              {cellName}
+                            </Text>
+                            <Text size="10px" c={noMatch ? "red" : "dimmed"} truncate>
+                              {segmentName}
+                              {noMatch ? " · no match" : ""}
+                            </Text>
+                          </Box>
+                        </Tooltip>
                       </Group>
                       <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
+                        <Tooltip
+                          label={
+                            forcedHidden
+                              ? "Hidden with its cell or segment"
+                              : hidden
+                                ? "Show series"
+                                : "Hide series"
+                          }
+                          openDelay={300}
+                          withArrow
+                        >
+                          <ActionIcon
+                            variant="subtle"
+                            color={hidden ? "gray" : "teal"}
+                            size="sm"
+                            aria-label={hidden ? "Show series" : "Hide series"}
+                            onClick={() => toggleSeriesHidden(item.id)}
+                          >
+                            {hidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
                         <ActionIcon
                           variant="subtle"
                           color="gray"
@@ -410,7 +521,7 @@ export function StepsSettings({
                   );
                 })}
               </Stack>
-            </ScrollArea.Autosize>
+            </Box>
           )}
         </Collapse>
       </Paper>
@@ -432,23 +543,35 @@ export function StepsSettings({
             }))}
             value={editor.cellId != null ? String(editor.cellId) : null}
             onChange={(value) =>
-              setEditor((current) => ({
-                ...current,
-                cellId: value ? Number(value) : null,
-                error: null,
-              }))
+              setEditor((current) => {
+                const cellId = value ? Number(value) : null;
+                return {
+                  ...current,
+                  cellId,
+                  segmentId: applicableSegments(cellId)[0]?.id ?? null,
+                  error: null,
+                };
+              })
             }
           />
           <Select
             label="Protocol segment"
             searchable
-            data={segments.map((segment) => ({
+            data={applicableSegments(editor.cellId).map((segment) => ({
               value: segment.id,
               label: segment.name,
             }))}
             value={editor.segmentId}
             onChange={(value) =>
               setEditor((current) => ({ ...current, segmentId: value, error: null }))
+            }
+            disabled={editor.cellId == null || protocolsLoading}
+            description={
+              editor.cellId != null &&
+              !protocolsLoading &&
+              applicableSegments(editor.cellId).length === 0
+                ? "No protocol segments apply to this cell."
+                : undefined
             }
           />
           {editor.error && (
@@ -564,6 +687,75 @@ export function StepsSettings({
   );
 }
 
+/**
+ * The step series that actually draw: blocks matched, and not switched off by
+ * the cell (sidebar), the segment, or this line individually. The plot and the
+ * sidebar swatches both palette over this list so their colours stay aligned.
+ */
+export function stepsVisibleSeries(result: StepsResult, spec: AnalysisSpec): StepSeries[] {
+  return result.cell_series.filter(
+    (item) =>
+      item.n_blocks > 0 &&
+      !isCellHiddenInAnalysis(spec, item.cell_id) &&
+      !isAnalysisSegmentHidden(spec, item.segment_id) &&
+      !isSeriesHidden(spec, item.series_id)
+  );
+}
+
+export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): Plotly.Data[] {
+  const view = readStepsView(spec);
+  const style = currentPlotStyle(spec, "steps");
+  const column = quantityColumn(view);
+  const palette = plotPalette(style);
+  const mode =
+    style.marker_mode === "none"
+      ? "lines"
+      : style.marker_mode === "points"
+        ? "markers"
+        : "lines+markers";
+  return stepsVisibleSeries(result, spec)
+    .map((item, index) => {
+      const color =
+        style.custom_colors[`steps-${item.series_id}`] ?? palette[index % palette.length];
+      const x =
+        view.x_axis === "cycle"
+          ? item.x_cycle
+          : view.x_axis === "time"
+            ? item.x_time
+            : item.x_occurrence;
+      return {
+        x,
+        y: item.quantities[column] ?? [],
+        name: item.label,
+        line: { color, width: style.line_width, dash: style.line_dash },
+        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
+        type: "scatter",
+        mode,
+      } as Plotly.Data;
+    });
+}
+
+export function stepsLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
+  const view = readStepsView(spec);
+  const style = currentPlotStyle(spec, "steps");
+  const defaultXTitle = xTitle(view.x_axis);
+  const yLabel = quantityLabel(view);
+  return {
+    ...plotLayoutStyle(style, spec),
+    margin: { l: 66, r: 20, t: 12, b: 52 },
+    xaxis: {
+      ...plotAxisStyle(style, { axis: style.x_axis }),
+      title: { text: style.x_title ?? defaultXTitle, font: axisTitleFont(style) },
+    },
+    yaxis: {
+      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
+      title: { text: style.y_title ?? yLabel, font: axisTitleFont(style) },
+    },
+    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
+    hovermode: "closest",
+  } as Partial<Plotly.Layout>;
+}
+
 export function StepsPlotCard({
   analysisId,
   analysisTitle,
@@ -571,6 +763,11 @@ export function StepsPlotCard({
   spec,
   cells,
   update,
+  edited = false,
+  onNewPlot,
+  newPlotEnabled = false,
+  onUpdatePlot,
+  updatePlotEnabled = false,
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -578,85 +775,50 @@ export function StepsPlotCard({
   spec: AnalysisSpec;
   cells: Pick<CellSummary, "id" | "name">[];
   update: (fn: (s: AnalysisSpec) => void) => void;
+  edited?: boolean;
+  onNewPlot?: () => void;
+  newPlotEnabled?: boolean;
+  onUpdatePlot?: () => void;
+  updatePlotEnabled?: boolean;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
+  const plotDivRef = useRef<HTMLElement | null>(null);
+  const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const { series, mode } = readStepsConfig(spec, cells);
   const view = readStepsView(spec);
   const style = currentPlotStyle(spec, "steps");
   const result = useStepsResult(analysisId, spec, cells);
   const data = result.data;
-  const column = quantityColumn(view);
   const yLabel = quantityLabel(view);
   const defaultXTitle = xTitle(view.x_axis);
-  const palette = plotPalette(style);
-
-  const traces = useMemo(() => {
-    if (!data) return [];
-    const mplot =
-      style.marker_mode === "none"
-        ? "lines"
-        : style.marker_mode === "points"
-          ? "markers"
-          : "lines+markers";
-    return data.cell_series
-      .filter((item) => item.n_blocks > 0)
-      .map((item, index) => {
-        const color =
-          style.custom_colors[`steps-${item.series_id}`] ??
-          palette[index % palette.length];
-        const x =
-          view.x_axis === "cycle"
-            ? item.x_cycle
-            : view.x_axis === "time"
-              ? item.x_time
-              : item.x_occurrence;
-        return {
-          x,
-          y: item.quantities[column] ?? [],
-          name: item.label,
-          line: { color, width: style.line_width, dash: style.line_dash },
-          marker: { color, size: style.marker_size },
-          type: "scatter",
-          mode: mplot,
-        } as Plotly.Data;
-      });
-  }, [data, column, palette, style, view.x_axis]);
-
-  const layout = useMemo(
-    () =>
-      ({
-        margin: { l: 66, r: 20, t: 12, b: 52 },
-        xaxis: {
-          title: { text: style.x_title ?? defaultXTitle },
-          zeroline: false,
-          showgrid: style.show_grid,
-        },
-        yaxis: {
-          title: { text: style.y_title ?? yLabel },
-          zeroline: false,
-          showgrid: style.show_grid,
-        },
-        showlegend: true,
-        legend: { orientation: "h" as const, y: -0.22 },
-        hovermode: "closest" as const,
-        paper_bgcolor: style.paper_bgcolor ?? "rgba(0,0,0,0)",
-        plot_bgcolor: style.plot_bgcolor ?? "rgba(0,0,0,0)",
-      }) as Partial<Plotly.Layout>,
-    [style, defaultXTitle, yLabel]
-  );
+  const traces = useMemo(() => (data ? stepsTracesForResult(data, spec) : []), [data, spec]);
+  const layout = useMemo(() => stepsLayoutForSpec(spec), [spec]);
+  const showComputeProgress = useDelayedFlag(result.isLoading);
+  const plotUpdating = result.isFetching && traces.length > 0;
+  const rememberPlotDiv = (graphDiv: unknown) => {
+    const element = graphDiv as HTMLElement;
+    plotDivRef.current = element;
+    const rect = element.getBoundingClientRect();
+    const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+    setPlotSize((current) =>
+      current && current.width === next.width && current.height === next.height
+        ? current
+        : next
+    );
+  };
 
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
-    if (traces.length === 0) return;
     try {
-      const toImage = (
-        Plotly as unknown as { toImage: (fig: unknown, opts: unknown) => Promise<string> }
-      ).toImage;
-      const dataUrl = await toImage(
-        { data: traces, layout: { ...layout, title: { text: plotName } } },
-        { format: format === "pdf" ? "svg" : format, width: 1000, height: 600, scale: 2 }
+      await downloadStyledPlotExport(
+        traces,
+        layout,
+        style,
+        plotName,
+        format,
+        baseName,
+        plotSize,
       );
-      const blob = await (await fetch(dataUrl)).blob();
-      await saveDownload(blob, `${baseName}.${format === "pdf" ? "svg" : format}`);
     } catch (error) {
       notifications.show({
         message: error instanceof Error ? error.message : "Plot export failed.",
@@ -664,6 +826,9 @@ export function StepsPlotCard({
       });
     }
   };
+
+  const getExportPreview = () =>
+    styledPlotExportPreview(traces, layout, style, plotName, plotSize);
 
   const handleDataExport = async (baseName: string) => {
     try {
@@ -683,11 +848,6 @@ export function StepsPlotCard({
         withBorder
         style={{ minHeight: 590, position: "relative", flex: 1, minWidth: 520, overflow: "hidden" }}
       >
-        <LoadingOverlay
-          visible={result.isFetching && traces.length === 0}
-          overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
-          loaderProps={{ size: "sm", color: "teal" }}
-        />
         <PlotHeader
           analysisTitle={analysisTitle}
           tabName="Steps"
@@ -698,7 +858,13 @@ export function StepsPlotCard({
           sampleSummary={`${traces.length} ${traces.length === 1 ? "series" : "series"}`}
           onExport={exportPlot}
           onDataExport={handleDataExport}
+          getExportPreview={getExportPreview}
           style={style}
+          edited={edited}
+          onNewPlot={onNewPlot}
+          newPlotEnabled={newPlotEnabled}
+          onUpdatePlot={onUpdatePlot}
+          updatePlotEnabled={updatePlotEnabled}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=
@@ -709,6 +875,7 @@ export function StepsPlotCard({
             })
           }
           layout={layout}
+          viewSize={plotSize}
           canExport={traces.length > 0}
         />
         {result.isError && (
@@ -729,7 +896,7 @@ export function StepsPlotCard({
           </Center>
         ) : result.isLoading ? (
           <Center h={480}>
-            <Loader size="sm" />
+            {showComputeProgress ? <Loader size="sm" /> : null}
           </Center>
         ) : traces.length === 0 ? (
           <Center h={480}>
@@ -744,13 +911,29 @@ export function StepsPlotCard({
                 ? "Each point is one occurrence of the whole selected block."
                 : "Each point is one uninterrupted run of the selected steps."}
             </Text>
-            <Box style={{ width: "100%", minWidth: 0 }}>
+            <Box
+              ref={containerRef}
+              style={{
+                width: "100%",
+                minWidth: 0,
+                opacity: plotUpdating ? 0.42 : 1,
+                transition: "opacity 160ms ease",
+              }}
+            >
               <Plot
                 data={traces}
                 layout={layout}
                 config={{ displaylogo: false, responsive: true }}
                 style={{ width: "100%", height: 470 }}
                 useResizeHandler
+                onInitialized={(_, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                }}
+                onUpdate={(_, graphDiv) => {
+                  rememberPlotDiv(graphDiv);
+                  syncPlotSize();
+                }}
               />
             </Box>
           </>

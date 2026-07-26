@@ -87,3 +87,16 @@ body {
   background: var(--mantine-color-teal-4);
   border-radius: 4px;
 }
+
+/* Soften the white Plotly paper against dark chrome. Display-only —
+   does not change exported figures or stored thumbnail bytes. */
+[data-mantine-color-scheme="dark"] .js-plotly-plot,
+[data-mantine-color-scheme="dark"] .cx-plot-thumbnail {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+[data-mantine-color-scheme="dark"] .cx-plot-thumbnail-frame {
+  border-radius: 8px;
+  overflow: hidden;
+}

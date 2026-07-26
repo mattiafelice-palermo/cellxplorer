@@ -42,7 +42,7 @@ from ..models import (
     Test,
     TestFile,
 )
-from . import analysis_engine, cache, diagnostic_cycles, parsing, scanner
+from . import analysis_engine, cache, cache_maintenance, diagnostic_cycles, parsing, scanner
 from .activity_log import record_activity
 from .entity_ids import next_analysis_id
 
@@ -54,6 +54,10 @@ PAYLOAD_PREFIX = "cellxplorer-payload-"
 _CHUNK_SIZE = 1024 * 1024
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PENDING_MAX_AGE_SECONDS = 24 * 60 * 60
+
+
+class PortableOriginalSourceError(RuntimeError):
+    """Raised when a sources-included export cannot preserve source identity."""
 
 
 def _plotly_runtime_path() -> Path:
@@ -395,12 +399,179 @@ def estimate_export(db: Session, analysis: Analysis) -> dict:
     }
 
 
+def _analysis_sources(analysis: Analysis, db: Session) -> list[tuple[SourceFile, Cell]]:
+    cells, _ = _selected_entities(db, analysis)
+    sources: dict[int, tuple[SourceFile, Cell]] = {}
+    for cell in cells:
+        for test in cell.tests:
+            for link in test.file_links:
+                sources[link.file.id] = (link.file, cell)
+    return [sources[source_id] for source_id in sorted(sources)]
+
+
+def preflight_original_sources(db: Session, analysis: Analysis) -> dict:
+    """Hash selected originals without adopting them and report export readiness."""
+    items: list[dict] = []
+    changed_cell_ids: set[int] = set()
+    for source, cell in _analysis_sources(analysis, db):
+        item = {
+            "source_id": source.id,
+            "filename": source.filename,
+            "path": source.path,
+            "cell_id": cell.id,
+            "cell_name": cell.name,
+            "status": "error",
+            "expected_size": None,
+            "expected_mtime_ns": None,
+            "message": None,
+        }
+        path = Path(source.path)
+        try:
+            expected = scanner.source_signature(path)
+        except FileNotFoundError:
+            item["status"] = "unavailable"
+            item["message"] = "The recorded source path is unavailable."
+            items.append(item)
+            continue
+        except OSError as exc:
+            item["message"] = f"The source could not be read: {exc}"
+            items.append(item)
+            continue
+
+        item["expected_size"] = expected[0]
+        # Nanosecond timestamps exceed JavaScript's safe integer range. Keep
+        # the exact stability token while it crosses the frontend.
+        item["expected_mtime_ns"] = str(expected[1])
+        try:
+            observed_hash = parsing.compute_hash(path)
+            current = scanner.source_signature(path)
+        except FileNotFoundError:
+            item["status"] = "unavailable"
+            item["message"] = "The source became unavailable while it was checked."
+        except OSError as exc:
+            item["message"] = f"The source could not be read: {exc}"
+        else:
+            if current != expected:
+                item["status"] = "changing"
+                item["message"] = "The source is still changing. Wait for the cycler write to finish."
+            elif observed_hash == source.hash:
+                item["status"] = "current"
+                item["message"] = "The source matches the version stored by CellXplorer."
+            else:
+                item["status"] = "changed"
+                item["message"] = "The source contents differ from the stored version."
+                changed_cell_ids.add(cell.id)
+        items.append(item)
+
+    counts = {
+        status: sum(item["status"] == status for item in items)
+        for status in ("current", "changed", "unavailable", "changing", "error")
+    }
+    affected_analysis_ids = cache_maintenance.dependent_analysis_ids(
+        db, changed_cell_ids
+    )
+    return {
+        "ready": counts["current"] == len(items),
+        "sources": items,
+        **counts,
+        "affected_analysis_ids": affected_analysis_ids,
+        "affected_analyses": len(affected_analysis_ids),
+    }
+
+
+def update_original_sources(
+    db: Session,
+    analysis: Analysis,
+    updates: list[dict],
+) -> dict:
+    """Adopt explicitly selected, stable source versions used by an analysis."""
+    selected = {
+        source.id: (source, cell)
+        for source, cell in _analysis_sources(analysis, db)
+    }
+    updated_source_ids: list[int] = []
+    updated_cell_ids: set[int] = set()
+    errors: list[dict] = []
+    seen: set[int] = set()
+    for update in updates:
+        source_id = int(update["source_id"])
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        selected_item = selected.get(source_id)
+        if selected_item is None:
+            errors.append(
+                {
+                    "source_id": source_id,
+                    "filename": f"Source #{source_id}",
+                    "error": "This source does not belong to the analysis.",
+                }
+            )
+            continue
+        source, cell = selected_item
+        try:
+            scanner.update_source_from_path_if_stable(
+                db,
+                source,
+                expected_size=int(update["expected_size"]),
+                expected_mtime_ns=int(update["expected_mtime_ns"]),
+            )
+        except scanner.SourceChangedDuringRead as exc:
+            errors.append(
+                {
+                    "source_id": source_id,
+                    "filename": source.filename,
+                    "error": str(exc),
+                }
+            )
+        except Exception as exc:
+            errors.append(
+                {
+                    "source_id": source_id,
+                    "filename": source.filename,
+                    "error": str(exc),
+                }
+            )
+        else:
+            updated_source_ids.append(source_id)
+            updated_cell_ids.add(cell.id)
+
+    result = {
+        "updated": len(updated_source_ids),
+        "updated_source_ids": updated_source_ids,
+        "updated_cell_ids": sorted(updated_cell_ids),
+        "errors": errors,
+        "preflight": preflight_original_sources(db, analysis),
+    }
+    if updated_source_ids or errors:
+        record_activity(
+            db,
+            category="analysis",
+            action="update_sources_for_portable_export",
+            message=(
+                f'Updated {len(updated_source_ids)} source file'
+                f'{"s" if len(updated_source_ids) != 1 else ""} before exporting '
+                f'"{analysis.title}".'
+            ),
+            entity_type="analysis",
+            entity_id=analysis.id,
+            details={
+                "updated_source_ids": updated_source_ids,
+                "updated_cell_ids": sorted(updated_cell_ids),
+                "error_count": len(errors),
+            },
+        )
+        db.commit()
+    return result
+
+
 def export_analysis_html(
     db: Session,
     analysis: Analysis,
     destination: Path,
     *,
     include_original_files: bool,
+    strict_original_files: bool = False,
     views: list[dict] | None = None,
 ) -> dict:
     cells, groups = _selected_entities(db, analysis)
@@ -419,6 +590,10 @@ def export_analysis_html(
         payload_paths: dict[str, Path] = {}
 
         source_documents = [_source_document(source) for source in sources.values()]
+        # Draft plots are local workspace state — never ship them in a portable report.
+        export_spec = deepcopy(analysis.spec or {})
+        export_spec.pop("draft_plot", None)
+        export_spec.pop("draft_plots", None)
         package = {
             "package_version": FORMAT_VERSION,
             "export_id": export_id,
@@ -426,7 +601,7 @@ def export_analysis_html(
             "analysis": {
                 "original_id": analysis.id,
                 "title": analysis.title,
-                "spec": analysis.spec,
+                "spec": export_spec,
                 "provenance": analysis.provenance,
                 "created_at": analysis.created_at.isoformat(),
                 "modified_at": analysis.modified_at.isoformat(),
@@ -461,6 +636,10 @@ def export_analysis_html(
             if include_original_files:
                 source_path = Path(source.path)
                 if not source_path.is_file():
+                    if strict_original_files:
+                        raise PortableOriginalSourceError(
+                            f"Original source is unavailable: {source.filename}."
+                        )
                     warnings.append(f"Original source is unavailable: {source.filename}.")
                     continue
                 payload_id = f"original-{source.hash}"
@@ -478,6 +657,11 @@ def export_analysis_html(
                 )
                 if descriptor["sha256"] != source.hash:
                     path.unlink(missing_ok=True)
+                    if strict_original_files:
+                        raise PortableOriginalSourceError(
+                            f"Original source changed while the report was being prepared: "
+                            f"{source.filename}."
+                        )
                     warnings.append(
                         f"Original source changed and was not embedded: {source.filename}."
                     )
@@ -1401,6 +1585,8 @@ def _remap_selection(selection: dict, cell_map: dict[int, int], group_map: dict[
 
 def _remap_spec(spec: dict, cell_map: dict[int, int], group_map: dict[int, int]) -> dict:
     result = deepcopy(spec)
+    result.pop("draft_plot", None)
+    result.pop("draft_plots", None)
     result["selection"] = _remap_selection(result.get("selection", {}), cell_map, group_map)
     for plot in result.get("saved_plots", []) or []:
         plot["selection"] = _remap_selection(plot.get("selection", {}), cell_map, group_map)

@@ -82,7 +82,7 @@ function DownloadRow({
       onDoubleClick={() => actionable && onOpen(entry)}
       style={{
         borderRadius: 8,
-        background: highlight ? "var(--mantine-color-teal-0)" : undefined,
+        background: highlight ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
         transition: "background 400ms",
         cursor: actionable ? "pointer" : "default",
         maxWidth: "100%",

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import APP_VERSION, CALC_VERSION, FRONTEND_DIST
 from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, cache_management, diagnostics, files, library, replicates, settings, tree
+from .routers import activity, analyses, automation, cache_management, diagnostics, files, library, replicates, settings, tree
 from .services.activity_log import record_activity
 from .services import cache_maintenance, database_identity, sessions, source_monitor
 
@@ -148,6 +148,7 @@ app.include_router(analyses.router)
 app.include_router(replicates.router)
 app.include_router(activity.router)
 app.include_router(settings.router)
+app.include_router(automation.router)
 app.include_router(cache_management.router)
 app.include_router(diagnostics.router)
 
