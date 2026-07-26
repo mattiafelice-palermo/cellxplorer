@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
+os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app import models  # noqa: F401

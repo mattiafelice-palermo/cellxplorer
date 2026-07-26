@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,11 +27,6 @@ class Stage:
 
 def repo_root(start: Path | None = None) -> Path:
     return (start or Path(__file__).resolve()).parents[1]
-
-
-def default_backend_jobs() -> int:
-    cpu = os.cpu_count() or 4
-    return max(1, min(16, cpu))
 
 
 def discover_frontend_test_files(root: Path) -> list[Path]:
@@ -90,7 +84,6 @@ def build_stages(
     python_executable: str | None = None,
     node_executable: str | None = None,
     npm_executable: str | None = None,
-    backend_jobs: int | None = None,
 ) -> list[Stage]:
     python_executable = python_executable or sys.executable
     node_executable = node_executable or find_node_executable()
@@ -102,7 +95,6 @@ def build_stages(
         path.relative_to(root).as_posix().replace("/", os.sep)
         for path in discover_frontend_test_files(root)
     ]
-    jobs = backend_jobs if backend_jobs is not None else default_backend_jobs()
 
     return [
         Stage(
@@ -115,13 +107,8 @@ def build_stages(
         ),
         Stage(
             2,
-            f"Backend tests ({jobs} workers)",
-            [
-                python_executable,
-                str(root / "scripts" / "run_backend_tests.py"),
-                "--jobs",
-                str(jobs),
-            ],
+            "Backend tests",
+            [python_executable, "-m", "unittest", "discover", "tests", "-v"],
         ),
         Stage(
             3,
@@ -146,32 +133,12 @@ def default_run_command(command: list[str], cwd: Path, env: dict[str, str]) -> i
     return completed.returncode
 
 
-def run_stage(
-    stage: Stage,
-    *,
-    root: Path,
-    env: dict[str, str],
-    run_command: RunCommand,
-) -> tuple[Stage, int]:
-    print(f"[{stage.number}/{STAGE_COUNT}] {stage.name}")
-    try:
-        exit_code = run_command(stage.command, root, env)
-    except KeyboardInterrupt:
-        raise
-    if exit_code != 0:
-        print(f"FAIL: {stage.name} exited with code {exit_code}", file=sys.stderr)
-    else:
-        print(f"PASS: {stage.name}")
-    return stage, exit_code
-
-
 def run_preflight(
     root: Path | None = None,
     *,
     python_executable: str | None = None,
     node_executable: str | None = None,
     npm_executable: str | None = None,
-    backend_jobs: int | None = None,
     run_command: RunCommand | None = None,
 ) -> int:
     root = root or repo_root()
@@ -191,7 +158,6 @@ def run_preflight(
             python_executable=python_executable,
             node_executable=node_executable,
             npm_executable=npm_executable,
-            backend_jobs=backend_jobs,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -201,68 +167,35 @@ def run_preflight(
         env = os.environ.copy()
         env["CELLXPLORER_DATA"] = temp_data_dir
 
-        version_stage = stages[0]
-        try:
-            _, version_code = run_stage(
-                version_stage,
-                root=root,
-                env=env,
-                run_command=run_command,
-            )
-        except KeyboardInterrupt:
-            print("\nPreflight cancelled.")
-            return 130
+        completed = 0
+        for stage in stages:
+            print(f"[{stage.number}/{STAGE_COUNT}] {stage.name}")
+            try:
+                exit_code = run_command(stage.command, root, env)
+            except KeyboardInterrupt:
+                print("\nPreflight cancelled.")
+                return 130
 
-        if version_code != 0:
-            print("\nPreflight stopped. Later stages were not run.", file=sys.stderr)
-            return version_code if version_code > 0 else 1
+            if exit_code != 0:
+                print(f"FAIL: command exited with code {exit_code}", file=sys.stderr)
+                print(
+                    "\nPreflight stopped. Later stages were not run.",
+                    file=sys.stderr,
+                )
+                return exit_code if exit_code > 0 else 1
 
-        parallel_stages = stages[1:]
-        completed = 1
-        failures: list[tuple[Stage, int]] = []
-
-        print(
-            f"Running {len(parallel_stages)} verification stages in parallel "
-            f"(backend, frontend tests, frontend build)."
-        )
-        try:
-            with ThreadPoolExecutor(max_workers=len(parallel_stages)) as pool:
-                futures = {
-                    pool.submit(
-                        run_stage,
-                        stage,
-                        root=root,
-                        env=env,
-                        run_command=run_command,
-                    ): stage
-                    for stage in parallel_stages
-                }
-                for future in as_completed(futures):
-                    stage, exit_code = future.result()
-                    completed += 1
-                    if exit_code != 0:
-                        failures.append((stage, exit_code))
-        except KeyboardInterrupt:
-            print("\nPreflight cancelled.")
-            return 130
-
-        if failures:
-            print("\nPreflight failed:", file=sys.stderr)
-            for stage, exit_code in sorted(failures, key=lambda item: item[0].number):
-                print(f"- {stage.name} (exit {exit_code})", file=sys.stderr)
-            return next(code for _stage, code in failures if code != 0)
+            print(f"PASS: {stage.name}")
+            completed += 1
 
     print("=" * 40)
     print("PREFLIGHT PASSED")
-    print(f"{STAGE_COUNT}/{STAGE_COUNT} stages completed successfully")
+    print(f"{completed}/{STAGE_COUNT} stages completed successfully")
     print("=" * 40)
     return 0
 
 
 def main() -> int:
-    jobs = os.environ.get("CELLXPLORER_PREFLIGHT_JOBS")
-    backend_jobs = int(jobs) if jobs else None
-    return run_preflight(backend_jobs=backend_jobs)
+    return run_preflight()
 
 
 if __name__ == "__main__":
