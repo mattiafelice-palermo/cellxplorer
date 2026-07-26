@@ -182,6 +182,14 @@ edits. Keep the index below in order.
   — replace low-value Tests/Files columns with replicate membership and cached maximum specific
   discharge capacity, plus an explanation of the existing status badges.
   **Implemented.**
+- [011-cell-library-toolbar-source-maintenance.md](011-cell-library-toolbar-source-maintenance.md)
+  — right-align Cell Database actions and combine source checking/updating into a split action while
+  preserving selected-cell scope and one-cell add-to-replicate behavior.
+  **Implemented.**
+- [012-cell-library-sort-and-filter.md](012-cell-library-sort-and-filter.md)
+  — add Excel-style header menus with typed filters and one-column sorting to the Cell Database,
+  applied before pagination with tested selection safety.
+  **Implemented.**
 
 ## Assets
 
