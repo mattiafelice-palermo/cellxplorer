@@ -1,0 +1,52 @@
+name: CellXplorer preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Clean Windows preflight
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip check
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: Verify release tag version
+        if: github.ref_type == 'tag'
+        run: python scripts/check_versions.py --expected-version "${{ github.ref_name }}"
+
+      - name: Run CellXplorer preflight
+        run: python scripts/preflight.py

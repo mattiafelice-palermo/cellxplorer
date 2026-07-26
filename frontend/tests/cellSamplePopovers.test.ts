@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cellFacts, relatedAnalysesForCell } from "../src/components/CellSamplePopovers.tsx";
+import { cellFacts, relatedAnalysesForCell } from "../src/cellSamplePopoverLogic.ts";
 
 type Analysis = Parameters<typeof relatedAnalysesForCell>[2][number];
 

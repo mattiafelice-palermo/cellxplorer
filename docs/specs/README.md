@@ -138,6 +138,18 @@ edits. Keep the index below in order.
   — (A) warn which analyses and saved plots an explode/cell-removal will affect, including ones
   left with no samples, via a new read-only `/api/analyses/usage` endpoint; (B) make an unsaved
   plot visible as an amber draft card that can survive leaving the analysis. **Implemented.**
+- [007-application-version-consistency-check.md](007-application-version-consistency-check.md)
+  — read-only `python scripts/check_versions.py` command that verifies every maintained version
+  declaration matches (backend, npm manifests and lockfiles, Tauri config, Rust crate and lock).
+  Developer tooling only. **Implemented.**
+- [008-canonical-local-preflight-command.md](008-canonical-local-preflight-command.md)
+  — `python scripts/preflight.py` runs version consistency, backend tests, frontend policy tests,
+  and the frontend production build in order with isolated `CELLXPLORER_DATA`. Developer tooling
+  only. **Implemented.**
+- [009-automatic-clean-environment-preflight.md](009-automatic-clean-environment-preflight.md)
+  — automatically runs the canonical CellXplorer preflight on a clean Windows environment
+  whenever `main` changes, when a version tag is pushed, or when manually requested.
+  **Implemented.**
 
 ## Assets
 

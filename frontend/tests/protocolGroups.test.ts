@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeGroup } from "../src/components/ProtocolSegmentsPanel.tsx";
+import { normalizeGroup } from "../src/protocolGroupNormalization.ts";
 
 /**
  * Protocol groups reach the panel from a live backend, a cached analysis

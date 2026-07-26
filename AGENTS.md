@@ -132,13 +132,17 @@ Cellxplorer/
 │   ├── test_automation.py          Automation pause endpoint and source-monitor skip
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
-│   └── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
+│   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
+│   ├── test_check_versions_script.py Version declaration consistency checker tests
+│   └── test_preflight_script.py    Preflight command unit tests
 ├── docs/
 │   └── agent-knowledge/            Durable architecture and change playbooks
 │       ├── chargeability-analysis.md
 │       ├── rate-capability-analysis.md
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
+│   ├── check_versions.py           Read-only version declaration consistency check
+│   └── preflight.py                Canonical local verification command
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 ├── run.py                          Runs FastAPI with the built frontend
@@ -187,6 +191,21 @@ Run backend tests from the repository root:
 
 ```powershell
 python -m unittest discover tests
+```
+
+After meaningful code changes, run the canonical local preflight:
+
+```powershell
+python scripts\preflight.py
+```
+
+Report the exact preflight result in your work summary. Do not claim verification passed when
+preflight was not run, and do not remove or weaken tests to make preflight green.
+
+Before release, verify every maintained version declaration matches:
+
+```powershell
+python scripts\check_versions.py
 ```
 
 Run the lightweight TypeScript policy tests directly when relevant:

@@ -80,3 +80,47 @@ python run.py
 ```
 
 Open `http://127.0.0.1:8642`. For live frontend hot reload, use `start-webapp.cmd` instead.
+
+## Verify a change
+
+After meaningful code changes, run the canonical local preflight from the repository root:
+
+```powershell
+python scripts\preflight.py
+```
+
+The command runs version consistency, backend tests, frontend policy tests, and the frontend
+production build in order. It uses an isolated temporary `CELLXPLORER_DATA` directory and stops
+at the first failure.
+
+Install frontend dependencies first if needed:
+
+```powershell
+npm --prefix frontend ci
+```
+
+Individual commands remain available for focused debugging. See `AGENTS.md` for the full list.
+
+## Automatic clean-environment preflight
+
+GitHub automatically runs the canonical preflight whenever `main` changes and when a `v*`
+release tag is pushed. You can also start it manually from the GitHub Actions page.
+
+The workflow installs backend and frontend dependencies on a clean `windows-latest` runner,
+checks release-tag versions when triggered by a tag, and then runs:
+
+```powershell
+python scripts\preflight.py
+```
+
+A red workflow means the committed code failed outside your local development environment.
+
+To run it manually:
+
+1. Open the CellXplorer repository on GitHub.
+2. Open **Actions**.
+3. Select **CellXplorer preflight**.
+4. Select **Run workflow**.
+5. Choose the intended branch.
+6. Start the workflow.
+7. Open the **Clean Windows preflight** job to inspect failures.
