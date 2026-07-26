@@ -116,9 +116,19 @@ def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
         total = values.sum(min_count=1)
         return None if pd.isna(total) else round(float(total), 6)
 
+    def _max(column: str) -> float | None:
+        if cycles is None or column not in cycles.columns:
+            return None
+        values = pd.to_numeric(cycles[column], errors="coerce")
+        if values.empty:
+            return None
+        maximum = values.max(skipna=True)
+        return None if pd.isna(maximum) else round(float(maximum), 6)
+
     return {
         "total_charge_capacity_mah": _sum("charge_capacity_mah"),
         "total_discharge_capacity_mah": _sum("discharge_capacity_mah"),
+        "max_discharge_capacity_mah": _max("discharge_capacity_mah"),
     }
 
 

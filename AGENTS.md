@@ -30,6 +30,21 @@ boundaries, proven failure modes, and verification techniques. Do not turn the k
 a chronological work log, copy chat transcripts into it, or document guesses that have not been
 confirmed by code or tests.
 
+## Branch workflow
+
+Implement features **sequentially**, one branch at a time:
+
+1. Before starting a new feature, check whether a feature branch is already open. If one exists,
+   finish it (preflight, merge to `main`) before creating another branch.
+2. Create a dedicated branch from current `main` before implementing a new feature or spec.
+   Do not build feature work directly on `main`.
+3. Use a short, descriptive name such as `feature/cell-table-pagination`.
+4. Run `python scripts\preflight.py` on the branch before merging.
+5. Merge to `main` when the feature is complete. GitHub preflight runs automatically on `main`;
+   feature-branch pushes do not.
+
+This keeps overlapping edits out of the same files and reduces merge conflicts.
+
 ## Core data rules
 
 - `SourceFile -> Test -> Cell` is the canonical scientific hierarchy. A cell is the primary object

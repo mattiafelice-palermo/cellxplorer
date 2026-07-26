@@ -424,6 +424,7 @@ export interface CellSummary {
   total_cycles: number;
   total_charge_capacity_mah: number | null;
   total_discharge_capacity_mah: number | null;
+  max_specific_discharge_capacity_mah_g: number | null;
   has_offline: boolean;
   has_changed: boolean;
   has_changing: boolean;

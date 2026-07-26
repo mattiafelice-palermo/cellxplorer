@@ -73,6 +73,7 @@ class SourceFile(Base):
     cycle_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_charge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_discharge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_discharge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     # pending | ready | error. Capacity totals are persisted so library reads
     # never need to open the per-cycle Parquet cache.
     capacity_summary_status: Mapped[str] = mapped_column(String(20), default="pending")

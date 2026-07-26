@@ -215,6 +215,38 @@ def _finite_sum(values) -> float | None:
     return round(total, 6) if found else None
 
 
+def _finite_max(values) -> float | None:
+    best = None
+    for value in values:
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(number):
+            continue
+        if best is None or number > best:
+            best = number
+    return round(best, 6) if best is not None else None
+
+
+def max_specific_discharge_capacity(
+    max_discharge_capacity_mah: float | None,
+    active_mass_mg: float | None,
+) -> float | None:
+    mass = _positive_float(active_mass_mg)
+    if max_discharge_capacity_mah is None or mass is None:
+        return None
+    try:
+        max_mah = float(max_discharge_capacity_mah)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(max_mah):
+        return None
+    return round(max_mah * 1000 / mass, 6)
+
+
 def cell_capacity_totals(cell: Cell) -> dict:
     source_files = []
     for test in cell.tests:
@@ -224,6 +256,7 @@ def cell_capacity_totals(cell: Cell) -> dict:
         return {
             "total_charge_capacity_mah": None,
             "total_discharge_capacity_mah": None,
+            "max_discharge_capacity_mah": None,
         }
     return {
         "total_charge_capacity_mah": _finite_sum(
@@ -231,6 +264,9 @@ def cell_capacity_totals(cell: Cell) -> dict:
         ),
         "total_discharge_capacity_mah": _finite_sum(
             sf.total_discharge_capacity_mah for sf in source_files
+        ),
+        "max_discharge_capacity_mah": _finite_max(
+            sf.max_discharge_capacity_mah for sf in source_files
         ),
     }
 
@@ -326,6 +362,21 @@ def _scientific_metadata_values(
     return values
 
 
+def _max_specific_from_summary(
+    summary: dict,
+    metadata: dict[str, str],
+    source_mass: float | None,
+    source_nominal: float | None,
+) -> float | None:
+    if summary.get("has_summary_pending") or summary.get("has_summary_error"):
+        return None
+    scientific = _scientific_metadata_values(metadata, source_mass, source_nominal)
+    return max_specific_discharge_capacity(
+        summary.get("max_discharge_capacity_mah"),
+        scientific["active_mass_mg"]["effective_value"],
+    )
+
+
 def _empty_cell_file_summary() -> dict:
     return {
         "n_tests": 0,
@@ -354,6 +405,7 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
             func.coalesce(func.sum(SourceFile.cycle_count), 0).label("total_cycles"),
             func.sum(SourceFile.total_charge_capacity_mah).label("total_charge"),
             func.sum(SourceFile.total_discharge_capacity_mah).label("total_discharge"),
+            func.max(SourceFile.max_discharge_capacity_mah).label("max_discharge"),
             func.sum(
                 case(
                     (
@@ -418,6 +470,11 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
             "total_discharge_capacity_mah": (
                 round(float(row.total_discharge), 6)
                 if all_ready and row.total_discharge is not None
+                else None
+            ),
+            "max_discharge_capacity_mah": (
+                round(float(row.max_discharge), 6)
+                if all_ready and row.max_discharge is not None
                 else None
             ),
             "has_offline": bool(row.has_offline),
@@ -508,6 +565,19 @@ def cell_dict(
     totals = cell_capacity_totals(cell)
     cell.total_charge_capacity_mah = totals["total_charge_capacity_mah"]
     cell.total_discharge_capacity_mah = totals["total_discharge_capacity_mah"]
+    scientific_metadata = cell_scientific_metadata(cell, meta)
+    has_summary_pending = any(
+        link.file.parse_status == "parsed"
+        and link.file.capacity_summary_status == "pending"
+        for test in cell.tests
+        for link in test.file_links
+    )
+    has_summary_error = any(
+        link.file.parse_status == "parsed"
+        and link.file.capacity_summary_status == "error"
+        for test in cell.tests
+        for link in test.file_links
+    )
     result = {
         "id": cell.id,
         "name": cell.name,
@@ -515,28 +585,27 @@ def cell_dict(
         "archived": cell.archived,
         "cycling_status": cell.cycling_status,
         "tags": sorted(tag_names),
-        "scientific_metadata": cell_scientific_metadata(cell, meta),
+        "scientific_metadata": scientific_metadata,
         "scientific_presets": cell_scientific_presets(cell, meta),
         "n_tests": len(cell.tests),
         "n_files": n_files,
         "total_cycles": cycles,
-        **totals,
+        "total_charge_capacity_mah": totals["total_charge_capacity_mah"],
+        "total_discharge_capacity_mah": totals["total_discharge_capacity_mah"],
+        "max_specific_discharge_capacity_mah_g": (
+            None
+            if has_summary_pending or has_summary_error
+            else max_specific_discharge_capacity(
+                totals["max_discharge_capacity_mah"],
+                scientific_metadata["active_mass_mg"]["effective_value"],
+            )
+        ),
         "has_offline": "offline" in statuses,
         "has_changed": "changed" in statuses,
         "has_changing": "changing" in statuses,
         "has_parsing": "parsing" in statuses,
-        "has_summary_pending": any(
-            link.file.parse_status == "parsed"
-            and link.file.capacity_summary_status == "pending"
-            for test in cell.tests
-            for link in test.file_links
-        ),
-        "has_summary_error": any(
-            link.file.parse_status == "parsed"
-            and link.file.capacity_summary_status == "error"
-            for test in cell.tests
-            for link in test.file_links
-        ),
+        "has_summary_pending": has_summary_pending,
+        "has_summary_error": has_summary_error,
         "created_at": cell.created_at.isoformat(),
     }
     if include_metadata:
@@ -597,6 +666,14 @@ def list_cells(
         metadata = metadata_by_cell[cell.id]
         source_mass, source_nominal = source_values.get(cell.id, (None, None))
         summary = file_summaries.get(cell.id, _empty_cell_file_summary())
+        max_specific = _max_specific_from_summary(
+            summary, metadata, source_mass, source_nominal
+        )
+        public_summary = {
+            key: value
+            for key, value in summary.items()
+            if key != "max_discharge_capacity_mah"
+        }
         result.append(
             {
                 "id": cell.id,
@@ -609,7 +686,8 @@ def list_cells(
                     metadata, source_mass, source_nominal
                 ),
                 "scientific_presets": cell_scientific_presets(cell, metadata),
-                **summary,
+                **public_summary,
+                "max_specific_discharge_capacity_mah_g": max_specific,
                 "created_at": cell.created_at.isoformat(),
             }
         )

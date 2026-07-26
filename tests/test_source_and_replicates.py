@@ -546,6 +546,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             parser_version=parsing.PARSER_VERSION,
             total_charge_capacity_mah=7.0,
             total_discharge_capacity_mah=6.0,
+            max_discharge_capacity_mah=6.0,
             capacity_summary_status="ready",
         )
         test = Test(cell=cell, name="Imported file")
@@ -559,6 +560,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
         self.assertEqual(totals["total_charge_capacity_mah"], 7.0)
         self.assertEqual(totals["total_discharge_capacity_mah"], 6.0)
+        self.assertEqual(totals["max_discharge_capacity_mah"], 6.0)
 
     def test_listing_cells_does_not_touch_sources_or_cycle_caches(self):
         db = self.make_session()
@@ -635,6 +637,7 @@ class SourceAndReplicateTests(unittest.TestCase):
                     nominal_capacity_mah=2.0,
                     total_charge_capacity_mah=3.25,
                     total_discharge_capacity_mah=3.0,
+                    max_discharge_capacity_mah=3.0,
                     capacity_summary_status="ready",
                 ),
             ),
@@ -653,6 +656,7 @@ class SourceAndReplicateTests(unittest.TestCase):
                     nominal_capacity_mah=2.1,
                     total_charge_capacity_mah=4.5,
                     total_discharge_capacity_mah=4.25,
+                    max_discharge_capacity_mah=4.25,
                     capacity_summary_status="ready",
                 ),
             ),
@@ -688,6 +692,11 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(payload[ready.id]["total_cycles"], 22)
         self.assertEqual(payload[ready.id]["total_charge_capacity_mah"], 7.75)
         self.assertEqual(payload[ready.id]["total_discharge_capacity_mah"], 7.25)
+        self.assertAlmostEqual(
+            payload[ready.id]["max_specific_discharge_capacity_mah_g"],
+            447.368421,
+            places=6,
+        )
         self.assertTrue(payload[ready.id]["has_changed"])
         self.assertEqual(
             payload[ready.id]["scientific_metadata"]["active_mass_mg"],
@@ -699,6 +708,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             },
         )
         self.assertIsNone(payload[pending.id]["total_charge_capacity_mah"])
+        self.assertIsNone(payload[pending.id]["max_specific_discharge_capacity_mah_g"])
         self.assertTrue(payload[pending.id]["has_offline"])
         self.assertTrue(payload[pending.id]["has_summary_pending"])
         self.assertEqual(payload[empty.id]["n_tests"], 0)
@@ -970,6 +980,138 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(cell_b.cycling_status, "complete")
         event = db.query(ActivityEvent).filter(ActivityEvent.action == "set_status").one()
         self.assertEqual(event.message, "Marked 2 cells as complete")
+
+
+class MaxSpecificDischargeTests(unittest.TestCase):
+    def make_session(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from app.db import Base
+
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def test_helper_rejects_missing_or_invalid_mass(self):
+        self.assertIsNone(
+            library.max_specific_discharge_capacity(4.0, None)
+        )
+        self.assertIsNone(
+            library.max_specific_discharge_capacity(4.0, 0)
+        )
+        self.assertIsNone(
+            library.max_specific_discharge_capacity(None, 10.0)
+        )
+
+    def test_helper_uses_override_mass_precedence_via_list_cells(self):
+        db = self.make_session()
+        cell = Cell(name="Specific discharge", cycling_status="active")
+        cell.metadata_entries = [
+            CellMetadata(key="override.active_mass_mg", value="10"),
+        ]
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [
+            TestFile(
+                position=0,
+                file=SourceFile(
+                    hash="specific-discharge",
+                    path="C:/data/specific.ndax",
+                    filename="specific.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="online",
+                    parse_status="parsed",
+                    active_mass_mg=20.0,
+                    total_charge_capacity_mah=5.0,
+                    total_discharge_capacity_mah=4.0,
+                    max_discharge_capacity_mah=4.0,
+                    capacity_summary_status="ready",
+                ),
+            )
+        ]
+        db.add(cell)
+        db.commit()
+
+        payload = library.list_cells(db=db)[0]
+        self.assertEqual(payload["max_specific_discharge_capacity_mah_g"], 400.0)
+
+    def test_multiple_files_use_maximum_not_sum(self):
+        db = self.make_session()
+        cell = Cell(name="Two files", cycling_status="active")
+        cell.metadata_entries = [CellMetadata(key="active_material_mg", value="5")]
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [
+            TestFile(
+                position=0,
+                file=SourceFile(
+                    hash="file-one",
+                    path="C:/data/one.ndax",
+                    filename="one.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="online",
+                    parse_status="parsed",
+                    max_discharge_capacity_mah=2.0,
+                    total_charge_capacity_mah=2.0,
+                    total_discharge_capacity_mah=2.0,
+                    capacity_summary_status="ready",
+                ),
+            ),
+            TestFile(
+                position=1,
+                file=SourceFile(
+                    hash="file-two",
+                    path="C:/data/two.ndax",
+                    filename="two.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="online",
+                    parse_status="parsed",
+                    max_discharge_capacity_mah=3.5,
+                    total_charge_capacity_mah=3.5,
+                    total_discharge_capacity_mah=3.5,
+                    capacity_summary_status="ready",
+                ),
+            ),
+        ]
+        db.add(cell)
+        db.commit()
+
+        payload = library.list_cells(db=db)[0]
+        self.assertEqual(payload["max_specific_discharge_capacity_mah_g"], 700.0)
+
+    def test_summary_error_returns_null(self):
+        db = self.make_session()
+        cell = Cell(name="Failed summary", cycling_status="active")
+        cell.metadata_entries = [CellMetadata(key="active_material_mg", value="5")]
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [
+            TestFile(
+                position=0,
+                file=SourceFile(
+                    hash="failed-summary",
+                    path="C:/data/failed.ndax",
+                    filename="failed.ndax",
+                    size=100,
+                    ext="ndax",
+                    location_status="online",
+                    parse_status="parsed",
+                    max_discharge_capacity_mah=3.0,
+                    capacity_summary_status="error",
+                ),
+            )
+        ]
+        db.add(cell)
+        db.commit()
+
+        payload = library.list_cells(db=db)[0]
+        self.assertIsNone(payload["max_specific_discharge_capacity_mah_g"])
 
 
 if __name__ == "__main__":

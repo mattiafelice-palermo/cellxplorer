@@ -50,6 +50,7 @@ def _require_signature(path: Path, expected: tuple[int, int]) -> None:
 def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.total_charge_capacity_mah = info.get("total_charge_capacity_mah")
     sf.total_discharge_capacity_mah = info.get("total_discharge_capacity_mah")
+    sf.max_discharge_capacity_mah = info.get("max_discharge_capacity_mah")
     sf.capacity_summary_status = "ready"
 
 

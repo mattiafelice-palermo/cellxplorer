@@ -301,5 +301,22 @@ class WriteBehindTests(unittest.TestCase):
         self.assertEqual(list(cycles["cycle"]), [1, 2])
 
 
+class CapacityTotalsTests(unittest.TestCase):
+    def test_returns_finite_maximum_discharge(self):
+        cycles = pd.DataFrame({"discharge_capacity_mah": [1.0, 3.5, 2.0]})
+        totals = cache.capacity_totals(cycles)
+        self.assertEqual(totals["max_discharge_capacity_mah"], 3.5)
+
+    def test_ignores_nan_discharge_values(self):
+        cycles = pd.DataFrame({"discharge_capacity_mah": [1.0, float("nan"), 2.0]})
+        totals = cache.capacity_totals(cycles)
+        self.assertEqual(totals["max_discharge_capacity_mah"], 2.0)
+
+    def test_no_valid_discharge_values_returns_none(self):
+        cycles = pd.DataFrame({"discharge_capacity_mah": [float("nan"), None]})
+        totals = cache.capacity_totals(cycles)
+        self.assertIsNone(totals["max_discharge_capacity_mah"])
+
+
 if __name__ == "__main__":
     unittest.main()

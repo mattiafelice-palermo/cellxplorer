@@ -49,7 +49,56 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "SELECT version_num FROM alembic_version"
                 ).fetchone()[0]
             self.assertEqual(revision, CURRENT_SCHEMA_REVISION)
+            columns = {column["name"] for column in inspect(engine).get_columns("source_files")}
+            self.assertIn("max_discharge_capacity_mah", columns)
             engine.dispose()
+
+    def test_migration_0002_marks_parsed_sources_pending_for_backfill(self):
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        from app.migrations.versions import v0002_max_discharge_summary
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, engine = self.make_database(root)
+            with engine.begin() as connection:
+                Base.metadata.create_all(connection)
+                connection.exec_driver_sql(
+                    "CREATE TABLE alembic_version "
+                    "(version_num VARCHAR(32) PRIMARY KEY NOT NULL)"
+                )
+                connection.exec_driver_sql(
+                    "INSERT INTO source_files "
+                    "(hash, path, filename, size, ext, location_status, parse_status, "
+                    "capacity_summary_status, max_discharge_capacity_mah, created_at) "
+                    "VALUES (?, 'C:/data/x.ndax', 'x.ndax', 1, 'ndax', 'online', "
+                    "'parsed', 'ready', NULL, CURRENT_TIMESTAMP)",
+                    ("a" * 64,),
+                )
+                connection.exec_driver_sql(
+                    "INSERT INTO alembic_version (version_num) VALUES ('0001')"
+                )
+                connection.exec_driver_sql(
+                    "ALTER TABLE source_files DROP COLUMN max_discharge_capacity_mah"
+                )
+
+            with engine.begin() as connection:
+                context = MigrationContext.configure(connection)
+                operations = Operations(context)
+                v0002_max_discharge_summary.upgrade(operations, connection)
+
+            with closing(sqlite3.connect(path)) as connection:
+                status = connection.execute(
+                    "SELECT capacity_summary_status FROM source_files"
+                ).fetchone()[0]
+                columns = {
+                    row[1]
+                    for row in connection.execute('PRAGMA table_info("source_files")')
+                }
+            engine.dispose()
+            self.assertEqual(status, "pending")
+            self.assertIn("max_discharge_capacity_mah", columns)
 
     def test_unversioned_cellxplorer_database_is_backed_up_and_stamped(self):
         with tempfile.TemporaryDirectory() as directory:

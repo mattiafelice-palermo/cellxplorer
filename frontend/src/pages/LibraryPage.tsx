@@ -10,6 +10,7 @@ import {
   Code,
   Divider,
   Group,
+  HoverCard,
   Loader,
   Menu,
   Modal,
@@ -17,6 +18,7 @@ import {
   NumberInput,
   Pagination,
   Paper,
+  Popover,
   ScrollArea,
   Select,
   Stack,
@@ -26,6 +28,7 @@ import {
   Textarea,
   Title,
   Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +40,7 @@ import {
   IconDeviceFloppy,
   IconEye,
   IconFolder,
+  IconInfoCircle,
   IconLayersIntersect,
   IconPlayerPlay,
   IconPencil,
@@ -140,6 +144,145 @@ function CapacityValue({
   );
 }
 
+function SpecificCapacityValue({
+  value,
+  pending,
+  failed = false,
+}: {
+  value: number | null | undefined;
+  pending: boolean;
+  failed?: boolean;
+}) {
+  if (failed) {
+    return (
+      <Tooltip label="The cached cycling data could not be summarized. Open Activity for details.">
+        <Text component="span" size="sm" c="red">
+          Unavailable
+        </Text>
+      </Tooltip>
+    );
+  }
+  if (pending) {
+    return (
+      <Tooltip label="Being calculated from the cached cycling data. No partial value is shown.">
+        <Text component="span" size="sm" c="dimmed" fs="italic">
+          Calculating...
+        </Text>
+      </Tooltip>
+    );
+  }
+  if (value === null || value === undefined) {
+    return (
+      <Tooltip label="Add a valid active mass to calculate specific discharge capacity.">
+        <Text component="span" size="sm" c="dimmed">
+          —
+        </Text>
+      </Tooltip>
+    );
+  }
+  return <>{`${value.toFixed(1)} mAh/g`}</>;
+}
+
+function ReplicateMembershipCell({
+  groups,
+  loading,
+  failed,
+}: {
+  groups: ReplicateGroupSummary[];
+  loading: boolean;
+  failed: boolean;
+}) {
+  if (loading) {
+    return (
+      <Text size="sm" c="dimmed" ta="right">
+        …
+      </Text>
+    );
+  }
+  if (failed) {
+    return (
+      <Tooltip label="Replicate membership could not be loaded.">
+        <Text component="span" size="sm" c="red" ta="right">
+          Unavailable
+        </Text>
+      </Tooltip>
+    );
+  }
+  const count = groups.length;
+  if (count === 0) {
+    return (
+      <Text size="sm" c="dimmed" ta="right">
+        0
+      </Text>
+    );
+  }
+  return (
+    <HoverCard width={320} shadow="md" position="right" openDelay={160} closeDelay={120} withinPortal>
+      <HoverCard.Target>
+        <UnstyledButton
+          aria-label={`${count} replicate group${count === 1 ? "" : "s"}`}
+          style={{ display: "block", width: "100%", textAlign: "right" }}
+        >
+          <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
+            {count}
+          </Text>
+        </UnstyledButton>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="sm" fw={600} mb={8}>
+          Replicate groups
+        </Text>
+        <Stack gap={4}>
+          {groups.map((group) => (
+            <Text key={group.id} size="sm" lineClamp={1} title={group.name}>
+              {group.name}
+            </Text>
+          ))}
+        </Stack>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
+const STATUS_HELP_ITEMS = [
+  "Active / Complete — whether the cell is still expected to receive new cycling data. Completed cells are skipped by normal source checks.",
+  "Ready — cached cycling data are available and the source has no detected change.",
+  "Changed — the source file differs from the registered version and can be updated.",
+  "Source changing — the file still appears to be written; updating is deferred.",
+  "Offline — the registered source path cannot be reached.",
+  "Parsing / Calculating / Summary failed — current state of preparing the cached cycling summary.",
+] as const;
+
+function StatusHeaderHelp() {
+  return (
+    <Popover width={360} position="bottom-start" withinPortal shadow="md">
+      <Popover.Target>
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color="gray"
+          aria-label="Explain cell statuses"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <IconInfoCircle size={14} />
+        </ActionIcon>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Text size="sm" fw={600} mb={8}>
+          Cell statuses
+        </Text>
+        <Stack gap={6}>
+          {STATUS_HELP_ITEMS.map((item) => (
+            <Text key={item} size="xs">
+              {item}
+            </Text>
+          ))}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
 function cellsUrl(search: string) {
   return `/api/cells${search ? `?search=${encodeURIComponent(search)}` : ""}`;
 }
@@ -171,9 +314,9 @@ const CELL_SEARCH_DEBOUNCE_MS = 300;
 const LIBRARY_CELL_TABLE_COL_WIDTHS = {
   select: 42,
   cell: "26%",
-  tests: 64,
-  files: 64,
-  cycles: 72,
+  replicates: 98,
+  cycles: 76,
+  maxSpecific: 156,
   charge: 112,
   discharge: 120,
   status: 188,
@@ -1180,9 +1323,9 @@ export function LibraryPage() {
               <colgroup>
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.select }} />
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cell }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.tests }} />
-                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.files }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.replicates }} />
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cycles }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.maxSpecific }} />
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.charge }} />
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.discharge }} />
                 <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.status }} />
@@ -1213,12 +1356,17 @@ export function LibraryPage() {
                     />
                   </Table.Th>
                   <Table.Th>Cell</Table.Th>
-                  <Table.Th>Tests</Table.Th>
-                  <Table.Th>Files</Table.Th>
-                  <Table.Th>Cycles</Table.Th>
-                  <Table.Th>Total charge</Table.Th>
-                  <Table.Th>Total discharge</Table.Th>
-                  <Table.Th style={{ whiteSpace: "nowrap" }}>Status</Table.Th>
+                  <Table.Th ta="right">Replicates</Table.Th>
+                  <Table.Th ta="right">Cycles</Table.Th>
+                  <Table.Th ta="right">Max specific discharge</Table.Th>
+                  <Table.Th ta="right">Total charge</Table.Th>
+                  <Table.Th ta="right">Total discharge</Table.Th>
+                  <Table.Th style={{ whiteSpace: "nowrap" }}>
+                    <Group gap={4} wrap="nowrap">
+                      Status
+                      <StatusHeaderHelp />
+                    </Group>
+                  </Table.Th>
                   <Table.Th>Created</Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
@@ -1248,25 +1396,28 @@ export function LibraryPage() {
                               {cell.description}
                             </Text>
                           )}
-                          {cellGroups.length > 0 && (
-                            <Group gap={4} mt={4}>
-                              {cellGroups.map((group) => (
-                                <Badge key={group.id} size="xs" color="teal" variant="light">
-                                  {group.name}
-                                </Badge>
-                              ))}
-                            </Group>
-                          )}
                         </>
                       </CellHoverCard>
                     </Table.Td>
-                    <Table.Td>{cell.n_tests}</Table.Td>
-                    <Table.Td>{cell.n_files}</Table.Td>
-                    <Table.Td>{cell.total_cycles}</Table.Td>
                     <Table.Td>
+                      <ReplicateMembershipCell
+                        groups={cellGroups}
+                        loading={replicateGroups.isLoading}
+                        failed={replicateGroups.isError}
+                      />
+                    </Table.Td>
+                    <Table.Td ta="right">{cell.total_cycles}</Table.Td>
+                    <Table.Td ta="right">
+                      <SpecificCapacityValue
+                        value={cell.max_specific_discharge_capacity_mah_g}
+                        pending={cell.has_summary_pending}
+                        failed={cell.has_summary_error}
+                      />
+                    </Table.Td>
+                    <Table.Td ta="right">
                       <CapacityValue value={cell.total_charge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td ta="right">
                       <CapacityValue value={cell.total_discharge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
                     </Table.Td>
                     <Table.Td style={{ whiteSpace: "nowrap" }}>

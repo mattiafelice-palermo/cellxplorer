@@ -24,13 +24,39 @@ loading and failure states, truncation/overflow, and accessibility. A reference 
 requested composition, but it does not silently replace the application's established colors,
 button hierarchy, typography, or feedback semantics.
 
+## Branch workflow
+
+Implement features **one at a time** on dedicated branches:
+
+1. **Check for an open branch first.** If a feature branch is already in progress, complete and
+   merge it before starting another feature. Do not leave multiple open feature branches.
+2. **Branch before implementing.** When a spec moves from Plan to Implement, create a feature
+   branch from current `main`. Record the branch name in the spec's implementation record when
+   work begins.
+3. **Stay sequential.** Finish branch A → merge to `main` → start branch B. Parallel feature
+   branches are discouraged because they often touch the same files (for example
+   `LibraryPage.tsx` or `AnalysisPage.tsx`) and create merge conflicts.
+4. **Verify on the branch.** Run `python scripts\preflight.py` before merge. Do not rely on
+   feature-branch pushes for CI; preflight on GitHub runs for `main`, release tags, and manual
+   workflow dispatch only.
+
+Example:
+
+```powershell
+git checkout main
+git pull
+git checkout -b feature/cell-table-pagination
+```
+
 ## Lifecycle
 
 A spec is a living document, not a one-shot brief:
 
 1. **Plan** — the sections above, written before implementation.
-2. **Implement** — the agent follows the spec.
-3. **Review** — a reviewer appends a `# Review of the implementation — follow-up tasks`
+2. **Branch** — create one feature branch from `main`. Do not start a new branch while another
+   feature branch is still open.
+3. **Implement** — the agent follows the spec on that branch.
+4. **Review** — a reviewer appends a `# Review of the implementation — follow-up tasks`
    section to the **same file**, containing:
    - the verification actually run (commands + results), so nobody repeats it;
    - what was confirmed correct by reading the code, so nobody re-litigates it;
@@ -55,6 +81,8 @@ the "Review of the implementation" section at the end lists the tasks (R1, R2, .
 For any UI work, also read docs/agent-knowledge/visual-style-guide.md before editing.
 
 Rules:
+0. Work on the spec's feature branch. If another feature branch is already open, finish it
+   before starting this spec.
 1. Do the R tasks in the order given under "Follow-up order", and only those. No
    unrelated refactors, no scope expansion.
 2. The review's "What the review verified" list is settled. Do not re-check, re-derive
@@ -149,6 +177,10 @@ edits. Keep the index below in order.
 - [009-automatic-clean-environment-preflight.md](009-automatic-clean-environment-preflight.md)
   — automatically runs the canonical CellXplorer preflight on a clean Windows environment
   whenever `main` changes, when a version tag is pushed, or when manually requested.
+  **Implemented.**
+- [010-cell-library-columns-and-status.md](010-cell-library-columns-and-status.md)
+  — replace low-value Tests/Files columns with replicate membership and cached maximum specific
+  discharge capacity, plus an explanation of the existing status badges.
   **Implemented.**
 
 ## Assets
