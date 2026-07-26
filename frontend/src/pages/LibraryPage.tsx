@@ -72,6 +72,7 @@ import {
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import { CellHoverCard } from "../components/CellSamplePopovers";
+import { CellLibraryColumnMenu } from "../components/CellLibraryColumnMenu";
 import {
   deleteEmptyAnalysesIfRequested,
   DestructiveImpactModal,
@@ -83,6 +84,17 @@ import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
 import { invalidateAnalysisQueries } from "../analysisQueryCache";
 import { ImportCellsLauncher } from "./InboxPage";
+import {
+  buildCellLibraryRows,
+  DEFAULT_CELL_LIBRARY_SORT,
+  EMPTY_CELL_LIBRARY_FILTERS,
+  cellLibraryStatuses,
+  processCellLibraryRows,
+  type CellLibraryFilters,
+  type CellLibrarySort,
+  type CellLibraryStatus,
+  type SortDirection,
+} from "../libraryTableLogic";
 
 type LibraryImpactRequest = {
   title: string;
@@ -192,6 +204,8 @@ function ReplicateMembershipCell({
   loading: boolean;
   failed: boolean;
 }) {
+  const [opened, setOpened] = useState(false);
+
   if (loading) {
     return (
       <Text size="sm" c="dimmed" ta="right">
@@ -217,18 +231,43 @@ function ReplicateMembershipCell({
     );
   }
   return (
-    <HoverCard width={320} shadow="md" position="right" openDelay={160} closeDelay={120} withinPortal>
-      <HoverCard.Target>
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      width={320}
+      position="right"
+      shadow="md"
+      withinPortal
+      trapFocus={false}
+    >
+      <Popover.Target>
         <UnstyledButton
           aria-label={`${count} replicate group${count === 1 ? "" : "s"}`}
+          aria-expanded={opened}
+          aria-haspopup="dialog"
           style={{ display: "block", width: "100%", textAlign: "right" }}
+          onMouseEnter={() => setOpened(true)}
+          onMouseLeave={() => setOpened(false)}
+          onFocus={() => setOpened(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setOpened((current) => !current);
+            }
+            if (event.key === "Escape") {
+              setOpened(false);
+            }
+          }}
         >
           <Text size="sm" td="underline" style={{ textDecorationStyle: "dotted" }}>
             {count}
           </Text>
         </UnstyledButton>
-      </HoverCard.Target>
-      <HoverCard.Dropdown>
+      </Popover.Target>
+      <Popover.Dropdown
+        onMouseEnter={() => setOpened(true)}
+        onMouseLeave={() => setOpened(false)}
+      >
         <Text size="sm" fw={600} mb={8}>
           Replicate groups
         </Text>
@@ -239,8 +278,65 @@ function ReplicateMembershipCell({
             </Text>
           ))}
         </Stack>
-      </HoverCard.Dropdown>
-    </HoverCard>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+const STATUS_BADGE_ORDER: CellLibraryStatus[] = [
+  "Complete",
+  "Active",
+  "Parsing",
+  "Calculating",
+  "Summary failed",
+  "Changed",
+  "Source changing",
+  "Offline",
+  "Ready",
+];
+
+function statusBadgeProps(status: CellLibraryStatus): {
+  color: string;
+  variant: "light" | "outline";
+  label: string;
+} {
+  switch (status) {
+    case "Complete":
+      return { color: "gray", variant: "light", label: "complete" };
+    case "Active":
+      return { color: "teal", variant: "outline", label: "active" };
+    case "Parsing":
+      return { color: "blue", variant: "light", label: "parsing" };
+    case "Calculating":
+      return { color: "gray", variant: "light", label: "calculating" };
+    case "Summary failed":
+      return { color: "red", variant: "light", label: "summary failed" };
+    case "Changed":
+      return { color: "orange", variant: "light", label: "changed" };
+    case "Source changing":
+      return { color: "yellow", variant: "light", label: "source changing" };
+    case "Offline":
+      return { color: "red", variant: "light", label: "offline" };
+    case "Ready":
+      return { color: "teal", variant: "light", label: "ready" };
+    default:
+      return { color: "gray", variant: "light", label: status };
+  }
+}
+
+function CellStatusBadges({ cell }: { cell: CellSummary }) {
+  const statuses = new Set(cellLibraryStatuses(cell));
+  return (
+    <Group gap={4} wrap="nowrap">
+      {STATUS_BADGE_ORDER.filter((status) => statuses.has(status)).map((status) => {
+        const badge = statusBadgeProps(status);
+        return (
+          <Badge key={status} color={badge.color} variant={badge.variant}>
+            {badge.label}
+          </Badge>
+        );
+      })}
+    </Group>
   );
 }
 
@@ -331,6 +427,8 @@ export function LibraryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [cellPage, setCellPage] = useState(1);
   const [cellPageSize, setCellPageSize] = useState<CellPageSize>(() => loadCellPageSize());
+  const [cellSort, setCellSortState] = useState<CellLibrarySort>(DEFAULT_CELL_LIBRARY_SORT);
+  const [cellFilters, setCellFilters] = useState<CellLibraryFilters>(EMPTY_CELL_LIBRARY_FILTERS);
   const [replicateSearch, setReplicateSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedCellIds, setSelectedCellIds] = useState<Set<number>>(new Set());
@@ -417,13 +515,20 @@ export function LibraryPage() {
   });
 
   const replicateGroups = useQuery({
-    queryKey: ["replicate-groups", replicateSearch],
+    queryKey: ["replicate-groups"],
+    queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),
+  });
+  const filteredReplicateGroups = useQuery({
+    queryKey: ["replicate-groups", "search", replicateSearch],
     queryFn: () =>
       get<ReplicateGroupSummary[]>(
         `/api/replicate-groups${
           replicateSearch ? `?search=${encodeURIComponent(replicateSearch)}` : ""
         }`
       ),
+    enabled:
+      replicateGroups.isSuccess &&
+      ((replicateGroups.data?.length ?? 0) > 0 || Boolean(replicateSearch.trim())),
   });
   const tree = useQuery({
     queryKey: ["tree"],
@@ -721,16 +826,23 @@ export function LibraryPage() {
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
 
-  const checkSources = useMutation({
-    mutationFn: (cellIds: number[]) =>
-      post<SourceCheckJob>("/api/cells/check-sources/jobs", {
-        cell_ids: cellIds.length ? cellIds : null,
-      }),
-    onSuccess: (job) => {
+  const startSourceMaintenance = useMutation({
+    mutationFn: (body: { cellIds: number[]; updateAfterCheck: boolean }) =>
+      post<SourceCheckJob>(
+        body.updateAfterCheck
+          ? "/api/cells/check-update-sources/jobs"
+          : "/api/cells/check-sources/jobs",
+        {
+          cell_ids: body.cellIds.length ? body.cellIds : null,
+        }
+      ),
+    onSuccess: (job, variables) => {
       qc.setQueryData(["source-check-job"], job);
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
       notifications.show({
-        message: `Checking ${job.total} source file${job.total === 1 ? "" : "s"} with ${job.workers} worker${job.workers === 1 ? "" : "s"}.`,
+        message: variables.updateAfterCheck
+          ? `Checking and updating ${job.total} source file${job.total === 1 ? "" : "s"}.`
+          : `Checking ${job.total} source file${job.total === 1 ? "" : "s"}.`,
         color: "teal",
       });
     },
@@ -741,6 +853,30 @@ export function LibraryPage() {
     const job = sourceCheckJob.data;
     if (!job || job.status !== "completed" || handledSourceCheckJob.current === job.id) return;
     handledSourceCheckJob.current = job.id;
+
+    if (job.update_after_check) {
+      const ready = new Set(job.ready_cell_ids ?? []);
+      void Promise.all([
+        qc.invalidateQueries({ queryKey: ["cells"] }),
+        qc.invalidateQueries({ queryKey: ["cell"] }),
+        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
+        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
+        qc.invalidateQueries({ queryKey: ["files"] }),
+        qc.invalidateQueries({ queryKey: ["tree"] }),
+        qc.invalidateQueries({ queryKey: ["analyses"] }),
+        invalidateAnalysisQueries(qc),
+      ]);
+      if (ready.size > 0) {
+        setSelectedCellIds((current) => {
+          const next = new Set(current);
+          ready.forEach((cellId) => next.delete(cellId));
+          return next;
+        });
+      }
+      return;
+    }
+
     const checkedScope = new Set(job.requested_cell_ids);
     void qc
       .fetchQuery({
@@ -757,53 +893,6 @@ export function LibraryPage() {
         setSelectedCellIds(new Set(changedIds));
       });
   }, [qc, searchQuery, sourceCheckJob.data]);
-
-  const updateChangedSources = useMutation({
-    mutationFn: (cellIds: number[]) =>
-      post<{
-        updated: number;
-        updated_file_ids: number[];
-        ready_cell_ids: number[];
-        skipped_complete: number;
-        errors: { file_id: number; filename: string; error: string }[];
-      }>("/api/cells/update-changed-sources", {
-        cell_ids: cellIds.length ? cellIds : null,
-      }),
-    onSuccess: async (result) => {
-      notifications.show({
-        message: `Updated ${result.updated} changed source file${result.updated === 1 ? "" : "s"}.`,
-        color: result.errors.length ? "orange" : "teal",
-      });
-      result.errors.forEach((error) =>
-        notifications.show({ message: `${error.filename}: ${error.error}`, color: "red" })
-      );
-      const ready = new Set(result.ready_cell_ids);
-      qc.setQueriesData<CellSummary[]>({ queryKey: ["cells"] }, (current) =>
-        current?.map((cell) =>
-          ready.has(cell.id)
-            ? { ...cell, has_changed: false, has_offline: false, has_changing: false }
-            : cell
-        )
-      );
-      setSelectedCellIds((current) => {
-        const next = new Set(current);
-        result.ready_cell_ids.forEach((cellId) => next.delete(cellId));
-        return next;
-      });
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["cells"] }),
-        qc.invalidateQueries({ queryKey: ["cell"] }),
-        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
-        qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
-        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
-        qc.invalidateQueries({ queryKey: ["files"] }),
-        qc.invalidateQueries({ queryKey: ["tree"] }),
-        invalidateAnalysisQueries(qc),
-        qc.invalidateQueries({ queryKey: ["analyses"] }),
-      ]);
-    },
-    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
-  });
 
   const setCellStatus = useMutation({
     mutationFn: (body: { cellIds: number[]; cyclingStatus: "active" | "complete" }) =>
@@ -1025,14 +1114,6 @@ export function LibraryPage() {
     () => (cells.data ?? []).filter((cell) => selectedCellIds.has(cell.id)),
     [cells.data, selectedCellIds]
   );
-  const changedCells = useMemo(
-    () => (cells.data ?? []).filter((cell) => cell.has_changed),
-    [cells.data]
-  );
-  const changedCellsInScope =
-    selectedCellIds.size > 0
-      ? selectedCells.filter((cell) => cell.has_changed).length
-      : changedCells.length;
   const selectedAllComplete =
     selectedCells.length > 0 && selectedCells.every((cell) => cell.cycling_status === "complete");
   const selectedAnyComplete = selectedCells.some((cell) => cell.cycling_status === "complete");
@@ -1046,22 +1127,6 @@ export function LibraryPage() {
           ? "Mark complete"
           : "Mark complete";
   const allCells = cells.data ?? [];
-  const cellPageCount = Math.max(1, Math.ceil(allCells.length / cellPageSize));
-  const safeCellPage = Math.min(cellPage, cellPageCount);
-  const pageStart = (safeCellPage - 1) * cellPageSize;
-  const pageCells = allCells.slice(pageStart, pageStart + cellPageSize);
-  const pageEnd = pageStart + pageCells.length;
-
-  useEffect(() => {
-    setCellPage(1);
-  }, [searchQuery, cellPageSize]);
-
-  useEffect(() => {
-    if (cellPage > cellPageCount) setCellPage(cellPageCount);
-  }, [cellPage, cellPageCount]);
-
-  const allVisibleSelected =
-    pageCells.length > 0 && pageCells.every((cell) => selectedCellIds.has(cell.id));
   const groupsByCellId = useMemo(() => {
     const map = new Map<number, ReplicateGroupSummary[]>();
     (replicateGroups.data ?? []).forEach((group) => {
@@ -1073,6 +1138,48 @@ export function LibraryPage() {
     });
     return map;
   }, [replicateGroups.data]);
+  const replicateFiltersEnabled = replicateGroups.isSuccess;
+  const replicateFiltersFailed = replicateGroups.isError;
+  const libraryRows = useMemo(
+    () => buildCellLibraryRows(allCells, groupsByCellId),
+    [allCells, groupsByCellId]
+  );
+  const filteredSortedRows = useMemo(
+    () =>
+      processCellLibraryRows(libraryRows, cellFilters, cellSort, {
+        replicateFiltersEnabled,
+      }),
+    [cellFilters, cellSort, libraryRows, replicateFiltersEnabled]
+  );
+  const cellPageCount = Math.max(1, Math.ceil(filteredSortedRows.length / cellPageSize));
+  const safeCellPage = Math.min(cellPage, cellPageCount);
+  const pageStart = (safeCellPage - 1) * cellPageSize;
+  const pageRows = filteredSortedRows.slice(pageStart, pageStart + cellPageSize);
+  const pageCells = pageRows.map((row) => row.cell);
+  const pageEnd = pageStart + pageCells.length;
+
+  useEffect(() => {
+    setCellPage(1);
+  }, [searchQuery, cellPageSize, cellFilters, cellSort]);
+
+  useEffect(() => {
+    if (cellPage > cellPageCount) setCellPage(cellPageCount);
+  }, [cellPage, cellPageCount]);
+
+  useEffect(() => {
+    const visibleIds = new Set(filteredSortedRows.map((row) => row.cell.id));
+    setSelectedCellIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filteredSortedRows]);
+
+  const allVisibleSelected =
+    pageCells.length > 0 && pageCells.every((cell) => selectedCellIds.has(cell.id));
+
+  const setCellSort = (column: CellLibrarySort["column"], direction: SortDirection) => {
+    setCellSortState({ column, direction });
+  };
   const previewGroup = (replicateGroups.data ?? []).find((group) => group.id === previewGroupId) ?? null;
   const replicateSelectData = useMemo(
     () => (replicateGroups.data ?? []).map((group) => ({ value: String(group.id), label: group.name })),
@@ -1127,7 +1234,7 @@ export function LibraryPage() {
 
       <Stack gap="xs">
       <Stack gap={6} style={LIBRARY_STICKY_BAR_STYLE}>
-        <Group gap="xs" align="center" wrap="nowrap" justify="flex-start">
+        <Group justify="space-between" align="center" wrap="nowrap">
           <TextInput
             size="sm"
             w={220}
@@ -1137,6 +1244,7 @@ export function LibraryPage() {
             value={searchInput}
             onChange={(event) => setSearchInput(event.currentTarget.value)}
           />
+          <Group ml="auto" justify="flex-end" gap="xs" wrap="wrap">
           <ImportCellsLauncher
             targetFolderId={null}
             onSaved={() => {
@@ -1151,26 +1259,42 @@ export function LibraryPage() {
               </Button>
             )}
           </ImportCellsLauncher>
-          <Button
-            variant="default"
-            size="sm"
-            leftSection={<IconRefresh size={15} />}
-            loading={checkSources.isPending || sourceCheckJob.data?.status === "running"}
-            disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
-            onClick={() => checkSources.mutate(selectedIds)}
-          >
-            Check sources
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            leftSection={<IconRefresh size={15} />}
-            loading={updateChangedSources.isPending}
-            disabled={changedCellsInScope === 0}
-            onClick={() => updateChangedSources.mutate(selectedIds)}
-          >
-            Update changed{changedCellsInScope ? ` (${changedCellsInScope})` : ""}
-          </Button>
+          <Button.Group>
+            <Button
+              variant="default"
+              size="sm"
+              leftSection={<IconRefresh size={15} />}
+              loading={startSourceMaintenance.isPending || sourceCheckJob.data?.status === "running"}
+              disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
+              onClick={() =>
+                startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: true })
+              }
+            >
+              Check and update
+            </Button>
+            <Menu withinPortal position="bottom-end">
+              <Menu.Target>
+                <ActionIcon
+                  variant="default"
+                  size={30}
+                  aria-label="Source maintenance options"
+                  disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
+                >
+                  <IconChevronDown size={13} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  disabled={sourceCheckJob.data?.status === "running"}
+                  onClick={() =>
+                    startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: false })
+                  }
+                >
+                  Check only
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Button.Group>
           <Menu withinPortal position="bottom-end">
             <Menu.Target>
               <Button
@@ -1178,6 +1302,7 @@ export function LibraryPage() {
                 size="sm"
                 rightSection={<IconChevronDown size={14} />}
                 leftSection={<IconLayersIntersect size={15} />}
+                disabled={selectedCellIds.size === 0}
               >
                 Replicate
               </Button>
@@ -1256,6 +1381,7 @@ export function LibraryPage() {
               <IconTrash size={15} />
             </ActionIcon>
           </Tooltip>
+          </Group>
         </Group>
         <Group gap="sm" justify="space-between" align="center" wrap="nowrap">
           <Group gap={8} align="center" wrap="nowrap">
@@ -1267,7 +1393,7 @@ export function LibraryPage() {
               </Badge>
             )}
           </Group>
-          {allCells.length > 0 && (
+          {filteredSortedRows.length > 0 && (
             <Group gap="sm" align="center" wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
                 <Text size="xs" c="dimmed">
@@ -1355,24 +1481,116 @@ export function LibraryPage() {
                       }}
                     />
                   </Table.Th>
-                  <Table.Th>Cell</Table.Th>
-                  <Table.Th ta="right">Replicates</Table.Th>
-                  <Table.Th ta="right">Cycles</Table.Th>
-                  <Table.Th ta="right">Max specific discharge</Table.Th>
-                  <Table.Th ta="right">Total charge</Table.Th>
-                  <Table.Th ta="right">Total discharge</Table.Th>
+                  <Table.Th>
+                    <CellLibraryColumnMenu
+                      column="cell"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                    />
+                  </Table.Th>
+                  <Table.Th ta="right">
+                    <CellLibraryColumnMenu
+                      column="replicates"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                      align="right"
+                    />
+                  </Table.Th>
+                  <Table.Th ta="right">
+                    <CellLibraryColumnMenu
+                      column="cycles"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                      align="right"
+                    />
+                  </Table.Th>
+                  <Table.Th ta="right">
+                    <CellLibraryColumnMenu
+                      column="maxSpecificDischarge"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                      align="right"
+                    />
+                  </Table.Th>
+                  <Table.Th ta="right">
+                    <CellLibraryColumnMenu
+                      column="totalCharge"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                      align="right"
+                    />
+                  </Table.Th>
+                  <Table.Th ta="right">
+                    <CellLibraryColumnMenu
+                      column="totalDischarge"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                      align="right"
+                    />
+                  </Table.Th>
                   <Table.Th style={{ whiteSpace: "nowrap" }}>
-                    <Group gap={4} wrap="nowrap">
-                      Status
+                    <Group gap={4} wrap="nowrap" justify="space-between">
+                      <CellLibraryColumnMenu
+                        column="status"
+                        sort={cellSort}
+                        filters={cellFilters}
+                        setFilters={setCellFilters}
+                        setSort={setCellSort}
+                        replicateFiltersEnabled={replicateFiltersEnabled}
+                        replicateFiltersFailed={replicateFiltersFailed}
+                      />
                       <StatusHeaderHelp />
                     </Group>
                   </Table.Th>
-                  <Table.Th>Created</Table.Th>
+                  <Table.Th>
+                    <CellLibraryColumnMenu
+                      column="created"
+                      sort={cellSort}
+                      filters={cellFilters}
+                      setFilters={setCellFilters}
+                      setSort={setCellSort}
+                      replicateFiltersEnabled={replicateFiltersEnabled}
+                      replicateFiltersFailed={replicateFiltersFailed}
+                    />
+                  </Table.Th>
                   <Table.Th>Actions</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {pageCells.map((cell) => {
+                {pageCells.length === 0 ? (
+                  <Table.Tr>
+                    <Table.Td colSpan={10}>
+                      <Text size="sm" c="dimmed" ta="center" py="md">
+                        No cells match the current filters.
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ) : (
+                pageCells.map((cell) => {
                   const cellGroups = groupsByCellId.get(cell.id) ?? [];
                   return (
                   <Table.Tr key={cell.id} bg={selectedCellIds.has(cell.id) ? "teal.0" : undefined}>
@@ -1410,70 +1628,26 @@ export function LibraryPage() {
                     <Table.Td ta="right">
                       <SpecificCapacityValue
                         value={cell.max_specific_discharge_capacity_mah_g}
-                        pending={cell.has_summary_pending}
+                        pending={cell.has_summary_pending || cell.has_parsing}
                         failed={cell.has_summary_error}
                       />
                     </Table.Td>
                     <Table.Td ta="right">
-                      <CapacityValue value={cell.total_charge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
+                      <CapacityValue
+                        value={cell.total_charge_capacity_mah}
+                        pending={cell.has_summary_pending || cell.has_parsing}
+                        failed={cell.has_summary_error}
+                      />
                     </Table.Td>
                     <Table.Td ta="right">
-                      <CapacityValue value={cell.total_discharge_capacity_mah} pending={cell.has_summary_pending} failed={cell.has_summary_error} />
+                      <CapacityValue
+                        value={cell.total_discharge_capacity_mah}
+                        pending={cell.has_summary_pending || cell.has_parsing}
+                        failed={cell.has_summary_error}
+                      />
                     </Table.Td>
                     <Table.Td style={{ whiteSpace: "nowrap" }}>
-                      <Group gap={4} wrap="nowrap">
-                        {cell.cycling_status === "complete" && (
-                          <Badge color="gray" variant="light">
-                            complete
-                          </Badge>
-                        )}
-                        {cell.cycling_status !== "complete" && (
-                          <Badge color="teal" variant="outline">
-                            active
-                          </Badge>
-                        )}
-                        {cell.has_parsing && (
-                          <Badge color="blue" variant="light">
-                            parsing
-                          </Badge>
-                        )}
-                        {cell.has_summary_pending && (
-                          <Badge color="gray" variant="light">
-                            calculating
-                          </Badge>
-                        )}
-                        {cell.has_summary_error && (
-                          <Badge color="red" variant="light">
-                            summary failed
-                          </Badge>
-                        )}
-                        {cell.has_changed && (
-                          <Badge color="orange" variant="light">
-                            changed
-                          </Badge>
-                        )}
-                        {cell.has_changing && (
-                          <Badge color="yellow" variant="light">
-                            source changing
-                          </Badge>
-                        )}
-                        {cell.has_offline && (
-                          <Badge color="red" variant="light">
-                            offline
-                          </Badge>
-                        )}
-                        {!cell.has_changed &&
-                          !cell.has_changing &&
-                          !cell.has_offline &&
-                          !cell.has_parsing &&
-                          !cell.has_summary_pending &&
-                          !cell.has_summary_error &&
-                          cell.cycling_status !== "complete" && (
-                          <Badge color="teal" variant="light">
-                            ready
-                          </Badge>
-                        )}
-                      </Group>
+                      <CellStatusBadges cell={cell} />
                     </Table.Td>
                     <Table.Td>
                       <Text size="xs" c="dimmed">
@@ -1518,7 +1692,8 @@ export function LibraryPage() {
                     </Table.Td>
                   </Table.Tr>
                 );
-                })}
+                })
+                )}
               </Table.Tbody>
               <Table.Tfoot>
                 <Table.Tr>
@@ -1615,17 +1790,17 @@ export function LibraryPage() {
                       size="xs"
                       aria-label="Select all replicate groups"
                       checked={
-                        (replicateGroups.data ?? []).length > 0 &&
-                        (replicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
+                        (filteredReplicateGroups.data ?? []).length > 0 &&
+                        (filteredReplicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
                       }
                       indeterminate={
                         selectedGroupIds.size > 0 &&
-                        !(replicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
+                        !(filteredReplicateGroups.data ?? []).every((g) => selectedGroupIds.has(g.id))
                       }
                       onChange={(event) =>
                         setSelectedGroupIds(
                           event.currentTarget.checked
-                            ? new Set((replicateGroups.data ?? []).map((g) => g.id))
+                            ? new Set((filteredReplicateGroups.data ?? []).map((g) => g.id))
                             : new Set()
                         )
                       }
@@ -1640,7 +1815,7 @@ export function LibraryPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {(replicateGroups.data ?? []).map((group) => (
+                {(filteredReplicateGroups.data ?? []).map((group) => (
                   <Table.Tr key={group.id}>
                     <Table.Td>
                       <Checkbox
@@ -1709,7 +1884,7 @@ export function LibraryPage() {
                     </Table.Td>
                   </Table.Tr>
                 ))}
-                {(replicateGroups.data ?? []).length === 0 && (
+                {(filteredReplicateGroups.data ?? []).length === 0 && (
                   <Table.Tr>
                     <Table.Td colSpan={7}>
                       <Text size="sm" c="dimmed">
