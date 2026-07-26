@@ -1,7 +1,7 @@
 # Review 015: Golden analysis regression corpus
 
 Branch: `feature/golden-analysis-regression-corpus`  
-Head reviewed: Round 3 follow-ups (pending commit on branch)  
+Head reviewed: `acfc1d88aaa7dad8143a01f0643ea155f881a1af` (Round 3 follow-ups)  
 Prior head: `2d74ccdaf32eb1ae5d4f9837a0c0e20537f3bbdc`  
 Base and merge base: `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  
 Cumulative scope: four commits ahead of `main` (after Round 3)  
@@ -90,9 +90,11 @@ specification until the user completes scientific and privacy approval.
 - `python -m unittest discover tests` — 387 tests OK
 - `python scripts\preflight.py --no-cache` — PREFLIGHT PASSED 5/5
 
-### Round 3 implementer (pending)
+### Round 3 implementer (head `acfc1d8`)
 
-- Golden tests, corpus verify, full suite, and preflight to be re-run after Round 3 commit.
+- `python -m unittest tests.test_golden_analysis -v` — 30 tests OK
+- `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — 8/8 PASS
+- `python scripts\preflight.py --no-cache` — PREFLIGHT PASSED 5/5
 
 ### Reviewer independently performed (Round 3)
 
