@@ -141,7 +141,10 @@ Cellxplorer/
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
 │   └── tests/                      Lightweight TypeScript policy tests
 ├── tests/                          Python backend and domain tests
+│   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
+│   ├── test_golden_analysis.py     Full-source golden analysis regression tests
 │   ├── fixtures/
+│   │   ├── golden_analysis/        Committed Neware sources + specs + expected JSON (Spec 015)
 │   │   └── rate_capability_corpus.json  Synthetic positive/negative protocol families
 │   ├── test_analysis_usage.py      Impact preview for cell/group removal
 │   ├── test_automation.py          Automation pause endpoint and source-monitor skip
@@ -154,8 +157,10 @@ Cellxplorer/
 │   └── agent-knowledge/            Durable architecture and change playbooks
 │       ├── chargeability-analysis.md
 │       ├── rate-capability-analysis.md
+│       ├── scientific-regression-testing.md
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
+│   ├── build_golden_analysis_corpus.py  Export/verify golden analysis corpus (Spec 015)
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── preflight.py                Canonical local verification command
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight

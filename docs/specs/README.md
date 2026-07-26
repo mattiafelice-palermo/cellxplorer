@@ -224,6 +224,14 @@ edits. Keep the index below in order.
   drift apart, a silent correctness hazard today; (B) enable incremental type-checking, measured
   at ~15 s → ~6 s warm. Tooling/config only.
   **Implemented.**
+- [015-golden-analysis-regression-corpus.md](015-golden-analysis-regression-corpus.md)
+  — committed full Neware source binaries and golden backend analysis projections for cycles,
+  time/capacity, steps, DCIR, chargeability, and rate capability.
+  **Implemented** (approval pending).
+- [016-reindex-remaining-cycles-has-no-effect.md](016-reindex-remaining-cycles-has-no-effect.md)
+  — the Cycles-tab "Reindex remaining cycles" toggle does nothing: `viewSignature` omits the
+  flag so the trace memo never recomputes, and `zoomSignature`/`uirevision` would re-apply the
+  stale x range. Frontend-only. **Not started.**
 
 ## Assets
 

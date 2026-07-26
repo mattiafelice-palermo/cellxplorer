@@ -1,0 +1,42 @@
+{
+  "available_filters": {
+    "current_ceiling_c": [],
+    "final_soc_pct": [],
+    "initial_soc_pct": [],
+    "target_voltage_v": []
+  },
+  "badges": [
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "detail": "No voltage-controlled charge step with an inferable SoC window was found.",
+      "kind": "chargeability_no_candidates"
+    }
+  ],
+  "calc_version": "1.5.0",
+  "candidates": [],
+  "cells": [
+    {
+      "candidate_count": 0,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "fingerprints": [],
+      "match_count": 0,
+      "status": "no_candidates"
+    }
+  ],
+  "compatibility": {
+    "compatible": false,
+    "complete": false,
+    "fingerprints": []
+  },
+  "filters": {
+    "final_soc_min_pct": 80.0,
+    "initial_soc_max_pct": 20.0,
+    "min_current_ceiling_c": 7.0,
+    "soc_tolerance_pct": 2.0
+  },
+  "matches": [],
+  "parser_version": "v2026.06.11",
+  "type": "chargeability"
+}

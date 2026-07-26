@@ -28,6 +28,8 @@ cache/
 *.spec
 *.nda
 *.ndax
+!tests/fixtures/golden_analysis/sources/*.nda
+!tests/fixtures/golden_analysis/sources/*.ndax
 _internal/
 build/
 dist/

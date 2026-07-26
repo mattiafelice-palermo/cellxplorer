@@ -1,0 +1,93 @@
+{
+  "available": {
+    "charge_fixed_rates_c": [],
+    "charge_rates_c": [],
+    "charge_structures": [],
+    "discharge_fixed_rates_c": [],
+    "discharge_rates_c": []
+  },
+  "badges": [
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "detail": "No completed fixed-rate/variable-rate capability sweep was detected.",
+      "kind": "rate_capability_no_match"
+    }
+  ],
+  "blocks": [],
+  "calc_version": "1.5.0",
+  "cells": [
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "families": {
+        "charge": {
+          "block_id": null,
+          "point_count": 0,
+          "rate_count": 0,
+          "status": "not_detected"
+        },
+        "discharge": {
+          "block_id": null,
+          "point_count": 0,
+          "rate_count": 0,
+          "status": "not_detected"
+        }
+      }
+    }
+  ],
+  "comparison": {
+    "available": false,
+    "common_rates_c": [],
+    "points": [],
+    "reason": "Charge and discharge sweeps are required for every selected cell before a common reference can be calculated.",
+    "reference_rate_c": null
+  },
+  "compatibility": {
+    "charge": {
+      "compatible": false,
+      "complete": false,
+      "fingerprints": []
+    },
+    "discharge": {
+      "compatible": false,
+      "complete": false,
+      "fingerprints": []
+    }
+  },
+  "config": {
+    "cutoff_tolerance_v": 0.03,
+    "families": {
+      "charge": {
+        "charge_structure": "auto",
+        "enabled": true,
+        "fixed_rate_c": null,
+        "monotonic": "prefer",
+        "scaffold": "prefer",
+        "selected_rates_c": []
+      },
+      "discharge": {
+        "charge_structure": "auto",
+        "enabled": true,
+        "fixed_rate_c": null,
+        "monotonic": "prefer",
+        "scaffold": "prefer",
+        "selected_rates_c": []
+      }
+    },
+    "min_points": 3,
+    "rate_tolerance_fraction": 0.03
+  },
+  "detected_blocks": [],
+  "invalid_execution_count": 0,
+  "parser_version": "v2026.06.11",
+  "points": [],
+  "selection_contexts": [
+    {
+      "cell_id": 103,
+      "entry_kind": "cell",
+      "entry_ref_id": 103
+    }
+  ],
+  "type": "rate_capability"
+}

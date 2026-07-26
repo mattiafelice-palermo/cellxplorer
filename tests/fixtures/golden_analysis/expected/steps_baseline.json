@@ -1,0 +1,55 @@
+{
+  "badges": [
+    {
+      "cell_id": 101,
+      "cell_name": "golden-cycles-cell",
+      "detail": "golden-cycles-cell has no source matching the protocol targets for test.",
+      "kind": "steps_no_match",
+      "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c",
+      "segment_name": "test",
+      "series_id": "e01df301-bc03-414a-a70f-affe5f5a057e"
+    }
+  ],
+  "calc_version": "1.5.0",
+  "cell_series": [
+    {
+      "block_meta": [],
+      "cell_id": 101,
+      "cell_name": "golden-cycles-cell",
+      "n_blocks": 0,
+      "quantities": {
+        "block_duration_h": [],
+        "charge_capacity_mah": [],
+        "charge_time_h": [],
+        "cv_charge_capacity_mah": [],
+        "cv_charge_time_h": [],
+        "discharge_capacity_mah": [],
+        "discharge_time_h": [],
+        "mean_charge_voltage_v": [],
+        "mean_discharge_voltage_v": [],
+        "mean_voltage_v": [],
+        "rest_time_h": [],
+        "start_time_h": [],
+        "total_time_h": []
+      },
+      "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c",
+      "segment_name": "test",
+      "series_id": "e01df301-bc03-414a-a70f-affe5f5a057e",
+      "x_cycle": [],
+      "x_occurrence": [],
+      "x_time": []
+    }
+  ],
+  "parser_version": "v2026.06.11",
+  "steps": {
+    "mode": "union",
+    "series": [
+      {
+        "cell_id": 101,
+        "id": "e01df301-bc03-414a-a70f-affe5f5a057e",
+        "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c"
+      }
+    ]
+  },
+  "type": "steps"
+}

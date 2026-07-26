@@ -1,0 +1,46 @@
+{
+  "badges": [
+    {
+      "cell_id": 102,
+      "cell_name": "golden-dcir-cell",
+      "detail": "golden-dcir-cell has no valid adjacent rest/pulse occurrences for Discharge 0.701C.",
+      "kind": "dcir_no_match",
+      "segment_id": "a4d9e24f-fd93-4e79-a36c-b30d9ba19a0b",
+      "segment_name": "Discharge 0.701C",
+      "series_id": "6f7320cb-60cb-4ae0-87fe-9cab3df421cf"
+    }
+  ],
+  "calc_version": "1.5.0",
+  "cell_series": [
+    {
+      "c_rate": null,
+      "cell_id": 102,
+      "cell_name": "golden-dcir-cell",
+      "current_ma": null,
+      "direction": null,
+      "measurement_meta": [],
+      "n_measurements": 0,
+      "quantities": {
+        "dcir_change_pct": [],
+        "dcir_mohm": []
+      },
+      "segment_id": "a4d9e24f-fd93-4e79-a36c-b30d9ba19a0b",
+      "segment_name": "Discharge 0.701C",
+      "series_id": "6f7320cb-60cb-4ae0-87fe-9cab3df421cf",
+      "x_cycle": [],
+      "x_occurrence": [],
+      "x_time": []
+    }
+  ],
+  "dcir": {
+    "series": [
+      {
+        "cell_id": 102,
+        "id": "6f7320cb-60cb-4ae0-87fe-9cab3df421cf",
+        "segment_id": "a4d9e24f-fd93-4e79-a36c-b30d9ba19a0b"
+      }
+    ]
+  },
+  "parser_version": "v2026.06.11",
+  "type": "dcir"
+}

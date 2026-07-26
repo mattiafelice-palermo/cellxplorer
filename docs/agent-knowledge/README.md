@@ -20,6 +20,8 @@ that matches the change, then follow its links to the authoritative implementati
   protocol-formula parsing, reference-capacity resolution, axes, and cache/UI ownership.
 - [`rate-capability-analysis.md`](rate-capability-analysis.md): automatic charge/discharge sweep
   recognition, CC-only capacity, cutoff validation, pattern rules, axes, and cache/UI ownership.
+- [`scientific-regression-testing.md`](scientific-regression-testing.md): golden analysis corpus,
+  synthetic vs full-source regression layers, and golden update workflow.
 
 Existing specialist references:
 
