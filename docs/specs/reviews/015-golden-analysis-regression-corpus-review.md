@@ -1,7 +1,7 @@
 # Review 015: Golden analysis regression corpus
 
 Branch: `feature/golden-analysis-regression-corpus`  
-Head reviewed: Round 3 + scientific approval (pending commit)  
+Head reviewed: `41610ef` (scientific approval complete)  
 Prior heads: `3ea7d09`, `acfc1d8`, `2d74ccd`  
 Base and merge base: `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  
 Status: **ready to merge**
