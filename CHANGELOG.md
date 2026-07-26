@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.14.3 - 2026-07-26
+
+- Draft plots now save through **Save as** in the plot toolbar instead of a separate button on
+  the draft card; **Update** remains for edited saved plots.
+- Fixed the Cell Library **Check and update** chevron so the **Check only** menu opens reliably.
+
 ## 0.14.2 - 2026-07-26
 
 - Fixed the Cycles plot **Reindex remaining cycles** toggle so it immediately closes gaps,

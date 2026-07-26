@@ -619,6 +619,7 @@ export function ChargeabilityPlotCard({
   newPlotEnabled = false,
   onUpdatePlot,
   updatePlotEnabled = false,
+  updatePlotLabel = "Update",
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -631,6 +632,7 @@ export function ChargeabilityPlotCard({
   newPlotEnabled?: boolean;
   onUpdatePlot?: () => void;
   updatePlotEnabled?: boolean;
+  updatePlotLabel?: string;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -740,6 +742,7 @@ export function ChargeabilityPlotCard({
           newPlotEnabled={newPlotEnabled}
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
+          updatePlotLabel={updatePlotLabel}
           updateStyle={(fn) =>
             update((draft) => {
               const styles = ((draft.presentation as Record<string, unknown>).plot_styles ??=

@@ -1,5 +1,4 @@
-import { Badge, Box, Button, Center, Group, Paper, Stack, Text } from "@mantine/core";
-import { IconDeviceFloppy } from "@tabler/icons-react";
+import { Badge, Box, Center, Group, Paper, Stack, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 
 import type { AnalysisDraftPlot, AnalysisTabKey } from "../api";
@@ -31,7 +30,6 @@ export function DraftPlotCard({
   activeTab,
   preview,
   onOpen,
-  onSave,
 }: {
   draft: AnalysisDraftPlot | null | undefined;
   liveUnsaved: boolean;
@@ -39,7 +37,6 @@ export function DraftPlotCard({
   /** Saved-plot thumbnail pipeline (SavedPlotPreview / SavedTimeCapacityPreview). */
   preview?: ReactNode;
   onOpen: () => void;
-  onSave: () => void;
 }) {
   if (!draft && !liveUnsaved) return null;
   const tab = draft?.tab ?? activeTab;
@@ -99,17 +96,8 @@ export function DraftPlotCard({
               </Text>
             </Group>
             <Text size="xs" c="dimmed">
-              Temporary — save it before closing this tab or opening another plot.
+              Temporary — use Save as in the plot toolbar before closing this tab or opening another plot.
             </Text>
-          </Stack>
-          <Stack gap={6} justify="center" w={120} onClick={(event) => event.stopPropagation()}>
-            <Button
-              size="compact-xs"
-              leftSection={<IconDeviceFloppy size={12} />}
-              onClick={onSave}
-            >
-              Save as new plot
-            </Button>
           </Stack>
         </Group>
       </Box>

@@ -1268,42 +1268,46 @@ export function LibraryPage() {
               </Button>
             )}
           </ImportCellsLauncher>
-          <Button.Group>
-            <Button
-              variant="default"
-              size="sm"
-              leftSection={<IconRefresh size={15} />}
-              loading={sourceMaintenanceBusy}
-              disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
-              onClick={() =>
-                startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: true })
-              }
-            >
-              Check and update
-            </Button>
-            <Menu withinPortal position="bottom-end">
-              <Menu.Target>
-                <ActionIcon
-                  variant="default"
-                  size={30}
-                  aria-label="Source maintenance options"
-                  disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
-                >
-                  <IconChevronDown size={13} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item
-                  disabled={sourceMaintenanceBusy}
-                  onClick={() =>
-                    startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: false })
-                  }
-                >
-                  Check only
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          </Button.Group>
+          <Menu withinPortal position="bottom-start" width="target">
+            <Menu.Target>
+              <Box component="span" display="inline-block">
+                <Button.Group>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    leftSection={<IconRefresh size={15} />}
+                    loading={sourceMaintenanceBusy}
+                    disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: true });
+                    }}
+                  >
+                    Check and update
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    px={6}
+                    aria-label="Source maintenance options"
+                    disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
+                  >
+                    <IconChevronDown size={14} />
+                  </Button>
+                </Button.Group>
+              </Box>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                disabled={sourceMaintenanceBusy}
+                onClick={() =>
+                  startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: false })
+                }
+              >
+                Check only
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
           <Menu withinPortal position="bottom-end">
             <Menu.Target>
               <Button

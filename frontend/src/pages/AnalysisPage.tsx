@@ -6430,6 +6430,7 @@ export function PlotHeader({
   newPlotEnabled = false,
   onUpdatePlot,
   updatePlotEnabled = false,
+  updatePlotLabel = "Update",
 }: {
   analysisTitle?: string;
   tabName?: string;
@@ -6453,8 +6454,10 @@ export function PlotHeader({
   /** Green and clickable when the analysis has samples. */
   newPlotEnabled?: boolean;
   onUpdatePlot?: () => void;
-  /** Amber/active when the open saved plot has unsaved edits. */
+  /** Amber/active when the open saved plot has unsaved edits, or when saving a draft. */
   updatePlotEnabled?: boolean;
+  /** `Save as` for new drafts; `Update` for edited saved plots. */
+  updatePlotLabel?: string;
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
   const selectedFormat = exportStyle.export_format ?? "png";
@@ -6885,7 +6888,7 @@ export function PlotHeader({
             disabled={!updatePlotEnabled}
             onClick={onUpdatePlot}
           >
-            Update
+            {updatePlotLabel}
           </Button>
         ) : null}
         {onNewPlot ? (
@@ -7861,6 +7864,7 @@ function CyclePlotCard({
   newPlotEnabled = false,
   onUpdatePlot,
   updatePlotEnabled = false,
+  updatePlotLabel = "Update",
 }: {
   analysisTitle: string;
   plotName: string;
@@ -7875,6 +7879,7 @@ function CyclePlotCard({
   newPlotEnabled?: boolean;
   onUpdatePlot?: () => void;
   updatePlotEnabled?: boolean;
+  updatePlotLabel?: string;
   computeJob: BackgroundJob | undefined;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
@@ -8083,6 +8088,7 @@ function CyclePlotCard({
           newPlotEnabled={newPlotEnabled}
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
+          updatePlotLabel={updatePlotLabel}
         />
         {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
         {segmentsActive && (
@@ -8201,6 +8207,7 @@ function TimeCapacityPlotCardView({
   newPlotEnabled = false,
   onUpdatePlot,
   updatePlotEnabled = false,
+  updatePlotLabel = "Update",
 }: {
   analysisId: number;
   analysisTitle: string;
@@ -8214,6 +8221,7 @@ function TimeCapacityPlotCardView({
   newPlotEnabled?: boolean;
   onUpdatePlot?: () => void;
   updatePlotEnabled?: boolean;
+  updatePlotLabel?: string;
 }) {
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
@@ -8496,6 +8504,7 @@ function TimeCapacityPlotCardView({
           newPlotEnabled={newPlotEnabled}
           onUpdatePlot={onUpdatePlot}
           updatePlotEnabled={updatePlotEnabled}
+          updatePlotLabel={updatePlotLabel}
         />
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
@@ -8572,7 +8581,6 @@ function TabDraftPlotCard({
   liveUnsaved,
   allowPreviewGeneration,
   onOpen,
-  onSave,
 }: {
   analysisId: number;
   tab: AnalysisTabKey;
@@ -8581,7 +8589,6 @@ function TabDraftPlotCard({
   liveUnsaved: boolean;
   allowPreviewGeneration: boolean;
   onOpen: () => void;
-  onSave: () => void;
 }) {
   const previewSource = useMemo(() => {
     if (liveUnsaved) {
@@ -8640,7 +8647,6 @@ function TabDraftPlotCard({
       activeTab={tab}
       preview={preview}
       onOpen={onOpen}
-      onSave={onSave}
     />
   );
 }
@@ -10223,7 +10229,7 @@ function AnalysisPageView({
               ? "Switching tabs will discard this unsaved draft."
               : "Switching tabs will discard edits that were not written back."}
           </Text>
-          <Group justify="flex-end">
+          <Group justify="flex-end" wrap="nowrap" gap="xs">
             <Button variant="default" onClick={() => modals.closeAll()}>
               Cancel
             </Button>
@@ -10240,7 +10246,7 @@ function AnalysisPageView({
                   });
                 }}
               >
-                Save as new plot…
+                Save as new plot
               </Button>
             ) : (
               <Button
@@ -10288,7 +10294,7 @@ function AnalysisPageView({
               ? "Opening another plot will discard this unsaved draft."
               : "Opening another plot will discard edits that were not written back."}
           </Text>
-          <Group justify="flex-end">
+          <Group justify="flex-end" wrap="nowrap" gap="xs">
             <Button variant="default" onClick={() => modals.closeAll()}>
               Cancel
             </Button>
@@ -10305,7 +10311,7 @@ function AnalysisPageView({
                   });
                 }}
               >
-                Save as new plot…
+                Save as new plot
               </Button>
             ) : (
               <Button
@@ -10438,7 +10444,7 @@ function AnalysisPageView({
             <Text size="sm">
               Starting a new plot will discard the current unsaved draft.
             </Text>
-            <Group justify="flex-end">
+            <Group justify="flex-end" wrap="nowrap" gap="xs">
               <Button variant="default" onClick={() => modals.closeAll()}>
                 Cancel
               </Button>
@@ -10454,7 +10460,7 @@ function AnalysisPageView({
                   });
                 }}
               >
-                Save as new plot…
+                Save as new plot
               </Button>
               <Button
                 color="red"
@@ -10672,13 +10678,22 @@ function AnalysisPageView({
     activePlotTab: activePlot?.tab ?? null,
     plotWorkspaceTouched,
   });
+  const draftPlotSession = Boolean(isLiveDraft && activeTabPlotSession);
   const newPlotHeaderProps = {
     onNewPlot: startNewPlot,
     newPlotEnabled: hasSamples,
-    onUpdatePlot: updateActivePlot,
-    updatePlotEnabled: Boolean(
-      activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab,
-    ),
+    onUpdatePlot: draftPlotSession
+      ? () =>
+          setSaveDraft({
+            name: suggestedPlotName(activeTab, displayResult, spec),
+            description: "",
+            source: "live",
+          })
+      : updateActivePlot,
+    updatePlotEnabled: draftPlotSession
+      ? true
+      : Boolean(activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab),
+    updatePlotLabel: draftPlotSession ? "Save as" : "Update",
   };
 
   const plotSurfaceFor = (tab: AnalysisTabKey, card: ReactNode) => {
@@ -10724,13 +10739,6 @@ function AnalysisPageView({
           setPlotWorkspaceTouched(true);
           setPlotSessionActive(true);
           setActiveTab(tab);
-        }}
-        onSave={() => {
-          setSaveDraft({
-            name: suggestedPlotName(tab, displayResult, spec),
-            description: "",
-            source: "live",
-          });
         }}
       />
       <SavedPlotsPanel
@@ -11617,7 +11625,7 @@ function AnalysisPageView({
                     )
                   }
                 >
-                  Save as new plot…
+                  Save as new plot
                 </Button>
               ) : null}
               {leavePrompt?.stage === "confirm" && leavePrompt.mode === "update" ? (
