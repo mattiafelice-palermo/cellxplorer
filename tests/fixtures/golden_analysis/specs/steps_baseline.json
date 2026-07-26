@@ -62,7 +62,7 @@
         {
           "cell_id": 101,
           "id": "e01df301-bc03-414a-a70f-affe5f5a057e",
-          "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c"
+          "segment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         }
       ]
     },
@@ -410,21 +410,15 @@
   },
   "protocol_segments": [
     {
-      "id": "66822bfb-dc42-4134-b303-20a5a30d310c",
-      "name": "test",
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Initial CC charge block",
       "targets": [
         {
-          "protocol_signature": "be1374acf912d64b42060b2dae784c9694702453b71cace65e2a5ad9e682a9f4",
+          "protocol_signature": "01f4668b624ca93c50878291c0e231de263d17aa5c9ebf41228af5b80c977b25",
           "step_indices": [
             2,
             3,
-            4,
-            5,
-            16,
-            17,
-            18,
-            19,
-            20
+            4
           ]
         }
       ]

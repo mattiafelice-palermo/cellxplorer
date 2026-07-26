@@ -75,7 +75,7 @@
       "smoothing_window": 7,
       "stacked": false,
       "time_unit": "min",
-      "view": "voltage_current",
+      "view": "dqdv",
       "x_axis": "time"
     }
   },

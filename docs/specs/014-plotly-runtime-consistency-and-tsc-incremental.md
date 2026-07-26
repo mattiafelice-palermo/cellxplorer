@@ -1,7 +1,8 @@
 # Spec 014: Plotly runtime consistency check + incremental type-checking
 
 Status: **implemented**. Tooling and configuration only — no application behaviour
-changes. Written 2026-07-26.
+changes. Written 2026-07-26.  
+Review document: [`reviews/013-014-build-performance-review.md`](reviews/013-014-build-performance-review.md).
 
 ## Implementation record
 
@@ -19,7 +20,7 @@ python scripts/check_versions.py
 
 ## Review of the implementation — follow-up tasks
 
-See `013-014-build-performance-review.md`. Plotly runtime parity and incremental
+See [`reviews/013-014-build-performance-review.md`](reviews/013-014-build-performance-review.md). Plotly runtime parity and incremental
 type-checking items were confirmed; worker-budget and cache-hash follow-ups live
 in Spec 013.
 

@@ -1,6 +1,7 @@
 # Spec 010: Cell library columns, replicate summary, and status explanation
 
 Status: **implemented**. Backend + migration + frontend.  
+Review document: [`reviews/010-cell-library-columns-and-status-review.md`](reviews/010-cell-library-columns-and-status-review.md).  
 Implement this spec before Spec 012. Written 2026-07-26.
 
 Read this whole file before editing. For UI work, also read

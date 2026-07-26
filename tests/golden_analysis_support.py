@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
+import os
 import shutil
 import tempfile
 from copy import deepcopy
@@ -19,7 +21,7 @@ from app.db import Base
 from app.models import Cell, CellMetadata, SourceFile, Test, TestFile
 from app.config import CALC_VERSION
 from app.services import analysis_engine as engine
-from app.services import cache, chargeability, parsing, rate_capability, scanner
+from app.services import chargeability, parsing, rate_capability
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "golden_analysis"
 MANIFEST_PATH = FIXTURE_ROOT / "manifest.json"
@@ -38,6 +40,57 @@ DEFAULT_PROFILE = {
     "absolute_tolerance": 1e-9,
 }
 
+ALLOWED_CELL_METADATA_KEYS = (
+    "active_material_mg",
+    "active_mass_mg",
+    "nominal_capacity_mah",
+    "electrode_area_cm2",
+    "override.electrode_area_cm2",
+)
+
+CYCLES_ABSOLUTE_QUANTITIES = {
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+    "charge_energy_mwh",
+    "discharge_energy_mwh",
+    "charge_capacity_loss_mah",
+    "discharge_capacity_loss_mah",
+    "cv_charge_capacity_mah",
+    "cv_charge_time_h",
+    "ce_pct",
+    "ee_pct",
+    "charge_voltage_v",
+    "discharge_voltage_v",
+    "polarization_v",
+}
+
+CYCLES_SPECIFIC_QUANTITIES = {
+    "charge_capacity_mah_g",
+    "discharge_capacity_mah_g",
+    "charge_energy_mwh_g",
+    "discharge_energy_mwh_g",
+    "charge_capacity_loss_mah_g_cycle",
+    "discharge_capacity_loss_mah_g_cycle",
+    "cv_charge_capacity_mah_g",
+}
+
+CYCLES_ABSOLUTE_METRICS = {
+    "n_cycles",
+    "max_discharge_capacity_mah",
+    "mean_discharge_capacity_mah",
+    "mean_ce_pct",
+    "mean_ee_pct",
+    "mean_cv_charge_capacity_mah",
+    "median_cv_charge_capacity_mah",
+    "discharge_loss_mah_per_cycle",
+    "charge_loss_mah_per_cycle",
+}
+
+CYCLES_SPECIFIC_METRICS = {
+    "max_discharge_capacity_mah_g",
+    "mean_discharge_capacity_mah_g",
+}
+
 
 class GoldenAnalysisError(Exception):
     """Base error for golden corpus problems."""
@@ -53,6 +106,36 @@ class ComparisonError(GoldenAnalysisError):
         self.path = path
         self.expected = expected
         self.actual = actual
+
+
+# Rebound by bind_isolated_data_root() before any cache I/O.
+cache = importlib.import_module("app.services.cache")
+scanner = importlib.import_module("app.services.scanner")
+
+
+def bind_isolated_data_root(data_root: Path) -> None:
+    """Point production cache/config modules at an isolated data directory."""
+    global cache, scanner
+
+    data_root = data_root.resolve()
+    data_root.mkdir(parents=True, exist_ok=True)
+    (data_root / "cache").mkdir(parents=True, exist_ok=True)
+    (data_root / "imports").mkdir(parents=True, exist_ok=True)
+    (data_root / "logs").mkdir(parents=True, exist_ok=True)
+    os.environ["CELLXPLORER_DATA"] = str(data_root)
+
+    from app import config as config_mod
+
+    importlib.reload(config_mod)
+    cache = importlib.reload(importlib.import_module("app.services.cache"))
+    scanner = importlib.reload(importlib.import_module("app.services.scanner"))
+
+
+def trim_cell_metadata(metadata: dict[str, str] | None) -> dict[str, str]:
+    if not metadata:
+        return {}
+    allowed = set(ALLOWED_CELL_METADATA_KEYS)
+    return {key: str(value) for key, value in metadata.items() if key in allowed and value not in (None, "")}
 
 
 def fixture_root() -> Path:
@@ -215,7 +298,38 @@ def compare_values(
         )
 
 
-def project_result(result: dict[str, Any]) -> dict[str, Any]:
+def _filter_mapping(mapping: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
+    return {key: mapping[key] for key in sorted(mapping) if key in allowed}
+
+
+def _apply_cycles_projection(projected: dict[str, Any], mode: str) -> dict[str, Any]:
+    if mode == "cycles_absolute":
+        quantity_keys = CYCLES_ABSOLUTE_QUANTITIES
+        metric_keys = CYCLES_ABSOLUTE_METRICS
+    elif mode == "cycles_specific":
+        quantity_keys = CYCLES_SPECIFIC_QUANTITIES
+        metric_keys = CYCLES_SPECIFIC_METRICS
+    else:
+        return projected
+
+    for series in projected.get("cell_series") or []:
+        quantities = series.get("quantities") or {}
+        series["quantities"] = _filter_mapping(quantities, quantity_keys)
+        metrics = series.get("metrics") or {}
+        series["metrics"] = _filter_mapping(metrics, metric_keys)
+        series.pop("active_mass_mg", None)
+    for series in projected.get("group_series") or []:
+        quantities = series.get("quantities") or {}
+        series["quantities"] = _filter_mapping(quantities, quantity_keys)
+    projected.pop("group_metrics", None)
+    return projected
+
+
+def project_result(
+    result: dict[str, Any],
+    *,
+    projection: str | None = None,
+) -> dict[str, Any]:
     """Reduce a production compute response to a stable scientific projection."""
 
     def walk(value: Any) -> Any:
@@ -243,6 +357,8 @@ def project_result(result: dict[str, Any]) -> dict[str, Any]:
                 for trace in traces:
                     if isinstance(trace, dict):
                         trace.pop("label", None)
+        if projection:
+            projected = _apply_cycles_projection(projected, projection)
     return projected
 
 
@@ -298,6 +414,19 @@ def dispatch_case(db: Session, case: dict[str, Any], spec: dict[str, Any]) -> di
     raise ManifestError(f"Unsupported case kind: {kind!r}")
 
 
+def required_raw_columns() -> list[str]:
+    return [
+        "cycle",
+        "step",
+        "time_s",
+        "voltage_v",
+        "current_ma",
+        "charge_capacity_mah",
+        "discharge_capacity_mah",
+        "status",
+    ]
+
+
 @dataclass
 class GoldenFixtureEnvironment:
     manifest: dict[str, Any]
@@ -305,16 +434,39 @@ class GoldenFixtureEnvironment:
     data_root: Path
     db: Session
     parse_counts: dict[str, int] = field(default_factory=dict)
+    timeseries_parse_counts: dict[str, int] = field(default_factory=dict)
     _temp_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, repr=False)
+    _owns_data_root: bool = field(default=True, repr=False)
 
     @classmethod
-    def create(cls, manifest_path: Path | None = None) -> "GoldenFixtureEnvironment":
+    def create(
+        cls,
+        manifest_path: Path | None = None,
+        *,
+        data_root: Path | None = None,
+    ) -> "GoldenFixtureEnvironment":
         manifest = load_manifest(manifest_path)
         root = manifest_path.parent if manifest_path else fixture_root()
         verify_source_binaries(manifest, root)
-        temp = tempfile.TemporaryDirectory(prefix="cellxplorer-golden-")
-        data_root = Path(temp.name)
-        env = cls(manifest=manifest, root=root, data_root=data_root, db=cls._make_db(), _temp_dir=temp)
+
+        temp: tempfile.TemporaryDirectory[str] | None
+        owns_data_root = data_root is None
+        if data_root is None:
+            temp = tempfile.TemporaryDirectory(prefix="cellxplorer-golden-")
+            data_root = Path(temp.name)
+        else:
+            temp = None
+            data_root = data_root.resolve()
+
+        bind_isolated_data_root(data_root)
+        env = cls(
+            manifest=manifest,
+            root=root,
+            data_root=data_root,
+            db=cls._make_db(),
+            _temp_dir=temp,
+            _owns_data_root=owns_data_root,
+        )
         env.install_entities()
         env.ensure_sources_parsed()
         return env
@@ -341,6 +493,8 @@ class GoldenFixtureEnvironment:
         if self._temp_dir is not None:
             self._temp_dir.cleanup()
             self._temp_dir = None
+        elif self._owns_data_root and self.data_root.exists():
+            shutil.rmtree(self.data_root, ignore_errors=True)
 
     def __enter__(self) -> "GoldenFixtureEnvironment":
         return self
@@ -353,7 +507,8 @@ class GoldenFixtureEnvironment:
         for cell in entities.get("cells", []):
             row = Cell(id=cell["id"], name=cell["name"], description=cell.get("description"))
             self.db.add(row)
-            for key, value in (cell.get("metadata") or {}).items():
+            metadata = trim_cell_metadata(cell.get("metadata") or {})
+            for key, value in metadata.items():
                 self.db.add(CellMetadata(cell_id=cell["id"], key=key, value=str(value)))
         self.db.flush()
 
@@ -361,22 +516,11 @@ class GoldenFixtureEnvironment:
         tests_by_cell: dict[int, Test] = {}
 
         for source in self.manifest.get("sources", []):
-            binary = self.root / source["binary_path"]
+            binary = (self.root / source["binary_path"]).resolve()
             digest = source["sha256"]
             sf = source_files_by_hash.get(digest)
             if sf is None:
-                sf = SourceFile(
-                    hash=digest,
-                    path=str(binary.resolve()),
-                    filename=binary.name,
-                    size=source["file_size_bytes"],
-                    ext=binary.suffix.lstrip("."),
-                    parse_status="unparsed",
-                    row_count=source.get("row_count"),
-                    cycle_count=source.get("cycle_count"),
-                )
-                self.db.add(sf)
-                self.db.flush()
+                sf = scanner.ingest_path(self.db, binary, parse_now=False)
                 source_files_by_hash[digest] = sf
 
             cell_id = source["fixture_cell_id"]
@@ -398,9 +542,15 @@ class GoldenFixtureEnvironment:
                 continue
             seen_hashes.add(digest)
             sf = self.db.query(SourceFile).filter(SourceFile.hash == digest).one()
+            if not sf.header_meta:
+                raise ManifestError(f"Missing parsed header metadata for source {key}")
+            parser_version = sf.parser_version or parsing.PARSER_VERSION
+            cold = not cache.raw_path(digest, parser_version).exists()
             if sf.parse_status != "parsed":
                 scanner.parse_file(self.db, sf)
                 self.db.refresh(sf)
+            if cold:
+                self.timeseries_parse_counts[digest] = self.timeseries_parse_counts.get(digest, 0) + 1
             self.parse_counts[key] = self.parse_counts.get(key, 0) + 1
             if source.get("row_count") is not None and sf.row_count != source["row_count"]:
                 raise ManifestError(
@@ -413,8 +563,15 @@ class GoldenFixtureEnvironment:
             cycles = cache.load_cycles(sf.hash, sf.parser_version or parsing.PARSER_VERSION, CALC_VERSION)
             if cycles is None or cycles.empty:
                 raise ManifestError(f"Per-cycle cache missing for source {key}")
+            raw = cache.load_raw(sf.hash, sf.parser_version or parsing.PARSER_VERSION)
+            if raw is None or raw.empty:
+                raise ManifestError(f"Raw cache missing for source {key}")
+            missing = [column for column in required_raw_columns() if column not in raw.columns]
+            if missing:
+                raise ManifestError(f"Raw cache for {key} missing columns: {missing}")
 
     def run_case(self, case: dict[str, Any]) -> dict[str, Any]:
         spec = load_case_spec(self.root, case)
         result = dispatch_case(self.db, case, spec)
-        return project_result(result)
+        projection = case.get("projection")
+        return project_result(result, projection=projection)

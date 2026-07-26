@@ -159,6 +159,38 @@ respond to the colour scheme.
 is a stable handle to reference a spec in conversation ("finish 002") regardless of title
 edits. Keep the index below in order.
 
+Review documents use the same number and title with a `-review` suffix, stored separately under
+[`reviews/`](reviews/): `reviews/NNN-short-kebab-title-review.md`. Multi-spec reviews may use a
+combined name (for example `reviews/013-014-build-performance-review.md`).
+
+## Ingesting specs and reviews from Downloads
+
+When a spec or review is provided in the user's **Downloads** folder (or attached in chat), the
+implementing agent must **copy it into this repository immediately** — do not implement from the
+Downloads path alone.
+
+| Kind | Copy to |
+|---|---|
+| New or updated spec | `docs/specs/NNN-<name>.md` |
+| Review / follow-up tasks | `docs/specs/reviews/NNN-<name>-review.md` |
+
+Rules:
+
+1. Copy on receipt, before or at the start of implementation — not after merge.
+2. Normalize Windows duplicate suffixes such as `(1)` to the canonical filename.
+3. Update the spec index below and any `Review document:` cross-links in the related spec.
+4. Do not edit the Downloads original; the repository copy is the source of truth from then on.
+5. If a review arrives while work is in progress, copy it to `reviews/` and continue follow-ups
+   from that file.
+
+## Reviews index
+
+- [010-cell-library-columns-and-status-review.md](reviews/010-cell-library-columns-and-status-review.md)
+- [011-cell-library-toolbar-source-maintenance-review.md](reviews/011-cell-library-toolbar-source-maintenance-review.md)
+- [012-cell-library-sort-and-filter-review.md](reviews/012-cell-library-sort-and-filter-review.md)
+- [013-014-build-performance-review.md](reviews/013-014-build-performance-review.md)
+- [015-golden-analysis-regression-corpus-review.md](reviews/015-golden-analysis-regression-corpus-review.md)
+
 ## Index
 
 - [001-folders-replicates-and-recognition-ux.md](001-folders-replicates-and-recognition-ux.md)
@@ -227,7 +259,7 @@ edits. Keep the index below in order.
 - [015-golden-analysis-regression-corpus.md](015-golden-analysis-regression-corpus.md)
   — committed full Neware source binaries and golden backend analysis projections for cycles,
   time/capacity, steps, DCIR, chargeability, and rate capability.
-  **Implemented** (approval pending).
+  **Implemented** — review R1–R3/R5–R7 done; scientific approval (R4) pending.
 - [016-reindex-remaining-cycles-has-no-effect.md](016-reindex-remaining-cycles-has-no-effect.md)
   — the Cycles-tab "Reindex remaining cycles" toggle does nothing: `viewSignature` omits the
   flag so the trace memo never recomputes, and `zoomSignature`/`uirevision` would re-apply the

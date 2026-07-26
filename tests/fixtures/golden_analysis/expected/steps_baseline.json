@@ -1,43 +1,74 @@
 {
-  "badges": [
-    {
-      "cell_id": 101,
-      "cell_name": "golden-cycles-cell",
-      "detail": "golden-cycles-cell has no source matching the protocol targets for test.",
-      "kind": "steps_no_match",
-      "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c",
-      "segment_name": "test",
-      "series_id": "e01df301-bc03-414a-a70f-affe5f5a057e"
-    }
-  ],
+  "badges": [],
   "calc_version": "1.5.0",
   "cell_series": [
     {
-      "block_meta": [],
+      "block_meta": [
+        {
+          "block": 1,
+          "cycle_end": 1,
+          "cycle_start": 1,
+          "occurrence": 1,
+          "step_end": 4,
+          "step_start": 2
+        }
+      ],
       "cell_id": 101,
       "cell_name": "golden-cycles-cell",
-      "n_blocks": 0,
+      "n_blocks": 1,
       "quantities": {
-        "block_duration_h": [],
-        "charge_capacity_mah": [],
-        "charge_time_h": [],
-        "cv_charge_capacity_mah": [],
-        "cv_charge_time_h": [],
-        "discharge_capacity_mah": [],
-        "discharge_time_h": [],
-        "mean_charge_voltage_v": [],
-        "mean_discharge_voltage_v": [],
-        "mean_voltage_v": [],
-        "rest_time_h": [],
-        "start_time_h": [],
-        "total_time_h": []
+        "block_duration_h": [
+          40.833333333333336
+        ],
+        "charge_capacity_mah": [
+          51.326969146728516
+        ],
+        "charge_time_h": [
+          20.547667100694444
+        ],
+        "cv_charge_capacity_mah": [
+          0.0
+        ],
+        "cv_charge_time_h": [
+          0.0
+        ],
+        "discharge_capacity_mah": [
+          50.29280090332031
+        ],
+        "discharge_time_h": [
+          20.120360243055554
+        ],
+        "mean_charge_voltage_v": [
+          3.4647417068481445
+        ],
+        "mean_discharge_voltage_v": [
+          3.3855361938476562
+        ],
+        "mean_voltage_v": [
+          3.4260852336883545
+        ],
+        "rest_time_h": [
+          0.16666666666666666
+        ],
+        "start_time_h": [
+          1.9994444444444444
+        ],
+        "total_time_h": [
+          40.66802734375
+        ]
       },
-      "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c",
-      "segment_name": "test",
+      "segment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "segment_name": "Initial CC charge block",
       "series_id": "e01df301-bc03-414a-a70f-affe5f5a057e",
-      "x_cycle": [],
-      "x_occurrence": [],
-      "x_time": []
+      "x_cycle": [
+        1
+      ],
+      "x_occurrence": [
+        1
+      ],
+      "x_time": [
+        1.9994444444444444
+      ]
     }
   ],
   "parser_version": "v2026.06.11",
@@ -47,7 +78,7 @@
       {
         "cell_id": 101,
         "id": "e01df301-bc03-414a-a70f-affe5f5a057e",
-        "segment_id": "66822bfb-dc42-4134-b303-20a5a30d310c"
+        "segment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
       }
     ]
   },

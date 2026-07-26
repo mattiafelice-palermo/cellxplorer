@@ -15,7 +15,7 @@ Manual UI verification not yet run in a live session.
 
 ## Review of the implementation — follow-up tasks
 
-Review document: `013-014-build-performance-review.md`.  
+Review document: [`reviews/013-014-build-performance-review.md`](reviews/013-014-build-performance-review.md).  
 Status after follow-ups: **addressed in working tree** (2026-07-26).
 
 | Task | Priority | Status |

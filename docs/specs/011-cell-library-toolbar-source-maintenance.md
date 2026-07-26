@@ -90,7 +90,7 @@ Manual UI verification (§9) not yet run in a live session.
 
 ## 6. Review of the implementation — follow-up tasks
 
-Review document: `011-cell-library-toolbar-source-maintenance-review.md`.  
+Review document: [`reviews/011-cell-library-toolbar-source-maintenance-review.md`](reviews/011-cell-library-toolbar-source-maintenance-review.md).  
 Status after follow-ups: **addressed in working tree** (2026-07-26).
 
 | Task | Priority | Status |

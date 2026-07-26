@@ -1,6 +1,7 @@
 # Spec 015: Golden analysis regression corpus
 
-Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regression-corpus`.
+Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regression-corpus`.  
+Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **R1–R3, R5–R7 addressed; R4 scientific approval still pending**.
 
 ## Implementation record
 
@@ -8,13 +9,34 @@ Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regressio
 - Added manifest, eight golden cases, `tests/golden_analysis_support.py`, `tests/test_golden_analysis.py`,
   and `scripts/build_golden_analysis_corpus.py` (`export` / `verify`).
 - `approval.md` status: **pending user approval**.
-- Focused verification: `python -m unittest tests.test_golden_analysis -v` — **10 tests OK (~4.5 s)**.
-- Unique source parses per module: **3** (chargeability and rate_capability share one hash).
-- Committed fixture size: **~4.8 MB** binaries + JSON specs/expected outputs.
+- Focused verification: `python -m unittest tests.test_golden_analysis -v` — **16 tests OK (~7 s)**.
+- Corpus verify: `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — **8/8 cases PASS**.
+- Full backend suite: `python -m unittest discover tests` — **379 tests OK (~41 s)**.
+- Unique cold source parses per module: **3** (chargeability and rate_capability share one hash).
+- Committed fixture size: **~4.8 MB** binaries + JSON specs/expected outputs; trimmed manifest **~6 KB**.
 - Selected sources:
   - `cycles_time_steps.ndax` — 193 cycles / 71190 rows (`1b226f9f…`) from Test analysis cell 613
   - `dcir_source.ndax` — 221 cycles / 78677 rows (`36b20c04…`) from DCIR test
   - `chargeability_source.ndax` + `rate_capability_source.ndax` — 37 cycles / 20491 rows (`c4c655f8…`) from Chargeability test
+
+## R* implementation record (2026-07-26)
+
+- **R1:** Fixture installation now uses `scanner.ingest_path` so `header_meta` and normalized source
+  metadata are populated before parsing. Steps protocol segment is derived from the cycles source
+  signature with step indices `[2, 3, 4]`. Regenerated expected outputs contain real Steps, DCIR,
+  Chargeability and Rate Capability measurements.
+- **R2:** Cycles baseline/normalization use distinct projections (`cycles_absolute` vs
+  `cycles_specific`). Time/Capacity derivative settings live under `computation.time_capacity`
+  (`view: dqdv`). Baseline case sets a fixed `electrode_area_cm2` for areal capacity output.
+- **R3:** Module-level isolated `CELLXPLORER_DATA`, `bind_isolated_data_root()`, cold-parse counting,
+  and cache-path assertions ensure no reuse of `.test-cellxplorer` or live caches.
+- **R5:** Builder resolves analyses, cells and source paths from a SQLite snapshot with CLI selectors;
+  no workstation paths or fixed analysis/cell IDs remain in repository code.
+- **R6:** Manifest metadata trimmed to active mass, nominal capacity and electrode area; protocol
+  fields come from parsed headers at runtime.
+- **R7:** Added harness tests for trimmed manifest, missing spec, cache isolation, non-empty protocol
+  cases, and distinct normalization/derivative outputs. Verification commands recorded above.
+- **R4:** `approval.md` checkpoint table expanded; scientific sign-off still pending user review.
 
 Status: **Plan**  
 Repository: `mattiafelice-palermo/cellxplorer`  

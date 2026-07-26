@@ -1,35 +1,143 @@
 {
-  "badges": [
-    {
-      "cell_id": 102,
-      "cell_name": "golden-dcir-cell",
-      "detail": "golden-dcir-cell has no valid adjacent rest/pulse occurrences for Discharge 0.701C.",
-      "kind": "dcir_no_match",
-      "segment_id": "a4d9e24f-fd93-4e79-a36c-b30d9ba19a0b",
-      "segment_name": "Discharge 0.701C",
-      "series_id": "6f7320cb-60cb-4ae0-87fe-9cab3df421cf"
-    }
-  ],
+  "badges": [],
   "calc_version": "1.5.0",
   "cell_series": [
     {
-      "c_rate": null,
+      "c_rate": 0.7008032128514057,
       "cell_id": 102,
       "cell_name": "golden-dcir-cell",
-      "current_ma": null,
-      "direction": null,
-      "measurement_meta": [],
-      "n_measurements": 0,
+      "current_ma": 34.9,
+      "direction": "discharge",
+      "measurement_meta": [
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 6,
+          "occurrence": 1,
+          "pulse_duration_s": 29.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 99.56916666666666,
+          "v_pulse_v": 3.3401999473571777,
+          "v_rest_v": 3.4223999977111816
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 42,
+          "occurrence": 2,
+          "pulse_duration_s": 30.0,
+          "rest_duration_s": 1799.0,
+          "start_time_h": 237.9338888888889,
+          "v_pulse_v": 3.3534998893737793,
+          "v_rest_v": 3.4221999645233154
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 77,
+          "occurrence": 3,
+          "pulse_duration_s": 30.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 372.2872222222222,
+          "v_pulse_v": 3.36080002784729,
+          "v_rest_v": 3.421999931335449
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 112,
+          "occurrence": 4,
+          "pulse_duration_s": 29.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 511.8672222222222,
+          "v_pulse_v": 3.3526999950408936,
+          "v_rest_v": 3.422100067138672
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 147,
+          "occurrence": 5,
+          "pulse_duration_s": 30.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 647.4830555555556,
+          "v_pulse_v": 3.3515000343322754,
+          "v_rest_v": 3.422100067138672
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 170,
+          "occurrence": 6,
+          "pulse_duration_s": 30.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 734.7813888888888,
+          "v_pulse_v": 3.3508999347686768,
+          "v_rest_v": 3.421999931335449
+        },
+        {
+          "c_rate": 0.7008032434915443,
+          "current_ma": 34.900001525878906,
+          "cycle": 205,
+          "occurrence": 7,
+          "pulse_duration_s": 30.0,
+          "rest_duration_s": 1800.0,
+          "start_time_h": 870.5952777777778,
+          "v_pulse_v": 3.351300001144409,
+          "v_rest_v": 3.421999931335449
+        }
+      ],
+      "n_measurements": 7,
       "quantities": {
-        "dcir_change_pct": [],
-        "dcir_mohm": []
+        "dcir_change_pct": [
+          0.0,
+          -16.423317438771125,
+          -25.54760827445384,
+          -15.57174016451452,
+          -14.11193484389683,
+          -13.50370679753576,
+          -13.990405253326836
+        ],
+        "dcir_mohm": [
+          2355.302199429741,
+          1968.4834425750364,
+          1753.5788198398352,
+          1988.5406608454462,
+          2022.923487669347,
+          2037.2490962228378,
+          2025.785876789
+        ]
       },
       "segment_id": "a4d9e24f-fd93-4e79-a36c-b30d9ba19a0b",
       "segment_name": "Discharge 0.701C",
       "series_id": "6f7320cb-60cb-4ae0-87fe-9cab3df421cf",
-      "x_cycle": [],
-      "x_occurrence": [],
-      "x_time": []
+      "x_cycle": [
+        6,
+        42,
+        77,
+        112,
+        147,
+        170,
+        205
+      ],
+      "x_occurrence": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "x_time": [
+        99.56916666666666,
+        237.9338888888889,
+        372.2872222222222,
+        511.8672222222222,
+        647.4830555555556,
+        734.7813888888888,
+        870.5952777777778
+      ]
     }
   ],
   "dcir": {

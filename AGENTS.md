@@ -45,6 +45,24 @@ Implement features **sequentially**, one branch at a time:
 
 This keeps overlapping edits out of the same files and reduces merge conflicts.
 
+## Feature specs and reviews
+
+Implementation plans live in `docs/specs/`; review follow-ups live in `docs/specs/reviews/`.
+See [`docs/specs/README.md`](docs/specs/README.md) for the full lifecycle.
+
+When the user provides a spec or review (typically from `%USERPROFILE%\\Downloads` or as a chat
+attachment), **copy it into the repository immediately** — do not implement from the Downloads
+path alone:
+
+| Kind | Copy to |
+|---|---|
+| New or updated spec | `docs/specs/NNN-<name>.md` |
+| Review / follow-up tasks | `docs/specs/reviews/NNN-<name>-review.md` |
+
+Normalize Windows duplicate suffixes such as `(1)` to the canonical filename, update the spec index
+in `docs/specs/README.md`, and add `Review document:` cross-links in the related spec. The
+repository copy is the source of truth from then on.
+
 ## Core data rules
 
 - `SourceFile -> Test -> Cell` is the canonical scientific hierarchy. A cell is the primary object
@@ -154,6 +172,7 @@ Cellxplorer/
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   └── test_preflight_script.py    Preflight command unit tests
 ├── docs/
+│   ├── specs/                      Numbered feature specs (`NNN-*.md`) and `reviews/` follow-ups
 │   └── agent-knowledge/            Durable architecture and change playbooks
 │       ├── chargeability-analysis.md
 │       ├── rate-capability-analysis.md

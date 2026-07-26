@@ -126,7 +126,7 @@ Manual UI verification not yet run in a live session.
 
 ## 10. Review of the implementation — follow-up tasks
 
-Review document: `012-cell-library-sort-and-filter-review.md`.  
+Review document: [`reviews/012-cell-library-sort-and-filter-review.md`](reviews/012-cell-library-sort-and-filter-review.md).  
 Status after follow-ups: **addressed in working tree** (2026-07-26).
 
 | Task | Priority | Status |

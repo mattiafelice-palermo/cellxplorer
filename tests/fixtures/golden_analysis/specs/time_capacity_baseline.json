@@ -70,7 +70,7 @@
       "derivative_phase": "both",
       "derivative_specific": false,
       "display_mode": "consecutive",
-      "electrode_area_cm2": null,
+      "electrode_area_cm2": 1.96,
       "max_points_per_cell": 500000,
       "smoothing_window": 7,
       "stacked": false,

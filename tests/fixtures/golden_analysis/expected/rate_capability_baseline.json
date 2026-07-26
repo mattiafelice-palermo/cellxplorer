@@ -1,20 +1,847 @@
 {
   "available": {
-    "charge_fixed_rates_c": [],
-    "charge_rates_c": [],
-    "charge_structures": [],
-    "discharge_fixed_rates_c": [],
-    "discharge_rates_c": []
+    "charge_fixed_rates_c": [
+      0.333
+    ],
+    "charge_rates_c": [
+      0.1,
+      0.2,
+      0.333,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0
+    ],
+    "charge_structures": [
+      "cc_cv",
+      "cccv"
+    ],
+    "discharge_fixed_rates_c": [
+      0.333
+    ],
+    "discharge_rates_c": [
+      0.2,
+      0.333,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0
+    ]
   },
-  "badges": [
+  "badges": [],
+  "blocks": [
     {
       "cell_id": 103,
       "cell_name": "golden-chargeability-cell",
-      "detail": "No completed fixed-rate/variable-rate capability sweep was detected.",
-      "kind": "rate_capability_no_match"
+      "charge_structure": "cc_cv",
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fingerprint": "de44e1b6ec7e5e1e833ffa3630864180fff8d480e77886c1980c5b8dc9f9b102",
+      "fixed_rate_c": 0.333,
+      "has_rest_control_scaffold": true,
+      "id": "78e51fd776fa81a255e3",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "monotonic": true,
+      "pair_ordinals": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "points": [
+        {
+          "capacity_mah": 49.69383239746094,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 148.97125846112158,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.1,
+          "charge_step_indices": [
+            132,
+            133
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 5.104000091552734,
+          "current_ma_cm2": null,
+          "current_ma_g": 15.300677773106106,
+          "cycle": 26,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            135
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-132-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 132,
+          "observed_c_rate": 0.09935760349528391,
+          "pair_ordinal": 21,
+          "protocol_fingerprint": "e137179067f4ba9cf2d6c75bb20cbeab743fa6fd26e294062158deaa6373aa97",
+          "rate_c": 0.1,
+          "retention_pct": 101.68494771713237,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 48.870391845703125,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 146.5027634921252,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.2,
+          "charge_step_indices": [
+            139,
+            140
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 10.303000450134277,
+          "current_ma_cm2": null,
+          "current_ma_g": 30.886145602656867,
+          "cycle": 27,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            142
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-139-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 139,
+          "observed_c_rate": 0.2005645405905057,
+          "pair_ordinal": 22,
+          "protocol_fingerprint": "5cd4f0fc4fdfff7eb5f3c991f6de1d50a9234c0bb36b3c8a11cd4869682900c4",
+          "rate_c": 0.2,
+          "retention_pct": 100.0,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 47.69791030883789,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 142.98791986581298,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            146,
+            147
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 17.10300064086914,
+          "current_ma_cm2": null,
+          "current_ma_g": 51.27106133721788,
+          "cycle": 28,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            149
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-146-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 146,
+          "observed_c_rate": 0.3329375246421869,
+          "pair_ordinal": 23,
+          "protocol_fingerprint": "9b30fda019e94f2ee6feb810169923215737921608becef69ab2b1c600c7c9d9",
+          "rate_c": 0.333,
+          "retention_pct": 97.60083459005799,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 46.04935073852539,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 138.04589825087052,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.5,
+          "charge_step_indices": [
+            153,
+            154
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 25.704999923706055,
+          "current_ma_cm2": null,
+          "current_ma_g": 77.05797686823567,
+          "cycle": 29,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            156
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-153-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 153,
+          "observed_c_rate": 0.5003893308099291,
+          "pair_ordinal": 24,
+          "protocol_fingerprint": "a1d3b66cba2a380890768e2f41e9250b9311b7d64f1678fbffc78a6fb88bf334",
+          "rate_c": 0.5,
+          "retention_pct": 94.22750462880569,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 36.50386047363281,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 109.43060277484506,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 1.0,
+          "charge_step_indices": [
+            160,
+            161
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 51.40999984741211,
+          "current_ma_cm2": null,
+          "current_ma_g": 154.11595373647134,
+          "cycle": 30,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            163
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-160-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 160,
+          "observed_c_rate": 1.0007786616198582,
+          "pair_ordinal": 25,
+          "protocol_fingerprint": "e2e4b3eaac686387d321621daa595bb164470850a9b32f805d9752c4b919f6b9",
+          "rate_c": 1.0,
+          "retention_pct": 74.69524817579783,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 17.14193344116211,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 51.38777337119165,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 2.0,
+          "charge_step_indices": [
+            167,
+            168
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 102.77999877929688,
+          "current_ma_cm2": null,
+          "current_ma_g": 308.1119934627282,
+          "cycle": 31,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            170
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-167-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 167,
+          "observed_c_rate": 2.0007786408272703,
+          "pair_ordinal": 26,
+          "protocol_fingerprint": "abe055ea122233152c4fc64de6017e13c62c786d048de5ce36cd9922b0fca625",
+          "rate_c": 2.0,
+          "retention_pct": 35.07631675081258,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 7.4600443840026855,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 22.363584099774226,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 3.0,
+          "charge_step_indices": [
+            174,
+            175
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 154.16500091552734,
+          "current_ma_cm2": null,
+          "current_ma_g": 462.1530095195376,
+          "cycle": 32,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            177
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-174-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 174,
+          "observed_c_rate": 3.0010706816337813,
+          "pair_ordinal": 27,
+          "protocol_fingerprint": "e7d326fce9c704a330df6fb9c8333a86ab1a612baf80ddda069f09f5b6a85435",
+          "rate_c": 3.0,
+          "retention_pct": 15.264957169887317,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 3.289038896560669,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 9.859820422569307,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 4.0,
+          "charge_step_indices": [
+            181,
+            182
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 205.57000732421875,
+          "current_ma_cm2": null,
+          "current_ma_g": 616.2539940170836,
+          "cycle": 33,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            184
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-181-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 181,
+          "observed_c_rate": 4.001752137905758,
+          "pair_ordinal": 28,
+          "protocol_fingerprint": "15ea14d6a92ae10bc669362334b37e60f19fa8c59ba456c52e02058651a9e803",
+          "rate_c": 4.0,
+          "retention_pct": 6.730125894928453,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 1.8201721906661987,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 5.456478777703096,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 5.0,
+          "charge_step_indices": [
+            188,
+            189
+          ],
+          "charge_structure": "cc_cv",
+          "current_ma": 256.9700012207031,
+          "current_ma_cm2": null,
+          "current_ma_g": 770.3399520975572,
+          "cycle": 34,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            191
+          ],
+          "family": "charge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-charge-188-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 188,
+          "observed_c_rate": 5.002336017533641,
+          "pair_ordinal": 29,
+          "protocol_fingerprint": "d0f924accffc260ec6641960917ed598d03b1f53dcd5006151b3b1af2c444b40",
+          "rate_c": 5.0,
+          "retention_pct": 3.7244886360088296,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control>rest",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        }
+      ],
+      "rates_c": [
+        0.1,
+        0.2,
+        0.333,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "scaffold_consistency": 0.8888888888888888,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "score": 95.27777777777777,
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65
+    },
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_structure": "cccv",
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fingerprint": "213dc27e786f2b91943285d513badb694f52b9e8ee97034df2d5b1dc9dc81b35",
+      "fixed_rate_c": 0.333,
+      "has_rest_control_scaffold": true,
+      "id": "197677d19365c50c51c2",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "monotonic": true,
+      "pair_ordinals": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "points": [
+        {
+          "capacity_mah": 50.70511245727539,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 152.00285525893457,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            62
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 10.302000045776367,
+          "current_ma_cm2": null,
+          "current_ma_g": 30.88314660883856,
+          "cycle": 14,
+          "discharge_rate_c": 0.2,
+          "discharge_step_indices": [
+            64
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-64-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 64,
+          "observed_c_rate": 0.20054506610427034,
+          "pair_ordinal": 9,
+          "protocol_fingerprint": "2b0c0472c68077ae430ea0831668105947b4781adebc6645b13fb05509192b98",
+          "rate_c": 0.2,
+          "retention_pct": 100.0,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 49.4610710144043,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 148.2734906601244,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            68
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 17.10300064086914,
+          "current_ma_cm2": null,
+          "current_ma_g": 51.27106133721788,
+          "cycle": 15,
+          "discharge_rate_c": 0.333,
+          "discharge_step_indices": [
+            70
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-70-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 70,
+          "observed_c_rate": 0.3329375246421869,
+          "pair_ordinal": 10,
+          "protocol_fingerprint": "15edabc2698f1424c4f9964cdb4cd3bb6bb03e3c77e125c265df4d670e85aa92",
+          "rate_c": 0.333,
+          "retention_pct": 97.54651674637476,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 48.167213439941406,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 144.39478817657357,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            74
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 25.704999923706055,
+          "current_ma_cm2": null,
+          "current_ma_g": 77.05797686823567,
+          "cycle": 16,
+          "discharge_rate_c": 0.5,
+          "discharge_step_indices": [
+            76
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-76-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 76,
+          "observed_c_rate": 0.5003893308099291,
+          "pair_ordinal": 11,
+          "protocol_fingerprint": "a786d53d952ef0c14aa9a610734c0a7668126799040e5d3d5a6b3d43e48343c5",
+          "rate_c": 0.5,
+          "retention_pct": 94.99478672989348,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 44.10386657714844,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 132.21376154789988,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            80
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 51.40999984741211,
+          "current_ma_cm2": null,
+          "current_ma_g": 154.11595373647134,
+          "cycle": 17,
+          "discharge_rate_c": 1.0,
+          "discharge_step_indices": [
+            82
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-82-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 82,
+          "observed_c_rate": 1.0007786616198582,
+          "pair_ordinal": 12,
+          "protocol_fingerprint": "cbd79e8daf9f8105bcb1c26018cbdfc70b810eac702df3aeedb2a4657a77e582",
+          "rate_c": 1.0,
+          "retention_pct": 86.98110395536698,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 23.402772903442383,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 70.15640297212778,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            86
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 102.73999786376953,
+          "current_ma_cm2": null,
+          "current_ma_g": 307.99207945251374,
+          "cycle": 18,
+          "discharge_rate_c": 2.0,
+          "discharge_step_indices": [
+            88
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-88-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 88,
+          "observed_c_rate": 1.9999999584148245,
+          "pair_ordinal": 13,
+          "protocol_fingerprint": "fdb410d49b7a24d681a7827034e72173b9422644aa172a7b5bdc5143575bb12d",
+          "rate_c": 2.0,
+          "retention_pct": 46.15466127436712,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 10.065811157226562,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 30.175103894797537,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            92
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 154.1300048828125,
+          "current_ma_cm2": null,
+          "current_ma_g": 462.04809905513673,
+          "cycle": 19,
+          "discharge_rate_c": 3.0,
+          "discharge_step_indices": [
+            94
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-94-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 94,
+          "observed_c_rate": 3.000389427346944,
+          "pair_ordinal": 14,
+          "protocol_fingerprint": "6fbc5dc72212ea44a92f8526d7fbc4f9028ce0b5643a9b98ade92488c417c70c",
+          "rate_c": 3.0,
+          "retention_pct": 19.85166913042173,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 5.103919506072998,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 15.300436195434374,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            98
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 205.52999877929688,
+          "current_ma_cm2": null,
+          "current_ma_g": 616.1340571356103,
+          "cycle": 20,
+          "discharge_rate_c": 4.0,
+          "discharge_step_indices": [
+            100
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-100-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 100,
+          "observed_c_rate": 4.000973306974827,
+          "pair_ordinal": 15,
+          "protocol_fingerprint": "23ac2e9b7664a294b1263bbd087aa53ca600def3b3455e6c0ae2f2bf59fdf58f",
+          "rate_c": 4.0,
+          "retention_pct": 10.065887360714582,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        },
+        {
+          "capacity_mah": 3.5329084396362305,
+          "capacity_mah_cm2": null,
+          "capacity_mah_g": 10.590888061743001,
+          "cell_id": 103,
+          "cell_name": "golden-chargeability-cell",
+          "charge_rate_c": 0.333,
+          "charge_step_indices": [
+            104
+          ],
+          "charge_structure": "cccv",
+          "current_ma": 256.94000244140625,
+          "current_ma_cm2": null,
+          "current_ma_g": 770.2500223077111,
+          "cycle": 21,
+          "discharge_rate_c": 5.0,
+          "discharge_step_indices": [
+            106
+          ],
+          "family": "discharge",
+          "filename": "chargeability_source.ndax",
+          "fixed_rate_c": 0.333,
+          "id": "103-c4c655f8fea6-discharge-106-1",
+          "label": "golden-chargeability-cell",
+          "lower_voltage_v": 2.8,
+          "measurement_step_index": 106,
+          "observed_c_rate": 5.001752042853927,
+          "pair_ordinal": 16,
+          "protocol_fingerprint": "7e4aa161cc455030cda0b69ab3b1b9cba769b16c3b994e548cf8c5d6124caed9",
+          "rate_c": 5.0,
+          "retention_pct": 6.967558631514905,
+          "retention_reference_rate_c": 0.2,
+          "scaffold_signature": "cccv>rest>cc_discharge>rest",
+          "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+          "upper_voltage_v": 3.65,
+          "valid": true,
+          "validation": {
+            "measurement_cutoff_reached": true,
+            "phase_completed": true,
+            "reference_phase_completed": true
+          }
+        }
+      ],
+      "rates_c": [
+        0.2,
+        0.333,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "scaffold_consistency": 0.875,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "score": 85.25,
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65
     }
   ],
-  "blocks": [],
   "calc_version": "1.5.0",
   "cells": [
     {
@@ -22,37 +849,155 @@
       "cell_name": "golden-chargeability-cell",
       "families": {
         "charge": {
-          "block_id": null,
-          "point_count": 0,
-          "rate_count": 0,
-          "status": "not_detected"
+          "block_id": "78e51fd776fa81a255e3",
+          "point_count": 9,
+          "rate_count": 9,
+          "status": "matched"
         },
         "discharge": {
-          "block_id": null,
-          "point_count": 0,
-          "rate_count": 0,
-          "status": "not_detected"
+          "block_id": "197677d19365c50c51c2",
+          "point_count": 8,
+          "rate_count": 8,
+          "status": "matched"
         }
       }
     }
   ],
   "comparison": {
-    "available": false,
-    "common_rates_c": [],
-    "points": [],
-    "reason": "Charge and discharge sweeps are required for every selected cell before a common reference can be calculated.",
-    "reference_rate_c": null
+    "available": true,
+    "common_rates_c": [
+      0.2,
+      0.333,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0
+    ],
+    "points": [
+      {
+        "asymmetry_ratio": 1.0,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 48.870391845703125,
+        "charge_retention_pct": 100.0,
+        "discharge_capacity_mah": 50.70511245727539,
+        "discharge_retention_pct": 100.0,
+        "id": "103-rate-asymmetry-0.2",
+        "label": "golden-chargeability-cell",
+        "rate_c": 0.2,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 0.999443469475324,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 47.69791030883789,
+        "charge_retention_pct": 97.60083459005799,
+        "discharge_capacity_mah": 49.4610710144043,
+        "discharge_retention_pct": 97.54651674637476,
+        "id": "103-rate-asymmetry-0.333",
+        "label": "golden-chargeability-cell",
+        "rate_c": 0.333,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.008142867670224,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 46.04935073852539,
+        "charge_retention_pct": 94.22750462880569,
+        "discharge_capacity_mah": 48.167213439941406,
+        "discharge_retention_pct": 94.99478672989348,
+        "id": "103-rate-asymmetry-0.5",
+        "label": "golden-chargeability-cell",
+        "rate_c": 0.5,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.164479750447498,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 36.50386047363281,
+        "charge_retention_pct": 74.69524817579783,
+        "discharge_capacity_mah": 44.10386657714844,
+        "discharge_retention_pct": 86.98110395536698,
+        "id": "103-rate-asymmetry-1",
+        "label": "golden-chargeability-cell",
+        "rate_c": 1.0,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.3158354567914516,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 17.14193344116211,
+        "charge_retention_pct": 35.07631675081258,
+        "discharge_capacity_mah": 23.402772903442383,
+        "discharge_retention_pct": 46.15466127436712,
+        "id": "103-rate-asymmetry-2",
+        "label": "golden-chargeability-cell",
+        "rate_c": 2.0,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.30047329379885,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 7.4600443840026855,
+        "charge_retention_pct": 15.264957169887317,
+        "discharge_capacity_mah": 10.065811157226562,
+        "discharge_retention_pct": 19.85166913042173,
+        "id": "103-rate-asymmetry-3",
+        "label": "golden-chargeability-cell",
+        "rate_c": 3.0,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.4956462208678476,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 3.289038896560669,
+        "charge_retention_pct": 6.730125894928453,
+        "discharge_capacity_mah": 5.103919506072998,
+        "discharge_retention_pct": 10.065887360714582,
+        "id": "103-rate-asymmetry-4",
+        "label": "golden-chargeability-cell",
+        "rate_c": 4.0,
+        "reference_rate_c": 0.2
+      },
+      {
+        "asymmetry_ratio": 1.8707423521585385,
+        "cell_id": 103,
+        "cell_name": "golden-chargeability-cell",
+        "charge_capacity_mah": 1.8201721906661987,
+        "charge_retention_pct": 3.7244886360088296,
+        "discharge_capacity_mah": 3.5329084396362305,
+        "discharge_retention_pct": 6.967558631514905,
+        "id": "103-rate-asymmetry-5",
+        "label": "golden-chargeability-cell",
+        "rate_c": 5.0,
+        "reference_rate_c": 0.2
+      }
+    ],
+    "reason": null,
+    "reference_rate_c": 0.2
   },
   "compatibility": {
     "charge": {
-      "compatible": false,
-      "complete": false,
-      "fingerprints": []
+      "compatible": true,
+      "complete": true,
+      "fingerprints": [
+        "de44e1b6ec7e5e1e833ffa3630864180fff8d480e77886c1980c5b8dc9f9b102"
+      ]
     },
     "discharge": {
-      "compatible": false,
-      "complete": false,
-      "fingerprints": []
+      "compatible": true,
+      "complete": true,
+      "fingerprints": [
+        "213dc27e786f2b91943285d513badb694f52b9e8ee97034df2d5b1dc9dc81b35"
+      ]
     }
   },
   "config": {
@@ -78,10 +1023,815 @@
     "min_points": 3,
     "rate_tolerance_fraction": 0.03
   },
-  "detected_blocks": [],
-  "invalid_execution_count": 0,
+  "detected_blocks": [
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_structure": "cc_cv",
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fingerprint": "de44e1b6ec7e5e1e833ffa3630864180fff8d480e77886c1980c5b8dc9f9b102",
+      "fixed_rate_c": 0.333,
+      "has_rest_control_scaffold": true,
+      "id": "78e51fd776fa81a255e3",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "monotonic": true,
+      "pair_ordinals": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "rates_c": [
+        0.1,
+        0.2,
+        0.333,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "scaffold_consistency": 0.8888888888888888,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "score": 95.27777777777777,
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65
+    },
+    {
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_structure": "cccv",
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fingerprint": "213dc27e786f2b91943285d513badb694f52b9e8ee97034df2d5b1dc9dc81b35",
+      "fixed_rate_c": 0.333,
+      "has_rest_control_scaffold": true,
+      "id": "197677d19365c50c51c2",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "monotonic": true,
+      "pair_ordinals": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "rates_c": [
+        0.2,
+        0.333,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "scaffold_consistency": 0.875,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "score": 85.25,
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65
+    }
+  ],
+  "invalid_execution_count": 1,
   "parser_version": "v2026.06.11",
-  "points": [],
+  "points": [
+    {
+      "capacity_mah": 49.69383239746094,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 148.97125846112158,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.1,
+      "charge_step_indices": [
+        132,
+        133
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 5.104000091552734,
+      "current_ma_cm2": null,
+      "current_ma_g": 15.300677773106106,
+      "cycle": 26,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        135
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-132-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 132,
+      "observed_c_rate": 0.09935760349528391,
+      "pair_ordinal": 21,
+      "protocol_fingerprint": "e137179067f4ba9cf2d6c75bb20cbeab743fa6fd26e294062158deaa6373aa97",
+      "rate_c": 0.1,
+      "retention_pct": 101.68494771713237,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 48.870391845703125,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 146.5027634921252,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.2,
+      "charge_step_indices": [
+        139,
+        140
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 10.303000450134277,
+      "current_ma_cm2": null,
+      "current_ma_g": 30.886145602656867,
+      "cycle": 27,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        142
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-139-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 139,
+      "observed_c_rate": 0.2005645405905057,
+      "pair_ordinal": 22,
+      "protocol_fingerprint": "5cd4f0fc4fdfff7eb5f3c991f6de1d50a9234c0bb36b3c8a11cd4869682900c4",
+      "rate_c": 0.2,
+      "retention_pct": 100.0,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 47.69791030883789,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 142.98791986581298,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        146,
+        147
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 17.10300064086914,
+      "current_ma_cm2": null,
+      "current_ma_g": 51.27106133721788,
+      "cycle": 28,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        149
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-146-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 146,
+      "observed_c_rate": 0.3329375246421869,
+      "pair_ordinal": 23,
+      "protocol_fingerprint": "9b30fda019e94f2ee6feb810169923215737921608becef69ab2b1c600c7c9d9",
+      "rate_c": 0.333,
+      "retention_pct": 97.60083459005799,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 46.04935073852539,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 138.04589825087052,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.5,
+      "charge_step_indices": [
+        153,
+        154
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 25.704999923706055,
+      "current_ma_cm2": null,
+      "current_ma_g": 77.05797686823567,
+      "cycle": 29,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        156
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-153-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 153,
+      "observed_c_rate": 0.5003893308099291,
+      "pair_ordinal": 24,
+      "protocol_fingerprint": "a1d3b66cba2a380890768e2f41e9250b9311b7d64f1678fbffc78a6fb88bf334",
+      "rate_c": 0.5,
+      "retention_pct": 94.22750462880569,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 36.50386047363281,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 109.43060277484506,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 1.0,
+      "charge_step_indices": [
+        160,
+        161
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 51.40999984741211,
+      "current_ma_cm2": null,
+      "current_ma_g": 154.11595373647134,
+      "cycle": 30,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        163
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-160-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 160,
+      "observed_c_rate": 1.0007786616198582,
+      "pair_ordinal": 25,
+      "protocol_fingerprint": "e2e4b3eaac686387d321621daa595bb164470850a9b32f805d9752c4b919f6b9",
+      "rate_c": 1.0,
+      "retention_pct": 74.69524817579783,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 17.14193344116211,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 51.38777337119165,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 2.0,
+      "charge_step_indices": [
+        167,
+        168
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 102.77999877929688,
+      "current_ma_cm2": null,
+      "current_ma_g": 308.1119934627282,
+      "cycle": 31,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        170
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-167-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 167,
+      "observed_c_rate": 2.0007786408272703,
+      "pair_ordinal": 26,
+      "protocol_fingerprint": "abe055ea122233152c4fc64de6017e13c62c786d048de5ce36cd9922b0fca625",
+      "rate_c": 2.0,
+      "retention_pct": 35.07631675081258,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 7.4600443840026855,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 22.363584099774226,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 3.0,
+      "charge_step_indices": [
+        174,
+        175
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 154.16500091552734,
+      "current_ma_cm2": null,
+      "current_ma_g": 462.1530095195376,
+      "cycle": 32,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        177
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-174-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 174,
+      "observed_c_rate": 3.0010706816337813,
+      "pair_ordinal": 27,
+      "protocol_fingerprint": "e7d326fce9c704a330df6fb9c8333a86ab1a612baf80ddda069f09f5b6a85435",
+      "rate_c": 3.0,
+      "retention_pct": 15.264957169887317,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 3.289038896560669,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 9.859820422569307,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 4.0,
+      "charge_step_indices": [
+        181,
+        182
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 205.57000732421875,
+      "current_ma_cm2": null,
+      "current_ma_g": 616.2539940170836,
+      "cycle": 33,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        184
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-181-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 181,
+      "observed_c_rate": 4.001752137905758,
+      "pair_ordinal": 28,
+      "protocol_fingerprint": "15ea14d6a92ae10bc669362334b37e60f19fa8c59ba456c52e02058651a9e803",
+      "rate_c": 4.0,
+      "retention_pct": 6.730125894928453,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 1.8201721906661987,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 5.456478777703096,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 5.0,
+      "charge_step_indices": [
+        188,
+        189
+      ],
+      "charge_structure": "cc_cv",
+      "current_ma": 256.9700012207031,
+      "current_ma_cm2": null,
+      "current_ma_g": 770.3399520975572,
+      "cycle": 34,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        191
+      ],
+      "family": "charge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-charge-188-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 188,
+      "observed_c_rate": 5.002336017533641,
+      "pair_ordinal": 29,
+      "protocol_fingerprint": "d0f924accffc260ec6641960917ed598d03b1f53dcd5006151b3b1af2c444b40",
+      "rate_c": 5.0,
+      "retention_pct": 3.7244886360088296,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cc_cv>rest>cc_discharge>rest>rest>control>rest",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 50.70511245727539,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 152.00285525893457,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        62
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 10.302000045776367,
+      "current_ma_cm2": null,
+      "current_ma_g": 30.88314660883856,
+      "cycle": 14,
+      "discharge_rate_c": 0.2,
+      "discharge_step_indices": [
+        64
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-64-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 64,
+      "observed_c_rate": 0.20054506610427034,
+      "pair_ordinal": 9,
+      "protocol_fingerprint": "2b0c0472c68077ae430ea0831668105947b4781adebc6645b13fb05509192b98",
+      "rate_c": 0.2,
+      "retention_pct": 100.0,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 49.4610710144043,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 148.2734906601244,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        68
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 17.10300064086914,
+      "current_ma_cm2": null,
+      "current_ma_g": 51.27106133721788,
+      "cycle": 15,
+      "discharge_rate_c": 0.333,
+      "discharge_step_indices": [
+        70
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-70-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 70,
+      "observed_c_rate": 0.3329375246421869,
+      "pair_ordinal": 10,
+      "protocol_fingerprint": "15edabc2698f1424c4f9964cdb4cd3bb6bb03e3c77e125c265df4d670e85aa92",
+      "rate_c": 0.333,
+      "retention_pct": 97.54651674637476,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 48.167213439941406,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 144.39478817657357,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        74
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 25.704999923706055,
+      "current_ma_cm2": null,
+      "current_ma_g": 77.05797686823567,
+      "cycle": 16,
+      "discharge_rate_c": 0.5,
+      "discharge_step_indices": [
+        76
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-76-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 76,
+      "observed_c_rate": 0.5003893308099291,
+      "pair_ordinal": 11,
+      "protocol_fingerprint": "a786d53d952ef0c14aa9a610734c0a7668126799040e5d3d5a6b3d43e48343c5",
+      "rate_c": 0.5,
+      "retention_pct": 94.99478672989348,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 44.10386657714844,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 132.21376154789988,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        80
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 51.40999984741211,
+      "current_ma_cm2": null,
+      "current_ma_g": 154.11595373647134,
+      "cycle": 17,
+      "discharge_rate_c": 1.0,
+      "discharge_step_indices": [
+        82
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-82-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 82,
+      "observed_c_rate": 1.0007786616198582,
+      "pair_ordinal": 12,
+      "protocol_fingerprint": "cbd79e8daf9f8105bcb1c26018cbdfc70b810eac702df3aeedb2a4657a77e582",
+      "rate_c": 1.0,
+      "retention_pct": 86.98110395536698,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 23.402772903442383,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 70.15640297212778,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        86
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 102.73999786376953,
+      "current_ma_cm2": null,
+      "current_ma_g": 307.99207945251374,
+      "cycle": 18,
+      "discharge_rate_c": 2.0,
+      "discharge_step_indices": [
+        88
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-88-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 88,
+      "observed_c_rate": 1.9999999584148245,
+      "pair_ordinal": 13,
+      "protocol_fingerprint": "fdb410d49b7a24d681a7827034e72173b9422644aa172a7b5bdc5143575bb12d",
+      "rate_c": 2.0,
+      "retention_pct": 46.15466127436712,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 10.065811157226562,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 30.175103894797537,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        92
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 154.1300048828125,
+      "current_ma_cm2": null,
+      "current_ma_g": 462.04809905513673,
+      "cycle": 19,
+      "discharge_rate_c": 3.0,
+      "discharge_step_indices": [
+        94
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-94-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 94,
+      "observed_c_rate": 3.000389427346944,
+      "pair_ordinal": 14,
+      "protocol_fingerprint": "6fbc5dc72212ea44a92f8526d7fbc4f9028ce0b5643a9b98ade92488c417c70c",
+      "rate_c": 3.0,
+      "retention_pct": 19.85166913042173,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 5.103919506072998,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 15.300436195434374,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        98
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 205.52999877929688,
+      "current_ma_cm2": null,
+      "current_ma_g": 616.1340571356103,
+      "cycle": 20,
+      "discharge_rate_c": 4.0,
+      "discharge_step_indices": [
+        100
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-100-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 100,
+      "observed_c_rate": 4.000973306974827,
+      "pair_ordinal": 15,
+      "protocol_fingerprint": "23ac2e9b7664a294b1263bbd087aa53ca600def3b3455e6c0ae2f2bf59fdf58f",
+      "rate_c": 4.0,
+      "retention_pct": 10.065887360714582,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest>rest>control",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    },
+    {
+      "capacity_mah": 3.5329084396362305,
+      "capacity_mah_cm2": null,
+      "capacity_mah_g": 10.590888061743001,
+      "cell_id": 103,
+      "cell_name": "golden-chargeability-cell",
+      "charge_rate_c": 0.333,
+      "charge_step_indices": [
+        104
+      ],
+      "charge_structure": "cccv",
+      "current_ma": 256.94000244140625,
+      "current_ma_cm2": null,
+      "current_ma_g": 770.2500223077111,
+      "cycle": 21,
+      "discharge_rate_c": 5.0,
+      "discharge_step_indices": [
+        106
+      ],
+      "family": "discharge",
+      "filename": "chargeability_source.ndax",
+      "fixed_rate_c": 0.333,
+      "id": "103-c4c655f8fea6-discharge-106-1",
+      "label": "golden-chargeability-cell",
+      "lower_voltage_v": 2.8,
+      "measurement_step_index": 106,
+      "observed_c_rate": 5.001752042853927,
+      "pair_ordinal": 16,
+      "protocol_fingerprint": "7e4aa161cc455030cda0b69ab3b1b9cba769b16c3b994e548cf8c5d6124caed9",
+      "rate_c": 5.0,
+      "retention_pct": 6.967558631514905,
+      "retention_reference_rate_c": 0.2,
+      "scaffold_signature": "cccv>rest>cc_discharge>rest",
+      "source_hash": "c4c655f8fea60c02e89572d2deb64da33064cd7979fa48c63831b104917bbdfa",
+      "upper_voltage_v": 3.65,
+      "valid": true,
+      "validation": {
+        "measurement_cutoff_reached": true,
+        "phase_completed": true,
+        "reference_phase_completed": true
+      }
+    }
+  ],
   "selection_contexts": [
     {
       "cell_id": 103,

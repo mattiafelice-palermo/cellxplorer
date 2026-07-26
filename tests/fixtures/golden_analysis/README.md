@@ -41,6 +41,10 @@ Regenerate a **candidate** corpus (never overwrites committed fixtures implicitl
 ```powershell
 python scripts\build_golden_analysis_corpus.py export `
   --data-root "$env:USERPROFILE\.cellxplorer" `
+  --cycles-analysis "Test analysis" `
+  --dcir-analysis "DCIR test" `
+  --chargeability-analysis "Chargeability test" `
+  --rate-analysis "Chargeability test" `
   --output tmp\golden-analysis-candidate `
   --replace
 ```
