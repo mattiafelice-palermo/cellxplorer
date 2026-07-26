@@ -8,7 +8,8 @@ independent checkpoints required before the corpus is treated as a scientificall
 Round 2 review follow-ups R1 and R8–R10 are addressed in the committed fixtures. Expected outputs
 were regenerated through the candidate workflow
 (`python scripts\build_golden_analysis_corpus.py refresh-expected ...`) and copied after review of
-DIFF digests. Scientific sign-off is still required before merge as an approved baseline.
+DIFF digests and scientific path diffs. Scientific sign-off is still required before merge as an
+approved baseline.
 
 ## Checkpoints
 
@@ -29,5 +30,34 @@ Approver: _not yet recorded_
 
 Date: _not yet recorded_
 
-Privacy review: committed manifest metadata is limited to active mass, nominal capacity and electrode
-area. Full protocol fields are derived at runtime from parsed `SourceFile.header_meta`.
+## Binary header privacy review
+
+The committed manifest stores only trimmed cell metadata (active mass, nominal capacity, electrode
+area). The complete Neware binaries still contain embedded header metadata that is parsed at runtime.
+Review the full binaries before treating this corpus as an approved baseline.
+
+Generate an inspection report:
+
+```powershell
+python scripts\build_golden_analysis_corpus.py inspect-privacy `
+  --manifest tests\fixtures\golden_analysis\manifest.json `
+  --output tmp\golden-analysis-privacy-report.json
+```
+
+Review for experiment names, operator/device/channel identifiers, remarks, GUIDs, barcodes, and
+other potentially sensitive metadata embedded in the `.ndax` files.
+
+| Field category | Inspected | Findings | Decision | Reviewer | Date |
+|---|---|---|---|---|---|
+| Experiment / cell identifiers | pending | | | | |
+| Operator / creator / builder | pending | | | | |
+| Device / channel / unit identifiers | pending | | | | |
+| Remarks / comments | pending | | | | |
+| GUIDs and barcodes | pending | | | | |
+| Other embedded metadata | pending | | | | |
+
+Privacy decision: _not yet recorded_
+
+Privacy reviewer: _not yet recorded_
+
+Privacy review date: _not yet recorded_

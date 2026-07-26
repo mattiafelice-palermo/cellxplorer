@@ -45,9 +45,20 @@ Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](rev
   and prior `CELLXPLORER_DATA` restored in teardown; create failure cleans up.
 - **R7:** Raw frames validated for required columns/dtypes; normal tests assert no export/refresh;
   preflight `--no-cache` recorded.
-- **R4:** Still pending user scientific approval; not claimed as approved.
+### Round 3
 
-Status: **Plan**  
+- **R11:** Candidate output paths reject committed fixture root and descendants, and outputs inside
+  the selected source tree. Temporary `_data` caches are removed on success and error. Structured
+  scientific diffs report changed JSON paths with numeric abs/rel deltas; optional `--diff-report`
+  JSON. Focused builder safety tests added.
+- **R12:** `restore_data_root_binding()` reloads config/cache/scanner to the prior data root on
+  golden test teardown and setup failure. Order-sensitive restore regression test added.
+- **R4 (partial):** Documentation no longer describes projections as approved. Binary privacy review
+  section and `inspect-privacy` builder command added. Scientific checkpoints remain pending user
+  sign-off.
+- **R13:** Review record updated through Round 3.
+
+Status: **Pending user scientific approval (R4)** — code/harness follow-ups through Round 3 addressed.  
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/golden-analysis-regression-corpus`  
 Base: current `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  

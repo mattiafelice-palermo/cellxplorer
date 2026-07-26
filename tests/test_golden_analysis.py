@@ -50,6 +50,7 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
             )
         except Exception:
             shutil.rmtree(_MODULE_DATA_ROOT, ignore_errors=True)
+            golden_analysis_support.restore_data_root_binding(_PRIOR_DATA)
             raise
 
     @classmethod
@@ -58,10 +59,7 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
             cls.env.close()
         finally:
             shutil.rmtree(_MODULE_DATA_ROOT, ignore_errors=True)
-            if _PRIOR_DATA is None:
-                os.environ.pop("CELLXPLORER_DATA", None)
-            else:
-                os.environ["CELLXPLORER_DATA"] = _PRIOR_DATA
+            golden_analysis_support.restore_data_root_binding(_PRIOR_DATA)
             if _MODULE_DATA_ROOT.exists():
                 raise AssertionError(f"module data root was not cleaned: {_MODULE_DATA_ROOT}")
 
@@ -426,6 +424,68 @@ class GoldenBuilderResolutionTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             builder.saved_plot_by_name({"saved_plots": [{"name": "Other"}]}, "Missing plot")
         self.assertIn("Missing plot", str(ctx.exception))
+
+
+class GoldenDataRootRestoreTests(unittest.TestCase):
+    def test_cache_module_uses_restored_root_after_isolation(self):
+        saved = os.environ.get("CELLXPLORER_DATA")
+        temp = Path(tempfile.mkdtemp(prefix="golden-restore-"))
+        try:
+            golden_analysis_support.bind_isolated_data_root(temp)
+            from app import config
+
+            self.assertEqual(config.APP_DATA_DIR.resolve(), temp.resolve())
+
+            golden_analysis_support.restore_data_root_binding(saved)
+
+            from app import config as config_after
+            from app.services import cache as cache_mod
+
+            expected = golden_analysis_support.resolved_data_root_from_env(saved)
+            self.assertEqual(config_after.APP_DATA_DIR.resolve(), expected)
+            self.assertEqual(cache_mod.CACHE_DIR.parent.resolve(), expected)
+            self.assertFalse(str(cache_mod.CACHE_DIR).startswith(str(temp)))
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
+            golden_analysis_support.restore_data_root_binding(saved)
+
+
+class GoldenBuilderSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.builder = _load_builder()
+        self.fixture = self.builder.FIXTURE
+
+    def test_rejects_exact_committed_fixture_root(self):
+        with self.assertRaises(SystemExit):
+            self.builder.validate_candidate_output_path_or_exit(self.fixture)
+
+    def test_rejects_descendant_of_committed_fixture(self):
+        with self.assertRaises(SystemExit):
+            self.builder.validate_candidate_output_path_or_exit(self.fixture / "nested-candidate")
+
+    def test_rejects_output_inside_source_tree(self):
+        with tempfile.TemporaryDirectory(prefix="golden-builder-source-") as tmp:
+            source = Path(tmp) / "source"
+            shutil.copytree(self.fixture, source, ignore=shutil.ignore_patterns("_data", "__pycache__"))
+            bad_output = source / "nested" / "candidate"
+            with self.assertRaises(SystemExit):
+                self.builder.refresh_expected(source, bad_output, replace=True)
+
+    def test_refresh_expected_cleans_data_cache(self):
+        with tempfile.TemporaryDirectory(prefix="golden-builder-refresh-") as tmp:
+            source = Path(tmp) / "source"
+            output = Path(tmp) / "output"
+            shutil.copytree(self.fixture, source, ignore=shutil.ignore_patterns("_data", "__pycache__"))
+            self.builder.refresh_expected(source, output, replace=True)
+            self.assertFalse((output / "_data").exists())
+
+    def test_scientific_diff_reports_numeric_changes(self):
+        from golden_analysis_support import collect_json_diffs
+
+        diffs = collect_json_diffs({"value": 1.0}, {"value": 1.1})
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0]["kind"], "numeric_changed")
+        self.assertAlmostEqual(diffs[0]["abs_diff"], 0.1)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # Golden analysis regression corpus
 
-Committed full Neware sources and approved scientific projections for end-to-end backend
-regression testing (Spec 015).
+Committed full Neware sources and generated scientific projections (pending user approval) for
+end-to-end backend regression testing (Spec 015).
 
 ## Sources
 
@@ -64,7 +64,14 @@ python scripts\build_golden_analysis_corpus.py refresh-expected `
   --replace
 ```
 
-Review the printed SAME/DIFF digest summary and `approval.md` before copying approved files into
-this directory.
+Review the printed SAME/DIFF digest summary, scientific path diffs, optional `--diff-report`
+JSON, and `approval.md` before copying approved files into this directory.
+
+Inspect embedded binary metadata for privacy review:
+
+```powershell
+python scripts\build_golden_analysis_corpus.py inspect-privacy `
+  --manifest tests\fixtures\golden_analysis\manifest.json
+```
 
 See also [`approval.md`](approval.md) and [`../../../docs/agent-knowledge/scientific-regression-testing.md`](../../../docs/agent-knowledge/scientific-regression-testing.md).

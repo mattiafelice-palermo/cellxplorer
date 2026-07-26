@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -16,14 +17,20 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from golden_analysis_support import (  # noqa: E402
+    CandidateOutputPathError,
     GoldenFixtureEnvironment,
     bind_isolated_data_root,
     compare_values,
     comparison_profile,
+    inspect_binary_privacy,
     load_manifest,
+    restore_data_root_binding,
     sha256_file,
+    summarize_scientific_diff,
     trim_cell_metadata,
+    validate_candidate_output_path,
     verify_source_binaries,
+    write_scientific_diff_report,
 )
 from app.services import analysis_engine as engine  # noqa: E402
 from app.services import parsing, protocol  # noqa: E402
@@ -552,36 +559,67 @@ def build_case_spec(
     return spec
 
 
-def refuse_committed_fixture_output(output: Path) -> None:
-    if output.resolve() == FIXTURE.resolve():
-        raise SystemExit(
-            "Refusing to write into the committed fixture tree "
-            f"({FIXTURE}). Export/refresh to a candidate directory, then copy after review."
-        )
+def validate_candidate_output_path_or_exit(
+    output: Path,
+    *,
+    source: Path | None = None,
+) -> Path:
+    try:
+        return validate_candidate_output_path(output, committed=FIXTURE, source=source)
+    except CandidateOutputPathError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def write_expected_outputs(manifest_path: Path, output_root: Path) -> None:
     manifest = load_manifest(manifest_path)
     export_data = output_root / "_data"
-    bind_isolated_data_root(export_data)
-    with GoldenFixtureEnvironment.create(manifest_path, data_root=export_data) as env:
-        for case in manifest.get("cases", []):
-            result = env.run_case(case)
-            target = output_root / case["expected_path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            print(f"Generated expected output for {case['id']}")
+    saved_env = os.environ.get("CELLXPLORER_DATA")
+    try:
+        bind_isolated_data_root(export_data)
+        with GoldenFixtureEnvironment.create(manifest_path, data_root=export_data) as env:
+            for case in manifest.get("cases", []):
+                result = env.run_case(case)
+                target = output_root / case["expected_path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                print(f"Generated expected output for {case['id']}")
+    finally:
+        shutil.rmtree(export_data, ignore_errors=True)
+        restore_data_root_binding(saved_env)
 
 
-def summarize_candidate_diff(committed: Path, candidate: Path) -> None:
+def summarize_candidate_diff(
+    committed: Path,
+    candidate: Path,
+    *,
+    diff_report: Path | None = None,
+) -> dict:
     print("\nCandidate vs committed expected digests:")
-    for expected in sorted((candidate / "expected").glob("*.json")):
-        committed_path = committed / "expected" / expected.name
-        if not committed_path.is_file():
-            print(f"  NEW  {expected.name}")
-            continue
-        same = sha256_file(expected) == sha256_file(committed_path)
-        print(f"  {'SAME' if same else 'DIFF'} {expected.name}")
+    report = summarize_scientific_diff(committed, candidate)
+    for case in report["cases"]:
+        status = case["digest_status"]
+        name = case["expected_file"]
+        print(f"  {status:<4} {name}")
+        if status == "DIFF":
+            print(f"        changed paths (sample): {case['changed_path_count']}")
+            for diff in case["sample_diffs"][:5]:
+                path = diff["path"]
+                kind = diff["kind"]
+                if kind == "numeric_changed":
+                    print(
+                        f"        - {path}: {diff['expected']!r} -> {diff['actual']!r} "
+                        f"(abs {diff['abs_diff']:.6g}, rel {diff['rel_diff']:.6g})"
+                    )
+                elif kind == "length_mismatch":
+                    print(
+                        f"        - {path}: length {diff['expected_length']} -> {diff['actual_length']}"
+                    )
+                else:
+                    print(f"        - {path}: {kind} expected={diff.get('expected')!r} actual={diff.get('actual')!r}")
+    if diff_report is not None:
+        write_scientific_diff_report(committed, candidate, diff_report)
+        print(f"\nWrote machine-readable diff report to {diff_report}")
+    return report
 
 
 def export_corpus(
@@ -598,8 +636,9 @@ def export_corpus(
     chargeability_analysis_id: int | None,
     rate_analysis_id: int | None,
     plot_names: dict[str, str],
+    diff_report: Path | None = None,
 ) -> None:
-    refuse_committed_fixture_output(output)
+    validate_candidate_output_path_or_exit(output)
     if output.exists():
         if not replace:
             raise SystemExit(f"Output directory already exists: {output}. Pass --replace to overwrite.")
@@ -762,30 +801,54 @@ def export_corpus(
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     write_expected_outputs(output / "manifest.json", output)
-    summarize_candidate_diff(FIXTURE, output)
+    summarize_candidate_diff(FIXTURE, output, diff_report=diff_report)
     conn.close()
     print(f"Exported golden corpus candidate to {output}")
 
 
-def refresh_expected(source: Path, output: Path, replace: bool) -> None:
+def refresh_expected(
+    source: Path,
+    output: Path,
+    replace: bool,
+    *,
+    diff_report: Path | None = None,
+) -> None:
     """Copy an existing corpus tree and regenerate expected JSON into a candidate directory."""
-    refuse_committed_fixture_output(output)
-    if source.resolve() == output.resolve():
+    source = source.resolve()
+    validate_candidate_output_path_or_exit(output, source=source)
+    if source == output.resolve():
         raise SystemExit("Source and output directories must differ.")
     if output.exists():
         if not replace:
             raise SystemExit(f"Output directory already exists: {output}. Pass --replace to overwrite.")
         shutil.rmtree(output)
-    shutil.copytree(source, output, ignore=shutil.ignore_patterns("_data", "__pycache__"))
-    # Drop stale expected files so regeneration is explicit.
-    expected_dir = output / "expected"
-    if expected_dir.exists():
-        shutil.rmtree(expected_dir)
-    expected_dir.mkdir(parents=True, exist_ok=True)
-    write_expected_outputs(output / "manifest.json", output)
-    summarize_candidate_diff(source if source.resolve() != FIXTURE.resolve() else FIXTURE, output)
+    try:
+        shutil.copytree(source, output, ignore=shutil.ignore_patterns("_data", "__pycache__"))
+        # Drop stale expected files so regeneration is explicit.
+        expected_dir = output / "expected"
+        if expected_dir.exists():
+            shutil.rmtree(expected_dir)
+        expected_dir.mkdir(parents=True, exist_ok=True)
+        write_expected_outputs(output / "manifest.json", output)
+        committed = FIXTURE if source == FIXTURE.resolve() else source
+        summarize_candidate_diff(committed, output, diff_report=diff_report)
+    finally:
+        shutil.rmtree(output / "_data", ignore_errors=True)
     print(f"Refreshed expected outputs into candidate {output}")
-    print("Review the DIFF lines, then copy approved files into the committed fixture tree.")
+    print("Review the DIFF lines and scientific path diffs, then copy approved files into the committed fixture tree.")
+
+
+def inspect_privacy(manifest_path: Path, output: Path | None = None) -> None:
+    manifest = load_manifest(manifest_path)
+    root = manifest_path.parent
+    report = inspect_binary_privacy(manifest, root)
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload, encoding="utf-8")
+        print(f"Wrote binary privacy inspection report to {output}")
+    else:
+        print(payload)
 
 
 def verify_corpus(manifest_path: Path) -> None:
@@ -824,6 +887,12 @@ def main() -> None:
     export_parser.add_argument("--dcir-plot", default=DEFAULT_PLOT_NAMES["dcir"])
     export_parser.add_argument("--chargeability-plot", default=DEFAULT_PLOT_NAMES["chargeability"])
     export_parser.add_argument("--rate-plot", default=DEFAULT_PLOT_NAMES["rate_capability"])
+    export_parser.add_argument(
+        "--diff-report",
+        type=Path,
+        default=None,
+        help="Optional path for a machine-readable scientific diff report (JSON).",
+    )
 
     refresh_parser = sub.add_parser(
         "refresh-expected",
@@ -832,9 +901,27 @@ def main() -> None:
     refresh_parser.add_argument("--source", type=Path, default=FIXTURE)
     refresh_parser.add_argument("--output", type=Path, required=True)
     refresh_parser.add_argument("--replace", action="store_true")
+    refresh_parser.add_argument(
+        "--diff-report",
+        type=Path,
+        default=None,
+        help="Optional path for a machine-readable scientific diff report (JSON).",
+    )
 
     verify_parser = sub.add_parser("verify", help="Verify a committed corpus manifest and expected outputs.")
     verify_parser.add_argument("--manifest", type=Path, default=FIXTURE / "manifest.json")
+
+    privacy_parser = sub.add_parser(
+        "inspect-privacy",
+        help="Inspect embedded binary metadata for privacy review.",
+    )
+    privacy_parser.add_argument("--manifest", type=Path, default=FIXTURE / "manifest.json")
+    privacy_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to write the inspection report as JSON.",
+    )
 
     args = parser.parse_args()
     if args.command == "export":
@@ -860,11 +947,14 @@ def main() -> None:
                 "chargeability": args.chargeability_plot,
                 "rate_capability": args.rate_plot,
             },
+            diff_report=args.diff_report,
         )
     elif args.command == "refresh-expected":
-        refresh_expected(args.source, args.output, args.replace)
+        refresh_expected(args.source, args.output, args.replace, diff_report=args.diff_report)
     elif args.command == "verify":
         verify_corpus(args.manifest)
+    elif args.command == "inspect-privacy":
+        inspect_privacy(args.manifest, args.output)
 
 
 if __name__ == "__main__":

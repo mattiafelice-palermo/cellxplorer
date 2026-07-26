@@ -177,6 +177,15 @@ cache = importlib.import_module("app.services.cache")
 scanner = importlib.import_module("app.services.scanner")
 
 
+def resolved_data_root_from_env(env_value: str | None = None) -> Path:
+    """Resolve the production data root from an environment value or the current process."""
+    if env_value is None:
+        env_value = os.environ.get("CELLXPLORER_DATA")
+    if env_value:
+        return Path(env_value).resolve()
+    return (Path.home() / ".cellxplorer").resolve()
+
+
 def bind_isolated_data_root(data_root: Path) -> None:
     """Point production cache/config modules at an isolated data directory."""
     global cache, scanner
@@ -193,6 +202,274 @@ def bind_isolated_data_root(data_root: Path) -> None:
     importlib.reload(config_mod)
     cache = importlib.reload(importlib.import_module("app.services.cache"))
     scanner = importlib.reload(importlib.import_module("app.services.scanner"))
+
+
+def restore_data_root_binding(saved_env: str | None) -> None:
+    """Restore config/cache/scanner module bindings to the prior data root."""
+    if saved_env is None:
+        os.environ.pop("CELLXPLORER_DATA", None)
+        target = Path.home() / ".cellxplorer"
+    else:
+        os.environ["CELLXPLORER_DATA"] = saved_env
+        target = Path(saved_env)
+    bind_isolated_data_root(target)
+
+
+class CandidateOutputPathError(GoldenAnalysisError):
+    """Raised when a candidate corpus path would overwrite committed fixtures."""
+
+
+def path_is_equal_or_descendant(path: Path, ancestor: Path) -> bool:
+    path = path.resolve()
+    ancestor = ancestor.resolve()
+    if path == ancestor:
+        return True
+    return path.is_relative_to(ancestor)
+
+
+def validate_candidate_output_path(
+    output: Path,
+    *,
+    committed: Path | None = None,
+    source: Path | None = None,
+) -> Path:
+    """Reject candidate output paths that would pollute committed or source trees."""
+    output = output.resolve()
+    committed_root = (committed or FIXTURE_ROOT).resolve()
+    if path_is_equal_or_descendant(output, committed_root):
+        raise CandidateOutputPathError(
+            "Refusing candidate output equal to or under the committed fixture tree "
+            f"({committed_root}). Export/refresh to a separate directory, then copy after review."
+        )
+    if source is not None:
+        source_root = source.resolve()
+        if path_is_equal_or_descendant(output, source_root):
+            raise CandidateOutputPathError(
+                "Refusing candidate output equal to or inside the selected source tree "
+                f"({source_root}). Choose an output directory outside the source tree."
+            )
+    return output
+
+
+PRIVACY_REVIEW_TOP_LEVEL_FIELDS = (
+    "barcode",
+    "remarks",
+    "builder",
+    "device_info",
+    "channel",
+    "start_time",
+    "part_number",
+    "nda_version",
+)
+
+PRIVACY_REVIEW_RAW_KEYWORDS = (
+    "guid",
+    "remark",
+    "creator",
+    "devid",
+    "chlid",
+    "unitid",
+    "operator",
+    "device",
+    "barcode",
+)
+
+
+def inspect_binary_privacy(manifest: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+    """Collect potentially sensitive metadata embedded in committed source binaries."""
+    from app.services import parsing
+
+    root = root or fixture_root()
+    sources: list[dict[str, Any]] = []
+    for source in manifest.get("sources", []):
+        binary = (root / source["binary_path"]).resolve()
+        meta = parsing.read_header_metadata(binary)
+        top_level = {
+            field: meta[field]
+            for field in PRIVACY_REVIEW_TOP_LEVEL_FIELDS
+            if meta.get(field) not in (None, "")
+        }
+        raw_hits: list[dict[str, str]] = []
+        for key, value in (meta.get("raw") or {}).items():
+            key_low = key.lower()
+            if any(keyword in key_low for keyword in PRIVACY_REVIEW_RAW_KEYWORDS):
+                raw_hits.append({key: str(value)})
+        sources.append(
+            {
+                "key": source["key"],
+                "binary_path": source["binary_path"],
+                "sha256": source["sha256"],
+                "top_level_fields": top_level,
+                "raw_sensitive_fields": raw_hits[:40],
+            }
+        )
+    return {"schema_version": 1, "sources": sources}
+
+
+def collect_json_diffs(
+    expected: Any,
+    actual: Any,
+    *,
+    path: str = "$",
+    max_entries: int = 100,
+) -> list[dict[str, Any]]:
+    """Collect structured JSON differences for candidate review."""
+    diffs: list[dict[str, Any]] = []
+
+    def add(entry: dict[str, Any]) -> None:
+        if len(diffs) < max_entries:
+            diffs.append(entry)
+
+    def walk(exp: Any, act: Any, current_path: str) -> None:
+        if len(diffs) >= max_entries:
+            return
+
+        if type(exp) is not type(act):
+            add(
+                {
+                    "path": current_path,
+                    "kind": "type_mismatch",
+                    "expected_type": type(exp).__name__,
+                    "actual_type": type(act).__name__,
+                    "expected": exp,
+                    "actual": act,
+                }
+            )
+            return
+
+        if isinstance(exp, bool):
+            if exp is not act:
+                add({"path": current_path, "kind": "changed", "expected": exp, "actual": act})
+            return
+
+        if isinstance(exp, int) and isinstance(act, int):
+            if exp != act:
+                add({"path": current_path, "kind": "changed", "expected": exp, "actual": act})
+            return
+
+        if _is_number(exp) and _is_number(act):
+            if not math.isclose(float(exp), float(act), rel_tol=0.0, abs_tol=0.0):
+                abs_diff = abs(float(act) - float(exp))
+                rel_diff = abs_diff / max(abs(float(exp)), 1e-30)
+                add(
+                    {
+                        "path": current_path,
+                        "kind": "numeric_changed",
+                        "expected": exp,
+                        "actual": act,
+                        "abs_diff": abs_diff,
+                        "rel_diff": rel_diff,
+                    }
+                )
+            return
+
+        if isinstance(exp, str):
+            if exp != act:
+                add({"path": current_path, "kind": "changed", "expected": exp, "actual": act})
+            return
+
+        if exp is None or act is None:
+            if exp is not act:
+                add({"path": current_path, "kind": "changed", "expected": exp, "actual": act})
+            return
+
+        if isinstance(exp, list):
+            if len(exp) != len(act):
+                add(
+                    {
+                        "path": current_path,
+                        "kind": "length_mismatch",
+                        "expected_length": len(exp),
+                        "actual_length": len(act),
+                    }
+                )
+                limit = min(len(exp), len(act), 5)
+                for index in range(limit):
+                    walk(exp[index], act[index], f"{current_path}[{index}]")
+                return
+            for index, (exp_item, act_item) in enumerate(zip(exp, act)):
+                walk(exp_item, act_item, f"{current_path}[{index}]")
+            return
+
+        if isinstance(exp, dict):
+            exp_keys = set(exp)
+            act_keys = set(act)
+            for key in sorted(exp_keys - act_keys):
+                add({"path": f"{current_path}.{key}", "kind": "removed", "expected": exp[key]})
+            for key in sorted(act_keys - exp_keys):
+                add({"path": f"{current_path}.{key}", "kind": "added", "actual": act[key]})
+            for key in sorted(exp_keys & act_keys):
+                walk(exp[key], act[key], f"{current_path}.{key}")
+            return
+
+        if exp != act:
+            add({"path": current_path, "kind": "changed", "expected": exp, "actual": act})
+
+    walk(expected, actual, path)
+    return diffs
+
+
+def summarize_scientific_diff(
+    committed: Path,
+    candidate: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+    max_entries_per_case: int = 100,
+) -> dict[str, Any]:
+    """Build a structured scientific diff report for candidate expected JSON."""
+    committed = committed.resolve()
+    candidate = candidate.resolve()
+    manifest = manifest or load_manifest(candidate / "manifest.json")
+    cases: list[dict[str, Any]] = []
+
+    for case in manifest.get("cases", []):
+        case_id = case["id"]
+        rel = Path(case["expected_path"]).name
+        committed_path = committed / case["expected_path"]
+        candidate_path = candidate / case["expected_path"]
+        digest_same = (
+            committed_path.is_file()
+            and candidate_path.is_file()
+            and sha256_file(committed_path) == sha256_file(candidate_path)
+        )
+        entry: dict[str, Any] = {
+            "case_id": case_id,
+            "expected_file": rel,
+            "digest_status": "SAME" if digest_same else "DIFF",
+            "changed_path_count": 0,
+            "sample_diffs": [],
+        }
+        if committed_path.is_file() and candidate_path.is_file() and not digest_same:
+            expected = json.loads(committed_path.read_text(encoding="utf-8"))
+            actual = json.loads(candidate_path.read_text(encoding="utf-8"))
+            diffs = collect_json_diffs(expected, actual, max_entries=max_entries_per_case)
+            entry["changed_path_count"] = len(diffs)
+            entry["sample_diffs"] = diffs[:20]
+        elif not committed_path.is_file() and candidate_path.is_file():
+            entry["digest_status"] = "NEW"
+        cases.append(entry)
+
+    return {
+        "schema_version": 1,
+        "committed_root": str(committed),
+        "candidate_root": str(candidate),
+        "cases": cases,
+    }
+
+
+def write_scientific_diff_report(
+    committed: Path,
+    candidate: Path,
+    report_path: Path | None = None,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Write and return a machine-readable scientific diff report."""
+    report = summarize_scientific_diff(committed, candidate, manifest=manifest)
+    if report_path is not None:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
 
 
 def trim_cell_metadata(metadata: dict[str, str] | None) -> dict[str, str]:
