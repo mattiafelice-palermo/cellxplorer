@@ -165,7 +165,9 @@ exclusions. Requirements:
 - Frontend: React + Vite + TypeScript, served as static files by FastAPI.
   Mantine for UI (tree, tables, modals), TanStack Query (server state),
   TanStack Table (cell tables), Plotly for charts (client-side plotting from
-  JSON the API returns).
+  JSON the API returns). All current UI work follows the canonical visual
+  contract in `docs/agent-knowledge/visual-style-guide.md`; explicit locked
+  decisions in a feature spec may override it narrowly.
 - Persistence shape: ~10 tables — files(hash unique), cells, tests,
   test_files(ordered), metadata fields + cell_metadata (or JSONB),
   tags + cell_tags + analysis_tags, folders(parent_id), projects(folder_id),

@@ -23,7 +23,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconActivity,
   IconAlertTriangle,
-  IconBug,
   IconChartLine,
   IconDatabase,
   IconFolder,
@@ -531,15 +530,7 @@ export default function App() {
               )}
             </Button>
             <DownloadsButton />
-            <QuickSettingsMenu />
-            <Button
-              size="compact-sm"
-              variant="subtle"
-              leftSection={<IconBug size={14} />}
-              onClick={() => setDebugOpen(true)}
-            >
-              Debug
-            </Button>
+            <QuickSettingsMenu onOpenDebug={() => setDebugOpen(true)} />
           </Group>
         </Group>
       </AppShell.Header>

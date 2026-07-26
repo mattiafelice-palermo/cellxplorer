@@ -18,6 +18,12 @@ knowledge, performance invariants, and change playbooks that are easy to miss by
 in isolation. The detailed migration, portable-report, parser, and packaging manuals remain in
 their existing files under `docs/` and are linked from that index.
 
+Before creating or changing any frontend surface, read
+`docs/agent-knowledge/visual-style-guide.md`. It is the canonical contract for colors, typography,
+spacing, control sizes, dark-mode behavior, plot presentation, feedback states, and accessibility.
+An explicit user decision or a design decision marked locked in an active spec may override it;
+otherwise new UI must follow it.
+
 When work reveals a durable fact that would save a future agent meaningful investigation, update
 the relevant knowledge document in the same change. Record architectural constraints, ownership
 boundaries, proven failure modes, and verification techniques. Do not turn the knowledge base into
@@ -130,7 +136,8 @@ Cellxplorer/
 ├── docs/
 │   └── agent-knowledge/            Durable architecture and change playbooks
 │       ├── chargeability-analysis.md
-│       └── rate-capability-analysis.md
+│       ├── rate-capability-analysis.md
+│       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
@@ -193,7 +200,8 @@ outside the workspace. This is an execution-environment issue, not necessarily a
 
 ## Implementation conventions
 
-- Preserve the existing quiet, compact Mantine design. Reuse current controls and Tabler icons.
+- Follow `docs/agent-knowledge/visual-style-guide.md` for all frontend work. Preserve the quiet,
+  compact Mantine design, and reuse current controls and Tabler icons.
 - Use React Query for server state. After a mutation, update or invalidate every affected view
   (cell lists/details, folders, replicates, analyses, and activity when applicable).
 - Validate domain constraints in the backend even when the frontend prevents invalid input.

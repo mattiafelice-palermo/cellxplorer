@@ -26,6 +26,16 @@
 5. If adding startup persistence, explicitly allowlist the query and verify that it contains no raw
    scientific data.
 
+## UI or visual change
+
+1. Read [`visual-style-guide.md`](visual-style-guide.md) before editing.
+2. Reuse the closest shared component and match neighbouring control geometry.
+3. Check chrome colors for both light and dark; keep Plotly presentation independent.
+4. Cover loading, empty, error, disabled, unsaved, and success states as applicable.
+5. Check truncation, overflow, keyboard access, tooltips, and accessible names.
+6. Run TypeScript/build checks. Perform visual browser verification when requested or required by
+   the active spec; never claim an unperformed visual check passed.
+
 ## Adding a hook to a large page component
 
 `AnalysisPage` (and any component with early returns such as

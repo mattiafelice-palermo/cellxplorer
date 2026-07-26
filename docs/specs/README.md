@@ -10,6 +10,20 @@ did **not** see the originating conversation, so it must be self-contained:
 - Call out data shapes, API endpoints, and any cache/recompute implications.
 - End with a suggested implementation order and how to verify (`tsc`, `vite build`, `pytest`).
 
+## Visual contract
+
+Every spec that creates or changes UI inherits
+[`../agent-knowledge/visual-style-guide.md`](../agent-knowledge/visual-style-guide.md), whether or
+not the spec repeats that link. Spec authors and implementers must read it before making visual
+decisions.
+
+A spec may override the guide only through an explicit **locked design decision**. State the
+exception, its scope, and why it is necessary; all unspecified details still follow the guide.
+UI specs must include acceptance criteria for the relevant control geometry, light/dark behavior,
+loading and failure states, truncation/overflow, and accessibility. A reference image defines the
+requested composition, but it does not silently replace the application's established colors,
+button hierarchy, typography, or feedback semantics.
+
 ## Lifecycle
 
 A spec is a living document, not a one-shot brief:
@@ -38,6 +52,7 @@ Implement the review follow-ups in docs/specs/NNN-<name>.md.
 
 Read the whole file first. The spec body is the source of truth for intended behaviour;
 the "Review of the implementation" section at the end lists the tasks (R1, R2, ...).
+For any UI work, also read docs/agent-knowledge/visual-style-guide.md before editing.
 
 Rules:
 1. Do the R tasks in the order given under "Follow-up order", and only those. No
@@ -57,6 +72,8 @@ Rules:
    changed per task, what you ran and the result, and anything you deliberately did
    not do.
 8. Do not modify unrelated uncommitted work in the tree.
+9. UI changes inherit the visual style guide unless this spec explicitly marks an override
+   as a locked design decision.
 
 Ask if a task is ambiguous rather than guessing.
 ```

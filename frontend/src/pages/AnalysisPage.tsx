@@ -204,6 +204,7 @@ import {
   type PlotExplainer,
 } from "../plotExplainers";
 import { applyPlotStylePreset } from "../plotStylePresets";
+import { axisLayout, numericTraceExtent } from "../plotAxisLayout";
 
 const PALETTE = [
   "#12b886",
@@ -1292,84 +1293,6 @@ function cePlotMode(style: PlotStyle): "lines" | "markers" | "lines+markers" {
   if (style.ce_marker_mode === "points") return "markers";
   if (style.ce_marker_mode === "lines_points") return "lines+markers";
   return "lines";
-}
-
-type AxisOverrides = {
-  autorange?: boolean;
-  range?: [number, number];
-  tickmode?: "linear" | "array";
-  tick0?: number;
-  dtick?: number;
-  tickvals?: number[];
-  autorangeoptions?: { minallowed?: number; maxallowed?: number };
-};
-
-function numericTraceExtent(
-  traces: Plotly.Data[],
-  coordinate: "x" | "y",
-  axisNames: string[]
-): [number, number] | undefined {
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-  for (const raw of traces) {
-    const trace = raw as Record<string, unknown>;
-    const axisName = String(trace[coordinate === "x" ? "xaxis" : "yaxis"] ?? coordinate);
-    if (!axisNames.includes(axisName)) continue;
-    const values = trace[coordinate];
-    if (!values || typeof (values as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function") {
-      continue;
-    }
-    for (const rawValue of values as Iterable<unknown>) {
-      const value = typeof rawValue === "number" ? rawValue : Number(rawValue);
-      if (!Number.isFinite(value)) continue;
-      min = Math.min(min, value);
-      max = Math.max(max, value);
-    }
-  }
-  return Number.isFinite(min) && Number.isFinite(max) && min !== max ? [min, max] : undefined;
-}
-
-// Returns ONLY the keys that should override Plotly's defaults. In auto mode
-// this is empty on purpose: passing `range: undefined, autorange: true` on a
-// layout-only re-render (grid/zero-line/border toggles) made Plotly.react
-// fall back to its empty-plot ranges (x [-1, 6], y [-1, 4]) without
-// recomputing from data. One-sided manual bounds clamp the autorange.
-function axisLayout(
-  axis: PlotStyle["x_axis"],
-  observedRange?: [number, number]
-): AxisOverrides {
-  const out: AxisOverrides = {};
-  const hasMin = axis.min !== null && axis.min !== undefined;
-  const hasMax = axis.max !== null && axis.max !== undefined;
-  const validManualRange = hasMin && hasMax && axis.min! < axis.max!;
-  if (axis.mode === "manual" && validManualRange) {
-    out.autorange = false;
-    out.range = [axis.min!, axis.max!];
-  } else if (axis.mode === "manual" && hasMin !== hasMax) {
-    out.autorange = true;
-    out.autorangeoptions = {
-      ...(hasMin ? { minallowed: axis.min! } : {}),
-      ...(hasMax ? { maxallowed: axis.max! } : {}),
-    };
-  }
-  if (axis.tick_mode === "step" && axis.dtick !== null && axis.dtick > 0) {
-    out.tickmode = "linear";
-    out.dtick = axis.dtick;
-    const start = validManualRange ? axis.min! : observedRange?.[0];
-    if (start !== undefined) out.tick0 = start;
-  } else if (axis.tick_mode === "count" && axis.tick_count !== null && axis.tick_count >= 2) {
-    const start = validManualRange ? axis.min! : hasMin ? axis.min! : observedRange?.[0];
-    const end = validManualRange ? axis.max! : hasMax ? axis.max! : observedRange?.[1];
-    if (start !== undefined && end !== undefined && start < end) {
-      const steps = axis.tick_count - 1;
-      out.tickmode = "array";
-      out.tickvals = Array.from(
-        { length: axis.tick_count },
-        (_, index) => start + ((end - start) * index) / steps
-      );
-    }
-  }
-  return out;
 }
 
 // Shared tick-mark + tick-label styling for all axes.

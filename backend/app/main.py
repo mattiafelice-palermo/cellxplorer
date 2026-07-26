@@ -107,6 +107,9 @@ def _record_migration_activity() -> None:
 
 def _warm_scientific_services() -> None:
     """Warm the data stack after the API is listening, then start backfills."""
+    from .services.process_priority import apply_background_thread_priority
+
+    apply_background_thread_priority()
     try:
         import pandas  # noqa: F401
         import NewareNDA  # noqa: F401

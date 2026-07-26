@@ -184,6 +184,9 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
     cycles = calc.per_cycle(raw)
 
     def _write() -> None:
+        from .process_priority import apply_background_thread_priority
+
+        apply_background_thread_priority()
         try:
             _dir(file_hash).mkdir(parents=True, exist_ok=True)
             _write_atomic(raw, raw_path(file_hash))

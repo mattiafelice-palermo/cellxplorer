@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import AppSetting
+from ..services.process_priority import apply_background_thread_priority
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,7 @@ def _run_scheduler() -> None:
     from ..routers import library
     from . import automation
 
+    apply_background_thread_priority()
     while not _stop_event.is_set():
         db = SessionLocal()
         try:

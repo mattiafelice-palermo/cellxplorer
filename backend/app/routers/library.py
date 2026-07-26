@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import os
 import threading
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +36,11 @@ from ..models import (
 from ..services import background_jobs
 from ..services.activity_log import record_activity
 from ..services.lazy_module import LazyModule
+from ..services.process_priority import (
+    apply_background_thread_priority,
+    process_pool_executor,
+    thread_pool_executor,
+)
 from .files import file_dict
 
 
@@ -968,22 +973,16 @@ def _source_stat_batches(
     max_workers: int,
 ) -> list[dict]:
     results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="source-stat") as executor:
+    with thread_pool_executor(max_workers=max_workers, thread_name_prefix="source-stat") as executor:
         for start in range(0, len(jobs), batch_size):
             results.extend(executor.map(_source_stat_worker, jobs[start : start + batch_size]))
     return results
 
 
-def _set_current_thread_low_priority() -> None:
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        thread_handle = ctypes.windll.kernel32.GetCurrentThread()
-        ctypes.windll.kernel32.SetThreadPriority(thread_handle, -1)
-    except Exception:
-        pass
+def _make_process_executor(executor_cls, max_workers: int):
+    if executor_cls is ProcessPoolExecutor:
+        return process_pool_executor(max_workers)
+    return executor_cls(max_workers=max_workers)
 
 
 def cell_source_check_worker_count(n_jobs: int, max_workers: int | None = None) -> int:
@@ -1438,8 +1437,7 @@ def _run_source_check_job(
     retry_delay_minutes: int = 5,
     retry_deadline_at: str | None = None,
 ) -> None:
-    if low_impact:
-        _set_current_thread_low_priority()
+    apply_background_thread_priority()
     db = SessionLocal()
     try:
         if not jobs:
@@ -1491,7 +1489,7 @@ def _run_source_check_job(
                 _record_source_check_result(job_id, db, source_job, result)
         else:
             pending = iter(jobs)
-            with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            with _make_process_executor(ProcessPoolExecutor, worker_count) as executor:
                 futures: dict = {}
 
                 def submit_next() -> bool:
@@ -1730,7 +1728,7 @@ def start_source_check_job(
     batch_size: int = 100,
     stability_seconds: float = 5.0,
     trigger: Literal["manual", "tray", "scheduled"] = "manual",
-    low_impact: bool = False,
+    low_impact: bool = True,
     retry_count: int = 0,
     retry_delay_minutes: int = 5,
     retry_deadline_at: str | None = None,
@@ -1887,7 +1885,7 @@ def check_cell_sources(
     if worker_count == 1:
         results = [_source_check_worker(job) for job in jobs]
     else:
-        with executor_cls(max_workers=worker_count) as executor:
+        with _make_process_executor(executor_cls, worker_count) as executor:
             results = list(executor.map(_source_check_worker, jobs))
 
     by_id = {sf.id: sf for sf in source_files}

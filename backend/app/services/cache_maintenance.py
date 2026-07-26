@@ -900,6 +900,9 @@ _maintenance_thread: threading.Thread | None = None
 
 
 def _maintenance_loop() -> None:
+    from .process_priority import apply_background_thread_priority
+
+    apply_background_thread_priority()
     configure_from_database()
     while not _maintenance_stop.wait(300):
         db = SessionLocal()

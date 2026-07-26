@@ -69,6 +69,9 @@ def start_capacity_summary_backfill() -> None:
 
 def _run_capacity_summary_backfill() -> None:
     global _capacity_backfill_running
+    from .process_priority import apply_background_thread_priority
+
+    apply_background_thread_priority()
     db = SessionLocal()
     job_id: int | None = None
     try:
@@ -179,6 +182,9 @@ def _bump(job_id: int, key: str, n: int = 1) -> None:
 
 
 def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
+    from .process_priority import apply_background_thread_priority
+
+    apply_background_thread_priority()
     try:
         paths = sorted(
             p for p in Path(root).rglob("*") if p.suffix.lower() in (".nda", ".ndax") and p.is_file()

@@ -10,6 +10,8 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from ..services.process_priority import apply_background_thread_priority, process_pool_executor
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -361,7 +363,8 @@ def build_import_caches_parallel(
             if progress_callback:
                 progress_callback(job, result)
         return results
-    with executor_cls(max_workers=worker_count) as executor:
+    pool = process_pool_executor(worker_count) if executor_cls is ProcessPoolExecutor else executor_cls(max_workers=worker_count)
+    with pool as executor:
         results = {}
         for job, result in zip(jobs, executor.map(_build_import_cache_worker, jobs)):
             normalized = {
@@ -405,6 +408,7 @@ def run_import_cache_jobs(
     cache_jobs: list[dict],
     background_job_id: int,
 ) -> None:
+    apply_background_thread_priority()
     db = SessionLocal()
     try:
         for cache_job in cache_jobs:

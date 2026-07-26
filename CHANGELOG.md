@@ -4,6 +4,19 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.14.1 - 2026-07-26
+
+- Polished the Cell Database table: fixed column widths across pages, debounced search,
+  a two-row sticky toolbar, icon-only row actions, and the same cell hover summary used in
+  analyses.
+- Reworked the header quick-settings control into a larger power button and moved Debug into
+  that menu.
+- On Windows, background source checks, cache rebuilds, imports, and other automation now run
+  at below-normal process priority so they compete less with the UI.
+- Default plot style presets no longer pin empty axes when their saved manual ranges do not
+  overlap the plotted data; those axes fall back to Plotly auto-scaling instead.
+- Added a canonical visual style guide for future frontend work.
+
 ## 0.14.0 - 2026-07-26
 
 - Added a Chargeability analysis tab that finds voltage-controlled charge events from protocol

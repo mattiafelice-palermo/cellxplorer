@@ -12,6 +12,8 @@ that matches the change, then follow its links to the authoritative implementati
   React Query persistence, analysis rendering, and performance failure modes.
 - [`change-playbooks.md`](change-playbooks.md): checklists for schema, scientific calculations,
   frontend server state, releases, and Windows packaging.
+- [`visual-style-guide.md`](visual-style-guide.md): canonical colors, typography, spacing,
+  component sizing, dark-mode recipes, plot presentation, and UI acceptance checklist.
 - [`dcir-analysis.md`](dcir-analysis.md): DCIR rest/pulse recognition, calculation rules, private
   segment ownership, series structure, and cache boundaries.
 - [`chargeability-analysis.md`](chargeability-analysis.md): semantic SoC-window matching, safe

@@ -14,10 +14,9 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  IconChevronDown,
+  IconBug,
   IconPower,
   IconRefresh,
-  IconSettings,
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
@@ -62,7 +61,7 @@ function confirmDestructiveReload(
   });
 }
 
-export function QuickSettingsMenu() {
+export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void }) {
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const tauri = isTauriApp();
@@ -157,13 +156,14 @@ export function QuickSettingsMenu() {
           processing={isPaused}
         >
           <Button
-            size="compact-sm"
+            size="sm"
             variant="subtle"
-            color="teal"
-            leftSection={<IconSettings size={14} />}
-            rightSection={<IconChevronDown size={14} />}
-            aria-label="Quick settings"
-          />
+            color={isPaused ? "yellow" : "teal"}
+            px="sm"
+            aria-label="Power and settings"
+          >
+            <IconPower size={18} stroke={1.75} />
+          </Button>
         </Indicator>
       </Menu.Target>
       <Menu.Dropdown>
@@ -250,6 +250,21 @@ export function QuickSettingsMenu() {
             ) : null}
           </Stack>
         </Box>
+
+        {onOpenDebug ? (
+          <>
+            <Divider my={6} />
+            <Menu.Item
+              leftSection={<IconBug size={14} />}
+              onClick={() => {
+                setMenuOpen(false);
+                onOpenDebug();
+              }}
+            >
+              Debug
+            </Menu.Item>
+          </>
+        ) : null}
       </Menu.Dropdown>
     </Menu>
   );

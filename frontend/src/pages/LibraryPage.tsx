@@ -67,6 +67,7 @@ import {
   Tree,
 } from "../api";
 import { CellDetailTabs } from "../components/CellDetailTabs";
+import { CellHoverCard } from "../components/CellSamplePopovers";
 import {
   deleteEmptyAnalysesIfRequested,
   DestructiveImpactModal,
@@ -165,10 +166,26 @@ const LIBRARY_STICKY_BAR_STYLE = {
   background: "light-dark(var(--mantine-color-body), var(--mantine-color-dark-7))",
 };
 
+const CELL_SEARCH_DEBOUNCE_MS = 300;
+
+const LIBRARY_CELL_TABLE_COL_WIDTHS = {
+  select: 42,
+  cell: "26%",
+  tests: 64,
+  files: 64,
+  cycles: 72,
+  charge: 112,
+  discharge: 120,
+  status: 188,
+  created: 96,
+  actions: 132,
+} as const;
+
 export function LibraryPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [cellPage, setCellPage] = useState(1);
   const [cellPageSize, setCellPageSize] = useState<CellPageSize>(() => loadCellPageSize());
   const [replicateSearch, setReplicateSearch] = useState("");
@@ -215,6 +232,12 @@ export function LibraryPage() {
     next.delete("replicate");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setSearchQuery(searchInput), CELL_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
+
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editActiveMass, setEditActiveMass] = useState<number | null>(null);
@@ -230,8 +253,8 @@ export function LibraryPage() {
   const handledSourceCheckJob = useRef<number | null>(null);
 
   const cells = useQuery({
-    queryKey: ["cells", search],
-    queryFn: () => get<CellSummary[]>(cellsUrl(search)),
+    queryKey: ["cells", searchQuery],
+    queryFn: () => get<CellSummary[]>(cellsUrl(searchQuery)),
     refetchInterval: (query) =>
       query.state.data?.some((cell) => cell.has_parsing || cell.has_summary_pending)
         ? 2000
@@ -578,8 +601,8 @@ export function LibraryPage() {
     const checkedScope = new Set(job.requested_cell_ids);
     void qc
       .fetchQuery({
-        queryKey: ["cells", search],
-        queryFn: () => get<CellSummary[]>(cellsUrl(search)),
+        queryKey: ["cells", searchQuery],
+        queryFn: () => get<CellSummary[]>(cellsUrl(searchQuery)),
       })
       .then((refreshed) => {
         const changedIds = refreshed
@@ -590,7 +613,7 @@ export function LibraryPage() {
           .map((cell) => cell.id);
         setSelectedCellIds(new Set(changedIds));
       });
-  }, [qc, search, sourceCheckJob.data]);
+  }, [qc, searchQuery, sourceCheckJob.data]);
 
   const updateChangedSources = useMutation({
     mutationFn: (cellIds: number[]) =>
@@ -888,7 +911,7 @@ export function LibraryPage() {
 
   useEffect(() => {
     setCellPage(1);
-  }, [search, cellPageSize]);
+  }, [searchQuery, cellPageSize]);
 
   useEffect(() => {
     if (cellPage > cellPageCount) setCellPage(cellPageCount);
@@ -968,8 +991,8 @@ export function LibraryPage() {
             style={{ flexShrink: 0 }}
             leftSection={<IconSearch size={15} />}
             placeholder="Search cells"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.currentTarget.value)}
           />
           <ImportCellsLauncher
             targetFolderId={null}
@@ -1153,10 +1176,22 @@ export function LibraryPage() {
         <>
         <Paper withBorder>
           <ScrollArea type="auto">
-            <Table highlightOnHover>
+            <Table highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+              <colgroup>
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.select }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cell }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.tests }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.files }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.cycles }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.charge }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.discharge }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.status }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.created }} />
+                <col style={{ width: LIBRARY_CELL_TABLE_COL_WIDTHS.actions }} />
+              </colgroup>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th w={42}>
+                  <Table.Th w={LIBRARY_CELL_TABLE_COL_WIDTHS.select}>
                     <Checkbox
                       aria-label="Select cells on this page"
                       checked={allVisibleSelected}
@@ -1203,21 +1238,27 @@ export function LibraryPage() {
                       />
                     </Table.Td>
                     <Table.Td>
-                      <Text fw={700}>{cell.name}</Text>
-                      {cell.description && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {cell.description}
-                        </Text>
-                      )}
-                      {cellGroups.length > 0 && (
-                        <Group gap={4} mt={4}>
-                          {cellGroups.map((group) => (
-                            <Badge key={group.id} size="xs" color="teal" variant="light">
-                              {group.name}
-                            </Badge>
-                          ))}
-                        </Group>
-                      )}
+                      <CellHoverCard cell={cell} result={undefined}>
+                        <>
+                          <Text fw={700} lineClamp={1}>
+                            {cell.name}
+                          </Text>
+                          {cell.description && (
+                            <Text size="xs" c="dimmed" lineClamp={1}>
+                              {cell.description}
+                            </Text>
+                          )}
+                          {cellGroups.length > 0 && (
+                            <Group gap={4} mt={4}>
+                              {cellGroups.map((group) => (
+                                <Badge key={group.id} size="xs" color="teal" variant="light">
+                                  {group.name}
+                                </Badge>
+                              ))}
+                            </Group>
+                          )}
+                        </>
+                      </CellHoverCard>
                     </Table.Td>
                     <Table.Td>{cell.n_tests}</Table.Td>
                     <Table.Td>{cell.n_files}</Table.Td>
@@ -1299,17 +1340,18 @@ export function LibraryPage() {
                           <IconPencil size={15} />
                         </ActionIcon>
                       </Tooltip>
-                      <Button
-                        size="xs"
-                        variant="default"
-                        leftSection={<IconEye size={14} />}
-                        onClick={() => {
-                          setMetadataOpen(false);
-                          setSelectedId(cell.id);
-                        }}
-                      >
-                        Open
-                      </Button>
+                      <Tooltip label="Open">
+                        <ActionIcon
+                          variant="default"
+                          aria-label={`Open ${cell.name}`}
+                          onClick={() => {
+                            setMetadataOpen(false);
+                            setSelectedId(cell.id);
+                          }}
+                        >
+                          <IconEye size={15} />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Remove">
                         <ActionIcon
                           variant="subtle"
