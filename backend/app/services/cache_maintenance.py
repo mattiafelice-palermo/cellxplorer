@@ -702,7 +702,15 @@ class WarmupCoordinator:
                             description="Analysis cache preparation finished",
                         )
 
-    def complete(self, task_id: str, *, status: str, detail: str | None, error: str | None) -> dict[str, Any]:
+    def complete(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        detail: str | None,
+        error: str | None,
+        db: Session | None = None,
+    ) -> dict[str, Any]:
         finished = False
         job_id: int | None
         with self._lock:
@@ -762,18 +770,19 @@ class WarmupCoordinator:
                 completed_task.get("plot_modified_at"),
             )
         if finished:
-            db = SessionLocal()
+            activity_db = db if db is not None else SessionLocal()
             try:
                 record_activity(
-                    db,
+                    activity_db,
                     category="system",
                     action="cache_warmup_completed",
                     message="Background analysis cache preparation finished.",
                     details={"plots": len(self._tasks)},
                 )
-                db.commit()
+                activity_db.commit()
             finally:
-                db.close()
+                if db is None:
+                    activity_db.close()
         return {"ok": True, "finished": finished, "job_id": job_id}
 
 

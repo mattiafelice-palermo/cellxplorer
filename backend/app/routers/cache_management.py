@@ -110,10 +110,11 @@ def resume_cache_warmup():
 
 
 @router.post("/warmup/complete")
-def complete_cache_warmup(payload: WarmupCompletion):
+def complete_cache_warmup(payload: WarmupCompletion, db: Session = Depends(get_db)):
     return cache_maintenance.warmup.complete(
         payload.task_id,
         status=payload.status,
         detail=payload.detail,
         error=payload.error,
+        db=db,
     )

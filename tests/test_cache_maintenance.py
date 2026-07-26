@@ -433,7 +433,7 @@ class CacheMaintenanceTests(unittest.TestCase):
                 self._THUMBNAIL,
                 self._THUMBNAIL,
             )
-            coordinator.complete(task["id"], status="ready", detail=None, error=None)
+            coordinator.complete(task["id"], status="ready", detail=None, error=None, db=db)
             after_first = calls["count"]
             self.assertGreater(after_first, 0)
 
@@ -649,7 +649,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             self._THUMBNAIL,
             self._THUMBNAIL,
         )
-        coordinator.complete(task["id"], status="ready", detail="Already cached", error=None)
+        coordinator.complete(task["id"], status="ready", detail="Already cached", error=None, db=db)
 
         marker = cache_maintenance.analysis_cache.load_prepared_marker(analysis.id, "solo")
         self.assertIsNotNone(marker)
@@ -711,9 +711,14 @@ class CacheMaintenanceTests(unittest.TestCase):
         coordinator = cache_maintenance.WarmupCoordinator()
         started = coordinator.start(db)
         task = coordinator.next_task(db)
-        coordinator.complete(
-            task["id"], status="ready", detail="Reported ready", error=None
-        )
+        with patch.object(
+            cache_maintenance.analysis_cache,
+            "load_latest_thumbnail",
+            return_value=None,
+        ):
+            coordinator.complete(
+                task["id"], status="ready", detail="Reported ready", error=None, db=db
+            )
 
         self.assertIsNone(
             cache_maintenance.analysis_cache.load_prepared_marker(

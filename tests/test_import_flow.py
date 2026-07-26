@@ -110,12 +110,15 @@ class ImportFlowTests(unittest.TestCase):
             files.resolve_import_staged_path("../outside.ndax")
 
     def test_source_path_takes_precedence_over_staged_import_path(self):
-        source = files.resolve_import_source_path(
-            "missing-staged-file.ndax",
-            str(ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax"),
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "example.ndax"
+            source.write_bytes(b"example")
+            resolved = files.resolve_import_source_path(
+                "missing-staged-file.ndax",
+                str(source),
+            )
 
-        self.assertEqual(source, (ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax").resolve())
+            self.assertEqual(resolved, source.resolve())
 
     def test_capacity_preview_uses_cycle_capacity_points(self):
         cycles = pd.DataFrame(
@@ -419,35 +422,43 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_create_imported_cells_starts_cache_jobs_after_committing_import(self):
         db = self.make_session()
-        path = ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax"
-        started = []
-        original_start = files.start_import_cache_jobs
-        files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
-        try:
-            result = files.create_imported_cells(
-                files.ImportCellsRequest(
-                    cells=[
-                        files.ImportCellDraft(
-                            staged_name="large.ndax",
-                            source_path=str(path),
-                            filename=path.name,
-                            cell_name="Async import cell",
-                            test_name="Imported file",
-                            active_mass_mg_override=25,
-                            nominal_capacity_mah_override=4.25,
-                            electrode_area_cm2_override=1.539,
-                            active_material_preset_id="lfp-reference",
-                            active_material_name="LFP",
-                            active_material_specific_capacity_mah_g=170,
-                            electrode_area_preset_id="coin-14mm",
-                            electrode_area_preset_name="14 mm circular electrode",
-                        )
-                    ]
-                ),
-                db=db,
-            )
-        finally:
-            files.start_import_cache_jobs = original_start
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.ndax"
+            path.write_bytes(b"fake-import-test-content")
+            started = []
+            original_start = files.start_import_cache_jobs
+            original_hash = parsing.compute_hash
+            original_meta = parsing.read_header_metadata
+            files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
+            parsing.compute_hash = lambda _path: "import-test-hash"
+            parsing.read_header_metadata = lambda _path: {"builder": "test"}
+            try:
+                result = files.create_imported_cells(
+                    files.ImportCellsRequest(
+                        cells=[
+                            files.ImportCellDraft(
+                                staged_name="large.ndax",
+                                source_path=str(path),
+                                filename=path.name,
+                                cell_name="Async import cell",
+                                test_name="Imported file",
+                                active_mass_mg_override=25,
+                                nominal_capacity_mah_override=4.25,
+                                electrode_area_cm2_override=1.539,
+                                active_material_preset_id="lfp-reference",
+                                active_material_name="LFP",
+                                active_material_specific_capacity_mah_g=170,
+                                electrode_area_preset_id="coin-14mm",
+                                electrode_area_preset_name="14 mm circular electrode",
+                            )
+                        ]
+                    ),
+                    db=db,
+                )
+            finally:
+                files.start_import_cache_jobs = original_start
+                parsing.compute_hash = original_hash
+                parsing.read_header_metadata = original_meta
 
         self.assertEqual(result["created"][0]["cell_name"], "Async import cell")
         self.assertTrue(result["parsing_started"])
