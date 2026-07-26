@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, event
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
+os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import _enable_write_ahead_logging, _set_sqlite_pragma

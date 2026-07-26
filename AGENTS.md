@@ -125,6 +125,7 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── CellLibraryColumnMenu.tsx
 │   │   │   ├── ChargeabilityPlotCard.tsx
 │   │   │   ├── RateCapabilityPlotCard.tsx
 │   │   │   ├── DestructiveImpactModal.tsx
@@ -137,6 +138,7 @@ Cellxplorer/
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
+│   │   ├── libraryTableLogic.ts    Cell Database column sort/filter pure helpers
 │   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
 │   └── tests/                      Lightweight TypeScript policy tests
@@ -157,7 +159,9 @@ Cellxplorer/
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
 │   ├── check_versions.py           Read-only version declaration consistency check
-│   └── preflight.py                Canonical local verification command
+│   ├── check_versions.py           Manifest version consistency checker
+│   ├── preflight.py                Canonical local verification command
+│   └── run_backend_tests.py          Parallel backend unittest runner
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 ├── run.py                          Runs FastAPI with the built frontend
@@ -213,6 +217,11 @@ After meaningful code changes, run the canonical local preflight:
 ```powershell
 python scripts\preflight.py
 ```
+
+Preflight runs the version check first, then executes backend tests, frontend policy tests, and
+the production build **in parallel**. Backend tests run one module per worker with isolated
+`CELLXPLORER_DATA` subfolders (default: up to 16 workers). Override worker count with
+`$env:CELLXPLORER_PREFLIGHT_JOBS = 8` when needed.
 
 Report the exact preflight result in your work summary. Do not claim verification passed when
 preflight was not run, and do not remove or weaken tests to make preflight green.
