@@ -45,10 +45,26 @@ python scripts\build_golden_analysis_corpus.py export `
   --dcir-analysis "DCIR test" `
   --chargeability-analysis "Chargeability test" `
   --rate-analysis "Chargeability test" `
+  --cycles-plot "Charge capacity (mAh/g) comparison test" `
+  --time-plot "Time / capacity comparison" `
+  --dcir-plot "DCIR comparison 0.7C" `
+  --chargeability-plot "Chargeability comparison" `
+  --rate-plot "Rate capability comparison" `
   --output tmp\golden-analysis-candidate `
   --replace
 ```
 
-Review the candidate diff and `approval.md` before copying into this directory.
+Regenerate expected JSON for an existing corpus tree into a **candidate** directory (never writes
+the committed fixture tree in place):
+
+```powershell
+python scripts\build_golden_analysis_corpus.py refresh-expected `
+  --source tests\fixtures\golden_analysis `
+  --output tmp\golden-analysis-candidate `
+  --replace
+```
+
+Review the printed SAME/DIFF digest summary and `approval.md` before copying approved files into
+this directory.
 
 See also [`approval.md`](approval.md) and [`../../../docs/agent-knowledge/scientific-regression-testing.md`](../../../docs/agent-knowledge/scientific-regression-testing.md).

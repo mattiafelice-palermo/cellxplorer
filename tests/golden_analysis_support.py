@@ -48,20 +48,30 @@ ALLOWED_CELL_METADATA_KEYS = (
     "override.electrode_area_cm2",
 )
 
+# Production absolute cycle quantities (ALL_QUANTITIES minus mass-normalized).
 CYCLES_ABSOLUTE_QUANTITIES = {
     "charge_capacity_mah",
     "discharge_capacity_mah",
+    "coulombic_efficiency_pct",
     "charge_energy_mwh",
     "discharge_energy_mwh",
-    "charge_capacity_loss_mah",
-    "discharge_capacity_loss_mah",
-    "cv_charge_capacity_mah",
+    "energy_efficiency_pct",
+    "mean_charge_voltage_v",
+    "mean_discharge_voltage_v",
+    "cycle_duration_h",
+    "charge_time_h",
+    "discharge_time_h",
     "cv_charge_time_h",
-    "ce_pct",
-    "ee_pct",
-    "charge_voltage_v",
-    "discharge_voltage_v",
+    "cv_charge_capacity_mah",
+    "cv_charge_fraction_pct",
+    "cv_charge_event_count",
+    "cv_reached",
+    "voltaic_efficiency_pct",
     "polarization_v",
+    "polarization_pct",
+    "capacity_retention_pct",
+    "discharge_capacity_loss_mah",
+    "charge_capacity_loss_mah",
 }
 
 CYCLES_SPECIFIC_QUANTITIES = {
@@ -74,21 +84,75 @@ CYCLES_SPECIFIC_QUANTITIES = {
     "cv_charge_capacity_mah_g",
 }
 
+# Absolute scientific context retained in the normalization projection.
+CYCLES_NORMALIZATION_CONTEXT_QUANTITIES = CYCLES_ABSOLUTE_QUANTITIES - {
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+    "charge_energy_mwh",
+    "discharge_energy_mwh",
+    "charge_capacity_loss_mah",
+    "discharge_capacity_loss_mah",
+    "cv_charge_capacity_mah",
+}
+
 CYCLES_ABSOLUTE_METRICS = {
     "n_cycles",
     "max_discharge_capacity_mah",
     "mean_discharge_capacity_mah",
+    "first_cycle_ce_pct",
     "mean_ce_pct",
     "mean_ee_pct",
-    "mean_cv_charge_capacity_mah",
-    "median_cv_charge_capacity_mah",
+    "mean_ve_pct",
+    "last_cycle",
+    "retention_last_pct",
     "discharge_loss_mah_per_cycle",
     "charge_loss_mah_per_cycle",
+    "discharge_loss_pct_per_cycle",
+    "cycles_to_80_pct",
+    "total_duration_h",
+    "mean_cycle_duration_h",
+    "mean_charge_time_h",
+    "mean_discharge_time_h",
+    "cv_reached_cycles",
+    "cv_reached_pct",
+    "cv_charge_event_count",
+    "mean_cv_charge_time_h",
+    "median_cv_charge_time_h",
+    "mean_cv_charge_capacity_mah",
+    "median_cv_charge_capacity_mah",
+    "mean_cv_charge_fraction_pct",
 }
 
-CYCLES_SPECIFIC_METRICS = {
-    "max_discharge_capacity_mah_g",
-    "mean_discharge_capacity_mah_g",
+REQUIRED_CYCLES_BASELINE_QUANTITIES = {
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+    "charge_energy_mwh",
+    "discharge_energy_mwh",
+    "coulombic_efficiency_pct",
+    "energy_efficiency_pct",
+    "mean_charge_voltage_v",
+    "mean_discharge_voltage_v",
+    "cv_charge_time_h",
+    "cv_charge_capacity_mah",
+    "capacity_retention_pct",
+    "polarization_v",
+}
+
+REQUIRED_CYCLES_BASELINE_METRICS = {
+    "n_cycles",
+    "max_discharge_capacity_mah",
+    "mean_ce_pct",
+    "mean_ee_pct",
+    "retention_last_pct",
+    "total_duration_h",
+}
+
+REQUIRED_CYCLES_NORMALIZATION_QUANTITIES = {
+    "charge_capacity_mah_g",
+    "discharge_capacity_mah_g",
+    "capacity_retention_pct",
+    "coulombic_efficiency_pct",
+    "polarization_v",
 }
 
 
@@ -307,8 +371,10 @@ def _apply_cycles_projection(projected: dict[str, Any], mode: str) -> dict[str, 
         quantity_keys = CYCLES_ABSOLUTE_QUANTITIES
         metric_keys = CYCLES_ABSOLUTE_METRICS
     elif mode == "cycles_specific":
-        quantity_keys = CYCLES_SPECIFIC_QUANTITIES
-        metric_keys = CYCLES_SPECIFIC_METRICS
+        # Keep absolute scientific context; replace absolute capacity/energy with
+        # mass-normalized counterparts so the case remains distinct.
+        quantity_keys = CYCLES_NORMALIZATION_CONTEXT_QUANTITIES | CYCLES_SPECIFIC_QUANTITIES
+        metric_keys = CYCLES_ABSOLUTE_METRICS
     else:
         return projected
 
@@ -325,14 +391,19 @@ def _apply_cycles_projection(projected: dict[str, Any], mode: str) -> dict[str, 
     return projected
 
 
+class NonFiniteProjectionError(GoldenAnalysisError):
+    """Raised when a production result contains NaN or Infinity."""
+
+
 def project_result(
     result: dict[str, Any],
     *,
     projection: str | None = None,
+    path: str = "$",
 ) -> dict[str, Any]:
     """Reduce a production compute response to a stable scientific projection."""
 
-    def walk(value: Any) -> Any:
+    def walk(value: Any, current_path: str) -> Any:
         if isinstance(value, dict):
             projected: dict[str, Any] = {}
             for key, item in value.items():
@@ -340,15 +411,17 @@ def project_result(
                     continue
                 if key in {"path", "source_path", "thumbnail", "thumbnail_svg"}:
                     continue
-                projected[key] = walk(item)
+                projected[key] = walk(item, f"{current_path}.{key}")
             return projected
         if isinstance(value, list):
-            return [walk(item) for item in value]
+            return [walk(item, f"{current_path}[{index}]") for index, item in enumerate(value)]
         if isinstance(value, float) and not math.isfinite(value):
-            return None
+            raise NonFiniteProjectionError(
+                f"{current_path}: non-finite scientific value {value!r} is not allowed in golden projections"
+            )
         return value
 
-    projected = walk(deepcopy(result))
+    projected = walk(deepcopy(result), path)
     if isinstance(projected, dict):
         projected.pop("sources", None)
         for traces_key in ("cell_traces", "cell_series"):
@@ -427,6 +500,45 @@ def required_raw_columns() -> list[str]:
     ]
 
 
+def required_raw_dtype_families() -> dict[str, str]:
+    """Expected pandas dtype family for each required raw column."""
+    return {
+        "cycle": "integer",
+        "step": "integer",
+        "time_s": "floating",
+        "voltage_v": "floating",
+        "current_ma": "floating",
+        "charge_capacity_mah": "floating",
+        "discharge_capacity_mah": "floating",
+        "status": "string",
+    }
+
+
+def assert_raw_frame_schema(raw, *, source_key: str) -> None:
+    import pandas as pd
+
+    missing = [column for column in required_raw_columns() if column not in raw.columns]
+    if missing:
+        raise ManifestError(f"Raw cache for {source_key} missing columns: {missing}")
+    for column, family in required_raw_dtype_families().items():
+        dtype = raw[column].dtype
+        if family == "integer" and not pd.api.types.is_integer_dtype(dtype):
+            raise ManifestError(
+                f"Raw cache for {source_key} column {column!r} expected integer dtype, got {dtype}"
+            )
+        if family == "floating" and not pd.api.types.is_float_dtype(dtype):
+            raise ManifestError(
+                f"Raw cache for {source_key} column {column!r} expected floating dtype, got {dtype}"
+            )
+        if family == "string" and not (
+            pd.api.types.is_string_dtype(dtype)
+            or pd.api.types.is_object_dtype(dtype)
+        ):
+            raise ManifestError(
+                f"Raw cache for {source_key} column {column!r} expected string-like dtype, got {dtype}"
+            )
+
+
 @dataclass
 class GoldenFixtureEnvironment:
     manifest: dict[str, Any]
@@ -445,6 +557,8 @@ class GoldenFixtureEnvironment:
         *,
         data_root: Path | None = None,
     ) -> "GoldenFixtureEnvironment":
+        from unittest import mock
+
         manifest = load_manifest(manifest_path)
         root = manifest_path.parent if manifest_path else fixture_root()
         verify_source_binaries(manifest, root)
@@ -467,8 +581,22 @@ class GoldenFixtureEnvironment:
             _temp_dir=temp,
             _owns_data_root=owns_data_root,
         )
-        env.install_entities()
-        env.ensure_sources_parsed()
+        try:
+            env.install_entities()
+            original = parsing.parse_timeseries
+
+            def _counting_parse(path, *args, **kwargs):
+                digest = sha256_file(Path(path))
+                env.timeseries_parse_counts[digest] = env.timeseries_parse_counts.get(digest, 0) + 1
+                return original(path, *args, **kwargs)
+
+            with mock.patch.object(parsing, "parse_timeseries", side_effect=_counting_parse):
+                # cache.build imports parsing at call time via module reference
+                with mock.patch("app.services.cache.parsing.parse_timeseries", side_effect=_counting_parse):
+                    env.ensure_sources_parsed()
+        except Exception:
+            env.close()
+            raise
         return env
 
     @staticmethod
@@ -544,13 +672,9 @@ class GoldenFixtureEnvironment:
             sf = self.db.query(SourceFile).filter(SourceFile.hash == digest).one()
             if not sf.header_meta:
                 raise ManifestError(f"Missing parsed header metadata for source {key}")
-            parser_version = sf.parser_version or parsing.PARSER_VERSION
-            cold = not cache.raw_path(digest, parser_version).exists()
             if sf.parse_status != "parsed":
                 scanner.parse_file(self.db, sf)
                 self.db.refresh(sf)
-            if cold:
-                self.timeseries_parse_counts[digest] = self.timeseries_parse_counts.get(digest, 0) + 1
             self.parse_counts[key] = self.parse_counts.get(key, 0) + 1
             if source.get("row_count") is not None and sf.row_count != source["row_count"]:
                 raise ManifestError(
@@ -566,9 +690,7 @@ class GoldenFixtureEnvironment:
             raw = cache.load_raw(sf.hash, sf.parser_version or parsing.PARSER_VERSION)
             if raw is None or raw.empty:
                 raise ManifestError(f"Raw cache missing for source {key}")
-            missing = [column for column in required_raw_columns() if column not in raw.columns]
-            if missing:
-                raise ManifestError(f"Raw cache for {key} missing columns: {missing}")
+            assert_raw_frame_schema(raw, source_key=key)
 
     def run_case(self, case: dict[str, Any]) -> dict[str, Any]:
         spec = load_case_spec(self.root, case)

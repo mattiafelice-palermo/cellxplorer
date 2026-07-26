@@ -1,18 +1,19 @@
 # Spec 015: Golden analysis regression corpus
 
 Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regression-corpus`.  
-Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **R1–R3, R5–R7 addressed; R4 scientific approval still pending**.
+Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **Round 2 R1/R3/R5/R7–R10 addressed; R4 scientific approval still pending**.
 
 ## Implementation record
 
 - Committed four full `.ndax` sources under `tests/fixtures/golden_analysis/sources/`.
 - Added manifest, eight golden cases, `tests/golden_analysis_support.py`, `tests/test_golden_analysis.py`,
-  and `scripts/build_golden_analysis_corpus.py` (`export` / `verify`).
+  and `scripts/build_golden_analysis_corpus.py` (`export` / `refresh-expected` / `verify`).
 - `approval.md` status: **pending user approval**.
-- Focused verification: `python -m unittest tests.test_golden_analysis -v` — **16 tests OK (~7 s)**.
+- Focused verification: `python -m unittest tests.test_golden_analysis -v` — **24 tests OK (~7.7 s)**.
 - Corpus verify: `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — **8/8 cases PASS**.
-- Full backend suite: `python -m unittest discover tests` — **379 tests OK (~41 s)**.
-- Unique cold source parses per module: **3** (chargeability and rate_capability share one hash).
+- Full backend suite: `python -m unittest discover tests` — **387 tests OK (~41 s)**.
+- Uncached preflight: `python scripts\preflight.py --no-cache` — **PREFLIGHT PASSED (5/5)**.
+- Unique cold `parsing.parse_timeseries` calls per module: **3** (chargeability and rate_capability share one hash).
 - Committed fixture size: **~4.8 MB** binaries + JSON specs/expected outputs; trimmed manifest **~6 KB**.
 - Selected sources:
   - `cycles_time_steps.ndax` — 193 cycles / 71190 rows (`1b226f9f…`) from Test analysis cell 613
@@ -21,22 +22,30 @@ Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](rev
 
 ## R* implementation record (2026-07-26)
 
-- **R1:** Fixture installation now uses `scanner.ingest_path` so `header_meta` and normalized source
-  metadata are populated before parsing. Steps protocol segment is derived from the cycles source
-  signature with step indices `[2, 3, 4]`. Regenerated expected outputs contain real Steps, DCIR,
-  Chargeability and Rate Capability measurements.
-- **R2:** Cycles baseline/normalization use distinct projections (`cycles_absolute` vs
-  `cycles_specific`). Time/Capacity derivative settings live under `computation.time_capacity`
-  (`view: dqdv`). Baseline case sets a fixed `electrode_area_cm2` for areal capacity output.
-- **R3:** Module-level isolated `CELLXPLORER_DATA`, `bind_isolated_data_root()`, cold-parse counting,
-  and cache-path assertions ensure no reuse of `.test-cellxplorer` or live caches.
-- **R5:** Builder resolves analyses, cells and source paths from a SQLite snapshot with CLI selectors;
-  no workstation paths or fixed analysis/cell IDs remain in repository code.
-- **R6:** Manifest metadata trimmed to active mass, nominal capacity and electrode area; protocol
-  fields come from parsed headers at runtime.
-- **R7:** Added harness tests for trimmed manifest, missing spec, cache isolation, non-empty protocol
-  cases, and distinct normalization/derivative outputs. Verification commands recorded above.
-- **R4:** `approval.md` checkpoint table expanded; scientific sign-off still pending user review.
+### Round 1
+
+- **R1 (partial):** Production ingestion + real protocol-dependent cases.
+- **R2:** Distinct cycles/Time-Capacity projections; derivative under `computation.time_capacity`.
+- **R3 (partial):** Isolated cache root.
+- **R5 (partial):** Analysis selectors; absolute paths removed.
+- **R6:** Trimmed manifest metadata.
+- **R7 (partial):** Focused/verify/backend recorded.
+
+### Round 2
+
+- **R9:** `project_result` rejects NaN/Infinity instead of coercing to `null`; projection-path test added.
+- **R10:** Removed in-place `regenerate_golden_fixture_outputs.py`. Canonical updates use
+  `export` / `refresh-expected` into a candidate directory with SAME/DIFF digests.
+- **R1:** DCIR golden case now includes charge and discharge 0.701C series (7 measurements each).
+- **R8:** Cycles absolute projection keeps full scientific quantities/metrics; normalization keeps
+  specific capacities plus absolute scientific context. Required-key assertions added.
+- **R5:** Rate Capability analysis/cell/source/plot resolved independently; plot-name CLI selectors;
+  builder unit test covers a rate analysis whose cell differs from Chargeability.
+- **R3:** Instruments `parsing.parse_timeseries` (and cache module binding); module temp root cleaned
+  and prior `CELLXPLORER_DATA` restored in teardown; create failure cleans up.
+- **R7:** Raw frames validated for required columns/dtypes; normal tests assert no export/refresh;
+  preflight `--no-cache` recorded.
+- **R4:** Still pending user scientific approval; not claimed as approved.
 
 Status: **Plan**  
 Repository: `mattiafelice-palermo/cellxplorer`  

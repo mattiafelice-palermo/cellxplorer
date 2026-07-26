@@ -259,7 +259,7 @@ Rules:
 - [015-golden-analysis-regression-corpus.md](015-golden-analysis-regression-corpus.md)
   — committed full Neware source binaries and golden backend analysis projections for cycles,
   time/capacity, steps, DCIR, chargeability, and rate capability.
-  **Implemented** — review R1–R3/R5–R7 done; scientific approval (R4) pending.
+  **Implemented** — Round 2 review fixes done; scientific approval (R4) pending.
 - [016-reindex-remaining-cycles-has-no-effect.md](016-reindex-remaining-cycles-has-no-effect.md)
   — the Cycles-tab "Reindex remaining cycles" toggle does nothing: `viewSignature` omits the
   flag so the trace memo never recomputes, and `zoomSignature`/`uirevision` would re-apply the

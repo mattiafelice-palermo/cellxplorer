@@ -179,7 +179,7 @@ Cellxplorer/
 │       ├── scientific-regression-testing.md
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
-│   ├── build_golden_analysis_corpus.py  Export/verify golden analysis corpus (Spec 015)
+│   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── preflight.py                Canonical local verification command
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight

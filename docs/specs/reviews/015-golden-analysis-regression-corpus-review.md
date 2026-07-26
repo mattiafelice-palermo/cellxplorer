@@ -1,135 +1,271 @@
 # Review 015: Golden analysis regression corpus
 
 Branch: `feature/golden-analysis-regression-corpus`  
-Head: `880c8219af470bc51cbdc02909e7b5cf1c74ae2f`  
+Head reviewed: `5e47e628899707f407882c41398a484931a266b8`  
 Base and merge base: `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  
-Scope: clean; one feature commit ahead of `main`  
-Status: **changes required — not ready to merge**
+Cumulative branch scope: two commits ahead of `main`  
+Status: **Round 2 follow-ups implemented in working tree / next commit — R4 scientific approval still pending**
 
-## Confirmed
+## Round 2 summary
 
-The branch adds the intended four binary fixture roles, checksum verification, production-service dispatch, recursive numerical comparison, corpus documentation and update tooling. The branch has no unrelated feature work.
+Composer materially improved the implementation:
 
-Composer reports `python -m unittest tests.test_golden_analysis -v` passing with 10 tests in approximately 4.5 seconds. No full backend run or preflight result is recorded.
+- protocol-dependent cases now contain real Steps, DCIR, Chargeability and Rate Capability results;
+- source installation uses the production ingestion path;
+- Time/Capacity derivative settings are now applied under `computation.time_capacity`;
+- the cache root is isolated for the golden test module;
+- manifest metadata is substantially reduced;
+- the builder now exposes analysis selectors;
+- focused and full-backend results are recorded.
 
-## R1 — Critical: four protocol-dependent goldens contain no scientific results
+However, the corpus still does not satisfy the complete scientific contract. Several safeguards can also allow an invalid golden baseline to be accepted or overwritten.
 
-Affected files:
+## Status of previous findings
+
+| Finding | Round 2 status |
+|---|---|
+| R1 — Empty protocol-dependent cases | **Partially addressed**. Cases are non-empty, but DCIR still covers discharge only. |
+| R2 — Duplicate normalization/derivative cases | **Addressed**. The outputs are now distinct and the derivative mode is active. |
+| R3 — Cold isolated parsing | **Partially addressed**. The cache root is fresh and isolated, but parser-call instrumentation and cleanup remain incomplete. |
+| R4 — Scientific approval | **Open**. All seven checkpoints remain pending. |
+| R5 — Workstation-bound builder | **Partially addressed**. Absolute paths/IDs were removed, but Rate Capability source resolution and saved-plot selection remain incorrect or fixed. |
+| R6 — Excess manifest metadata | **Addressed**. |
+| R7 — Verification/harness completeness | **Partially addressed**. Focused, verify and backend runs are recorded; required assertions and full preflight remain missing. |
+
+## R1 — High: DCIR golden coverage still omits charge resistance
+
+**Affected files**
+
+- `tests/fixtures/golden_analysis/specs/dcir_baseline.json`
+- `tests/fixtures/golden_analysis/expected/dcir_baseline.json`
+- builder case generation
+- `tests/test_golden_analysis.py`
+
+### Current
+
+The regenerated DCIR output is now real, but it contains one series only:
+
+- `direction: "discharge"`;
+- seven discharge measurements;
+- no charge series.
+
+The specification requires at least one discharge and one charge rest/pulse series. The approval checkpoint also requires one independently calculated charge resistance and one discharge resistance.
+
+### Target
+
+Add a charge DCIR series from the same complete DCIR source. This may be a second series in the existing case or a second bounded DCIR case.
+
+### Acceptance criteria
+
+- Golden output contains both `direction: "charge"` and `direction: "discharge"`.
+- Both series contain finite `dcir_mohm`, relative-change arrays and measurement metadata.
+- The harness explicitly asserts both directions.
+- `approval.md` independently checks one charge and one discharge resistance.
+
+## R8 — High: the Cycles projections discard required scientific coverage
+
+**Affected files**
 
 - `tests/golden_analysis_support.py`
-- `scripts/build_golden_analysis_corpus.py`
-- `tests/fixtures/golden_analysis/expected/{steps,dcir,chargeability,rate_capability}_baseline.json`
-- corresponding specs and manifest entries
+- `tests/fixtures/golden_analysis/expected/cycles_baseline.json`
+- `tests/test_golden_analysis.py`
 
 ### Current
 
-The harness manually creates `SourceFile` rows without populating `header_meta` or the normalized source metadata. It then calls `scanner.parse_file`, which only builds the raw and cycle caches; it does not read and assign the Neware header.
+The new `cycles_absolute` allowlists make the baseline smaller, but they remove required scientific outputs. The committed baseline keeps only a limited set of quantities and metrics.
 
-Consequently, the current golden outputs approve failure states:
+Missing coverage includes, at minimum:
 
-- Steps: zero blocks and `steps_no_match`.
-- DCIR: zero measurements and `dcir_no_match`.
-- Chargeability: no candidates or executed curves.
-- Rate Capability: no blocks, points, rates or reference rate.
+- per-cycle retention;
+- voltage-efficiency output;
+- cycle/charge/discharge duration quantities and related summary metrics;
+- CV fraction/reached metrics;
+- final retention and total-duration summaries;
+- other stable summary metrics returned by the production service.
 
-The Steps builder also takes protocol segments from analysis 20, identified as the Chargeability analysis, while attaching them to the separate 193-cycle source. This does not represent the Steps plot from the cycling source.
-
-These outputs fail the core scientific coverage required by the spec.
-
-### Target
-
-Install each binary through the production source-ingestion path, or explicitly populate the same header fields that `scanner.ingest_path` produces before parsing. Build the Steps segment from the actual protocol of `cycles_time_steps.ndax`.
-
-Regenerate the candidate outputs only after all four cases produce real measurements.
-
-### Acceptance criteria
-
-- Steps has at least one multi-step block with non-empty occurrence, cycle and time arrays.
-- DCIR has both charge and discharge series with finite resistance values and measurement metadata.
-- Chargeability has at least one semantic candidate and one executed curve.
-- Rate Capability has at least one detected real sweep with rates, CC-only capacities and a reference rate.
-- None of these baseline cases ends in a `*_no_match` or `*_no_candidates` state.
-
-## R2 — High: derivative and normalization cases are duplicates of their baselines
-
-Affected files:
-
-- `scripts/build_golden_analysis_corpus.py`
-- `specs/cycles_normalization.json`
-- `specs/time_capacity_derivative.json`
-- corresponding expected JSON
-
-### Current
-
-`cycles_normalization.json` and `cycles_baseline.json` generate byte-identical expected files.
-
-The Time/Capacity derivative and baseline files are also byte-identical.
-
-The builder writes derivative settings under `presentation.time_capacity`. The backend reads them from `computation.time_capacity`, so the derivative mode is never activated.
-
-The normalization flag is likewise a presentation field that does not create a distinct backend scientific result.
+The spec requires retention, voltage statistics, CV time/capacity, polarization and summary metrics—not merely a small representative subset.
 
 ### Target
 
-- Put derivative configuration in `computation.time_capacity`.
-- Make the normalization case exercise a genuinely distinct scientific input or projection.
-- Add an areal Time/Capacity path using a fixed electrode area, as required by the spec.
-- Remove a duplicate case only after explicitly revising the locked coverage.
+Use a bounded projection that preserves every scientific field required by Spec 015. Separate absolute and specific projections only where units differ; do not remove unrelated scientific quantities to make the files distinct.
 
 ### Acceptance criteria
 
-- The derivative result contains non-empty derivative X/Y arrays and is not identical to the voltage-current baseline.
-- A manually checked derivative point is recorded.
-- Specific and areal normalization values are explicitly asserted.
-- No two cases advertised as distinct scientific computations have identical expected JSON.
+- `cycles_baseline` explicitly includes capacity/energy, CE/EE, voltage statistics, CV time/capacity, retention, polarization and summary metrics.
+- Tests assert the required keys, rather than only comparing generated JSON.
+- `cycles_normalization` asserts specific-capacity values while retaining the scientific context needed to interpret them.
+- No required field can disappear while golden tests continue to pass.
 
-## R3 — High: the tests do not guarantee a cold, isolated production parse
+## R9 — High: non-finite production values are converted to `null` before comparison
 
-Affected files:
+**Affected files**
 
 - `tests/golden_analysis_support.py`
 - `tests/test_golden_analysis.py`
 
 ### Current
 
-The test module defaults to the persistent repository `.test-cellxplorer` directory. `GoldenFixtureEnvironment.create()` creates a temporary `data_root`, but never binds the already-imported cache/configuration modules to it.
+`project_result()` recursively converts every non-finite float to `None`. The comparator rejects NaN/Infinity only when called directly with a non-finite value.
 
-`scanner.parse_file` can therefore call `cache.build` against an existing checksum/version cache. `cache.build` skips binary parsing when raw and cycle Parquet files already exist.
+All real golden cases pass through `project_result()` first. A production regression that emits NaN or Infinity can therefore become JSON `null` and pass whenever the expected projection also contains `null`.
 
-The “parsed once” test counts calls to `scanner.parse_file`, not actual source parsing. It also creates a fresh environment only inside that test, while other tests independently create additional environments.
-
-A parser regression could therefore be hidden by stale Parquet from an earlier run.
+The existing NaN test exercises `compare_values()` directly and does not cover this path.
 
 ### Target
 
-Use one module-level isolated environment whose scientific cache is physically under a temporary root. Ensure every unique binary is cold-parsed once and then reused by all cases.
+Reject non-finite scientific values during projection or before projection. Do not apply a generic NaN/Infinity-to-null conversion.
 
-Instrument the actual binary parsing boundary, not only `scanner.parse_file`.
+Intentional missing data should already be emitted as `None` by the production service or handled by an explicitly documented path rule.
 
 ### Acceptance criteria
 
-- `parsing.parse_timeseries` or the equivalent real parser boundary runs exactly once per unique source hash.
-- The test starts with no raw or cycle Parquet.
-- All generated caches are inside the temporary fixture root.
-- No `.test-cellxplorer` or live cache is read or written.
-- The temporary database and caches are removed after the module.
-- A pre-existing external cache cannot change whether the parser is exercised.
+- `project_result({"value": math.nan})` and Infinity fail clearly.
+- A test injects a non-finite value into a production-shaped result and proves the complete projection/comparison path fails.
+- Existing legitimate `None` values remain supported.
+- No expected JSON is regenerated to hide a non-finite output.
 
-## R4 — High: the corpus has not received scientific approval
+## R10 — High: a new script overwrites committed goldens directly
 
-Affected file:
+**Affected file**
+
+- `scripts/regenerate_golden_fixture_outputs.py`
+
+### Current
+
+The script directly modifies committed specs, rewrites the committed manifest and overwrites every committed expected JSON file in `tests/fixtures/golden_analysis/`.
+
+This bypasses the locked workflow in which:
+
+1. the builder writes a separate candidate;
+2. numerical changes are reviewed;
+3. approval checkpoints are performed;
+4. reviewed files are copied explicitly.
+
+The script also hard-codes fixture IDs, a protocol signature, step indices and electrode area.
+
+### Target
+
+Remove this one-off script, or convert it into a candidate generator that requires an explicit output directory outside the committed fixture tree.
+
+The canonical update path should remain `build_golden_analysis_corpus.py export`.
+
+### Acceptance criteria
+
+- No repository script rewrites committed golden specs, manifest or expected JSON in place.
+- Regeneration always writes to a separate candidate directory.
+- The command produces or documents a numerical diff before replacement.
+- Normal verification remains read-only.
+- Hard-coded one-off patch values are removed.
+
+## R5 — Medium: Rate Capability export still resolves the Chargeability source
+
+**Affected file**
+
+- `scripts/build_golden_analysis_corpus.py`
+
+### Current
+
+The CLI resolves `rate_analysis_id`, but export still:
+
+- obtains `rate_plot` from the Chargeability analysis spec;
+- uses `chargeability_cell_id` for the Rate Capability case;
+- copies the Chargeability cell source as `rate_capability_source.ndax`;
+- never resolves the primary cell/source of the selected Rate Capability analysis.
+
+Saved-plot names are also still fixed in code.
+
+The committed corpus happens to use a Rate Capability plot stored in `Chargeability test`, so this defect is hidden for the current defaults. Passing a different `--rate-analysis` does not reliably export that analysis.
+
+### Target
+
+Resolve each role independently from its selected analysis:
+
+- load the Rate Capability analysis spec;
+- resolve its selected cell;
+- resolve that cell's source;
+- resolve or accept the Rate Capability saved plot from that analysis.
+
+Do the same for saved-plot selectors where names are currently hard-coded.
+
+### Acceptance criteria
+
+- A distinct `--rate-analysis` exports its own selected cell and source.
+- The manifest checksum for the rate role corresponds to that resolved source.
+- A missing or ambiguous saved plot fails with a useful message.
+- Tests cover a Rate Capability analysis whose cell differs from the Chargeability analysis cell.
+- No hidden dependency on the default plot names remains.
+
+## R3 — Medium: parser instrumentation and temporary-root cleanup are incomplete
+
+**Affected files**
+
+- `tests/golden_analysis_support.py`
+- `tests/test_golden_analysis.py`
+
+### Current
+
+The module uses a fresh temporary cache root, which prevents stale-cache reuse. However:
+
+- `timeseries_parse_counts` is inferred from whether `raw.parquet` existed before `scanner.parse_file`; it does not instrument the actual parser boundary;
+- the assertion therefore does not prove `parsing.parse_timeseries` was called exactly once;
+- `_MODULE_DATA_ROOT` is passed as an externally owned root, so `env.close()` does not remove it;
+- `tearDownClass()` does not remove the module temporary directory or restore the prior data-root binding.
+
+### Target
+
+Instrument the actual parser call and cleanly restore/remove test-global state.
+
+### Acceptance criteria
+
+- A mock/wrapper around `parsing.parse_timeseries` or the actual binary parser records exactly one call per unique hash.
+- The module data root is absent after teardown.
+- Previous `CELLXPLORER_DATA` and module bindings are restored where required.
+- A failure during `setUpClass` also cleans temporary files.
+
+## R7 — Medium: required harness assertions and full verification remain incomplete
+
+**Affected files**
+
+- `tests/test_golden_analysis.py`
+- `docs/specs/015-golden-analysis-regression-corpus.md`
+
+### Current
+
+The implementation record reports:
+
+- 16 focused tests;
+- 8/8 corpus cases;
+- 379 backend tests.
+
+It does not record `python scripts\preflight.py --no-cache`.
+
+The test named `test_required_raw_columns_present` only checks that the helper returns at least six names. It does not validate the actual raw frames or dtypes. There is also no assertion that normal tests never invoke corpus generation.
+
+### Target
+
+Complete the locked verification and make the assertions test actual behavior.
+
+### Acceptance criteria
+
+- Every unique parsed raw frame is checked for required columns and expected dtype families.
+- A normal golden test run proves no export/regeneration function is called.
+- `python scripts\preflight.py --no-cache` passes and its exact result is recorded.
+- The canonical full test command from the current repository documentation is also recorded.
+- No GitHub status is claimed unless a workflow actually ran.
+
+## R4 — High: scientific approval is still pending
+
+**Affected file**
 
 - `tests/fixtures/golden_analysis/approval.md`
 
 ### Current
 
-All seven required scientific checkpoints remain pending, with no approver or date.
-
-The spec explicitly says that automated tests may run while approval is pending, but the branch is not ready to merge as a scientific golden baseline.
+All seven manual checkpoints remain `pending`, with no calculations, approver or date.
 
 ### Target
 
-After R1–R3 are corrected, independently verify the reference calculations against raw rows and protocol fields.
+Perform approval only after R1 and R8–R10 are corrected and the expected outputs are regenerated through the candidate workflow.
 
 ### Acceptance criteria
 
@@ -137,123 +273,38 @@ Each checkpoint records:
 
 - exact raw rows or protocol fields;
 - formula and unit;
-- manually verified value;
-- comparison with the golden output;
+- independently calculated value;
+- golden value and comparison;
 - approver and date.
 
-Approval must cover CC+CV capacity, CE/EE, counter continuity, Steps timing, charge and discharge DCIR, Chargeability SoC/reference capacity and Rate Capability CC-only capacity/reference rate.
+The corpus must not be described as approved, and the branch must not merge as a scientific baseline, until all seven are complete.
 
-## R5 — Medium: the builder is tied to one workstation and database layout
+## Documentation consistency
 
-Affected file:
+The repository copy of this review still records head `880c821…`, one commit of clean scope and the original pre-fix state. Update this same review file with the Round 2 results and the current head.
 
-- `scripts/build_golden_analysis_corpus.py`
-
-### Current
-
-The script hard-codes:
-
-- personal absolute Windows paths;
-- analysis IDs;
-- cell IDs;
-- saved-plot names;
-- the same chargeability source and cell for the Rate Capability role.
-
-The CLI only accepts `--data-root`, `--output` and `--replace`; it does not accept or resolve the requested analyses.
-
-Moving a source file, changing an analysis ID or running the tool on another installation breaks corpus generation.
-
-### Target
-
-Resolve analyses, saved plots, selected cells and their exact source paths from the SQLite snapshot. Accept analysis titles or IDs through explicit CLI arguments and reject ambiguous title matches.
-
-Remove all absolute personal paths and fixed database IDs from repository code.
-
-### Acceptance criteria
-
-- `--help` exposes Cycles, DCIR, Chargeability and Rate Capability analysis selectors.
-- Export succeeds against a copied data root whose source paths differ from the original workstation.
-- Ambiguous titles fail with a request for an ID.
-- No `C:\Users\...` path or local analysis/cell ID remains in the script.
-
-## R6 — Medium: the manifest contains unnecessary raw metadata and identifiers
-
-Affected files:
-
-- `scripts/build_golden_analysis_corpus.py`
-- `tests/fixtures/golden_analysis/manifest.json`
-
-### Current
-
-The builder copies every `cell_metadata` entry into the manifest. This includes complete `raw.*` protocol metadata plus searchable identifiers such as builder, channel, device information, remarks, GUIDs and original experiment naming.
-
-Most of this metadata is then attached as `CellMetadata`, while the required `SourceFile.header_meta` remains empty. It both exposes unnecessary information and contributes to the very large manifest.
-
-The spec only requires active mass, nominal capacity, electrode area and deterministic entity relationships in the manifest.
-
-### Target
-
-Keep only scalar metadata required by calculations. Derive source protocol/header information from the committed binary through production parsing.
-
-### Acceptance criteria
-
-- The manifest contains no `raw.*`, GUID, device, channel, builder, remark or original-path fields unless individually justified.
-- Active mass, nominal capacity and electrode area are retained.
-- Protocol reconstruction uses parsed `SourceFile.header_meta`.
-- The source privacy review is recorded before merge.
-
-## R7 — Medium: required verification and harness tests are incomplete
-
-Affected files:
-
-- `tests/test_golden_analysis.py`
-- Spec implementation record
-
-### Current
-
-Only the focused 10-test run is reported. The spec also requires the full backend suite and uncached preflight, with exact results recorded.
-
-The current test file does not fully verify:
-
-- required raw columns and dtypes;
-- a missing spec file;
-- that corpus generation is never invoked during normal tests;
-- that no path outside the fixture/test root is accessed;
-- the actual parser invocation count across the whole module.
-
-The live-database test only compares two path strings.
-
-### Target
-
-Add the missing harness assertions and run the complete verification only after R1–R6.
-
-### Acceptance criteria
-
-Record successful results for:
-
-```powershell
-python -m unittest tests.test_golden_analysis -v
-python scripts\build_golden_analysis_corpus.py --help
-python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json
-python -m unittest discover tests
-python scripts\preflight.py --no-cache
-```
+The branch also contains a repository-wide review-document migration for Specs 010–014 and new workflow instructions in `AGENTS.md`. This is documentation-only but outside the scientific corpus scope; the final merge description must acknowledge it, or it should be split into a separate documentation commit/branch if conflicts arise.
 
 ## Follow-up order
 
-`R1 → R2 → R3 → R5 → R6 → R7 → R4`
+`R9 → R10 → R1 → R8 → R5 → R3 → R7 → R4`
 
 ## Verification record
 
 ### Implementer reported
 
-- `python -m unittest tests.test_golden_analysis -v`
-- 10 tests passed in approximately 4.5 seconds.
+- `python -m unittest tests.test_golden_analysis -v` — 16 tests OK, approximately 7 s.
+- `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — 8/8 cases PASS.
+- `python -m unittest discover tests` — 379 tests OK, approximately 41 s.
 
 ### Reviewer independently performed
 
-- Inspected the complete branch diff against the correct merge base.
-- Read the harness, builder, test module, specs and committed expected outputs.
-- Compared the duplicate expected-file blob hashes.
-- No test command was executed in the reviewer environment.
-- No GitHub workflow or commit status was attached to this feature-branch commit.
+- Confirmed head `5e47e628899707f407882c41398a484931a266b8`.
+- Compared the cumulative branch and the follow-up commit against the correct merge base.
+- Read the updated harness, builder, regeneration script, manifest, approval file, specs and representative expected outputs.
+- Confirmed the DCIR expected output contains discharge only.
+- Confirmed Cycles projection allowlists omit required Spec 015 coverage.
+- Confirmed the non-finite projection path converts NaN/Infinity to `None`.
+- Confirmed the direct regeneration script overwrites committed fixture files.
+- No test command or browser check was run in the reviewer environment.
+- No GitHub workflow/status is attached to the reviewed head.
