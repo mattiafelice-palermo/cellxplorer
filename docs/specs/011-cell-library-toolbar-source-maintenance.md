@@ -88,6 +88,17 @@ python scripts/preflight.py  → PREFLIGHT PASSED
 
 Manual UI verification (§9) not yet run in a live session.
 
+## 6. Review of the implementation — follow-up tasks
+
+Review document: `011-cell-library-toolbar-source-maintenance-review.md`.  
+Status after follow-ups: **addressed in working tree** (2026-07-26).
+
+| Task | Priority | Status |
+|---|---|---|
+| R1 — Clean branch scope (no Spec 012 files on this branch) | High | addressed |
+| R2 — Disable chevron and Check only while mutation is pending | Medium | addressed |
+| R3 — Base source maintenance availability on unfiltered library cells | Medium | addressed |
+
 ## 5. Acceptance checklist
 
 - [x] Search is the only left-aligned top-toolbar control.

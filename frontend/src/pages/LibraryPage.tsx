@@ -501,6 +501,10 @@ export function LibraryPage() {
         ? 2000
         : false,
   });
+  const libraryCells = useQuery({
+    queryKey: ["cells", ""],
+    queryFn: () => get<CellSummary[]>(cellsUrl("")),
+  });
 
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
@@ -1127,6 +1131,9 @@ export function LibraryPage() {
           ? "Mark complete"
           : "Mark complete";
   const allCells = cells.data ?? [];
+  const sourceMaintenanceAvailable = (libraryCells.data?.length ?? 0) > 0;
+  const sourceMaintenanceBusy =
+    startSourceMaintenance.isPending || sourceCheckJob.data?.status === "running";
   const groupsByCellId = useMemo(() => {
     const map = new Map<number, ReplicateGroupSummary[]>();
     (replicateGroups.data ?? []).forEach((group) => {
@@ -1264,8 +1271,8 @@ export function LibraryPage() {
               variant="default"
               size="sm"
               leftSection={<IconRefresh size={15} />}
-              loading={startSourceMaintenance.isPending || sourceCheckJob.data?.status === "running"}
-              disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
+              loading={sourceMaintenanceBusy}
+              disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
               onClick={() =>
                 startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: true })
               }
@@ -1278,14 +1285,14 @@ export function LibraryPage() {
                   variant="default"
                   size={30}
                   aria-label="Source maintenance options"
-                  disabled={allCells.length === 0 || sourceCheckJob.data?.status === "running"}
+                  disabled={!sourceMaintenanceAvailable || sourceMaintenanceBusy}
                 >
                   <IconChevronDown size={13} />
                 </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item
-                  disabled={sourceCheckJob.data?.status === "running"}
+                  disabled={sourceMaintenanceBusy}
                   onClick={() =>
                     startSourceMaintenance.mutate({ cellIds: selectedIds, updateAfterCheck: false })
                   }
