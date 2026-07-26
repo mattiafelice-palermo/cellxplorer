@@ -1,7 +1,8 @@
 # Golden analysis regression corpus
 
-Committed full Neware sources and scientifically approved projections for end-to-end backend
-regression testing (Spec 015). See [`approval.md`](approval.md) for checkpoint and privacy sign-off.
+Committed full Neware sources and candidate scientific projections for end-to-end backend
+regression testing (Spec 015). See [`approval.md`](approval.md) for the current checkpoint and
+privacy approval status.
 
 ## Sources
 
@@ -31,6 +32,10 @@ Total committed fixture size: about **4.8 MB** of source binaries plus JSON spec
 
 ```powershell
 python -m unittest tests.test_golden_analysis -v
+python -m unittest tests.test_golden_approval_checkpoints -v
+
+python scripts\verify_golden_approval_checkpoints.py `
+  --output tmp\golden-analysis-checkpoint-report.json
 
 python scripts\build_golden_analysis_corpus.py verify `
   --manifest tests\fixtures\golden_analysis\manifest.json
@@ -71,7 +76,12 @@ Inspect embedded binary metadata for privacy review:
 
 ```powershell
 python scripts\build_golden_analysis_corpus.py inspect-privacy `
-  --manifest tests\fixtures\golden_analysis\manifest.json
+  --manifest tests\fixtures\golden_analysis\manifest.json `
+  --output tmp\golden-analysis-privacy-report.json
 ```
+
+The privacy report includes the complete flattened header and may contain sensitive metadata.
+Keep it outside the committed fixture tree and review the entire `flattened_header_fields` list,
+not only the convenience `sensitive_field_hits`.
 
 See also [`approval.md`](approval.md) and [`../../../docs/agent-knowledge/scientific-regression-testing.md`](../../../docs/agent-knowledge/scientific-regression-testing.md).

@@ -1,18 +1,25 @@
 # Spec 015: Golden analysis regression corpus
 
-Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regression-corpus`.  
-Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **approved, ready to merge**.
+Status: **Implemented; scientific checkpoints approved, privacy approval pending** (2026-07-26). Branch:
+`feature/golden-analysis-regression-corpus`.
+Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md)
+— Round 4 engineering follow-ups complete; explicit privacy sign-off is the only remaining gate.
 
 ## Implementation record
 
 - Committed four full `.ndax` sources under `tests/fixtures/golden_analysis/sources/`.
 - Added manifest, eight golden cases, `tests/golden_analysis_support.py`, `tests/test_golden_analysis.py`,
   and `scripts/build_golden_analysis_corpus.py` (`export` / `refresh-expected` / `verify`).
-- `approval.md` status: **approved** (2026-07-26).
-- Focused verification: `python -m unittest tests.test_golden_analysis -v` — **24 tests OK (~7.7 s)**.
+- `approval.md` status: **scientific checkpoints approved by Mattia Felice Palermo on
+  2026-07-26; privacy approval pending**.
+- Original focused verification: `python -m unittest tests.test_golden_analysis -v` —
+  **24 tests OK (~7.7 s)**.
+- Round 4 focused verification:
+  `python -m unittest tests.test_golden_approval_checkpoints -v` — **3 tests OK (4.1 s)**.
 - Corpus verify: `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — **8/8 cases PASS**.
-- Full backend suite: `python -m unittest discover tests` — **387 tests OK (~41 s)**.
-- Uncached preflight: `python scripts\preflight.py --no-cache` — **PREFLIGHT PASSED (5/5)**.
+- Current full backend suite: `python -m unittest discover tests` — **396 tests OK (37.3 s)**.
+- Previously reported uncached preflight at implementation head:
+  `python scripts\preflight.py --no-cache` — **PREFLIGHT PASSED (5/5)**.
 - Unique cold `parsing.parse_timeseries` calls per module: **3** (chargeability and rate_capability share one hash).
 - Committed fixture size: **~4.8 MB** binaries + JSON specs/expected outputs; trimmed manifest **~6 KB**.
 - Selected sources:
@@ -53,9 +60,29 @@ Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](rev
   JSON. Focused builder safety tests added.
 - **R12:** `restore_data_root_binding()` reloads config/cache/scanner to the prior data root on
   golden test teardown and setup failure. Order-sensitive restore regression test added.
-- **R4:** Scientific and privacy approval completed; `scripts/verify_golden_approval_checkpoints.py` added.
+- **R4 (superseded by Round 4):** An approval verifier was added, but the later review correctly
+  found that approval had been recorded without demonstrated sign-off and that several booleans
+  were not enforced.
 
-Status: **Approved — ready to merge**  
+### Round 4
+
+- **R14:** Reworked `scripts/verify_golden_approval_checkpoints.py` so every checkpoint has an
+  enforced top-level result. Time/Capacity compares its complete selected output arrays and
+  reset/null positions; DCIR uses exact raw rest/pulse runs; Chargeability uses the raw
+  protocol-recorded reference capacity; Rate Capability derives the common reference from raw
+  measurement-step currents.
+- **R14 negative coverage:** Added `tests/test_golden_approval_checkpoints.py`; mutations for every
+  checkpoint input, including CE and EE separately, must be rejected by the command evaluator.
+- **R15:** Privacy inspection now emits every flattened header leaf (12,924 fields across the four
+  manifest source entries), while keyword/value hits remain only a convenience index. The complete
+  report stays under `tmp/`.
+- **R4:** Restored truthful approval state. Mattia Felice Palermo explicitly approved scientific
+  checkpoints 1–7 on 2026-07-26; privacy approval remains pending. Prepared evidence is
+  `tmp/golden-analysis-checkpoint-report.json` and `tmp/golden-analysis-privacy-report.json`.
+- **R13:** Reconciled current verification at 396 backend tests and distinguished historical
+  implementation/preflight results from the current uncommitted Round 4 work.
+
+Status: **Scientific checkpoints approved; awaiting explicit privacy approval**
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/golden-analysis-regression-corpus`  
 Base: current `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  

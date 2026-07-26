@@ -160,6 +160,7 @@ Cellxplorer/
 │   └── tests/                      Lightweight TypeScript policy tests
 ├── tests/                          Python backend and domain tests
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
+│   ├── test_golden_approval_checkpoints.py  Fail-closed scientific/privacy approval checks
 │   ├── test_golden_analysis.py     Full-source golden analysis regression tests
 │   ├── fixtures/
 │   │   ├── golden_analysis/        Committed Neware sources + specs + expected JSON (Spec 015)

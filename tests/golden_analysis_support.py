@@ -251,17 +251,6 @@ def validate_candidate_output_path(
     return output
 
 
-PRIVACY_REVIEW_TOP_LEVEL_FIELDS = (
-    "barcode",
-    "remarks",
-    "builder",
-    "device_info",
-    "channel",
-    "start_time",
-    "part_number",
-    "nda_version",
-)
-
 PRIVACY_REVIEW_RAW_KEYWORDS = (
     "guid",
     "remark",
@@ -275,8 +264,35 @@ PRIVACY_REVIEW_RAW_KEYWORDS = (
 )
 
 
+def _flatten_metadata(
+    value: Any,
+    *,
+    path: str = "$",
+) -> list[dict[str, str]]:
+    """Return every metadata leaf with a stable path and printable value."""
+    if isinstance(value, dict):
+        flattened: list[dict[str, str]] = []
+        for key in sorted(value, key=str):
+            flattened.extend(
+                _flatten_metadata(value[key], path=f"{path}.{key}")
+            )
+        return flattened
+    if isinstance(value, (list, tuple)):
+        flattened = []
+        for index, item in enumerate(value):
+            flattened.extend(_flatten_metadata(item, path=f"{path}[{index}]"))
+        return flattened
+    return [
+        {
+            "path": path,
+            "value": "" if value is None else str(value),
+            "value_type": type(value).__name__,
+        }
+    ]
+
+
 def inspect_binary_privacy(manifest: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
-    """Collect potentially sensitive metadata embedded in committed source binaries."""
+    """Collect the complete flattened header for one-time privacy review."""
     from app.services import parsing
 
     root = root or fixture_root()
@@ -284,27 +300,35 @@ def inspect_binary_privacy(manifest: dict[str, Any], root: Path | None = None) -
     for source in manifest.get("sources", []):
         binary = (root / source["binary_path"]).resolve()
         meta = parsing.read_header_metadata(binary)
-        top_level = {
-            field: meta[field]
-            for field in PRIVACY_REVIEW_TOP_LEVEL_FIELDS
-            if meta.get(field) not in (None, "")
-        }
-        raw_hits: list[dict[str, str]] = []
-        for key, value in (meta.get("raw") or {}).items():
-            key_low = key.lower()
-            if any(keyword in key_low for keyword in PRIVACY_REVIEW_RAW_KEYWORDS):
-                raw_hits.append({key: str(value)})
+        flattened = _flatten_metadata(meta)
+        sensitive_hits = [
+            item
+            for item in flattened
+            if any(
+                keyword in f"{item['path']} {item['value']}".lower()
+                for keyword in PRIVACY_REVIEW_RAW_KEYWORDS
+            )
+        ]
         sources.append(
             {
                 "key": source["key"],
                 "binary_path": source["binary_path"],
                 "sha256": source["sha256"],
-                "top_level_fields": top_level,
-                "raw_sensitive_fields": raw_hits,
-                "raw_sensitive_field_count": len(raw_hits),
+                "flattened_header_fields": flattened,
+                "flattened_header_field_count": len(flattened),
+                "sensitive_field_hits": sensitive_hits,
+                "sensitive_field_hit_count": len(sensitive_hits),
             }
         )
-    return {"schema_version": 1, "sources": sources}
+    return {
+        "schema_version": 2,
+        "scope": "complete flattened output of parsing.read_header_metadata",
+        "source_count": len(sources),
+        "flattened_header_field_count": sum(
+            source["flattened_header_field_count"] for source in sources
+        ),
+        "sources": sources,
+    }
 
 
 def collect_json_diffs(

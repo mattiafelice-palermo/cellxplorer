@@ -27,11 +27,18 @@ stable scientific projections only — never PNG/SVG/Plotly layout.
 
 - `manifest.json` — schema version, source checksums, fixture entities, case list, tolerances.
 - `specs/<case>.json` — standalone analysis specs using fixture cell IDs.
-- `expected/<case>.json` — approved scientific projections.
-- `approval.md` — manual checkpoint status.
+- `expected/<case>.json` — scientific projections whose approval state is recorded in
+  `approval.md`.
+- `approval.md` — manual checkpoint status; it must remain pending until the user explicitly
+  approves the scientific and privacy evidence.
 
 Normal test runs verify checksums, parse each unique source once, and compare projections with
 `relative_tolerance=1e-7`, `absolute_tolerance=1e-9`.
+
+`scripts/verify_golden_approval_checkpoints.py` is a separate fail-closed approval aid. Every
+mandatory checkpoint exposes one top-level `match` boolean, and the command fails when any
+checkpoint is absent or false. `tests/test_golden_approval_checkpoints.py` mutates each
+checkpoint's expected input (CE and EE separately) to keep that failure path covered.
 
 ## Updating goldens after an intentional scientific change
 
@@ -49,6 +56,12 @@ Preflight and normal tests never regenerate expected output automatically.
 - Do not trim or rewrite committed binaries.
 - Use generic fixture cell names; keep only scalar metadata required for calculations in the manifest.
 - Do not commit the user's SQLite database or live cache directory.
+- Generate privacy evidence with `inspect-privacy --output <tmp-path>`. The report contains every
+  flattened leaf returned by `parsing.read_header_metadata`, including fields with unexpected
+  names. Keep the report outside the repository because it can contain embedded internal paths,
+  experiment labels, creator fields, and other sensitive metadata.
+- Keyword/value hits are only a convenience index. Human privacy approval applies to the complete
+  flattened field list, not only those hits.
 
 ## Runtime rule
 
