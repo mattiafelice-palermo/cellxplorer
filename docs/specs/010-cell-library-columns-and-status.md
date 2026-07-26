@@ -196,8 +196,9 @@ Upgrade behavior:
 
 This causes the existing non-blocking capacity-summary backfill to calculate the new field.
 
-Also add `max_discharge_capacity_mah` to the `source_additions` tuple in
-`v0001_initial.py`, so a fresh or legacy-baselined database receives the complete current schema.
+Also add `max_discharge_capacity_mah` through migration `0002` only. Do not modify the
+released `0001` revision after it ships; fresh databases receive the column when migrations
+run through `0002`.
 
 Register `v0002_max_discharge_summary` after `v0001_initial` in `registry.py`.
 
@@ -471,3 +472,23 @@ python scripts/preflight.py  → PREFLIGHT PASSED (4/4 stages)
 ```
 
 Manual UI verification (§7) not yet run in a live session.
+
+## 13. Review of the implementation — follow-up tasks
+
+Review branch: `feature/cell-library-columns-and-status`.  
+Status after follow-ups: **addressed in working tree** (2026-07-26).
+
+| Task | Priority | Status |
+|---|---|---|
+| R1 — unfiltered replicate data for cell membership | High | Done |
+| R2 — reject non-finite scientific values | High | Done |
+| R3 — restore migration `0001` | Medium | Done |
+| R4 — keyboard-accessible replicate details | Medium | Done |
+| R5 — show calculation state while parsing | Medium | Done |
+
+Verification after follow-ups:
+
+```text
+python -m unittest tests.test_calc_and_cache tests.test_source_and_replicates tests.test_database_migrations -v
+python scripts/preflight.py
+```

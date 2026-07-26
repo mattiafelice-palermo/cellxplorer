@@ -10,6 +10,7 @@ Layout:  CACHE_DIR/<hash[:2]>/<hash>/raw__p<parser>.parquet
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import shutil
@@ -113,17 +114,38 @@ def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
         if cycles is None or column not in cycles.columns:
             return None
         values = pd.to_numeric(cycles[column], errors="coerce")
-        total = values.sum(min_count=1)
-        return None if pd.isna(total) else round(float(total), 6)
+        total = 0.0
+        found = False
+        for raw in values:
+            if pd.isna(raw):
+                continue
+            try:
+                number = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(number):
+                continue
+            total += number
+            found = True
+        return round(total, 6) if found else None
 
     def _max(column: str) -> float | None:
         if cycles is None or column not in cycles.columns:
             return None
         values = pd.to_numeric(cycles[column], errors="coerce")
-        if values.empty:
-            return None
-        maximum = values.max(skipna=True)
-        return None if pd.isna(maximum) else round(float(maximum), 6)
+        best = None
+        for raw in values:
+            if pd.isna(raw):
+                continue
+            try:
+                number = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(number):
+                continue
+            if best is None or number > best:
+                best = number
+        return round(best, 6) if best is not None else None
 
     return {
         "total_charge_capacity_mah": _sum("charge_capacity_mah"),

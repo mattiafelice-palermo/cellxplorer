@@ -35,7 +35,6 @@ def upgrade(operations: Operations, connection: Connection) -> None:
         ("nominal_capacity_mah", "FLOAT"),
         ("total_charge_capacity_mah", "FLOAT"),
         ("total_discharge_capacity_mah", "FLOAT"),
-        ("max_discharge_capacity_mah", "FLOAT"),
         (
             "capacity_summary_status",
             "VARCHAR(20) NOT NULL DEFAULT 'pending'",

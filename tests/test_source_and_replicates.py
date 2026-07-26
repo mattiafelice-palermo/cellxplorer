@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ["CELLXPLORER_DATA"] = str(ROOT / ".test-cellxplorer")
+os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
@@ -840,6 +840,116 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(live_jobs[0]["title"], "Checking and updating sources")
         self.assertEqual(live_jobs[0]["items"][0]["label"], "active.ndax")
 
+    def _start_deferred_source_job(self, db, starter):
+        class DeferredThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        original_thread = library._JobThread
+        try:
+            background_jobs.clear_jobs()
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+                library._next_source_check_job_id = 1
+            library._JobThread = DeferredThread
+            return starter()
+        finally:
+            library._JobThread = original_thread
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+            background_jobs.clear_jobs()
+
+    def _add_cell_with_source(self, db, *, name: str, cycling_status: str = "active"):
+        cell = Cell(name=name, cycling_status=cycling_status)
+        source = SourceFile(
+            hash=f"hash-{name}",
+            path=f"C:/data/{name}.ndax",
+            filename=f"{name}.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Imported file")
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        db.flush()
+        return cell, source
+
+    def test_check_update_job_without_body_targets_all_active_cells(self):
+        db = self.make_session()
+        self._add_cell_with_source(db, name="active")
+        self._add_cell_with_source(db, name="complete", cycling_status="complete")
+        db.commit()
+
+        job = self._start_deferred_source_job(
+            db,
+            lambda: library.create_source_check_update_job(db=db),
+        )
+
+        self.assertTrue(job["update_after_check"])
+        self.assertEqual(job["total"], 1)
+        self.assertEqual(job["requested_cell_ids"], [])
+
+    def test_check_update_job_with_cell_ids_forwards_selected_scope(self):
+        db = self.make_session()
+        active_cell, _ = self._add_cell_with_source(db, name="active")
+        self._add_cell_with_source(db, name="other")
+        db.commit()
+
+        job = self._start_deferred_source_job(
+            db,
+            lambda: library.create_source_check_update_job(
+                req=library.CellSourceCheckRequest(cell_ids=[active_cell.id]),
+                db=db,
+            ),
+        )
+
+        self.assertTrue(job["update_after_check"])
+        self.assertEqual(job["requested_cell_ids"], [active_cell.id])
+        self.assertEqual(job["total"], 1)
+
+    def test_check_update_job_skips_completed_cells_by_default(self):
+        db = self.make_session()
+        active_cell, _ = self._add_cell_with_source(db, name="active")
+        complete_cell, _ = self._add_cell_with_source(db, name="complete", cycling_status="complete")
+        db.commit()
+
+        job = self._start_deferred_source_job(
+            db,
+            lambda: library.create_source_check_update_job(
+                req=library.CellSourceCheckRequest(cell_ids=[active_cell.id, complete_cell.id]),
+                db=db,
+            ),
+        )
+
+        self.assertTrue(job["update_after_check"])
+        self.assertEqual(job["skipped_complete"], 1)
+        self.assertEqual(job["total"], 1)
+
+    def test_check_only_job_endpoint_leaves_update_after_check_false(self):
+        db = self.make_session()
+        cell, _ = self._add_cell_with_source(db, name="active")
+        db.commit()
+
+        job = self._start_deferred_source_job(
+            db,
+            lambda: library.create_source_check_job(
+                req=library.CellSourceCheckRequest(cell_ids=[cell.id]),
+                db=db,
+            ),
+        )
+
+        self.assertFalse(job["update_after_check"])
+
     def test_combined_source_job_adopts_changed_file_and_marks_it_ready(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1008,6 +1118,13 @@ class MaxSpecificDischargeTests(unittest.TestCase):
         self.assertIsNone(
             library.max_specific_discharge_capacity(None, 10.0)
         )
+        self.assertIsNone(
+            library.max_specific_discharge_capacity(4.0, float("inf"))
+        )
+
+    def test_finite_max_rejects_infinite_cached_values(self):
+        self.assertIsNone(library._finite_max([float("inf"), float("nan")]))
+        self.assertEqual(library._finite_max([1.0, float("inf"), 3.0]), 3.0)
 
     def test_helper_uses_override_mass_precedence_via_list_cells(self):
         db = self.make_session()

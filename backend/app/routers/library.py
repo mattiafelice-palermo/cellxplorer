@@ -11,7 +11,7 @@ from pathlib import Path
 from time import sleep as _sleep
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
@@ -208,7 +208,7 @@ def _finite_sum(values) -> float | None:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if math.isnan(number):
+        if math.isnan(number) or not math.isfinite(number):
             continue
         total += number
         found = True
@@ -224,7 +224,7 @@ def _finite_max(values) -> float | None:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if math.isnan(number):
+        if math.isnan(number) or not math.isfinite(number):
             continue
         if best is None or number > best:
             best = number
@@ -299,7 +299,7 @@ def _positive_float(value) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number > 0 else None
+    return number if number > 0 and math.isfinite(number) else None
 
 
 def cell_scientific_metadata(
@@ -2051,11 +2051,15 @@ def create_source_check_job(req: CellSourceCheckRequest, db: Session = Depends(g
 
 
 @router.post("/cells/check-update-sources/jobs")
-def create_source_check_update_job(db: Session = Depends(get_db)):
+def create_source_check_update_job(
+    db: Session = Depends(get_db),
+    req: CellSourceCheckRequest | None = Body(default=None),
+):
+    request = req if isinstance(req, CellSourceCheckRequest) else None
     return start_source_check_job(
         db,
-        cell_ids=None,
-        include_complete=False,
+        cell_ids=request.cell_ids if request else None,
+        include_complete=request.include_complete if request else False,
         update_after_check=True,
     )
 

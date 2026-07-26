@@ -317,6 +317,16 @@ class CapacityTotalsTests(unittest.TestCase):
         totals = cache.capacity_totals(cycles)
         self.assertIsNone(totals["max_discharge_capacity_mah"])
 
+    def test_ignores_infinite_discharge_values(self):
+        cycles = pd.DataFrame({"discharge_capacity_mah": [1.0, float("inf"), 3.0]})
+        totals = cache.capacity_totals(cycles)
+        self.assertEqual(totals["max_discharge_capacity_mah"], 3.0)
+
+    def test_only_invalid_discharge_values_returns_none(self):
+        cycles = pd.DataFrame({"discharge_capacity_mah": [float("inf"), float("nan")]})
+        totals = cache.capacity_totals(cycles)
+        self.assertIsNone(totals["max_discharge_capacity_mah"])
+
 
 if __name__ == "__main__":
     unittest.main()
