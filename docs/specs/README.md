@@ -264,7 +264,17 @@ Rules:
 - [016-reindex-remaining-cycles-has-no-effect.md](016-reindex-remaining-cycles-has-no-effect.md)
   — the Cycles-tab "Reindex remaining cycles" toggle does nothing: `viewSignature` omits the
   flag so the trace memo never recomputes, and `zoomSignature`/`uirevision` would re-apply the
-  stale x range. Frontend-only. **Not started.**
+  stale x range. Frontend-only. **Implemented** (0.14.3).
+- [017-secure-tauri-updater-foundation.md](017-secure-tauri-updater-foundation.md)
+  — secure Tauri updater substrate: signed manifest, NSIS updater artifacts, Rust pending-update
+  state, and narrow check/download/install commands. Desktop-only; no in-app UI yet.
+  **Planned** — branch `feature/updater-017-019` (shared with 018–019). **In progress** on that branch.
+- [018-in-app-update-experience.md](018-in-app-update-experience.md)
+  — power-menu update indicator, modal, download progress, and installer launch via Spec 017
+  commands. **Planned** — same branch; implement after 017 on that branch.
+- [019-automated-github-release-publishing.md](019-automated-github-release-publishing.md)
+  — tag-triggered GitHub release workflow, signed `latest.json`, and combined minor version bump.
+  **Planned** — same branch; merge to `main` once 017–019 are complete.
 
 ## Assets
 

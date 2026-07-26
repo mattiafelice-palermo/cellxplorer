@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_updates;
+
+use app_updates::PendingAppUpdate;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::{
@@ -141,6 +144,13 @@ fn stop_backend(app: &AppHandle) {
             }
         }
     }
+}
+
+pub(crate) fn prepare_exit_for_update(app: &AppHandle) {
+    if let Some(lifecycle) = app.try_state::<LifecycleState>() {
+        lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    stop_backend(app);
 }
 
 fn quit_application(app: &AppHandle) {
@@ -442,7 +452,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(PendingAppUpdate::default())
         .invoke_handler(tauri::generate_handler![
+            app_updates::check_app_update,
+            app_updates::download_app_update,
+            app_updates::install_app_update,
             backend_api_base,
             is_autostart_enabled,
             is_main_window_visible,

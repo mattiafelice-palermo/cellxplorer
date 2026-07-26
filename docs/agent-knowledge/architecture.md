@@ -163,5 +163,21 @@ Backend services own parsing and deterministic scientific calculations. React co
 editing state and visualization state. Server-state copies in React Query are disposable views of
 backend records, never an alternative source of truth.
 
+## Desktop updates
+
+Signed application updates are owned by the Tauri shell, not FastAPI. Rust holds the pending update
+object and verified installer bytes in `src-tauri/src/app_updates.rs` and exposes three narrow
+commands: `check_app_update`, `download_app_update`, and `install_app_update`. The frontend must
+not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
+
+Every checked update is built with the updater plugin's Windows `on_before_exit` hook, which sets
+the shell quitting flag and runs the existing PyInstaller sidecar process-tree cleanup through
+`prepare_exit_for_update` in `src-tauri/src/main.rs`. Check and download never stop the backend;
+only the successful Windows installer-launch path does. User database, caches, and source files
+are not touched by update infrastructure.
+
+For packaging artifacts, signing keys, and the bootstrap-release limitation, see
+`docs/windows-packaging.md`.
+
 For schema and cache-version rules, see `docs/database-migrations.md` and the core data rules in
 `AGENTS.md`.

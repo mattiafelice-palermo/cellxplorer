@@ -171,6 +171,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
+│   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
 │   └── test_preflight_script.py    Preflight command unit tests
 ├── docs/
 │   ├── specs/                      Numbered feature specs (`NNN-*.md`) and `reviews/` follow-ups
@@ -186,6 +187,7 @@ Cellxplorer/
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
+│   └── src/app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 ├── run.py                          Runs FastAPI with the built frontend
 ├── README.md                       Project overview and quick-start commands
 ├── spec.md                         Original domain specification

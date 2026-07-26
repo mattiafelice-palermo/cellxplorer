@@ -139,3 +139,17 @@ the Python sources and skips the stage entirely when nothing changed; `-ForceBac
 Do not try to shrink the sidecar by excluding modules. `tkinter` is used by `routers/files.py` for
 the native folder picker, and the remaining unused modules are ~3MB against pandas 62MB, numpy 31MB
 and pyarrow 84MB.
+
+### Updater signing and release checks
+
+1. Confirm `bundle.createUpdaterArtifacts` is `true` and the committed updater public key in
+   `src-tauri/tauri.conf.json` is real, not a placeholder or file path.
+2. Never commit the private updater key, its password, or GitHub release tokens.
+3. Local signed packaging requires `TAURI_SIGNING_PRIVATE_KEY` (and password when used) in the
+   environment; `.env` files are not read by Tauri signing.
+4. After NSIS template changes, smoke-test the `/UPDATER` path in a disposable install. Cancel
+   before modifying non-disposable user data.
+5. Run `python -m unittest tests.test_updater_configuration -v` when updater config or Rust
+   command wiring changes.
+6. The first updater-enabled release is a manual bootstrap install; live in-app updates require
+   public HTTPS release assets and Specs 018–019.

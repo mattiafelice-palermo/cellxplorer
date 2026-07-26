@@ -16,6 +16,8 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-shell = "2"
+tauri-plugin-updater = "2.10"
+serde = { version = "1", features = ["derive"] }
 
 # Local packaging runs rebuild this crate every time (tauri-build re-runs its
 # build script), and the release default of no incremental data meant a full

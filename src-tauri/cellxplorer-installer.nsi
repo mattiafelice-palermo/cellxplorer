@@ -1239,6 +1239,11 @@ Function .onInit
     StrCpy $NoShortcutMode 1
   ${EndIf}
 
+  ${GetOptions} $CMDLINE "/UPDATER" $UpdateMode
+  ${IfNot} ${Errors}
+    StrCpy $UpdateMode 1
+  ${EndIf}
+
   ${GetOptions} $CMDLINE "/UPDATE" $UpdateMode
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
@@ -1548,6 +1553,11 @@ Function un.onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
+  ${EndIf}
+
+  ${GetOptions} $CMDLINE "/UPDATER" $UpdateMode
+  ${IfNot} ${Errors}
+    StrCpy $UpdateMode 1
   ${EndIf}
 
   ${GetOptions} $CMDLINE "/UPDATE" $UpdateMode

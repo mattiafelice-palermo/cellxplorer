@@ -106,6 +106,43 @@ machines where the Windows Installer service is not available to the build proce
 For this spike, MSI could be emitted manually with WiX `light.exe -sval` after Tauri
 generates `src-tauri/target/release/wix/x64/main.wixobj`.
 
+## Tauri updater artifacts
+
+`src-tauri/tauri.conf.json` sets `bundle.createUpdaterArtifacts: true`. A signed release build
+produces the normal NSIS setup executable plus an adjacent `.sig` file in
+`src-tauri/target/release/bundle/nsis/`. Tauri updater signatures are separate from Windows
+Authenticode signing.
+
+The production update manifest endpoint is:
+
+```text
+https://github.com/mattiafelice-palermo/cellxplorer/releases/latest/download/latest.json
+```
+
+Only the updater **public key** belongs in `tauri.conf.json`. Store the private key outside the
+repository (developer backup and later GitHub Actions secrets). Local packaging with updater
+signatures requires:
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY="<secure path or key content>"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<password when used>"
+.\scripts\build-app.cmd
+```
+
+The Tauri shell owns update checking, download verification, and installer launch through narrow
+Rust commands in `src-tauri/src/app_updates.rs`. The webview must not call the generic updater
+plugin API directly. On Windows, the Python sidecar is stopped only through the updater plugin's
+`on_before_exit` hook immediately before NSIS launch; check and download must not stop the backend.
+
+The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
+alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while
+preserving `%USERPROFILE%\.cellxplorer`.
+
+**Bootstrap limitation:** existing installed builds without the updater cannot receive the first
+updater-enabled release automatically. The first updater-capable version must be installed manually;
+later releases can use the in-app flow once Specs 018–019 are complete and public release assets
+exist.
+
 ## Current blocker found during the spike
 
 This spike produced an NSIS installer. The MSI path reached WiX linking, but WiX ICE validation

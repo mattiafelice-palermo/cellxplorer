@@ -27,10 +27,20 @@
           "cellxplorer"
         ]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxNTY3MTM0NjI5NEJFQTEKUldTaHZwUmlOSEZXSWRFbjFoUlE5SFJTdlhLUnpwdVgwZE44MGpSWFAzSHU3K3BVWTV5UExpUncK",
+      "endpoints": [
+        "https://github.com/mattiafelice-palermo/cellxplorer/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "basicUi"
+      }
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "nsis"
     ],

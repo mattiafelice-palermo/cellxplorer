@@ -40,6 +40,10 @@ src-tauri/target/
 .agents/
 .codex/
 
+# Tauri updater signing keys (private key must never be committed)
+*.key
+!tests/fixtures/**/*.key
+
 # OS / editor
 .DS_Store
 Thumbs.db
