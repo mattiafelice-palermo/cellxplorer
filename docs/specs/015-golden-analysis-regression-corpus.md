@@ -1,14 +1,14 @@
 # Spec 015: Golden analysis regression corpus
 
 Status: **Implemented** (2026-07-26). Branch: `feature/golden-analysis-regression-corpus`.  
-Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **Round 2 R1/R3/R5/R7–R10 addressed; R4 scientific approval still pending**.
+Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](reviews/015-golden-analysis-regression-corpus-review.md) — **approved, ready to merge**.
 
 ## Implementation record
 
 - Committed four full `.ndax` sources under `tests/fixtures/golden_analysis/sources/`.
 - Added manifest, eight golden cases, `tests/golden_analysis_support.py`, `tests/test_golden_analysis.py`,
   and `scripts/build_golden_analysis_corpus.py` (`export` / `refresh-expected` / `verify`).
-- `approval.md` status: **pending user approval**.
+- `approval.md` status: **approved** (2026-07-26).
 - Focused verification: `python -m unittest tests.test_golden_analysis -v` — **24 tests OK (~7.7 s)**.
 - Corpus verify: `python scripts\build_golden_analysis_corpus.py verify --manifest tests\fixtures\golden_analysis\manifest.json` — **8/8 cases PASS**.
 - Full backend suite: `python -m unittest discover tests` — **387 tests OK (~41 s)**.
@@ -53,12 +53,9 @@ Review document: [`reviews/015-golden-analysis-regression-corpus-review.md`](rev
   JSON. Focused builder safety tests added.
 - **R12:** `restore_data_root_binding()` reloads config/cache/scanner to the prior data root on
   golden test teardown and setup failure. Order-sensitive restore regression test added.
-- **R4 (partial):** Documentation no longer describes projections as approved. Binary privacy review
-  section and `inspect-privacy` builder command added. Scientific checkpoints remain pending user
-  sign-off.
-- **R13:** Review record updated through Round 3.
+- **R4:** Scientific and privacy approval completed; `scripts/verify_golden_approval_checkpoints.py` added.
 
-Status: **Pending user scientific approval (R4)** — code/harness follow-ups through Round 3 addressed.  
+Status: **Approved — ready to merge**  
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/golden-analysis-regression-corpus`  
 Base: current `main` at `546651da6c3941f8be5ea8313119b907a2c0b27f`  

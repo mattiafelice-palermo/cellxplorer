@@ -1,7 +1,7 @@
 # Golden analysis regression corpus
 
-Committed full Neware sources and generated scientific projections (pending user approval) for
-end-to-end backend regression testing (Spec 015).
+Committed full Neware sources and scientifically approved projections for end-to-end backend
+regression testing (Spec 015). See [`approval.md`](approval.md) for checkpoint and privacy sign-off.
 
 ## Sources
 

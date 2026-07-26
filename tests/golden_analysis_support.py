@@ -300,7 +300,8 @@ def inspect_binary_privacy(manifest: dict[str, Any], root: Path | None = None) -
                 "binary_path": source["binary_path"],
                 "sha256": source["sha256"],
                 "top_level_fields": top_level,
-                "raw_sensitive_fields": raw_hits[:40],
+                "raw_sensitive_fields": raw_hits,
+                "raw_sensitive_field_count": len(raw_hits),
             }
         )
     return {"schema_version": 1, "sources": sources}
