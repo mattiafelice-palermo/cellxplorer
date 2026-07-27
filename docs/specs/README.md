@@ -271,7 +271,7 @@ Rules:
   **Planned** — branch `feature/updater-017-019` (shared with 018–019). **In progress** on that branch.
 - [018-in-app-update-experience.md](018-in-app-update-experience.md)
   — power-menu update indicator, modal, download progress, and installer launch via Spec 017
-  commands. **Planned** — same branch; implement after 017 on that branch.
+  commands. **In progress** on `feature/updater-017-019`.
 - [019-automated-github-release-publishing.md](019-automated-github-release-publishing.md)
   — tag-triggered GitHub release workflow, signed `latest.json`, and combined minor version bump.
   **Planned** — same branch; merge to `main` once 017–019 are complete.

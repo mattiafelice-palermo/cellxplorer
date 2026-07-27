@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
+import { AppUpdateProvider } from "./components/AppUpdateCoordinator";
 import { isTransientApiError } from "./apiRetryPolicy";
 import {
   configureStartupQueryDefaults,
@@ -48,7 +49,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <ModalsProvider>
           <Notifications position="bottom-right" />
           <BrowserRouter>
-            <App />
+            <AppUpdateProvider>
+              <App />
+            </AppUpdateProvider>
           </BrowserRouter>
         </ModalsProvider>
       </MantineProvider>

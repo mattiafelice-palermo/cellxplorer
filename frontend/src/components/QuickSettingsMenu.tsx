@@ -4,6 +4,7 @@ import {
   Divider,
   Group,
   Indicator,
+  Loader,
   Menu,
   SegmentedControl,
   Stack,
@@ -15,6 +16,7 @@ import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconBug,
+  IconDownload,
   IconPower,
   IconRefresh,
 } from "@tabler/icons-react";
@@ -22,7 +24,13 @@ import { useEffect, useState } from "react";
 
 import { get, post, type AutomationPauseState } from "../api";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
+import {
+  getUpdateMenuLabel,
+  isUpdateMenuDisabled,
+  isUpdateMenuLoading,
+} from "../appUpdater";
 import { isTauriApp } from "../downloads";
+import { useOptionalAppUpdate } from "./AppUpdateCoordinator";
 
 const PAUSE_QUERY_KEY = ["automation-pause"] as const;
 
@@ -65,6 +73,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
   const queryClient = useQueryClient();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const tauri = isTauriApp();
+  const appUpdate = useOptionalAppUpdate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -149,21 +158,32 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
     >
       <Menu.Target>
         <Indicator
-          color="yellow"
-          size={8}
+          color="teal"
+          size={16}
+          label="1"
           offset={4}
-          disabled={!isPaused}
-          processing={isPaused}
+          disabled={!appUpdate?.showUpdateBadge}
+          aria-label={
+            appUpdate?.showUpdateBadge ? "1 application update available" : undefined
+          }
         >
-          <Button
-            size="sm"
-            variant="subtle"
-            color={isPaused ? "yellow" : "teal"}
-            px="sm"
-            aria-label="Power and settings"
+          <Indicator
+            color="yellow"
+            size={8}
+            offset={4}
+            disabled={!isPaused}
+            processing={isPaused}
           >
-            <IconPower size={18} stroke={1.75} />
-          </Button>
+            <Button
+              size="sm"
+              variant="subtle"
+              color={isPaused ? "yellow" : "teal"}
+              px="sm"
+              aria-label="Power and settings"
+            >
+              <IconPower size={18} stroke={1.75} />
+            </Button>
+          </Indicator>
         </Indicator>
       </Menu.Target>
       <Menu.Dropdown>
@@ -199,7 +219,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
 
         <Box px="sm" py={4}>
           <Text size="xs" c="dimmed" mb={6}>
-            Automatic updates
+            Background automation
           </Text>
           <Stack gap={8}>
             <Group gap={8} wrap="nowrap">
@@ -262,6 +282,28 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
               }}
             >
               Debug
+            </Menu.Item>
+          </>
+        ) : null}
+
+        {appUpdate?.updateUiEnabled ? (
+          <>
+            <Divider my={6} />
+            <Menu.Item
+              leftSection={
+                isUpdateMenuLoading(appUpdate.state) ? (
+                  <Loader size={14} color="teal" />
+                ) : (
+                  <IconDownload size={14} />
+                )
+              }
+              disabled={isUpdateMenuDisabled(appUpdate.state)}
+              onClick={() => {
+                setMenuOpen(false);
+                appUpdate.handleMenuClick();
+              }}
+            >
+              {getUpdateMenuLabel(appUpdate.state)}
             </Menu.Item>
           </>
         ) : null}
