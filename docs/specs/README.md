@@ -196,6 +196,7 @@ Rules:
 - [017-secure-tauri-updater-foundation-review.md](reviews/017-secure-tauri-updater-foundation-review.md)
 - [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
 - [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
+- [017-019-updater-cumulative-review.md](reviews/017-019-updater-cumulative-review.md)
 
 ## Index
 

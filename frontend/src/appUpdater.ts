@@ -82,6 +82,12 @@ export function shouldShowUpdateUi(tauri: boolean, mock: DevUpdateMockMode | nul
   return tauri || mock !== null;
 }
 
+export function failurePhaseForLocalUpdatePhase(
+  phase: "download" | "install",
+): "download" | "install" {
+  return phase;
+}
+
 export function normalizeUpdaterError(error: unknown, fallback: string): string {
   if (typeof error === "string") {
     const trimmed = error.trim();

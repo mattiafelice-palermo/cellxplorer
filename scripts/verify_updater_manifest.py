@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import sys
@@ -38,6 +39,10 @@ def normalize_version(value: str) -> str:
 
 
 def normalize_notes(value: str) -> str:
+    return value.replace("\r\n", "\n").strip()
+
+
+def normalize_signature_text(value: str) -> str:
     return value.replace("\r\n", "\n").strip()
 
 
@@ -133,6 +138,63 @@ def asset_display_name(asset: dict) -> str:
     raise ManifestVerificationError("Release asset is missing a name/label.")
 
 
+def require_named_asset(assets: list[dict], name: str) -> dict:
+    for asset in assets:
+        try:
+            if asset_display_name(asset) == name:
+                return asset
+        except ManifestVerificationError:
+            continue
+    raise ManifestVerificationError(f"Release assets metadata is missing {name!r}.")
+
+
+def _minisign_data_line(decoded_text: str, *, kind: str) -> str:
+    lines = [line.strip() for line in decoded_text.splitlines() if line.strip()]
+    if kind == "pubkey":
+        data_lines = [line for line in lines if not line.lower().startswith("untrusted comment:")]
+        if not data_lines:
+            raise ManifestVerificationError("Updater public key has no minisign data line.")
+        return data_lines[-1]
+    if len(lines) < 2:
+        raise ManifestVerificationError("Updater signature is missing the minisign data line.")
+    return lines[1]
+
+
+def minisign_key_id_from_tauri_pubkey(pubkey_b64: str) -> bytes:
+    try:
+        decoded = base64.b64decode(pubkey_b64.strip(), validate=True)
+        text = decoded.decode("utf-8")
+        data_line = _minisign_data_line(text, kind="pubkey")
+        blob = base64.b64decode(data_line, validate=True)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ManifestVerificationError(f"Invalid Tauri updater public key encoding ({exc}).") from exc
+    if len(blob) < 10:
+        raise ManifestVerificationError("Tauri updater public key is too short.")
+    return blob[2:10]
+
+
+def minisign_key_id_from_tauri_sig(signature_b64: str) -> bytes:
+    try:
+        decoded = base64.b64decode(signature_b64.strip(), validate=True)
+        text = decoded.decode("utf-8")
+        data_line = _minisign_data_line(text, kind="signature")
+        blob = base64.b64decode(data_line, validate=True)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ManifestVerificationError(f"Invalid updater signature encoding ({exc}).") from exc
+    if len(blob) < 10:
+        raise ManifestVerificationError("Updater signature is too short.")
+    return blob[2:10]
+
+
+def assert_signature_matches_pubkey(signature_b64: str, pubkey_b64: str) -> None:
+    pub_id = minisign_key_id_from_tauri_pubkey(pubkey_b64)
+    sig_id = minisign_key_id_from_tauri_sig(signature_b64)
+    if pub_id != sig_id:
+        raise ManifestVerificationError(
+            "Updater signature key id does not match the embedded Tauri public key."
+        )
+
+
 def verify_manifest(
     manifest: dict,
     *,
@@ -142,6 +204,8 @@ def verify_manifest(
     expected_repo: str,
     release_assets: list[dict],
     setup_exe_name: str | None = None,
+    pubkey_b64: str | None = None,
+    uploaded_signature_text: str | None = None,
 ) -> None:
     version = normalize_version(str(manifest.get("version", "")))
     target_version = normalize_version(expected_version)
@@ -159,6 +223,7 @@ def verify_manifest(
         )
 
     setup_name = setup_exe_name or infer_setup_exe_name(target_version)
+    require_named_asset(release_assets, "latest.json")
     _platform_key, platform_entry = choose_windows_platform(manifest)
     url = platform_entry.get("url")
     signature = platform_entry.get("signature")
@@ -186,10 +251,16 @@ def verify_manifest(
         )
 
     sig_name = f"{setup_name}.sig"
-    if not any(asset_display_name(entry) == sig_name for entry in release_assets):
-        raise ManifestVerificationError(
-            f"Release assets metadata is missing signature file {sig_name!r}."
-        )
+    require_named_asset(release_assets, sig_name)
+
+    if uploaded_signature_text is not None:
+        if normalize_signature_text(uploaded_signature_text) != normalize_signature_text(signature):
+            raise ManifestVerificationError(
+                "Uploaded .sig contents do not match latest.json platform signature text."
+            )
+
+    if pubkey_b64:
+        assert_signature_matches_pubkey(signature, pubkey_b64)
 
     serialized = json.dumps(manifest, ensure_ascii=False)
     assert_no_secrets(serialized, "Manifest JSON")
@@ -198,6 +269,21 @@ def verify_manifest(
 
 def infer_setup_exe_name(version: str) -> str:
     return f"CellXplorer_{normalize_version(version)}_x64-setup.exe"
+
+
+def load_pubkey_from_tauri_conf(path: Path) -> str:
+    conf = load_json_object(path)
+    try:
+        pubkey = conf["plugins"]["updater"]["pubkey"]
+    except (KeyError, TypeError) as exc:
+        raise ManifestVerificationError(
+            f"{path.as_posix()}: missing plugins.updater.pubkey."
+        ) from exc
+    if not isinstance(pubkey, str) or not pubkey.strip():
+        raise ManifestVerificationError(
+            f"{path.as_posix()}: plugins.updater.pubkey must be a non-empty string."
+        )
+    return pubkey.strip()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -215,6 +301,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Expected NSIS setup executable file name in release-asset metadata.",
     )
+    parser.add_argument(
+        "--tauri-conf",
+        type=Path,
+        default=None,
+        help="Optional tauri.conf.json used to verify signature key identity.",
+    )
+    parser.add_argument(
+        "--uploaded-signature",
+        type=Path,
+        default=None,
+        help="Optional downloaded draft .sig contents to compare with latest.json.",
+    )
     args = parser.parse_args(argv)
 
     if not args.manifest.is_file():
@@ -229,8 +327,19 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_name = args.setup_exe_name or infer_setup_exe_name(args.expected_version)
     notes = args.notes_file.read_text(encoding="utf-8")
-
+    pubkey = None
+    uploaded_sig = None
     try:
+        if args.tauri_conf is not None:
+            if not args.tauri_conf.is_file():
+                raise ManifestVerificationError(f"tauri.conf not found: {args.tauri_conf}")
+            pubkey = load_pubkey_from_tauri_conf(args.tauri_conf)
+        if args.uploaded_signature is not None:
+            if not args.uploaded_signature.is_file():
+                raise ManifestVerificationError(
+                    f"uploaded signature not found: {args.uploaded_signature}"
+                )
+            uploaded_sig = args.uploaded_signature.read_text(encoding="utf-8")
         verify_manifest(
             load_json_object(args.manifest),
             expected_version=args.expected_version,
@@ -239,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
             expected_repo=args.repo,
             release_assets=load_release_assets(args.release_assets),
             setup_exe_name=setup_name,
+            pubkey_b64=pubkey,
+            uploaded_signature_text=uploaded_sig,
         )
     except ManifestVerificationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -13,6 +13,31 @@ pub struct PendingAppUpdate {
     downloaded_bytes: Option<Vec<u8>>,
     downloading: bool,
     download_generation: u64,
+    /// Monotonic revision bumped on material pending-state transitions.
+    revision: u64,
+}
+
+pub fn bump_revision(pending: &mut PendingAppUpdate) -> u64 {
+    pending.revision = pending.revision.wrapping_add(1);
+    pending.revision
+}
+
+pub fn apply_check_result(
+    pending: &mut PendingAppUpdate,
+    check_revision: u64,
+    update: Option<tauri_plugin_updater::Update>,
+) -> Result<Option<AppUpdateRelease>, PendingUpdateError> {
+    if pending.revision != check_revision {
+        // Stale check — leave verified bytes / current pending update untouched.
+        return Ok(pending.update.as_ref().map(release_from_update));
+    }
+    match update {
+        Some(update) => Ok(Some(replace_pending_update(pending, update)?)),
+        None => {
+            clear_pending_update(pending)?;
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -66,6 +91,7 @@ pub fn replace_pending_update(
         return Err(PendingUpdateError::AlreadyDownloading);
     }
     let release = release_from_update(&update);
+    bump_revision(pending);
     pending.version = Some(release.version.clone());
     pending.update = Some(update);
     pending.downloaded_bytes = None;
@@ -77,7 +103,11 @@ pub fn clear_pending_update(pending: &mut PendingAppUpdate) -> Result<(), Pendin
     if pending.downloading {
         return Err(PendingUpdateError::AlreadyDownloading);
     }
-    *pending = PendingAppUpdate::default();
+    let revision = pending.revision.wrapping_add(1);
+    *pending = PendingAppUpdate {
+        revision,
+        ..Default::default()
+    };
     Ok(())
 }
 
@@ -106,16 +136,16 @@ pub fn begin_download(
     if pending.downloading {
         return Err(PendingUpdateError::AlreadyDownloading);
     }
-    let Some(update) = pending.update.as_ref() else {
-        return Err(PendingUpdateError::MissingPendingUpdate);
+    let update = match pending.update.as_ref() {
+        Some(update) if update.version == expected_version => update.clone(),
+        Some(_) => return Err(PendingUpdateError::VersionMismatch),
+        None => return Err(PendingUpdateError::MissingPendingUpdate),
     };
-    if update.version != expected_version {
-        return Err(PendingUpdateError::VersionMismatch);
-    }
     pending.download_generation = pending.download_generation.wrapping_add(1);
+    bump_revision(pending);
     pending.downloading = true;
     pending.downloaded_bytes = None;
-    Ok((update.clone(), pending.download_generation))
+    Ok((update, pending.download_generation))
 }
 
 /// Store verified bytes only when they still belong to the active download generation/version.
@@ -163,6 +193,7 @@ pub fn take_verified_install(
         .ok_or(PendingUpdateError::MissingVerifiedBytes)?;
     pending.version = None;
     pending.downloading = false;
+    bump_revision(pending);
     Ok((update, bytes))
 }
 
@@ -208,12 +239,13 @@ pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<Option<AppUpdateRelease>, String> {
-    {
+    let check_revision = {
         let pending = lock_pending(&state)?;
         if pending.downloading {
             return Err(map_pending_error(PendingUpdateError::AlreadyDownloading));
         }
-    }
+        pending.revision
+    };
 
     let app_for_exit = app.clone();
     let update = app
@@ -228,15 +260,7 @@ pub async fn check_app_update(
         .map_err(|error| user_safe_error(error))?;
 
     let mut pending = lock_pending(&state)?;
-    match update {
-        Some(update) => Ok(Some(
-            replace_pending_update(&mut pending, update).map_err(map_pending_error)?,
-        )),
-        None => {
-            clear_pending_update(&mut pending).map_err(map_pending_error)?;
-            Ok(None)
-        }
-    }
+    apply_check_result(&mut pending, check_revision, update).map_err(map_pending_error)
 }
 
 #[tauri::command]
@@ -534,6 +558,52 @@ mod tests {
         assert_eq!(pending.version.as_deref(), Some("0.15.0"));
         assert_eq!(pending.downloaded_bytes, Some(vec![1]));
         assert!(pending.downloading);
+    }
+
+    #[test]
+    fn stale_check_cannot_discard_verified_bytes() {
+        let mut pending = PendingAppUpdate {
+            version: Some("0.15.0".into()),
+            downloaded_bytes: Some(vec![1, 2, 3]),
+            revision: 5,
+            ..Default::default()
+        };
+        let result = apply_check_result(&mut pending, 4, None).expect("stale apply");
+        assert!(result.is_none());
+        assert_eq!(pending.downloaded_bytes, Some(vec![1, 2, 3]));
+        assert_eq!(pending.version.as_deref(), Some("0.15.0"));
+        assert_eq!(pending.revision, 5);
+    }
+
+    #[test]
+    fn begin_download_bumps_revision_so_stale_checks_miss() {
+        let mut pending = PendingAppUpdate {
+            version: Some("0.15.0".into()),
+            downloaded_bytes: Some(vec![9]),
+            revision: 2,
+            ..Default::default()
+        };
+        let check_revision = pending.revision;
+        bump_revision(&mut pending);
+        apply_check_result(&mut pending, check_revision, None).expect("stale");
+        assert_eq!(pending.downloaded_bytes, Some(vec![9]));
+        assert_eq!(pending.version.as_deref(), Some("0.15.0"));
+        assert_eq!(pending.revision, 3);
+    }
+
+    #[test]
+    fn matching_check_revision_can_clear_pending_state() {
+        let mut pending = PendingAppUpdate {
+            version: Some("0.15.0".into()),
+            downloaded_bytes: Some(vec![9]),
+            revision: 3,
+            ..Default::default()
+        };
+        let result = apply_check_result(&mut pending, 3, None).expect("fresh clear");
+        assert!(result.is_none());
+        assert!(pending.version.is_none());
+        assert!(pending.downloaded_bytes.is_none());
+        assert_eq!(pending.revision, 4);
     }
 
     #[test]

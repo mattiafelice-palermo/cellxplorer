@@ -31,30 +31,59 @@ type AppUpdateModalProps = {
 
 function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
   const lines = parseReleaseNoteLines(release.notes);
+  const blocks: Array<
+    | { kind: "text"; text: string; key: string }
+    | { kind: "bullets"; items: string[]; key: string }
+  > = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.kind === "text") {
+      blocks.push({ kind: "text", text: line.text, key: `${index}:text:${line.text}` });
+      continue;
+    }
+    const items: string[] = [line.text];
+    let cursor = index + 1;
+    while (cursor < lines.length && lines[cursor].kind === "bullet") {
+      items.push(lines[cursor].text);
+      cursor += 1;
+    }
+    blocks.push({
+      kind: "bullets",
+      items,
+      key: `${index}:bullets:${items.join("\n")}`,
+    });
+    index = cursor - 1;
+  }
 
   return (
     <Paper withBorder radius="md" p="sm">
       <ScrollArea.Autosize mah={220} type="auto">
         <Stack gap={6}>
-          {lines.map((line, index) =>
-            line.kind === "bullet" ? (
-              <Text
-                component="li"
-                size="sm"
-                key={`${index}:${line.kind}:${line.text}`}
-                ml="md"
-                style={{ display: "list-item", listStyleType: "disc" }}
-              >
-                {line.text}
+          {blocks.map((block) =>
+            block.kind === "text" ? (
+              <Text key={block.key} size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                {block.text}
               </Text>
             ) : (
-              <Text
-                size="sm"
-                key={`${index}:${line.kind}:${line.text}`}
-                style={{ whiteSpace: "pre-wrap" }}
+              <Stack
+                key={block.key}
+                component="ul"
+                gap={6}
+                m={0}
+                pl="md"
+                style={{ listStyleType: "disc" }}
               >
-                {line.text}
-              </Text>
+                {block.items.map((item, itemIndex) => (
+                  <Text
+                    component="li"
+                    size="sm"
+                    key={`${block.key}:${itemIndex}:${item}`}
+                  >
+                    {item}
+                  </Text>
+                ))}
+              </Stack>
             ),
           )}
         </Stack>

@@ -22,6 +22,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: cellxplorer-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-release:
     name: Build Windows release
@@ -264,18 +268,44 @@ jobs:
             $json
           )
 
+      - name: Download staged draft manifest and signature
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = Get-Content release-assets.json -Raw | ConvertFrom-Json
+          if ($assets -isnot [System.Array]) { $assets = @($assets) }
+          $version = "${{ steps.version.outputs.version }}".TrimStart('v')
+          $setupName = "CellXplorer_${version}_x64-setup.exe"
+          $sigName = "$setupName.sig"
+          $latest = $assets | Where-Object { $_.name -eq "latest.json" } | Select-Object -First 1
+          $sig = $assets | Where-Object { $_.name -eq $sigName } | Select-Object -First 1
+          if (-not $latest) { Write-Error "Draft release is missing latest.json asset."; exit 1 }
+          if (-not $sig) { Write-Error "Draft release is missing $sigName asset."; exit 1 }
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/octet-stream"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "cellxplorer-release-workflow"
+          }
+          Invoke-WebRequest -Uri $latest.url -Headers $headers -OutFile uploaded-latest.json
+          Invoke-WebRequest -Uri $sig.url -Headers $headers -OutFile uploaded-setup.sig
+
       - name: Verify updater manifest
         if: github.ref_type == 'tag'
         shell: pwsh
         run: |
           $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
           python scripts/verify_updater_manifest.py `
-            --manifest "${{ steps.manifest.outputs.path }}" `
+            --manifest uploaded-latest.json `
             --expected-version "${{ steps.version.outputs.version }}" `
             --notes-file release-notes.md `
             --owner $owner `
             --repo $repo `
-            --release-assets release-assets.json
+            --release-assets release-assets.json `
+            --tauri-conf src-tauri/tauri.conf.json `
+            --uploaded-signature uploaded-setup.sig
 
       - name: Publish verified draft release
         if: github.ref_type == 'tag'

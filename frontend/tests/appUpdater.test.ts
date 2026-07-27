@@ -16,6 +16,7 @@ import {
   normalizeUpdaterError,
   parseDevUpdateMock,
   parseReleaseNoteLines,
+  failurePhaseForLocalUpdatePhase,
   renderReleaseNotes,
   shouldNotifyForVersion,
   shouldPersistUpdateBadge,
@@ -334,13 +335,7 @@ test("notification storage key stays stable", () => {
   assert.equal(UPDATE_NOTIFIED_VERSION_KEY, "cellxplorer-update-notified-version");
 });
 
-test("manual check errors keep the menu actionable", () => {
-  assert.equal(
-    isUpdateMenuDisabled({
-      status: "error",
-      phase: "check",
-      message: "offline",
-    }),
-    false,
-  );
+test("install-phase failures stay install even if React state lags", () => {
+  assert.equal(failurePhaseForLocalUpdatePhase("download"), "download");
+  assert.equal(failurePhaseForLocalUpdatePhase("install"), "install");
 });

@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import re
 import sys
@@ -35,8 +36,7 @@ def step_names(workflow: str) -> list[str]:
 
 
 def step_index(workflow: str, name: str) -> int:
-    names = step_names(workflow)
-    return names.index(name)
+    return step_names(workflow).index(name)
 
 
 NOTES = "- Signed in-app updates through the power menu.\n"
@@ -44,6 +44,32 @@ SETUP_EXE = "CellXplorer_0.15.0_x64-setup.exe"
 OWNER = "mattiafelice-palermo"
 REPO = "cellxplorer"
 ASSET_ID = 987654321
+KEY_ID = b"\x11\x22\x33\x44\x55\x66\x77\x88"
+OTHER_KEY_ID = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x11"
+
+
+def encode_tauri_pubkey(key_id: bytes) -> str:
+    blob = b"Ed" + key_id + (b"\x00" * 32)
+    pub_file = (
+        "untrusted comment: minisign public key: TESTKEY\n"
+        f"{base64.b64encode(blob).decode('ascii')}\n"
+    )
+    return base64.b64encode(pub_file.encode("utf-8")).decode("ascii")
+
+
+def encode_tauri_sig(key_id: bytes) -> str:
+    blob = b"ED" + key_id + (b"\x00" * 64)
+    sig_file = (
+        "untrusted comment: signature from tauri secret key\n"
+        f"{base64.b64encode(blob).decode('ascii')}\n"
+        "trusted comment: timestamp:1\tfile:setup.exe\n"
+        f"{base64.b64encode(b'global').decode('ascii')}\n"
+    )
+    return base64.b64encode(sig_file.encode("utf-8")).decode("ascii")
+
+
+SIGNATURE = encode_tauri_sig(KEY_ID)
+PUBKEY = encode_tauri_pubkey(KEY_ID)
 
 
 def sample_manifest(**overrides) -> dict:
@@ -55,7 +81,7 @@ def sample_manifest(**overrides) -> dict:
                 "url": (
                     f"https://api.github.com/repos/{OWNER}/{REPO}/releases/assets/{ASSET_ID}"
                 ),
-                "signature": "dGVzdA==",
+                "signature": SIGNATURE,
             }
         },
     }
@@ -107,6 +133,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("uploadWorkflowArtifacts: true", self.release)
         self.assertNotIn("inputs.publish", self.release)
 
+    def test_concurrency_serializes_release_runs(self):
+        self.assertIn("group: cellxplorer-release-${{ github.ref }}", self.release)
+        self.assertIn("cancel-in-progress: false", self.release)
+
     def test_stable_tag_and_main_ancestry_guards_exist(self):
         self.assertIn("python scripts/release_tag.py --tag", self.release)
         self.assertIn("git merge-base --is-ancestor", self.release)
@@ -124,6 +154,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             step_index(self.release, "Verify updater manifest"),
         )
         self.assertLess(
+            step_index(self.release, "Download staged draft manifest and signature"),
+            step_index(self.release, "Verify updater manifest"),
+        )
+        self.assertLess(
             step_index(self.release, "Verify updater manifest"),
             step_index(self.release, "Publish verified draft release"),
         )
@@ -131,6 +165,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_manifest_is_read_from_workspace_root(self):
         self.assertIn('Join-Path $env:GITHUB_WORKSPACE "latest.json"', self.release)
         self.assertNotIn("src-tauri/target", self.release)
+
+    def test_uploaded_manifest_and_signature_are_verified(self):
+        self.assertIn("uploaded-latest.json", self.release)
+        self.assertIn("uploaded-setup.sig", self.release)
+        self.assertIn("--tauri-conf src-tauri/tauri.conf.json", self.release)
+        self.assertIn("--uploaded-signature uploaded-setup.sig", self.release)
 
     def test_all_third_party_actions_are_full_sha_pinned(self):
         refs = []
@@ -177,6 +217,8 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             expected_repo=REPO,
             release_assets=sample_assets(),
             setup_exe_name=SETUP_EXE,
+            pubkey_b64=PUBKEY,
+            uploaded_signature_text=SIGNATURE,
         )
 
     def test_rejects_browser_download_url_shape(self):
@@ -212,6 +254,46 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
                 expected_owner=OWNER,
                 expected_repo=REPO,
                 release_assets=sample_assets(name="wrong-setup.exe"),
+            )
+
+    def test_rejects_missing_latest_json_asset(self):
+        assets = [
+            {"id": ASSET_ID, "name": SETUP_EXE},
+            {"id": ASSET_ID + 1, "name": f"{SETUP_EXE}.sig"},
+        ]
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=assets,
+            )
+
+    def test_rejects_uploaded_signature_mismatch(self):
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+                uploaded_signature_text=encode_tauri_sig(OTHER_KEY_ID),
+            )
+
+    def test_rejects_mismatched_signing_key_identity(self):
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+                pubkey_b64=encode_tauri_pubkey(OTHER_KEY_ID),
+                uploaded_signature_text=SIGNATURE,
             )
 
     def test_rejects_missing_sig_wrong_version_notes_or_empty_signature(self):
@@ -269,6 +351,8 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             manifest_path = root / "latest.json"
             notes_path = root / "notes.md"
             assets_path = root / "assets.json"
+            sig_path = root / "setup.sig"
+            conf_path = root / "tauri.conf.json"
             manifest_path.write_text(
                 __import__("json").dumps(sample_manifest()),
                 encoding="utf-8",
@@ -276,6 +360,11 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
             notes_path.write_text(NOTES, encoding="utf-8")
             assets_path.write_text(
                 __import__("json").dumps(sample_assets()),
+                encoding="utf-8",
+            )
+            sig_path.write_text(SIGNATURE, encoding="utf-8")
+            conf_path.write_text(
+                __import__("json").dumps({"plugins": {"updater": {"pubkey": PUBKEY}}}),
                 encoding="utf-8",
             )
             code = verify_updater_manifest.main(
@@ -292,6 +381,10 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
                     REPO,
                     "--release-assets",
                     str(assets_path),
+                    "--tauri-conf",
+                    str(conf_path),
+                    "--uploaded-signature",
+                    str(sig_path),
                 ]
             )
             self.assertEqual(code, 0)

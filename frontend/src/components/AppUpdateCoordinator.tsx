@@ -22,6 +22,7 @@ import {
   canDismissUpdateModal,
   checkAppUpdateTauri,
   downloadAppUpdateTauri,
+  failurePhaseForLocalUpdatePhase,
   installAppUpdateTauri,
   mergeCheckResult,
   mockRelease,
@@ -88,6 +89,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
   const checkFeedbackSource = useRef<UpdateCheckSource>("automatic");
+  const checkEpochRef = useRef(0);
   const downloadInFlight = useRef(false);
   const mountedRef = useRef(true);
 
@@ -162,6 +164,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       }
 
       checkFeedbackSource.current = source;
+      const epochAtStart = checkEpochRef.current;
       dispatch({ type: "check_started", source });
 
       const run = (async () => {
@@ -173,18 +176,46 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             devMock === "download-error" ||
             devMock === "install-error"
           ) {
+            if (
+              source === "automatic" &&
+              (epochAtStart !== checkEpochRef.current ||
+                shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
+            ) {
+              return;
+            }
             applyRelease(mockRelease(), checkFeedbackSource.current);
             return;
           }
           if (!tauri) {
+            if (
+              source === "automatic" &&
+              (epochAtStart !== checkEpochRef.current ||
+                shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
+            ) {
+              return;
+            }
             applyRelease(null, checkFeedbackSource.current);
             return;
           }
           const release = await checkAppUpdateTauri();
           if (!mountedRef.current) return;
+          if (
+            source === "automatic" &&
+            (epochAtStart !== checkEpochRef.current ||
+              shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
+          ) {
+            return;
+          }
           applyRelease(release, checkFeedbackSource.current);
         } catch (error) {
           if (!mountedRef.current) return;
+          if (
+            source === "automatic" &&
+            (epochAtStart !== checkEpochRef.current ||
+              shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current))
+          ) {
+            return;
+          }
           const feedbackSource = checkFeedbackSource.current;
           const message = normalizeUpdaterError(error, "Could not check for updates.");
           if (feedbackSource === "automatic") {
@@ -244,6 +275,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const openUpdateModal = useCallback(() => {
     if (stateRef.current.status === "available") {
+      checkEpochRef.current += 1;
       setModalOpen(true);
     }
   }, []);
@@ -260,7 +292,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     async (release: AppUpdateRelease) => {
       if (downloadInFlight.current) return;
       downloadInFlight.current = true;
+      checkEpochRef.current += 1;
       dispatch({ type: "download_started", release });
+      let phase: "download" | "install" = "download";
 
       const pushProgress = (event: AppUpdateDownloadEvent) => {
         dispatch({ type: "download_event", release, event });
@@ -274,6 +308,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         }
 
         if (!mountedRef.current) return;
+        phase = "install";
         dispatch({ type: "launching", release });
 
         try {
@@ -303,7 +338,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         if (!mountedRef.current) return;
         const message = normalizeUpdaterError(error, "Could not complete the update.");
-        if (stateRef.current.status === "launching" || devMock === "install-error") {
+        const failurePhase = failurePhaseForLocalUpdatePhase(
+          phase === "install" || devMock === "install-error" ? "install" : "download",
+        );
+        if (failurePhase === "install") {
           dispatch({
             type: "install_error",
             release,
@@ -321,6 +359,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   );
 
   const downloadAndLaunchInstaller = useCallback(async () => {
+    if (checkInFlight.current) {
+      await checkInFlight.current;
+    }
     const current = stateRef.current;
     if (current.status !== "available") return;
     const confirmed = await confirmDirtyWorkspace(
@@ -328,6 +369,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       "The installer will close CellXplorer and unsaved plot changes in open analysis tabs will be lost.",
     );
     if (!confirmed) return;
+    checkEpochRef.current += 1;
     setModalOpen(true);
     await runDownload(current.release);
   }, [runDownload]);
@@ -359,6 +401,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const handleMenuClick = useCallback(() => {
     const current = stateRef.current;
     if (current.status === "available") {
+      checkEpochRef.current += 1;
       setModalOpen(true);
       return;
     }
