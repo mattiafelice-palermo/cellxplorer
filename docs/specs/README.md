@@ -293,6 +293,12 @@ Rules:
   follow-ups in progress — not merge-ready until installed Windows body-click matrix is recorded.
   Review: [020-windows-update-notification-and-manual-modal-review.md](reviews/020-windows-update-notification-and-manual-modal-review.md).
   Branch `feature/windows-update-notification`.
+- [021-stable-beta-app-identities.md](021-stable-beta-app-identities.md)
+  — side-by-side Stable and Beta Windows application identities from one source tree: separate
+  product/identifier/installer, Beta blue theme and badge, channel-aware build commands, and
+  fail-closed Beta updater until Spec 023. Data isolation and Beta feed are Specs 022–023.
+  Review: [021-stable-beta-app-identities-review.md](reviews/021-stable-beta-app-identities-review.md).
+  Branch `feature/stable-beta-app-identities`.
 
 ## Assets
 
