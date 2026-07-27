@@ -383,6 +383,67 @@ export function shouldNotifyForVersion(
   return notifiedVersion !== version;
 }
 
+export const UPDATE_NOTIFICATION_TAG = "cellxplorer-app-update";
+export const UPDATE_NOTIFICATION_KIND = "cellxplorer-app-update";
+
+export type UpdateDiscoveryFeedback =
+  | "open-modal"
+  | "native-notification"
+  | "badge-only"
+  | "silent";
+
+/**
+ * Choose update-discovery feedback from the effective check source.
+ * Manual results always open the modal; automatic results never do.
+ */
+export function resolveUpdateDiscoveryFeedback(options: {
+  source: UpdateCheckSource;
+  release: AppUpdateRelease | null;
+  notificationsEnabled: boolean;
+  notifiedVersion: string | null;
+}): UpdateDiscoveryFeedback {
+  if (!options.release) {
+    return options.source === "manual" ? "open-modal" : "silent";
+  }
+  if (options.source === "manual") {
+    return "open-modal";
+  }
+  if (
+    options.notificationsEnabled &&
+    shouldNotifyForVersion(options.release.version, options.notifiedVersion)
+  ) {
+    return "native-notification";
+  }
+  return "badge-only";
+}
+
+/** When a manual check joins an in-flight automatic check, the result is manual. */
+export function resolveEffectiveCheckSource(
+  startedSource: UpdateCheckSource,
+  feedbackSource: UpdateCheckSource,
+): UpdateCheckSource {
+  return feedbackSource === "manual" || startedSource === "manual" ? "manual" : "automatic";
+}
+
+export function isValidUpdateNotificationActivation(payload: {
+  tag?: unknown;
+  kind?: unknown;
+  version?: unknown;
+}): boolean {
+  const version = typeof payload.version === "string" ? payload.version.trim() : "";
+  if (!version) return false;
+  const tag = typeof payload.tag === "string" ? payload.tag : null;
+  const kind = typeof payload.kind === "string" ? payload.kind : null;
+  if (tag !== null && tag !== UPDATE_NOTIFICATION_TAG) return false;
+  if (kind !== null && kind !== UPDATE_NOTIFICATION_KIND) return false;
+  return tag === UPDATE_NOTIFICATION_TAG || kind === UPDATE_NOTIFICATION_KIND;
+}
+
+/** Notification activation never starts download/install; it only opens the modal. */
+export function notificationActivationAction(): "open-modal" {
+  return "open-modal";
+}
+
 export function readNotifiedVersion(storage: Pick<Storage, "getItem">): string | null {
   return storage.getItem(UPDATE_NOTIFIED_VERSION_KEY);
 }
@@ -392,6 +453,11 @@ export function writeNotifiedVersion(
   version: string,
 ): void {
   storage.setItem(UPDATE_NOTIFIED_VERSION_KEY, version);
+}
+
+export async function showMainWindowForUpdateTauri(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("show_main_window_for_update");
 }
 
 export function mergeCheckResult(

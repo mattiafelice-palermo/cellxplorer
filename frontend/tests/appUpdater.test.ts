@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   DEFAULT_APP_UPDATE_PREFERENCES,
   UPDATE_NOTIFIED_VERSION_KEY,
+  UPDATE_NOTIFICATION_KIND,
+  UPDATE_NOTIFICATION_TAG,
   UPDATE_PREFERENCES_KEY,
   accumulateDownloadProgress,
   appUpdateIntervalMs,
@@ -14,20 +16,26 @@ import {
   getUpdateMenuLabel,
   isProtectedUpdateFlow,
   isUpdateMenuDisabled,
+  isValidUpdateNotificationActivation,
   loadAppUpdatePreferences,
   mergeCheckResult,
   mockRelease,
   normalizeUpdaterError,
+  notificationActivationAction,
   parseDevUpdateMock,
   parseReleaseNoteLines,
   failurePhaseForLocalUpdatePhase,
   explainUpdateCheckFailure,
+  readNotifiedVersion,
   renderReleaseNotes,
+  resolveEffectiveCheckSource,
+  resolveUpdateDiscoveryFeedback,
   shouldNotifyForVersion,
   shouldPersistUpdateBadge,
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
   saveAppUpdatePreferences,
+  writeNotifiedVersion,
 } from "../src/appUpdater.ts";
 
 test("automatic versus manual no-update behavior", () => {
@@ -408,6 +416,169 @@ test("invalid update preferences fail safely to defaults", () => {
   };
   assert.deepEqual(loadAppUpdatePreferences(malformed), DEFAULT_APP_UPDATE_PREFERENCES);
   assert.deepEqual(loadAppUpdatePreferences(invalid), DEFAULT_APP_UPDATE_PREFERENCES);
+});
+
+test("update discovery feedback is source-aware", () => {
+  const release = mockRelease("0.16.0");
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "manual",
+      release,
+      notificationsEnabled: true,
+      notifiedVersion: null,
+    }),
+    "open-modal",
+  );
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "automatic",
+      release,
+      notificationsEnabled: true,
+      notifiedVersion: null,
+    }),
+    "native-notification",
+  );
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "automatic",
+      release,
+      notificationsEnabled: false,
+      notifiedVersion: null,
+    }),
+    "badge-only",
+  );
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "automatic",
+      release,
+      notificationsEnabled: true,
+      notifiedVersion: "0.16.0",
+    }),
+    "badge-only",
+  );
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "automatic",
+      release: null,
+      notificationsEnabled: true,
+      notifiedVersion: null,
+    }),
+    "silent",
+  );
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "manual",
+      release: null,
+      notificationsEnabled: true,
+      notifiedVersion: null,
+    }),
+    "open-modal",
+  );
+});
+
+test("manual coalesced with automatic check is treated as manual", () => {
+  assert.equal(resolveEffectiveCheckSource("automatic", "manual"), "manual");
+  assert.equal(resolveEffectiveCheckSource("manual", "automatic"), "manual");
+  assert.equal(resolveEffectiveCheckSource("automatic", "automatic"), "automatic");
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: resolveEffectiveCheckSource("automatic", "manual"),
+      release: mockRelease("0.16.0"),
+      notificationsEnabled: true,
+      notifiedVersion: null,
+    }),
+    "open-modal",
+  );
+});
+
+test("manual discovery records the version as seen", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  const release = mockRelease("0.16.0");
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "manual",
+      release,
+      notificationsEnabled: true,
+      notifiedVersion: readNotifiedVersion(storage),
+    }),
+    "open-modal",
+  );
+  writeNotifiedVersion(storage, release.version);
+  assert.equal(readNotifiedVersion(storage), "0.16.0");
+  assert.equal(
+    resolveUpdateDiscoveryFeedback({
+      source: "automatic",
+      release,
+      notificationsEnabled: true,
+      notifiedVersion: readNotifiedVersion(storage),
+    }),
+    "badge-only",
+  );
+});
+
+test("notification failure keeps available badge state", () => {
+  const release = mockRelease("0.16.0");
+  const available = appUpdateReducer(
+    { status: "checking", source: "automatic" },
+    { type: "check_success", source: "automatic", release },
+  );
+  assert.equal(available.status, "available");
+  assert.equal(shouldPersistUpdateBadge(available), true);
+  // A failed native notification must not clear available state or the badge.
+  assert.deepEqual(available, { status: "available", release });
+});
+
+test("notification activation accepts only expected tag/kind and version", () => {
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      tag: UPDATE_NOTIFICATION_TAG,
+      kind: UPDATE_NOTIFICATION_KIND,
+      version: "0.16.0",
+    }),
+    true,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      tag: UPDATE_NOTIFICATION_TAG,
+      version: "0.16.0",
+    }),
+    true,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      kind: UPDATE_NOTIFICATION_KIND,
+      version: "0.16.0",
+    }),
+    true,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      tag: "other",
+      kind: UPDATE_NOTIFICATION_KIND,
+      version: "0.16.0",
+    }),
+    false,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      tag: UPDATE_NOTIFICATION_TAG,
+      version: "   ",
+    }),
+    false,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      version: "0.16.0",
+    }),
+    false,
+  );
+  assert.equal(notificationActivationAction(), "open-modal");
 });
 
 test("install-phase failures stay install even if React state lags", () => {

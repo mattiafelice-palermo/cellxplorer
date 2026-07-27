@@ -286,6 +286,10 @@ Rules:
   0.15.0. Review: [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
   (**Implemented**; review follow-ups addressed — do not push `v0.15.0` until repo is public and
   017/018 re-review is clean). Branch `feature/updater-017-019`.
+- [020-windows-update-notification-and-manual-modal.md](020-windows-update-notification-and-manual-modal.md)
+  — native Windows notification for automatic update discovery; manual Check for updates opens the
+  existing update modal directly with no Mantine discovery toaster. **Implemented** (0.16.0). Branch
+  `feature/windows-update-notification`.
 
 ## Assets
 

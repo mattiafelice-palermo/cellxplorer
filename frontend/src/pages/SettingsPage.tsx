@@ -1599,10 +1599,10 @@ export function SettingsPage() {
               >
                 <Group justify="space-between" wrap="nowrap">
                   <div>
-                    <Text fw={600}>Show update notification</Text>
+                    <Text fw={600}>Show Windows update notification</Text>
                     <Text size="sm" c="dimmed">
-                      Show a toaster when an automatic check finds a new version. The power-menu
-                      update badge remains available even when this is disabled.
+                      Show a Windows notification when an automatic check finds a new version.
+                      The power-menu update badge remains available when this is disabled.
                     </Text>
                   </div>
                   <Switch
@@ -1613,7 +1613,7 @@ export function SettingsPage() {
                         notificationsEnabled: event.currentTarget.checked,
                       }))
                     }
-                    aria-label="Show update notification"
+                    aria-label="Show Windows update notification"
                   />
                 </Group>
               </Paper>

@@ -1,6 +1,6 @@
 [package]
 name = "cellxplorer"
-version = "0.15.5"
+version = "0.16.0"
 description = "CellXplorer desktop app"
 authors = ["CellXplorer"]
 edition = "2021"
@@ -18,6 +18,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2.10"
 serde = { version = "1", features = ["derive"] }
+tauri-plugin-notification = "2"
 
 # Local packaging runs rebuild this crate every time (tauri-build re-runs its
 # build script), and the release default of no incremental data meant a full

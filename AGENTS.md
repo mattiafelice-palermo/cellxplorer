@@ -155,6 +155,7 @@ Cellxplorer/
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   └── RecognitionProgress.tsx
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
+│   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)

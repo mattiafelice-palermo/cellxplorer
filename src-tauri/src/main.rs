@@ -101,6 +101,19 @@ fn show_main_window(app: &AppHandle) {
 }
 
 #[tauri::command]
+fn show_main_window_for_update(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window is unavailable.".to_string())?;
+    window
+        .unminimize()
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn is_main_window_visible(app: AppHandle) -> bool {
     app.get_webview_window("main")
         .and_then(|window| window.is_visible().ok())
@@ -452,6 +465,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(PendingAppUpdate::default()))
         .invoke_handler(tauri::generate_handler![
@@ -469,6 +483,7 @@ fn main() {
             restart_app,
             set_autostart_enabled,
             set_tray_status,
+            show_main_window_for_update,
             startup_mode,
             take_pending_deep_link
         ])
