@@ -91,11 +91,19 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)
         self.assertNotIn("/IM cellxplorer.exe", hooks)
 
-    def test_beta_update_commands_are_fail_closed_until_spec_023(self):
+    def test_stable_and_beta_updater_endpoints_are_channel_specific(self):
+        stable = json.loads(STABLE_CONF.read_text(encoding="utf-8"))
+        beta = deep_merge(stable, json.loads(BETA_OVERLAY.read_text(encoding="utf-8")))
+        stable_endpoint = stable["plugins"]["updater"]["endpoints"][0]
+        beta_endpoint = beta["plugins"]["updater"]["endpoints"][0]
+        self.assertIn("release-channels/stable/latest.json", stable_endpoint)
+        self.assertIn("release-channels/beta/latest.json", beta_endpoint)
+        self.assertNotIn("/releases/latest/", stable_endpoint)
+        self.assertNotIn("/releases/latest/", beta_endpoint)
+
+    def test_beta_self_updater_gate_is_removed(self):
         source = APP_UPDATES_RS.read_text(encoding="utf-8")
-        self.assertIn("reject_beta_channel_updates", source)
-        self.assertIn("Spec 023", source)
-        self.assertIn("reject_beta_channel_updates(&app)?;", source)
+        self.assertNotIn("reject_beta_channel_updates", source)
 
     def test_nsis_template_is_shared(self):
         nsis = NSIS.read_text(encoding="utf-8")

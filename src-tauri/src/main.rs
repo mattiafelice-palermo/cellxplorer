@@ -3,6 +3,7 @@
 mod app_channel;
 mod app_updates;
 mod beta_bootstrap;
+mod beta_installer;
 mod update_notifications;
 
 use app_channel::{resolve_data_root, AppChannel};
@@ -516,10 +517,16 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(PendingAppUpdate::default()))
+        .manage(Mutex::new(beta_installer::PendingBetaInstall::default()))
         .invoke_handler(tauri::generate_handler![
             app_updates::check_app_update,
             app_updates::download_app_update,
             app_updates::install_app_update,
+            beta_installer::detect_beta_installation,
+            beta_installer::check_beta_install,
+            beta_installer::download_beta_install,
+            beta_installer::install_beta,
+            beta_installer::open_beta_application,
             apply_beta_bootstrap,
             backend_api_base,
             is_autostart_enabled,
@@ -535,7 +542,8 @@ fn main() {
             show_main_window_for_update,
             startup_mode,
             take_pending_deep_link,
-            update_notifications::show_update_notification
+            update_notifications::show_update_notification,
+            update_notifications::show_beta_install_notification
         ])
         .setup(move |app| {
             let app_channel = AppChannel::from_identifier(app.config().identifier.as_str())

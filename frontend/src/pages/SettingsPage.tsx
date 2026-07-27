@@ -67,6 +67,7 @@ import {
   type AppUpdatePreferences,
 } from "../appUpdater";
 import { useOptionalAppUpdate } from "../components/AppUpdateCoordinator";
+import { useBetaInstall } from "../components/BetaInstallCoordinator";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -129,11 +130,7 @@ export function SettingsPage() {
     savedUpdatePreferences,
   );
   const appUpdate = useOptionalAppUpdate();
-  useEffect(() => {
-    if (APP_BRANDING.isBeta && location.pathname.endsWith("/updates")) {
-      navigate("/settings", { replace: true });
-    }
-  }, [location.pathname, navigate]);
+  const betaInstall = useBetaInstall();
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -639,9 +636,13 @@ export function SettingsPage() {
   const updatePreferencesDirty =
     JSON.stringify(updatePreferences) !== JSON.stringify(savedUpdatePreferences);
   const saveUpdatePreferences = () => {
+    const betaOptInEnabled = updatePreferences.betaUpdatesEnabled;
     saveAppUpdatePreferences(window.localStorage, updatePreferences);
     setSavedUpdatePreferences(updatePreferences);
     window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
+    if (!APP_BRANDING.isBeta && betaOptInEnabled) {
+      void betaInstall?.checkForBeta("manual");
+    }
     notifications.show({
       message: "Application update settings saved.",
       color: "teal",
@@ -679,9 +680,7 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
-          {!APP_BRANDING.isBeta ? (
-            <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
-          ) : null}
+          <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
           <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
@@ -1528,7 +1527,6 @@ export function SettingsPage() {
           </Paper>
         </Tabs.Panel>
 
-        {!APP_BRANDING.isBeta ? (
         <Tabs.Panel value="updates" pt="lg">
           <Paper withBorder p="lg">
             <Stack gap="lg">
@@ -1538,6 +1536,22 @@ export function SettingsPage() {
                   Choose how often the installed Windows app checks for a newer signed release.
                 </Text>
               </div>
+
+              {APP_BRANDING.isBeta ? (
+                <Paper
+                  withBorder
+                  p="md"
+                  bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+                >
+                  <Stack gap={4}>
+                    <Text fw={600}>Beta release channel</Text>
+                    <Text size="sm" c="dimmed">
+                      This installation receives CellXplorer Beta updates. Stable CellXplorer remains
+                      a separate application.
+                    </Text>
+                  </Stack>
+                </Paper>
+              ) : null}
 
               {!isTauriApp() ? (
                 <Alert color="gray">
@@ -1644,17 +1658,18 @@ export function SettingsPage() {
                 </Group>
               </Paper>
 
+              {!APP_BRANDING.isBeta ? (
               <Paper
                 withBorder
                 p="md"
                 bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
               >
-                <Group justify="space-between" wrap="nowrap">
+                <Group justify="space-between" wrap="nowrap" align="flex-start">
                   <div>
-                    <Text fw={600}>Receive beta versions</Text>
+                    <Text fw={600}>Notify me about CellXplorer Beta</Text>
                     <Text size="sm" c="dimmed">
-                      Allow updates whose version contains &quot;beta&quot;. When disabled, beta
-                      releases are ignored for both automatic and manual checks.
+                      Check for the separate Beta app. Installing Beta keeps this stable installation
+                      and its data unchanged.
                     </Text>
                   </div>
                   <Switch
@@ -1665,10 +1680,49 @@ export function SettingsPage() {
                         betaUpdatesEnabled: event.currentTarget.checked,
                       }))
                     }
-                    aria-label="Receive beta versions"
+                    aria-label="Notify me about CellXplorer Beta"
                   />
                 </Group>
               </Paper>
+              ) : null}
+
+              {!APP_BRANDING.isBeta && betaInstall?.installationInfo?.installed ? (
+                <Paper withBorder p="md">
+                  <Group justify="space-between" wrap="nowrap" align="center">
+                    <div>
+                      <Text fw={600}>CellXplorer Beta is installed</Text>
+                      <Text size="sm" c="dimmed">
+                        {betaInstall.installationInfo.installedVersion
+                          ? `Version ${betaInstall.installationInfo.installedVersion}`
+                          : "Installed beside this stable copy."}
+                      </Text>
+                    </div>
+                    <Button variant="default" onClick={() => void betaInstall.openBetaApplication()}>
+                      Open Beta
+                    </Button>
+                  </Group>
+                </Paper>
+              ) : null}
+
+              {!APP_BRANDING.isBeta &&
+              !betaInstall?.installationInfo?.installed &&
+              betaInstall?.installState.status === "available" ? (
+                <Paper withBorder p="md">
+                  <Group justify="space-between" wrap="nowrap" align="center">
+                    <div>
+                      <Text fw={600}>
+                        CellXplorer Beta {betaInstall.installState.release.version} is available
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Install the separate preview app without replacing this stable installation.
+                      </Text>
+                    </div>
+                    <Button color="betaBlue" onClick={() => betaInstall.openBetaInstallModal()}>
+                      Review Beta
+                    </Button>
+                  </Group>
+                </Paper>
+              ) : null}
 
               <Group justify="flex-end">
                 <Button
@@ -1682,7 +1736,6 @@ export function SettingsPage() {
             </Stack>
           </Paper>
         </Tabs.Panel>
-        ) : null}
 
         <Tabs.Panel value="performance" pt="lg">
           <Paper withBorder p="lg">

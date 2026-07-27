@@ -17,9 +17,6 @@ import { APP_CHANNEL } from "../appChannel";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
-  acceptUpdateReleaseForPreferences,
-  appUpdateIntervalMs,
-  canDismissUpdateModal,
   checkAppUpdateTauri,
   DEFAULT_APP_UPDATE_PREFERENCES,
   firstAutomaticCheckDelayMs,
@@ -28,7 +25,8 @@ import {
   failurePhaseForLocalUpdatePhase,
   getCurrentRelease,
   installAppUpdateTauri,
-  isBetaUpdateVersion,
+  appUpdateIntervalMs,
+  canDismissUpdateModal,
   isProtectedUpdateFlow,
   mergeCheckResult,
   mockRelease,
@@ -172,19 +170,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    if (preferences.betaUpdatesEnabled) return;
-    const current = stateRef.current;
-    if (isProtectedUpdateFlow(current)) return;
-    const release = getCurrentRelease(current);
-    if (!release || !isBetaUpdateVersion(release.version)) return;
-    dispatch({ type: "check_success", source: "automatic", release: null });
-    if (modalOpenRef.current) {
-      setUpToDateModal(false);
-      setModalOpen(false);
-    }
-  }, [preferences.betaUpdatesEnabled]);
-
   const openMatchingUpdateModal = useCallback(() => {
     setUpToDateModal(false);
     setModalOpen(true);
@@ -234,8 +219,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const applyRelease = useCallback(
     (release: AppUpdateRelease | null, source: UpdateCheckSource) => {
       const feedbackSource = resolveEffectiveCheckSource(source, checkFeedbackSource.current);
-      const accepted = acceptUpdateReleaseForPreferences(release, preferences);
-      const merged = mergeCheckResult(stateRef.current, accepted);
+      const merged = mergeCheckResult(stateRef.current, release);
       dispatch({ type: "check_success", source: feedbackSource, release: merged });
 
       const feedback = resolveUpdateDiscoveryFeedback({

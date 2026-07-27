@@ -160,6 +160,34 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", cancel_block)
         self.assertIn("exit 0", cancel_block)
 
+    def test_manual_dispatch_accepts_channel_input(self):
+        self.assertIn("workflow_dispatch:", self.release)
+        self.assertIn("channel:", self.release)
+        self.assertIn("- stable", self.release)
+        self.assertIn("- beta", self.release)
+
+    def test_release_resolves_stable_and_beta_channels(self):
+        self.assertIn("Resolve release channel", self.release)
+        self.assertIn("channel_manifest=stable/latest.json", self.release)
+        self.assertIn("channel_manifest=beta/latest.json", self.release)
+        self.assertIn("VITE_CELLXPLORER_CHANNEL", self.release)
+        self.assertIn("tauri.beta.conf.json", self.release)
+
+    def test_beta_tags_publish_as_prereleases(self):
+        self.assertIn("is_prerelease=true", self.release)
+        self.assertIn("prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}", self.release)
+
+    def test_channel_manifest_is_published_after_verification(self):
+        self.assertIn("Publish channel manifest pointer", self.release)
+        self.assertLess(
+            step_index(self.release, "Verify updater manifest"),
+            step_index(self.release, "Publish channel manifest pointer"),
+        )
+        self.assertLess(
+            step_index(self.release, "Publish verified draft release"),
+            step_index(self.release, "Publish channel manifest pointer"),
+        )
+
     def test_manual_dispatch_is_build_only(self):
         self.assertIn("workflow_dispatch:", self.release)
         self.assertNotIn("publish:", self.release)
@@ -203,7 +231,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_uploaded_manifest_and_signature_are_verified(self):
         self.assertIn("uploaded-latest.json", self.release)
         self.assertIn("uploaded-setup.sig", self.release)
-        self.assertIn("--tauri-conf src-tauri/tauri.conf.json", self.release)
+        self.assertIn("--tauri-conf ${{ steps.channel.outputs.tauri_conf }}", self.release)
         self.assertIn("--uploaded-signature uploaded-setup.sig", self.release)
 
     def test_release_assets_metadata_persists_raw_github_json(self):

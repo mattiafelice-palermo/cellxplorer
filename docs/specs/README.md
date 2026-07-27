@@ -304,7 +304,7 @@ Rules:
 - [021-stable-beta-app-identities.md](021-stable-beta-app-identities.md)
   — side-by-side Stable and Beta Windows application identities from one source tree: separate
   product/identifier/installer, Beta blue theme and badge, channel-aware build commands, and
-  fail-closed Beta updater until Spec 023. Data isolation and Beta feed are Specs 022–023.
+  fail-closed Beta updater until Spec 023 (removed in Spec 023). Data isolation and Beta feed are Specs 022–023.
   Review: [021-stable-beta-app-identities-review.md](reviews/021-stable-beta-app-identities-review.md).
   Branch `feature/stable-beta-app-identities`.
 - [022-beta-data-isolation.md](022-beta-data-isolation.md)
@@ -312,6 +312,11 @@ Rules:
   backup, blocking first-run modal, and token-scoped apply/restart. Part of the Spec 021–023
   release train on branch `feature/stable-beta-app-identities`. Depends on Spec 021 identities.
   Review: [022-beta-data-isolation-review.md](reviews/022-beta-data-isolation-review.md).
+- [023-stable-beta-release-channels.md](023-stable-beta-release-channels.md)
+  — separate Stable/Beta updater feeds on `release-channels`, true Beta GitHub prereleases,
+  Stable-owned Beta installation UX, and channel-aware release automation. Part of the Spec
+  021–023 release train on branch `feature/stable-beta-app-identities`. Depends on Specs 021–022.
+  Review: [023-stable-beta-release-channels-review.md](reviews/023-stable-beta-release-channels-review.md).
 
 ## Assets
 

@@ -221,6 +221,8 @@ def verify_manifest(
     setup_exe_name: str | None = None,
     pubkey_b64: str | None = None,
     uploaded_signature_text: str | None = None,
+    channel: str | None = None,
+    expected_product_name: str | None = None,
 ) -> None:
     version = normalize_version(str(manifest.get("version", "")))
     target_version = normalize_version(expected_version)
@@ -228,6 +230,9 @@ def verify_manifest(
         raise ManifestVerificationError(
             f"Manifest version {version!r} does not match expected {target_version!r}."
         )
+
+    if channel is not None:
+        assert_channel_version(version, channel)
 
     notes = manifest.get("notes")
     if notes is None:
@@ -237,7 +242,15 @@ def verify_manifest(
             "Manifest notes do not match the extracted changelog section."
         )
 
-    setup_name = setup_exe_name or infer_setup_exe_name(target_version)
+    setup_name = setup_exe_name or (
+        infer_setup_exe_name_for_channel(target_version, channel)
+        if channel is not None
+        else infer_setup_exe_name(target_version)
+    )
+    if expected_product_name and not setup_name.startswith(f"{expected_product_name}_"):
+        raise ManifestVerificationError(
+            f"Installer asset {setup_name!r} does not belong to product {expected_product_name!r}."
+        )
     require_named_asset(release_assets, "latest.json")
     _platform_key, platform_entry = choose_windows_platform(manifest)
     url = platform_entry.get("url")
@@ -282,8 +295,30 @@ def verify_manifest(
     assert_no_secrets(signature, "Signature")
 
 
-def infer_setup_exe_name(version: str) -> str:
-    return f"CellXplorer_{normalize_version(version)}_x64-setup.exe"
+def infer_setup_exe_name(version: str, *, product_name: str = "CellXplorer") -> str:
+    normalized = normalize_version(version)
+    return f"{product_name}_{normalized}_x64-setup.exe"
+
+
+def infer_setup_exe_name_for_channel(version: str, channel: str) -> str:
+    if channel == "beta":
+        return infer_setup_exe_name(version, product_name="CellXplorer Beta")
+    if channel == "stable":
+        return infer_setup_exe_name(version, product_name="CellXplorer")
+    raise ManifestVerificationError(f"Unsupported release channel: {channel!r}.")
+
+
+def assert_channel_version(version: str, channel: str) -> None:
+    normalized = normalize_version(version)
+    is_beta = "-beta." in normalized
+    if channel == "stable" and is_beta:
+        raise ManifestVerificationError(
+            f"Stable channel manifest cannot contain a beta version ({normalized!r})."
+        )
+    if channel == "beta" and not is_beta:
+        raise ManifestVerificationError(
+            f"Beta channel manifest must contain a -beta.N version ({normalized!r})."
+        )
 
 
 def load_pubkey_from_tauri_conf(path: Path) -> str:
@@ -328,6 +363,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional downloaded draft .sig contents to compare with latest.json.",
     )
+    parser.add_argument(
+        "--channel",
+        choices=("stable", "beta"),
+        default=None,
+        help="Expected release channel for SemVer and installer naming checks.",
+    )
+    parser.add_argument(
+        "--expected-product-name",
+        default=None,
+        help="Expected Windows installer product prefix (for example CellXplorer Beta).",
+    )
     args = parser.parse_args(argv)
 
     if not args.manifest.is_file():
@@ -340,7 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: release assets not found: {args.release_assets}", file=sys.stderr)
         return 1
 
-    setup_name = args.setup_exe_name or infer_setup_exe_name(args.expected_version)
+    setup_name = args.setup_exe_name
+    if setup_name is None and args.channel is not None:
+        setup_name = infer_setup_exe_name_for_channel(args.expected_version, args.channel)
+    elif setup_name is None:
+        setup_name = infer_setup_exe_name(args.expected_version)
     notes = args.notes_file.read_text(encoding="utf-8")
     pubkey = None
     uploaded_sig = None
@@ -365,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
             setup_exe_name=setup_name,
             pubkey_b64=pubkey,
             uploaded_signature_text=uploaded_sig,
+            channel=args.channel,
+            expected_product_name=args.expected_product_name,
         )
     except ManifestVerificationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

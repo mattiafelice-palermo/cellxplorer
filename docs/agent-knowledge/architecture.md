@@ -36,8 +36,10 @@ Both editions use separate default data roots after Spec 022: Stable `%USERPROFI
 Beta `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides both exactly for tests and
 development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
 
-Beta updater commands are disabled fail-closed until Spec 023; do not tag or publish an intermediate
-Beta release.
+Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
+`release-channels/beta/latest.json`. Stable may optionally notify about and install the separate
+Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it never updates an
+installed Beta copy.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
 directory being changed — never by shared image name alone — so Stable and Beta can run side by side.

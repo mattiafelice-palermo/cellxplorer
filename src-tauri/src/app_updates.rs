@@ -5,7 +5,6 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::app_channel::{AppChannel, BETA_IDENTIFIER};
 
 #[derive(Default)]
 pub struct PendingAppUpdate {
@@ -17,6 +16,16 @@ pub struct PendingAppUpdate {
     download_generation: u64,
     /// Monotonic revision bumped on material pending-state transitions.
     revision: u64,
+}
+
+impl PendingAppUpdate {
+    pub(crate) fn is_downloading(&self) -> bool {
+        self.downloading
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
 }
 
 pub fn bump_revision(pending: &mut PendingAppUpdate) -> u64 {
@@ -236,23 +245,11 @@ fn user_safe_error(error: impl std::fmt::Display) -> String {
     format!("Could not complete the update request: {error}")
 }
 
-/// Spec 023 will replace this temporary Beta gate with a dedicated updater feed.
-fn reject_beta_channel_updates(app: &AppHandle) -> Result<(), String> {
-    if app.config().identifier.as_str() == BETA_IDENTIFIER {
-        return Err(
-            "Application updates are not available in CellXplorer Beta yet.".to_string(),
-        );
-    }
-    let _ = AppChannel::from_identifier(app.config().identifier.as_str())?;
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<Option<AppUpdateRelease>, String> {
-    reject_beta_channel_updates(&app)?;
     let check_revision = {
         let pending = lock_pending(&state)?;
         if pending.downloading {
@@ -279,12 +276,11 @@ pub async fn check_app_update(
 
 #[tauri::command]
 pub async fn download_app_update(
-    app: AppHandle,
+    _app: AppHandle,
     expected_version: String,
     on_progress: Channel<AppUpdateDownloadEvent>,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
-    reject_beta_channel_updates(&app)?;
     let (update, generation) = {
         let mut pending = lock_pending(&state)?;
         begin_download(&mut pending, &expected_version).map_err(map_pending_error)?
@@ -325,11 +321,10 @@ pub async fn download_app_update(
 
 #[tauri::command]
 pub fn install_app_update(
-    app: AppHandle,
+    _app: AppHandle,
     expected_version: String,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
-    reject_beta_channel_updates(&app)?;
     let (update, bytes) = {
         let mut pending = lock_pending(&state)?;
         take_verified_install(&mut pending, &expected_version).map_err(|error| match error {

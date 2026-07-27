@@ -13,6 +13,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { APP_BRANDING } from "./appChannel";
 import { AppUpdateProvider } from "./components/AppUpdateCoordinator";
+import { BetaInstallProvider } from "./components/BetaInstallCoordinator";
 import { isTransientApiError } from "./apiRetryPolicy";
 import {
   configureStartupQueryDefaults,
@@ -70,7 +71,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Notifications position="bottom-right" />
           <BrowserRouter>
             <AppUpdateProvider>
-              <App />
+              <BetaInstallProvider>
+                <App />
+              </BetaInstallProvider>
             </AppUpdateProvider>
           </BrowserRouter>
         </ModalsProvider>

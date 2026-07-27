@@ -44,7 +44,7 @@ This performs the complete frontend, backend sidecar, and NSIS build. See
 | Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
 | Deep link | `cellxplorer://` | `cellxplorer-beta://` |
 | Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` |
-| Updater | Stable GitHub feed | disabled until Spec 023 |
+| Updater | `release-channels/stable/latest.json` | `release-channels/beta/latest.json` |
 
 Both editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
 kill only processes whose executable path is under the installation directory being changed — never
@@ -55,8 +55,10 @@ by shared image name alone.
 development. Do not install intermediate Beta builds against real user data; use disposable
 `CELLXPLORER_DATA` or a test account.
 
-**Release:** do not tag or publish an intermediate Beta product until Specs 022–023 complete the
-release train.
+**Release:** Stable and Beta publish to separate SemVer tags. Beta GitHub releases are
+prereleases. Verified updater manifests are copied to the `release-channels` branch
+(`stable/latest.json`, `beta/latest.json`) after draft verification. The first Stable release after
+Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap clients.
 
 Beta icons are generated deterministically:
 

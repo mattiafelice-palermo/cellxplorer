@@ -12,9 +12,15 @@ APP_UPDATES_RS = ROOT / "src-tauri" / "src" / "app_updates.rs"
 CAPABILITIES = ROOT / "src-tauri" / "capabilities" / "default.json"
 NSIS = ROOT / "src-tauri" / "cellxplorer-installer.nsi"
 
-EXPECTED_ENDPOINT = (
-    "https://github.com/mattiafelice-palermo/cellxplorer/releases/latest/download/latest.json"
+EXPECTED_STABLE_ENDPOINT = (
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/"
+    "release-channels/stable/latest.json"
 )
+EXPECTED_BETA_ENDPOINT = (
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/"
+    "release-channels/beta/latest.json"
+)
+BETA_OVERLAY = ROOT / "src-tauri" / "tauri.beta.conf.json"
 PLACEHOLDER_PATTERNS = (
     "CONTENT FROM PUBLICKEY.PEM",
     "your public key",
@@ -37,8 +43,19 @@ class UpdaterConfigurationTests(unittest.TestCase):
 
     def test_updater_endpoint_is_public_https_github_release(self):
         endpoints = self.conf["plugins"]["updater"]["endpoints"]
-        self.assertEqual(endpoints, [EXPECTED_ENDPOINT])
+        self.assertEqual(endpoints, [EXPECTED_STABLE_ENDPOINT])
         self.assertTrue(endpoints[0].startswith("https://"))
+        self.assertNotIn("/releases/latest/", endpoints[0])
+
+    def test_resolved_beta_config_uses_beta_channel_endpoint(self):
+        overlay = json.loads(BETA_OVERLAY.read_text(encoding="utf-8"))
+        endpoints = overlay["plugins"]["updater"]["endpoints"]
+        self.assertEqual(endpoints, [EXPECTED_BETA_ENDPOINT])
+        self.assertNotIn("/releases/latest/", endpoints[0])
+
+    def test_beta_self_updater_gate_is_removed(self):
+        source = self.app_updates_rs
+        self.assertNotIn("reject_beta_channel_updates", source)
 
     def test_insecure_transport_is_not_enabled(self):
         updater = self.conf["plugins"]["updater"]
@@ -67,7 +84,20 @@ class UpdaterConfigurationTests(unittest.TestCase):
             minor = int(version.split(".", 2)[1])
             self.assertGreaterEqual(minor, 10)
 
-    def test_custom_commands_and_state_are_registered(self):
+    def test_beta_install_commands_are_registered(self):
+        beta_installer_rs = (ROOT / "src-tauri" / "src" / "beta_installer.rs").read_text(
+            encoding="utf-8"
+        )
+        for needle in (
+            "beta_installer::detect_beta_installation",
+            "beta_installer::check_beta_install",
+            "beta_installer::download_beta_install",
+            "beta_installer::install_beta",
+            "beta_installer::open_beta_application",
+            "PendingBetaInstall",
+            "BETA_CHANNEL_ENDPOINT",
+        ):
+            self.assertIn(needle, self.main_rs + beta_installer_rs)
         for needle in (
             "tauri_plugin_updater::Builder::new().build()",
             "app_updates::check_app_update",

@@ -9,6 +9,13 @@ pub enum AppChannel {
 pub const STABLE_IDENTIFIER: &str = "com.cellxplorer.desktop";
 pub const BETA_IDENTIFIER: &str = "com.cellxplorer.desktop.beta";
 
+pub const STABLE_CHANNEL_ENDPOINT: &str =
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json";
+pub const BETA_CHANNEL_ENDPOINT: &str =
+    "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json";
+
+pub const BETA_PRODUCT_NAME: &str = "CellXplorer Beta";
+
 impl AppChannel {
     pub fn from_identifier(identifier: &str) -> Result<Self, String> {
         match identifier {

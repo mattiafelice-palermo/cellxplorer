@@ -17,6 +17,11 @@
       "desktop": {
         "schemes": ["cellxplorer-beta"]
       }
+    },
+    "updater": {
+      "endpoints": [
+        "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json"
+      ]
     }
   },
   "bundle": {

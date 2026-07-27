@@ -19,10 +19,12 @@ tauri-plugin-shell = "2"
 tauri-plugin-updater = "2.10"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18"
+winreg = "0.55"
 
 [dev-dependencies]
 tempfile = "3"
