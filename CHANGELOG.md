@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.16.1 - 2026-07-27
+
+- Show last and next automatic update-check times under App updates settings.
+
 ## 0.16.0 - 2026-07-27
 
 - Use native Windows notifications for automatically discovered application updates and open manual update results directly.
