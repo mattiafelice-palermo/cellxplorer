@@ -17,6 +17,7 @@ import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
   AUTO_CHECK_INITIAL_DELAY_MS,
+  acceptUpdateReleaseForPreferences,
   appUpdateIntervalMs,
   canDismissUpdateModal,
   checkAppUpdateTauri,
@@ -26,6 +27,8 @@ import {
   failurePhaseForLocalUpdatePhase,
   getCurrentRelease,
   installAppUpdateTauri,
+  isBetaUpdateVersion,
+  isProtectedUpdateFlow,
   mergeCheckResult,
   mockRelease,
   normalizeUpdaterError,
@@ -159,6 +162,19 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (preferences.betaUpdatesEnabled) return;
+    const current = stateRef.current;
+    if (isProtectedUpdateFlow(current)) return;
+    const release = getCurrentRelease(current);
+    if (!release || !isBetaUpdateVersion(release.version)) return;
+    dispatch({ type: "check_success", source: "automatic", release: null });
+    if (modalOpenRef.current) {
+      setUpToDateModal(false);
+      setModalOpen(false);
+    }
+  }, [preferences.betaUpdatesEnabled]);
+
   const openMatchingUpdateModal = useCallback(() => {
     setUpToDateModal(false);
     setModalOpen(true);
@@ -208,7 +224,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const applyRelease = useCallback(
     (release: AppUpdateRelease | null, source: UpdateCheckSource) => {
       const feedbackSource = resolveEffectiveCheckSource(source, checkFeedbackSource.current);
-      const merged = mergeCheckResult(stateRef.current, release);
+      const accepted = acceptUpdateReleaseForPreferences(release, preferences);
+      const merged = mergeCheckResult(stateRef.current, accepted);
       dispatch({ type: "check_success", source: feedbackSource, release: merged });
 
       const feedback = resolveUpdateDiscoveryFeedback({
@@ -251,7 +268,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         });
       });
     },
-    [preferences.notificationsEnabled],
+    [preferences],
   );
 
   const performCheck = useCallback(

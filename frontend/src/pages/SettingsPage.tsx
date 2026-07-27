@@ -1618,6 +1618,32 @@ export function SettingsPage() {
                 </Group>
               </Paper>
 
+              <Paper
+                withBorder
+                p="md"
+                bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+              >
+                <Group justify="space-between" wrap="nowrap">
+                  <div>
+                    <Text fw={600}>Receive beta versions</Text>
+                    <Text size="sm" c="dimmed">
+                      Allow updates whose version contains &quot;beta&quot;. When disabled, beta
+                      releases are ignored for both automatic and manual checks.
+                    </Text>
+                  </div>
+                  <Switch
+                    checked={updatePreferences.betaUpdatesEnabled}
+                    onChange={(event) =>
+                      setUpdatePreferences((current) => ({
+                        ...current,
+                        betaUpdatesEnabled: event.currentTarget.checked,
+                      }))
+                    }
+                    aria-label="Receive beta versions"
+                  />
+                </Group>
+              </Paper>
+
               <Group justify="flex-end">
                 <Button
                   leftSection={<IconDeviceFloppy size={16} />}

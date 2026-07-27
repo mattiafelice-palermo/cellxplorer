@@ -7,6 +7,7 @@ import {
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
   UPDATE_PREFERENCES_KEY,
+  acceptUpdateReleaseForPreferences,
   accumulateDownloadProgress,
   appUpdateIntervalMs,
   appUpdateReducer,
@@ -14,6 +15,7 @@ import {
   compareSemver,
   computeDownloadProgress,
   getUpdateMenuLabel,
+  isBetaUpdateVersion,
   isProtectedUpdateFlow,
   isUpdateMenuDisabled,
   isValidUpdateNotificationActivation,
@@ -397,11 +399,31 @@ test("update preferences support a fifteen-second interval", () => {
     intervalValue: 15,
     intervalUnit: "seconds" as const,
     notificationsEnabled: false,
+    betaUpdatesEnabled: false,
   };
   saveAppUpdatePreferences(storage, preferences);
   assert.equal(values.has(UPDATE_PREFERENCES_KEY), true);
   assert.deepEqual(loadAppUpdatePreferences(storage), preferences);
   assert.equal(appUpdateIntervalMs(preferences), 15_000);
+});
+
+test("beta updates are ignored unless the preference is enabled", () => {
+  const beta = mockRelease("0.16.0-beta.1");
+  const stable = mockRelease("0.16.0");
+  assert.equal(isBetaUpdateVersion("0.16.0-beta.1"), true);
+  assert.equal(isBetaUpdateVersion("0.16.0"), false);
+  assert.equal(
+    acceptUpdateReleaseForPreferences(beta, { betaUpdatesEnabled: false }),
+    null,
+  );
+  assert.deepEqual(
+    acceptUpdateReleaseForPreferences(beta, { betaUpdatesEnabled: true }),
+    beta,
+  );
+  assert.deepEqual(
+    acceptUpdateReleaseForPreferences(stable, { betaUpdatesEnabled: false }),
+    stable,
+  );
 });
 
 test("invalid update preferences fail safely to defaults", () => {

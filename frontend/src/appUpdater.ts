@@ -10,12 +10,14 @@ export type AppUpdatePreferences = {
   intervalValue: number;
   intervalUnit: AppUpdateIntervalUnit;
   notificationsEnabled: boolean;
+  betaUpdatesEnabled: boolean;
 };
 
 export const DEFAULT_APP_UPDATE_PREFERENCES: AppUpdatePreferences = {
   intervalValue: 12,
   intervalUnit: "hours",
   notificationsEnabled: true,
+  betaUpdatesEnabled: false,
 };
 
 const UPDATE_INTERVAL_MULTIPLIERS: Record<AppUpdateIntervalUnit, number> = {
@@ -58,6 +60,7 @@ export function loadAppUpdatePreferences(
       intervalValue: Math.floor(intervalValue),
       intervalUnit: unit,
       notificationsEnabled: parsed.notificationsEnabled !== false,
+      betaUpdatesEnabled: parsed.betaUpdatesEnabled === true,
     };
   } catch {
     return DEFAULT_APP_UPDATE_PREFERENCES;
@@ -381,6 +384,25 @@ export function shouldNotifyForVersion(
   notifiedVersion: string | null,
 ): boolean {
   return notifiedVersion !== version;
+}
+
+/** True when the advertised update version is a beta/prerelease labeled with beta. */
+export function isBetaUpdateVersion(version: string): boolean {
+  return /beta/i.test(version.trim());
+}
+
+/**
+ * Drop beta updates unless the user opted in. Stable releases always pass through.
+ */
+export function acceptUpdateReleaseForPreferences(
+  release: AppUpdateRelease | null,
+  preferences: Pick<AppUpdatePreferences, "betaUpdatesEnabled">,
+): AppUpdateRelease | null {
+  if (!release) return null;
+  if (isBetaUpdateVersion(release.version) && !preferences.betaUpdatesEnabled) {
+    return null;
+  }
+  return release;
 }
 
 export const UPDATE_NOTIFICATION_TAG = "cellxplorer-app-update";

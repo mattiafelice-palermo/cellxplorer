@@ -7,6 +7,7 @@ user-facing impact.
 ## 0.16.0 - 2026-07-27
 
 - Use native Windows notifications for automatically discovered application updates and open manual update results directly.
+- Add a Receive beta versions setting; when off, updates whose version contains "beta" are ignored for automatic and manual checks.
 
 ## 0.15.5 - 2026-07-27
 
