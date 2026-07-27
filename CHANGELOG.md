@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.1 - 2026-07-27
+
+- Published the first GitHub Release with signed updater artifacts and `latest.json`, so
+  installed builds can discover and apply updates from the power menu.
+
 ## 0.15.0 - 2026-07-27
 
 - Added signed in-app updates from the power menu: automatic checks, update badge,
