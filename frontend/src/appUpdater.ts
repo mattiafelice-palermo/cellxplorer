@@ -10,12 +10,14 @@ export type AppUpdatePreferences = {
   intervalValue: number;
   intervalUnit: AppUpdateIntervalUnit;
   notificationsEnabled: boolean;
+  betaUpdatesEnabled: boolean;
 };
 
 export const DEFAULT_APP_UPDATE_PREFERENCES: AppUpdatePreferences = {
   intervalValue: 12,
   intervalUnit: "hours",
   notificationsEnabled: true,
+  betaUpdatesEnabled: false,
 };
 
 const UPDATE_INTERVAL_MULTIPLIERS: Record<AppUpdateIntervalUnit, number> = {
@@ -58,6 +60,7 @@ export function loadAppUpdatePreferences(
       intervalValue: Math.floor(intervalValue),
       intervalUnit: unit,
       notificationsEnabled: parsed.notificationsEnabled !== false,
+      betaUpdatesEnabled: parsed.betaUpdatesEnabled === true,
     };
   } catch {
     return DEFAULT_APP_UPDATE_PREFERENCES;
@@ -383,6 +386,91 @@ export function shouldNotifyForVersion(
   return notifiedVersion !== version;
 }
 
+/** True when the advertised update version is a beta/prerelease labeled with beta. */
+export function isBetaUpdateVersion(version: string): boolean {
+  return /beta/i.test(version.trim());
+}
+
+/**
+ * Drop beta updates unless the user opted in. Stable releases always pass through.
+ */
+export function acceptUpdateReleaseForPreferences(
+  release: AppUpdateRelease | null,
+  preferences: Pick<AppUpdatePreferences, "betaUpdatesEnabled">,
+): AppUpdateRelease | null {
+  if (!release) return null;
+  if (isBetaUpdateVersion(release.version) && !preferences.betaUpdatesEnabled) {
+    return null;
+  }
+  return release;
+}
+
+export const UPDATE_NOTIFICATION_TAG = "cellxplorer-app-update";
+export const UPDATE_NOTIFICATION_KIND = "cellxplorer-app-update";
+export const UPDATE_NOTIFICATION_EVENT = "app-update-notification-activated";
+
+export type UpdateDiscoveryFeedback =
+  | "open-modal"
+  | "native-notification"
+  | "badge-only"
+  | "silent";
+
+export type UpdateNotificationActivationPayload = {
+  kind: typeof UPDATE_NOTIFICATION_KIND;
+  tag: typeof UPDATE_NOTIFICATION_TAG;
+  version: string;
+};
+
+/**
+ * Choose update-discovery feedback from the effective check source.
+ * Manual results always open the modal; automatic results never do.
+ */
+export function resolveUpdateDiscoveryFeedback(options: {
+  source: UpdateCheckSource;
+  release: AppUpdateRelease | null;
+  notificationsEnabled: boolean;
+  notifiedVersion: string | null;
+}): UpdateDiscoveryFeedback {
+  if (!options.release) {
+    return options.source === "manual" ? "open-modal" : "silent";
+  }
+  if (options.source === "manual") {
+    return "open-modal";
+  }
+  if (
+    options.notificationsEnabled &&
+    shouldNotifyForVersion(options.release.version, options.notifiedVersion)
+  ) {
+    return "native-notification";
+  }
+  return "badge-only";
+}
+
+/** When a manual check joins an in-flight automatic check, the result is manual. */
+export function resolveEffectiveCheckSource(
+  startedSource: UpdateCheckSource,
+  feedbackSource: UpdateCheckSource,
+): UpdateCheckSource {
+  return feedbackSource === "manual" || startedSource === "manual" ? "manual" : "automatic";
+}
+
+export function isValidUpdateNotificationActivation(payload: {
+  tag?: unknown;
+  kind?: unknown;
+  version?: unknown;
+}): payload is UpdateNotificationActivationPayload {
+  if (payload.kind !== UPDATE_NOTIFICATION_KIND) return false;
+  if (payload.tag !== UPDATE_NOTIFICATION_TAG) return false;
+  if (typeof payload.version !== "string") return false;
+  const version = payload.version.trim();
+  return version.length > 0 && version === payload.version;
+}
+
+/** Notification activation never starts download/install; it only opens the modal. */
+export function notificationActivationAction(): "open-modal" {
+  return "open-modal";
+}
+
 export function readNotifiedVersion(storage: Pick<Storage, "getItem">): string | null {
   return storage.getItem(UPDATE_NOTIFIED_VERSION_KEY);
 }
@@ -392,6 +480,11 @@ export function writeNotifiedVersion(
   version: string,
 ): void {
   storage.setItem(UPDATE_NOTIFIED_VERSION_KEY, version);
+}
+
+export async function showMainWindowForUpdateTauri(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("show_main_window_for_update");
 }
 
 export function mergeCheckResult(

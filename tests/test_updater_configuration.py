@@ -107,6 +107,57 @@ class UpdaterConfigurationTests(unittest.TestCase):
         self.assertIn('${GetOptions} $CMDLINE "/UPDATE" $UpdateMode', self.nsis)
         self.assertIn("StrCpy $UpdateMode 1", self.nsis)
 
+    def test_notification_plugin_and_window_command_are_wired(self):
+        frontend_package = json.loads(
+            (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+        )
+        update_notifications_rs = (
+            ROOT / "src-tauri" / "src" / "update_notifications.rs"
+        ).read_text(encoding="utf-8")
+        frontend_adapter = (
+            ROOT / "frontend" / "src" / "updateNotifications.ts"
+        ).read_text(encoding="utf-8")
+        coordinator = (
+            ROOT / "frontend" / "src" / "components" / "AppUpdateCoordinator.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('notify-rust = "4.18"', self.cargo)
+        self.assertNotIn("tauri-plugin-notification", self.cargo)
+        self.assertNotIn(
+            "@tauri-apps/plugin-notification",
+            frontend_package.get("dependencies", {}),
+        )
+        self.assertNotIn("tauri_plugin_notification::init()", self.main_rs)
+        self.assertIn("show_main_window_for_update", self.main_rs)
+        self.assertIn(
+            "show_main_window_for_update",
+            self.main_rs.split("tauri::generate_handler!")[1],
+        )
+        self.assertIn("update_notifications::show_update_notification", self.main_rs)
+        self.assertIn('UPDATE_NOTIFICATION_EVENT: &str = "app-update-notification-activated"', update_notifications_rs)
+        self.assertIn("show_update_notification", update_notifications_rs)
+        self.assertIn("listenForUpdateNotificationActivation", frontend_adapter)
+        self.assertIn("listenForUpdateNotificationActivation", coordinator)
+        self.assertNotIn("new Notification(", frontend_adapter)
+        self.assertNotIn("notification.onclick", frontend_adapter)
+        permissions = self.capabilities["permissions"]
+        self.assertNotIn("notification:default", permissions)
+        self.assertFalse(any(permission.startswith("updater:") for permission in permissions))
+        self.assertFalse(
+            any(
+                permission.startswith("shell:")
+                or permission.startswith("process:")
+                or permission == "core:window:allow-create"
+                for permission in permissions
+            )
+        )
+        for needle in (
+            "app_updates::check_app_update",
+            "app_updates::download_app_update",
+            "app_updates::install_app_update",
+        ):
+            self.assertIn(needle, self.main_rs)
+
 
 if __name__ == "__main__":
     unittest.main()

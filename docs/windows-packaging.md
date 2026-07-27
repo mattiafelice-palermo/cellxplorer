@@ -145,6 +145,11 @@ preserving `%USERPROFILE%\.cellxplorer`.
 updater-enabled release automatically. The first updater-capable version must be installed manually;
 later releases can use the in-app update flow once public release assets are available.
 
+Automatic update discovery may show a native Windows notification. Verify notification title/body
+identity and body-click restore/focus/modal behavior in an **installed** NSIS package. Development
+(`tauri dev`) builds may show PowerShell branding/name instead of CellXplorer, so do not treat
+dev-only branding as final proof.
+
 ## Production GitHub release
 
 Stable releases are published by pushing a SemVer tag:

@@ -1,4 +1,3 @@
-import { Button } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
@@ -18,6 +17,7 @@ import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
   AUTO_CHECK_INITIAL_DELAY_MS,
+  acceptUpdateReleaseForPreferences,
   appUpdateIntervalMs,
   canDismissUpdateModal,
   checkAppUpdateTauri,
@@ -25,18 +25,23 @@ import {
   loadAppUpdatePreferences,
   downloadAppUpdateTauri,
   failurePhaseForLocalUpdatePhase,
+  getCurrentRelease,
   installAppUpdateTauri,
+  isBetaUpdateVersion,
+  isProtectedUpdateFlow,
   mergeCheckResult,
   mockRelease,
   normalizeUpdaterError,
   parseDevUpdateMock,
   readNotifiedVersion,
+  resolveEffectiveCheckSource,
+  resolveUpdateDiscoveryFeedback,
   restartAppTauri,
   runDevUpdateMock,
-  shouldNotifyForVersion,
   shouldPersistUpdateBadge,
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
+  showMainWindowForUpdateTauri,
   UPDATE_PREFERENCES_CHANGED_EVENT,
   writeNotifiedVersion,
   type AppUpdatePreferences,
@@ -47,6 +52,7 @@ import {
 } from "../appUpdater";
 import { addDebugEvent } from "../debug";
 import { isTauriApp } from "../downloads";
+import { showWindowsUpdateNotification, listenForUpdateNotificationActivation } from "../updateNotifications";
 import { AppUpdateModal } from "./AppUpdateModal";
 
 type AppUpdateContextValue = {
@@ -103,6 +109,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const checkEpochRef = useRef(0);
   const downloadInFlight = useRef(false);
   const mountedRef = useRef(true);
+  const performCheckRef = useRef<(source: UpdateCheckSource) => Promise<void>>(
+    async () => undefined,
+  );
 
   useEffect(() => {
     stateRef.current = state;
@@ -153,43 +162,114 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const applyRelease = useCallback((release: AppUpdateRelease | null, source: UpdateCheckSource) => {
-    const feedbackSource = source === "manual" ? "manual" : checkFeedbackSource.current;
-    const merged = mergeCheckResult(stateRef.current, release);
-    dispatch({ type: "check_success", source: feedbackSource, release: merged });
-    if (!merged) {
-      if (feedbackSource === "manual") {
-        setUpToDateModal(true);
-        setModalOpen(true);
-      }
-      return;
+  useEffect(() => {
+    if (preferences.betaUpdatesEnabled) return;
+    const current = stateRef.current;
+    if (isProtectedUpdateFlow(current)) return;
+    const release = getCurrentRelease(current);
+    if (!release || !isBetaUpdateVersion(release.version)) return;
+    dispatch({ type: "check_success", source: "automatic", release: null });
+    if (modalOpenRef.current) {
+      setUpToDateModal(false);
+      setModalOpen(false);
     }
+  }, [preferences.betaUpdatesEnabled]);
+
+  const openMatchingUpdateModal = useCallback(() => {
     setUpToDateModal(false);
-    if (
-      preferences.notificationsEnabled &&
-      shouldNotifyForVersion(
-        merged.version,
-        readNotifiedVersion(window.localStorage),
-      )
-    ) {
-      writeNotifiedVersion(window.localStorage, merged.version);
-      notifications.show({
-        title: `CellXplorer v${merged.version} is available.`,
-        message: (
-          <Button
-            size="compact-xs"
-            variant="light"
-            color="teal"
-            onClick={() => setModalOpen(true)}
-          >
-            View update
-          </Button>
-        ),
-        color: "teal",
-        autoClose: 10_000,
+    setModalOpen(true);
+  }, []);
+
+  const handleNotificationActivate = useCallback(
+    async (version: string) => {
+      try {
+        await showMainWindowForUpdateTauri();
+      } catch (error) {
+        addDebugEvent("app-update:notification-focus-error", {
+          message: normalizeUpdaterError(error, "Could not focus the main window."),
+        });
+      }
+
+      const current = stateRef.current;
+      const release = getCurrentRelease(current);
+      if (release && release.version === version) {
+        openMatchingUpdateModal();
+        return;
+      }
+
+      await performCheckRef.current("manual");
+    },
+    [openMatchingUpdateModal],
+  );
+
+  useEffect(() => {
+    if (!tauri) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listenForUpdateNotificationActivation((payload) => {
+      void handleNotificationActivate(payload.version);
+    }).then((stop) => {
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [handleNotificationActivate, tauri]);
+
+  const applyRelease = useCallback(
+    (release: AppUpdateRelease | null, source: UpdateCheckSource) => {
+      const feedbackSource = resolveEffectiveCheckSource(source, checkFeedbackSource.current);
+      const accepted = acceptUpdateReleaseForPreferences(release, preferences);
+      const merged = mergeCheckResult(stateRef.current, accepted);
+      dispatch({ type: "check_success", source: feedbackSource, release: merged });
+
+      const feedback = resolveUpdateDiscoveryFeedback({
+        source: feedbackSource,
+        release: merged,
+        notificationsEnabled: preferences.notificationsEnabled,
+        notifiedVersion: readNotifiedVersion(window.localStorage),
       });
-    }
-  }, [preferences.notificationsEnabled]);
+
+      if (feedback === "silent") {
+        return;
+      }
+
+      if (feedback === "open-modal") {
+        if (merged) {
+          writeNotifiedVersion(window.localStorage, merged.version);
+        }
+        setUpToDateModal(!merged);
+        setModalOpen(true);
+        return;
+      }
+
+      setUpToDateModal(false);
+
+      if (feedback === "badge-only" || !merged) {
+        return;
+      }
+
+      void showWindowsUpdateNotification({
+        release: merged,
+      }).then((result) => {
+        if (!mountedRef.current) return;
+        if (result === "shown") {
+          writeNotifiedVersion(window.localStorage, merged.version);
+          return;
+        }
+        addDebugEvent("app-update:notification-result", {
+          result,
+          version: merged.version,
+        });
+      });
+    },
+    [preferences],
+  );
 
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
@@ -278,6 +358,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     },
     [applyRelease, devMock, tauri],
   );
+
+  useEffect(() => {
+    performCheckRef.current = performCheck;
+  }, [performCheck]);
 
   useEffect(() => {
     if (!updateUiEnabled || devMock) return;

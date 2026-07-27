@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_updates;
+mod update_notifications;
 
 use app_updates::PendingAppUpdate;
 use std::net::TcpListener;
@@ -98,6 +99,19 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+#[tauri::command]
+fn show_main_window_for_update(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window is unavailable.".to_string())?;
+    window
+        .unminimize()
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -469,8 +483,10 @@ fn main() {
             restart_app,
             set_autostart_enabled,
             set_tray_status,
+            show_main_window_for_update,
             startup_mode,
-            take_pending_deep_link
+            take_pending_deep_link,
+            update_notifications::show_update_notification
         ])
         .setup(move |app| {
             let backend_port = available_backend_port()?;
