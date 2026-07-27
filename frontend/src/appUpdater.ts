@@ -37,6 +37,11 @@ export type AppUpdateDownloadEvent =
   | { event: "progress"; data: { chunkLength: number } }
   | { event: "finished" };
 
+export type ReleaseNoteLine = {
+  kind: "bullet" | "text";
+  text: string;
+};
+
 export type AppUpdateMenuState = {
   label: string;
   disabled: boolean;
@@ -75,6 +80,18 @@ export function parseDevUpdateMock(
 
 export function shouldShowUpdateUi(tauri: boolean, mock: DevUpdateMockMode | null): boolean {
   return tauri || mock !== null;
+}
+
+export function normalizeUpdaterError(error: unknown, fallback: string): string {
+  if (typeof error === "string") {
+    const trimmed = error.trim();
+    return trimmed || fallback;
+  }
+  if (error instanceof Error) {
+    const trimmed = error.message.trim();
+    return trimmed || fallback;
+  }
+  return fallback;
 }
 
 export function formatUpdateBytes(value: number): string {
@@ -127,10 +144,10 @@ export function accumulateDownloadProgress(
   return current;
 }
 
-export function renderReleaseNotes(notes: string | null | undefined): string[] {
+export function parseReleaseNoteLines(notes: string | null | undefined): ReleaseNoteLine[] {
   const trimmed = (notes ?? "").trim();
   if (!trimmed) {
-    return [DEFAULT_RELEASE_NOTES];
+    return [{ kind: "text", text: DEFAULT_RELEASE_NOTES }];
   }
   return trimmed
     .split(/\r?\n/)
@@ -138,14 +155,21 @@ export function renderReleaseNotes(notes: string | null | undefined): string[] {
     .filter(Boolean)
     .map((line) => {
       const bullet = line.match(/^[-*]\s+(.*)$/);
-      return bullet ? bullet[1].trim() : line;
+      if (bullet) {
+        return { kind: "bullet" as const, text: bullet[1].trim() };
+      }
+      return { kind: "text" as const, text: line };
     });
 }
 
+/** @deprecated Prefer parseReleaseNoteLines; kept for transitional call sites. */
+export function renderReleaseNotes(notes: string | null | undefined): string[] {
+  return parseReleaseNoteLines(notes).map((line) => line.text);
+}
+
 export function releaseNotesAreBulleted(notes: string | null | undefined): boolean {
-  return (notes ?? "")
-    .split(/\r?\n/)
-    .some((line) => /^[-*]\s+/.test(line.trim()));
+  const lines = parseReleaseNoteLines(notes);
+  return lines.length > 0 && lines.every((line) => line.kind === "bullet");
 }
 
 export function shouldPersistUpdateBadge(state: AppUpdateState): boolean {
@@ -201,6 +225,57 @@ export function canDismissUpdateModal(state: AppUpdateState): boolean {
   return false;
 }
 
+export function isProtectedUpdateFlow(state: AppUpdateState): boolean {
+  return (
+    state.status === "downloading" ||
+    state.status === "launching" ||
+    (state.status === "error" &&
+      (state.phase === "download" || state.phase === "install") &&
+      Boolean(state.release))
+  );
+}
+
+export function shouldSkipAutomaticCheck(
+  state: AppUpdateState,
+  modalOpen: boolean,
+): boolean {
+  if (modalOpen) return true;
+  return isProtectedUpdateFlow(state);
+}
+
+export function getCurrentRelease(state: AppUpdateState): AppUpdateRelease | null {
+  if (
+    state.status === "available" ||
+    state.status === "downloading" ||
+    state.status === "launching"
+  ) {
+    return state.release;
+  }
+  if (state.status === "error" && state.release) {
+    return state.release;
+  }
+  return null;
+}
+
+export function compareSemver(left: string, right: string): number {
+  const parse = (value: string): number[] => {
+    const normalized = value.trim().replace(/^v/i, "");
+    const core = normalized.split("-")[0] ?? normalized;
+    return core.split(".").map((part) => {
+      const match = part.match(/^\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+  };
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 export function shouldNotifyForVersion(
   version: string,
   notifiedVersion: string | null,
@@ -223,53 +298,74 @@ export function mergeCheckResult(
   current: AppUpdateState,
   release: AppUpdateRelease | null,
 ): AppUpdateRelease | null {
-  if (!release) return null;
-  if (current.status === "available" && current.release.version === release.version) {
-    return current.release;
+  const existing = getCurrentRelease(current);
+  if (isProtectedUpdateFlow(current)) {
+    return existing;
   }
-  if (
-    (current.status === "downloading" ||
-      current.status === "launching" ||
-      (current.status === "error" && current.release)) &&
-    current.release &&
-    current.release.version === release.version
-  ) {
-    return current.release;
+  if (!release) return null;
+  if (!existing) return release;
+  if (compareSemver(release.version, existing.version) <= 0) {
+    return existing;
   }
   return release;
 }
 
+export type AppUpdateAction =
+  | { type: "check_started"; source: UpdateCheckSource }
+  | { type: "check_success"; source: UpdateCheckSource; release: AppUpdateRelease | null }
+  | { type: "check_error"; source: UpdateCheckSource; message: string }
+  | { type: "download_started"; release: AppUpdateRelease }
+  | {
+      type: "download_event";
+      release: AppUpdateRelease;
+      event: AppUpdateDownloadEvent;
+    }
+  | { type: "launching"; release: AppUpdateRelease }
+  | { type: "download_error"; release: AppUpdateRelease; message: string }
+  | {
+      type: "install_error";
+      release: AppUpdateRelease;
+      message: string;
+      lifecycleMayNeedRestart?: boolean;
+    }
+  | { type: "reset_available"; release: AppUpdateRelease };
+
 export function appUpdateReducer(
   state: AppUpdateState,
-  action:
-    | { type: "check_started"; source: UpdateCheckSource }
-    | { type: "check_success"; source: UpdateCheckSource; release: AppUpdateRelease | null }
-    | { type: "check_error"; source: UpdateCheckSource; message: string }
-    | { type: "download_started"; release: AppUpdateRelease }
-    | {
-        type: "download_progress";
-        release: AppUpdateRelease;
-        downloadedBytes: number;
-        totalBytes: number | null;
-      }
-    | { type: "launching"; release: AppUpdateRelease }
-    | { type: "download_error"; release: AppUpdateRelease; message: string }
-    | {
-        type: "install_error";
-        release: AppUpdateRelease;
-        message: string;
-        lifecycleMayNeedRestart?: boolean;
-      }
-    | { type: "reset_available"; release: AppUpdateRelease },
+  action: AppUpdateAction,
 ): AppUpdateState {
   switch (action.type) {
     case "check_started":
+      if (action.source === "automatic") {
+        if (isProtectedUpdateFlow(state) || state.status === "available") {
+          return state;
+        }
+      }
       return { status: "checking", source: action.source };
-    case "check_success":
+    case "check_success": {
+      if (isProtectedUpdateFlow(state)) {
+        return state;
+      }
+      if (state.status === "available" && !action.release) {
+        return { status: "idle" };
+      }
       if (!action.release) return { status: "idle" };
       return { status: "available", release: action.release };
+    }
     case "check_error":
-      if (action.source === "automatic") return { status: "idle" };
+      if (action.source === "automatic") {
+        if (
+          state.status === "available" ||
+          isProtectedUpdateFlow(state) ||
+          state.status !== "checking"
+        ) {
+          return state;
+        }
+        return { status: "idle" };
+      }
+      if (isProtectedUpdateFlow(state) || state.status === "available") {
+        return state;
+      }
       return {
         status: "error",
         phase: "check",
@@ -282,13 +378,17 @@ export function appUpdateReducer(
         downloadedBytes: 0,
         totalBytes: null,
       };
-    case "download_progress":
+    case "download_event": {
+      if (state.status !== "downloading") return state;
+      if (state.release.version !== action.release.version) return state;
+      const next = accumulateDownloadProgress(state, action.event);
       return {
         status: "downloading",
-        release: action.release,
-        downloadedBytes: action.downloadedBytes,
-        totalBytes: action.totalBytes,
+        release: state.release,
+        downloadedBytes: next.downloadedBytes,
+        totalBytes: next.totalBytes,
       };
+    }
     case "launching":
       return { status: "launching", release: action.release };
     case "download_error":

@@ -56,8 +56,8 @@ A spec is a living document, not a one-shot brief:
 2. **Branch** — create one feature branch from `main`. Do not start a new branch while another
    feature branch is still open.
 3. **Implement** — the agent follows the spec on that branch.
-4. **Review** — a reviewer appends a `# Review of the implementation — follow-up tasks`
-   section to the **same file**, containing:
+4. **Review** — a reviewer writes findings to a **separate** review file under
+   [`reviews/`](reviews/) (`reviews/NNN-short-kebab-title-review.md`), containing:
    - the verification actually run (commands + results), so nobody repeats it;
    - what was confirmed correct by reading the code, so nobody re-litigates it;
    - any pre-existing/known failures, explicitly flagged as *not* to be "fixed";
@@ -65,7 +65,9 @@ A spec is a living document, not a one-shot brief:
      file / current / target / acceptance format, with a priority;
    - what remains unverified (e.g. anything needing a real browser or the shared dev DB).
 
-The implementing agent then works the `R*` tasks from the same document.
+The implementing agent then works the `R*` tasks from that review file while keeping the linked
+specification as the source of truth for intended behaviour. Do **not** append review findings or
+`R*` task lists into the specification file itself.
 
 ### Handoff prompt
 
@@ -74,10 +76,10 @@ line only when a task carries a hazard the spec cannot fully express (e.g. "R1 c
 verified in a packaged build").
 
 ```
-Implement the review follow-ups in docs/specs/NNN-<name>.md.
+Implement the review follow-ups in docs/specs/reviews/NNN-<name>-review.md.
 
-Read the whole file first. The spec body is the source of truth for intended behaviour;
-the "Review of the implementation" section at the end lists the tasks (R1, R2, ...).
+Read that review file first, then read the linked specification it reviews. The spec body is the
+source of truth for intended behaviour; the review lists the tasks (R1, R2, ...).
 For any UI work, also read docs/agent-knowledge/visual-style-guide.md before editing.
 
 Rules:
@@ -85,7 +87,7 @@ Rules:
    before starting this spec.
 1. Do the R tasks in the order given under "Follow-up order", and only those. No
    unrelated refactors, no scope expansion.
-2. The review's "What the review verified" list is settled. Do not re-check, re-derive
+2. The review's confirmed/verified list is settled. Do not re-check, re-derive
    or "improve" those — changing them is a regression, not a cleanup.
 3. Decisions marked locked in the spec body stay locked. If a task seems to require
    breaking one, stop and ask instead of deciding for yourself.
@@ -96,7 +98,8 @@ Rules:
 6. Run the checks in the spec's Verification section for the parts you touched. If a
    task cannot be verified in your environment, say so plainly rather than assuming
    it works.
-7. When done, append a "## R* implementation record" to the same spec file: what
+7. When done, append a "## R* implementation record" to the review file (or update the
+   linked spec's implementation record section if the spec already defines one): what
    changed per task, what you ran and the result, and anything you deliberately did
    not do.
 8. Do not modify unrelated uncommitted work in the tree.
@@ -106,7 +109,7 @@ Rules:
 Ask if a task is ambiguous rather than guessing.
 ```
 
-The result comes back for review, which appends `R*` outcomes to the same file — the loop
+The result comes back for review, which updates `R*` outcomes in the review file — the loop
 continues until the section is clean.
 
 ### When to run `vite build`
@@ -190,6 +193,8 @@ Rules:
 - [012-cell-library-sort-and-filter-review.md](reviews/012-cell-library-sort-and-filter-review.md)
 - [013-014-build-performance-review.md](reviews/013-014-build-performance-review.md)
 - [015-golden-analysis-regression-corpus-review.md](reviews/015-golden-analysis-regression-corpus-review.md)
+- [017-secure-tauri-updater-foundation-review.md](reviews/017-secure-tauri-updater-foundation-review.md)
+- [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
 
 ## Index
 
@@ -268,10 +273,12 @@ Rules:
 - [017-secure-tauri-updater-foundation.md](017-secure-tauri-updater-foundation.md)
   — secure Tauri updater substrate: signed manifest, NSIS updater artifacts, Rust pending-update
   state, and narrow check/download/install commands. Desktop-only; no in-app UI yet.
-  **Planned** — branch `feature/updater-017-019` (shared with 018–019). **In progress** on that branch.
+  Review: [017-secure-tauri-updater-foundation-review.md](reviews/017-secure-tauri-updater-foundation-review.md)
+  (**Implemented**; review follow-ups addressed). Branch `feature/updater-017-019`.
 - [018-in-app-update-experience.md](018-in-app-update-experience.md)
   — power-menu update indicator, modal, download progress, and installer launch via Spec 017
-  commands.   **In progress** on `feature/updater-017-019`. **Implemented** on that branch.
+  commands. Review: [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
+  (**Implemented**; review follow-ups addressed). Branch `feature/updater-017-019`.
 - [019-automated-github-release-publishing.md](019-automated-github-release-publishing.md)
   — tag-triggered GitHub release workflow, signed `latest.json`, and combined minor version bump to
   0.15.0. **Implemented** on `feature/updater-017-019`.

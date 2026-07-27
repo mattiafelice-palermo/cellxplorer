@@ -1,6 +1,6 @@
 # Spec 017: Secure Tauri updater foundation
 
-Status: **planned**.
+Status: **implemented** (review follow-ups R1–R5 addressed on `feature/updater-017-019`).
 
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/updater-017-019` (shared with Specs 018 and 019; merge once when all three are complete)  
@@ -126,9 +126,13 @@ The hook must:
 2. call the existing `stop_backend(&app)` process-tree cleanup;
 3. return without scheduling the normal `restart_app` relaunch.
 
-Do not stop the sidecar during check or download. The hook runs only at installation time.
+Do not stop the sidecar during check or download. The hook runs only at installation time, and
+only after the updater has already committed to exiting.
 
-Do not substitute a frontend `prepare` command for this hook. A separate command can stop the backend too early and leave a broken app if installer launch fails.
+Do not substitute a frontend `prepare` command for this hook. A separate command can stop the
+backend too early. Pre-hook install errors can still return to the frontend with the backend
+alive; once `on_before_exit` has run on Windows, Tauri exits regardless of whether
+`ShellExecuteW` successfully opened the installer, so there is no post-hook recovery path.
 
 ### 2.7 Split check, download and install in Rust
 

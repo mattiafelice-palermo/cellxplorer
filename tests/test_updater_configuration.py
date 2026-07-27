@@ -79,6 +79,25 @@ class UpdaterConfigurationTests(unittest.TestCase):
         ):
             self.assertIn(needle, self.main_rs + self.app_updates_rs)
 
+    def test_pending_update_state_is_managed_as_mutex(self):
+        """Tauri resolves managed state by exact type; commands request Mutex<PendingAppUpdate>."""
+        self.assertIn(
+            "Mutex::new(PendingAppUpdate::default())",
+            self.main_rs,
+        )
+        self.assertNotRegex(
+            self.main_rs,
+            r"\.manage\(\s*PendingAppUpdate::default\(\)\s*\)",
+        )
+        self.assertIn(
+            "State<'_, Mutex<PendingAppUpdate>>",
+            self.app_updates_rs,
+        )
+        self.assertGreaterEqual(
+            self.app_updates_rs.count("State<'_, Mutex<PendingAppUpdate>>"),
+            3,
+        )
+
     def test_frontend_does_not_get_broad_updater_permissions(self):
         permissions = self.capabilities["permissions"]
         self.assertFalse(any(permission.startswith("updater:") for permission in permissions))

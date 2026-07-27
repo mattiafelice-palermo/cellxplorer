@@ -16,7 +16,6 @@ import {
 import { post } from "../api";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
-  accumulateDownloadProgress,
   appUpdateReducer,
   AUTO_CHECK_INITIAL_DELAY_MS,
   AUTO_CHECK_INTERVAL_MS,
@@ -26,6 +25,7 @@ import {
   installAppUpdateTauri,
   mergeCheckResult,
   mockRelease,
+  normalizeUpdaterError,
   parseDevUpdateMock,
   readNotifiedVersion,
   restartAppTauri,
@@ -33,7 +33,9 @@ import {
   shouldNotifyForVersion,
   shouldPersistUpdateBadge,
   shouldShowUpdateUi,
+  shouldSkipAutomaticCheck,
   writeNotifiedVersion,
+  type AppUpdateDownloadEvent,
   type AppUpdateRelease,
   type AppUpdateState,
   type UpdateCheckSource,
@@ -83,13 +85,19 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appUpdateReducer, { status: "idle" });
   const [modalOpen, setModalOpen] = useState(false);
   const stateRef = useRef(state);
+  const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
+  const checkFeedbackSource = useRef<UpdateCheckSource>("automatic");
   const downloadInFlight = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    modalOpenRef.current = modalOpen;
+  }, [modalOpen]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,10 +113,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [devMock]);
 
   const applyRelease = useCallback((release: AppUpdateRelease | null, source: UpdateCheckSource) => {
+    const feedbackSource = source === "manual" ? "manual" : checkFeedbackSource.current;
     const merged = mergeCheckResult(stateRef.current, release);
-    dispatch({ type: "check_success", source, release: merged });
+    dispatch({ type: "check_success", source: feedbackSource, release: merged });
     if (!merged) {
-      if (source === "manual") {
+      if (feedbackSource === "manual") {
         notifications.show({ message: "CellXplorer is up to date.", color: "teal" });
       }
       return;
@@ -141,16 +150,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
       if (checkInFlight.current) {
+        if (source === "manual") {
+          checkFeedbackSource.current = "manual";
+        }
         await checkInFlight.current;
         return;
       }
-      if (
-        stateRef.current.status === "downloading" ||
-        stateRef.current.status === "launching"
-      ) {
+
+      if (source === "automatic" && shouldSkipAutomaticCheck(stateRef.current, modalOpenRef.current)) {
         return;
       }
 
+      checkFeedbackSource.current = source;
       dispatch({ type: "check_started", source });
 
       const run = (async () => {
@@ -162,25 +173,25 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             devMock === "download-error" ||
             devMock === "install-error"
           ) {
-            applyRelease(mockRelease(), source);
+            applyRelease(mockRelease(), checkFeedbackSource.current);
             return;
           }
           if (!tauri) {
-            dispatch({ type: "check_success", source, release: null });
+            applyRelease(null, checkFeedbackSource.current);
             return;
           }
           const release = await checkAppUpdateTauri();
           if (!mountedRef.current) return;
-          applyRelease(release, source);
+          applyRelease(release, checkFeedbackSource.current);
         } catch (error) {
           if (!mountedRef.current) return;
-          const message =
-            error instanceof Error ? error.message : "Could not check for updates.";
-          if (source === "automatic") {
+          const feedbackSource = checkFeedbackSource.current;
+          const message = normalizeUpdaterError(error, "Could not check for updates.");
+          if (feedbackSource === "automatic") {
             addDebugEvent("app-update:check-error", { message });
-            dispatch({ type: "check_error", source, message });
+            dispatch({ type: "check_error", source: "automatic", message });
           } else {
-            dispatch({ type: "check_error", source, message });
+            dispatch({ type: "check_error", source: "manual", message });
             notifications.show({ message, color: "red" });
           }
         } finally {
@@ -251,15 +262,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       downloadInFlight.current = true;
       dispatch({ type: "download_started", release });
 
-      const pushProgress = (event: Parameters<typeof accumulateDownloadProgress>[1]) => {
-        if (stateRef.current.status !== "downloading") return;
-        const next = accumulateDownloadProgress(stateRef.current, event);
-        dispatch({
-          type: "download_progress",
-          release,
-          downloadedBytes: next.downloadedBytes,
-          totalBytes: next.totalBytes,
-        });
+      const pushProgress = (event: AppUpdateDownloadEvent) => {
+        dispatch({ type: "download_event", release, event });
       };
 
       try {
@@ -276,7 +280,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           await post("/api/session/finish");
         } catch (error) {
           addDebugEvent("app-update:session-finish-error", {
-            message: error instanceof Error ? error.message : String(error),
+            message: normalizeUpdaterError(error, "Session finish failed."),
           });
         }
 
@@ -294,11 +298,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // Successful Windows install invocation is non-returning after on_before_exit.
         await installAppUpdateTauri(release.version);
       } catch (error) {
         if (!mountedRef.current) return;
-        const message =
-          error instanceof Error ? error.message : "Could not complete the update.";
+        const message = normalizeUpdaterError(error, "Could not complete the update.");
         if (stateRef.current.status === "launching" || devMock === "install-error") {
           dispatch({
             type: "install_error",
@@ -346,7 +350,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       await restartAppTauri();
     } catch (error) {
       notifications.show({
-        message: error instanceof Error ? error.message : "Could not restart CellXplorer.",
+        message: normalizeUpdaterError(error, "Could not restart CellXplorer."),
         color: "red",
       });
     }

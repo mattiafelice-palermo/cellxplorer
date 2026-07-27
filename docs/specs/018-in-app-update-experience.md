@@ -1,6 +1,6 @@
 # Spec 018: In-app update experience
 
-Status: **planned**.
+Status: **implemented** (review follow-ups R1–R7 addressed on `feature/updater-017-019`).
 
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/updater-017-019` (shared with Specs 017 and 019; merge once when all three are complete)  
@@ -184,12 +184,18 @@ Keep the release notes visible.
 
 #### Installation-launch failure
 
-The Spec 017 `on_before_exit` hook runs only on the successful Windows installer-launch path. If `install_app_update` returns an error, the backend should still be alive, but `/api/session/finish` may already have closed the current diagnostic session. Show an inline red Alert with:
+Distinguish two Windows boundaries:
 
-- the specific safe error message;
-- a primary `Restart CellXplorer` action using the existing `restart_app` command.
-
-Do not let the user dismiss the modal and continue in a session whose lifecycle record may already be closed. Do not fall back to `window.location.reload()`.
+1. **Pre-hook errors** — `install_app_update` returns before `on_before_exit`. The backend is still
+   alive, but `/api/session/finish` may already have closed the current diagnostic session. Show an
+   inline red Alert with the specific safe error message and a primary `Restart CellXplorer` action
+   using the existing `restart_app` command. Do not let the user dismiss the modal and continue in a
+   session whose lifecycle record may already be closed. Do not fall back to
+   `window.location.reload()` in the packaged app.
+2. **Post-hook path** — once the updater plugin runs `on_before_exit`, CellXplorer and the backend
+   exit. Upstream Tauri 2.10 does not inspect `ShellExecuteW` success before exiting, so the
+   frontend must treat a successful install invocation as non-returning and must not design UI
+   recovery for a failed Windows installer open after that point.
 
 ### 3.10 No automatic restart after installer launch
 

@@ -453,7 +453,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(PendingAppUpdate::default())
+        .manage(Mutex::new(PendingAppUpdate::default()))
         .invoke_handler(tauri::generate_handler![
             app_updates::check_app_update,
             app_updates::download_app_update,

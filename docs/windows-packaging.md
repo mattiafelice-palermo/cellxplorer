@@ -133,6 +133,9 @@ The Tauri shell owns update checking, download verification, and installer launc
 Rust commands in `src-tauri/src/app_updates.rs`. The webview must not call the generic updater
 plugin API directly. On Windows, the Python sidecar is stopped only through the updater plugin's
 `on_before_exit` hook immediately before NSIS launch; check and download must not stop the backend.
+Pre-hook install errors can still return to the frontend. After `on_before_exit` runs, Tauri exits
+regardless of whether Windows successfully opens the installer, so there is no post-hook recovery
+UI.
 
 The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
 alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while

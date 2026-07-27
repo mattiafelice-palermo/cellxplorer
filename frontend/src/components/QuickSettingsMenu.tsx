@@ -162,15 +162,14 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
           size={16}
           label="1"
           offset={4}
+          position="top-end"
           disabled={!appUpdate?.showUpdateBadge}
-          aria-label={
-            appUpdate?.showUpdateBadge ? "1 application update available" : undefined
-          }
         >
           <Indicator
             color="yellow"
             size={8}
             offset={4}
+            position="bottom-end"
             disabled={!isPaused}
             processing={isPaused}
           >
@@ -179,7 +178,11 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
               variant="subtle"
               color={isPaused ? "yellow" : "teal"}
               px="sm"
-              aria-label="Power and settings"
+              aria-label={
+                appUpdate?.showUpdateBadge
+                  ? "Power and settings, 1 application update available"
+                  : "Power and settings"
+              }
             >
               <IconPower size={18} stroke={1.75} />
             </Button>

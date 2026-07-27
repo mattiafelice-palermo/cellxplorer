@@ -15,8 +15,7 @@ import { IconDownload } from "@tabler/icons-react";
 import {
   canDismissUpdateModal,
   computeDownloadProgress,
-  renderReleaseNotes,
-  releaseNotesAreBulleted,
+  parseReleaseNoteLines,
   type AppUpdateRelease,
   type AppUpdateState,
 } from "../appUpdater";
@@ -31,29 +30,34 @@ type AppUpdateModalProps = {
 };
 
 function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
-  const lines = renderReleaseNotes(release.notes);
-  const bulleted = releaseNotesAreBulleted(release.notes);
+  const lines = parseReleaseNoteLines(release.notes);
 
   return (
     <Paper withBorder radius="md" p="sm">
       <ScrollArea.Autosize mah={220} type="auto">
-        {bulleted ? (
-          <Stack component="ul" gap={6} pl="md" m={0}>
-            {lines.map((line) => (
-              <Text component="li" size="sm" key={line}>
-                {line}
+        <Stack gap={6}>
+          {lines.map((line, index) =>
+            line.kind === "bullet" ? (
+              <Text
+                component="li"
+                size="sm"
+                key={`${index}:${line.kind}:${line.text}`}
+                ml="md"
+                style={{ display: "list-item", listStyleType: "disc" }}
+              >
+                {line.text}
               </Text>
-            ))}
-          </Stack>
-        ) : (
-          <Stack gap={6}>
-            {lines.map((line) => (
-              <Text size="sm" key={line} style={{ whiteSpace: "pre-wrap" }}>
-                {line}
+            ) : (
+              <Text
+                size="sm"
+                key={`${index}:${line.kind}:${line.text}`}
+                style={{ whiteSpace: "pre-wrap" }}
+              >
+                {line.text}
               </Text>
-            ))}
-          </Stack>
-        )}
+            ),
+          )}
+        </Stack>
       </ScrollArea.Autosize>
     </Paper>
   );
@@ -85,6 +89,7 @@ export function AppUpdateModal({
   const progress = downloading
     ? computeDownloadProgress(state.downloadedBytes, state.totalBytes)
     : null;
+  const indeterminate = downloading && progress?.percent === null;
 
   return (
     <Modal
@@ -122,8 +127,9 @@ export function AppUpdateModal({
               Downloading update…
             </Text>
             <Progress
-              value={progress?.percent ?? 100}
-              animated={progress?.percent === null}
+              value={indeterminate ? 100 : (progress?.percent ?? 0)}
+              animated={indeterminate}
+              striped={indeterminate}
               color="teal"
               size="md"
             />
