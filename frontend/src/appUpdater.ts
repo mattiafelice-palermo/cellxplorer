@@ -100,6 +100,32 @@ export function normalizeUpdaterError(error: unknown, fallback: string): string 
   return fallback;
 }
 
+/** User-facing explanation for failed update checks (404, offline, etc.). */
+export function explainUpdateCheckFailure(rawMessage: string): string {
+  const text = rawMessage.toLowerCase();
+  if (
+    text.includes("404") ||
+    text.includes("valid release json") ||
+    text.includes("could not fetch") ||
+    text.includes("not found") ||
+    text.includes("no release")
+  ) {
+    return "CellXplorer could not find update information online. The update server may be unreachable, or no release has been published yet.";
+  }
+  if (
+    text.includes("network") ||
+    text.includes("offline") ||
+    text.includes("timed out") ||
+    text.includes("timeout") ||
+    text.includes("dns") ||
+    text.includes("connection") ||
+    text.includes("unreachable")
+  ) {
+    return "CellXplorer could not reach the update server. Check your internet connection and try again.";
+  }
+  return "CellXplorer could not check for updates right now. Try again in a moment.";
+}
+
 export function formatUpdateBytes(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "0 B";
   if (value < 1024) return `${Math.round(value)} B`;
@@ -334,7 +360,8 @@ export type AppUpdateAction =
       message: string;
       lifecycleMayNeedRestart?: boolean;
     }
-  | { type: "reset_available"; release: AppUpdateRelease };
+  | { type: "reset_available"; release: AppUpdateRelease }
+  | { type: "dismiss_check_error" };
 
 export function appUpdateReducer(
   state: AppUpdateState,
@@ -414,6 +441,11 @@ export function appUpdateReducer(
       };
     case "reset_available":
       return { status: "available", release: action.release };
+    case "dismiss_check_error":
+      if (state.status === "error" && state.phase === "check") {
+        return { status: "idle" };
+      }
+      return state;
     default:
       return state;
   }

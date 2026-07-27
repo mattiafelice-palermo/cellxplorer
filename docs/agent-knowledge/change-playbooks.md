@@ -153,6 +153,9 @@ and pyarrow 84MB.
    command wiring changes.
 6. The first updater-enabled release is a manual bootstrap install; live in-app updates require
    public HTTPS release assets and Specs 018–019.
+7. Persist GitHub release-asset metadata as the raw `Invoke-WebRequest` response body. Do not
+   re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
+   fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.
 
 ### Tag and release checklist
 

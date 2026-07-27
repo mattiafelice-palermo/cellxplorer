@@ -15,6 +15,7 @@ import { IconDownload } from "@tabler/icons-react";
 import {
   canDismissUpdateModal,
   computeDownloadProgress,
+  explainUpdateCheckFailure,
   parseReleaseNoteLines,
   type AppUpdateRelease,
   type AppUpdateState,
@@ -23,9 +24,12 @@ import {
 type AppUpdateModalProps = {
   opened: boolean;
   state: AppUpdateState;
+  currentVersion: string | null;
+  upToDate: boolean;
   onClose: () => void;
   onDownload: () => void;
   onRetry: () => void;
+  onRetryCheck: () => void;
   onRestart: () => void;
 };
 
@@ -92,12 +96,24 @@ function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
   );
 }
 
+function CurrentVersionBadge({ version }: { version: string | null }) {
+  if (!version) return null;
+  return (
+    <Badge color="gray" variant="light">
+      v{version}
+    </Badge>
+  );
+}
+
 export function AppUpdateModal({
   opened,
   state,
+  currentVersion,
+  upToDate,
   onClose,
   onDownload,
   onRetry,
+  onRetryCheck,
   onRestart,
 }: AppUpdateModalProps) {
   const release =
@@ -108,17 +124,78 @@ export function AppUpdateModal({
       ? state.release
       : null;
 
-  if (!release) return null;
+  const checkFailed = state.status === "error" && state.phase === "check";
+  const checkingManual = state.status === "checking" && state.source === "manual";
+  const showStatusOnly = !release && (checkFailed || upToDate || (opened && checkingManual));
 
-  const dismissible = canDismissUpdateModal(state);
+  if (!release && !showStatusOnly) return null;
+
+  const dismissible =
+    !checkingManual && (canDismissUpdateModal(state) || upToDate || checkFailed);
   const downloading = state.status === "downloading";
   const launching = state.status === "launching";
-  const error = state.status === "error" && state.phase !== "check";
+  const transferError = state.status === "error" && state.phase !== "check";
 
   const progress = downloading
     ? computeDownloadProgress(state.downloadedBytes, state.totalBytes)
     : null;
   const indeterminate = downloading && progress?.percent === null;
+
+  if (showStatusOnly) {
+    const title = checkingManual
+      ? "Checking for updates"
+      : checkFailed
+        ? "Could not check for updates"
+        : "You’re up to date";
+    return (
+      <Modal
+        opened={opened}
+        onClose={onClose}
+        title={
+          <Group gap="sm" wrap="nowrap">
+            <Text fw={600}>{title}</Text>
+            <CurrentVersionBadge version={currentVersion} />
+          </Group>
+        }
+        centered
+        size="36rem"
+        radius="md"
+        padding="md"
+        withCloseButton={false}
+        closeOnClickOutside={dismissible}
+        closeOnEscape={dismissible}
+      >
+        <Stack gap="sm">
+          {checkingManual ? (
+            <Text size="sm">Looking for a newer CellXplorer release…</Text>
+          ) : checkFailed ? (
+            <Alert color="orange" title="Update check failed">
+              <Text size="sm">{explainUpdateCheckFailure(state.message)}</Text>
+            </Alert>
+          ) : (
+            <Text size="sm">
+              {currentVersion
+                ? `This installation is already running CellXplorer v${currentVersion}. No newer release was found.`
+                : "This installation is already up to date. No newer release was found."}
+            </Text>
+          )}
+
+          <Group justify="flex-end" gap="sm" mt={4}>
+            {!checkingManual ? (
+              <Button variant="default" onClick={onClose}>
+                Close
+              </Button>
+            ) : null}
+            {checkFailed && !checkingManual ? (
+              <Button color="teal" onClick={onRetryCheck}>
+                Try again
+              </Button>
+            ) : null}
+          </Group>
+        </Stack>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -128,7 +205,7 @@ export function AppUpdateModal({
         <Group gap="sm" wrap="nowrap">
           <Text fw={600}>Update available</Text>
           <Badge color="teal" variant="light">
-            v{release.version}
+            v{release!.version}
           </Badge>
         </Group>
       }
@@ -147,7 +224,7 @@ export function AppUpdateModal({
           <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
             Release notes
           </Text>
-          <ReleaseNotesBody release={release} />
+          <ReleaseNotesBody release={release!} />
         </Stack>
 
         {downloading ? (
@@ -179,7 +256,7 @@ export function AppUpdateModal({
           </Stack>
         ) : null}
 
-        {error ? (
+        {transferError ? (
           <Alert color="red" title={state.phase === "install" ? "Install failed" : "Download failed"}>
             <Text size="sm">{state.message}</Text>
           </Alert>

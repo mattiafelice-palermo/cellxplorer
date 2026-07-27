@@ -17,6 +17,7 @@ import {
   parseDevUpdateMock,
   parseReleaseNoteLines,
   failurePhaseForLocalUpdatePhase,
+  explainUpdateCheckFailure,
   renderReleaseNotes,
   shouldNotifyForVersion,
   shouldPersistUpdateBadge,
@@ -259,6 +260,38 @@ test("normalizeUpdaterError preserves strings and Error messages", () => {
   assert.equal(normalizeUpdaterError(new Error("boom"), "fallback"), "boom");
   assert.equal(normalizeUpdaterError({ nested: true }, "fallback"), "fallback");
   assert.equal(normalizeUpdaterError("   ", "fallback"), "fallback");
+});
+
+test("explainUpdateCheckFailure maps transport failures to plain language", () => {
+  assert.match(
+    explainUpdateCheckFailure("Could not fetch a valid release JSON from the remote"),
+    /could not find update information/i,
+  );
+  assert.match(
+    explainUpdateCheckFailure("network offline"),
+    /could not reach the update server/i,
+  );
+  assert.match(explainUpdateCheckFailure("unexpected"), /could not check for updates/i);
+});
+
+test("dismiss_check_error clears manual check failures only", () => {
+  assert.deepEqual(
+    appUpdateReducer(
+      { status: "error", phase: "check", message: "offline" },
+      { type: "dismiss_check_error" },
+    ),
+    { status: "idle" },
+  );
+  const downloadError = {
+    status: "error" as const,
+    phase: "download" as const,
+    message: "fail",
+    release: mockRelease("0.16.0"),
+  };
+  assert.deepEqual(
+    appUpdateReducer(downloadError, { type: "dismiss_check_error" }),
+    downloadError,
+  );
 });
 
 test("menu label for each state", () => {

@@ -4,6 +4,14 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.2 - 2026-07-27
+
+- Restored the chevron on the power-menu button so it reads as a menu control again.
+- Manual update checks now open a clear modal with the installed version when the check fails
+  or the app is already up to date, instead of a hard-to-see corner notification.
+- Fixed GitHub release verification so draft asset metadata is saved as raw API JSON (avoids a
+  PowerShell `ConvertTo-Json` failure that blocked publishing).
+
 ## 0.15.1 - 2026-07-27
 
 - Published the first GitHub Release with signed updater artifacts and `latest.json`, so

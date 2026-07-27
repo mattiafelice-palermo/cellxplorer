@@ -85,6 +85,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const [state, dispatch] = useReducer(appUpdateReducer, { status: "idle" });
   const [modalOpen, setModalOpen] = useState(false);
+  const [upToDateModal, setUpToDateModal] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const stateRef = useRef(state);
   const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
@@ -109,6 +111,22 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!tauri) return;
+    let cancelled = false;
+    void import("@tauri-apps/api/app")
+      .then(({ getVersion }) => getVersion())
+      .then((version) => {
+        if (!cancelled && mountedRef.current) setCurrentVersion(version);
+      })
+      .catch(() => {
+        /* keep null; modal still works without a badge */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tauri]);
+
+  useEffect(() => {
     if (devMock) {
       addDebugEvent("app-update:mock", { mode: devMock });
     }
@@ -120,10 +138,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "check_success", source: feedbackSource, release: merged });
     if (!merged) {
       if (feedbackSource === "manual") {
-        notifications.show({ message: "CellXplorer is up to date.", color: "teal" });
+        setUpToDateModal(true);
+        setModalOpen(true);
       }
       return;
     }
+    setUpToDateModal(false);
     if (
       shouldNotifyForVersion(
         merged.version,
@@ -222,8 +242,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             addDebugEvent("app-update:check-error", { message });
             dispatch({ type: "check_error", source: "automatic", message });
           } else {
+            setUpToDateModal(false);
             dispatch({ type: "check_error", source: "manual", message });
-            notifications.show({ message, color: "red" });
+            setModalOpen(true);
           }
         } finally {
           checkInFlight.current = null;
@@ -276,17 +297,33 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const openUpdateModal = useCallback(() => {
     if (stateRef.current.status === "available") {
       checkEpochRef.current += 1;
+      setUpToDateModal(false);
       setModalOpen(true);
     }
   }, []);
 
   const closeUpdateModal = useCallback(() => {
+    if (upToDateModal) {
+      setUpToDateModal(false);
+      setModalOpen(false);
+      return;
+    }
     if (!canDismissUpdateModal(stateRef.current)) return;
     setModalOpen(false);
+    if (stateRef.current.status === "error" && stateRef.current.phase === "check") {
+      dispatch({ type: "dismiss_check_error" });
+      return;
+    }
     if (stateRef.current.status === "error" && stateRef.current.phase === "download") {
       dispatch({ type: "reset_available", release: stateRef.current.release! });
     }
-  }, []);
+  }, [upToDateModal]);
+
+  const retryCheck = useCallback(() => {
+    setUpToDateModal(false);
+    dispatch({ type: "dismiss_check_error" });
+    void performCheck("manual");
+  }, [performCheck]);
 
   const runDownload = useCallback(
     async (release: AppUpdateRelease) => {
@@ -402,6 +439,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     if (current.status === "available") {
       checkEpochRef.current += 1;
+      setUpToDateModal(false);
       setModalOpen(true);
       return;
     }
@@ -443,9 +481,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       <AppUpdateModal
         opened={modalOpen}
         state={state}
+        currentVersion={currentVersion}
+        upToDate={upToDateModal}
         onClose={closeUpdateModal}
         onDownload={() => void downloadAndLaunchInstaller()}
         onRetry={() => void retryDownload()}
+        onRetryCheck={retryCheck}
         onRestart={() => void restartAfterInstallFailure()}
       />
     </AppUpdateContext.Provider>
