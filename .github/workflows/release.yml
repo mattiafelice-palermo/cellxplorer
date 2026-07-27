@@ -1,15 +1,23 @@
 name: Publish CellXplorer release
 
+# Staged draft publishing (Spec 019 review R2):
+# 1) create/update a draft GitHub Release with signed NSIS + latest.json
+# 2) verify local latest.json against release-asset metadata
+# 3) undraft only after verification succeeds
+#
+# Pinned third-party actions (full 40-char SHAs):
+# - actions/checkout@v6.0.1
+# - actions/setup-python@v6.0.0
+# - actions/setup-node@v6.0.0
+# - dtolnay/rust-toolchain stable (2026-06-30)
+# - Swatinem/rust-cache@v2.8.2
+# - tauri-apps/tauri-action@v1.0.0
+
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Create or update a GitHub Release (tag pushes always publish)
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -22,17 +30,19 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: "22"
           cache: npm
@@ -41,10 +51,10 @@ jobs:
             frontend/package-lock.json
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-06-30
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: src-tauri -> target
 
@@ -73,6 +83,60 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Require stable SemVer tag
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: python scripts/release_tag.py --tag "${{ github.ref_name }}"
+
+      - name: Require public repository for publishing
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          if ("${{ github.event.repository.private }}" -eq "true") {
+            Write-Error "Stable updater publishing requires a public repository so installed clients can fetch latest.json without credentials."
+            exit 1
+          }
+
+      - name: Require tagged commit is reachable from main
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$env:GITHUB_SHA" origin/main
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Tag ${{ github.ref_name }} points to a commit that is not reachable from origin/main."
+            exit 1
+          }
+
+      - name: Refuse to replace an already published release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/${{ github.ref_name }}"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "cellxplorer-release-workflow"
+          }
+          try {
+            $release = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            if ($status -eq 404) {
+              Write-Host "No existing release for ${{ github.ref_name }}; draft staging may proceed."
+              exit 0
+            }
+            throw
+          }
+          if (-not $release.draft) {
+            Write-Error "Release ${{ github.ref_name }} is already published. Published versions are immutable; cut a new patch tag instead."
+            exit 1
+          }
+          Write-Host "Existing draft release found; draft assets may be replaced before final publication."
+
       - name: Verify maintained version declarations
         if: github.ref_type == 'tag'
         shell: pwsh
@@ -91,7 +155,7 @@ jobs:
             --output release-notes.md
 
       - name: Require updater signing secrets
-        if: github.ref_type == 'tag' || inputs.publish
+        if: github.ref_type == 'tag'
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -131,18 +195,19 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value $content
           Add-Content -Path $env:GITHUB_OUTPUT -Value "RELEASE_NOTES_EOF"
 
-      - name: Publish signed release
-        if: github.ref_type == 'tag' || inputs.publish
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+      - name: Stage signed draft release
+        if: github.ref_type == 'tag'
+        id: tauri_release
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          tagName: ${{ github.ref_name }}
           releaseName: CellXplorer ${{ steps.version.outputs.version }}
           releaseBody: ${{ steps.release_notes.outputs.body }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           tauriScript: npm run tauri
           uploadUpdaterJson: true
@@ -151,8 +216,8 @@ jobs:
           uploadPlainBinary: false
 
       - name: Build release artifacts only
-        if: github.ref_type != 'tag' && !inputs.publish
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+        if: github.ref_type != 'tag'
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -163,24 +228,69 @@ jobs:
           uploadPlainBinary: false
 
       - name: Locate generated updater manifest
-        if: github.ref_type == 'tag' || inputs.publish
+        if: github.ref_type == 'tag'
         id: manifest
         shell: pwsh
         run: |
-          $manifest = Get-ChildItem -Path src-tauri/target -Recurse -Filter latest.json |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $manifest) {
-            Write-Error "Could not find generated latest.json"
+          $manifest = Join-Path $env:GITHUB_WORKSPACE "latest.json"
+          if (-not (Test-Path $manifest)) {
+            Write-Error "Could not find generated latest.json at repository root ($manifest)."
             exit 1
           }
-          "path=$($manifest.FullName)" >> $env:GITHUB_OUTPUT
+          "path=$manifest" >> $env:GITHUB_OUTPUT
+
+      - name: Export draft release assets metadata
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseId = "${{ steps.tauri_release.outputs.releaseId }}"
+          if ([string]::IsNullOrWhiteSpace($releaseId)) {
+            Write-Error "tauri-action did not provide releaseId."
+            exit 1
+          }
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$releaseId/assets?per_page=100"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "cellxplorer-release-workflow"
+          }
+          $assets = @(Invoke-RestMethod -Method Get -Uri $uri -Headers $headers)
+          $json = ConvertTo-Json -InputObject $assets -Depth 8
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE "release-assets.json"),
+            $json
+          )
 
       - name: Verify updater manifest
-        if: github.ref_type == 'tag' || inputs.publish
+        if: github.ref_type == 'tag'
         shell: pwsh
         run: |
+          $owner, $repo = $env:GITHUB_REPOSITORY.Split('/', 2)
           python scripts/verify_updater_manifest.py `
             --manifest "${{ steps.manifest.outputs.path }}" `
             --expected-version "${{ steps.version.outputs.version }}" `
-            --notes-file release-notes.md
+            --notes-file release-notes.md `
+            --owner $owner `
+            --repo $repo `
+            --release-assets release-assets.json
+
+      - name: Publish verified draft release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseId = "${{ steps.tauri_release.outputs.releaseId }}"
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$releaseId"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "cellxplorer-release-workflow"
+          }
+          $body = @{ draft = $false } | ConvertTo-Json
+          Invoke-RestMethod -Method Patch -Uri $uri -Headers $headers -Body $body -ContentType "application/json"
+          Write-Host "Published verified release ${{ github.ref_name }}."

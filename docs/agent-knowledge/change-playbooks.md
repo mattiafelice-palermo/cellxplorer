@@ -159,9 +159,11 @@ and pyarrow 84MB.
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
 2. Run `python scripts/check_versions.py` and `python scripts/preflight.py --no-cache` locally.
 3. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
-4. Push `vX.Y.Z` to trigger `.github/workflows/release.yml` (do not rely on the ordinary preflight
-   workflow for tag publishing).
+4. Push `vX.Y.Z` (exact `vMAJOR.MINOR.PATCH` only) to trigger `.github/workflows/release.yml`.
+   The tag commit must be reachable from `main`. Do not rely on the ordinary preflight workflow for
+   tag publishing, and do not re-run a published tag to replace binaries.
 5. Inspect the GitHub Release assets: NSIS setup executable, matching `.sig`, and `latest.json`.
+   The workflow stages a draft first and undrafts only after verification.
 6. For the bootstrap release, manually install the updater-enabled build on a real machine.
 7. For the first live update test, publish a real patch release `N+1` and verify discovery,
    download, installer launch, data preservation, and backend restart from version `N`.

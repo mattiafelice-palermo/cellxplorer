@@ -1,4 +1,7 @@
+import importlib.util
 import re
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -6,8 +9,86 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 PREFLIGHT_WORKFLOW = ROOT / ".github" / "workflows" / "preflight.yml"
+RELEASE_TAG_PATH = ROOT / "scripts" / "release_tag.py"
+VERIFY_MANIFEST_PATH = ROOT / "scripts" / "verify_updater_manifest.py"
 
 TAURI_ACTION_SHA = "1deb371b0cd8bd54025b384f1cd735e725c4060f"
+FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+USES_RE = re.compile(r"^\s+uses:\s*([^\s#]+)(?:\s*#.*)?$", re.MULTILINE)
+
+
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+release_tag = load_module(RELEASE_TAG_PATH, "release_tag")
+verify_updater_manifest = load_module(VERIFY_MANIFEST_PATH, "verify_updater_manifest")
+
+
+def step_names(workflow: str) -> list[str]:
+    return re.findall(r"^\s+- name: (.+)$", workflow, re.MULTILINE)
+
+
+def step_index(workflow: str, name: str) -> int:
+    names = step_names(workflow)
+    return names.index(name)
+
+
+NOTES = "- Signed in-app updates through the power menu.\n"
+SETUP_EXE = "CellXplorer_0.15.0_x64-setup.exe"
+OWNER = "mattiafelice-palermo"
+REPO = "cellxplorer"
+ASSET_ID = 987654321
+
+
+def sample_manifest(**overrides) -> dict:
+    payload = {
+        "version": "0.15.0",
+        "notes": NOTES,
+        "platforms": {
+            "windows-x86_64": {
+                "url": (
+                    f"https://api.github.com/repos/{OWNER}/{REPO}/releases/assets/{ASSET_ID}"
+                ),
+                "signature": "dGVzdA==",
+            }
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def sample_assets(*, asset_id: int = ASSET_ID, name: str = SETUP_EXE) -> list[dict]:
+    return [
+        {"id": asset_id, "name": name},
+        {"id": asset_id + 1, "name": f"{SETUP_EXE}.sig"},
+        {"id": asset_id + 2, "name": "latest.json"},
+    ]
+
+
+class ReleaseTagTests(unittest.TestCase):
+    def test_accepts_exact_stable_tags(self):
+        self.assertTrue(release_tag.is_stable_release_tag("v0.15.0"))
+        self.assertEqual(release_tag.require_stable_release_tag("v0.15.0"), "v0.15.0")
+
+    def test_rejects_prerelease_and_malformed_tags(self):
+        for tag in (
+            "v0.15",
+            "release-0.15.0",
+            "v0.15.0-rc.1",
+            "v0.15.0+build",
+            "vfoo",
+            "0.15.0",
+        ):
+            with self.subTest(tag=tag):
+                self.assertFalse(release_tag.is_stable_release_tag(tag))
+                with self.assertRaises(release_tag.ReleaseTagError):
+                    release_tag.require_stable_release_tag(tag)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -20,27 +101,62 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('tags:\n      - "v*"', self.release)
         self.assertNotIn("tags:", self.preflight)
 
-    def test_preflight_still_runs_on_main_and_manual_dispatch(self):
-        self.assertIn("branches:\n      - main", self.preflight)
-        self.assertIn("workflow_dispatch:", self.preflight)
+    def test_manual_dispatch_is_build_only(self):
+        self.assertIn("workflow_dispatch:", self.release)
+        self.assertNotIn("publish:", self.release)
+        self.assertIn("uploadWorkflowArtifacts: true", self.release)
+        self.assertNotIn("inputs.publish", self.release)
 
-    def test_release_job_runs_on_windows(self):
-        self.assertIn("runs-on: windows-latest", self.release)
+    def test_stable_tag_and_main_ancestry_guards_exist(self):
+        self.assertIn("python scripts/release_tag.py --tag", self.release)
+        self.assertIn("git merge-base --is-ancestor", self.release)
+        self.assertIn("Refuse to replace an already published release", self.release)
 
-    def test_release_workflow_has_contents_write(self):
-        self.assertIn("contents: write", self.release)
+    def test_private_repository_blocks_tag_publish(self):
+        self.assertIn("Require public repository for publishing", self.release)
+        self.assertIn("github.event.repository.private", self.release)
+
+    def test_draft_staging_then_publish_after_verification(self):
+        self.assertIn("releaseDraft: true", self.release)
+        self.assertNotIn("releaseDraft: false", self.release)
+        self.assertLess(
+            step_index(self.release, "Stage signed draft release"),
+            step_index(self.release, "Verify updater manifest"),
+        )
+        self.assertLess(
+            step_index(self.release, "Verify updater manifest"),
+            step_index(self.release, "Publish verified draft release"),
+        )
+
+    def test_manifest_is_read_from_workspace_root(self):
+        self.assertIn('Join-Path $env:GITHUB_WORKSPACE "latest.json"', self.release)
+        self.assertNotIn("src-tauri/target", self.release)
+
+    def test_all_third_party_actions_are_full_sha_pinned(self):
+        refs = []
+        for match in USES_RE.finditer(self.release):
+            uses = match.group(1)
+            self.assertIn("@", uses, uses)
+            action, ref = uses.rsplit("@", 1)
+            if action.startswith("./"):
+                continue
+            refs.append((action, ref))
+            self.assertRegex(ref, FULL_SHA_RE, msg=f"{action} is not pinned to a full SHA")
+            self.assertFalse(ref.startswith("v"), msg=f"{action} uses floating tag {ref}")
+            self.assertNotIn(ref, {"stable", "main", "master"})
+        actions = {action for action, _ref in refs}
+        self.assertIn("dtolnay/rust-toolchain", actions)
+        self.assertIn("Swatinem/rust-cache", actions)
+        self.assertIn(f"tauri-apps/tauri-action@{TAURI_ACTION_SHA}", self.release)
 
     def test_release_preflight_uses_no_cache(self):
         self.assertIn("python scripts/preflight.py --no-cache", self.release)
 
-    def test_release_runs_expected_version_gate_for_tags(self):
+    def test_sidecar_is_prepared_with_existing_build_script(self):
         self.assertIn(
-            'python scripts/check_versions.py --expected-version "${{ github.ref_name }}"',
+            ".\\scripts\\build-app.ps1 -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend",
             self.release,
         )
-
-    def test_pyinstaller_is_installed_in_release_workflow(self):
-        self.assertIn("python -m pip install pyinstaller", self.release)
 
     def test_signing_secret_names_are_present_without_values(self):
         for name in (
@@ -50,27 +166,135 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn(name, self.release)
             self.assertNotIn(f"{name}=", self.release)
 
-    def test_tauri_action_is_pinned_to_full_sha(self):
-        self.assertIn(f"tauri-apps/tauri-action@{TAURI_ACTION_SHA}", self.release)
-        self.assertNotRegex(self.release, r"tauri-apps/tauri-action@v\d")
 
-    def test_updater_json_prefers_nsis_and_disables_plain_binary(self):
-        self.assertIn("updaterJsonPreferNsis: true", self.release)
-        self.assertIn("uploadPlainBinary: false", self.release)
-        self.assertIn("uploadUpdaterJson: true", self.release)
-        self.assertIn("uploadUpdaterSignatures: true", self.release)
-
-    def test_manual_dispatch_is_build_only_by_default(self):
-        self.assertIn("workflow_dispatch:", self.release)
-        self.assertIn("publish:", self.release)
-        self.assertIn("default: false", self.release)
-        self.assertIn("uploadWorkflowArtifacts: true", self.release)
-
-    def test_sidecar_is_prepared_with_existing_build_script(self):
-        self.assertIn(
-            ".\\scripts\\build-app.ps1 -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend",
-            self.release,
+class VerifyUpdaterManifestTests(unittest.TestCase):
+    def test_accepts_tauri_action_v1_api_asset_manifest(self):
+        verify_updater_manifest.verify_manifest(
+            sample_manifest(),
+            expected_version="v0.15.0",
+            expected_notes=NOTES,
+            expected_owner=OWNER,
+            expected_repo=REPO,
+            release_assets=sample_assets(),
+            setup_exe_name=SETUP_EXE,
         )
+
+    def test_rejects_browser_download_url_shape(self):
+        manifest = sample_manifest()
+        manifest["platforms"]["windows-x86_64"]["url"] = (
+            f"https://github.com/{OWNER}/{REPO}/releases/download/v0.15.0/{SETUP_EXE}"
+        )
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                manifest,
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+            )
+
+    def test_rejects_wrong_owner_repo_or_asset_name(self):
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner="other-owner",
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+            )
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(name="wrong-setup.exe"),
+            )
+
+    def test_rejects_missing_sig_wrong_version_notes_or_empty_signature(self):
+        assets_without_sig = [
+            {"id": ASSET_ID, "name": SETUP_EXE},
+            {"id": ASSET_ID + 2, "name": "latest.json"},
+        ]
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                sample_manifest(),
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=assets_without_sig,
+            )
+
+        bad_version = sample_manifest(version="0.15.1")
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                bad_version,
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+            )
+
+        bad_notes = sample_manifest(notes="- Different notes.\n")
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                bad_notes,
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+            )
+
+        empty_sig = sample_manifest()
+        empty_sig["platforms"]["windows-x86_64"]["signature"] = "   "
+        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
+            verify_updater_manifest.verify_manifest(
+                empty_sig,
+                expected_version="0.15.0",
+                expected_notes=NOTES,
+                expected_owner=OWNER,
+                expected_repo=REPO,
+                release_assets=sample_assets(),
+            )
+
+    def test_cli_accepts_fixture_files_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "latest.json"
+            notes_path = root / "notes.md"
+            assets_path = root / "assets.json"
+            manifest_path.write_text(
+                __import__("json").dumps(sample_manifest()),
+                encoding="utf-8",
+            )
+            notes_path.write_text(NOTES, encoding="utf-8")
+            assets_path.write_text(
+                __import__("json").dumps(sample_assets()),
+                encoding="utf-8",
+            )
+            code = verify_updater_manifest.main(
+                [
+                    "--manifest",
+                    str(manifest_path),
+                    "--expected-version",
+                    "v0.15.0",
+                    "--notes-file",
+                    str(notes_path),
+                    "--owner",
+                    OWNER,
+                    "--repo",
+                    REPO,
+                    "--release-assets",
+                    str(assets_path),
+                ]
+            )
+            self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

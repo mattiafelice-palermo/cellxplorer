@@ -195,6 +195,7 @@ Rules:
 - [015-golden-analysis-regression-corpus-review.md](reviews/015-golden-analysis-regression-corpus-review.md)
 - [017-secure-tauri-updater-foundation-review.md](reviews/017-secure-tauri-updater-foundation-review.md)
 - [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
+- [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
 
 ## Index
 
@@ -281,7 +282,9 @@ Rules:
   (**Implemented**; review follow-ups addressed). Branch `feature/updater-017-019`.
 - [019-automated-github-release-publishing.md](019-automated-github-release-publishing.md)
   — tag-triggered GitHub release workflow, signed `latest.json`, and combined minor version bump to
-  0.15.0. **Implemented** on `feature/updater-017-019`.
+  0.15.0. Review: [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
+  (**Implemented**; review follow-ups addressed — do not push `v0.15.0` until repo is public and
+  017/018 re-review is clean). Branch `feature/updater-017-019`.
 
 ## Assets
 

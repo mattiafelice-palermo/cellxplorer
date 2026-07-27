@@ -190,6 +190,7 @@ Cellxplorer/
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── preflight.py                Canonical local verification command
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
+│   ├── release_tag.py              Stable SemVer tag validation for release workflow (Spec 019)
 │   ├── verify_updater_manifest.py  Read-only latest.json validation (Spec 019)
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight
 ├── .github/workflows/              GitHub Actions CI and release automation

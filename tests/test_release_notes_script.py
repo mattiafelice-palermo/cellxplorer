@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_NOTES_PATH = ROOT / "scripts" / "release_notes.py"
-VERIFY_MANIFEST_PATH = ROOT / "scripts" / "verify_updater_manifest.py"
 
 
 def load_module(path: Path, name: str):
@@ -20,7 +19,6 @@ def load_module(path: Path, name: str):
 
 
 release_notes = load_module(RELEASE_NOTES_PATH, "release_notes")
-verify_updater_manifest = load_module(VERIFY_MANIFEST_PATH, "verify_updater_manifest")
 
 
 SAMPLE_CHANGELOG = """# Changelog
@@ -91,46 +89,6 @@ class ReleaseNotesScriptTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(output.is_file())
             self.assertEqual(changelog.read_text(encoding="utf-8"), before)
-
-
-class VerifyUpdaterManifestTests(unittest.TestCase):
-    def test_accepts_valid_windows_nsis_manifest(self):
-        notes = "- Signed in-app updates through the power menu.\n"
-        manifest = {
-            "version": "0.15.0",
-            "notes": notes,
-            "platforms": {
-                "windows-x86_64": {
-                    "url": "https://github.com/example/cellxplorer/releases/download/v0.15.0/CellXplorer_0.15.0_x64-setup.exe",
-                    "signature": "dGVzdA==",
-                }
-            },
-        }
-        verify_updater_manifest.verify_manifest(
-            manifest,
-            expected_version="v0.15.0",
-            expected_notes=notes,
-            setup_exe_name="CellXplorer_0.15.0_x64-setup.exe",
-        )
-
-    def test_rejects_version_or_notes_mismatch(self):
-        notes = "- Release notes.\n"
-        manifest = {
-            "version": "0.15.1",
-            "notes": notes,
-            "platforms": {
-                "windows-x86_64": {
-                    "url": "https://github.com/example/cellxplorer/releases/download/v0.15.1/CellXplorer_0.15.1_x64-setup.exe",
-                    "signature": "dGVzdA==",
-                }
-            },
-        }
-        with self.assertRaises(verify_updater_manifest.ManifestVerificationError):
-            verify_updater_manifest.verify_manifest(
-                manifest,
-                expected_version="0.15.0",
-                expected_notes=notes,
-            )
 
 
 if __name__ == "__main__":

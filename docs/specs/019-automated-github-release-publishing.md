@@ -1,6 +1,7 @@
 # Spec 019: Automated GitHub release publishing
 
-Status: **planned**.
+Status: **implemented** (review follow-ups R1–R8 addressed on `feature/updater-017-019`; do not
+push `v0.15.0` until the repository is public and Specs 017/018 re-review is clean).
 
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/updater-017-019` (shared with Specs 017 and 018; merge once when all three are complete)  
@@ -39,7 +40,10 @@ git tag v0.15.0
 git push origin v0.15.0
 ```
 
-The workflow creates or updates the matching non-draft, non-prerelease GitHub Release and uploads the updater assets.
+The workflow creates or updates a **draft** GitHub Release, verifies installer / `.sig` /
+`latest.json` against release-asset metadata, and only then undrafts the release. Drafts are not
+selected by `releases/latest`, so a failed verification cannot expose an incomplete stable updater
+endpoint.
 
 Do not publish installers on ordinary `main` pushes. The existing `main` preflight workflow remains the normal post-merge quality check.
 
@@ -75,7 +79,7 @@ Required action behavior:
 - `uploadUpdaterJson: true`;
 - `uploadUpdaterSignatures: true`;
 - `updaterJsonPreferNsis: true`;
-- `releaseDraft: false`;
+- `releaseDraft: true` while staging, then undraft only after CellXplorer verification;
 - `prerelease: false`;
 - no plain unbundled executable upload.
 
@@ -201,7 +205,8 @@ jobs:
     runs-on: windows-latest
 ```
 
-`workflow_dispatch` is a **build-only rehearsal** by default. It must not create or alter a public GitHub Release unless an explicit protected publish input is added and deliberately selected. Omitting release identifiers from `tauri-action` is an acceptable build-only mode.
+`workflow_dispatch` is always a **build-only rehearsal**. It must not create or alter a GitHub
+Release. Tag pushes are the only publish path.
 
 ### 4.1 Checkout and toolchains
 
@@ -306,7 +311,7 @@ with:
   tagName: ${{ github.ref_name }}
   releaseName: CellXplorer __VERSION__
   releaseBody: <contents of release-notes.md>
-  releaseDraft: false
+  releaseDraft: true
   prerelease: false
   uploadUpdaterJson: true
   uploadUpdaterSignatures: true
@@ -314,13 +319,9 @@ with:
   uploadPlainBinary: false
 ```
 
-Use the repository root as `projectPath` unless an actual action test proves that `src-tauri` is required. Do not guess: the current configuration is the standard root project with `src-tauri/tauri.conf.json` and root npm scripts.
-
-For manual build-only dispatch:
-
-- omit `tagName`, `releaseName` and `releaseId`;
-- enable workflow-artifact upload for inspection;
-- never overwrite `releases/latest`.
+After the action returns, verify the workspace-root `latest.json` against the draft release's asset
+metadata (API asset URL + setup executable name + adjacent `.sig`). Only then undraft the release.
+A published non-draft release is immutable: corrections require a new patch version/tag.
 
 ### 4.8 Post-build manifest verification
 

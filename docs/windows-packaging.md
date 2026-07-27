@@ -156,13 +156,17 @@ git push origin v0.15.0
 
 The `.github/workflows/release.yml` workflow then:
 
-1. verifies every maintained version declaration matches the tag;
-2. extracts the matching `CHANGELOG.md` section with `scripts/release_notes.py`;
-3. runs `python scripts/preflight.py --no-cache`;
-4. builds the PyInstaller sidecar through `scripts/build-app.ps1`;
-5. invokes the pinned `tauri-apps/tauri-action` to create the GitHub Release, signed NSIS
-   installer, `.sig`, and `latest.json`;
-6. validates the generated manifest with `scripts/verify_updater_manifest.py`.
+1. verifies the tag is exact stable SemVer (`vMAJOR.MINOR.PATCH`) and reachable from `main`;
+2. refuses to replace an already published non-draft release;
+3. fails before publishing when the repository is private;
+4. extracts the matching `CHANGELOG.md` section with `scripts/release_notes.py`;
+5. runs `python scripts/preflight.py --no-cache`;
+6. builds the PyInstaller sidecar through `scripts/build-app.ps1`;
+7. stages a **draft** GitHub Release with the pinned `tauri-apps/tauri-action`, signed NSIS
+   installer, `.sig`, and workspace-root `latest.json`;
+8. validates the draft manifest against release-asset metadata with
+   `scripts/verify_updater_manifest.py`;
+9. undrafts the release only after verification succeeds.
 
 Required GitHub repository secrets:
 
@@ -171,11 +175,14 @@ TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-Use **Actions → Publish CellXplorer release → Run workflow** for a build-only rehearsal. Leave
-**publish** unchecked to upload workflow artifacts without creating or altering a GitHub Release.
+Use **Actions → Publish CellXplorer release → Run workflow** for a build-only rehearsal. Manual
+dispatch never creates or alters a GitHub Release.
 
-The repository must be public, or release assets must be published to another public HTTPS host,
-before installed applications can fetch `latest.json` without credentials.
+Published versions are immutable. If a stable release is wrong, cut a new patch version rather than
+rebuilding the same tag.
+
+The repository must be public before a production tag publish is allowed, so installed applications
+can fetch `latest.json` without credentials.
 
 If the updater signing key is lost, existing installed clients cannot trust releases signed with a
 new key. Plan key backup before the first bootstrap release and treat rotation as a major,

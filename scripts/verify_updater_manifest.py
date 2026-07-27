@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a generated Tauri updater latest.json manifest."""
+"""Validate a generated Tauri updater latest.json against GitHub release assets."""
 
 from __future__ import annotations
 
@@ -19,6 +19,12 @@ SECRET_MARKERS = (
     "gho_",
 )
 
+# Tauri action v1 writes api.github.com asset URLs, not browser download URLs.
+GITHUB_API_ASSET_RE = re.compile(
+    r"^https://api\.github\.com/repos/"
+    r"(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/assets/(?P<asset_id>\d+)/?$"
+)
+
 
 class ManifestVerificationError(Exception):
     """Raised when latest.json fails validation."""
@@ -35,14 +41,34 @@ def normalize_notes(value: str) -> str:
     return value.replace("\r\n", "\n").strip()
 
 
-def load_json(path: Path) -> dict:
+def load_json(path: Path) -> object:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ManifestVerificationError(f"{path.as_posix()}: invalid JSON ({exc})") from exc
+
+
+def load_json_object(path: Path) -> dict:
+    payload = load_json(path)
     if not isinstance(payload, dict):
-        raise ManifestVerificationError(f"{path.as_posix()}: manifest root must be an object.")
+        raise ManifestVerificationError(f"{path.as_posix()}: JSON root must be an object.")
     return payload
+
+
+def load_release_assets(path: Path) -> list[dict]:
+    payload = load_json(path)
+    if not isinstance(payload, list):
+        raise ManifestVerificationError(
+            f"{path.as_posix()}: release assets JSON must be an array."
+        )
+    assets: list[dict] = []
+    for index, entry in enumerate(payload):
+        if not isinstance(entry, dict):
+            raise ManifestVerificationError(
+                f"{path.as_posix()}: release asset at index {index} must be an object."
+            )
+        assets.append(entry)
+    return assets
 
 
 def choose_windows_platform(payload: dict) -> tuple[str, dict]:
@@ -75,11 +101,46 @@ def assert_no_secrets(text: str, label: str) -> None:
             )
 
 
+def parse_github_api_asset_url(url: str) -> tuple[str, str, int]:
+    match = GITHUB_API_ASSET_RE.fullmatch(url.strip())
+    if not match:
+        raise ManifestVerificationError(
+            "Windows platform URL must be a GitHub API release-asset URL "
+            "(https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>)."
+        )
+    return match.group("owner"), match.group("repo"), int(match.group("asset_id"))
+
+
+def find_asset_by_id(assets: list[dict], asset_id: int) -> dict:
+    for asset in assets:
+        raw_id = asset.get("id")
+        try:
+            current_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if current_id == asset_id:
+            return asset
+    raise ManifestVerificationError(
+        f"Release assets metadata does not include asset id {asset_id}."
+    )
+
+
+def asset_display_name(asset: dict) -> str:
+    for key in ("name", "label"):
+        value = asset.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise ManifestVerificationError("Release asset is missing a name/label.")
+
+
 def verify_manifest(
     manifest: dict,
     *,
     expected_version: str,
     expected_notes: str,
+    expected_owner: str,
+    expected_repo: str,
+    release_assets: list[dict],
     setup_exe_name: str | None = None,
 ) -> None:
     version = normalize_version(str(manifest.get("version", "")))
@@ -97,6 +158,7 @@ def verify_manifest(
             "Manifest notes do not match the extracted changelog section."
         )
 
+    setup_name = setup_exe_name or infer_setup_exe_name(target_version)
     _platform_key, platform_entry = choose_windows_platform(manifest)
     url = platform_entry.get("url")
     signature = platform_entry.get("signature")
@@ -108,12 +170,25 @@ def verify_manifest(
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ManifestVerificationError("Windows platform URL must use HTTPS.")
-    if "github.com" not in parsed.netloc:
-        raise ManifestVerificationError("Windows platform URL must point to GitHub releases.")
 
-    if setup_exe_name and setup_exe_name not in url:
+    owner, repo, asset_id = parse_github_api_asset_url(url)
+    if owner != expected_owner or repo != expected_repo:
         raise ManifestVerificationError(
-            f"Windows platform URL does not reference setup executable {setup_exe_name!r}."
+            f"Windows platform URL repository {owner}/{repo} does not match "
+            f"expected {expected_owner}/{expected_repo}."
+        )
+
+    asset = find_asset_by_id(release_assets, asset_id)
+    asset_name = asset_display_name(asset)
+    if asset_name != setup_name:
+        raise ManifestVerificationError(
+            f"Release asset id {asset_id} is named {asset_name!r}, expected {setup_name!r}."
+        )
+
+    sig_name = f"{setup_name}.sig"
+    if not any(asset_display_name(entry) == sig_name for entry in release_assets):
+        raise ManifestVerificationError(
+            f"Release assets metadata is missing signature file {sig_name!r}."
         )
 
     serialized = json.dumps(manifest, ensure_ascii=False)
@@ -126,14 +201,19 @@ def infer_setup_exe_name(version: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Verify a Tauri updater latest.json file.")
+    parser = argparse.ArgumentParser(
+        description="Verify a Tauri updater latest.json against GitHub release assets."
+    )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--notes-file", type=Path, required=True)
+    parser.add_argument("--owner", required=True)
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--release-assets", type=Path, required=True)
     parser.add_argument(
         "--setup-exe-name",
         default=None,
-        help="Expected NSIS setup executable file name inside the platform URL.",
+        help="Expected NSIS setup executable file name in release-asset metadata.",
     )
     args = parser.parse_args(argv)
 
@@ -143,15 +223,21 @@ def main(argv: list[str] | None = None) -> int:
     if not args.notes_file.is_file():
         print(f"ERROR: notes file not found: {args.notes_file}", file=sys.stderr)
         return 1
+    if not args.release_assets.is_file():
+        print(f"ERROR: release assets not found: {args.release_assets}", file=sys.stderr)
+        return 1
 
     setup_name = args.setup_exe_name or infer_setup_exe_name(args.expected_version)
     notes = args.notes_file.read_text(encoding="utf-8")
 
     try:
         verify_manifest(
-            load_json(args.manifest),
+            load_json_object(args.manifest),
             expected_version=args.expected_version,
             expected_notes=notes,
+            expected_owner=args.owner,
+            expected_repo=args.repo,
+            release_assets=load_release_assets(args.release_assets),
             setup_exe_name=setup_name,
         )
     except ManifestVerificationError as exc:
