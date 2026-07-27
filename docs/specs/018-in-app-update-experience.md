@@ -66,11 +66,22 @@ The update badge has an accessible description such as `1 application update ava
 
 Only run in the Tauri application.
 
-- First automatic check: approximately 10 seconds after the normal app shell mounts.
-- Repeat while the app remains open: every 12 hours.
+- First automatic check: approximately 10 seconds after the normal app shell mounts, or sooner
+  when the configured interval is shorter.
+- Repeat while the app remains open: at the user-configured interval (default: every 12 hours).
 - A manual `Check for updates` action always checks immediately.
 - Do not block backend/database startup, normal navigation or the first render.
-- Do not add a settings toggle or update channel in this feature.
+- Do not add an update channel.
+
+The **Settings → App updates** tab stores process-local update preferences in browser local
+storage:
+
+- interval value: positive integer;
+- interval unit: seconds, minutes, hours or days;
+- automatic discovery toaster: enabled by default.
+
+Changing the preference reschedules the coordinator immediately. Disabling the toaster does not
+disable update checks or the persistent power-button update badge.
 
 Automatic-check failures are silent in the main UI but must be added to the existing frontend debug-event log.
 Manual-check failures open the update modal with the current installed version and a plain-language
@@ -80,7 +91,8 @@ explanation (not a bottom-corner notification). Manual “up to date” results 
 
 When a newly discovered version is newer than the installed version:
 
-- show one standard Mantine notification: `CellXplorer vX.Y.Z is available.`;
+- when enabled in settings, show one standard Mantine notification:
+  `CellXplorer vX.Y.Z is available.`;
 - include an action that opens the update modal;
 - keep the power-button badge until that version is installed or no longer reported;
 - do not open the modal automatically.

@@ -18,9 +18,11 @@ import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
   AUTO_CHECK_INITIAL_DELAY_MS,
-  AUTO_CHECK_INTERVAL_MS,
+  appUpdateIntervalMs,
   canDismissUpdateModal,
   checkAppUpdateTauri,
+  DEFAULT_APP_UPDATE_PREFERENCES,
+  loadAppUpdatePreferences,
   downloadAppUpdateTauri,
   failurePhaseForLocalUpdatePhase,
   installAppUpdateTauri,
@@ -35,7 +37,9 @@ import {
   shouldPersistUpdateBadge,
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
+  UPDATE_PREFERENCES_CHANGED_EVENT,
   writeNotifiedVersion,
+  type AppUpdatePreferences,
   type AppUpdateDownloadEvent,
   type AppUpdateRelease,
   type AppUpdateState,
@@ -87,6 +91,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [upToDateModal, setUpToDateModal] = useState(false);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<AppUpdatePreferences>(() =>
+    typeof window === "undefined"
+      ? DEFAULT_APP_UPDATE_PREFERENCES
+      : loadAppUpdatePreferences(window.localStorage),
+  );
   const stateRef = useRef(state);
   const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
@@ -132,6 +141,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     }
   }, [devMock]);
 
+  useEffect(() => {
+    const reloadPreferences = () => {
+      setPreferences(loadAppUpdatePreferences(window.localStorage));
+    };
+    window.addEventListener(UPDATE_PREFERENCES_CHANGED_EVENT, reloadPreferences);
+    window.addEventListener("storage", reloadPreferences);
+    return () => {
+      window.removeEventListener(UPDATE_PREFERENCES_CHANGED_EVENT, reloadPreferences);
+      window.removeEventListener("storage", reloadPreferences);
+    };
+  }, []);
+
   const applyRelease = useCallback((release: AppUpdateRelease | null, source: UpdateCheckSource) => {
     const feedbackSource = source === "manual" ? "manual" : checkFeedbackSource.current;
     const merged = mergeCheckResult(stateRef.current, release);
@@ -145,6 +166,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     }
     setUpToDateModal(false);
     if (
+      preferences.notificationsEnabled &&
       shouldNotifyForVersion(
         merged.version,
         readNotifiedVersion(window.localStorage),
@@ -167,7 +189,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         autoClose: 10_000,
       });
     }
-  }, []);
+  }, [preferences.notificationsEnabled]);
 
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
@@ -269,10 +291,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       timers.push(id);
     };
 
-    schedule(AUTO_CHECK_INITIAL_DELAY_MS);
+    const intervalMs = appUpdateIntervalMs(preferences);
+    schedule(Math.min(AUTO_CHECK_INITIAL_DELAY_MS, intervalMs));
     const intervalId = window.setInterval(() => {
       if (!disposed) void performCheck("automatic");
-    }, AUTO_CHECK_INTERVAL_MS);
+    }, intervalMs);
     timers.push(intervalId);
 
     return () => {
@@ -280,13 +303,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(timers[0]);
       window.clearInterval(intervalId);
     };
-  }, [devMock, performCheck, updateUiEnabled]);
+  }, [devMock, performCheck, preferences, updateUiEnabled]);
 
   useEffect(() => {
     if (devMock === "available") {
-      dispatch({ type: "check_success", source: "automatic", release: mockRelease() });
+      applyRelease(mockRelease(), "automatic");
     }
-  }, [devMock]);
+  }, [applyRelease, devMock]);
 
   useEffect(() => {
     if (!devMock || devMock === "available") return;

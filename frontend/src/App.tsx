@@ -598,6 +598,7 @@ export default function App() {
               <Route path="/settings/metadata" element={<SettingsPage />} />
               <Route path="/settings/plots" element={<SettingsPage />} />
               <Route path="/settings/desktop" element={<SettingsPage />} />
+              <Route path="/settings/updates" element={<SettingsPage />} />
               <Route path="/settings/performance" element={<SettingsPage />} />
               <Route path="/settings/cache" element={<SettingsPage />} />
               <Route path="/settings/activity" element={<SettingsPage />} />

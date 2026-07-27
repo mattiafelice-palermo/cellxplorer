@@ -1,7 +1,75 @@
 export const UPDATE_NOTIFIED_VERSION_KEY = "cellxplorer-update-notified-version";
+export const UPDATE_PREFERENCES_KEY = "cellxplorer-update-preferences";
+export const UPDATE_PREFERENCES_CHANGED_EVENT = "cellxplorer-update-preferences-changed";
 
 export const AUTO_CHECK_INITIAL_DELAY_MS = 10_000;
-export const AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+
+export type AppUpdateIntervalUnit = "seconds" | "minutes" | "hours" | "days";
+
+export type AppUpdatePreferences = {
+  intervalValue: number;
+  intervalUnit: AppUpdateIntervalUnit;
+  notificationsEnabled: boolean;
+};
+
+export const DEFAULT_APP_UPDATE_PREFERENCES: AppUpdatePreferences = {
+  intervalValue: 12,
+  intervalUnit: "hours",
+  notificationsEnabled: true,
+};
+
+const UPDATE_INTERVAL_MULTIPLIERS: Record<AppUpdateIntervalUnit, number> = {
+  seconds: 1000,
+  minutes: 60_000,
+  hours: 60 * 60_000,
+  days: 24 * 60 * 60_000,
+};
+
+export function appUpdateIntervalMs(
+  preferences: Pick<AppUpdatePreferences, "intervalValue" | "intervalUnit">,
+): number {
+  const value = Number.isFinite(preferences.intervalValue)
+    ? Math.max(1, Math.floor(preferences.intervalValue))
+    : DEFAULT_APP_UPDATE_PREFERENCES.intervalValue;
+  return value * UPDATE_INTERVAL_MULTIPLIERS[preferences.intervalUnit];
+}
+
+export function loadAppUpdatePreferences(
+  storage: Pick<Storage, "getItem">,
+): AppUpdatePreferences {
+  try {
+    const raw = storage.getItem(UPDATE_PREFERENCES_KEY);
+    if (!raw) return DEFAULT_APP_UPDATE_PREFERENCES;
+    const parsed = JSON.parse(raw) as Partial<AppUpdatePreferences>;
+    const unit = parsed.intervalUnit;
+    if (
+      unit !== "seconds" &&
+      unit !== "minutes" &&
+      unit !== "hours" &&
+      unit !== "days"
+    ) {
+      return DEFAULT_APP_UPDATE_PREFERENCES;
+    }
+    const intervalValue = Number(parsed.intervalValue);
+    if (!Number.isFinite(intervalValue) || intervalValue < 1) {
+      return DEFAULT_APP_UPDATE_PREFERENCES;
+    }
+    return {
+      intervalValue: Math.floor(intervalValue),
+      intervalUnit: unit,
+      notificationsEnabled: parsed.notificationsEnabled !== false,
+    };
+  } catch {
+    return DEFAULT_APP_UPDATE_PREFERENCES;
+  }
+}
+
+export function saveAppUpdatePreferences(
+  storage: Pick<Storage, "setItem">,
+  preferences: AppUpdatePreferences,
+): void {
+  storage.setItem(UPDATE_PREFERENCES_KEY, JSON.stringify(preferences));
+}
 
 export type UpdateCheckSource = "automatic" | "manual";
 export type UpdateFailurePhase = "check" | "download" | "install";

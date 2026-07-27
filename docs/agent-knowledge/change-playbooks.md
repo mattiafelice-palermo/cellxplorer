@@ -157,6 +157,12 @@ and pyarrow 84MB.
    re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
    fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.
 
+Updater check preferences are local UI state under `cellxplorer-update-preferences`. The default is
+12 hours with discovery notifications enabled. Saving **Settings → App updates** dispatches
+`cellxplorer-update-preferences-changed`, which makes `AppUpdateCoordinator` reschedule without an
+app restart. The notification toggle affects only the toaster; automatic checks and the power-menu
+badge remain active.
+
 ### Tag and release checklist
 
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.

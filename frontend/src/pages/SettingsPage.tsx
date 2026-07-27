@@ -24,7 +24,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { IconActivityHeartbeat, IconChartLine, IconDatabaseCog, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconGauge, IconHistory, IconInfoCircle, IconPlus, IconRefresh, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
+import { IconActivityHeartbeat, IconBell, IconChartLine, IconDatabaseCog, IconDeviceDesktop, IconDeviceFloppy, IconDownload, IconFolderOpen, IconGauge, IconHistory, IconInfoCircle, IconPlus, IconRefresh, IconRulerMeasure, IconTrash, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -57,6 +57,13 @@ import {
   saveAnalysisWorkspaceMemoryPolicy,
   type AnalysisWorkspaceMemoryPolicy,
 } from "../analysisWorkspace";
+import {
+  loadAppUpdatePreferences,
+  saveAppUpdatePreferences,
+  UPDATE_PREFERENCES_CHANGED_EVENT,
+  type AppUpdateIntervalUnit,
+  type AppUpdatePreferences,
+} from "../appUpdater";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -112,6 +119,12 @@ export function SettingsPage() {
   const [analysisMemoryPolicy, setAnalysisMemoryPolicy] = useState<AnalysisWorkspaceMemoryPolicy>(
     loadAnalysisWorkspaceMemoryPolicy,
   );
+  const [savedUpdatePreferences, setSavedUpdatePreferences] = useState<AppUpdatePreferences>(() =>
+    loadAppUpdatePreferences(window.localStorage),
+  );
+  const [updatePreferences, setUpdatePreferences] = useState<AppUpdatePreferences>(
+    savedUpdatePreferences,
+  );
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -124,6 +137,8 @@ export function SettingsPage() {
       ? "plots"
     : location.pathname.endsWith("/desktop")
       ? "desktop"
+    : location.pathname.endsWith("/updates")
+      ? "updates"
     : location.pathname.endsWith("/performance")
       ? "performance"
       : "downloads";
@@ -612,6 +627,17 @@ export function SettingsPage() {
     });
   };
   const formatDateTime = (value: string | null) => value ? new Date(value).toLocaleString() : "Not yet";
+  const updatePreferencesDirty =
+    JSON.stringify(updatePreferences) !== JSON.stringify(savedUpdatePreferences);
+  const saveUpdatePreferences = () => {
+    saveAppUpdatePreferences(window.localStorage, updatePreferences);
+    setSavedUpdatePreferences(updatePreferences);
+    window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
+    notifications.show({
+      message: "Application update settings saved.",
+      color: "teal",
+    });
+  };
   return (
     <Stack gap="lg" maw={980}>
       <Title order={2}>Settings</Title>
@@ -631,6 +657,8 @@ export function SettingsPage() {
                 ? "/settings/plots"
               : value === "desktop"
                 ? "/settings/desktop"
+              : value === "updates"
+                ? "/settings/updates"
               : value === "performance"
                 ? "/settings/performance"
                 : "/settings",
@@ -642,6 +670,7 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
+          <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
           <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
@@ -1484,6 +1513,120 @@ export function SettingsPage() {
               <Text size="sm" c="dimmed">
                 Right-click the tray icon to open CellXplorer, check and update active-cell sources, or quit completely.
               </Text>
+            </Stack>
+          </Paper>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="updates" pt="lg">
+          <Paper withBorder p="lg">
+            <Stack gap="lg">
+              <div>
+                <Title order={4}>Application updates</Title>
+                <Text c="dimmed" size="sm">
+                  Choose how often the installed Windows app checks for a newer signed release.
+                </Text>
+              </div>
+
+              {!isTauriApp() ? (
+                <Alert color="gray">
+                  Update checks run only in the installed Windows application. You can still
+                  configure the preferences here for testing.
+                </Alert>
+              ) : null}
+
+              <Paper
+                withBorder
+                p="md"
+                bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+              >
+                <Stack gap="md">
+                  <div>
+                    <Text fw={600}>Automatic check interval</Text>
+                    <Text size="sm" c="dimmed">
+                      Short intervals are useful for testing. For normal use, several hours avoids
+                      unnecessary network requests.
+                    </Text>
+                  </div>
+                  <Group align="end" wrap="nowrap">
+                    <NumberInput
+                      label="Every"
+                      min={1}
+                      max={
+                        updatePreferences.intervalUnit === "seconds"
+                          ? 86_400
+                          : updatePreferences.intervalUnit === "minutes"
+                            ? 1_440
+                            : updatePreferences.intervalUnit === "hours"
+                              ? 168
+                              : 365
+                      }
+                      allowDecimal={false}
+                      value={updatePreferences.intervalValue}
+                      onChange={(value) =>
+                        setUpdatePreferences((current) => ({
+                          ...current,
+                          intervalValue: Math.max(1, Number(value) || 1),
+                        }))
+                      }
+                      style={{ flex: 1 }}
+                    />
+                    <Select
+                      label="Unit"
+                      value={updatePreferences.intervalUnit}
+                      data={[
+                        { value: "seconds", label: "Seconds" },
+                        { value: "minutes", label: "Minutes" },
+                        { value: "hours", label: "Hours" },
+                        { value: "days", label: "Days" },
+                      ]}
+                      onChange={(value) =>
+                        setUpdatePreferences((current) => ({
+                          ...current,
+                          intervalUnit: (value ?? "hours") as AppUpdateIntervalUnit,
+                        }))
+                      }
+                      allowDeselect={false}
+                      w={180}
+                    />
+                  </Group>
+                </Stack>
+              </Paper>
+
+              <Paper
+                withBorder
+                p="md"
+                bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+              >
+                <Group justify="space-between" wrap="nowrap">
+                  <div>
+                    <Text fw={600}>Show update notification</Text>
+                    <Text size="sm" c="dimmed">
+                      Show a toaster when an automatic check finds a new version. The power-menu
+                      update badge remains available even when this is disabled.
+                    </Text>
+                  </div>
+                  <Switch
+                    checked={updatePreferences.notificationsEnabled}
+                    onChange={(event) =>
+                      setUpdatePreferences((current) => ({
+                        ...current,
+                        notificationsEnabled: event.currentTarget.checked,
+                      }))
+                    }
+                    aria-label="Show update notification"
+                  />
+                </Group>
+              </Paper>
+
+              <Group justify="flex-end">
+                <Button
+                  leftSection={<IconDeviceFloppy size={16} />}
+                  disabled={!updatePreferencesDirty}
+                  onClick={saveUpdatePreferences}
+                >
+                  Save settings
+                </Button>
+              </Group>
             </Stack>
           </Paper>
         </Tabs.Panel>

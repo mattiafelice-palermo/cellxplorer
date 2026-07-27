@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.5 - 2026-07-27
+
+- Added an App updates settings tab with configurable automatic-check intervals in seconds, minutes, hours, or days.
+- Added an enabled-by-default update discovery toaster toggle; disabling it keeps automatic checks and the power-menu badge active.
+
 ## 0.15.4 - 2026-07-27
 
 - Added scripts/bump_version.py to synchronize version declarations and prepend CHANGELOG sections.

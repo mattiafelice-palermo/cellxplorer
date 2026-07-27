@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_APP_UPDATE_PREFERENCES,
   UPDATE_NOTIFIED_VERSION_KEY,
+  UPDATE_PREFERENCES_KEY,
   accumulateDownloadProgress,
+  appUpdateIntervalMs,
   appUpdateReducer,
   canDismissUpdateModal,
   compareSemver,
@@ -11,6 +14,7 @@ import {
   getUpdateMenuLabel,
   isProtectedUpdateFlow,
   isUpdateMenuDisabled,
+  loadAppUpdatePreferences,
   mergeCheckResult,
   mockRelease,
   normalizeUpdaterError,
@@ -23,6 +27,7 @@ import {
   shouldPersistUpdateBadge,
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
+  saveAppUpdatePreferences,
 } from "../src/appUpdater.ts";
 
 test("automatic versus manual no-update behavior", () => {
@@ -366,6 +371,43 @@ test("modal dismissal rules follow download and install phases", () => {
 
 test("notification storage key stays stable", () => {
   assert.equal(UPDATE_NOTIFIED_VERSION_KEY, "cellxplorer-update-notified-version");
+});
+
+test("update preferences default to twelve hours with notifications enabled", () => {
+  const storage = { getItem: () => null };
+  assert.deepEqual(loadAppUpdatePreferences(storage), DEFAULT_APP_UPDATE_PREFERENCES);
+  assert.equal(appUpdateIntervalMs(DEFAULT_APP_UPDATE_PREFERENCES), 12 * 60 * 60 * 1000);
+});
+
+test("update preferences support a fifteen-second interval", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+  const preferences = {
+    intervalValue: 15,
+    intervalUnit: "seconds" as const,
+    notificationsEnabled: false,
+  };
+  saveAppUpdatePreferences(storage, preferences);
+  assert.equal(values.has(UPDATE_PREFERENCES_KEY), true);
+  assert.deepEqual(loadAppUpdatePreferences(storage), preferences);
+  assert.equal(appUpdateIntervalMs(preferences), 15_000);
+});
+
+test("invalid update preferences fail safely to defaults", () => {
+  const malformed = { getItem: () => "{not json" };
+  const invalid = {
+    getItem: () =>
+      JSON.stringify({
+        intervalValue: 0,
+        intervalUnit: "weeks",
+        notificationsEnabled: false,
+      }),
+  };
+  assert.deepEqual(loadAppUpdatePreferences(malformed), DEFAULT_APP_UPDATE_PREFERENCES);
+  assert.deepEqual(loadAppUpdatePreferences(invalid), DEFAULT_APP_UPDATE_PREFERENCES);
 });
 
 test("install-phase failures stay install even if React state lags", () => {
