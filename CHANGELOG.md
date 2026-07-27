@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.4 - 2026-07-27
+
+- Added scripts/bump_version.py to synchronize version declarations and prepend CHANGELOG sections.
+- Packaged-backend startup tests now drive the ASGI lifespan directly instead of requiring httpx.
+
 ## 0.15.3 - 2026-07-27
 
 - Fixed a critical packaged-install regression where the Python backend could not start:

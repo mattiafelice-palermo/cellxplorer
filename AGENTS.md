@@ -174,6 +174,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
+│   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
 │   ├── test_release_workflow.py    Release workflow contract tests (Spec 019)
@@ -188,6 +189,7 @@ Cellxplorer/
 ├── scripts/                        Development and Windows build launchers
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── check_versions.py           Read-only version declaration consistency check
+│   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
 │   ├── release_tag.py              Stable SemVer tag validation for release workflow (Spec 019)
@@ -261,6 +263,15 @@ Before release, verify every maintained version declaration matches:
 ```powershell
 python scripts\check_versions.py
 ```
+
+To bump every maintained declaration and prepend a changelog section:
+
+```powershell
+python scripts\bump_version.py --patch --notes "Short release note."
+python scripts\bump_version.py 0.15.4 --notes-file notes.txt
+```
+
+Then run preflight and push the release tag.
 
 Run the lightweight TypeScript policy tests directly when relevant:
 

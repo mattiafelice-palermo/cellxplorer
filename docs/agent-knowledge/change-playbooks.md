@@ -160,6 +160,7 @@ and pyarrow 84MB.
 ### Tag and release checklist
 
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
+   Use `python scripts\bump_version.py --patch --notes "..."` (or an explicit version).
 2. Run `python scripts/check_versions.py` and `python scripts/preflight.py --no-cache` locally.
 3. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
 4. Push `vX.Y.Z` (exact `vMAJOR.MINOR.PATCH` only) to trigger `.github/workflows/release.yml`.
