@@ -12,6 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$env:CARGO_TARGET_DIR = Join-Path $repoRoot "src-tauri\target"
 $frontendRoot = Join-Path $repoRoot "frontend"
 $backendExe = Join-Path $repoRoot "dist\cellxplorer-backend.exe"
 $sidecarExe = Join-Path $repoRoot "src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe"
@@ -29,6 +30,8 @@ function Invoke-Checked {
 
     Write-Host "`n> $FilePath $($Arguments -join ' ')" -ForegroundColor DarkGray
     Push-Location $WorkingDirectory
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
         & $FilePath @Arguments
         if ($LASTEXITCODE -ne 0) {
@@ -36,6 +39,7 @@ function Invoke-Checked {
         }
     }
     finally {
+        $ErrorActionPreference = $previousErrorAction
         Pop-Location
     }
 }
@@ -97,6 +101,7 @@ if (-not $SkipFrontend) {
     $env:VITE_CELLXPLORER_CHANNEL = $Channel
     try {
         Invoke-Checked "npm.cmd" @("run", "build") $frontendRoot
+        Invoke-Checked "python" @("scripts/frontend_channel.py", "write", "--channel", $Channel) $repoRoot
     }
     finally {
         if ($null -eq $previousChannel) {
@@ -105,6 +110,10 @@ if (-not $SkipFrontend) {
             $env:VITE_CELLXPLORER_CHANNEL = $previousChannel
         }
     }
+}
+else {
+    Write-Host "Verifying frontend channel stamp..." -ForegroundColor Yellow
+    Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot
 }
 
 if (-not $SkipBackend) {
@@ -136,9 +145,19 @@ elseif (-not (Test-Path $sidecarExe)) {
 }
 
 if (-not $SkipInstaller) {
+    Write-Host "Verifying frontend channel stamp before packaging..." -ForegroundColor Yellow
+    Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot
+
     Write-Host "Building the Windows installer..." -ForegroundColor Yellow
-    $tauriScript = if ($Channel -eq "beta") { "tauri:build:beta" } else { "tauri:build:stable" }
-    Invoke-Checked "npm.cmd" @("run", $tauriScript) $repoRoot
+    $tauriArgs = @("tauri", "build")
+    if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+        Write-Host "No TAURI_SIGNING_PRIVATE_KEY; using --no-sign for local packaging." -ForegroundColor Yellow
+        $tauriArgs += "--no-sign"
+    }
+    if ($Channel -eq "beta") {
+        $tauriArgs += @("--config", "src-tauri/tauri.beta.conf.json")
+    }
+    Invoke-Checked "npx.cmd" $tauriArgs $repoRoot
 
     $installerDir = Join-Path $repoRoot "src-tauri\target\release\bundle\nsis"
     $installer = Get-ChildItem $installerDir -Filter $expectedInstallerName -File -ErrorAction SilentlyContinue | Select-Object -First 1

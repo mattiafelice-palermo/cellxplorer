@@ -14,6 +14,33 @@ FastAPI processes documented in `docs/local-development.md`. The desktop backend
 available loopback port; frontend requests must use the desktop endpoint discovery helpers rather
 than assuming port `8642`.
 
+## Stable and Beta application channels (Spec 021)
+
+The same source tree builds two Windows products from channel-specific configuration:
+
+| Property | Stable | Beta |
+|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta |
+| Tauri identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
+| Frontend build env | `VITE_CELLXPLORER_CHANNEL=stable` | `VITE_CELLXPLORER_CHANNEL=beta` |
+| Mantine primary | `teal` | `betaBlue` |
+
+Build either channel with `.\scripts\build-app.ps1 -Channel stable|beta`. Each frontend build writes
+`frontend/dist/.cellxplorer-channel.json`; packaging verifies the stamp so a Stable-built dist cannot
+be bundled into Beta and vice versa. The PyInstaller sidecar is shared; Rust passes
+`CELLXPLORER_CHANNEL` to it. Packaged backend startup requires a valid channel and fails closed on
+missing or unsupported values.
+
+Both editions still share the default `%USERPROFILE%\.cellxplorer` data root until Spec 022. Use
+disposable `CELLXPLORER_DATA` for installer tests. Beta updater commands are disabled fail-closed
+until Spec 023; do not tag or publish an intermediate Beta release.
+
+NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
+directory being changed — never by shared image name alone — so Stable and Beta can run side by side.
+
+See `docs/windows-packaging.md` for the full identity matrix and build commands.
+
 ## Startup sequence
 
 Importing `backend/app/main.py` performs database inspection and forward migration before Uvicorn
@@ -68,7 +95,7 @@ never `AppHandle::restart()`, which races `tauri_plugin_single_instance`), Appea
 (Auto/Light/Dark via Mantine `defaultColorScheme="auto"`), and pause of background automation.
 
 Chrome surfaces that need a subtle raised/hover fill must use
-`light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the teal
+`light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the primary
 equivalent for selection). Numbered Mantine shades such as `gray.0` / `teal.0` do **not**
 flip with the colour scheme.
 
@@ -169,6 +196,10 @@ Signed application updates are owned by the Tauri shell, not FastAPI. Rust holds
 object and verified installer bytes in `src-tauri/src/app_updates.rs` and exposes three narrow
 commands: `check_app_update`, `download_app_update`, and `install_app_update`. The frontend must
 not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
+
+**Beta channel (Spec 021):** all three update commands reject with an explicit error until Spec 023
+introduces a Beta feed. The Beta frontend hides the Settings updates tab and update menu entries.
+Stable updater behavior is unchanged.
 
 Automatic background discovery may emit one native Windows notification per new version when the
 user preference is enabled. Display and body-click activation are owned by Rust

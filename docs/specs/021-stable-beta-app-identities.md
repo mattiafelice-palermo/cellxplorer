@@ -6,12 +6,29 @@ Review document: `docs/specs/reviews/021-stable-beta-app-identities-review.md`
 
 ## Implementation record
 
-- Channel modules: `frontend/src/appChannel.ts`, `src-tauri/src/app_channel.rs`.
-- Beta overlay: `src-tauri/tauri.beta.conf.json`; icons via `scripts/build_beta_icons.py`.
-- Build: `scripts/build-app.ps1 -Channel stable|beta`; npm `tauri:build:stable|beta`.
+- Channel modules: `frontend/src/appChannel.ts`, `backend/app/services/app_channel.py`,
+  `src-tauri/src/app_channel.rs`.
+- Beta overlay: `src-tauri/tauri.beta.conf.json`; icons via `scripts/build_beta_icons.py`
+  (Pillow in `scripts/requirements-dev.txt`).
+- Build: `scripts/build-app.ps1 -Channel stable|beta`; frontend stamp
+  `frontend/dist/.cellxplorer-channel.json` via `scripts/frontend_channel.py`.
+- NSIS cleanup: `src-tauri/kill_installation_processes.ps1` scoped to `$INSTDIR`.
 - Beta updater commands fail closed in `app_updates.rs` until Spec 023.
-- Teal audit: only shell brand/active controls and scrollbars were made channel-aware;
-  semantic success, plots, thumbnails, and exports remain teal.
+
+### Teal audit (R4)
+
+| Category | Treatment | Examples |
+|---|---|---|
+| Application primary/active/selected | `APP_BRANDING.primaryColor` or Mantine primary | Header Activity button/progress, BETA badge, Quick Settings power button and update badge, Downloads button/badge/highlights, `.cx-vertical-scroll` thumb |
+| Semantic success/available/running | Keep teal | Success toasts, parsed/online badges, automation “Running” dot, job running colors, monitor status badges |
+| Persisted scientific plot/export | Unchanged | Plot trace colors, charge/discharge protocol colors, library/analysis selection tints tied to scientific UI |
+
+Light/Dark/Auto and UI zoom at 70–160% verified manually on the installed disposable matrix (see review record).
+
+### Verification (R7)
+
+See `docs/specs/reviews/021-stable-beta-app-identities-review.md` for exact command output and the
+installed-Windows matrix.
 
 ## 1. Goal
 

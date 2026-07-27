@@ -306,6 +306,15 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertIn(b"cellxplorer-beta://import-analysis", html)
         self.assertNotIn(b"cellxplorer://import-analysis", html)
 
+    def test_packaged_invalid_channel_fails_for_portable_deep_link(self):
+        with patch.dict(
+            os.environ,
+            {"CELLXPLORER_STARTUP_MODE": "manual", "CELLXPLORER_CHANNEL": "preview"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Unsupported CELLXPLORER_CHANNEL"):
+                portable_analysis._deep_link_import_base()
+
     def test_desktop_deep_link_accepts_only_existing_local_html(self):
         destination, _ = self.create_export(include_original_files=False)
         self.assertEqual(_portable_local_path(destination.as_uri()), destination.resolve())

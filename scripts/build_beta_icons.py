@@ -68,11 +68,12 @@ def write_rgba(image: Image.Image, destination: Path) -> None:
 def write_ico(image: Image.Image, destination: Path) -> None:
     sizes = [16, 24, 32, 48, 256]
     images = [image.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS) for size in sizes]
-    images[0].save(
+    # Pillow embeds every size only when the largest image is the primary save target.
+    images[-1].save(
         destination,
         format="ICO",
         sizes=[(size, size) for size in sizes],
-        append_images=images[1:],
+        append_images=images[:-1],
     )
 
 

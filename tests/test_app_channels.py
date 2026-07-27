@@ -68,17 +68,28 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertIn('[ValidateSet("stable", "beta")]', script)
         self.assertIn('[string]$Channel = "stable"', script)
         self.assertIn("VITE_CELLXPLORER_CHANNEL", script)
-        self.assertIn("tauri:build:beta", script)
-        self.assertIn("tauri:build:stable", script)
+        self.assertIn("frontend_channel.py", script)
+        self.assertIn("tauri.beta.conf.json", script)
+        self.assertIn("--no-sign", script)
         self.assertIn("$expectedInstallerName", script)
 
     def test_package_json_exposes_channel_build_scripts(self):
         scripts = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))["scripts"]
-        self.assertEqual(scripts["tauri:build:stable"], "tauri build")
+        self.assertEqual(scripts["tauri:build:stable"], "python scripts/frontend_channel.py verify --channel stable && tauri build")
         self.assertEqual(
             scripts["tauri:build:beta"],
-            "tauri build --config src-tauri/tauri.beta.conf.json",
+            "python scripts/frontend_channel.py verify --channel beta && tauri build --config src-tauri/tauri.beta.conf.json",
         )
+        self.assertEqual(scripts["build:frontend:stable"], "python scripts/build_frontend_channel.py stable")
+        self.assertEqual(scripts["build:frontend:beta"], "python scripts/build_frontend_channel.py beta")
+
+    def test_nsis_hooks_scope_process_cleanup_to_install_dir(self):
+        hooks = (ROOT / "src-tauri" / "nsis-hooks.nsh").read_text(encoding="utf-8")
+        self.assertIn("StartsWith", hooks)
+        self.assertIn("$INSTDIR", hooks)
+        self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", hooks)
+        self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)
+        self.assertNotIn("/IM cellxplorer.exe", hooks)
 
     def test_beta_update_commands_are_fail_closed_until_spec_023(self):
         source = APP_UPDATES_RS.read_text(encoding="utf-8")

@@ -61,6 +61,9 @@ def main() -> int:
     try:
         _configure_logging()
         _ensure_source_backend_on_path()
+        from app.services.app_channel import validate_packaged_channel_at_startup
+
+        validate_packaged_channel_at_startup()
         from app.main import app
 
         if os.environ.get("CELLXPLORER_BACKEND_SMOKE") == "1":

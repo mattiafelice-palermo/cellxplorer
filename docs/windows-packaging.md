@@ -24,27 +24,77 @@ explicit packaged schema migrations and automatic pre-migration backups. See
 From the repository root, run:
 
 ```powershell
-.\scripts\build-app.cmd
+.\scripts\build-app.cmd -Channel stable
+.\scripts\build-app.cmd -Channel beta
 ```
+
+`-Channel` defaults to `stable`. Each channel builds its own frontend (`VITE_CELLXPLORER_CHANNEL`)
+and writes a fail-closed stamp at `frontend/dist/.cellxplorer-channel.json`. Packaging rejects a
+stale or mismatched stamp, so a Stable-built `frontend/dist` cannot be bundled into Beta and vice
+versa.
 
 This performs the complete frontend, backend sidecar, and NSIS build. See
 `docs/local-development.md` for incremental options and the expected output path.
 
+### Stable and Beta identities (Spec 021)
+
+| Property | Stable | Beta |
+|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta |
+| Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
+| Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` |
+| Updater | Stable GitHub feed | disabled until Spec 023 |
+
+Both editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
+kill only processes whose executable path is under the installation directory being changed — never
+by shared image name alone.
+
+**Data root:** both editions still use the same default `%USERPROFILE%\.cellxplorer` until Spec
+022. Do not install intermediate Beta builds against real user data; use disposable
+`CELLXPLORER_DATA` or a test account.
+
+**Release:** do not tag or publish an intermediate Beta product until Specs 022–023 complete the
+release train.
+
+Beta icons are generated deterministically:
+
+```powershell
+pip install -r scripts\requirements-dev.txt
+python scripts\build_beta_icons.py
+```
+
+Committed outputs live under `frontend/public/app-icon-beta.png` and `src-tauri/icons-beta/`.
+Stable icons under `src-tauri/icons/` must remain unchanged.
+
+Expected outputs:
+
+- `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
+
+The Stable app icon is sourced from `frontend/public/app-icon.png`. The Tauri bundle uses
+`src-tauri/icons/icon.ico` (Stable) or `src-tauri/icons-beta/icon.ico` (Beta overlay). The runtime
+window/taskbar icon is set from the matching `icon-256.rgba` in `src-tauri/src/main.rs`.
+
 ## Manual build sequence
+
+Prefer `.\scripts\build-app.ps1 -Channel stable|beta`. When building manually:
 
 ```powershell
 npm.cmd install
 
-cd frontend
-npm.cmd run build
-cd ..
+python scripts\build_frontend_channel.py stable
+# or: python scripts\build_frontend_channel.py beta
 
 npm.cmd run build:backend
 New-Item -ItemType Directory -Force src-tauri\binaries
 Copy-Item dist\cellxplorer-backend.exe src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe -Force
 
-npm.cmd run tauri:build
+python scripts\frontend_channel.py verify --channel stable
+npm.cmd run tauri:build:stable
 ```
+
+Direct `tauri:build:beta` verifies the frontend stamp before packaging.
 
 The backend build includes `backend/app/assets/plotly.min.js`. This offline runtime is embedded
 once in each portable HTML analysis so serialized Plotly figures remain interactive without an
@@ -65,12 +115,15 @@ command with elevated sandbox permission, then continue with the normal packagin
 
 Expected output, once the toolchain is installed:
 
-- `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- Beta: `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
 
-The app icon is sourced from `CellXplorer_X_teal_flat_transparent.ico`.
-The Tauri bundle uses `src-tauri/icons/icon.ico`, and the runtime window/taskbar icon
-uses `src-tauri/icons/icon-256.rgba`. If the root `.ico` is replaced, regenerate both
-of those files before rebuilding.
+The Stable app icon is sourced from `frontend/public/app-icon.png`.
+The Tauri bundle uses channel-specific icons under `src-tauri/icons/` (Stable) or
+`src-tauri/icons-beta/` (Beta overlay), and the runtime window/taskbar icon uses the matching
+`icon-256.rgba`. Regenerate Beta assets with `python scripts\build_beta_icons.py` after changing
+the Stable source icon; Stable committed assets must remain byte-for-byte unchanged unless
+intentionally replaced.
 
 ## Branded NSIS installer
 

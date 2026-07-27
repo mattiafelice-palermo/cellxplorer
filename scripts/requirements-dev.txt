@@ -1,0 +1,2 @@
+# Developer-only tooling dependencies. Not bundled into the PyInstaller sidecar.
+Pillow>=10.4.0,<12

@@ -57,15 +57,9 @@ _PENDING_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def _deep_link_import_base() -> str:
-    channel = os.environ.get("CELLXPLORER_CHANNEL", "stable").strip().lower()
-    packaged = os.environ.get("CELLXPLORER_STARTUP_MODE") in {"manual", "startup"}
-    if channel == "beta":
-        return "cellxplorer-beta://import-analysis"
-    if channel == "stable":
-        return "cellxplorer://import-analysis"
-    if packaged:
-        return "cellxplorer://import-analysis"
-    return "cellxplorer://import-analysis"
+    from .app_channel import deep_link_import_base
+
+    return deep_link_import_base()
 
 
 class PortableOriginalSourceError(RuntimeError):

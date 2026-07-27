@@ -25,6 +25,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { del, get, getBlob, post, type DownloadEntry } from "../api";
+import { APP_BRANDING } from "../appChannel";
 import { DOWNLOAD_EVENT } from "../downloads";
 import { isTauriApp } from "../downloads";
 
@@ -43,7 +44,7 @@ function formatBytes(value: number | null): string {
 
 function KindIcon({ kind }: { kind: string }) {
   const size = 18;
-  const color = "var(--mantine-color-teal-6)";
+  const color = "var(--mantine-primary-color-6)";
   if (kind === "image") return <IconPhoto size={size} color={color} />;
   if (kind === "document") return <IconFileText size={size} color={color} />;
   if (kind === "data") return <IconFileSpreadsheet size={size} color={color} />;
@@ -82,7 +83,9 @@ function DownloadRow({
       onDoubleClick={() => actionable && onOpen(entry)}
       style={{
         borderRadius: 8,
-        background: highlight ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
+        background: highlight
+          ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
+          : undefined,
         transition: "background 400ms",
         cursor: actionable ? "pointer" : "default",
         maxWidth: "100%",
@@ -125,7 +128,7 @@ function DownloadRow({
             <Tooltip label="Copy file" withArrow>
               <ActionIcon
                 variant="subtle"
-                color="teal"
+                color={APP_BRANDING.primaryColor}
                 disabled={!entry.path}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -139,7 +142,7 @@ function DownloadRow({
             <Tooltip label="Show in folder" withArrow>
               <ActionIcon
                 variant="subtle"
-                color="teal"
+                color={APP_BRANDING.primaryColor}
                 disabled={!actionable}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -323,7 +326,7 @@ export function DownloadsButton() {
         <Button
           size="compact-sm"
           variant="subtle"
-          color="teal"
+          color={APP_BRANDING.primaryColor}
           leftSection={<IconDownload size={14} />}
           onClick={() => {
             setOpened((value) => !value);
@@ -332,7 +335,7 @@ export function DownloadsButton() {
         >
           Downloads
           {recentCount > 0 && (
-            <Badge size="xs" variant="light" color="teal" ml={6}>
+            <Badge size="xs" variant="light" color={APP_BRANDING.primaryColor} ml={6}>
               {recentCount}
             </Badge>
           )}
