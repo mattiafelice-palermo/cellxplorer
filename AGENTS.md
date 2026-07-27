@@ -150,10 +150,11 @@ Cellxplorer/
 │   │   │   ├── FolderTree.tsx
 │   │   │   ├── PlaceInFoldersModal.tsx
 │   │   │   ├── ProtocolStructureViewer.tsx
-│   │   ├── appUpdater.ts               App update state, Tauri commands, dev mock (Spec 018)
-│   ├── components/AppUpdateCoordinator.tsx  Update provider, polling, notifications
-│   ├── components/AppUpdateModal.tsx        In-app update modal and progress UI
+│   │   │   ├── QuickSettingsMenu.tsx
+│   │   │   ├── AppUpdateCoordinator.tsx
+│   │   │   ├── AppUpdateModal.tsx
 │   │   │   └── RecognitionProgress.tsx
+│   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
