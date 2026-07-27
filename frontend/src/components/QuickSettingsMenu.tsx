@@ -16,6 +16,7 @@ import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconBug,
+  IconChevronDown,
   IconDownload,
   IconPower,
   IconRefresh,
@@ -180,9 +181,10 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
               px="sm"
               aria-label={
                 appUpdate?.showUpdateBadge
-                  ? "Power and settings, 1 application update available"
-                  : "Power and settings"
+                  ? "Power and settings menu, 1 application update available"
+                  : "Power and settings menu"
               }
+              rightSection={<IconChevronDown size={14} stroke={1.75} />}
             >
               <IconPower size={18} stroke={1.75} />
             </Button>

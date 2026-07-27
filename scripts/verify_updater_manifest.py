@@ -62,15 +62,30 @@ def load_json_object(path: Path) -> dict:
 
 def load_release_assets(path: Path) -> list[dict]:
     payload = load_json(path)
+    if isinstance(payload, dict):
+        # Defensive: some serializers wrap the GitHub array as a single object.
+        nested = payload.get("value")
+        if isinstance(nested, list):
+            payload = nested
+        else:
+            raise ManifestVerificationError(
+                f"{path.as_posix()}: release assets JSON must be an array."
+            )
     if not isinstance(payload, list):
         raise ManifestVerificationError(
             f"{path.as_posix()}: release assets JSON must be an array."
         )
+    # PowerShell ConvertTo-Json can emit a one-element outer array whose only
+    # entry is the real assets array: [[{...}, {...}]].
+    if len(payload) == 1 and isinstance(payload[0], list):
+        payload = payload[0]
     assets: list[dict] = []
     for index, entry in enumerate(payload):
         if not isinstance(entry, dict):
             raise ManifestVerificationError(
-                f"{path.as_posix()}: release asset at index {index} must be an object."
+                f"{path.as_posix()}: release asset at index {index} must be an object "
+                f"(got {type(entry).__name__}). Avoid PowerShell ConvertTo-Json; "
+                "persist the raw GitHub API response body instead."
             )
         assets.append(entry)
     return assets

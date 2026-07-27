@@ -72,7 +72,9 @@ Only run in the Tauri application.
 - Do not block backend/database startup, normal navigation or the first render.
 - Do not add a settings toggle or update channel in this feature.
 
-Automatic-check failures are silent in the main UI but must be added to the existing frontend debug-event log. Manual-check failures show a concise red notification.
+Automatic-check failures are silent in the main UI but must be added to the existing frontend debug-event log.
+Manual-check failures open the update modal with the current installed version and a plain-language
+explanation (not a bottom-corner notification). Manual “up to date” results use the same modal.
 
 ### 3.4 Notification behavior
 
@@ -91,7 +93,8 @@ cellxplorer-update-notified-version
 
 Do not store the manifest, download URL, signature, release notes or updater object in local storage.
 
-A manual check may show `CellXplorer is up to date.` when nothing is available. Automatic checks must not show that success message.
+A manual check may open the update modal with `You’re up to date` and the current version when
+nothing is available. Automatic checks must not show that success message.
 
 ### 3.5 Initial modal — exact content scope
 
@@ -171,7 +174,7 @@ Use one progress bar for this operation. Do not also create a background-job ent
 #### Check failure
 
 - automatic: debug log only;
-- manual: red notification; menu returns to `Check for updates`.
+- manual: update modal with plain-language explanation and current version; menu returns to `Check for updates`.
 
 #### Download failure
 
@@ -494,7 +497,7 @@ The combined updater feature receives one minor release bump in Spec 019. Do not
 
 - [ ] Packaged CellXplorer checks after startup and every 12 hours without delaying normal use.
 - [ ] Manual check works from the final power-menu item.
-- [ ] Automatic failures are silent but debuggable; manual failures notify.
+- [ ] Automatic failures are silent but debuggable; manual failures open the update modal with a plain-language explanation.
 - [ ] A new version shows one notification per version and a persistent independent teal `1` badge.
 - [ ] Paused background automation and update availability can be shown simultaneously.
 - [ ] The background pause section is relabelled `Background automation` without behavior changes.

@@ -172,6 +172,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--tauri-conf src-tauri/tauri.conf.json", self.release)
         self.assertIn("--uploaded-signature uploaded-setup.sig", self.release)
 
+    def test_release_assets_metadata_persists_raw_github_json(self):
+        export = self.release.split("Export draft release assets metadata", 1)[1]
+        export = export.split("Download staged draft manifest", 1)[0]
+        self.assertIn("Invoke-WebRequest", export)
+        self.assertIn("$response.Content", export)
+        self.assertNotIn("ConvertTo-Json -InputObject $assets", export)
+
     def test_all_third_party_actions_are_full_sha_pinned(self):
         refs = []
         for match in USES_RE.finditer(self.release):
@@ -388,6 +395,25 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(code, 0)
+
+    def test_load_release_assets_unwraps_powershell_nested_array(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text(
+                __import__("json").dumps([sample_assets()]),
+                encoding="utf-8",
+            )
+            loaded = verify_updater_manifest.load_release_assets(path)
+            self.assertEqual(loaded, sample_assets())
+
+    def test_load_release_assets_rejects_stringified_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "assets.json"
+            path.write_text('["@{name=latest.json}"]', encoding="utf-8")
+            with self.assertRaises(verify_updater_manifest.ManifestVerificationError) as ctx:
+                verify_updater_manifest.load_release_assets(path)
+            self.assertIn("index 0", str(ctx.exception))
+            self.assertIn("ConvertTo-Json", str(ctx.exception))
 
 
 if __name__ == "__main__":
