@@ -35,6 +35,27 @@ class BackendAppChannelTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 app_channel.validate_packaged_channel_at_startup()
 
+    def test_default_data_roots_by_channel(self):
+        home = Path(r"C:\Users\example")
+        self.assertEqual(
+            app_channel.default_data_root("stable", home),
+            home / ".cellxplorer",
+        )
+        self.assertEqual(
+            app_channel.default_data_root("beta", home),
+            home / ".cellxplorer-beta",
+        )
+
+    def test_resolve_data_root_honors_override(self):
+        home = Path(r"C:\Users\example")
+        env = {"CELLXPLORER_DATA": r"C:\disposable\data", "CELLXPLORER_CHANNEL": "beta"}
+        self.assertEqual(app_channel.resolve_data_root(env, home), Path(r"C:\disposable\data"))
+
+    def test_resolve_data_root_without_override(self):
+        home = Path(r"C:\Users\example")
+        env = {"CELLXPLORER_CHANNEL": "beta"}
+        self.assertEqual(app_channel.resolve_data_root(env, home), home / ".cellxplorer-beta")
+
 
 if __name__ == "__main__":
     unittest.main()

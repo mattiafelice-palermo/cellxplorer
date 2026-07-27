@@ -307,6 +307,11 @@ Rules:
   fail-closed Beta updater until Spec 023. Data isolation and Beta feed are Specs 022–023.
   Review: [021-stable-beta-app-identities-review.md](reviews/021-stable-beta-app-identities-review.md).
   Branch `feature/stable-beta-app-identities`.
+- [022-beta-data-isolation.md](022-beta-data-isolation.md)
+  — separate Beta data root (`.cellxplorer-beta`), one-time Stable library copy via SQLite
+  backup, blocking first-run modal, and token-scoped apply/restart. Part of the Spec 021–023
+  release train on branch `feature/stable-beta-app-identities`. Depends on Spec 021 identities.
+  Review: `docs/specs/reviews/022-beta-data-isolation-review.md` (when present).
 
 ## Assets
 

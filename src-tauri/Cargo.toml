@@ -22,6 +22,9 @@ serde = { version = "1", features = ["derive"] }
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18"
 
+[dev-dependencies]
+tempfile = "3"
+
 # Local packaging runs rebuild this crate every time (tauri-build re-runs its
 # build script), and the release default of no incremental data meant a full
 # recompile plus link on each pass.

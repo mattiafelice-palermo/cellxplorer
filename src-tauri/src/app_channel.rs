@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppChannel {
     Stable,
@@ -65,6 +67,26 @@ impl AppChannel {
             AppChannel::Beta => include_bytes!("../icons-beta/icon-256.rgba"),
         }
     }
+
+    pub fn default_data_dir_name(&self) -> &'static str {
+        match self {
+            AppChannel::Stable => ".cellxplorer",
+            AppChannel::Beta => ".cellxplorer-beta",
+        }
+    }
+
+    pub fn default_data_root(&self, home: &Path) -> PathBuf {
+        home.join(self.default_data_dir_name())
+    }
+}
+
+pub fn resolve_data_root(channel: AppChannel, home: &Path) -> PathBuf {
+    if let Ok(value) = std::env::var("CELLXPLORER_DATA") {
+        if !value.trim().is_empty() {
+            return PathBuf::from(value);
+        }
+    }
+    channel.default_data_root(home)
 }
 
 #[cfg(test)]
@@ -117,5 +139,27 @@ mod tests {
             AppChannel::Beta.frame_color_bgr()
         );
         assert_eq!(AppChannel::Beta.frame_color_bgr(), 0x00_b7_7836);
+    }
+
+    #[test]
+    fn default_data_roots_differ_by_channel() {
+        let home = Path::new(r"C:\Users\example");
+        assert_eq!(
+            AppChannel::Stable.default_data_root(home),
+            PathBuf::from(r"C:\Users\example\.cellxplorer")
+        );
+        assert_eq!(
+            AppChannel::Beta.default_data_root(home),
+            PathBuf::from(r"C:\Users\example\.cellxplorer-beta")
+        );
+    }
+
+    #[test]
+    fn resolve_data_root_honors_explicit_override() {
+        let home = Path::new(r"C:\Users\example");
+        std::env::set_var("CELLXPLORER_DATA", r"C:\disposable\data");
+        let resolved = super::resolve_data_root(AppChannel::Beta, home);
+        std::env::remove_var("CELLXPLORER_DATA");
+        assert_eq!(resolved, PathBuf::from(r"C:\disposable\data"));
     }
 }

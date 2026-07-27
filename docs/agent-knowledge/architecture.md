@@ -32,9 +32,12 @@ be bundled into Beta and vice versa. The PyInstaller sidecar is shared; Rust pas
 `CELLXPLORER_CHANNEL` to it. Packaged backend startup requires a valid channel and fails closed on
 missing or unsupported values.
 
-Both editions still share the default `%USERPROFILE%\.cellxplorer` data root until Spec 022. Use
-disposable `CELLXPLORER_DATA` for installer tests. Beta updater commands are disabled fail-closed
-until Spec 023; do not tag or publish an intermediate Beta release.
+Both editions use separate default data roots after Spec 022: Stable `%USERPROFILE%\.cellxplorer`,
+Beta `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides both exactly for tests and
+development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
+
+Beta updater commands are disabled fail-closed until Spec 023; do not tag or publish an intermediate
+Beta release.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
 directory being changed — never by shared image name alone — so Stable and Beta can run side by side.

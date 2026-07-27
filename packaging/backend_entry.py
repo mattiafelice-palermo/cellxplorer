@@ -18,11 +18,9 @@ def _ensure_source_backend_on_path() -> None:
 
 
 def _crash_log_path() -> Path:
-    data_override = os.environ.get("CELLXPLORER_DATA")
-    if data_override:
-        base = Path(data_override)
-    else:
-        base = Path.home() / ".cellxplorer"
+    from app.services.app_channel import resolve_data_root
+
+    base = resolve_data_root(os.environ, Path.home())
     return base / "logs" / "backend-crash.log"
 
 

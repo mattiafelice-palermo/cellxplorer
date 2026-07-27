@@ -46,6 +46,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
+import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
 import { AnalysisWorkspaceTabs } from "./components/AnalysisWorkspaceTabs";
 import { AnalysisWorkspaceContent } from "./components/AnalysisWorkspaceContent";
@@ -472,6 +473,7 @@ export default function App() {
           databaseStatus.data?.compatible === true && !automationPause.data?.paused
         }
       />
+      <BetaBootstrapCoordinator backendReady={databaseStatus.data?.compatible === true} />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"

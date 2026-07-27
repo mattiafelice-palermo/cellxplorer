@@ -39,11 +39,13 @@ Implement features **sequentially**, one branch at a time:
 2. Create a dedicated branch from current `main` before implementing a new feature or spec.
    Do not build feature work directly on `main`.
 3. Use a short, descriptive name such as `feature/cell-table-pagination`.
-4. **Push the feature branch to `origin` after each reviewable commit.** Local-only branches
-   block other agents and humans from reviewing the work. Use `git push -u origin HEAD` the first
-   time, then `git push` on later commits. Do not leave completed spec implementation only on disk
-   unless the user explicitly asks you not to push.
-5. Run `python scripts\preflight.py` on the branch before merging.
+4. When a spec or review follow-up batch is **complete**, commit the work on the feature branch,
+   run preflight, and **push to `origin`**. Reviewers and other agents cannot read local-only
+   changes. Use `git push -u origin HEAD` the first time on a branch, then `git push` on later
+   commits. Do not finish a completed spec without pushing unless the user explicitly asks you
+   not to.
+5. Run `python scripts\preflight.py` on the branch before merging (and as part of step 4 when
+   landing a completed spec).
 6. Merge to `main` when the feature is complete. GitHub preflight runs automatically on `main`;
    feature-branch pushes do not trigger it.
 
@@ -66,6 +68,11 @@ path alone:
 Normalize Windows duplicate suffixes such as `(1)` to the canonical filename, update the spec index
 in `docs/specs/README.md`, and add `Review document:` cross-links in the related spec. The
 repository copy is the source of truth from then on.
+
+When implementation for a numbered spec (or a review follow-up tranche named in the review doc)
+is complete and preflight passes, **commit and push the feature branch to `origin` in the same
+session**. The remote branch is what reviewers read; do not leave finished spec work uncommitted
+or unpushed.
 
 ## Core data rules
 

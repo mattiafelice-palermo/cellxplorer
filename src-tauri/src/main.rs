@@ -2,9 +2,10 @@
 
 mod app_channel;
 mod app_updates;
+mod beta_bootstrap;
 mod update_notifications;
 
-use app_channel::AppChannel;
+use app_channel::{resolve_data_root, AppChannel};
 use app_updates::PendingAppUpdate;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -233,6 +234,26 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
+    let channel = channel_for_app(&app)?;
+    if channel != AppChannel::Beta {
+        return Err("Beta bootstrap is only available in the Beta channel.".to_string());
+    }
+    let beta_root = app_data_dir_for_channel(channel);
+    let paths = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+    stop_backend(&app);
+    if let Err(error) = beta_bootstrap::activate_staged_copy(&beta_root, &paths) {
+        return Err(error);
+    }
+    schedule_relaunch()?;
+    if let Some(lifecycle) = app.try_state::<LifecycleState>() {
+        lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 fn startup_mode() -> String {
     if std::env::args().any(|arg| arg == "--hidden") {
         "startup".to_string()
@@ -344,20 +365,21 @@ fn set_tray_status(app: AppHandle, message: Option<String>) -> Result<(), String
         .map_err(|error| error.to_string())
 }
 
-fn app_data_dir() -> PathBuf {
-    if let Some(value) = std::env::var_os("CELLXPLORER_DATA") {
-        return PathBuf::from(value);
-    }
+fn user_home_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cellxplorer")
+}
+
+fn app_data_dir_for_channel(channel: AppChannel) -> PathBuf {
+    resolve_data_root(channel, &user_home_dir())
 }
 
 #[allow(deprecated)]
 #[tauri::command]
 fn open_app_folder(app: AppHandle, kind: String) -> Result<(), String> {
-    let base = app_data_dir();
+    let channel = channel_for_app(&app)?;
+    let base = app_data_dir_for_channel(channel);
     let path = if kind == "logs" {
         base.join("logs")
     } else {
@@ -480,6 +502,7 @@ fn main() {
             app_updates::check_app_update,
             app_updates::download_app_update,
             app_updates::install_app_update,
+            apply_beta_bootstrap,
             backend_api_base,
             is_autostart_enabled,
             is_main_window_visible,
@@ -508,7 +531,11 @@ fn main() {
                 .env("CELLXPLORER_PORT", backend_port.to_string())
                 .env("CELLXPLORER_STARTUP_MODE", startup_label)
                 .env("CELLXPLORER_APP_VERSION", version)
-                .env("CELLXPLORER_CHANNEL", app_channel.as_str());
+                .env("CELLXPLORER_CHANNEL", app_channel.as_str())
+                .env(
+                    "CELLXPLORER_DATA",
+                    app_data_dir_for_channel(app_channel).to_string_lossy().to_string(),
+                );
             let (_rx, child) = sidecar.spawn()?;
             app.manage(BackendChild(Mutex::new(Some(child))));
 
