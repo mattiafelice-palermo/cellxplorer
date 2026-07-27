@@ -24,6 +24,7 @@ from check_versions import (
 
 
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+PUBLISHABLE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
 CHANGELOG_HEADING_RE = re.compile(
     r"^##\s+(?:\[)?(?P<version>v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\])?"
 )
@@ -41,8 +42,20 @@ def parse_semver(value: str) -> tuple[int, int, int]:
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
 
 
+def parse_publishable_version(value: str) -> str:
+    """Accept stable X.Y.Z or beta X.Y.Z-beta.N versions."""
+    normalized = normalize_expected_version(value.strip())
+    if not PUBLISHABLE_VERSION_RE.fullmatch(normalized):
+        raise BumpVersionError(
+            f"Version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N, got {value!r}."
+        )
+    return normalized
+
+
 def bump_semver(current: str, *, patch: bool, minor: bool, major: bool) -> str:
-    major_n, minor_n, patch_n = parse_semver(current)
+    # Incremental bumps always produce a stable version from the core SemVer triple.
+    core = current.split("-", 1)[0]
+    major_n, minor_n, patch_n = parse_semver(core)
     if major:
         return f"{major_n + 1}.0.0"
     if minor:
@@ -63,8 +76,7 @@ def resolve_target_version(
     sources = collect_version_sources(repo_root)
     current = sources[0].version
     if explicit is not None:
-        target = normalize_expected_version(explicit)
-        parse_semver(target)
+        target = parse_publishable_version(explicit)
         if target == current:
             raise BumpVersionError(f"Target version {target} matches the current version.")
         return target

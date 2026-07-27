@@ -101,6 +101,16 @@ class ReleaseTagTests(unittest.TestCase):
     def test_accepts_exact_stable_tags(self):
         self.assertTrue(release_tag.is_stable_release_tag("v0.15.0"))
         self.assertEqual(release_tag.require_stable_release_tag("v0.15.0"), "v0.15.0")
+        self.assertTrue(release_tag.is_publishable_release_tag("v0.15.0"))
+
+    def test_accepts_beta_tags(self):
+        self.assertTrue(release_tag.is_beta_release_tag("v0.16.2-beta.1"))
+        self.assertTrue(release_tag.is_publishable_release_tag("v0.16.2-beta.1"))
+        self.assertEqual(
+            release_tag.require_publishable_release_tag("v0.16.2-beta.1"),
+            "v0.16.2-beta.1",
+        )
+        self.assertFalse(release_tag.is_stable_release_tag("v0.16.2-beta.1"))
 
     def test_rejects_prerelease_and_malformed_tags(self):
         for tag in (
@@ -110,11 +120,13 @@ class ReleaseTagTests(unittest.TestCase):
             "v0.15.0+build",
             "vfoo",
             "0.15.0",
+            "v0.16.2-beta",
+            "v0.16.2-alpha.1",
         ):
             with self.subTest(tag=tag):
-                self.assertFalse(release_tag.is_stable_release_tag(tag))
+                self.assertFalse(release_tag.is_publishable_release_tag(tag))
                 with self.assertRaises(release_tag.ReleaseTagError):
-                    release_tag.require_stable_release_tag(tag)
+                    release_tag.require_publishable_release_tag(tag)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -156,6 +168,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_stable_tag_and_main_ancestry_guards_exist(self):
         self.assertIn("python scripts/release_tag.py --tag", self.release)
+        self.assertIn("Require publishable SemVer tag", self.release)
         self.assertIn("git merge-base --is-ancestor", self.release)
         self.assertIn("Refuse to replace an already published release", self.release)
 

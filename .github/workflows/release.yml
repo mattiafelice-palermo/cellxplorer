@@ -110,7 +110,7 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Require stable SemVer tag
+      - name: Require publishable SemVer tag
         if: github.ref_type == 'tag'
         shell: pwsh
         run: python scripts/release_tag.py --tag "${{ github.ref_name }}"
@@ -235,6 +235,8 @@ jobs:
           releaseName: CellXplorer ${{ steps.version.outputs.version }}
           releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
+          # Keep false even for *-beta.* tags so releases/latest/latest.json updates.
+          # The app hides versions containing "beta" unless Receive beta versions is on.
           prerelease: false
           tauriScript: npm run tauri
           uploadUpdaterJson: true
