@@ -155,6 +155,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("gh run cancel", self.release)
         self.assertIn("--workflow preflight.yml", self.release)
+        cancel_block = self.release.split("Cancel redundant main preflight for this commit", 1)[1]
+        cancel_block = cancel_block.split("- name:", 1)[0]
+        self.assertIn("continue-on-error: true", cancel_block)
+        self.assertIn("exit 0", cancel_block)
 
     def test_manual_dispatch_is_build_only(self):
         self.assertIn("workflow_dispatch:", self.release)

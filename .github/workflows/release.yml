@@ -36,10 +36,13 @@ jobs:
     steps:
       - name: Cancel redundant main preflight for this commit
         if: github.ref_type == 'tag'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          # Best-effort only: main pushes often finish the preflight gate before cancel runs.
+          $ErrorActionPreference = "Continue"
           $sha = $env:GITHUB_SHA
           $ids = [System.Collections.Generic.HashSet[string]]::new()
           foreach ($status in @("queued", "pending", "waiting", "requested", "in_progress")) {
@@ -47,14 +50,20 @@ jobs:
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
               continue
             }
-            foreach ($row in ($json | ConvertFrom-Json)) {
-              [void]$ids.Add([string]$row.databaseId)
+            foreach ($row in @($json | ConvertFrom-Json)) {
+              if ($null -ne $row.databaseId) {
+                [void]$ids.Add([string]$row.databaseId)
+              }
             }
           }
           foreach ($id in $ids) {
             Write-Host "Canceling CellXplorer preflight run $id for $sha (release preflight covers this commit)."
             gh run cancel $id
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Cancel of run $id returned $LASTEXITCODE (ignored)."
+            }
           }
+          exit 0
 
       - name: Check out repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
