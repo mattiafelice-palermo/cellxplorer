@@ -165,7 +165,12 @@ and the power-menu badge remain active. Manual **Check for updates** opens the e
 modal directly and never shows a discovery toaster. Toast display and body-click activation are
 owned by Rust (`show_update_notification` / `notify-rust`), not the Tauri notification plugin JS
 facade. Verify Windows notification identity and body-click behavior in an installed NSIS build —
-`tauri dev` may show PowerShell branding.
+`tauri dev` may show PowerShell branding. The **Receive beta versions** toggle (off by default)
+ignores advertised versions containing `beta` unless enabled.
+
+On release days, `preflight.yml` skips its Windows job when a `v*` tag already points at the
+pushed `main` commit, and `release.yml` cancels any still-running main preflight for that SHA so
+only the release job's `--no-cache` preflight runs.
 
 ### Tag and release checklist
 
