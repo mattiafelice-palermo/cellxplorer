@@ -174,15 +174,30 @@ only the release job's `--no-cache` preflight runs.
 
 ### Tag and release checklist
 
+Agents use this when the user asks for a release. Unless a spec defers tagging (for example a
+multi-spec release train), operate on `main` after the relevant features are merged.
+
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
-   Use `python scripts\bump_version.py --patch --notes "..."` (or an explicit version).
-2. Run `python scripts/check_versions.py` and `python scripts/preflight.py --no-cache` locally.
+   Use `python scripts\bump_version.py --patch --notes "..."` for Stable, or an explicit version
+   such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases.
+2. Run `python scripts/check_versions.py --expected-version <version>` and
+   `python scripts/preflight.py --no-cache` locally. Report the exact preflight result.
 3. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
-4. Push `vX.Y.Z` (exact `vMAJOR.MINOR.PATCH` only) to trigger `.github/workflows/release.yml`.
-   The tag commit must be reachable from `main`. Do not rely on the ordinary preflight workflow for
-   tag publishing, and do not re-run a published tag to replace binaries.
+4. Commit the version bump on `main`, push `main`, then tag and push:
+   ```powershell
+   git tag -a v<version> -m "CellXplorer <version>"
+   git push origin main
+   git push origin v<version>
+   ```
+   Validate the tag with `python scripts\release_tag.py --tag v<version>`. Stable tags use
+   `vX.Y.Z`; Beta uses `vX.Y.Z-beta.N`. The tagged commit must be reachable from `main`. Tag push
+   triggers `.github/workflows/release.yml` — do not re-run a published tag to replace binaries.
+   If the workflow fails on an early step, fix on `main`, push, move the tag to the fixed commit,
+   and push the tag again.
 5. Inspect the GitHub Release assets: NSIS setup executable, matching `.sig`, and `latest.json`.
-   The workflow stages a draft first and undrafts only after verification.
+   The workflow stages a draft first and undrafts only after verification. Beta releases remain
+   non-prerelease in GitHub so `/latest` updates; Stable clients ignore Beta versions in-app when
+   **Receive beta versions** is off.
 6. For the bootstrap release, manually install the updater-enabled build on a real machine.
 7. For the first live update test, publish a real patch release `N+1` and verify discovery,
    download, installer launch, data preservation, and backend restart from version `N`.

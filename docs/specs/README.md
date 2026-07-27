@@ -33,10 +33,14 @@ Implement features **one at a time** on dedicated branches:
 2. **Branch before implementing.** When a spec moves from Plan to Implement, create a feature
    branch from current `main`. Record the branch name in the spec's implementation record when
    work begins.
-3. **Stay sequential.** Finish branch A → merge to `main` → start branch B. Parallel feature
+3. **Push for review.** After each reviewable checkpoint (spec implementation complete, or a
+   logical milestone the user should see), commit on the feature branch and push to `origin`:
+   `git push -u origin HEAD` the first time, then `git push`. Other agents and reviewers depend
+   on the remote branch; do not leave finished work local-only unless the user explicitly opts out.
+4. **Stay sequential.** Finish branch A → merge to `main` → start branch B. Parallel feature
    branches are discouraged because they often touch the same files (for example
    `LibraryPage.tsx` or `AnalysisPage.tsx`) and create merge conflicts.
-4. **Verify on the branch.** Run `python scripts\preflight.py` before merge. Do not rely on
+5. **Verify on the branch.** Run `python scripts\preflight.py` before merge. Do not rely on
    feature-branch pushes for CI; preflight on GitHub runs for `main`, release tags, and manual
    workflow dispatch only.
 
@@ -56,7 +60,9 @@ A spec is a living document, not a one-shot brief:
 2. **Branch** — create one feature branch from `main`. Do not start a new branch while another
    feature branch is still open.
 3. **Implement** — the agent follows the spec on that branch.
-4. **Review** — a reviewer writes findings to a **separate** review file under
+4. **Push** — commit reviewable work and push the branch to `origin` so another agent or reviewer
+   can read the diff without your local tree.
+5. **Review** — a reviewer writes findings to a **separate** review file under
    [`reviews/`](reviews/) (`reviews/NNN-short-kebab-title-review.md`), containing:
    - the verification actually run (commands + results), so nobody repeats it;
    - what was confirmed correct by reading the code, so nobody re-litigates it;
@@ -105,6 +111,8 @@ Rules:
 8. Do not modify unrelated uncommitted work in the tree.
 9. UI changes inherit the visual style guide unless this spec explicitly marks an override
    as a locked design decision.
+10. After reviewable implementation, commit and push the feature branch to `origin` unless the
+   user explicitly opts out. Other agents review from the remote branch.
 
 Ask if a task is ambiguous rather than guessing.
 ```

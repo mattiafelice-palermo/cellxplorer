@@ -72,7 +72,7 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-  scrollbar-color: var(--mantine-color-teal-4) transparent;
+  scrollbar-color: var(--mantine-primary-color-4) transparent;
 }
 
 .cx-vertical-scroll::-webkit-scrollbar {
@@ -84,7 +84,7 @@ body {
 }
 
 .cx-vertical-scroll::-webkit-scrollbar-thumb {
-  background: var(--mantine-color-teal-4);
+  background: var(--mantine-primary-color-4);
   border-radius: 4px;
 }
 

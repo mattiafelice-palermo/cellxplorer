@@ -28,6 +28,8 @@ import { IconActivityHeartbeat, IconBell, IconChartLine, IconDatabaseCog, IconDe
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { APP_BRANDING } from "../appChannel";
+
 import {
   get,
   post,
@@ -127,6 +129,11 @@ export function SettingsPage() {
     savedUpdatePreferences,
   );
   const appUpdate = useOptionalAppUpdate();
+  useEffect(() => {
+    if (APP_BRANDING.isBeta && location.pathname.endsWith("/updates")) {
+      navigate("/settings", { replace: true });
+    }
+  }, [location.pathname, navigate]);
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -293,7 +300,7 @@ export function SettingsPage() {
       setAutostartEnabled(saved);
       notifications.show({
         message: saved
-          ? "CellXplorer will launch in the tray when Windows starts."
+          ? `${APP_BRANDING.productName} will launch in the tray when Windows starts.`
           : "Launch at Windows startup disabled.",
         color: "teal",
       });
@@ -672,7 +679,9 @@ export function SettingsPage() {
           <Tabs.Tab value="metadata" leftSection={<IconRulerMeasure size={15} />}>Cell metadata</Tabs.Tab>
           <Tabs.Tab value="plots" leftSection={<IconChartLine size={15} />}>Plots & export</Tabs.Tab>
           <Tabs.Tab value="desktop" leftSection={<IconDeviceDesktop size={15} />}>Desktop</Tabs.Tab>
-          <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
+          {!APP_BRANDING.isBeta ? (
+            <Tabs.Tab value="updates" leftSection={<IconBell size={15} />}>App updates</Tabs.Tab>
+          ) : null}
           <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
           <Tabs.Tab value="cache" leftSection={<IconDatabaseCog size={15} />}>Cache</Tabs.Tab>
           <Tabs.Tab value="activity" leftSection={<IconHistory size={15} />}>Activity log</Tabs.Tab>
@@ -1519,6 +1528,7 @@ export function SettingsPage() {
           </Paper>
         </Tabs.Panel>
 
+        {!APP_BRANDING.isBeta ? (
         <Tabs.Panel value="updates" pt="lg">
           <Paper withBorder p="lg">
             <Stack gap="lg">
@@ -1672,6 +1682,7 @@ export function SettingsPage() {
             </Stack>
           </Paper>
         </Tabs.Panel>
+        ) : null}
 
         <Tabs.Panel value="performance" pt="lg">
           <Paper withBorder p="lg">

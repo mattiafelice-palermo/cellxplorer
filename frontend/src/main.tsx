@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
+import { APP_BRANDING } from "./appChannel";
 import { AppUpdateProvider } from "./components/AppUpdateCoordinator";
 import { isTransientApiError } from "./apiRetryPolicy";
 import {
@@ -18,8 +19,27 @@ import {
   startupQueryPersistence,
 } from "./startupQueryPersistence";
 
+const betaBlue = [
+  "#eef7ff",
+  "#dceeff",
+  "#badcff",
+  "#96c9f2",
+  "#7db7e8",
+  "#61a3dc",
+  "#478dcd",
+  "#3678b7",
+  "#2d659f",
+  "#265487",
+] as const;
+
 const theme = createTheme({
-  primaryColor: "teal",
+  primaryColor: APP_BRANDING.primaryColor,
+  ...(APP_BRANDING.isBeta
+    ? {
+        colors: { betaBlue: [...betaBlue] },
+        primaryShade: { light: 7, dark: 6 },
+      }
+    : {}),
   defaultRadius: "md",
 });
 

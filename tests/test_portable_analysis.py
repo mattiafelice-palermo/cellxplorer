@@ -292,6 +292,20 @@ class PortableAnalysisTests(unittest.TestCase):
         result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
         self.assertEqual(result["cell_series"][0]["x"], [1])
 
+    def test_export_uses_beta_deep_link_scheme_when_channel_is_beta(self):
+        db, analysis, _, _, _ = self.create_analysis()
+        destination = self.root / "beta-portable.html"
+        with patch.dict(os.environ, {"CELLXPLORER_CHANNEL": "beta"}, clear=False):
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                destination,
+                include_original_files=False,
+            )
+        html = destination.read_bytes()
+        self.assertIn(b"cellxplorer-beta://import-analysis", html)
+        self.assertNotIn(b"cellxplorer://import-analysis", html)
+
     def test_desktop_deep_link_accepts_only_existing_local_html(self):
         destination, _ = self.create_export(include_original_files=False)
         self.assertEqual(_portable_local_path(destination.as_uri()), destination.resolve())

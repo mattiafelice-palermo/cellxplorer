@@ -1,11 +1,17 @@
 # Spec 021: Side-by-side Stable and Beta application identities
 
-Status: **planned**  
-Repository: `mattiafelice-palermo/cellxplorer`  
-Inspected baseline: `main` at `6c08a59c61a2607c47e036fac91486fb69a4c200`  
+Status: **in progress**  
 Target branch: `feature/stable-beta-app-identities`  
-Depends on: Specs 017–020 already merged  
 Review document: `docs/specs/reviews/021-stable-beta-app-identities-review.md`
+
+## Implementation record
+
+- Channel modules: `frontend/src/appChannel.ts`, `src-tauri/src/app_channel.rs`.
+- Beta overlay: `src-tauri/tauri.beta.conf.json`; icons via `scripts/build_beta_icons.py`.
+- Build: `scripts/build-app.ps1 -Channel stable|beta`; npm `tauri:build:stable|beta`.
+- Beta updater commands fail closed in `app_updates.rs` until Spec 023.
+- Teal audit: only shell brand/active controls and scrollbars were made channel-aware;
+  semantic success, plots, thumbnails, and exports remain teal.
 
 ## 1. Goal
 

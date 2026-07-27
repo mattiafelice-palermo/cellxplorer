@@ -39,9 +39,13 @@ Implement features **sequentially**, one branch at a time:
 2. Create a dedicated branch from current `main` before implementing a new feature or spec.
    Do not build feature work directly on `main`.
 3. Use a short, descriptive name such as `feature/cell-table-pagination`.
-4. Run `python scripts\preflight.py` on the branch before merging.
-5. Merge to `main` when the feature is complete. GitHub preflight runs automatically on `main`;
-   feature-branch pushes do not.
+4. **Push the feature branch to `origin` after each reviewable commit.** Local-only branches
+   block other agents and humans from reviewing the work. Use `git push -u origin HEAD` the first
+   time, then `git push` on later commits. Do not leave completed spec implementation only on disk
+   unless the user explicitly asks you not to push.
+5. Run `python scripts\preflight.py` on the branch before merging.
+6. Merge to `main` when the feature is complete. GitHub preflight runs automatically on `main`;
+   feature-branch pushes do not trigger it.
 
 This keeps overlapping edits out of the same files and reduces merge conflicts.
 
@@ -154,6 +158,7 @@ Cellxplorer/
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   └── RecognitionProgress.tsx
+│   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
@@ -174,6 +179,7 @@ Cellxplorer/
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
+│   ├── test_app_channels.py        Stable/Beta identity and build contract tests (Spec 021)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
@@ -188,6 +194,7 @@ Cellxplorer/
 │       ├── scientific-regression-testing.md
 │       └── visual-style-guide.md
 ├── scripts/                        Development and Windows build launchers
+│   ├── build_beta_icons.py         Derive Beta icon assets from Stable source art (Spec 021)
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
@@ -202,6 +209,7 @@ Cellxplorer/
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 │   └── src/
+│       ├── app_channel.rs          Stable/Beta identity helpers (Spec 021)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 │       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend
@@ -275,6 +283,38 @@ python scripts\bump_version.py 0.15.4 --notes-file notes.txt
 ```
 
 Then run preflight and push the release tag.
+
+## Release workflow
+
+Use this sequence for user-facing Stable or Beta releases unless a spec says otherwise (for
+example a coordinated release train that defers tagging until several specs land).
+
+1. Finish and merge feature work to `main`, or confirm `main` already contains the release scope.
+2. Bump every maintained version declaration and prepend `CHANGELOG.md`:
+   ```powershell
+   python scripts\bump_version.py --patch --notes "Short release note."
+   python scripts\bump_version.py 0.16.2-beta.1 --notes "Beta release note."
+   ```
+3. Verify declarations: `python scripts\check_versions.py --expected-version <version>`
+4. Run `python scripts\preflight.py --no-cache` and report the exact result.
+5. Commit the version bump on `main`, push `main`, then create and push the tag:
+   ```powershell
+   git tag -a v<version> -m "CellXplorer <version>"
+   git push origin main
+   git push origin v<version>
+   ```
+   Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
+   prereleases use `vX.Y.Z-beta.N`. The tag commit must be reachable from `main`.
+6. Publishing is triggered by `.github/workflows/release.yml` on tag push. Monitor the Actions run;
+   if a tag push fails early (for example preflight cancel), fix on `main`, push, delete and
+   re-create the tag on the fixed commit, then push the tag again.
+7. Confirm GitHub Release assets: NSIS installer, matching `.sig`, and `latest.json`. Beta tags
+   stay `prerelease: false` in the workflow so opted-in clients can discover them via `/latest`;
+   in-app filtering handles Stable vs Beta.
+
+Detailed packaging, signing, and updater notes live in
+[`docs/agent-knowledge/change-playbooks.md`](docs/agent-knowledge/change-playbooks.md) and
+[`docs/windows-packaging.md`](docs/windows-packaging.md).
 
 Run the lightweight TypeScript policy tests directly when relevant:
 

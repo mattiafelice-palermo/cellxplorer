@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { post } from "../api";
+import { APP_CHANNEL } from "../appChannel";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
@@ -96,7 +97,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     typeof window === "undefined" ? "" : window.location.search,
     import.meta.env.DEV,
   );
-  const updateUiEnabled = shouldShowUpdateUi(tauri, devMock);
+  const updateUiEnabled = shouldShowUpdateUi(tauri, devMock, APP_CHANNEL);
 
   const [state, dispatch] = useReducer(appUpdateReducer, { status: "idle" });
   const [modalOpen, setModalOpen] = useState(false);

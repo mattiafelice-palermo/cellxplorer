@@ -59,6 +59,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
 import { invalidateAnalysisQueries } from "./analysisQueryCache";
+import { APP_BRANDING } from "./appChannel";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -491,19 +492,26 @@ export default function App() {
               </ActionIcon>
             </Tooltip>
             <img
-              src="/app-icon.png"
+              src={APP_BRANDING.appIconPath}
               alt=""
               aria-hidden="true"
               style={{ width: 24, height: 24, display: "block" }}
             />
-            <Title order={4}>CellXplorer</Title>
+            <Group gap={6} wrap="nowrap" align="center">
+              <Title order={4}>{APP_BRANDING.headerTitle}</Title>
+              {APP_BRANDING.isBeta ? (
+                <Badge size="xs" color={APP_BRANDING.primaryColor} variant="filled" radius="sm">
+                  BETA
+                </Badge>
+              ) : null}
+            </Group>
           </Group>
           <Group gap="xs">
             <Button
               className="background-activity-button"
               size="compact-sm"
               variant="subtle"
-              color={backgroundJobs.data?.some((job) => job.status === "failed") ? "red" : "teal"}
+              color={backgroundJobs.data?.some((job) => job.status === "failed") ? "red" : APP_BRANDING.primaryColor}
               leftSection={
                 activeJob ? (
                   <IconLoader2 size={14} className="source-check-spin" />
@@ -523,7 +531,7 @@ export default function App() {
                       {activeJob.completed}/{activeJob.total}
                     </Text>
                   </Group>
-                  <Progress value={activityProgress} size={3} animated color="teal" />
+                  <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />
                 </Stack>
               ) : (
                 "Activity"

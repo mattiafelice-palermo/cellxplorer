@@ -7,7 +7,9 @@
     "check:packaging-tools": "rustc --version && cargo --version && python -m PyInstaller --version && npx.cmd tauri --version",
     "build:backend": "python -m PyInstaller --noconfirm --onefile --noconsole --disable-windowed-traceback --paths backend --add-data \"backend/app/assets/plotly.min.js;app/assets\" --name cellxplorer-backend packaging/backend_entry.py",
     "tauri": "tauri",
-    "tauri:build": "npx.cmd tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:stable": "tauri build",
+    "tauri:build:beta": "tauri build --config src-tauri/tauri.beta.conf.json"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

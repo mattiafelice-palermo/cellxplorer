@@ -176,7 +176,14 @@ export function parseDevUpdateMock(
   return null;
 }
 
-export function shouldShowUpdateUi(tauri: boolean, mock: DevUpdateMockMode | null): boolean {
+export function shouldShowUpdateUi(
+  tauri: boolean,
+  mock: DevUpdateMockMode | null,
+  channel: "stable" | "beta" = "stable",
+): boolean {
+  if (channel === "beta") {
+    return false;
+  }
   return tauri || mock !== null;
 }
 

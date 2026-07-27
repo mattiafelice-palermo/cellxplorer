@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("stable", "beta")]
+    [string]$Channel = "stable",
     [switch]$SkipInstall,
     [switch]$SkipFrontend,
     [switch]$SkipBackend,
@@ -65,6 +67,21 @@ function Get-BackendFingerprint {
 
 Write-Host "CellXplorer application build" -ForegroundColor Cyan
 Write-Host "Repository: $repoRoot"
+Write-Host "Channel: $Channel" -ForegroundColor Cyan
+
+$tauriConf = Get-Content (Join-Path $repoRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
+$betaConfPath = Join-Path $repoRoot "src-tauri\tauri.beta.conf.json"
+if ($Channel -eq "beta") {
+    if (-not (Test-Path $betaConfPath)) {
+        throw "Missing beta Tauri overlay: $betaConfPath"
+    }
+    $betaConf = Get-Content $betaConfPath -Raw | ConvertFrom-Json
+    $productName = $betaConf.productName
+} else {
+    $productName = $tauriConf.productName
+}
+$appVersion = (Get-Content (Join-Path $repoRoot "package.json") -Raw | ConvertFrom-Json).version
+$expectedInstallerName = "$productName" + "_${appVersion}_x64-setup.exe"
 
 if (-not $SkipInstall) {
     Write-Host "Installing root npm dependencies..." -ForegroundColor Yellow
@@ -76,7 +93,18 @@ if (-not $SkipInstall) {
 
 if (-not $SkipFrontend) {
     Write-Host "Building the frontend..." -ForegroundColor Yellow
-    Invoke-Checked "npm.cmd" @("run", "build") $frontendRoot
+    $previousChannel = $env:VITE_CELLXPLORER_CHANNEL
+    $env:VITE_CELLXPLORER_CHANNEL = $Channel
+    try {
+        Invoke-Checked "npm.cmd" @("run", "build") $frontendRoot
+    }
+    finally {
+        if ($null -eq $previousChannel) {
+            Remove-Item Env:VITE_CELLXPLORER_CHANNEL -ErrorAction SilentlyContinue
+        } else {
+            $env:VITE_CELLXPLORER_CHANNEL = $previousChannel
+        }
+    }
 }
 
 if (-not $SkipBackend) {
@@ -109,12 +137,13 @@ elseif (-not (Test-Path $sidecarExe)) {
 
 if (-not $SkipInstaller) {
     Write-Host "Building the Windows installer..." -ForegroundColor Yellow
-    Invoke-Checked "npm.cmd" @("run", "tauri:build") $repoRoot
+    $tauriScript = if ($Channel -eq "beta") { "tauri:build:beta" } else { "tauri:build:stable" }
+    Invoke-Checked "npm.cmd" @("run", $tauriScript) $repoRoot
 
-    $installer = Get-ChildItem (Join-Path $repoRoot "src-tauri\target\release\bundle\nsis") `
-        -Filter "*-setup.exe" -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $installerDir = Join-Path $repoRoot "src-tauri\target\release\bundle\nsis"
+    $installer = Get-ChildItem $installerDir -Filter $expectedInstallerName -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $installer) {
-        throw "Tauri did not create an NSIS installer."
+        throw "Tauri did not create the expected installer: $expectedInstallerName"
     }
 
     Write-Host "`nInstaller created:" -ForegroundColor Green
