@@ -1,9 +1,24 @@
-NewareNDA
-fastapi
-orjson
-uvicorn[standard]
-sqlalchemy>=2.0
-alembic>=1.14
-pandas
-pyarrow
-python-multipart
+# Runtime dependencies, pinned exactly.
+#
+# These were unpinned, so GitHub CI resolved whatever was newest on build day
+# while developer machines kept older releases. That shipped an installer whose
+# backend aborted during import: CI picked up a Starlette release that removed
+# `add_event_handler`, which `app/main.py` still called, so the packaged process
+# died before uvicorn could bind a port. Preflight never caught it because it
+# installed the same drifting set the build did.
+#
+# Pin exactly, so the packaged backend is built from the versions the test suite
+# actually passed against. Bump deliberately, in a commit that runs preflight.
+#
+# Captured on Python 3.14; CI builds on Python 3.12. Both resolve these
+# versions — re-check when bumping.
+
+NewareNDA==2026.6.11
+fastapi==0.115.6
+orjson==3.11.9
+uvicorn[standard]==0.32.1
+sqlalchemy==2.0.51
+alembic==1.14.0
+pandas==3.0.3
+pyarrow==24.0.0
+python-multipart==0.0.32

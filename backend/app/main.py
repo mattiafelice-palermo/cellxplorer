@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,39 @@ def _load_database_instance_id() -> str | None:
 
 DATABASE_INSTANCE_ID = _load_database_instance_id()
 
-app = FastAPI(title="CellXplorer", version=APP_VERSION)
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start and stop the background services around the serving window.
+
+    Uses the lifespan protocol rather than ``add_event_handler``/``on_event``:
+    those are deprecated and have been removed from recent Starlette, which
+    made the packaged backend abort during import with
+    ``AttributeError: 'FastAPI' object has no attribute 'add_event_handler'``
+    whenever CI resolved a newer release than the pinned one. Lifespan is
+    supported across every version we build against.
+
+    The callables below are synchronous and return promptly (they spawn
+    daemon threads), which matches how Starlette invoked them before.
+    """
+    if DATABASE_STATUS.compatible:
+        sessions.start_runtime_session()
+        _start_scientific_service_warmup()
+        source_monitor.start_source_monitor()
+        cache_maintenance.start_cache_maintenance()
+    try:
+        yield
+    finally:
+        # `finally` so a failure while serving still releases the monitor
+        # threads and closes the session, which the shutdown events did not
+        # guarantee.
+        if DATABASE_STATUS.compatible:
+            source_monitor.stop_source_monitor()
+            cache_maintenance.stop_cache_maintenance()
+            sessions.finish_runtime_session("backend_shutdown")
+
+
+app = FastAPI(title="CellXplorer", version=APP_VERSION, lifespan=_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=4096, compresslevel=5)
 app.add_middleware(
     CORSMiddleware,
@@ -132,17 +165,9 @@ def _start_scientific_service_warmup() -> None:
 
 
 if DATABASE_STATUS.compatible:
+    # Recorded at import, as before. Starting and stopping the background
+    # services now happens in `_lifespan` above.
     _record_migration_activity()
-    app.add_event_handler("startup", sessions.start_runtime_session)
-    app.add_event_handler("startup", _start_scientific_service_warmup)
-    app.add_event_handler("startup", source_monitor.start_source_monitor)
-    app.add_event_handler("startup", cache_maintenance.start_cache_maintenance)
-    app.add_event_handler("shutdown", source_monitor.stop_source_monitor)
-    app.add_event_handler("shutdown", cache_maintenance.stop_cache_maintenance)
-    app.add_event_handler(
-        "shutdown",
-        lambda: sessions.finish_runtime_session("backend_shutdown"),
-    )
 
 app.include_router(files.router)
 app.include_router(library.router)

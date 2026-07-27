@@ -4,6 +4,14 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.3 - 2026-07-27
+
+- Fixed a critical packaged-install regression where the Python backend could not start:
+  recent dependency releases removed `add_event_handler`, so the sidecar crashed during import
+  before the UI could connect.
+- Moved backend startup/shutdown to FastAPI lifespan and pinned exact Python dependencies so
+  CI builds match tested versions.
+
 ## 0.15.2 - 2026-07-27
 
 - Restored the chevron on the power-menu button so it reads as a menu control again.
