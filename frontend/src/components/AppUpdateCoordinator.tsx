@@ -49,7 +49,7 @@ import {
 } from "../appUpdater";
 import { addDebugEvent } from "../debug";
 import { isTauriApp } from "../downloads";
-import { showWindowsUpdateNotification } from "../updateNotifications";
+import { showWindowsUpdateNotification, listenForUpdateNotificationActivation } from "../updateNotifications";
 import { AppUpdateModal } from "./AppUpdateModal";
 
 type AppUpdateContextValue = {
@@ -186,6 +186,25 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     [openMatchingUpdateModal],
   );
 
+  useEffect(() => {
+    if (!tauri) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listenForUpdateNotificationActivation((payload) => {
+      void handleNotificationActivate(payload.version);
+    }).then((stop) => {
+      if (cancelled) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [handleNotificationActivate, tauri]);
+
   const applyRelease = useCallback(
     (release: AppUpdateRelease | null, source: UpdateCheckSource) => {
       const feedbackSource = resolveEffectiveCheckSource(source, checkFeedbackSource.current);
@@ -220,7 +239,6 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
       void showWindowsUpdateNotification({
         release: merged,
-        onActivate: handleNotificationActivate,
       }).then((result) => {
         if (!mountedRef.current) return;
         if (result === "shown") {
@@ -233,7 +251,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         });
       });
     },
-    [handleNotificationActivate, preferences.notificationsEnabled],
+    [preferences.notificationsEnabled],
   );
 
   const performCheck = useCallback(

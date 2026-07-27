@@ -162,8 +162,10 @@ Updater check preferences are local UI state under `cellxplorer-update-preferenc
 `cellxplorer-update-preferences-changed`, which makes `AppUpdateCoordinator` reschedule without an
 app restart. The notification toggle controls native Windows notifications only; automatic checks
 and the power-menu badge remain active. Manual **Check for updates** opens the existing update
-modal directly and never shows a discovery toaster. Verify Windows notification identity and body
-click behavior in an installed NSIS build — `tauri dev` may show PowerShell branding.
+modal directly and never shows a discovery toaster. Toast display and body-click activation are
+owned by Rust (`show_update_notification` / `notify-rust`), not the Tauri notification plugin JS
+facade. Verify Windows notification identity and body-click behavior in an installed NSIS build —
+`tauri dev` may show PowerShell branding.
 
 ### Tag and release checklist
 

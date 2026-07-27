@@ -111,19 +111,37 @@ class UpdaterConfigurationTests(unittest.TestCase):
         frontend_package = json.loads(
             (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
         )
-        self.assertIn("tauri-plugin-notification", self.cargo)
-        self.assertIn(
+        update_notifications_rs = (
+            ROOT / "src-tauri" / "src" / "update_notifications.rs"
+        ).read_text(encoding="utf-8")
+        frontend_adapter = (
+            ROOT / "frontend" / "src" / "updateNotifications.ts"
+        ).read_text(encoding="utf-8")
+        coordinator = (
+            ROOT / "frontend" / "src" / "components" / "AppUpdateCoordinator.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('notify-rust = "4.18"', self.cargo)
+        self.assertNotIn("tauri-plugin-notification", self.cargo)
+        self.assertNotIn(
             "@tauri-apps/plugin-notification",
             frontend_package.get("dependencies", {}),
         )
-        self.assertIn("tauri_plugin_notification::init()", self.main_rs)
+        self.assertNotIn("tauri_plugin_notification::init()", self.main_rs)
         self.assertIn("show_main_window_for_update", self.main_rs)
         self.assertIn(
             "show_main_window_for_update",
             self.main_rs.split("tauri::generate_handler!")[1],
         )
+        self.assertIn("update_notifications::show_update_notification", self.main_rs)
+        self.assertIn('UPDATE_NOTIFICATION_EVENT: &str = "app-update-notification-activated"', update_notifications_rs)
+        self.assertIn("show_update_notification", update_notifications_rs)
+        self.assertIn("listenForUpdateNotificationActivation", frontend_adapter)
+        self.assertIn("listenForUpdateNotificationActivation", coordinator)
+        self.assertNotIn("new Notification(", frontend_adapter)
+        self.assertNotIn("notification.onclick", frontend_adapter)
         permissions = self.capabilities["permissions"]
-        self.assertIn("notification:default", permissions)
+        self.assertNotIn("notification:default", permissions)
         self.assertFalse(any(permission.startswith("updater:") for permission in permissions))
         self.assertFalse(
             any(

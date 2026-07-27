@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_updates;
+mod update_notifications;
 
 use app_updates::PendingAppUpdate;
 use std::net::TcpListener;
@@ -465,7 +466,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(PendingAppUpdate::default()))
         .invoke_handler(tauri::generate_handler![
@@ -485,7 +485,8 @@ fn main() {
             set_tray_status,
             show_main_window_for_update,
             startup_mode,
-            take_pending_deep_link
+            take_pending_deep_link,
+            update_notifications::show_update_notification
         ])
         .setup(move |app| {
             let backend_port = available_backend_port()?;

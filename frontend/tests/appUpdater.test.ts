@@ -534,7 +534,7 @@ test("notification failure keeps available badge state", () => {
   assert.deepEqual(available, { status: "available", release });
 });
 
-test("notification activation accepts only expected tag/kind and version", () => {
+test("notification activation accepts only exact tag/kind and trimmed version", () => {
   assert.equal(
     isValidUpdateNotificationActivation({
       tag: UPDATE_NOTIFICATION_TAG,
@@ -548,14 +548,14 @@ test("notification activation accepts only expected tag/kind and version", () =>
       tag: UPDATE_NOTIFICATION_TAG,
       version: "0.16.0",
     }),
-    true,
+    false,
   );
   assert.equal(
     isValidUpdateNotificationActivation({
       kind: UPDATE_NOTIFICATION_KIND,
       version: "0.16.0",
     }),
-    true,
+    false,
   );
   assert.equal(
     isValidUpdateNotificationActivation({
@@ -568,7 +568,16 @@ test("notification activation accepts only expected tag/kind and version", () =>
   assert.equal(
     isValidUpdateNotificationActivation({
       tag: UPDATE_NOTIFICATION_TAG,
+      kind: UPDATE_NOTIFICATION_KIND,
       version: "   ",
+    }),
+    false,
+  );
+  assert.equal(
+    isValidUpdateNotificationActivation({
+      tag: UPDATE_NOTIFICATION_TAG,
+      kind: UPDATE_NOTIFICATION_KIND,
+      version: " 0.16.0 ",
     }),
     false,
   );

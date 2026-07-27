@@ -201,7 +201,9 @@ Cellxplorer/
 │   └── release.yml                 Signed Windows release publishing on v* tags (Spec 019)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
-│   └── src/app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
+│   └── src/
+│       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
+│       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend
 ├── README.md                       Project overview and quick-start commands
 ├── spec.md                         Original domain specification

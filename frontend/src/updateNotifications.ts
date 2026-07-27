@@ -1,8 +1,10 @@
 import {
+  UPDATE_NOTIFICATION_EVENT,
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
   isValidUpdateNotificationActivation,
   type AppUpdateRelease,
+  type UpdateNotificationActivationPayload,
 } from "./appUpdater";
 import { isTauriApp } from "./downloads";
 
@@ -12,103 +14,58 @@ export type UpdateNotificationResult =
   | "unsupported"
   | "failed";
 
-type NotificationPermissionApi = {
-  isPermissionGranted: () => Promise<boolean>;
-  requestPermission: () => Promise<NotificationPermission | "prompt">;
-};
+export { UPDATE_NOTIFICATION_EVENT, UPDATE_NOTIFICATION_KIND, UPDATE_NOTIFICATION_TAG };
 
-let activeUpdateNotification: Notification | null = null;
-
-function readNotificationVersion(notification: Notification, fallback: string): string {
-  const data = notification.data as { version?: unknown } | null | undefined;
-  if (typeof data?.version === "string" && data.version.trim()) {
-    return data.version.trim();
-  }
-  return fallback;
-}
-
+/** Ask Rust to display a Windows toast. Success means Windows accepted the toast. */
 export async function showWindowsUpdateNotification(options: {
   release: AppUpdateRelease;
-  onActivate: (version: string) => void | Promise<void>;
 }): Promise<UpdateNotificationResult> {
   if (!isTauriApp()) {
     return "unsupported";
   }
-  if (typeof Notification === "undefined") {
-    return "unsupported";
+
+  const version = options.release.version.trim();
+  if (!version) {
+    return "failed";
   }
 
   try {
-    const { isPermissionGranted, requestPermission } =
-      (await import("@tauri-apps/plugin-notification")) as NotificationPermissionApi;
-
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const permission = await requestPermission();
-      granted = permission === "granted";
-    }
-    if (!granted) {
-      return "permission-denied";
-    }
-
-    if (activeUpdateNotification) {
-      activeUpdateNotification.close();
-      activeUpdateNotification = null;
-    }
-
-    const version = options.release.version.trim();
-    if (!version) {
-      return "failed";
-    }
-
-    const notification = new Notification("CellXplorer update available", {
-      body: `Version ${version} is ready. Click to view the update.`,
-      tag: UPDATE_NOTIFICATION_TAG,
-      data: {
-        kind: UPDATE_NOTIFICATION_KIND,
-        version,
-      },
-    });
-
-    activeUpdateNotification = notification;
-
-    notification.onclick = (event) => {
-      event.preventDefault();
-      const activatedVersion = readNotificationVersion(notification, version);
-      if (
-        !isValidUpdateNotificationActivation({
-          tag: notification.tag,
-          kind: UPDATE_NOTIFICATION_KIND,
-          version: activatedVersion,
-        })
-      ) {
-        notification.close();
-        if (activeUpdateNotification === notification) {
-          activeUpdateNotification = null;
-        }
-        return;
-      }
-      notification.close();
-      if (activeUpdateNotification === notification) {
-        activeUpdateNotification = null;
-      }
-      void options.onActivate(activatedVersion);
-    };
-
-    notification.onclose = () => {
-      if (activeUpdateNotification === notification) {
-        activeUpdateNotification = null;
-      }
-    };
-
-    notification.onerror = () => {
-      if (activeUpdateNotification === notification) {
-        activeUpdateNotification = null;
-      }
-    };
-
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("show_update_notification", { version });
     return "shown";
   } catch {
     return "failed";
+  }
+}
+
+/**
+ * Register the single AppUpdateProvider listener for Rust-owned toast activation.
+ * Returns an unlisten function. Rejects malformed payloads without invoking the callback.
+ */
+export async function listenForUpdateNotificationActivation(
+  onActivate: (payload: UpdateNotificationActivationPayload) => void | Promise<void>,
+): Promise<() => void> {
+  if (!isTauriApp()) {
+    return () => undefined;
+  }
+
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<UpdateNotificationActivationPayload>(
+      UPDATE_NOTIFICATION_EVENT,
+      (event) => {
+        if (!isValidUpdateNotificationActivation(event.payload)) {
+          return;
+        }
+        const version = event.payload.version.trim();
+        void onActivate({
+          kind: UPDATE_NOTIFICATION_KIND,
+          tag: UPDATE_NOTIFICATION_TAG,
+          version,
+        });
+      },
+    );
+  } catch {
+    return () => undefined;
   }
 }

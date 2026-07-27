@@ -385,12 +385,19 @@ export function shouldNotifyForVersion(
 
 export const UPDATE_NOTIFICATION_TAG = "cellxplorer-app-update";
 export const UPDATE_NOTIFICATION_KIND = "cellxplorer-app-update";
+export const UPDATE_NOTIFICATION_EVENT = "app-update-notification-activated";
 
 export type UpdateDiscoveryFeedback =
   | "open-modal"
   | "native-notification"
   | "badge-only"
   | "silent";
+
+export type UpdateNotificationActivationPayload = {
+  kind: typeof UPDATE_NOTIFICATION_KIND;
+  tag: typeof UPDATE_NOTIFICATION_TAG;
+  version: string;
+};
 
 /**
  * Choose update-discovery feedback from the effective check source.
@@ -429,14 +436,12 @@ export function isValidUpdateNotificationActivation(payload: {
   tag?: unknown;
   kind?: unknown;
   version?: unknown;
-}): boolean {
-  const version = typeof payload.version === "string" ? payload.version.trim() : "";
-  if (!version) return false;
-  const tag = typeof payload.tag === "string" ? payload.tag : null;
-  const kind = typeof payload.kind === "string" ? payload.kind : null;
-  if (tag !== null && tag !== UPDATE_NOTIFICATION_TAG) return false;
-  if (kind !== null && kind !== UPDATE_NOTIFICATION_KIND) return false;
-  return tag === UPDATE_NOTIFICATION_TAG || kind === UPDATE_NOTIFICATION_KIND;
+}): payload is UpdateNotificationActivationPayload {
+  if (payload.kind !== UPDATE_NOTIFICATION_KIND) return false;
+  if (payload.tag !== UPDATE_NOTIFICATION_TAG) return false;
+  if (typeof payload.version !== "string") return false;
+  const version = payload.version.trim();
+  return version.length > 0 && version === payload.version;
 }
 
 /** Notification activation never starts download/install; it only opens the modal. */

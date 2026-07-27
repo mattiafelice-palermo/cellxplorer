@@ -197,6 +197,7 @@ Rules:
 - [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
 - [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
 - [017-019-updater-cumulative-review.md](reviews/017-019-updater-cumulative-review.md)
+- [020-windows-update-notification-and-manual-modal-review.md](reviews/020-windows-update-notification-and-manual-modal-review.md)
 
 ## Index
 
@@ -288,8 +289,10 @@ Rules:
   017/018 re-review is clean). Branch `feature/updater-017-019`.
 - [020-windows-update-notification-and-manual-modal.md](020-windows-update-notification-and-manual-modal.md)
   — native Windows notification for automatic update discovery; manual Check for updates opens the
-  existing update modal directly with no Mantine discovery toaster. **Implemented** (0.16.0). Branch
-  `feature/windows-update-notification`.
+  existing update modal directly with no Mantine discovery toaster. **Implemented** (0.16.0); review
+  follow-ups in progress — not merge-ready until installed Windows body-click matrix is recorded.
+  Review: [020-windows-update-notification-and-manual-modal-review.md](reviews/020-windows-update-notification-and-manual-modal-review.md).
+  Branch `feature/windows-update-notification`.
 
 ## Assets
 

@@ -1,6 +1,7 @@
 # Spec 020: Native Windows update notification and direct manual-check modal
 
-Status: **implemented**.
+Status: **implemented; review follow-ups in progress — not merge-ready until the installed Windows
+notification body-click matrix is recorded**.
 
 Repository: `mattiafelice-palermo/cellxplorer`  
 Base: current `main` (inspected at `47b5f1a2a9a9ee20f4d3452d2da59505fb69951a`)  

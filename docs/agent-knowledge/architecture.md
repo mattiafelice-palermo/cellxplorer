@@ -171,12 +171,13 @@ commands: `check_app_update`, `download_app_update`, and `install_app_update`. T
 not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
 
 Automatic background discovery may emit one native Windows notification per new version when the
-user preference is enabled (`frontend/src/updateNotifications.ts`). Clicking that notification
-restores and focuses the existing `main` window through `show_main_window_for_update`, then opens
-the existing update modal. It never starts download or install. Manual **Check for updates** opens
-the modal directly and never shows a discovery toaster. Closing the main window to the tray keeps
-the process alive for later checks; an explicit **Quit** ends the process, so no further checks or
-notifications occur afterward.
+user preference is enabled. Display and body-click activation are owned by Rust
+(`src-tauri/src/update_notifications.rs` via `notify-rust`); the frontend listens once for
+`app-update-notification-activated` and opens the existing update modal. Clicking that notification
+restores and focuses the existing `main` window, then opens the modal. It never starts download or
+install. Manual **Check for updates** opens the modal directly and never shows a discovery toaster.
+Closing the main window to the tray keeps the process alive for later checks; an explicit **Quit**
+ends the process, so no further checks or notifications occur afterward.
 
 Every checked update is built with the updater plugin's Windows `on_before_exit` hook, which sets
 the shell quitting flag and runs the existing PyInstaller sidecar process-tree cleanup through
