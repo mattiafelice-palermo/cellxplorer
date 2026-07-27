@@ -127,6 +127,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('tags:\n      - "v*"', self.release)
         self.assertNotIn("tags:", self.preflight)
 
+    def test_preflight_skips_when_release_tag_points_at_commit(self):
+        self.assertIn("name: Release-tag gate", self.preflight)
+        self.assertIn('git tag --points-at "${GITHUB_SHA}"', self.preflight)
+        self.assertIn("needs: gate", self.preflight)
+        self.assertIn("needs.gate.outputs.should_run == 'true'", self.preflight)
+        self.assertIn("Manual dispatch always runs preflight.", self.preflight)
+
+    def test_release_cancels_redundant_main_preflight(self):
+        self.assertIn("actions: write", self.release)
+        self.assertIn("Cancel redundant main preflight for this commit", self.release)
+        self.assertLess(
+            step_index(self.release, "Cancel redundant main preflight for this commit"),
+            step_index(self.release, "Check out repository"),
+        )
+        self.assertIn("gh run cancel", self.release)
+        self.assertIn("--workflow preflight.yml", self.release)
+
     def test_manual_dispatch_is_build_only(self):
         self.assertIn("workflow_dispatch:", self.release)
         self.assertNotIn("publish:", self.release)
