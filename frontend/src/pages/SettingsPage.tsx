@@ -64,6 +64,7 @@ import {
   type AppUpdateIntervalUnit,
   type AppUpdatePreferences,
 } from "../appUpdater";
+import { useOptionalAppUpdate } from "../components/AppUpdateCoordinator";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -125,6 +126,7 @@ export function SettingsPage() {
   const [updatePreferences, setUpdatePreferences] = useState<AppUpdatePreferences>(
     savedUpdatePreferences,
   );
+  const appUpdate = useOptionalAppUpdate();
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -1588,6 +1590,20 @@ export function SettingsPage() {
                       allowDeselect={false}
                       w={180}
                     />
+                  </Group>
+                  <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
+                    <div>
+                      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Last checked on</Text>
+                      <Text fw={600}>{formatDateTime(appUpdate?.lastCheckedAt ?? null)}</Text>
+                    </div>
+                    <div>
+                      <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Next check foreseen at</Text>
+                      <Text fw={600}>
+                        {appUpdate?.updateUiEnabled
+                          ? formatDateTime(appUpdate.nextCheckAt)
+                          : "Not scheduled"}
+                      </Text>
+                    </div>
                   </Group>
                 </Stack>
               </Paper>

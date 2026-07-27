@@ -16,12 +16,12 @@ import { post } from "../api";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   appUpdateReducer,
-  AUTO_CHECK_INITIAL_DELAY_MS,
   acceptUpdateReleaseForPreferences,
   appUpdateIntervalMs,
   canDismissUpdateModal,
   checkAppUpdateTauri,
   DEFAULT_APP_UPDATE_PREFERENCES,
+  firstAutomaticCheckDelayMs,
   loadAppUpdatePreferences,
   downloadAppUpdateTauri,
   failurePhaseForLocalUpdatePhase,
@@ -33,6 +33,7 @@ import {
   mockRelease,
   normalizeUpdaterError,
   parseDevUpdateMock,
+  readLastUpdateCheckedAt,
   readNotifiedVersion,
   resolveEffectiveCheckSource,
   resolveUpdateDiscoveryFeedback,
@@ -43,6 +44,8 @@ import {
   shouldSkipAutomaticCheck,
   showMainWindowForUpdateTauri,
   UPDATE_PREFERENCES_CHANGED_EVENT,
+  UPDATE_SCHEDULE_CHANGED_EVENT,
+  writeLastUpdateCheckedAt,
   writeNotifiedVersion,
   type AppUpdatePreferences,
   type AppUpdateDownloadEvent,
@@ -60,6 +63,8 @@ type AppUpdateContextValue = {
   showUpdateBadge: boolean;
   updateUiEnabled: boolean;
   modalOpen: boolean;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
   openUpdateModal: () => void;
   closeUpdateModal: () => void;
   checkForUpdate: (source: UpdateCheckSource) => Promise<void>;
@@ -97,6 +102,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [upToDateModal, setUpToDateModal] = useState(false);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : readLastUpdateCheckedAt(window.localStorage),
+  );
+  const [nextCheckAt, setNextCheckAt] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<AppUpdatePreferences>(() =>
     typeof window === "undefined"
       ? DEFAULT_APP_UPDATE_PREFERENCES
@@ -271,6 +280,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     [preferences],
   );
 
+  const recordCheckCompleted = useCallback(() => {
+    const iso = new Date().toISOString();
+    writeLastUpdateCheckedAt(window.localStorage, iso);
+    setLastCheckedAt(iso);
+    window.dispatchEvent(new Event(UPDATE_SCHEDULE_CHANGED_EVENT));
+  }, []);
+
   const performCheck = useCallback(
     async (source: UpdateCheckSource) => {
       if (checkInFlight.current) {
@@ -306,6 +322,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
               return;
             }
             applyRelease(mockRelease(), checkFeedbackSource.current);
+            recordCheckCompleted();
             return;
           }
           if (!tauri) {
@@ -317,6 +334,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
               return;
             }
             applyRelease(null, checkFeedbackSource.current);
+            recordCheckCompleted();
             return;
           }
           const release = await checkAppUpdateTauri();
@@ -329,6 +347,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             return;
           }
           applyRelease(release, checkFeedbackSource.current);
+          recordCheckCompleted();
         } catch (error) {
           if (!mountedRef.current) return;
           if (
@@ -348,6 +367,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             dispatch({ type: "check_error", source: "manual", message });
             setModalOpen(true);
           }
+          recordCheckCompleted();
         } finally {
           checkInFlight.current = null;
         }
@@ -356,7 +376,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       checkInFlight.current = run;
       await run;
     },
-    [applyRelease, devMock, tauri],
+    [applyRelease, devMock, recordCheckCompleted, tauri],
   );
 
   useEffect(() => {
@@ -364,26 +384,35 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [performCheck]);
 
   useEffect(() => {
-    if (!updateUiEnabled || devMock) return;
+    if (!updateUiEnabled || devMock) {
+      setNextCheckAt(null);
+      return;
+    }
     let disposed = false;
     const timers: number[] = [];
+    const intervalMs = appUpdateIntervalMs(preferences);
+    const firstDelay = firstAutomaticCheckDelayMs(intervalMs);
 
-    const schedule = (delayMs: number) => {
-      const id = window.setTimeout(() => {
-        if (!disposed) void performCheck("automatic");
-      }, delayMs);
-      timers.push(id);
+    const markNext = (delayMs: number) => {
+      const iso = new Date(Date.now() + delayMs).toISOString();
+      setNextCheckAt(iso);
+      window.dispatchEvent(new Event(UPDATE_SCHEDULE_CHANGED_EVENT));
     };
 
-    const intervalMs = appUpdateIntervalMs(preferences);
-    schedule(Math.min(AUTO_CHECK_INITIAL_DELAY_MS, intervalMs));
-    const intervalId = window.setInterval(() => {
-      if (!disposed) void performCheck("automatic");
-    }, intervalMs);
+    const runAutomatic = () => {
+      if (disposed) return;
+      markNext(intervalMs);
+      void performCheck("automatic");
+    };
+
+    markNext(firstDelay);
+    timers.push(window.setTimeout(runAutomatic, firstDelay));
+    const intervalId = window.setInterval(runAutomatic, intervalMs);
     timers.push(intervalId);
 
     return () => {
       disposed = true;
+      setNextCheckAt(null);
       window.clearTimeout(timers[0]);
       window.clearInterval(intervalId);
     };
@@ -560,6 +589,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       showUpdateBadge: shouldPersistUpdateBadge(state),
       updateUiEnabled,
       modalOpen,
+      lastCheckedAt,
+      nextCheckAt,
       openUpdateModal,
       closeUpdateModal,
       checkForUpdate: performCheck,
@@ -572,7 +603,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       closeUpdateModal,
       downloadAndLaunchInstaller,
       handleMenuClick,
+      lastCheckedAt,
       modalOpen,
+      nextCheckAt,
       openUpdateModal,
       performCheck,
       restartAfterInstallFailure,

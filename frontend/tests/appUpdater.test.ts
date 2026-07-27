@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DEFAULT_APP_UPDATE_PREFERENCES,
+  UPDATE_LAST_CHECKED_AT_KEY,
   UPDATE_NOTIFIED_VERSION_KEY,
   UPDATE_NOTIFICATION_KIND,
   UPDATE_NOTIFICATION_TAG,
@@ -14,6 +15,7 @@ import {
   canDismissUpdateModal,
   compareSemver,
   computeDownloadProgress,
+  firstAutomaticCheckDelayMs,
   getUpdateMenuLabel,
   isBetaUpdateVersion,
   isProtectedUpdateFlow,
@@ -28,6 +30,7 @@ import {
   parseReleaseNoteLines,
   failurePhaseForLocalUpdatePhase,
   explainUpdateCheckFailure,
+  readLastUpdateCheckedAt,
   readNotifiedVersion,
   renderReleaseNotes,
   resolveEffectiveCheckSource,
@@ -37,6 +40,7 @@ import {
   shouldShowUpdateUi,
   shouldSkipAutomaticCheck,
   saveAppUpdatePreferences,
+  writeLastUpdateCheckedAt,
   writeNotifiedVersion,
 } from "../src/appUpdater.ts";
 
@@ -405,6 +409,26 @@ test("update preferences support a fifteen-second interval", () => {
   assert.equal(values.has(UPDATE_PREFERENCES_KEY), true);
   assert.deepEqual(loadAppUpdatePreferences(storage), preferences);
   assert.equal(appUpdateIntervalMs(preferences), 15_000);
+});
+
+test("first automatic check delay is capped at the initial delay", () => {
+  assert.equal(firstAutomaticCheckDelayMs(12 * 60 * 60 * 1000), 10_000);
+  assert.equal(firstAutomaticCheckDelayMs(5_000), 5_000);
+});
+
+test("last update checked timestamp round-trips", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  assert.equal(readLastUpdateCheckedAt(storage), null);
+  writeLastUpdateCheckedAt(storage, "2026-07-27T15:00:00.000Z");
+  assert.equal(values.get(UPDATE_LAST_CHECKED_AT_KEY), "2026-07-27T15:00:00.000Z");
+  assert.equal(readLastUpdateCheckedAt(storage), "2026-07-27T15:00:00.000Z");
+  assert.equal(readLastUpdateCheckedAt({ getItem: () => "not-a-date" }), null);
 });
 
 test("beta updates are ignored unless the preference is enabled", () => {

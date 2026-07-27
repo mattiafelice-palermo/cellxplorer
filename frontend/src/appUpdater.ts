@@ -1,6 +1,8 @@
 export const UPDATE_NOTIFIED_VERSION_KEY = "cellxplorer-update-notified-version";
 export const UPDATE_PREFERENCES_KEY = "cellxplorer-update-preferences";
 export const UPDATE_PREFERENCES_CHANGED_EVENT = "cellxplorer-update-preferences-changed";
+export const UPDATE_LAST_CHECKED_AT_KEY = "cellxplorer-update-last-checked-at";
+export const UPDATE_SCHEDULE_CHANGED_EVENT = "cellxplorer-update-schedule-changed";
 
 export const AUTO_CHECK_INITIAL_DELAY_MS = 10_000;
 
@@ -34,6 +36,31 @@ export function appUpdateIntervalMs(
     ? Math.max(1, Math.floor(preferences.intervalValue))
     : DEFAULT_APP_UPDATE_PREFERENCES.intervalValue;
   return value * UPDATE_INTERVAL_MULTIPLIERS[preferences.intervalUnit];
+}
+
+/** Delay until the first automatic check after the schedule starts or resets. */
+export function firstAutomaticCheckDelayMs(intervalMs: number): number {
+  return Math.min(AUTO_CHECK_INITIAL_DELAY_MS, intervalMs);
+}
+
+export function readLastUpdateCheckedAt(
+  storage: Pick<Storage, "getItem">,
+): string | null {
+  try {
+    const raw = storage.getItem(UPDATE_LAST_CHECKED_AT_KEY);
+    if (!raw) return null;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastUpdateCheckedAt(
+  storage: Pick<Storage, "setItem">,
+  isoTimestamp: string,
+): void {
+  storage.setItem(UPDATE_LAST_CHECKED_AT_KEY, isoTimestamp);
 }
 
 export function loadAppUpdatePreferences(
