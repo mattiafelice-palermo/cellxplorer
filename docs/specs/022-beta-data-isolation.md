@@ -1,6 +1,6 @@
 # Spec 022: Isolated Beta data and one-time Stable library copy
 
-Status: **complete**  
+Status: **review follow-ups R1–R9 implemented — awaiting re-review**  
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/stable-beta-app-identities` (Specs 021–023 release train)  
 Depends on: Spec 021 application identities  
@@ -534,21 +534,21 @@ Verify:
 
 ## 18. Acceptance checklist
 
-- [ ] Stable and Beta use separate roots without an explicit override.
-- [ ] Every persistent/runtime path follows the correct root.
-- [ ] Stable and Beta can run simultaneously without SQLite/cache/log conflicts.
-- [ ] First Beta launch requires Copy or Start empty.
-- [ ] Stable is opened read-only and remains unchanged.
-- [ ] Copy uses SQLite backup, not raw DB/WAL copying.
-- [ ] copied DB gets a new instance UUID.
-- [ ] external sources are referenced, not duplicated.
-- [ ] Stable-managed imports are copied and rewritten safely.
-- [ ] caches/logs/backups/history are not copied.
-- [ ] non-pristine Beta is never overwritten.
-- [ ] apply is token-scoped, atomic and rollback-safe.
-- [ ] no database migration or `CALC_VERSION` change is introduced.
-- [ ] full tests and disposable manual matrix pass.
-- [ ] no user release is tagged before Spec 023.
+- [x] Stable and Beta use separate roots without an explicit override. (unit/policy tests)
+- [x] Every persistent/runtime path follows the correct root. (Python/Rust path tests + docs)
+- [ ] Stable and Beta can run simultaneously without SQLite/cache/log conflicts. (installed matrix pending elevated install)
+- [x] First Beta launch requires Copy or Start empty. (fail-closed gate + coordinator policy tests)
+- [x] Stable is opened read-only and remains unchanged. (bootstrap service tests)
+- [x] Copy uses SQLite backup, not raw DB/WAL copying. (stage_stable_copy)
+- [x] copied DB gets a new instance UUID. (bootstrap tests)
+- [x] external sources are referenced, not duplicated. (bootstrap tests)
+- [x] Stable-managed imports are copied and rewritten safely. (streaming copy + inventory tests)
+- [x] caches/logs/backups/history are not copied. (stage content tests)
+- [x] non-pristine Beta is never overwritten. (Rust + Python tests)
+- [x] apply is token-scoped, atomic and rollback-safe. (Rust activation tests + non-returning lifecycle)
+- [x] no database migration or `CALC_VERSION` change is introduced.
+- [ ] full tests and disposable manual matrix pass. (automated suite PASS; installed matrix incomplete)
+- [x] no user release is tagged before Spec 023.
 
 ## 19. Composer handoff
 

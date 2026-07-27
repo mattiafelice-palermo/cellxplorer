@@ -88,6 +88,7 @@ _COMPATIBILITY_API_PATHS = {
     "/api/diagnostics/logs",
     "/api/beta-bootstrap/status",
     "/api/beta-bootstrap/stage-copy",
+    "/api/beta-bootstrap/discard-stage",
     "/api/beta-bootstrap/start-empty",
 }
 

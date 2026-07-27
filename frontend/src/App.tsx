@@ -354,16 +354,19 @@ export default function App() {
 
   if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
-      <Group h="100vh" justify="center" p="xl">
-        <Alert
-          color="red"
-          title="Could not contact the CellXplorer backend"
-          maw={680}
-        >
-          The application could not determine whether the database is compatible.
-          Check the backend log or restart CellXplorer.
-        </Alert>
-      </Group>
+      <>
+        <BetaBootstrapCoordinator backendReady={false} />
+        <Group h="100vh" justify="center" p="xl">
+          <Alert
+            color="red"
+            title="Could not contact the CellXplorer backend"
+            maw={680}
+          >
+            The application could not determine whether the database is compatible.
+            Check the backend log or restart CellXplorer.
+          </Alert>
+        </Group>
+      </>
     );
   }
 

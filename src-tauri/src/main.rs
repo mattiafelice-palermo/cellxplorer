@@ -240,14 +240,32 @@ fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
         return Err("Beta bootstrap is only available in the Beta channel.".to_string());
     }
     let beta_root = app_data_dir_for_channel(channel);
-    let paths = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
-    stop_backend(&app);
-    if let Err(error) = beta_bootstrap::activate_staged_copy(&beta_root, &paths) {
-        return Err(error);
-    }
+
+    // Pre-stop validation may return to the frontend. Nothing is mutated yet.
+    let _ = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+
+    // Establish relaunch capability before stopping the backend or changing data.
     schedule_relaunch()?;
+
     if let Some(lifecycle) = app.try_state::<LifecycleState>() {
         lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    stop_backend(&app);
+
+    // After backend stop this command must not return a retryable error to the
+    // existing frontend. Always exit; the delayed relaunch recovers the app.
+    match (|| {
+        let paths = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+        beta_bootstrap::activate_staged_copy(&beta_root, &paths)?;
+        Ok::<(), String>(())
+    })() {
+        Ok(()) => {
+            beta_bootstrap::clear_apply_failure_marker(&beta_root);
+            let _ = beta_bootstrap::remove_consumed_stage(&beta_root, &token);
+        }
+        Err(error) => {
+            let _ = beta_bootstrap::write_apply_failure_marker(&beta_root, &error);
+        }
     }
     app.exit(0);
     Ok(())

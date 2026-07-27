@@ -220,13 +220,18 @@ export interface DatabaseStatus {
 
 export interface BetaBootstrapStatus {
   channel: "beta";
+  setupState?: "choice-required" | "complete" | "blocked-error";
   decision: "copied" | "empty" | null;
   needsChoice: boolean;
   betaPristine: boolean;
   stableDatabaseExists: boolean;
   stableDatabaseCompatible: boolean;
   stableDatabasePath: string;
+  copyBlockingReason?: string | null;
+  setupError?: string | null;
   blockingReason: string | null;
+  outstandingStageToken?: string | null;
+  applyFailureMessage?: string | null;
 }
 
 export interface BetaBootstrapStageCopyResult {
@@ -241,6 +246,11 @@ export interface BetaBootstrapStageCopyResult {
 export interface BetaBootstrapStartEmptyResult {
   decision: "empty";
   restartRequired: boolean;
+}
+
+export interface BetaBootstrapDiscardResult {
+  discarded: boolean;
+  token: string;
 }
 
 export interface ElectrodeAreaPreset {

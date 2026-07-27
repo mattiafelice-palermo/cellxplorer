@@ -102,6 +102,18 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertIn("PRODUCTNAME", nsis)
         self.assertNotIn("CellXplorer Beta", nsis)
 
+    def test_nsis_destructive_uninstall_targets_channel_specific_data_root(self):
+        nsis = NSIS.read_text(encoding="utf-8")
+        self.assertIn('!define CX_PROFILE_DATA_DIR ".cellxplorer-beta"', nsis)
+        self.assertIn('!define CX_PROFILE_DATA_DIR ".cellxplorer"', nsis)
+        self.assertIn('com.cellxplorer.desktop.beta', nsis)
+        self.assertIn('com.cellxplorer.desktop', nsis)
+        self.assertIn(r'RmDir /r "$PROFILE\${CX_PROFILE_DATA_DIR}"', nsis)
+        self.assertIn(r'"$PROFILE\${CX_PROFILE_DATA_DIR}"', nsis)
+        self.assertNotIn(r'RmDir /r "$PROFILE\.cellxplorer"', nsis)
+        self.assertNotIn(r'"$PROFILE\.cellxplorer"', nsis)
+        self.assertIn("Unsupported CellXplorer bundle identifier for profile data directory", nsis)
+
 
 if __name__ == "__main__":
     unittest.main()

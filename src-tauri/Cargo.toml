@@ -18,6 +18,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2.10"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18"

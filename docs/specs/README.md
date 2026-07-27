@@ -311,7 +311,7 @@ Rules:
   — separate Beta data root (`.cellxplorer-beta`), one-time Stable library copy via SQLite
   backup, blocking first-run modal, and token-scoped apply/restart. Part of the Spec 021–023
   release train on branch `feature/stable-beta-app-identities`. Depends on Spec 021 identities.
-  Review: `docs/specs/reviews/022-beta-data-isolation-review.md` (when present).
+  Review: [022-beta-data-isolation-review.md](reviews/022-beta-data-isolation-review.md).
 
 ## Assets
 

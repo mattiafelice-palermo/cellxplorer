@@ -50,8 +50,9 @@ Both editions share the backend sidecar binary and NSIS template. NSIS pre-insta
 kill only processes whose executable path is under the installation directory being changed — never
 by shared image name alone.
 
-**Data root:** both editions still use the same default `%USERPROFILE%\.cellxplorer` until Spec
-022. Do not install intermediate Beta builds against real user data; use disposable
+**Data root:** Stable defaults to `%USERPROFILE%\.cellxplorer`; Beta defaults to
+`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly for tests and
+development. Do not install intermediate Beta builds against real user data; use disposable
 `CELLXPLORER_DATA` or a test account.
 
 **Release:** do not tag or publish an intermediate Beta product until Specs 022–023 complete the
@@ -131,8 +132,11 @@ intentionally replaced.
 CellXplorer installer and uninstaller surfaces built directly in nsDialogs. Tauri is configured to
 use it through `bundle.windows.nsis.template` in `src-tauri/tauri.conf.json`. The first visible
 installer page is the location step; it includes the three-step progress indicator, desktop and
-startup options, and the custom CellXplorer actions. Uninstall preserves `%USERPROFILE%\.cellxplorer`
-by default and offers deletion only as an explicit, confirmed destructive choice.
+startup options, and the custom CellXplorer actions. Uninstall preserves the product's own profile
+data root by default (`%USERPROFILE%\.cellxplorer` for Stable, `%USERPROFILE%\.cellxplorer-beta`
+for Beta) and offers deletion only as an explicit, confirmed destructive choice. The destructive
+path deletes only that product's `CX_PROFILE_DATA_DIR` derived from the exact bundle identifier —
+Beta must never remove `.cellxplorer`.
 
 The template is version-coupled to the Tauri CLI. When upgrading Tauri, compare it with the exact
 upstream template for the new CLI before carrying the branded sections forward. A template can
@@ -192,7 +196,7 @@ UI.
 
 The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
 alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while
-preserving `%USERPROFILE%\.cellxplorer`.
+preserving the product's profile data root.
 
 **Bootstrap limitation:** existing installed builds without the updater cannot receive the first
 updater-enabled release automatically. The first updater-capable version must be installed manually;
