@@ -329,10 +329,10 @@ export function mapTauriRelease(response: TauriUpdateReleaseResponse): AppUpdate
   };
 }
 
-export function mockRelease(version = "0.15.0"): AppUpdateRelease {
+export function mockRelease(version = "0.16.0"): AppUpdateRelease {
   return {
     version,
-    currentVersion: "0.14.3",
+    currentVersion: "0.15.0",
     notes: "- Improved cycle plotting\n- Fixed library filters\n- Updater foundation",
     publishedAt: "2026-07-27T00:00:00Z",
   };

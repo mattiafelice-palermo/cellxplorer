@@ -103,11 +103,15 @@ Individual commands remain available for focused debugging. See `AGENTS.md` for 
 
 ## Automatic clean-environment preflight
 
-GitHub automatically runs the canonical preflight whenever `main` changes and when a `v*`
-release tag is pushed. You can also start it manually from the GitHub Actions page.
+GitHub automatically runs the canonical preflight whenever `main` changes. You can also start it
+manually from the GitHub Actions page.
 
-The workflow installs backend and frontend dependencies on a clean `windows-latest` runner,
-checks release-tag versions when triggered by a tag, and then runs:
+Stable `v*` tags trigger `.github/workflows/release.yml`, which runs preflight with `--no-cache`,
+builds the signed Windows release, and uploads updater assets. Tag pushes no longer run the
+ordinary preflight workflow.
+
+The preflight workflow installs backend and frontend dependencies on a clean `windows-latest`
+runner and then runs:
 
 ```powershell
 python scripts\preflight.py

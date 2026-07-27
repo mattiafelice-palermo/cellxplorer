@@ -1,0 +1,186 @@
+name: Publish CellXplorer release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Create or update a GitHub Release (tag pushes always publish)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Windows release
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install backend dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pyinstaller
+          python -m pip check
+
+      - name: Install frontend and Tauri CLI dependencies
+        shell: pwsh
+        run: |
+          npm ci
+          npm --prefix frontend ci
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Verify maintained version declarations
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: python scripts/check_versions.py --expected-version "${{ github.ref_name }}"
+
+      - name: Verify maintained version declarations (build-only)
+        if: github.ref_type != 'tag'
+        shell: pwsh
+        run: python scripts/check_versions.py
+
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          python scripts/release_notes.py `
+            --expected-version "${{ steps.version.outputs.version }}" `
+            --output release-notes.md
+
+      - name: Require updater signing secrets
+        if: github.ref_type == 'tag' || inputs.publish
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY is required for publishing."
+            exit 1
+          }
+
+      - name: Run canonical preflight
+        shell: pwsh
+        run: python scripts/preflight.py --no-cache
+
+      - name: Build Python sidecar
+        shell: pwsh
+        run: .\scripts\build-app.ps1 -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
+
+      - name: Verify packaged inputs exist
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "frontend/dist/index.html")) {
+            Write-Error "Missing frontend/dist/index.html after preflight."
+            exit 1
+          }
+          $sidecar = "src-tauri/binaries/cellxplorer-backend-x86_64-pc-windows-msvc.exe"
+          if (-not (Test-Path $sidecar)) {
+            Write-Error "Missing backend sidecar at $sidecar"
+            exit 1
+          }
+
+      - name: Load release notes body
+        id: release_notes
+        shell: pwsh
+        run: |
+          $content = Get-Content release-notes.md -Raw
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<RELEASE_NOTES_EOF"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $content
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "RELEASE_NOTES_EOF"
+
+      - name: Publish signed release
+        if: github.ref_type == 'tag' || inputs.publish
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          releaseName: CellXplorer ${{ steps.version.outputs.version }}
+          releaseBody: ${{ steps.release_notes.outputs.body }}
+          releaseDraft: false
+          prerelease: false
+          tauriScript: npm run tauri
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          uploadPlainBinary: false
+
+      - name: Build release artifacts only
+        if: github.ref_type != 'tag' && !inputs.publish
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: npm run tauri
+          uploadWorkflowArtifacts: true
+          uploadUpdaterJson: false
+          uploadPlainBinary: false
+
+      - name: Locate generated updater manifest
+        if: github.ref_type == 'tag' || inputs.publish
+        id: manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-ChildItem -Path src-tauri/target -Recurse -Filter latest.json |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $manifest) {
+            Write-Error "Could not find generated latest.json"
+            exit 1
+          }
+          "path=$($manifest.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Verify updater manifest
+        if: github.ref_type == 'tag' || inputs.publish
+        shell: pwsh
+        run: |
+          python scripts/verify_updater_manifest.py `
+            --manifest "${{ steps.manifest.outputs.path }}" `
+            --expected-version "${{ steps.version.outputs.version }}" `
+            --notes-file release-notes.md

@@ -153,3 +153,17 @@ and pyarrow 84MB.
    command wiring changes.
 6. The first updater-enabled release is a manual bootstrap install; live in-app updates require
    public HTTPS release assets and Specs 018–019.
+
+### Tag and release checklist
+
+1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
+2. Run `python scripts/check_versions.py` and `python scripts/preflight.py --no-cache` locally.
+3. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
+4. Push `vX.Y.Z` to trigger `.github/workflows/release.yml` (do not rely on the ordinary preflight
+   workflow for tag publishing).
+5. Inspect the GitHub Release assets: NSIS setup executable, matching `.sig`, and `latest.json`.
+6. For the bootstrap release, manually install the updater-enabled build on a real machine.
+7. For the first live update test, publish a real patch release `N+1` and verify discovery,
+   download, installer launch, data preservation, and backend restart from version `N`.
+8. Run `python -m unittest tests.test_release_notes_script tests.test_release_workflow -v` when
+   release scripts or workflow YAML change.

@@ -175,6 +175,8 @@ Cellxplorer/
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
+│   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
+│   ├── test_release_workflow.py    Release workflow contract tests (Spec 019)
 │   └── test_preflight_script.py    Preflight command unit tests
 ├── docs/
 │   ├── specs/                      Numbered feature specs (`NNN-*.md`) and `reviews/` follow-ups
@@ -187,7 +189,12 @@ Cellxplorer/
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── preflight.py                Canonical local verification command
+│   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
+│   ├── verify_updater_manifest.py  Read-only latest.json validation (Spec 019)
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight
+├── .github/workflows/              GitHub Actions CI and release automation
+│   ├── preflight.yml               Clean Windows preflight on main pushes
+│   └── release.yml                 Signed Windows release publishing on v* tags (Spec 019)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 │   └── src/app_updates.rs          Pending-update state and narrow updater commands (Spec 017)

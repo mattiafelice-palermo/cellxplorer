@@ -140,8 +140,43 @@ preserving `%USERPROFILE%\.cellxplorer`.
 
 **Bootstrap limitation:** existing installed builds without the updater cannot receive the first
 updater-enabled release automatically. The first updater-capable version must be installed manually;
-later releases can use the in-app flow once Specs 018–019 are complete and public release assets
-exist.
+later releases can use the in-app update flow once public release assets are available.
+
+## Production GitHub release
+
+Stable releases are published by pushing a SemVer tag:
+
+```powershell
+git tag v0.15.0
+git push origin v0.15.0
+```
+
+The `.github/workflows/release.yml` workflow then:
+
+1. verifies every maintained version declaration matches the tag;
+2. extracts the matching `CHANGELOG.md` section with `scripts/release_notes.py`;
+3. runs `python scripts/preflight.py --no-cache`;
+4. builds the PyInstaller sidecar through `scripts/build-app.ps1`;
+5. invokes the pinned `tauri-apps/tauri-action` to create the GitHub Release, signed NSIS
+   installer, `.sig`, and `latest.json`;
+6. validates the generated manifest with `scripts/verify_updater_manifest.py`.
+
+Required GitHub repository secrets:
+
+```text
+TAURI_SIGNING_PRIVATE_KEY
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+Use **Actions → Publish CellXplorer release → Run workflow** for a build-only rehearsal. Leave
+**publish** unchecked to upload workflow artifacts without creating or altering a GitHub Release.
+
+The repository must be public, or release assets must be published to another public HTTPS host,
+before installed applications can fetch `latest.json` without credentials.
+
+If the updater signing key is lost, existing installed clients cannot trust releases signed with a
+new key. Plan key backup before the first bootstrap release and treat rotation as a major,
+user-visible migration.
 
 ## Current blocker found during the spike
 

@@ -4,6 +4,15 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.15.0 - 2026-07-27
+
+- Added signed in-app updates from the power menu: automatic checks, update badge,
+  release-notes modal, download progress, and branded NSIS installer launch.
+- Added automated GitHub release publishing for Windows tags, including signed updater
+  artifacts and `latest.json` generation.
+- Renamed the power-menu **Automatic updates** section to **Background automation** so
+  source monitoring is not confused with application releases.
+
 ## 0.14.3 - 2026-07-26
 
 - Draft plots now save through **Save as** in the plot toolbar instead of a separate button on
