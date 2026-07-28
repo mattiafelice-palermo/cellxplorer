@@ -442,6 +442,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.release,
         )
         self.assertIn("--uploaded-signature uploaded-setup.sig", self.release)
+        self.assertIn(
+            '--setup-exe-name "${{ steps.staged_assets.outputs.setup_name }}"',
+            self.release,
+        )
+        self.assertIn(
+            'Where-Object { $_.name -like "*.exe.sig" }',
+            self.release,
+        )
 
     def test_release_assets_metadata_persists_raw_github_json(self):
         export = self.release.split("Export draft release assets metadata", 1)[1]
