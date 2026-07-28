@@ -1,6 +1,6 @@
 # Spec 023: Separate Stable/Beta release feeds and Beta installation UX
 
-Status: **review R1–R9 implemented; local R10 verification passed; remote/installed matrix pending**
+Status: **merged; signed Beta release and public pointer verified; installed R10 matrix pending**
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/stable-beta-app-identities` (Specs 021–023 release train)  
 Review document: `docs/specs/reviews/023-stable-beta-release-channels-review.md`

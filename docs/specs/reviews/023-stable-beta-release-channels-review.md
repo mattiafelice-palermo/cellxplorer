@@ -738,10 +738,9 @@ matrix is recorded.
 - **R7:** Beta installation now follows download → `/api/session/finish` → install, using the debug-log-and-continue policy when session finalization fails.
 - **R8:** Recurring timers reschedule on Standard schedule events; opt-out clears non-protected UI and notification state, protected flows survive, and manual no-release feedback is dismissible.
 - **R9:** Durable documentation was updated.
-- **R10:** Local cumulative verification and both unsigned channel installer builds passed at
-  `0.17.0-beta.1`. Remote build-only dispatch/artifact extraction and the elevated disposable
-  installed/update matrix remain pending. No production tag, publish, merge, commit, or push was
-  performed.
+- **R10:** Local cumulative verification, both unsigned channel installer builds, and the signed
+  `v0.17.0-beta.1` GitHub prerelease/public Beta pointer passed. Remote build-only dispatch and the
+  elevated disposable installed/update matrix remain pending.
 
 Verification actually run so far:
 
@@ -771,11 +770,29 @@ Verification actually run so far:
   - Stable `86DF889AB5211F7DCDB0AD18BE1E153A5BA403B2C05494832EA02513C759261A`;
   - Beta `A34E3B4A773AE9F0DB65417181F0F2CE852E022F8D6030EACFE69EF0C69B0510`;
 - final Beta frontend stamp: channel `beta`, branding hash
-  `d65ba5456becc201465c69fe35db93b6b0dfa19eb50603552b1c1c24b5c8090a`.
+  `d65ba5456becc201465c69fe35db93b6b0dfa19eb50603552b1c1c24b5c8090a`;
+- signed GitHub prerelease:
+  `https://github.com/mattiafelice-palermo/cellxplorer/releases/tag/v0.17.0-beta.1`;
+- published assets: `CellXplorer.Beta_0.17.0-beta.1_x64-setup.exe` (75.2 MB),
+  matching `.sig`, and `latest.json`;
+- the release workflow verified version, notes, inherited updater key identity, uploaded signature,
+  product/channel ownership, and API asset identity before undrafting;
+- public `beta/latest.json` bytes match the release asset at SHA-256
+  `913e881d18c3660128a6ce199f8b9b30046c0113157dc3bc39b0c52f2e786ac6`, and its
+  signature text matches the published `.sig`;
+- `release-channels` contains only `README.md`, `stable/latest.json`, and `beta/latest.json`;
+  Stable retained blob `efe741a74d99fa3619f19f9d53ea21074cbe5337`, while Beta is blob
+  `671615c168c62feef76a29b71ce09116ffe44457`;
+- the tag points to `d162254d11b8d143568ad74f08cc5bab2bc0173c`.
 
 The first run of the required Python command exposed the absent
 `tests.test_release_tag_script` module after all other selected tests passed. A focused module was
 added and the exact command was rerun successfully (108/108).
+
+The successful publication run reported failure only after both the release and Beta pointer were
+public: GitHub's branch-qualified Contents GET briefly returned 404 immediately after the pointer
+PUT. Main commit `b898b74` changes future post-write verification to use the immutable commit SHA
+returned by that PUT, while retaining the public raw-pointer check.
 
 ### R10 remaining verification
 
@@ -784,6 +801,5 @@ added and the exact command was rerun successfully (108/108).
 - The per-machine NSIS installed matrix requires an elevated disposable Windows session and was not
   run. No installer was launched and no profile/registry data was modified by matrix testing.
 - First Stable legacy-endpoint bootstrap, Stable-owned Beta install, side-by-side runtime,
-  channel-specific N→N+1 updates, crossed signed-manifest rejection, public pointer verification,
-  and destructive uninstall isolation remain unproven in installed artifacts.
-- No commit, push, merge, tag, GitHub Release, or channel-pointer publication was performed.
+  channel-specific N→N+1 updates, crossed signed-manifest rejection, installed-client pointer
+  consumption, and destructive uninstall isolation remain unproven in installed artifacts.
