@@ -43,30 +43,10 @@ jobs:
         run: python scripts/fix_apply_beta_release_polish.py
 
       - name: Apply source and asset fixes
-        id: migrate
-        continue-on-error: true
         shell: pwsh
-        run: |
-          python scripts/apply_beta_release_polish.py *>&1 | Tee-Object migration-output.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Persist migration diagnostic
-        if: steps.migrate.outcome == 'failure'
-        shell: pwsh
-        run: |
-          git config user.name "CellXplorer release-fix bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add migration-output.txt
-          git commit -m "Record Beta polish migration failure"
-          git push origin HEAD:feature/beta-release-polish
-
-      - name: Stop after migration failure
-        if: steps.migrate.outcome == 'failure'
-        shell: pwsh
-        run: exit 1
+        run: python scripts/apply_beta_release_polish.py
 
       - name: Run focused verification
-        if: steps.migrate.outcome == 'success'
         shell: pwsh
         run: |
           python -m unittest tests.test_app_channels tests.test_build_beta_icons -v
@@ -75,16 +55,13 @@ jobs:
           cargo test --manifest-path src-tauri\Cargo.toml
 
       - name: Remove one-shot migration machinery
-        if: steps.migrate.outcome == 'success'
         shell: pwsh
         run: |
           git rm .github/workflows/apply-beta-release-polish.yml
           git rm scripts/apply_beta_release_polish.py
           git rm scripts/fix_apply_beta_release_polish.py
-          Remove-Item migration-output.txt -ErrorAction SilentlyContinue
 
       - name: Commit generated fixes
-        if: steps.migrate.outcome == 'success'
         shell: pwsh
         run: |
           git config user.name "CellXplorer release-fix bot"
