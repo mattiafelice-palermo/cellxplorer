@@ -33,8 +33,10 @@ When `CELLXPLORER_DATA` is set, `backups/` lives under that directory instead.
 
 CellXplorer Beta uses a separate data root (`%USERPROFILE%\.cellxplorer-beta` by default). Stable
 and Beta each maintain their own `cellxplorer.db`, `backups/`, caches, and migration history. The
-one-time Beta bootstrap copies a Stable database snapshot with SQLite's backup API; it never
-modifies the Stable database or its backups.
+Beta bootstrap copies a Stable database snapshot with SQLite's backup API; it never modifies the
+Stable database or its backups. Each newly installed Beta version asks once whether to keep the
+inherited Beta library or replace it with a new Stable snapshot. Replacement is explicit and uses
+an atomic activation/rollback path.
 
 If the database is corrupt, unrecognized, newer than the application, or fails migration,
 CellXplorer starts in compatibility mode. The frontend explains the problem, normal API operations

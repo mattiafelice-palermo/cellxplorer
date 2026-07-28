@@ -20,6 +20,25 @@ After this specification:
 
 This specification does not synchronize the two databases and does not publish Beta releases.
 
+### 1.1 July 2026 startup-choice amendment
+
+The shipped workflow now supersedes the original one-time/pristine-only clauses in sections 3,
+6.2, 7, and the historical checklist:
+
+- the choice is acknowledged once per installed Beta application version;
+- a first Beta install offers **Start clean** or **Copy Stable library**;
+- a new Beta version with an inherited Beta library offers **Use existing Beta library** or
+  **Copy Stable library**;
+- copying over an inherited Beta library requires a clear overwrite warning and explicit
+  confirmation;
+- the staged manifest records whether replacement was authorized;
+- activation moves the existing Beta database and managed imports to rollback locations, restores
+  them on any failure, and deletes them only after the Stable snapshot activates successfully;
+- choosing the existing library changes no scientific data and only updates the version-scoped
+  acknowledgement marker.
+
+The Stable library remains read-only throughout and no synchronization is introduced.
+
 ## 2. Locked data-root matrix
 
 | Data | Stable | Beta |

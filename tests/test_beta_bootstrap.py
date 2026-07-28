@@ -145,6 +145,7 @@ class BetaBootstrapTests(unittest.TestCase):
             self.assertEqual(result["decision"], "empty")
             marker = beta_bootstrap.read_marker()
             self.assertEqual(marker["decision"], "empty")
+            self.assertEqual(marker["appVersion"], beta_bootstrap.APP_VERSION)
             status = beta_bootstrap.build_status(db)
             self.assertFalse(status["needsChoice"])
             self.assertEqual(status["decision"], "empty")
@@ -158,6 +159,48 @@ class BetaBootstrapTests(unittest.TestCase):
             beta_bootstrap.write_marker("empty")
             status = beta_bootstrap.build_status(db)
             self.assertFalse(status["needsChoice"])
+        finally:
+            db.close()
+
+    def test_current_version_acknowledgement_blocks_direct_copy(self):
+        self.stable_session().close()
+        db = self.beta_session()
+        try:
+            beta_bootstrap.write_marker("empty")
+            with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
+                beta_bootstrap.stage_stable_copy(
+                    db,
+                    confirm_replace_existing_beta=True,
+                )
+        finally:
+            db.close()
+
+    def test_marker_from_an_older_beta_requires_a_new_choice(self):
+        db = self.beta_session()
+        try:
+            beta_bootstrap.marker_path().write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "decision": "copied",
+                        "completedAt": "2026-07-01T00:00:00Z",
+                        "sourceDatabaseInstanceId": "stable-id",
+                        "sourceSchemaRevision": "0012",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status = beta_bootstrap.build_status(db)
+            self.assertTrue(status["needsChoice"])
+            self.assertTrue(status["betaHasExistingLibrary"])
+            self.assertIsNone(status["acknowledgedAppVersion"])
+
+            result = beta_bootstrap.use_current_library(db)
+            self.assertEqual(result["decision"], "copied")
+            marker = beta_bootstrap.read_marker()
+            self.assertEqual(marker["appVersion"], beta_bootstrap.APP_VERSION)
+            self.assertEqual(marker["sourceDatabaseInstanceId"], "stable-id")
+            self.assertFalse(beta_bootstrap.build_status(db)["needsChoice"])
         finally:
             db.close()
 
@@ -200,13 +243,27 @@ class BetaBootstrapTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_non_pristine_beta_rejects_copy(self):
+    def test_non_pristine_beta_stages_explicit_replacement(self):
+        self.stable_session().close()
         db = self.beta_session()
         try:
             db.add(Cell(name="Existing cell"))
             db.commit()
             with self.assertRaises(beta_bootstrap.BetaBootstrapConflict):
                 beta_bootstrap.stage_stable_copy(db)
+            result = beta_bootstrap.stage_stable_copy(
+                db,
+                confirm_replace_existing_beta=True,
+            )
+            self.assertTrue(result["replaceExistingBeta"])
+            manifest = json.loads(
+                (
+                    beta_bootstrap.bootstrap_root()
+                    / result["token"]
+                    / beta_bootstrap.MANIFEST_NAME
+                ).read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["replaceExistingBeta"])
         finally:
             db.close()
 
@@ -459,6 +516,7 @@ class BetaBootstrapTests(unittest.TestCase):
             )
             self.assertEqual(manifest["stagedDatabaseSize"], staged_db.stat().st_size)
             self.assertEqual(manifest["copiedImports"], 1)
+            self.assertFalse(manifest["replaceExistingBeta"])
             self.assertEqual(len(manifest["imports"]), 1)
             entry = manifest["imports"][0]
             self.assertEqual(entry["relativePath"], "batch/big.nda")

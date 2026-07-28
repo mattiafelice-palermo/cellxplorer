@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -13,6 +13,13 @@ router = APIRouter(prefix="/api/beta-bootstrap", tags=["beta-bootstrap"])
 
 class DiscardStageRequest(BaseModel):
     token: str
+
+
+class StageCopyRequest(BaseModel):
+    confirm_replace_existing_beta: bool = Field(
+        default=False,
+        alias="confirmReplaceExistingBeta",
+    )
 
 
 def _require_beta_channel() -> None:
@@ -30,10 +37,16 @@ def beta_bootstrap_status(db: Session = Depends(get_db)):
 
 
 @router.post("/stage-copy")
-def beta_bootstrap_stage_copy(db: Session = Depends(get_db)):
+def beta_bootstrap_stage_copy(
+    payload: StageCopyRequest,
+    db: Session = Depends(get_db),
+):
     _require_beta_channel()
     try:
-        return beta_bootstrap.stage_stable_copy(db)
+        return beta_bootstrap.stage_stable_copy(
+            db,
+            confirm_replace_existing_beta=payload.confirm_replace_existing_beta,
+        )
     except beta_bootstrap.BetaBootstrapConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except beta_bootstrap.BetaBootstrapValidation as error:
@@ -62,5 +75,14 @@ def beta_bootstrap_start_empty(db: Session = Depends(get_db)):
         return beta_bootstrap.start_empty_library(db)
     except beta_bootstrap.BetaBootstrapConflict as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except beta_bootstrap.BetaBootstrapValidation as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/use-current")
+def beta_bootstrap_use_current(db: Session = Depends(get_db)):
+    _require_beta_channel()
+    try:
+        return beta_bootstrap.use_current_library(db)
     except beta_bootstrap.BetaBootstrapValidation as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

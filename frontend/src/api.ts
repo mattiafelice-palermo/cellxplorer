@@ -221,9 +221,11 @@ export interface DatabaseStatus {
 export interface BetaBootstrapStatus {
   channel: "beta";
   setupState?: "choice-required" | "complete" | "blocked-error";
-  decision: "copied" | "empty" | null;
+  decision: "copied" | "empty" | "current" | null;
   needsChoice: boolean;
   betaPristine: boolean;
+  betaHasExistingLibrary: boolean;
+  acknowledgedAppVersion?: string | null;
   stableDatabaseExists: boolean;
   stableDatabaseCompatible: boolean;
   stableDatabasePath: string;
@@ -240,11 +242,12 @@ export interface BetaBootstrapStageCopyResult {
   sourceSchemaRevision: string | null;
   copiedImports: number;
   externalSourcePaths: number;
+  replaceExistingBeta: boolean;
   restartRequired: boolean;
 }
 
 export interface BetaBootstrapStartEmptyResult {
-  decision: "empty";
+  decision: "empty" | "copied" | "current";
   restartRequired: boolean;
 }
 

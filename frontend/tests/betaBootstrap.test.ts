@@ -18,6 +18,8 @@ const availableStatus: BetaBootstrapStatus = {
   decision: null,
   needsChoice: true,
   betaPristine: true,
+  betaHasExistingLibrary: false,
+  acknowledgedAppVersion: null,
   stableDatabaseExists: true,
   stableDatabaseCompatible: true,
   stableDatabasePath: "C:\\Users\\example\\.cellxplorer\\cellxplorer.db",

@@ -33,6 +33,7 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
   const [phase, setPhase] = useState<CoordinatorPhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retainedToken, setRetainedToken] = useState<string | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   const statusQuery = useQuery({
     queryKey: ["beta-bootstrap-status"],
@@ -43,6 +44,7 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
   });
 
   const status = devMock ? mockBetaBootstrapStatus(devMock) : statusQuery.data;
+  const hasExistingBeta = status?.betaHasExistingLibrary ?? !status?.betaPristine;
   const setupState = resolveBetaBootstrapSetupState({
     enabled,
     mock: devMock,
@@ -110,7 +112,9 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
       let token = outstandingToken;
       if (!shouldRetryExistingStage(token)) {
         setPhase("staging");
-        const staged = await post<BetaBootstrapStageCopyResult>("/api/beta-bootstrap/stage-copy");
+        const staged = await post<BetaBootstrapStageCopyResult>("/api/beta-bootstrap/stage-copy", {
+          confirmReplaceExistingBeta: hasExistingBeta,
+        });
         token = staged.token;
         setRetainedToken(token);
       }
@@ -134,9 +138,9 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
     } finally {
       actionInFlight.current = false;
     }
-  }, [applyToken, devMock, outstandingToken, phase]);
+  }, [applyToken, devMock, hasExistingBeta, outstandingToken, phase]);
 
-  const runStartEmpty = useCallback(async () => {
+  const runUseCurrent = useCallback(async () => {
     if (actionInFlight.current) return;
     actionInFlight.current = true;
     setErrorMessage(null);
@@ -145,7 +149,10 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
         setPhase("idle");
         return;
       }
-      await post("/api/beta-bootstrap/start-empty");
+      if (outstandingToken) {
+        await post("/api/beta-bootstrap/discard-stage", { token: outstandingToken });
+      }
+      await post("/api/beta-bootstrap/use-current");
       setRetainedToken(null);
       await queryClient.invalidateQueries({ queryKey: ["beta-bootstrap-status"] });
       setPhase("idle");
@@ -153,13 +160,13 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
       const message =
         error instanceof Error && error.message.trim()
           ? error.message.trim()
-          : "Could not start with an empty library.";
+          : "Could not keep the current Beta library.";
       setErrorMessage(message);
       setPhase("error");
     } finally {
       actionInFlight.current = false;
     }
-  }, [devMock, queryClient]);
+  }, [devMock, outstandingToken, queryClient]);
 
   const retryStatus = useCallback(() => {
     setErrorMessage(null);
@@ -231,9 +238,25 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
 
         {showChoice ? (
           <Text size="sm">
-            Beta keeps its library separate from the stable app. You can copy a snapshot of your
-            current Stable library, or start with an empty Beta library.
+            {hasExistingBeta
+              ? "This Beta installation already has its own library. You can keep it, or replace it with a fresh snapshot of your current Stable library."
+              : "Beta keeps its library separate from the stable app. You can copy a snapshot of your current Stable library, or start with a clean Beta library."}
           </Text>
+        ) : null}
+
+        {showChoice && hasExistingBeta ? (
+          <Alert color="yellow" title="Copying will overwrite Beta data">
+            Copying from Stable replaces the current Beta database and Beta-managed imports. Stable
+            itself is not changed.
+          </Alert>
+        ) : null}
+
+        {showChoice && hasExistingBeta && confirmReplace ? (
+          <Alert color="red" title="Confirm Beta library replacement">
+            Continue only if you no longer need the current Beta data. The replacement is rolled
+            back if activation fails, but after a successful copy the previous Beta library is
+            removed.
+          </Alert>
         ) : null}
 
         {showBlocked ? (
@@ -306,15 +329,34 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
               ) : null}
             </Group>
             <Group gap="sm">
-              <Button variant="default" onClick={() => void runStartEmpty()} disabled={busy}>
-                Start empty
+              <Button variant="default" onClick={() => void runUseCurrent()} disabled={busy}>
+                {hasExistingBeta ? "Use existing Beta library" : "Start clean"}
               </Button>
+              {hasExistingBeta && confirmReplace && !outstandingToken ? (
+                <Button
+                  variant="default"
+                  onClick={() => setConfirmReplace(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </Button>
+              ) : null}
               <Button
-                color={APP_BRANDING.primaryColor}
-                onClick={() => void runCopyFlow()}
+                color={hasExistingBeta && confirmReplace ? "red" : APP_BRANDING.primaryColor}
+                onClick={() => {
+                  if (hasExistingBeta && !confirmReplace && !outstandingToken) {
+                    setConfirmReplace(true);
+                    return;
+                  }
+                  void runCopyFlow();
+                }}
                 disabled={copyDisabled}
               >
-                {outstandingToken ? "Retry activation" : "Copy Stable library"}
+                {outstandingToken
+                  ? "Retry activation"
+                  : hasExistingBeta && confirmReplace
+                    ? "Replace Beta library"
+                    : "Copy Stable library"}
               </Button>
             </Group>
           </Group>

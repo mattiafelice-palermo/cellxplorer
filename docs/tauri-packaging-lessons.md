@@ -86,6 +86,13 @@ Do not replace this with a fixed sleep, `AppHandle::restart()`, or an unverified
 `Start-Process`; each can launch while the old single-instance resources still exist and leave the
 application closed. Keep both manual restart and Beta bootstrap on the same helper.
 
+The Beta library decision is acknowledged per application version, not forever. On the first
+startup of a newly installed Beta version, an inherited Beta library may be kept or explicitly
+replaced with a Stable snapshot. A genuinely new Beta installation instead offers Start clean or
+Copy Stable. Replacement staging records the user's overwrite choice; activation swaps the
+database and managed-import tree with rollback on failure, and removes the old Beta copy only after
+success.
+
 The shared NSIS template selects its brand constants from the exact bundle identifier:
 Stable uses `#12B886` and Beta uses `#3678B7`. Primary buttons, step indicators, connectors,
 selected controls and progress bars must consume those constants rather than a literal Stable
@@ -125,10 +132,11 @@ same command with elevated sandbox permission, then continue the documented buil
   the icon from the target executable and cached it inconsistently across Start/taskbar.
   `src-tauri/nsis-hooks.nsh` rewrites Start/Desktop shortcuts after install with an explicit
   icon location: `$INSTDIR\cellxplorer.exe,0`.
-- Pre-install and pre-uninstall hooks call `kill_installation_processes.ps1` with `-InstallDir
-  "$INSTDIR"`. That script kills only processes whose executable path is under the installation
-  directory being changed. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup —
-  Stable and Beta share executable image names but install to different folders.
+- Pre-install and pre-uninstall hooks mirror `kill_installation_processes.ps1`: they repeatedly stop
+  only processes whose executable path is under the exact `$INSTDIR`, wait up to ten seconds for
+  both PyInstaller backend processes to release their files, and abort before copying if anything
+  remains. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup — Stable and Beta
+  share executable image names but install to different folders.
 
 ## PyInstaller backend entrypoint
 

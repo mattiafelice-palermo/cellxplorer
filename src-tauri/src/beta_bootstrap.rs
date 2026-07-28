@@ -43,6 +43,8 @@ struct BootstrapManifest {
     #[serde(rename = "copiedImports")]
     copied_imports: usize,
     imports: Vec<ImportInventoryEntry>,
+    #[serde(rename = "replaceExistingBeta", default)]
+    replace_existing_beta: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -372,7 +374,9 @@ pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePa
         }
     }
 
-    live_beta_is_pristine(beta_root)?;
+    if !manifest.replace_existing_beta {
+        live_beta_is_pristine(beta_root)?;
+    }
 
     Ok(StagePaths {
         stage_dir,
@@ -391,6 +395,7 @@ pub fn write_bootstrap_marker(
     let payload = serde_json::json!({
         "schemaVersion": 1,
         "decision": "copied",
+        "appVersion": env!("CARGO_PKG_VERSION"),
         "completedAt": utc_now_iso(),
         "sourceDatabaseInstanceId": source_database_instance_id,
         "sourceSchemaRevision": source_schema_revision,
@@ -590,7 +595,13 @@ mod tests {
             .unwrap();
     }
 
-    fn write_manifest(stage_dir: &Path, token: &str, db_path: &Path, imports: &[(&str, &[u8])]) {
+    fn write_manifest_with_replacement(
+        stage_dir: &Path,
+        token: &str,
+        db_path: &Path,
+        imports: &[(&str, &[u8])],
+        replace_existing_beta: bool,
+    ) {
         let (digest, size) = sha256_file(db_path).unwrap();
         let mut inventory = Vec::new();
         for (relative, bytes) in imports {
@@ -616,12 +627,17 @@ mod tests {
             "stagedDatabaseSize": size,
             "copiedImports": inventory.len(),
             "imports": inventory,
+            "replaceExistingBeta": replace_existing_beta,
         });
         fs::write(
             stage_dir.join(MANIFEST_NAME),
             serde_json::to_string_pretty(&payload).unwrap(),
         )
         .unwrap();
+    }
+
+    fn write_manifest(stage_dir: &Path, token: &str, db_path: &Path, imports: &[(&str, &[u8])]) {
+        write_manifest_with_replacement(stage_dir, token, db_path, imports, false);
     }
 
     #[test]
@@ -735,5 +751,36 @@ mod tests {
         fs::write(beta_root.join("imports/extra.nda"), b"x").unwrap();
         let error = resolve_and_verify_stage(&beta_root, token).expect_err("non-pristine");
         assert!(error.contains("imported"));
+    }
+
+    #[test]
+    fn explicit_replacement_accepts_existing_beta_and_swaps_it_atomically() {
+        let (_dir, beta_root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage_dir = beta_root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(&stage_dir).unwrap();
+        let staged_db = stage_dir.join(STAGED_DB_NAME);
+        write_sqlite_file(&staged_db, "staged");
+        write_manifest_with_replacement(&stage_dir, token, &staged_db, &[], true);
+        write_sqlite_file(&beta_root.join(LIVE_DB_NAME), "existing");
+        fs::write(
+            beta_root.join(MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"empty"}"#,
+        )
+        .unwrap();
+
+        let paths = resolve_and_verify_stage(&beta_root, token).expect("validate replacement");
+        activate_staged_copy(&beta_root, &paths).expect("activate replacement");
+
+        let connection = rusqlite::Connection::open(beta_root.join(LIVE_DB_NAME)).unwrap();
+        let value: String = connection
+            .query_row("SELECT value FROM probe", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "staged");
+        let marker: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(beta_root.join(MARKER_NAME)).unwrap()).unwrap();
+        assert_eq!(marker["decision"], "copied");
+        assert_eq!(marker["appVersion"], env!("CARGO_PKG_VERSION"));
+        assert!(!beta_root.join(ROLLBACK_DB_NAME).exists());
     }
 }

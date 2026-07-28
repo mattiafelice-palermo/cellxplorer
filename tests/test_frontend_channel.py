@@ -92,12 +92,17 @@ class NsisProcessCleanupTests(unittest.TestCase):
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
         self.assertIn("StartsWith", hooks)
         self.assertIn("$INSTDIR", hooks)
+        self.assertIn("AddSeconds(10)", hooks)
+        self.assertIn("$remaining.Count", hooks)
+        self.assertIn("Abort", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)
 
     def test_kill_script_scopes_to_install_prefix(self):
         script = KILL_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("StartsWith($prefix", script)
+        self.assertIn("AddSeconds(10)", script)
+        self.assertIn("$remaining.Count", script)
         self.assertNotIn("/IM cellxplorer", script)
 
 

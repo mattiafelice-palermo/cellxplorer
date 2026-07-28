@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import APP_DATA_DIR, IMPORT_DIR
+from ..config import APP_DATA_DIR, APP_VERSION, IMPORT_DIR
 from ..models import Analysis, Cell, Folder, ReplicateGroup, SourceFile, Test
 from ..services.app_channel import resolve_app_channel, stable_default_data_root
 from ..services.database_identity import DATABASE_INSTANCE_ID_KEY
@@ -124,7 +124,10 @@ def read_marker(data_root: Path | None = None) -> dict[str, Any] | None:
     if payload.get("schemaVersion") != MARKER_SCHEMA_VERSION:
         raise BetaBootstrapValidation("Beta setup metadata uses an unsupported version.")
     decision = payload.get("decision")
-    if decision not in {"copied", "empty"}:
+    if decision not in {"copied", "empty", "current"}:
+        raise BetaBootstrapValidation("Beta setup metadata is invalid.")
+    app_version = payload.get("appVersion")
+    if app_version is not None and not isinstance(app_version, str):
         raise BetaBootstrapValidation("Beta setup metadata is invalid.")
     return payload
 
@@ -157,6 +160,7 @@ def write_marker(
     payload = {
         "schemaVersion": MARKER_SCHEMA_VERSION,
         "decision": decision,
+        "appVersion": APP_VERSION,
         "completedAt": _utc_now_iso(),
         "sourceDatabaseInstanceId": source_database_instance_id,
         "sourceSchemaRevision": source_schema_revision,
@@ -515,6 +519,7 @@ def build_status(db: Session) -> dict[str, Any]:
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
 
+    marker: dict[str, Any] | None = None
     decision: str | None = None
     setup_error: str | None = None
     try:
@@ -532,7 +537,10 @@ def build_status(db: Session) -> dict[str, Any]:
 
     pristine = beta_is_pristine(db) if setup_error is None else False
     stable = inspect_stable_database()
-    needs_choice = setup_error is None and decision is None and pristine
+    acknowledged_for_version = (
+        marker is not None and marker.get("appVersion") == APP_VERSION
+    )
+    needs_choice = setup_error is None and not acknowledged_for_version
 
     copy_blocking: str | None = None
     if not stable.compatible:
@@ -542,7 +550,7 @@ def build_status(db: Session) -> dict[str, Any]:
 
     if setup_error:
         setup_state = "blocked-error"
-    elif decision:
+    elif acknowledged_for_version:
         setup_state = "complete"
     elif needs_choice:
         setup_state = "choice-required"
@@ -555,6 +563,8 @@ def build_status(db: Session) -> dict[str, Any]:
         "decision": decision,
         "needsChoice": needs_choice,
         "betaPristine": pristine,
+        "betaHasExistingLibrary": not pristine,
+        "acknowledgedAppVersion": marker.get("appVersion") if marker else None,
         "stableDatabaseExists": stable.exists,
         "stableDatabaseCompatible": stable.compatible,
         "stableDatabasePath": str(stable.path),
@@ -577,14 +587,40 @@ def start_empty_library(db: Session) -> dict[str, Any]:
     return {"decision": payload["decision"], "restartRequired": False}
 
 
-def stage_stable_copy(db: Session) -> dict[str, Any]:
+def use_current_library(db: Session) -> dict[str, Any]:
+    """Keep the current Beta library and acknowledge this installed Beta version."""
+    if resolve_app_channel() != "beta":
+        raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
+
+    marker = read_marker()
+    pristine = beta_is_pristine(db)
+    decision = str(marker["decision"]) if marker else ("empty" if pristine else "current")
+    payload = write_marker(
+        decision,
+        source_database_instance_id=(
+            marker.get("sourceDatabaseInstanceId") if marker else None
+        ),
+        source_schema_revision=marker.get("sourceSchemaRevision") if marker else None,
+    )
+    return {"decision": payload["decision"], "restartRequired": False}
+
+
+def stage_stable_copy(
+    db: Session,
+    *,
+    confirm_replace_existing_beta: bool = False,
+) -> dict[str, Any]:
     global _active_stage_token
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
-    if read_marker() is not None:
-        raise BetaBootstrapConflict("Beta setup has already completed.")
-    if not beta_is_pristine(db):
-        raise BetaBootstrapConflict("Beta already contains library data.")
+    marker = read_marker()
+    if marker and marker.get("appVersion") == APP_VERSION:
+        raise BetaBootstrapConflict("Beta setup has already been completed for this version.")
+    replace_existing_beta = not beta_is_pristine(db)
+    if replace_existing_beta and not confirm_replace_existing_beta:
+        raise BetaBootstrapConflict(
+            "Confirm that copying Stable may replace the current Beta library."
+        )
 
     _reconcile_active_stage_token()
     if find_outstanding_stage_token() is not None:
@@ -693,6 +729,7 @@ def stage_stable_copy(db: Session) -> dict[str, Any]:
             "copiedImports": len(staged_entries),
             "imports": staged_entries,
             "externalSourcePaths": external_paths,
+            "replaceExistingBeta": replace_existing_beta,
             "createdAt": _utc_now_iso(),
         }
         _atomic_write_json(stage_dir / MANIFEST_NAME, manifest)
@@ -703,6 +740,7 @@ def stage_stable_copy(db: Session) -> dict[str, Any]:
             "sourceSchemaRevision": source_revision,
             "copiedImports": len(staged_entries),
             "externalSourcePaths": external_paths,
+            "replaceExistingBeta": replace_existing_beta,
             "restartRequired": True,
         }
     except Exception:

@@ -90,6 +90,7 @@ _COMPATIBILITY_API_PATHS = {
     "/api/beta-bootstrap/stage-copy",
     "/api/beta-bootstrap/discard-stage",
     "/api/beta-bootstrap/start-empty",
+    "/api/beta-bootstrap/use-current",
 }
 
 
