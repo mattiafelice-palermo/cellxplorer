@@ -21,7 +21,6 @@ export function RecognitionProgress({
         value={value}
         animated={animated}
         striped={waiting}
-        color="teal"
       />
       <Text size="xs" c="dimmed" ta="center">
         {waiting

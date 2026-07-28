@@ -256,7 +256,7 @@ function AddReferencesModal({
       <Table.Tr key={`folder-${node.id}`}>
         <Table.Td colSpan={2}>
           <Group gap={6} pl={depth * 16}>
-            <IconFolder size={14} color="var(--mantine-color-teal-6)" />
+            <IconFolder size={14} color="var(--mantine-primary-color-6)" />
             <Text size="xs" fw={700} c="dimmed">
               {node.name}
             </Text>
@@ -271,7 +271,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`cell-${node.id}-${cell.id}`}
-              bg={selectedCells.includes(cell.id) ? "teal.0" : undefined}
+              bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-0)" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedCells((current) =>
@@ -302,7 +302,7 @@ function AddReferencesModal({
           rows.push(
             <Table.Tr
               key={`group-${node.id}-${group.id}`}
-              bg={selectedGroups.includes(group.id) ? "teal.0" : undefined}
+              bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-0)" : undefined}
               style={{ cursor: "pointer" }}
               onClick={() =>
                 setSelectedGroups((current) =>
@@ -314,7 +314,7 @@ function AddReferencesModal({
             >
               <Table.Td>
                 <Group gap={6} pl={(depth + 1) * 16}>
-                  <IconLayersIntersect size={14} color="var(--mantine-color-teal-6)" />
+                  <IconLayersIntersect size={14} color="var(--mantine-primary-color-6)" />
                   <Text size="sm" fw={600} truncate>
                     {group.name}
                   </Text>
@@ -381,7 +381,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "cells" && unfiledCells.map((cell) => (
                 <Table.Tr
                   key={cell.id}
-                  bg={selectedCells.includes(cell.id) ? "teal.0" : undefined}
+                  bg={selectedCells.includes(cell.id) ? "var(--mantine-primary-color-0)" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedCells((current) =>
@@ -407,7 +407,7 @@ function AddReferencesModal({
               {!branchOnly && mode === "replicate_groups" && unfiledGroups.map((group) => (
                 <Table.Tr
                   key={group.id}
-                  bg={selectedGroups.includes(group.id) ? "teal.0" : undefined}
+                  bg={selectedGroups.includes(group.id) ? "var(--mantine-primary-color-0)" : undefined}
                   style={{ cursor: "pointer" }}
                   onClick={() =>
                     setSelectedGroups((current) =>
@@ -422,7 +422,7 @@ function AddReferencesModal({
                   </Table.Td>
                   <Table.Td>
                     <Group gap={6}>
-                      <IconLayersIntersect size={15} color="var(--mantine-color-teal-6)" />
+                      <IconLayersIntersect size={15} color="var(--mantine-primary-color-6)" />
                       <div>
                         <Text size="sm" fw={600}>
                           {group.name}
@@ -1466,11 +1466,11 @@ export function ProjectsPage() {
             borderRadius: 6,
             cursor: "pointer",
             background: dropTarget
-              ? "var(--mantine-color-teal-1)"
+              ? "var(--mantine-primary-color-1)"
               : selected
-                ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
+                ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
                 : undefined,
-            outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
+            outline: selected ? "1px solid var(--mantine-primary-color-4)" : undefined,
           }}
           onClick={(event) => handleSelect(event, item)}
         >
@@ -1489,7 +1489,7 @@ export function ProjectsPage() {
             >
               {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
             </ActionIcon>
-            <IconFolder size={16} color="var(--mantine-color-teal-6)" />
+            <IconFolder size={16} color="var(--mantine-primary-color-6)" />
             {editingFolderId === folder.id ? (
               <TextInput
                 size="xs"
@@ -1593,13 +1593,13 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
-          outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
+          background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
+          outline: selected ? "1px solid var(--mantine-primary-color-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}
       >
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-          <IconLayersIntersect size={15} color="var(--mantine-color-teal-6)" />
+          <IconLayersIntersect size={15} color="var(--mantine-primary-color-6)" />
           <Text size="sm" fw={selected ? 700 : 400} truncate>
             {group.name}
           </Text>
@@ -1652,8 +1652,8 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
-          outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
+          background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
+          outline: selected ? "1px solid var(--mantine-primary-color-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}
       >
@@ -1718,8 +1718,8 @@ export function ProjectsPage() {
           marginLeft: depth * 18,
           borderRadius: 6,
           cursor: "pointer",
-          background: selected ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
-          outline: selected ? "1px solid var(--mantine-color-teal-4)" : undefined,
+          background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
+          outline: selected ? "1px solid var(--mantine-primary-color-4)" : undefined,
         }}
         onClick={(event) => handleSelect(event, item)}
       >

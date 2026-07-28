@@ -148,8 +148,8 @@ fn read_installed_version(executable: &Path) -> Option<String> {
     None
 }
 
-pub fn detect_beta_installation_info() -> BetaInstallationInfo {
-    let Some(executable) = resolve_beta_executable_from_registry() else {
+fn installation_info_for_executable(executable: Option<PathBuf>) -> BetaInstallationInfo {
+    let Some(executable) = executable else {
         return BetaInstallationInfo {
             installed: false,
             installed_version: None,
@@ -162,6 +162,10 @@ pub fn detect_beta_installation_info() -> BetaInstallationInfo {
         installed_version,
         executable_path: Some(executable.to_string_lossy().into_owned()),
     }
+}
+
+pub fn detect_beta_installation_info() -> BetaInstallationInfo {
+    installation_info_for_executable(resolve_beta_executable_from_registry())
 }
 
 fn beta_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
@@ -317,8 +321,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_registry_reports_not_installed() {
-        let info = detect_beta_installation_info();
+    fn missing_executable_reports_not_installed_without_reading_machine_state() {
+        let info = installation_info_for_executable(None);
         assert!(!info.installed);
         assert!(info.executable_path.is_none());
     }

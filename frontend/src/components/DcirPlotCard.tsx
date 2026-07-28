@@ -835,7 +835,7 @@ export function DcirSettings({
                         >
                           <ActionIcon
                             variant="subtle"
-                            color={hidden ? "gray" : "teal"}
+                            color={hidden ? "gray" : "var(--mantine-primary-color-6)"}
                             size="sm"
                             aria-label={hidden ? "Show DCIR series" : "Hide DCIR series"}
                             onClick={() => toggleSeriesHidden(item.id)}

@@ -68,7 +68,8 @@ python scripts\build_beta_icons.py
 ```
 
 Committed outputs live under `frontend/public/app-icon-beta.png` and `src-tauri/icons-beta/`.
-Stable icons under `src-tauri/icons/` must remain unchanged.
+Large Beta frames contain a high-contrast `BETA` badge; 16/24/32 px ICO frames use a separately
+rendered `B` badge. Stable icons under `src-tauri/icons/` must remain unchanged.
 
 Expected outputs:
 
@@ -145,6 +146,16 @@ upstream template for the new CLI before carrying the branded sections forward. 
 compile successfully while stock MUI controls overlap the custom page, so visually smoke-test both
 the installer and uninstaller after template or NSIS changes. Never test the destructive uninstall
 choice against a real user data directory.
+
+The template also derives visual brand constants from the exact bundle identifier. Stable uses
+RGB `12B886` / COLORREF `0x0086B812`; Beta uses RGB `3678B7` / COLORREF `0x00B77836`. All branded
+installer controls must consume these constants, while unsupported identifiers fail at compile
+time.
+
+Manual restart and Beta database-copy apply share the parent-process-aware relaunch helper in
+`src-tauri/src/relaunch.rs`. It is invoked before backend shutdown and handled before Tauri or the
+single-instance plugin initialize. The helper waits for the exact previous PID's Windows process
+handle to signal before starting the replacement; fixed-delay relaunches are not safe.
 
 ## Desktop startup performance
 

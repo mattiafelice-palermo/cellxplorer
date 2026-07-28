@@ -1764,7 +1764,7 @@ export function SettingsPage() {
                   ? "Recommended for fast switching. Analyses visited in this session stay mounted and may use additional RAM and graphics memory."
                   : "Uses fewer resources. Returning to an analysis may briefly rebuild its interactive plot from cache."}
               </Text>
-              <Alert color="teal" variant="light">
+              <Alert color="var(--mantine-primary-color-6)" variant="light">
                 Hidden analyses do not recompute together after a source update. The visible analysis refreshes first; another tab refreshes when you open it.
               </Alert>
             </Stack>

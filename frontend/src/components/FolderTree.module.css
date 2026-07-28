@@ -8,12 +8,12 @@
 }
 
 .highlighted {
-  background: light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9));
-  box-shadow: inset 3px 0 0 var(--mantine-color-teal-6);
+  background: light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9));
+  box-shadow: inset 3px 0 0 var(--mantine-primary-color-6);
 }
 
 .highlighted:hover {
-  background: light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9));
+  background: light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9));
 }
 
 .chevronCell {

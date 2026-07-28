@@ -444,20 +444,20 @@ export function AnalysisWorkspaceTabs() {
           maxWidth: 230,
           height: 40,
           borderRight: "1px solid var(--mantine-color-gray-3)",
-          borderBottom: active ? "2px solid var(--mantine-color-teal-6)" : "2px solid transparent",
+          borderBottom: active ? "2px solid var(--mantine-primary-color-6)" : "2px solid transparent",
           background:
             dragTargetId === tab.id && draggedId !== tab.id
-              ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
+              ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
               : active
                 ? "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))"
                 : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
           opacity: draggedId === tab.id ? 0.78 : 1,
-          outline: draggedId === tab.id ? "1px solid var(--mantine-color-teal-5)" : undefined,
+          outline: draggedId === tab.id ? "1px solid var(--mantine-primary-color-5)" : undefined,
           boxShadow:
             draggedId === tab.id
               ? "0 5px 14px rgba(0, 0, 0, 0.14)"
               : dragTargetId === tab.id
-                ? "inset 2px 0 var(--mantine-color-teal-6)"
+                ? "inset 2px 0 var(--mantine-primary-color-6)"
                 : undefined,
           transition: "background 100ms ease, box-shadow 100ms ease, opacity 100ms ease",
           cursor: draggedId === tab.id ? "grabbing" : "grab",
@@ -480,7 +480,7 @@ export function AnalysisWorkspaceTabs() {
                 aria-label="Unsaved changes"
                 w={7}
                 h={7}
-                bg="teal.6"
+                bg="var(--mantine-primary-color-6)"
                 style={{ borderRadius: "50%", flexShrink: 0 }}
               />
             ) : null}
@@ -542,7 +542,7 @@ export function AnalysisWorkspaceTabs() {
             height: 40,
             flexShrink: 0,
             borderRight: "1px solid var(--mantine-color-gray-3)",
-            borderBottom: onHome ? "2px solid var(--mantine-color-teal-6)" : "2px solid transparent",
+            borderBottom: onHome ? "2px solid var(--mantine-primary-color-6)" : "2px solid transparent",
             background: onHome ? "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
           }}
         >
@@ -588,7 +588,7 @@ export function AnalysisWorkspaceTabs() {
                     aria-label="Unsaved changes"
                     w={7}
                     h={7}
-                    bg="teal.6"
+                    bg="var(--mantine-primary-color-6)"
                     style={{ borderRadius: "50%" }}
                   />
                 ) : null

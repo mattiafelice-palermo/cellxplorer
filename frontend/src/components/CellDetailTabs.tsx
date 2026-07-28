@@ -167,7 +167,7 @@ function ReconstructionModal({ opened, onClose }: { opened: boolean; onClose: ()
       <Stack gap="sm">
         {rules.map((rule, index) => (
           <Group key={rule} align="flex-start" wrap="nowrap" gap="sm">
-            <Badge circle color="teal" variant="light" mt={1}>{index + 1}</Badge>
+            <Badge circle color="var(--mantine-primary-color-6)" variant="light" mt={1}>{index + 1}</Badge>
             <Text size="sm">{rule}</Text>
           </Group>
         ))}
@@ -266,14 +266,14 @@ function ProtocolPanel({ cellId }: { cellId: number }) {
             >
               <Group justify="space-between" align="start" wrap="nowrap">
                 <Group gap="xs" wrap="nowrap">
-                  {group.kind === "repeated_block" && <ThemeIcon color="teal" variant="light" size="sm"><IconRepeat size={15} /></ThemeIcon>}
+                  {group.kind === "repeated_block" && <ThemeIcon color="var(--mantine-primary-color-6)" variant="light" size="sm"><IconRepeat size={15} /></ThemeIcon>}
                   <div>
                     <Text fw={700} size="sm">{group.label}</Text>
                   <Text size="xs" c="dimmed">{group.summary}</Text>
                   </div>
                 </Group>
                 {group.kind === "repeated_block" && (
-                  <Badge color="teal" variant="light">x{group.repeat_count}</Badge>
+                  <Badge color="var(--mantine-primary-color-6)" variant="light">x{group.repeat_count}</Badge>
                 )}
               </Group>
               <ScrollArea type="auto" offsetScrollbars mt="sm">

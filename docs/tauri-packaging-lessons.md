@@ -74,6 +74,24 @@ Standard self-update and Stable-owned Beta installation must remain different Ta
 types. `PendingBetaInstall` is a real newtype around the shared pending-update state machine; a Rust
 type alias would register the same `TypeId` twice and can panic during builder construction.
 
+## Restart and first-run bootstrap invariant
+
+Desktop restart and Beta database-bootstrap apply use an internal
+`--relaunch-after-pid <pid>` helper in `src-tauri/src/relaunch.rs`. The current app starts the
+helper before stopping its backend. The helper runs before Tauri and the single-instance plugin,
+opens the exact old Windows process, waits for its process handle to signal, and only then starts
+the ordinary application.
+
+Do not replace this with a fixed sleep, `AppHandle::restart()`, or an unverified PowerShell
+`Start-Process`; each can launch while the old single-instance resources still exist and leave the
+application closed. Keep both manual restart and Beta bootstrap on the same helper.
+
+The shared NSIS template selects its brand constants from the exact bundle identifier:
+Stable uses `#12B886` and Beta uses `#3678B7`. Primary buttons, step indicators, connectors,
+selected controls and progress bars must consume those constants rather than a literal Stable
+color. Beta icons are not merely recolored: large frames carry `BETA`, while 16/24/32 px ICO frames
+carry a separately rendered `B`.
+
 ## Codex sandbox frontend build issue
 
 In the managed Codex sandbox, `npm.cmd run build` from `frontend` can fail before Vite loads its

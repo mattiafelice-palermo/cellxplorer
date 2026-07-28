@@ -53,11 +53,11 @@ gradients, glass effects, heavy shadows, or decorative animation.
 
 ### Chrome palette
 
-`frontend/src/main.tsx` defines:
+`frontend/src/main.tsx` selects the application primary color from `APP_BRANDING`:
 
 ```ts
 createTheme({
-  primaryColor: "teal",
+  primaryColor: APP_BRANDING.primaryColor, // Stable teal; Beta betaBlue
   defaultRadius: "md",
 });
 ```
@@ -66,7 +66,8 @@ Use colors by meaning:
 
 | Meaning | Mantine color | Typical use |
 |---|---|---|
-| Primary / active / successful | `teal` | Main action, active eye, progress, selected state, success notification |
+| Primary / active | current theme primary (`teal` or `betaBlue`) | Main action, active eye, progress, selected state |
+| Semantic success / running | `teal` | Success notification, completed operation, healthy/running state |
 | Draft / unsaved attention | `yellow` | Draft plot, update-pending action, non-destructive attention |
 | Changed / caution | `orange` | Changed source, caution alert, action needing review |
 | Error / destructive / offline | `red` | Errors, destructive actions, failed jobs, unavailable data |
@@ -91,8 +92,8 @@ Use these recipes when a numbered tint is needed:
 // Subtle raised or nested neutral surface
 "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
 
-// Selected or active teal surface
-"light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
+// Selected or active channel-primary surface
+"var(--mantine-primary-color-light)"
 ```
 
 Mantine numbered shades such as `gray.0`, `teal.0`, `--mantine-color-gray-0`, and
@@ -182,13 +183,14 @@ true empty-state call to action or accessibility need.
 
 ### Button hierarchy
 
-- One primary action per local decision area: filled teal.
+- One primary action per local decision area: filled current channel primary.
 - Secondary actions: `variant="default"`.
 - Tertiary/navigation utilities: `variant="subtle"`.
 - Low-emphasis semantic actions: `variant="light"` with the semantic color.
 - Destructive actions: red. Use a filled red button only in the final destructive confirmation;
   routine delete icons remain subtle red.
-- Draft/update actions use yellow; new/save actions use teal, matching the analysis plot header.
+- Draft/update actions use yellow; new/save actions use the channel primary, matching the analysis
+  plot header.
 - Split actions use `Button.Group` with identical size/height and a 12–14 px chevron.
 - Disabled buttons must remain visible when they teach what action becomes available. Hide an
   action only when it is irrelevant, not merely unavailable.

@@ -12,6 +12,7 @@ import {
 } from "@mantine/core";
 import { IconDownload } from "@tabler/icons-react";
 
+import { APP_BRANDING } from "../appChannel";
 import {
   canDismissUpdateModal,
   computeDownloadProgress,
@@ -187,7 +188,7 @@ export function AppUpdateModal({
               </Button>
             ) : null}
             {checkFailed && !checkingManual ? (
-              <Button color="teal" onClick={onRetryCheck}>
+              <Button color={APP_BRANDING.primaryColor} onClick={onRetryCheck}>
                 Try again
               </Button>
             ) : null}
@@ -204,7 +205,7 @@ export function AppUpdateModal({
       title={
         <Group gap="sm" wrap="nowrap">
           <Text fw={600}>Update available</Text>
-          <Badge color="teal" variant="light">
+          <Badge color={APP_BRANDING.primaryColor} variant="light">
             v{release!.version}
           </Badge>
         </Group>
@@ -236,7 +237,7 @@ export function AppUpdateModal({
               value={indeterminate ? 100 : (progress?.percent ?? 0)}
               animated={indeterminate}
               striped={indeterminate}
-              color="teal"
+              color={APP_BRANDING.primaryColor}
               size="md"
             />
             {progress ? (
@@ -252,7 +253,7 @@ export function AppUpdateModal({
             <Text size="sm" fw={500}>
               Download complete. Launching installer…
             </Text>
-            <Progress value={100} color="teal" size="md" />
+            <Progress value={100} color={APP_BRANDING.primaryColor} size="md" />
           </Stack>
         ) : null}
 
@@ -274,7 +275,11 @@ export function AppUpdateModal({
               <Button variant="default" onClick={onClose}>
                 Later
               </Button>
-              <Button color="teal" leftSection={<IconDownload size={16} />} onClick={onDownload}>
+              <Button
+                color={APP_BRANDING.primaryColor}
+                leftSection={<IconDownload size={16} />}
+                onClick={onDownload}
+              >
                 Download update
               </Button>
             </>
@@ -285,14 +290,14 @@ export function AppUpdateModal({
               <Button variant="default" onClick={onClose}>
                 Later
               </Button>
-              <Button color="teal" onClick={onRetry}>
+              <Button color={APP_BRANDING.primaryColor} onClick={onRetry}>
                 Retry download
               </Button>
             </>
           ) : null}
 
           {state.status === "error" && state.phase === "install" ? (
-            <Button color="teal" onClick={onRestart}>
+            <Button color={APP_BRANDING.primaryColor} onClick={onRestart}>
               Restart CellXplorer
             </Button>
           ) : null}

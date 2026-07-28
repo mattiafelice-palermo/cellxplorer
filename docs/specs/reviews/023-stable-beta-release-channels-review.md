@@ -803,3 +803,82 @@ returned by that PUT, while retaining the public raw-pointer check.
 - First Stable legacy-endpoint bootstrap, Stable-owned Beta install, side-by-side runtime,
   channel-specific N→N+1 updates, crossed signed-manifest rejection, installed-client pointer
   consumption, and destructive uninstall isolation remain unproven in installed artifacts.
+
+## Draft PR #2 Beta release-polish verification (2026-07-28)
+
+This follow-up replaced the fixed-delay restart with the shared parent-process-handle relaunch
+path, made shared NSIS branding depend on the exact bundle identifier, removed Stable-primary
+leakage from Beta chrome without changing semantic/scientific colors, and regenerated
+size-specific Beta icons. The temporary apply workflow and its two patch scripts were deleted.
+
+### Automated commands
+
+| Command | Result |
+|---|---|
+| `python -m unittest tests.test_app_channels tests.test_build_beta_icons -v` | **PASS** - 20/20 |
+| `node --test frontend\tests\appChannel.test.ts frontend\tests\appUpdater.test.ts frontend\tests\betaBootstrap.test.ts frontend\tests\betaInstaller.test.ts` | **PASS** - 53/53 |
+| `cd frontend; npx tsc --noEmit` | **Environment blocked** - PowerShell refused `npx.ps1` under the machine execution policy. |
+| `cd frontend; npx.cmd tsc --noEmit` | **PASS** - exact Windows command-shim equivalent |
+| `cd frontend; npm.cmd run build` | **PASS** - 7,469 modules; required rerun outside the filesystem sandbox because esbuild could not traverse its normal Windows runtime paths inside it. |
+| `cargo test --manifest-path src-tauri\Cargo.toml` | **PASS** - 42/42. The first run exposed a test that assumed Beta was absent from the live registry; the test was made atomic and the complete command was rerun. |
+| `cargo check --manifest-path src-tauri\Cargo.toml` | **PASS** - two existing dead-code warnings |
+| `python scripts\preflight.py --no-cache` | **PASS** - 5/5 stages, 203 frontend policy tests and all 48 backend modules. The final identical run was outside the filesystem sandbox so nested esbuild could run. |
+
+`cargo fmt --check` was also inspected but was not used as a gate: it reports pre-existing
+formatting drift in `beta_bootstrap.rs`, `main.rs`, and `update_notifications.rs`, including
+unrelated sections outside this polish scope. `git diff --check` passed.
+
+### Beta build and artifact checks
+
+Command:
+
+```powershell
+powershell -File scripts\build-app.ps1 -Channel beta -SkipInstall
+```
+
+Result: **PASS**. The unsigned local build completed the frontend, PyInstaller sidecar, optimized
+Rust application and shared NSIS stages. Approximate measured phase times were 52 seconds for Vite,
+152 seconds for PyInstaller, and 3 minutes 34 seconds for optimized Rust/NSIS packaging.
+
+Artifact:
+
+```text
+src-tauri\target\release\bundle\nsis\CellXplorer Beta_0.17.0-beta.1_x64-setup.exe
+size: 93,791,277 bytes
+SHA-256: EEACF9816528ED937CC6D7B138C378A4140D804E84EB9517D4BAEFE9FF204957
+ProductName/FileDescription: CellXplorer Beta
+ProductVersion: 0.17.0-beta.1
+```
+
+The packaged frontend channel stamp was `beta`. The compiled application and installer associated
+icons were extracted independently and both showed the blue tiny-frame `B` badge. Automated ICO
+tests also compared all committed frames byte-for-byte: 16/24/32 px use `B`, while 48/256 px use
+`BETA`.
+
+### Disposable Windows checks
+
+| Check | Result | Notes |
+|---|---|---|
+| Parent-PID-aware helper waits before Tauri | **PASS** | Final rebuilt Beta helper remained alive throughout a disposable 7.40-second parent process and exited 38 ms after that parent ended. The launched process inherited a workspace-local `CELLXPLORER_DATA` override. |
+| Shared helper ownership | **PASS** | Rust/frontend contract tests verify manual Quick Settings restart and Beta database-copy restart both call the same helper, and helper dispatch precedes Tauri context/plugin initialization. |
+| Existing Stable/Beta side-by-side registrations | **Observed, unchanged** | Existing per-machine entries remained at `C:\Program Files\CellXplorer` and `C:\Program Files\CellXplorer Beta`; the running installed Beta was not stopped or overwritten. This does not count as installing the new artifact. |
+| Exact installer channel colors | **Build/static PASS** | The shared template accepts only `com.cellxplorer.desktop` (Stable teal) and `com.cellxplorer.desktop.beta` (Beta blue); unsupported identifiers fail compilation. |
+| Beta chrome color policy | **Build/static PASS** | Primary/active app chrome uses channel branding. Semantic success and scientific/plot colors remain unchanged. |
+| Updater ownership | **Unit/static PASS** | Exact Beta and Stable endpoints and Stable-owned Beta-discovery policy remain covered by the channel/updater suites. |
+
+### Installed checks not run
+
+The new installer was not launched because this workstation already had a real per-machine Beta
+installation running. Reinstalling the same product identity would overwrite that installation and
+its registry/shortcut state, so it is not a disposable check. Consequently these checks remain
+manual in a Windows VM or other disposable elevated installation:
+
+- first-run Stable-library copy through the actual UI, including its automatic restart;
+- Quick Settings restart through the actual installed UI;
+- visual inspection of every installer wizard frame for absence of Stable teal;
+- newly installed taskbar, shortcut, tray, installer and uninstaller icons;
+- simultaneous Stable/new-Beta runtime and same-channel single-instance behavior;
+- live Stable/Beta updater checks against their signed feeds and Stable-only Beta offering policy.
+
+No version bump, tag, release, merge, production data mutation, installed-product replacement, or
+uninstall was performed during this follow-up.

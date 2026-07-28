@@ -98,10 +98,13 @@ deliberately never bound so "select all" keeps working in every input.
 ## App shell utilities
 
 The header strip hosts Activity, Downloads, a quick-settings menu (`QuickSettingsMenu.tsx`), and
-Debug. Quick settings covers reload interface, desktop-only restart (`restart_app` in
-`src-tauri/src/main.rs`: schedule a delayed relaunch, then `stop_backend` and `app.exit` —
-never `AppHandle::restart()`, which races `tauri_plugin_single_instance`), Appearance
-(Auto/Light/Dark via Mantine `defaultColorScheme="auto"`), and pause of background automation.
+Debug. Quick settings covers reload interface and desktop-only restart. Manual restart and Beta
+bootstrap apply both launch the internal `--relaunch-after-pid <pid>` helper from
+`src-tauri/src/relaunch.rs` before stopping the backend. The helper runs before Tauri and
+`tauri_plugin_single_instance`, waits on the exact old Windows process handle, and launches a clean
+ordinary process only after teardown completes. Never replace it with a fixed sleep or
+`AppHandle::restart()`, which can race the single-instance lock. Quick settings also owns Appearance
+(Auto/Light/Dark via Mantine `defaultColorScheme="auto"`) and pause of background automation.
 
 Chrome surfaces that need a subtle raised/hover fill must use
 `light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the primary

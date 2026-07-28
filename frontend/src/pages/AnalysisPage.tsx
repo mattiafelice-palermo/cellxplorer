@@ -555,7 +555,7 @@ function ComputeProgress({ job, label }: { job: BackgroundJob | undefined; label
       <Text size="sm" fw={600} ta="center">
         {job?.description || label}
       </Text>
-      <Progress value={jobProgress(job)} animated={job?.status === "running"} color="teal" />
+      <Progress value={jobProgress(job)} animated={job?.status === "running"} />
       <Text size="xs" c="dimmed" ta="center">
         {job?.total ? `${job.completed} of ${job.total} cells` : "Preparing cached data"}
       </Text>
@@ -2359,7 +2359,7 @@ function AddEntriesModal({
         </Table.Td>
         <Table.Td>
           <Group gap={6} pl={depth * 16}>
-            <IconFolder size={14} color="var(--mantine-color-teal-6)" />
+            <IconFolder size={14} color="var(--mantine-primary-color-6)" />
             <Text size="xs" fw={700} c="dimmed">
               {folder.name}
             </Text>
@@ -2382,7 +2382,7 @@ function AddEntriesModal({
           rows.push(
             <Table.Tr
               key={`cell-${folder.id}-${cell.id}`}
-              bg={selected.has(key) ? "teal.0" : undefined}
+              bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
               style={{ cursor: added ? "default" : "pointer" }}
               onClick={(event) => toggleEntry(entry, event)}
             >
@@ -2415,7 +2415,7 @@ function AddEntriesModal({
           rows.push(
             <Table.Tr
               key={`group-${folder.id}-${group.id}`}
-              bg={selected.has(key) ? "teal.0" : undefined}
+              bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
               style={{ cursor: added ? "default" : "pointer" }}
               onClick={(event) => toggleEntry(entry, event)}
             >
@@ -2424,7 +2424,7 @@ function AddEntriesModal({
               </Table.Td>
               <Table.Td>
                 <Group gap={6} pl={(depth + 1) * 16}>
-                  <IconLayersIntersect size={14} color="var(--mantine-color-teal-6)" />
+                  <IconLayersIntersect size={14} color="var(--mantine-primary-color-6)" />
                   <div>
                     <Text size="sm" fw={600} truncate>
                       {group.name}
@@ -2500,7 +2500,7 @@ function AddEntriesModal({
                   return (
                     <Table.Tr
                       key={`unfiled-cell-${cell.id}`}
-                      bg={selected.has(key) ? "teal.0" : undefined}
+                      bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
                       style={{ cursor: added ? "default" : "pointer" }}
                       onClick={(event) => toggleEntry(entry, event)}
                     >
@@ -2527,7 +2527,7 @@ function AddEntriesModal({
                   return (
                     <Table.Tr
                       key={`unfiled-group-${group.id}`}
-                      bg={selected.has(key) ? "teal.0" : undefined}
+                      bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
                       style={{ cursor: added ? "default" : "pointer" }}
                       onClick={(event) => toggleEntry(entry, event)}
                     >
@@ -2536,7 +2536,7 @@ function AddEntriesModal({
                       </Table.Td>
                       <Table.Td>
                         <Group gap={6} pl={16}>
-                          <IconLayersIntersect size={14} color="var(--mantine-color-teal-6)" />
+                          <IconLayersIntersect size={14} color="var(--mantine-primary-color-6)" />
                           <Text size="sm" fw={600} truncate>
                             {group.name}
                           </Text>
@@ -4406,7 +4406,7 @@ function SamplePanel({
                         <ActionIcon
                           size="sm"
                           variant="subtle"
-                          color={groupHidden ? "gray" : "teal"}
+                          color={groupHidden ? "gray" : "var(--mantine-primary-color-6)"}
                           onClick={() => onToggleReplicate(entry.ref_id)}
                           aria-label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}
                         >
@@ -4447,7 +4447,7 @@ function SamplePanel({
                             <ActionIcon
                               size="xs"
                               variant="subtle"
-                              color={isHidden ? "gray" : "teal"}
+                              color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
                               disabled={groupHidden}
                               onClick={() => onToggleCell(cell.id, context)}
                               aria-label={`${isHidden ? "Show" : "Hide"} ${cell.name} in replicate ${group?.name ?? entry.ref_id}`}
@@ -4492,7 +4492,7 @@ function SamplePanel({
                     <ActionIcon
                       size="sm"
                       variant="subtle"
-                      color={isHidden ? "gray" : "teal"}
+                      color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
                       onClick={() => onToggleCell(entry.ref_id, context)}
                       aria-label={`${isHidden ? "Show" : "Hide"} standalone cell ${cell?.name ?? entry.ref_id}`}
                     >
@@ -6358,7 +6358,7 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
     <Popover withinPortal position="bottom-end" shadow="md" width={360}>
       <Popover.Target>
         <Tooltip label="How this plot is calculated">
-          <ActionIcon size={30} variant="subtle" color="teal" aria-label="Plot explainer">
+          <ActionIcon size={30} variant="subtle" color="var(--mantine-primary-color-6)" aria-label="Plot explainer">
             <IconInfoCircle size={18} />
           </ActionIcon>
         </Tooltip>
@@ -6383,7 +6383,7 @@ function PlotExplainerButton({ explainer }: { explainer?: PlotExplainer }) {
               </Text>
               <Group gap={6}>
                 {explainer.requires.map((item) => (
-                  <Badge key={item} size="sm" variant="light" color="teal">
+                  <Badge key={item} size="sm" variant="light" color="var(--mantine-primary-color-6)">
                     {item}
                   </Badge>
                 ))}
@@ -6894,7 +6894,7 @@ export function PlotHeader({
         {onNewPlot ? (
           <Button
             size="xs"
-            color="teal"
+            color="var(--mantine-primary-color-6)"
             variant={newPlotEnabled ? "filled" : "light"}
             leftSection={<IconPlus size={14} />}
             disabled={!newPlotEnabled}
@@ -6921,7 +6921,7 @@ function PlotWorkspaceEmpty({
       <Group justify="flex-end" mb="md">
         <Button
           size="xs"
-          color="teal"
+          color="var(--mantine-primary-color-6)"
           variant={hasSamples ? "filled" : "light"}
           leftSection={<IconPlus size={14} />}
           disabled={!hasSamples}
@@ -8062,7 +8062,7 @@ function CyclePlotCard({
         <LoadingOverlay
           visible={updating && traces.length === 0}
           overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
-          loaderProps={{ size: "sm", color: "teal" }}
+          loaderProps={{ size: "sm" }}
         />
         <PlotHeader
           analysisTitle={analysisTitle}
@@ -8105,7 +8105,7 @@ function CyclePlotCard({
         )}
         {diagnostics && diagnostics.hiddenCount > 0 && (
           <Group gap="xs" wrap="nowrap" align="center">
-            <Badge color="teal" variant="light" style={{ flexShrink: 0 }}>
+            <Badge color="var(--mantine-primary-color-6)" variant="light" style={{ flexShrink: 0 }}>
               {diagnostics.hiddenCount} hidden · {diagnostics.shownCount} shown
             </Badge>
             <Tooltip
@@ -8464,7 +8464,7 @@ function TimeCapacityPlotCardView({
         <LoadingOverlay
           visible={timeResult.isFetching && traces.length === 0 && !timeResult.isLoading}
           overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
-          loaderProps={{ size: "sm", color: "teal" }}
+          loaderProps={{ size: "sm" }}
         />
         <PlotHeader
           analysisTitle={analysisTitle}
@@ -8766,9 +8766,9 @@ function SavedPlotsPanel({
                 }}
                 style={{
                   border: active
-                    ? "1px solid var(--mantine-color-teal-3)"
+                    ? "1px solid var(--mantine-primary-color-3)"
                     : "1px solid var(--mantine-color-gray-2)",
-                  background: active ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
+                  background: active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))",
                   borderRadius: 8,
                   cursor: "pointer",
                 }}
@@ -8808,7 +8808,7 @@ function SavedPlotsPanel({
                   </Box>
                   <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                     <Group gap={6}>
-                      <Badge size="xs" variant="light" color={active ? "teal" : "gray"}>
+                      <Badge size="xs" variant="light" color={active ? "var(--mantine-primary-color-6)" : "gray"}>
                         {tabLabel(plot.tab)}
                       </Badge>
                       <Text fw={700} truncate>
@@ -11163,12 +11163,12 @@ function AnalysisPageView({
                       p="xs"
                       bg={
                         selected
-                          ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
+                          ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
                           : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
                       }
                       style={{
                         borderColor: selected
-                          ? "var(--mantine-color-teal-3)"
+                          ? "var(--mantine-primary-color-3)"
                           : "var(--mantine-color-gray-2)",
                         cursor: "pointer",
                       }}
@@ -11214,7 +11214,7 @@ function AnalysisPageView({
                           )}
                         </Box>
                         <Stack gap={3} style={{ minWidth: 0, flex: 1 }}>
-                          <Badge size="xs" variant="light" color={selected ? "teal" : "gray"}>
+                          <Badge size="xs" variant="light" color={selected ? "var(--mantine-primary-color-6)" : "gray"}>
                             {tabLabel(plot.tab)}
                           </Badge>
                           <Text size="sm" fw={700} lineClamp={2}>
@@ -11298,7 +11298,6 @@ function AnalysisPageView({
                   </Text>
                 </Group>
                 <Progress
-                  color="teal"
                   animated
                   value={
                     portableProgress.phase === "plots"
@@ -11405,7 +11404,7 @@ function AnalysisPageView({
             </Stack>
           </ScrollArea.Autosize>
           {canUpdatePortableSources ? (
-            <Alert color="teal">
+            <Alert color="var(--mantine-primary-color-6)">
               Updating adopts the new stable file version, rebuilds its scientific cache, and
               invalidates {portableSourceDecision?.affected_analyses ?? 0} dependent{" "}
               {(portableSourceDecision?.affected_analyses ?? 0) === 1

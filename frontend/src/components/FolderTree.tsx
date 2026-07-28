@@ -298,7 +298,7 @@ export function FolderTree({
               checked={checked}
               indeterminate={indeterminate}
               readOnly
-              color={complete ? "gray" : "teal"}
+              color={complete ? "gray" : "var(--mantine-primary-color-6)"}
               styles={
                 complete
                   ? {
@@ -323,7 +323,7 @@ export function FolderTree({
           <IconFolder
             size={16}
             stroke={1.5}
-            color="var(--mantine-color-teal-6)"
+            color="var(--mantine-primary-color-6)"
             style={{ flexShrink: 0 }}
           />
           <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
@@ -410,8 +410,8 @@ export function FolderTree({
                 style={{ borderRadius: 6 }}
               >
                 <Group gap={6}>
-                  <IconPlus size={14} color="var(--mantine-color-teal-6)" />
-                  <Text size="xs" c="teal.6" fw={500}>
+                  <IconPlus size={14} color="var(--mantine-primary-color-6)" />
+                  <Text size="xs" c="var(--mantine-primary-color-6)" fw={500}>
                     New folder
                   </Text>
                 </Group>

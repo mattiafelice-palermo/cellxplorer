@@ -96,7 +96,7 @@ export function RelatedAnalysesPopover({
           <ActionIcon
             size="sm"
             variant="subtle"
-            color={related.length === 0 ? "gray" : "teal"}
+            color={related.length === 0 ? "gray" : "var(--mantine-primary-color-6)"}
             disabled={related.length === 0}
             onClick={() => setOpened((v) => !v)}
             aria-label={label}
@@ -164,7 +164,7 @@ export function RelatedAnalysesPopover({
                                 <ActionIcon
                                   size="xs"
                                   variant="subtle"
-                                  color="teal"
+                                  color="var(--mantine-primary-color-6)"
                                   onClick={() =>
                                     onImport([{ kind: entry.kind, ref_id: entry.ref_id }])
                                   }
@@ -179,7 +179,7 @@ export function RelatedAnalysesPopover({
                             <Button
                               size="compact-xs"
                               variant="subtle"
-                              color="teal"
+                              color="var(--mantine-primary-color-6)"
                               mt={2}
                               onClick={() =>
                                 onImport(
@@ -196,7 +196,7 @@ export function RelatedAnalysesPopover({
                       <Button
                         size="compact-xs"
                         variant="light"
-                        color="teal"
+                        color="var(--mantine-primary-color-6)"
                         disabled={analysis.entries.every((e) => e.alreadyHere)}
                         onClick={() =>
                           onImport(

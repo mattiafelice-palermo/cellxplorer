@@ -94,7 +94,8 @@ or unpushed.
 
 ## Persistent user data
 
-By default all user state is under `%USERPROFILE%\.cellxplorer`:
+Stable user state defaults to `%USERPROFILE%\.cellxplorer`; Beta user state defaults to
+`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly:
 
 - `cellxplorer.db`: canonical SQLite database
 - `cache/`: versioned Parquet caches
@@ -222,6 +223,7 @@ Cellxplorer/
 │       ├── app_channel.rs          Stable/Beta identity helpers (Spec 021)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
 │       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
+│       ├── relaunch.rs             Parent-process-aware desktop relaunch helper
 │       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend
 ├── README.md                       Project overview and quick-start commands

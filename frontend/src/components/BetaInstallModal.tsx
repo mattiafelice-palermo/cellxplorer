@@ -124,7 +124,7 @@ export function BetaInstallModal({
                   Close
                 </Button>
                 {!unavailable ? (
-                  <Button color="teal" onClick={onRetryCheck}>
+                  <Button color="betaBlue" onClick={onRetryCheck}>
                     Try again
                   </Button>
                 ) : null}
