@@ -1,0 +1,15 @@
+{
+  "version": "0.17.0-beta.1",
+  "notes": "- Add separate Stable and Beta application identities, isolated Beta data, channel-specific signed updates, and explicit Stable-owned Beta installation.",
+  "pub_date": "2026-07-28T07:14:14.294Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVZxbmpRS1VDdFpjY0tHTGMxWm52TTY0SmhMMTk0VG9tUk5QamFWU3MxbnlWTkRlS282QkcvemFja2ZLMU9sMTJKcDlEZUhmWGFpU2wvVzZlcFNqRVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjIyODQ4CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKVnN4UTFhc0o0N25DTmhwNnFYRmYvNmk0REtUZUxqb0crRlJXT2ZGWUVxZXdMbGZZL1JocXdrdkt6OVkvemc3aFA5Ri9xQnI5OFJzYjFmZklCRTh4QXc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492409699"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVZxbmpRS1VDdFpjY0tHTGMxWm52TTY0SmhMMTk0VG9tUk5QamFWU3MxbnlWTkRlS282QkcvemFja2ZLMU9sMTJKcDlEZUhmWGFpU2wvVzZlcFNqRVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjIyODQ4CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKVnN4UTFhc0o0N25DTmhwNnFYRmYvNmk0REtUZUxqb0crRlJXT2ZGWUVxZXdMbGZZL1JocXdrdkt6OVkvemc3aFA5Ri9xQnI5OFJzYjFmZklCRTh4QXc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492409699"
+    }
+  }
+}
