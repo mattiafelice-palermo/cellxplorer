@@ -87,11 +87,16 @@ class AppChannelConfigurationTests(unittest.TestCase):
 
     def test_nsis_hooks_scope_process_cleanup_to_install_dir(self):
         hooks = (ROOT / "src-tauri" / "nsis-hooks.nsh").read_text(encoding="utf-8")
-        self.assertIn("StartsWith", hooks)
+        helper = (
+            ROOT / "src-tauri" / "kill_installation_processes.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("kill_installation_processes.ps1", hooks)
+        self.assertIn("StartsWith", helper)
         self.assertIn("$INSTDIR", hooks)
-        self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", hooks)
-        self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)
-        self.assertNotIn("/IM cellxplorer.exe", hooks)
+        combined = hooks + helper
+        self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", combined)
+        self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", combined)
+        self.assertNotIn("/IM cellxplorer.exe", combined)
 
     def test_stable_and_beta_updater_endpoints_are_channel_specific(self):
         stable = json.loads(STABLE_CONF.read_text(encoding="utf-8"))

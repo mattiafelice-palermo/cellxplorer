@@ -90,10 +90,9 @@ class FrontendChannelStampTests(unittest.TestCase):
 class NsisProcessCleanupTests(unittest.TestCase):
     def test_hooks_kill_by_install_dir_not_image_name(self):
         hooks = NSIS_HOOKS.read_text(encoding="utf-8")
-        self.assertIn("StartsWith", hooks)
         self.assertIn("$INSTDIR", hooks)
-        self.assertIn("AddSeconds(10)", hooks)
-        self.assertIn("$remaining.Count", hooks)
+        self.assertIn("kill_installation_processes.ps1", hooks)
+        self.assertIn("-File", hooks)
         self.assertIn("Abort", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", hooks)
         self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", hooks)

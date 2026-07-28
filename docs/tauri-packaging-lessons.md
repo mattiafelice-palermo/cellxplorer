@@ -132,11 +132,13 @@ same command with elevated sandbox permission, then continue the documented buil
   the icon from the target executable and cached it inconsistently across Start/taskbar.
   `src-tauri/nsis-hooks.nsh` rewrites Start/Desktop shortcuts after install with an explicit
   icon location: `$INSTDIR\cellxplorer.exe,0`.
-- Pre-install and pre-uninstall hooks mirror `kill_installation_processes.ps1`: they repeatedly stop
-  only processes whose executable path is under the exact `$INSTDIR`, wait up to ten seconds for
-  both PyInstaller backend processes to release their files, and abort before copying if anything
-  remains. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup — Stable and Beta
-  share executable image names but install to different folders.
+- Pre-install and pre-uninstall hooks embed and execute `kill_installation_processes.ps1` from
+  NSIS's private plugin directory. Keep the PowerShell logic in that script instead of a long
+  inline `-Command`: NSIS variable expansion can corrupt PowerShell variables. The script
+  repeatedly stops only processes whose executable path is under the exact `$INSTDIR`, waits up to
+  ten seconds for both PyInstaller backend processes to release their files, and aborts before
+  copying if anything remains. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup —
+  Stable and Beta share executable image names but install to different folders.
 
 ## PyInstaller backend entrypoint
 
