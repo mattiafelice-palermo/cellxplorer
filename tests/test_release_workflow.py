@@ -380,9 +380,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_channel_pointer_update_is_optimistic_and_preserves_other_channel(self):
         publish = self.release.split("Publish channel manifest pointer", 1)[1]
         self.assertIn("steps.channel_branch.outputs.target_sha", publish)
+        self.assertIn("steps.channel_branch.outputs.target_ref_sha", publish)
         self.assertIn("steps.channel_branch.outputs.other_sha", publish)
         self.assertIn("The target channel pointer changed", publish)
-        self.assertIn("The target channel pointer appeared after the release gate", publish)
+        self.assertIn("The release channel branch changed after the first-write gate", publish)
         self.assertIn("The non-target channel pointer changed", publish)
 
     def test_manual_dispatch_is_build_only(self):
