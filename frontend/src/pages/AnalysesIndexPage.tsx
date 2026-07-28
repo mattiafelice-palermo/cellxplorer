@@ -166,7 +166,7 @@ function PortableFolderTree({
   const draftRow = (depth: number) => (
     <Group gap={5} px="xs" py={4} wrap="nowrap" style={{ marginLeft: depth * 18 }}>
       <Box w={22} />
-      <IconFolder size={16} color="var(--mantine-color-teal-6)" />
+      <IconFolder size={16} color="var(--mantine-primary-color-6)" />
       <TextInput
         value={draftName}
         onChange={(event) => setDraftName(event.currentTarget.value)}
@@ -196,7 +196,7 @@ function PortableFolderTree({
           cursor: "pointer",
           borderRadius: 5,
           background:
-            value === String(folder.id) ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "transparent",
+            value === String(folder.id) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : "transparent",
         }}
       >
         <ActionIcon
@@ -216,7 +216,7 @@ function PortableFolderTree({
             <IconChevronRight size={14} />
           )}
         </ActionIcon>
-        <IconFolder size={16} color="var(--mantine-color-teal-6)" />
+        <IconFolder size={16} color="var(--mantine-primary-color-6)" />
         <Text size="sm" fw={value === String(folder.id) ? 650 : 400} truncate style={{ flex: 1 }}>
           {folder.name}
         </Text>
@@ -256,7 +256,7 @@ function PortableFolderTree({
         style={{
           cursor: "pointer",
           borderRadius: 5,
-          background: value === "none" ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : "transparent",
+          background: value === "none" ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : "transparent",
         }}
       >
         <Box w={22} />
@@ -632,7 +632,7 @@ export function AnalysesIndexPage() {
       </Text>
       {analyses.isLoading && !analyses.data ? (
         <Group justify="center" py="xl">
-          <Loader color="teal" />
+          <Loader />
         </Group>
       ) : analyses.isError && !analyses.data ? (
         <Alert color="red">Could not load the analysis database.</Alert>
@@ -717,7 +717,7 @@ export function AnalysesIndexPage() {
           {!portableFile ? (
             <Paper withBorder p="xl">
               <Stack align="center" gap="sm">
-                <IconFileImport size={28} color="var(--mantine-color-teal-6)" />
+                <IconFileImport size={28} color="var(--mantine-primary-color-6)" />
                 <div>
                   <Text ta="center" fw={700}>Choose a portable CellXplorer report</Text>
                   <Text ta="center" size="sm" c="dimmed">

@@ -336,7 +336,7 @@ export function PlaceInFoldersModal({
             <>
               <Box px="md" pt="md" pb="sm">
                 <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <ThemeIcon size={36} radius="md" variant="light" color="teal">
+                  <ThemeIcon size={36} radius="md" variant="light" color="var(--mantine-primary-color-6)">
                     <IconFolder size={22} />
                   </ThemeIcon>
                   <div style={{ minWidth: 0 }}>
@@ -375,13 +375,13 @@ export function PlaceInFoldersModal({
                         {item.kind === "cell" ? (
                           <IconBattery
                             size={18}
-                            color="var(--mantine-color-teal-6)"
+                            color="var(--mantine-primary-color-6)"
                             style={{ flexShrink: 0 }}
                           />
                         ) : (
                           <IconLayersIntersect
                             size={18}
-                            color="var(--mantine-color-teal-6)"
+                            color="var(--mantine-primary-color-6)"
                             style={{ flexShrink: 0 }}
                           />
                         )}
@@ -426,7 +426,7 @@ export function PlaceInFoldersModal({
             Cancel
           </Button>
           <Button
-            color="teal"
+            color="var(--mantine-primary-color-6)"
             h={38}
             fw={600}
             loading={save.isPending}
@@ -473,8 +473,8 @@ function StatusPill({ status }: { status: ReturnType<typeof placementItemStatus>
         styles={{
           root: {
             height: 26,
-            background: "var(--mantine-color-teal-1)",
-            color: "light-dark(#0B7285, var(--mantine-color-teal-8))",
+            background: "var(--mantine-primary-color-1)",
+            color: "var(--mantine-primary-color-8)",
             textTransform: "none",
             fontWeight: 500,
             fontSize: 12,

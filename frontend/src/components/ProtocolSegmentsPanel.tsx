@@ -322,7 +322,7 @@ function StepRow({
             multiline
             maw={320}
           >
-            <Text size="10px" ff="monospace" c="teal.7" truncate pl={12}>
+            <Text size="10px" ff="monospace" c="var(--mantine-primary-color-7)" truncate pl={12}>
               {condition.expression}
             </Text>
           </Tooltip>
@@ -440,7 +440,7 @@ function ProtocolGroupNode({
               {group.summary}
             </Text>
             {isBlock && (
-              <Badge size="xs" variant="light" color="teal" style={{ flexShrink: 0 }}>
+              <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)" style={{ flexShrink: 0 }}>
                 x{group.repeat_count}
               </Badge>
             )}
@@ -654,7 +654,7 @@ function SegmentSidePanel({
             {[...byProtocol.entries()].map(([signature, list]) => (
               <Box key={signature}>
                 <Group gap={6} align="baseline" mb={4}>
-                  <Text size="xs" fw={600} c="teal.7">
+                  <Text size="xs" fw={600} c="var(--mantine-primary-color-7)">
                     Protocol {protocolNumber(families, signature) ?? "—"}
                   </Text>
                   <Text size="10px" c="dimmed" ff="monospace">
@@ -675,7 +675,7 @@ function SegmentSidePanel({
                         p={6}
                         style={{
                           borderColor:
-                            segment.id === editingId ? "var(--mantine-color-teal-4)" : undefined,
+                            segment.id === editingId ? "var(--mantine-primary-color-4)" : undefined,
                         }}
                       >
                         {renaming === segment.id ? (
@@ -721,7 +721,7 @@ function SegmentSidePanel({
                               <ActionIcon
                                 size="xs"
                                 variant="subtle"
-                                color="teal"
+                                color="var(--mantine-primary-color-6)"
                                 onClick={() => onEdit(segment)}
                                 aria-label={`Edit ${segment.name}`}
                               >
@@ -1131,7 +1131,7 @@ function SegmentEditor({
       <Box>
         <Group justify="space-between" wrap="nowrap" mb={6}>
           <Group gap="xs" wrap="nowrap">
-            <Badge size="sm" variant="light" color="teal">
+            <Badge size="sm" variant="light" color="var(--mantine-primary-color-6)">
               {selected.length}/{allSteps.length} steps
             </Badge>
             {visibleSteps && (
@@ -1145,7 +1145,7 @@ function SegmentEditor({
               <Button
                 size="compact-xs"
                 variant="light"
-                color="teal"
+                color="var(--mantine-primary-color-6)"
                 disabled={visibleSteps.size === 0}
                 onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
               >
@@ -1242,11 +1242,11 @@ function SegmentEditor({
         </Box>
 
         {showSuggestions && (
-          <Paper p="xs" withBorder bg="light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))">
+          <Paper p="xs" withBorder bg="light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))">
             <Group align="end" wrap="nowrap">
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={6} mb={4}>
-                  <IconSparkles size={15} color="var(--mantine-color-teal-6)" />
+                  <IconSparkles size={15} color="var(--mantine-primary-color-6)" />
                   <Text size="xs" fw={700}>Suggested DCIR pairs</Text>
                 </Group>
                 <Select
@@ -1504,7 +1504,7 @@ export function ProtocolSegmentsPanel({
                 )}
               </Group>
               {subtitle && <Text size="xs" c="dimmed">{subtitle}</Text>}
-              {onlySegmentIds.length > 0 && <Text size="xs" c="teal">Use-only filter active</Text>}
+              {onlySegmentIds.length > 0 && <Text size="xs" c="var(--mantine-primary-color-6)">Use-only filter active</Text>}
             </Box>
           </Group>
           <Tooltip label={cellIds.length === 0 ? "Add analysis samples first" : "Create protocol segment"}>
@@ -1545,7 +1545,7 @@ export function ProtocolSegmentsPanel({
                           <ActionIcon
                             size="sm"
                             variant="subtle"
-                            color={effectivelyHidden ? "gray" : "teal"}
+                            color={effectivelyHidden ? "gray" : "var(--mantine-primary-color-6)"}
                             disabled={excluded || filteredByOnly}
                             onClick={() => onToggleHidden(segment.id)}
                             aria-label={hidden ? `Show ${segment.name}` : `Hide ${segment.name}`}
@@ -1560,7 +1560,7 @@ export function ProtocolSegmentsPanel({
                             <ActionIcon
                               size="sm"
                               variant="subtle"
-                              color={excluded ? "red" : "teal"}
+                              color={excluded ? "red" : "var(--mantine-primary-color-6)"}
                               onClick={() => onToggleExcluded(segment.id)}
                               aria-label={excluded ? `Include ${segment.name} in calculations` : `Exclude ${segment.name} from calculations`}
                             >
@@ -1571,7 +1571,7 @@ export function ProtocolSegmentsPanel({
                             <ActionIcon
                               size="sm"
                               variant={only ? "light" : "subtle"}
-                              color="teal"
+                              color="var(--mantine-primary-color-6)"
                               onClick={() => onUseOnly(only ? null : segment.id)}
                               aria-label={only ? "Clear use-only filter" : `Use only ${segment.name}`}
                             >

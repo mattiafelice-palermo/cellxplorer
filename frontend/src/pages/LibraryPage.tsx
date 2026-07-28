@@ -1398,10 +1398,10 @@ export function LibraryPage() {
         </Group>
         <Group gap="sm" justify="space-between" align="center" wrap="nowrap">
           <Group gap={8} align="center" wrap="nowrap">
-            <IconDatabase size={18} color="var(--mantine-color-teal-6)" />
+            <IconDatabase size={18} color="var(--mantine-primary-color-6)" />
             <Title order={4}>Cells</Title>
             {selectedCellIds.size > 0 && (
-              <Badge color="teal" variant="light">
+              <Badge color="var(--mantine-primary-color-6)" variant="light">
                 {selectedCellIds.size} selected
               </Badge>
             )}
@@ -1437,14 +1437,14 @@ export function LibraryPage() {
       <Stack gap="xs">
       {cells.isLoading ? (
         <Center h={360}>
-          <Loader color="teal" />
+          <Loader />
         </Center>
       ) : cells.isError && !cells.data ? (
         <Alert color="red">Could not load the cell library.</Alert>
       ) : allCells.length === 0 ? (
         <Paper withBorder p="lg">
           <Group gap="lg" align="start">
-            <IconDatabase size={34} color="var(--mantine-color-teal-6)" />
+            <IconDatabase size={34} color="var(--mantine-primary-color-6)" />
             <Stack gap={6}>
               <Text fw={700}>No cells in the library yet</Text>
               <Text size="sm" c="dimmed" maw={720}>
@@ -1606,7 +1606,7 @@ export function LibraryPage() {
                 pageCells.map((cell) => {
                   const cellGroups = groupsByCellId.get(cell.id) ?? [];
                   return (
-                  <Table.Tr key={cell.id} bg={selectedCellIds.has(cell.id) ? "teal.0" : undefined}>
+                  <Table.Tr key={cell.id} bg={selectedCellIds.has(cell.id) ? "var(--mantine-primary-color-0)" : undefined}>
                     <Table.Td>
                       <Checkbox
                         aria-label={`Select ${cell.name}`}
@@ -1722,7 +1722,7 @@ export function LibraryPage() {
                           : ""}
                       </Text>
                       {selectedCellIds.size > 0 && (
-                        <Text size="xs" c="teal">
+                        <Text size="xs" c="var(--mantine-primary-color-6)">
                           {selectedCellIds.size} selected
                         </Text>
                       )}
@@ -1772,7 +1772,7 @@ export function LibraryPage() {
         <Stack gap="xs" mt="xl">
           <Group justify="space-between" align="center" style={LIBRARY_STICKY_BAR_STYLE}>
             <Group gap={6}>
-              <IconLayersIntersect size={16} color="var(--mantine-color-teal-6)" />
+              <IconLayersIntersect size={16} color="var(--mantine-primary-color-6)" />
               <Title order={4}>Replicate groups</Title>
             </Group>
             <Group gap="xs">
@@ -2103,7 +2103,7 @@ export function LibraryPage() {
             </Button>
             <Button
               leftSection={editGroupCellIds.length === 0 ? <IconTrash size={16} /> : <IconDeviceFloppy size={16} />}
-              color={editGroupCellIds.length === 0 ? "red" : "teal"}
+              color={editGroupCellIds.length === 0 ? "red" : "var(--mantine-primary-color-6)"}
               disabled={!editGroupName.trim()}
               loading={editReplicateGroup.isPending || deleteReplicateGroup.isPending}
               onClick={saveGroupEdit}
@@ -2138,7 +2138,7 @@ export function LibraryPage() {
       >
         {detail.isLoading ? (
           <Center h={320}>
-            <Loader color="teal" />
+            <Loader />
           </Center>
         ) : detail.isError ? (
           <Alert color="red">Could not load this cell.</Alert>

@@ -114,7 +114,7 @@ function ReadOnlyStepRow({
         padding: "5px 8px",
         alignItems: "start",
         borderBottom: "1px solid var(--mantine-color-gray-1)",
-        background: highlighted ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
+        background: highlighted ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
       }}
     >
       <Text size="xs" c="dimmed" ff="monospace" mt={2}>
@@ -140,7 +140,7 @@ function ReadOnlyStepRow({
             key={`${condition.expression}-${index}`}
             size="10px"
             ff="monospace"
-            c="teal.7"
+            c="var(--mantine-primary-color-7)"
             truncate
             pl={12}
           >
@@ -162,7 +162,7 @@ function ReadOnlyStepRow({
       </Text>
       <Box mt={1}>
         {highlighted ? (
-          <Badge size="xs" variant="light" color="teal">
+          <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)">
             auto-selected
           </Badge>
         ) : null}
@@ -221,7 +221,7 @@ function ReadOnlyGroupNode({
               {group.summary}
             </Text>
             {isBlock && (
-              <Badge size="xs" variant="light" color="teal" style={{ flexShrink: 0 }}>
+              <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)" style={{ flexShrink: 0 }}>
                 x{group.repeat_count}
               </Badge>
             )}

@@ -150,7 +150,9 @@ Beta uses a distinct icon set:
 - preserve the exact CellXplorer icon geometry and transparency;
 - replace the stable teal brand pixels with pastel blue `#7DB7E8`;
 - preserve neutral, white and dark details;
-- do not add tiny text, a Greek beta symbol or another overlay that becomes unreadable at 16 px.
+- revised after installed Beta feedback: frames from 48 px upward show a high-contrast `BETA`
+  badge, while 16/24/32 px frames use a simplified high-contrast `B` rendered specifically for
+  each size.
 
 Required committed assets include all formats needed by the existing build:
 

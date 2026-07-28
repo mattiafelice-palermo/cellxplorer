@@ -268,7 +268,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
               <Button
                 size="compact-xs"
                 variant="light"
-                color="teal"
+                color={brandColor}
                 loading={setPause.isPending}
                 onClick={() => setPause.mutate(null)}
               >

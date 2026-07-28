@@ -8,7 +8,7 @@
 .protocolFlow[data-repeated="true"] {
   border-color: var(--mantine-color-gray-3);
   background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
-  box-shadow: inset 5px 0 0 var(--mantine-color-teal-5);
+  box-shadow: inset 5px 0 0 var(--mantine-primary-color-5);
   padding-left: 18px;
 }
 
@@ -34,13 +34,13 @@
 }
 
 .stepNode:hover {
-  border-color: var(--mantine-color-teal-4);
+  border-color: var(--mantine-primary-color-4);
   box-shadow: var(--mantine-shadow-xs);
   transform: translateY(-1px);
 }
 
 .stepNode:focus-visible {
-  outline: 2px solid var(--mantine-color-teal-5);
+  outline: 2px solid var(--mantine-primary-color-5);
   outline-offset: 2px;
 }
 

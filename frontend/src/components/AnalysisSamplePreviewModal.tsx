@@ -40,7 +40,7 @@ export function AnalysisSamplePreviewModal({
       size={selection?.kind === "cell" ? "90rem" : "xl"}
     >
       {activeQuery.isLoading ? (
-        <Center h={300}><Loader color="teal" /></Center>
+        <Center h={300}><Loader /></Center>
       ) : activeQuery.isError ? (
         <Alert color="red">Could not load this preview.</Alert>
       ) : selection?.kind === "cell" && cell.data ? (

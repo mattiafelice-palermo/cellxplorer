@@ -10,6 +10,8 @@ BUILD_SCRIPT = ROOT / "scripts" / "build-app.ps1"
 PACKAGE_JSON = ROOT / "package.json"
 NSIS = ROOT / "src-tauri" / "cellxplorer-installer.nsi"
 APP_UPDATES_RS = ROOT / "src-tauri" / "src" / "app_updates.rs"
+MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
+RELAUNCH_RS = ROOT / "src-tauri" / "src" / "relaunch.rs"
 
 
 def deep_merge(base: dict, overlay: dict) -> dict:
@@ -109,6 +111,89 @@ class AppChannelConfigurationTests(unittest.TestCase):
         nsis = NSIS.read_text(encoding="utf-8")
         self.assertIn("PRODUCTNAME", nsis)
         self.assertNotIn("CellXplorer Beta", nsis)
+
+    def test_nsis_branding_is_channel_specific(self):
+        nsis = NSIS.read_text(encoding="utf-8")
+        self.assertIn('!define CX_BRAND_RGB "3678B7"', nsis)
+        self.assertIn("!define CX_BRAND_COLORREF 0x00B77836", nsis)
+        self.assertIn('!define CX_BRAND_RGB "12B886"', nsis)
+        self.assertIn("!define CX_BRAND_COLORREF 0x0086B812", nsis)
+        self.assertGreaterEqual(nsis.count("${CX_BRAND_RGB}"), 8)
+        self.assertIn("${CX_BRAND_COLORREF}", nsis)
+        self.assertEqual(nsis.count('"12B886"'), 1)
+        self.assertEqual(nsis.count("0x0086B812"), 1)
+
+    def test_restart_helper_precedes_tauri_and_is_shared(self):
+        main = MAIN_RS.read_text(encoding="utf-8")
+        helper = RELAUNCH_RS.read_text(encoding="utf-8")
+        self.assertLess(
+            main.index("relaunch::run_if_requested()"),
+            main.index("tauri::generate_context!()"),
+        )
+        self.assertEqual(main.count("relaunch::schedule_relaunch()?"), 2)
+        self.assertIn("--relaunch-after-pid", helper)
+        self.assertIn("OpenProcess", helper)
+        self.assertIn("WaitForSingleObject", helper)
+        self.assertNotIn("Start-Sleep", main)
+        self.assertNotIn("AppHandle::restart()", main)
+
+    def test_beta_chrome_uses_channel_colors_without_redefining_semantic_teal(self):
+        main = (ROOT / "frontend" / "src" / "main.tsx").read_text(encoding="utf-8")
+        update_modal = (
+            ROOT / "frontend" / "src" / "components" / "AppUpdateModal.tsx"
+        ).read_text(encoding="utf-8")
+        beta_modal = (
+            ROOT / "frontend" / "src" / "components" / "BetaInstallModal.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("teal: [...betaBlue]", main)
+        self.assertGreaterEqual(update_modal.count("APP_BRANDING.primaryColor"), 7)
+        self.assertNotIn('color="teal"', update_modal)
+        self.assertNotIn('color="teal"', beta_modal)
+
+        chrome_only = [
+            "components/AnalysisDatabaseTable.tsx",
+            "components/AnalysisWorkspaceTabs.tsx",
+            "components/CellLibraryColumnMenu.tsx",
+            "components/CellSamplePopovers.tsx",
+            "components/CommandPalette.tsx",
+            "components/DcirPlotCard.tsx",
+            "components/FilenameTemplateEditor.tsx",
+            "components/FolderTree.module.css",
+            "components/FolderTree.tsx",
+            "components/RecognitionProgress.tsx",
+            "components/StepsPlotCard.tsx",
+        ]
+        for relative in chrome_only:
+            with self.subTest(relative=relative):
+                source = (
+                    ROOT / "frontend" / "src" / Path(relative)
+                ).read_text(encoding="utf-8")
+                self.assertNotIn("teal", source)
+
+        mixed_semantics = [
+            "pages/AnalysisPage.tsx",
+            "pages/InboxPage.tsx",
+            "pages/LibraryPage.tsx",
+            "pages/ProjectsPage.tsx",
+        ]
+        for relative in mixed_semantics:
+            with self.subTest(relative=relative):
+                source = (
+                    ROOT / "frontend" / "src" / Path(relative)
+                ).read_text(encoding="utf-8")
+                self.assertNotIn("--mantine-color-teal", source)
+                self.assertNotIn('"teal.0"', source)
+
+        protocol_segments = (
+            ROOT / "frontend" / "src" / "components" / "ProtocolSegmentsPanel.tsx"
+        ).read_text(encoding="utf-8")
+        protocol_viewer = (
+            ROOT / "frontend" / "src" / "components" / "ProtocolStructureViewer.tsx"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(protocol_segments.count("--mantine-color-teal"), 1)
+        self.assertEqual(protocol_viewer.count("--mantine-color-teal"), 1)
+        self.assertIn('charge: "var(--mantine-color-teal-6)"', protocol_segments)
+        self.assertIn('charge: "var(--mantine-color-teal-6)"', protocol_viewer)
 
     def test_nsis_destructive_uninstall_targets_channel_specific_data_root(self):
         nsis = NSIS.read_text(encoding="utf-8")

@@ -44,6 +44,40 @@ class BuildBetaIconsTests(unittest.TestCase):
             sizes = sorted(icon.info.get("sizes", [(icon.width, icon.height)]))
         self.assertEqual(sizes, [(16, 16), (24, 24), (32, 32), (48, 48), (256, 256)])
 
+    def test_beta_ico_preserves_size_specific_badges(self):
+        try:
+            from PIL import Image
+        except ImportError as error:
+            self.skipTest(f"Pillow is required for icon tests: {error}")
+
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("build_beta_icons_frames", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        base = module.recolor_icon(STABLE_ICON)
+
+        with Image.open(BETA_DIR / "icon.ico") as icon:
+            for size in module.ICO_SIZES:
+                with self.subTest(size=size):
+                    actual = icon.ico.getimage((size, size)).convert("RGBA")
+                    expected = module.render_size(base, size)
+                    self.assertEqual(actual.tobytes(), expected.tobytes())
+
+        tiny = module.render_size(base, 16)
+        large = module.render_size(base, 256)
+        badge = module.BADGE_RGB
+        count_badge = lambda image: sum(
+            image.getpixel((x, y))[:3] == badge
+            for y in range(image.height)
+            for x in range(image.width)
+        )
+        self.assertGreater(
+            count_badge(large),
+            count_badge(tiny),
+        )
+
     def test_beta_rgba_is_256_square(self):
         raw = (BETA_DIR / "icon-256.rgba").read_bytes()
         self.assertEqual(len(raw), 256 * 256 * 4)

@@ -245,7 +245,7 @@ function PlotSummary({
                 }}
                 style={{
                   borderRadius: 5,
-                  background: hoveredPlot?.id === plot.id ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
+                  background: hoveredPlot?.id === plot.id ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
                 }}
               >
                 <Text size="sm" fw={600}>{plot.name}</Text>
@@ -409,7 +409,7 @@ function HeaderMenu({
           {sorted ? (
             sort.direction === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />
           ) : filtered ? (
-            <IconFilter size={13} color="var(--mantine-color-teal-6)" />
+            <IconFilter size={13} color="var(--mantine-primary-color-6)" />
           ) : (
             <IconArrowsSort size={13} color="var(--mantine-color-gray-5)" />
           )}
@@ -665,7 +665,7 @@ export function AnalysisDatabaseTable({
         <Group gap="xs" wrap="nowrap">
           <Button
             variant={openOnly ? "light" : "default"}
-            color={openOnly ? "teal" : "gray"}
+            color={openOnly ? "var(--mantine-primary-color-6)" : "gray"}
             leftSection={<IconLayoutSidebarRight size={16} />}
             onClick={() => setOpenOnly((current) => !current)}
           >
@@ -778,7 +778,7 @@ export function AnalysisDatabaseTable({
                             aria-label="Sources updated"
                             w={7}
                             h={7}
-                            bg="teal.6"
+                            bg="var(--mantine-primary-color-6)"
                             style={{ borderRadius: "50%", flexShrink: 0 }}
                           />
                         </Tooltip>
@@ -791,7 +791,7 @@ export function AnalysisDatabaseTable({
                           <IconLayoutSidebarRight
                             aria-label="Open analysis"
                             size={15}
-                            color="var(--mantine-color-teal-6)"
+                            color="var(--mantine-primary-color-6)"
                             style={{ flexShrink: 0 }}
                           />
                         </Tooltip>
@@ -811,7 +811,7 @@ export function AnalysisDatabaseTable({
                         }}
                         style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%" }}
                       >
-                        <IconFolder size={14} color="var(--mantine-color-teal-6)" />
+                        <IconFolder size={14} color="var(--mantine-primary-color-6)" />
                         <Text size="sm" td="underline" truncate>{analysis.folder.name}</Text>
                       </UnstyledButton>
                     ) : <Text size="sm" c="dimmed">No folder</Text>}

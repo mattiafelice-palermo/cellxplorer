@@ -140,7 +140,7 @@ function Highlighted({ text, indices }: { text: string; indices: number[] }) {
     <>
       {highlightSegments(text, indices).map((segment, index) =>
         segment.matched ? (
-          <Text key={index} span fw={800} c="teal.7">
+          <Text key={index} span fw={800} c="var(--mantine-primary-color-7)">
             {segment.text}
           </Text>
         ) : (
@@ -387,11 +387,11 @@ export function CommandPalette({
                           borderRadius: 8,
                           cursor: "pointer",
                           background:
-                            index === active ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
+                            index === active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
                         }}
                       >
                         <Box
-                          c={index === active ? "teal.7" : "gray.6"}
+                          c={index === active ? "var(--mantine-primary-color-7)" : "gray.6"}
                           style={{ display: "flex", paddingTop: 2 }}
                         >
                           <KindIcon kind={item.kind} />
@@ -413,7 +413,7 @@ export function CommandPalette({
                               c="dimmed"
                               truncate="end"
                               pl={8}
-                              style={{ borderLeft: "2px solid var(--mantine-color-teal-2)" }}
+                              style={{ borderLeft: "2px solid var(--mantine-primary-color-2)" }}
                               mt={2}
                             >
                               <Highlighted text={line.text} indices={line.indices} />
@@ -426,7 +426,7 @@ export function CommandPalette({
                           )}
                         </Box>
                         {index === active && (
-                          <Badge size="xs" variant="light" color="teal" style={{ flexShrink: 0 }}>
+                          <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)" style={{ flexShrink: 0 }}>
                             Enter
                           </Badge>
                         )}

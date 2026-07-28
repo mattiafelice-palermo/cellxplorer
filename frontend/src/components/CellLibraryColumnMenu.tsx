@@ -143,7 +143,7 @@ export function CellLibraryColumnMenu({
               <IconChevronDown size={14} />
             )
           ) : filtered ? (
-            <IconFilter size={13} color="var(--mantine-color-teal-6)" />
+            <IconFilter size={13} color="var(--mantine-primary-color-6)" />
           ) : (
             <IconArrowsSort size={13} color="var(--mantine-color-gray-5)" />
           )}

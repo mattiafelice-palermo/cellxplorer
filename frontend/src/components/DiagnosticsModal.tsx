@@ -142,7 +142,7 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
               <Paper withBorder p="md">
                 <Group justify="space-between" mb="sm">
                   <Title order={5}>Services</Title>
-                  <IconHeartbeat size={18} color="var(--mantine-color-teal-6)" />
+                  <IconHeartbeat size={18} color="var(--mantine-primary-color-6)" />
                 </Group>
                 <Group gap="xs">
                   <HealthBadge ok={health.data ? health.data.backend.status === "ok" : undefined} label="Backend" />
@@ -166,7 +166,7 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
               <Paper withBorder p="md">
                 <Group justify="space-between" mb="sm">
                   <Title order={5}>Storage</Title>
-                  <IconDatabase size={18} color="var(--mantine-color-teal-6)" />
+                  <IconDatabase size={18} color="var(--mantine-primary-color-6)" />
                 </Group>
                 <Group gap="xs">
                   <HealthBadge ok={health.data?.storage.data_writable} label="Data writable" />
@@ -212,7 +212,7 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
                 <Text fw={600}>CPU utilization</Text>
                 <Text size="sm" c="dimmed">{resources.data ? `Uptime ${duration(resources.data.uptime_seconds)}` : "Sampling..."}</Text>
               </Group>
-              <Progress value={resources.data?.cpu_percent ?? 0} color="teal" />
+              <Progress value={resources.data?.cpu_percent ?? 0} />
             </Paper>
             <Paper withBorder p="md">
               <Group justify="space-between" mb="sm">

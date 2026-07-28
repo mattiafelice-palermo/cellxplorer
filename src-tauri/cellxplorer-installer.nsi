@@ -74,9 +74,15 @@ ${StrLoc}
 ; never infer from product-name substrings. Beta must never target .cellxplorer.
 !if "${BUNDLEID}" == "com.cellxplorer.desktop.beta"
   !define CX_PROFILE_DATA_DIR ".cellxplorer-beta"
+  !define CX_BRAND_RGB "3678B7"
+  ; Windows COLORREF: 0x00BBGGRR for #3678B7.
+  !define CX_BRAND_COLORREF 0x00B77836
 !else
   !if "${BUNDLEID}" == "com.cellxplorer.desktop"
     !define CX_PROFILE_DATA_DIR ".cellxplorer"
+    !define CX_BRAND_RGB "12B886"
+    ; Windows COLORREF: 0x00BBGGRR for #12B886.
+    !define CX_BRAND_COLORREF 0x0086B812
   !else
     !error "Unsupported CellXplorer bundle identifier for profile data directory: ${BUNDLEID}"
   !endif
@@ -241,12 +247,12 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   ${NSD_OnClick} ${VARIABLE} ${HANDLER}
 !macroend
 
-; Stepper chips: filled teal for done/current steps, outlined for upcoming.
+; Stepper chips: filled channel-primary for done/current steps, outlined for upcoming.
 !macro CxStepChipFilled X TEXT
   ${NSD_CreateLabel} ${X} 96u 4% 14u "${TEXT}"
   Pop $0
   ${NSD_AddStyle} $0 ${SS_CENTER}|${SS_CENTERIMAGE}
-  !insertmacro CxStyleText $0 "FFFFFF" "12B886" $CxStepFont
+  !insertmacro CxStyleText $0 "FFFFFF" "${CX_BRAND_RGB}" $CxStepFont
 !macroend
 
 !macro CxStepChipOutline X TEXT
@@ -421,7 +427,7 @@ Function PageReinstall
     ${NSD_CreateHLine} 0 250u 100% 1u ""
     Pop $0
     !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Back" CellXplorerNativeBack
-    !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "12B886" CellXplorerNativeNext
+    !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "${CX_BRAND_RGB}" CellXplorerNativeNext
 
     ${NSD_SetFocus} $R2
     nsDialogs::Show
@@ -648,7 +654,7 @@ FunctionEnd
 
 Function CxCreateStepperLocation
   !insertmacro CxStepChipFilled 23% "✓"
-  !insertmacro CxStepConnector 28% "12B886"
+  !insertmacro CxStepConnector 28% "${CX_BRAND_RGB}"
   !insertmacro CxStepChipFilled 48% "2"
   !insertmacro CxStepConnector 53% "D6DCE2"
   !insertmacro CxStepChipOutline 73% "3"
@@ -680,7 +686,7 @@ FunctionEnd
 
 ; The stock file-copy page positions its controls for the small default
 ; wizard window; restyle it to match the branded pages: white surface,
-; teal flat progress bar, and the native buttons pinned bottom-right.
+; channel-primary flat progress bar, and the native buttons pinned bottom-right.
 !macro CxStyleInstFilesBody HEADING SUBTITLE
   ; MUI re-shows its banner chrome when a stock page appears; put it away
   ; again (the wizard buttons 1/2/3 stay visible on this page).
@@ -775,7 +781,7 @@ FunctionEnd
   GetDlgItem $1 $0 1004
   System::Call 'user32::MoveWindow(p r1, i 0, i $8, i $5, i $9, i 1)'
   System::Call 'uxtheme::SetWindowTheme(p r1, w " ", w " ")'
-  SendMessage $1 0x0409 0 0x0086B812
+  SendMessage $1 0x0409 0 ${CX_BRAND_COLORREF}
   SendMessage $1 0x2001 0 0x00F5F3F1
 
   IntOp $8 214 * $4
@@ -869,7 +875,7 @@ Function CellXplorerWelcomePage
   ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
   !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Cancel" CellXplorerNativeCancel
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Continue" "${CX_BRAND_RGB}" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
@@ -943,14 +949,14 @@ Function CellXplorerInstallPage
   ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
   !insertmacro CxCreateSecondaryButton $CxSecondaryButton 0 262u 18% "Back" CellXplorerNativeBack
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Install" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Install" "${CX_BRAND_RGB}" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 
 Function CellXplorerPaintDesktopOption
   ${If} $CxDesktopState == ${BST_CHECKED}
     ${NSD_SetText} $CxDesktopMark "✓"
-    !insertmacro CxStyleText $CxDesktopMark "FFFFFF" "12B886" $CxBodyFont
+    !insertmacro CxStyleText $CxDesktopMark "FFFFFF" "${CX_BRAND_RGB}" $CxBodyFont
   ${Else}
     ${NSD_SetText} $CxDesktopMark ""
     !insertmacro CxStyleText $CxDesktopMark "FFFFFF" "FFFFFF" $CxBodyFont
@@ -969,7 +975,7 @@ FunctionEnd
 Function CellXplorerPaintStartupOption
   ${If} $CxStartupState == ${BST_CHECKED}
     ${NSD_SetText} $CxStartupMark "✓"
-    !insertmacro CxStyleText $CxStartupMark "FFFFFF" "12B886" $CxBodyFont
+    !insertmacro CxStyleText $CxStartupMark "FFFFFF" "${CX_BRAND_RGB}" $CxBodyFont
   ${Else}
     ${NSD_SetText} $CxStartupMark ""
     !insertmacro CxStyleText $CxStartupMark "FFFFFF" "FFFFFF" $CxBodyFont
@@ -1009,7 +1015,7 @@ FunctionEnd
 Function CellXplorerPaintLaunchOption
   ${If} $CxLaunchState == ${BST_CHECKED}
     ${NSD_SetText} $CxLaunchMark "✓"
-    !insertmacro CxStyleText $CxLaunchMark "FFFFFF" "12B886" $CxBodyFont
+    !insertmacro CxStyleText $CxLaunchMark "FFFFFF" "${CX_BRAND_RGB}" $CxBodyFont
   ${Else}
     ${NSD_SetText} $CxLaunchMark ""
     !insertmacro CxStyleText $CxLaunchMark "FFFFFF" "FFFFFF" $CxBodyFont
@@ -1062,7 +1068,7 @@ Function CellXplorerFinishPage
 
   ${NSD_CreateHLine} 0 250u 100% 1u ""
   Pop $0
-  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Finish" "12B886" CellXplorerNativeNext
+  !insertmacro CxCreatePrimaryButton $CxPrimaryButton 82% 262u 18% "Finish" "${CX_BRAND_RGB}" CellXplorerNativeNext
   nsDialogs::Show
 FunctionEnd
 

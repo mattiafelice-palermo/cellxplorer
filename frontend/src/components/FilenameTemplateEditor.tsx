@@ -123,8 +123,8 @@ export function FilenameTemplateEditor({
                 withRemoveButton
                 onRemove={() => removeToken(index)}
                 removeButtonProps={{ "aria-label": `Remove ${parts.tokens[index]}` }}
-                bg="light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))"
-                c="teal.8"
+                bg="light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
+                c="var(--mantine-primary-color-8)"
               >
                 {parts.tokens[index]}
               </Pill>

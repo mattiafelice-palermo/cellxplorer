@@ -269,7 +269,7 @@ function FolderImportSelectionModal({
             readOnly
             styles={{ input: { cursor: "pointer" } }}
           />
-          <IconFolder size={17} color="var(--mantine-color-teal-6)" />
+          <IconFolder size={17} color="var(--mantine-primary-color-6)" />
           <Text size="sm" fw={600} truncate>
             {node.name}
           </Text>
@@ -288,12 +288,12 @@ function FolderImportSelectionModal({
               py={4}
               px="xs"
               ml={(depth + 1) * 18}
-              bg={selected.has(key) ? "teal.0" : undefined}
+              bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
               style={{
                 cursor: "pointer",
                 borderRadius: 4,
                 outline:
-                  focusedKey === key ? "1px solid var(--mantine-color-teal-4)" : undefined,
+                  focusedKey === key ? "1px solid var(--mantine-primary-color-4)" : undefined,
               }}
               onClick={(event) =>
                 toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey)
@@ -401,7 +401,7 @@ function FolderImportSelectionModal({
                 {previewQuery.isPending ? (
                   <Center h={390}>
                     <Stack align="center" gap="xs">
-                      <Loader color="teal" size="sm" />
+                      <Loader size="sm" />
                       <Text size="xs" c="dimmed">
                         Generating preview
                       </Text>
@@ -634,12 +634,12 @@ function ImportFilesystemPickerModal({
                             wrap="nowrap"
                             px="xs"
                             py={6}
-                            bg={active ? "teal.0" : undefined}
+                            bg={active ? "var(--mantine-primary-color-0)" : undefined}
                             style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}
                           >
                             <Button
                               variant="subtle"
-                              color={active ? "teal" : "dark"}
+                              color={active ? "var(--mantine-primary-color-6)" : "dark"}
                               size="compact-sm"
                               leftSection={shortcutIcon(item)}
                               disabled={!item.available}
@@ -694,7 +694,7 @@ function ImportFilesystemPickerModal({
                     <Button
                       key={root.path}
                       variant="subtle"
-                      color={browseQuery.data?.current_path === root.path ? "teal" : "dark"}
+                      color={browseQuery.data?.current_path === root.path ? "var(--mantine-primary-color-6)" : "dark"}
                       size="compact-sm"
                       leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />}
                       justify="flex-start"
@@ -764,7 +764,7 @@ function ImportFilesystemPickerModal({
         <Paper withBorder p={0}>
           {browseQuery.isPending ? (
             <Center h={390}>
-              <Loader color="teal" />
+              <Loader />
             </Center>
           ) : browseQuery.isError ? (
             <Center h={390} px="lg">
@@ -824,7 +824,7 @@ function ImportFilesystemPickerModal({
                       wrap="nowrap"
                       px="sm"
                       py={7}
-                      bg={selected.has(entry.path) ? "teal.0" : undefined}
+                      bg={selected.has(entry.path) ? "var(--mantine-primary-color-0)" : undefined}
                       style={{
                         cursor: "pointer",
                         borderBottom: "1px solid var(--mantine-color-gray-2)",
@@ -838,7 +838,7 @@ function ImportFilesystemPickerModal({
                     >
                       <Checkbox checked={selected.has(entry.path)} readOnly />
                       {entry.kind === "folder" ? (
-                        <IconFolder size={17} color="var(--mantine-color-teal-6)" />
+                        <IconFolder size={17} color="var(--mantine-primary-color-6)" />
                       ) : (
                         <IconFile size={17} color="var(--mantine-color-gray-6)" />
                       )}
@@ -1384,7 +1384,7 @@ function ImportModal({
                           onDrop={(event) => handleDropOnGroup(event, group.id)}
                           style={{
                             borderColor: draft && group.staged_names.includes(draft.staged_name)
-                              ? "var(--mantine-color-teal-5)"
+                              ? "var(--mantine-primary-color-5)"
                               : undefined,
                           }}
                         >
@@ -1493,8 +1493,8 @@ function ImportModal({
                             style={{
                               cursor: "pointer",
                               borderColor:
-                                index === active ? "var(--mantine-color-teal-5)" : undefined,
-                              background: checked ? "light-dark(var(--mantine-color-teal-0), var(--mantine-color-teal-9))" : undefined,
+                                index === active ? "var(--mantine-primary-color-5)" : undefined,
+                              background: checked ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
                             }}
                             onClick={() => onActive(index)}
                           >
@@ -1518,7 +1518,7 @@ function ImportModal({
                                 {groups.length > 0 && (
                                   <Group gap={4}>
                                     {groups.map((group) => (
-                                      <Badge key={group.id} size="xs" color="teal" variant="light">
+                                      <Badge key={group.id} size="xs" color="var(--mantine-primary-color-6)" variant="light">
                                         {group.name}
                                       </Badge>
                                     ))}
@@ -1796,7 +1796,7 @@ function ImportModal({
                 <Paper withBorder p="xs" h={250}>
                   <Center h="100%">
                     <Stack align="center" gap="xs">
-                      <Loader color="teal" />
+                      <Loader />
                       <Text size="sm" c="dimmed">
                         Generating capacity preview
                       </Text>
@@ -1928,7 +1928,7 @@ function ImportModal({
             <Paper withBorder h={420}>
               <Center h="100%">
                 <Stack align="center" gap="xs">
-                  <Loader color="teal" />
+                  <Loader />
                   <Text size="sm" c="dimmed">
                     Loading raw data table
                   </Text>
@@ -2332,7 +2332,7 @@ export function InboxPage() {
       />
 
       {targetFolderId !== null && (
-        <Alert color="teal">
+        <Alert color="var(--mantine-primary-color-6)">
           Import target: {targetFolderName ?? `folder #${targetFolderId}`}. Imported cells will be
           filed in this folder.
         </Alert>
@@ -2340,7 +2340,7 @@ export function InboxPage() {
 
       <Paper withBorder p="lg">
         <Group gap="lg" align="start">
-          <IconFileImport size={34} color="var(--mantine-color-teal-6)" />
+          <IconFileImport size={34} color="var(--mantine-primary-color-6)" />
           <Stack gap={6}>
             <Text fw={700}>Start from Neware files</Text>
             <Text size="sm" c="dimmed" maw={720}>
