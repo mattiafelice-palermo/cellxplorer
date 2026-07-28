@@ -27,7 +27,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.17.0-beta.2"
+APP_VERSION = "0.17.0-beta.3"
 
 # Version of our derived per-cycle calculation code. Bump when the
 # calculation in services/calc.py changes meaning.

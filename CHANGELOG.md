@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.3 - 2026-07-28
+
+- Wait for install-directory processes and backend locks to clear before NSIS updates.
+- Let Beta reuse or replace an existing library with explicit version acknowledgment.
+
 ## 0.17.0-beta.2 - 2026-07-28
 
 - Use parent-process-aware relaunch for manual restart and Beta library copy apply.
