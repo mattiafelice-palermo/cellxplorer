@@ -91,7 +91,11 @@ class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: stri
   }
 }
 
-export default function App() {
+export default function App({
+  betaBootstrapGateRequired,
+}: {
+  betaBootstrapGateRequired: boolean;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -355,7 +359,10 @@ export default function App() {
   if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
       <>
-        <BetaBootstrapCoordinator backendReady={false} />
+        <BetaBootstrapCoordinator
+          backendReady={false}
+          gateRequiredOnLaunch={betaBootstrapGateRequired}
+        />
         <Group h="100vh" justify="center" p="xl">
           <Alert
             color="red"
@@ -476,7 +483,10 @@ export default function App() {
           databaseStatus.data?.compatible === true && !automationPause.data?.paused
         }
       />
-      <BetaBootstrapCoordinator backendReady={databaseStatus.data?.compatible === true} />
+      <BetaBootstrapCoordinator
+        backendReady={databaseStatus.data?.compatible === true}
+        gateRequiredOnLaunch={betaBootstrapGateRequired}
+      />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"

@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import APP_DATA_DIR, APP_VERSION, IMPORT_DIR
+from ..config import APP_DATA_DIR, APP_VERSION, IMPORT_DIR, INSTALL_INSTANCE_ID
 from ..models import Analysis, Cell, Folder, ReplicateGroup, SourceFile, Test
 from ..services.app_channel import resolve_app_channel, stable_default_data_root
 from ..services.database_identity import DATABASE_INSTANCE_ID_KEY
@@ -129,6 +129,9 @@ def read_marker(data_root: Path | None = None) -> dict[str, Any] | None:
     app_version = payload.get("appVersion")
     if app_version is not None and not isinstance(app_version, str):
         raise BetaBootstrapValidation("Beta setup metadata is invalid.")
+    install_instance_id = payload.get("installInstanceId")
+    if install_instance_id is not None and not isinstance(install_instance_id, str):
+        raise BetaBootstrapValidation("Beta setup metadata is invalid.")
     return payload
 
 
@@ -161,12 +164,23 @@ def write_marker(
         "schemaVersion": MARKER_SCHEMA_VERSION,
         "decision": decision,
         "appVersion": APP_VERSION,
+        "installInstanceId": INSTALL_INSTANCE_ID,
         "completedAt": _utc_now_iso(),
         "sourceDatabaseInstanceId": source_database_instance_id,
         "sourceSchemaRevision": source_schema_revision,
     }
     _atomic_write_json(marker_path(data_root), payload)
     return payload
+
+
+def _marker_acknowledges_current_install(marker: dict[str, Any] | None) -> bool:
+    if marker is None:
+        return False
+    if INSTALL_INSTANCE_ID is not None:
+        return marker.get("installInstanceId") == INSTALL_INSTANCE_ID
+    # Development and legacy launchers do not have an NSIS installation
+    # identity. Retain the previous per-version behavior in that environment.
+    return marker.get("appVersion") == APP_VERSION
 
 
 def imports_has_payload(import_dir: Path | None = None) -> bool:
@@ -181,8 +195,8 @@ def imports_has_payload(import_dir: Path | None = None) -> bool:
 
 def beta_is_pristine(db: Session, data_root: Path | None = None) -> bool:
     root = data_root or APP_DATA_DIR
-    if marker_path(root).exists():
-        return False
+    # The marker acknowledges a setup decision; it is not library content.
+    # Keep this definition aligned with the Rust activation safety check.
     if imports_has_payload(root / "imports"):
         return False
     counts = [
@@ -537,10 +551,8 @@ def build_status(db: Session) -> dict[str, Any]:
 
     pristine = beta_is_pristine(db) if setup_error is None else False
     stable = inspect_stable_database()
-    acknowledged_for_version = (
-        marker is not None and marker.get("appVersion") == APP_VERSION
-    )
-    needs_choice = setup_error is None and not acknowledged_for_version
+    acknowledged_for_install = _marker_acknowledges_current_install(marker)
+    needs_choice = setup_error is None and not acknowledged_for_install
 
     copy_blocking: str | None = None
     if not stable.compatible:
@@ -550,7 +562,7 @@ def build_status(db: Session) -> dict[str, Any]:
 
     if setup_error:
         setup_state = "blocked-error"
-    elif acknowledged_for_version:
+    elif acknowledged_for_install:
         setup_state = "complete"
     elif needs_choice:
         setup_state = "choice-required"
@@ -565,6 +577,9 @@ def build_status(db: Session) -> dict[str, Any]:
         "betaPristine": pristine,
         "betaHasExistingLibrary": not pristine,
         "acknowledgedAppVersion": marker.get("appVersion") if marker else None,
+        "acknowledgedInstallInstanceId": (
+            marker.get("installInstanceId") if marker else None
+        ),
         "stableDatabaseExists": stable.exists,
         "stableDatabaseCompatible": stable.compatible,
         "stableDatabasePath": str(stable.path),
@@ -579,7 +594,7 @@ def build_status(db: Session) -> dict[str, Any]:
 def start_empty_library(db: Session) -> dict[str, Any]:
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
-    if read_marker() is not None:
+    if _marker_acknowledges_current_install(read_marker()):
         raise BetaBootstrapConflict("Beta setup has already completed.")
     if not beta_is_pristine(db):
         raise BetaBootstrapConflict("Beta already contains library data and cannot be reset from here.")
@@ -588,7 +603,7 @@ def start_empty_library(db: Session) -> dict[str, Any]:
 
 
 def use_current_library(db: Session) -> dict[str, Any]:
-    """Keep the current Beta library and acknowledge this installed Beta version."""
+    """Keep the current Beta library and acknowledge this installation."""
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
 
@@ -614,8 +629,8 @@ def stage_stable_copy(
     if resolve_app_channel() != "beta":
         raise BetaBootstrapValidation("Beta bootstrap is only available in the Beta channel.")
     marker = read_marker()
-    if marker and marker.get("appVersion") == APP_VERSION:
-        raise BetaBootstrapConflict("Beta setup has already been completed for this version.")
+    if _marker_acknowledges_current_install(marker):
+        raise BetaBootstrapConflict("Beta setup has already been completed for this installation.")
     replace_existing_beta = not beta_is_pristine(db)
     if replace_existing_beta and not confirm_replace_existing_beta:
         raise BetaBootstrapConflict(

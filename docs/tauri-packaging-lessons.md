@@ -86,12 +86,37 @@ Do not replace this with a fixed sleep, `AppHandle::restart()`, or an unverified
 `Start-Process`; each can launch while the old single-instance resources still exist and leave the
 application closed. Keep both manual restart and Beta bootstrap on the same helper.
 
-The Beta library decision is acknowledged per application version, not forever. On the first
-startup of a newly installed Beta version, an inherited Beta library may be kept or explicitly
-replaced with a Stable snapshot. A genuinely new Beta installation instead offers Start clean or
-Copy Stable. Replacement staging records the user's overwrite choice; activation swaps the
+Beta activation validates the staged database checksum on a Tauri command thread before scheduling
+the relaunch. Do not put its 1 MiB streaming buffer, or another comparably large value, in a local
+stack array: the Windows command thread can exhaust its stack in `__chkstk` with exception
+`0xc00000fd`, terminating the shell before the relaunch helper is created and leaving the backend
+orphaned. Keep large validation buffers on the heap. When an apparent relaunch failure leaves the
+stage untouched, first check whether Windows recorded a pre-relaunch application crash.
+
+The Beta library decision is acknowledged per installation, not forever and not merely per
+application version. Every completed NSIS installer run records a fresh `InstallInstanceId` in the
+product's uninstall registry key. On the first startup after an install or reinstall, an inherited
+Beta library may be kept or explicitly replaced with a Stable snapshot, even when the reinstalled
+version number is unchanged. Repeated launches from that same installation do not ask again. A
+genuinely new Beta installation instead offers Start clean or Copy Stable. Development or legacy
+launchers without an installation identity retain per-version acknowledgement as a fallback.
+Replacement staging records the user's overwrite choice; activation swaps the
 database and managed-import tree with rollback on failure, and removes the old Beta copy only after
-success.
+success. A setup marker is acknowledgement metadata, not proof that the Beta library contains user
+data. Retry safety is determined from the live scientific tables and managed-import tree so a
+valid staged copy can still be activated after an interrupted attempt left an acknowledged but
+empty Beta library. Conversely, an older stage created while Beta was empty must not silently
+replace library data added afterward. The retry UI requires an explicit overwrite confirmation and
+passes that confirmation to both the pre-stop and post-stop Rust validation; without it, activation
+remains blocked. Preserve string errors returned by Tauri so this rejection is not collapsed into a
+generic copy failure.
+
+Before React renders, a narrow Tauri command compares the current NSIS `InstallInstanceId` with the
+local setup marker. A new install or reinstall therefore renders the blocking setup-check state
+until the backend safely confirms the available choices. An installation whose marker already
+acknowledges that exact ID performs the backend status check silently, so ordinary cold launches do
+not flash the setup loader. If the fast local check fails, fail closed and let the backend status
+request provide the actionable recovery UI.
 
 The shared NSIS template selects its brand constants from the exact bundle identifier:
 Stable uses `#12B886` and Beta uses `#3678B7`. Primary buttons, step indicators, connectors,
@@ -136,9 +161,25 @@ same command with elevated sandbox permission, then continue the documented buil
   NSIS's private plugin directory. Keep the PowerShell logic in that script instead of a long
   inline `-Command`: NSIS variable expansion can corrupt PowerShell variables. The script
   repeatedly stops only processes whose executable path is under the exact `$INSTDIR`, waits up to
-  ten seconds for both PyInstaller backend processes to release their files, and aborts before
-  copying if anything remains. Do **not** revert to shared `taskkill /IM cellxplorer.exe` cleanup —
-  Stable and Beta share executable image names but install to different folders.
+  ten seconds, and requires five consecutive process-free checks before copying. The quiet period
+  matters because Windows may remove a killed PyInstaller process from the process snapshot just
+  before releasing its executable image. It aborts if the installation does not remain quiet. The
+  helper must exclude its own ancestor chain: upgrade flows launch
+  `uninstall.exe` directly from `$INSTDIR` with `_?=`, and killing that ancestor causes the
+  already-installed/uninstall pages to loop without removing anything. On uninstall, run the
+  standard NSIS foreground-app check first and invoke the helper in backend-only mode; the custom
+  hook exists there only to reap orphaned PyInstaller processes. Do not probe executable locks by
+  opening Program Files binaries for read/write: an unelevated diagnostic gets access denied even
+  when no process owns the file, producing a false lock. Stable process disappearance across the
+  bounded quiet period is the completion condition. Do **not** revert to shared
+  `taskkill /IM cellxplorer.exe` cleanup — Stable and Beta
+  share executable image names but install to different folders.
+- An upgrade must not execute the previous release's registered `uninstall.exe`: that binary may
+  contain the exact packaging defect the new release is meant to repair. When the reinstall page
+  selects uninstall-before-install, defer the operation to the Install section, generate the
+  current setup's uninstaller under `$PLUGINSDIR` with `WriteUninstaller`, and run that temporary
+  executable against the registered installation directory using `_?=<install-dir>`. Wix
+  migrations remain on their `msiexec` uninstall path.
 
 ## PyInstaller backend entrypoint
 

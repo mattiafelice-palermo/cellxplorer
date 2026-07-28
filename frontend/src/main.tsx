@@ -12,6 +12,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import { APP_BRANDING } from "./appChannel";
+import { isTauriApp } from "./downloads";
 import { AppUpdateProvider } from "./components/AppUpdateCoordinator";
 import { BetaInstallProvider } from "./components/BetaInstallCoordinator";
 import { isTransientApiError } from "./apiRetryPolicy";
@@ -62,22 +63,38 @@ configureStartupQueryDefaults(queryClient);
 startupQueryPersistence.restore(queryClient);
 startupQueryPersistence.start(queryClient);
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <ColorSchemeScript defaultColorScheme="auto" />
-    <QueryClientProvider client={queryClient}>
-      <MantineProvider theme={theme} defaultColorScheme="auto">
-        <ModalsProvider>
-          <Notifications position="bottom-right" />
-          <BrowserRouter>
-            <AppUpdateProvider>
-              <BetaInstallProvider>
-                <App />
-              </BetaInstallProvider>
-            </AppUpdateProvider>
-          </BrowserRouter>
-        </ModalsProvider>
-      </MantineProvider>
-    </QueryClientProvider>
-  </React.StrictMode>
-);
+async function betaBootstrapGateRequired(): Promise<boolean> {
+  if (!APP_BRANDING.isBeta || !isTauriApp()) return false;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<boolean>("beta_bootstrap_gate_required");
+  } catch {
+    // Fail closed on the first render. The coordinator's backend status
+    // request provides the actionable error and recovery controls.
+    return true;
+  }
+}
+
+function renderApp(gateRequired: boolean): void {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <ColorSchemeScript defaultColorScheme="auto" />
+      <QueryClientProvider client={queryClient}>
+        <MantineProvider theme={theme} defaultColorScheme="auto">
+          <ModalsProvider>
+            <Notifications position="bottom-right" />
+            <BrowserRouter>
+              <AppUpdateProvider>
+                <BetaInstallProvider>
+                  <App betaBootstrapGateRequired={gateRequired} />
+                </BetaInstallProvider>
+              </AppUpdateProvider>
+            </BrowserRouter>
+          </ModalsProvider>
+        </MantineProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void betaBootstrapGateRequired().then(renderApp);

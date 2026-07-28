@@ -48,7 +48,9 @@ This performs the complete frontend, backend sidecar, and NSIS build. See
 
 Both editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
 kill only processes whose executable path is under the installation directory being changed — never
-by shared image name alone.
+by shared image name alone. After the last matching process disappears, the helper requires five
+consecutive quiet checks before NSIS overwrites binaries; this covers the short Windows image-release
+race without killing the other channel.
 
 **Data root:** Stable defaults to `%USERPROFILE%\.cellxplorer`; Beta defaults to
 `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly for tests and

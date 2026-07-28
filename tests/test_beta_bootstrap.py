@@ -58,6 +58,7 @@ class BetaBootstrapTests(unittest.TestCase):
             ),
             patch("app.services.beta_bootstrap.APP_DATA_DIR", self.beta_root),
             patch("app.services.beta_bootstrap.IMPORT_DIR", self.beta_root / "imports"),
+            patch("app.services.beta_bootstrap.INSTALL_INSTANCE_ID", "test-install"),
             patch("app.services.app_channel.resolve_app_channel", return_value="beta"),
             patch("app.services.beta_bootstrap.stable_library_root", return_value=self.stable_root),
         ]
@@ -146,6 +147,7 @@ class BetaBootstrapTests(unittest.TestCase):
             marker = beta_bootstrap.read_marker()
             self.assertEqual(marker["decision"], "empty")
             self.assertEqual(marker["appVersion"], beta_bootstrap.APP_VERSION)
+            self.assertEqual(marker["installInstanceId"], "test-install")
             status = beta_bootstrap.build_status(db)
             self.assertFalse(status["needsChoice"])
             self.assertEqual(status["decision"], "empty")
@@ -159,6 +161,35 @@ class BetaBootstrapTests(unittest.TestCase):
             beta_bootstrap.write_marker("empty")
             status = beta_bootstrap.build_status(db)
             self.assertFalse(status["needsChoice"])
+            self.assertTrue(status["betaPristine"])
+            self.assertFalse(status["betaHasExistingLibrary"])
+        finally:
+            db.close()
+
+    def test_reinstall_of_same_version_requires_a_new_choice(self):
+        db = self.beta_session()
+        try:
+            beta_bootstrap.write_marker("empty")
+            with patch(
+                "app.services.beta_bootstrap.INSTALL_INSTANCE_ID",
+                "replacement-install",
+            ):
+                status = beta_bootstrap.build_status(db)
+                self.assertTrue(status["needsChoice"])
+                self.assertEqual(status["acknowledgedAppVersion"], beta_bootstrap.APP_VERSION)
+                self.assertEqual(
+                    status["acknowledgedInstallInstanceId"],
+                    "test-install",
+                )
+
+                result = beta_bootstrap.start_empty_library(db)
+                self.assertEqual(result["decision"], "empty")
+                marker = beta_bootstrap.read_marker()
+                self.assertEqual(
+                    marker["installInstanceId"],
+                    "replacement-install",
+                )
+                self.assertFalse(beta_bootstrap.build_status(db)["needsChoice"])
         finally:
             db.close()
 
@@ -192,13 +223,14 @@ class BetaBootstrapTests(unittest.TestCase):
             )
             status = beta_bootstrap.build_status(db)
             self.assertTrue(status["needsChoice"])
-            self.assertTrue(status["betaHasExistingLibrary"])
+            self.assertFalse(status["betaHasExistingLibrary"])
             self.assertIsNone(status["acknowledgedAppVersion"])
 
             result = beta_bootstrap.use_current_library(db)
             self.assertEqual(result["decision"], "copied")
             marker = beta_bootstrap.read_marker()
             self.assertEqual(marker["appVersion"], beta_bootstrap.APP_VERSION)
+            self.assertEqual(marker["installInstanceId"], "test-install")
             self.assertEqual(marker["sourceDatabaseInstanceId"], "stable-id")
             self.assertFalse(beta_bootstrap.build_status(db)["needsChoice"])
         finally:

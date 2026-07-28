@@ -12,6 +12,10 @@ NSIS = ROOT / "src-tauri" / "cellxplorer-installer.nsi"
 APP_UPDATES_RS = ROOT / "src-tauri" / "src" / "app_updates.rs"
 MAIN_RS = ROOT / "src-tauri" / "src" / "main.rs"
 RELAUNCH_RS = ROOT / "src-tauri" / "src" / "relaunch.rs"
+BETA_BOOTSTRAP_RS = ROOT / "src-tauri" / "src" / "beta_bootstrap.rs"
+BETA_BOOTSTRAP_COORDINATOR = (
+    ROOT / "frontend" / "src" / "components" / "BetaBootstrapCoordinator.tsx"
+)
 
 
 def deep_merge(base: dict, overlay: dict) -> dict:
@@ -90,13 +94,30 @@ class AppChannelConfigurationTests(unittest.TestCase):
         helper = (
             ROOT / "src-tauri" / "kill_installation_processes.ps1"
         ).read_text(encoding="utf-8")
+        template = (
+            ROOT / "src-tauri" / "cellxplorer-installer.nsi"
+        ).read_text(encoding="utf-8")
         self.assertIn("kill_installation_processes.ps1", hooks)
         self.assertIn("StartsWith", helper)
+        self.assertIn("$protectedProcessIds", helper)
+        self.assertIn("ParentProcessId", helper)
+        self.assertIn("[switch]$BackendOnly", helper)
+        self.assertIn('-like "cellxplorer-backend*.exe"', helper)
+        self.assertIn("$quietChecksRequired = 5", helper)
+        self.assertIn("$quietChecks -lt $quietChecksRequired", helper)
+        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertNotIn("[System.IO.File]::Open", helper)
         self.assertIn("$INSTDIR", hooks)
         combined = hooks + helper
         self.assertNotIn("taskkill /F /T /IM cellxplorer.exe", combined)
         self.assertNotIn("taskkill /F /T /IM cellxplorer-backend.exe", combined)
         self.assertNotIn("/IM cellxplorer.exe", combined)
+        self.assertIn("Var RunCurrentUninstaller", template)
+        self.assertIn(
+            'WriteUninstaller "$PLUGINSDIR\\cellxplorer-current-uninstall.exe"',
+            template,
+        )
+        self.assertIn("StrCpy $RunCurrentUninstaller 1", template)
 
     def test_stable_and_beta_updater_endpoints_are_channel_specific(self):
         stable = json.loads(STABLE_CONF.read_text(encoding="utf-8"))
@@ -128,6 +149,16 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertEqual(nsis.count('"12B886"'), 1)
         self.assertEqual(nsis.count("0x0086B812"), 1)
 
+    def test_each_installer_run_records_a_new_installation_identity(self):
+        nsis = NSIS.read_text(encoding="utf-8")
+        main = MAIN_RS.read_text(encoding="utf-8")
+        rust = BETA_BOOTSTRAP_RS.read_text(encoding="utf-8")
+        self.assertIn("ole32::CoCreateGuid", nsis)
+        self.assertIn('"InstallInstanceId" "$CxInstallInstanceId"', nsis)
+        self.assertIn("current_beta_install_instance_id()", main)
+        self.assertIn('"CELLXPLORER_INSTALL_INSTANCE_ID"', main)
+        self.assertIn('"installInstanceId": install_instance_id', rust)
+
     def test_restart_helper_precedes_tauri_and_is_shared(self):
         main = MAIN_RS.read_text(encoding="utf-8")
         helper = RELAUNCH_RS.read_text(encoding="utf-8")
@@ -141,6 +172,46 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertIn("WaitForSingleObject", helper)
         self.assertNotIn("Start-Sleep", main)
         self.assertNotIn("AppHandle::restart()", main)
+
+    def test_beta_bootstrap_checksum_buffer_stays_off_tauri_thread_stack(self):
+        source = BETA_BOOTSTRAP_RS.read_text(encoding="utf-8")
+        self.assertIn("vec![0_u8; 1024 * 1024]", source)
+        self.assertNotIn("let mut buffer = [0_u8; 1024 * 1024]", source)
+
+    def test_retry_activation_requires_and_forwards_overwrite_confirmation(self):
+        main = MAIN_RS.read_text(encoding="utf-8")
+        rust = BETA_BOOTSTRAP_RS.read_text(encoding="utf-8")
+        frontend = BETA_BOOTSTRAP_COORDINATOR.read_text(encoding="utf-8")
+        self.assertIn("confirm_replace_existing_beta: bool", main)
+        self.assertIn("validate_staged_copy_for_activation", rust)
+        self.assertIn(
+            'invoke("apply_beta_bootstrap", { token, confirmReplaceExistingBeta })',
+            frontend,
+        )
+        self.assertIn("applyToken(token, hasExistingBeta && confirmReplace)", frontend)
+        self.assertIn("if (hasExistingBeta && !confirmReplace)", frontend)
+        self.assertNotIn(
+            "if (hasExistingBeta && !confirmReplace && !outstandingToken)",
+            frontend,
+        )
+        self.assertIn('typeof error === "string" && error.trim()', frontend)
+
+    def test_beta_first_render_gate_uses_the_installation_marker(self):
+        main = MAIN_RS.read_text(encoding="utf-8")
+        frontend_main = (ROOT / "frontend" / "src" / "main.tsx").read_text(
+            encoding="utf-8"
+        )
+        coordinator = BETA_BOOTSTRAP_COORDINATOR.read_text(encoding="utf-8")
+        self.assertIn("beta_bootstrap_gate_required", main)
+        self.assertIn("marker_acknowledges_install", main)
+        self.assertIn(
+            'invoke<boolean>("beta_bootstrap_gate_required")',
+            frontend_main,
+        )
+        self.assertIn(
+            "gateRequiredOnLaunch || devMock === \"loading\"",
+            coordinator,
+        )
 
     def test_beta_chrome_uses_channel_colors_without_redefining_semantic_teal(self):
         main = (ROOT / "frontend" / "src" / "main.tsx").read_text(encoding="utf-8")

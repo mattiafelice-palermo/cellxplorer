@@ -20,6 +20,7 @@ const availableStatus: BetaBootstrapStatus = {
   betaPristine: true,
   betaHasExistingLibrary: false,
   acknowledgedAppVersion: null,
+  acknowledgedInstallInstanceId: null,
   stableDatabaseExists: true,
   stableDatabaseCompatible: true,
   stableDatabasePath: "C:\\Users\\example\\.cellxplorer\\cellxplorer.db",
@@ -45,7 +46,7 @@ test("bootstrap UI is beta-only and requires Tauri or dev mock", () => {
   assert.equal(shouldShowBetaBootstrapUi("beta", false, "available"), true);
 });
 
-test("installed Beta stays gated while status loads or errors", () => {
+test("installed Beta checks silently while loading and gates confirmed errors or choices", () => {
   assert.equal(
     resolveBetaBootstrapSetupState({
       enabled: true,
@@ -84,7 +85,8 @@ test("installed Beta stays gated while status loads or errors", () => {
     }),
     "complete",
   );
-  assert.equal(betaBootstrapGateOpen("loading"), true);
+  assert.equal(betaBootstrapGateOpen("loading"), false);
+  assert.equal(betaBootstrapGateOpen("loading", true), true);
   assert.equal(betaBootstrapGateOpen("blocked-error"), true);
   assert.equal(betaBootstrapGateOpen("complete"), false);
   assert.equal(betaBootstrapGateOpen("inactive"), false);

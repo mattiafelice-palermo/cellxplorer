@@ -130,8 +130,15 @@ export function resolveBetaBootstrapSetupState(args: {
   return "complete";
 }
 
-export function betaBootstrapGateOpen(state: BetaBootstrapSetupState | "inactive"): boolean {
-  return state === "loading" || state === "choice-required" || state === "blocked-error";
+export function betaBootstrapGateOpen(
+  state: BetaBootstrapSetupState | "inactive",
+  showLoadingPreview = false,
+): boolean {
+  return (
+    state === "choice-required" ||
+    state === "blocked-error" ||
+    (showLoadingPreview && state === "loading")
+  );
 }
 
 export function copyStableLibraryDisabled(

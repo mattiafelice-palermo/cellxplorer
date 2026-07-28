@@ -16,6 +16,7 @@ pub const IMPORTS_ROLLBACK_NAME: &str = "imports.bootstrap-rollback";
 pub const LOCK_NAME: &str = ".stage-copy.lock";
 pub const LIVE_DB_NAME: &str = "cellxplorer.db";
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const MARKER_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 struct ImportInventoryEntry {
@@ -74,6 +75,37 @@ pub enum ApplyPhase {
     ActivationFailed,
 }
 
+pub fn marker_acknowledges_install(
+    beta_root: &Path,
+    install_instance_id: Option<&str>,
+    app_version: &str,
+) -> bool {
+    let Ok(body) = fs::read_to_string(beta_root.join(MARKER_NAME)) else {
+        return false;
+    };
+    let Ok(marker) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return false;
+    };
+    if marker.get("schemaVersion").and_then(|value| value.as_u64())
+        != Some(MARKER_SCHEMA_VERSION as u64)
+    {
+        return false;
+    }
+    if !matches!(
+        marker.get("decision").and_then(|value| value.as_str()),
+        Some("copied" | "empty" | "current")
+    ) {
+        return false;
+    }
+    if let Some(install_instance_id) = install_instance_id {
+        return marker
+            .get("installInstanceId")
+            .and_then(|value| value.as_str())
+            == Some(install_instance_id);
+    }
+    marker.get("appVersion").and_then(|value| value.as_str()) == Some(app_version)
+}
+
 pub fn validate_stage_token(token: &str) -> Result<(), TokenValidationError> {
     if token.is_empty() {
         return Err(TokenValidationError::Empty);
@@ -102,7 +134,10 @@ pub fn token_error_message(error: TokenValidationError) -> String {
 fn sha256_file(path: &Path) -> Result<(String, u64), String> {
     let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    // This runs on a Tauri command thread whose Windows stack is small enough
+    // that a 1 MiB local array terminates the process in __chkstk. Keep the
+    // large streaming buffer on the heap.
+    let mut buffer = vec![0_u8; 1024 * 1024];
     let mut total = 0_u64;
     loop {
         let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
@@ -255,9 +290,10 @@ fn sqlite_integrity_ok(db_path: &Path) -> Result<(), String> {
 }
 
 pub fn live_beta_is_pristine(beta_root: &Path) -> Result<(), String> {
-    if beta_root.join(MARKER_NAME).is_file() {
-        return Err("Beta setup has already completed.".to_string());
-    }
+    // A setup marker records the user's decision, not library content. In
+    // particular, an interrupted activation can leave a valid staged copy
+    // beside an acknowledged but still-empty Beta library. The actual
+    // database and managed-import tree remain the overwrite safety boundary.
     if imports_has_payload(&beta_root.join("imports")) {
         return Err("Beta already contains imported source files.".to_string());
     }
@@ -302,7 +338,11 @@ fn collect_staged_files(stage_imports: &Path) -> Result<BTreeMap<String, PathBuf
     Ok(found)
 }
 
-pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePaths, String> {
+fn resolve_and_verify_stage_with_confirmation(
+    beta_root: &Path,
+    token: &str,
+    confirm_replace_existing_beta: bool,
+) -> Result<StagePaths, String> {
     validate_stage_token(token).map_err(token_error_message)?;
     fs::create_dir_all(beta_root).map_err(|error| error.to_string())?;
     let stage_dir = beta_root.join(BOOTSTRAP_SUBDIR).join(token);
@@ -374,7 +414,7 @@ pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePa
         }
     }
 
-    if !manifest.replace_existing_beta {
+    if !manifest.replace_existing_beta && !confirm_replace_existing_beta {
         live_beta_is_pristine(beta_root)?;
     }
 
@@ -387,8 +427,13 @@ pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePa
     })
 }
 
+pub fn resolve_and_verify_stage(beta_root: &Path, token: &str) -> Result<StagePaths, String> {
+    resolve_and_verify_stage_with_confirmation(beta_root, token, false)
+}
+
 pub fn write_bootstrap_marker(
     beta_root: &Path,
+    install_instance_id: Option<&str>,
     source_database_instance_id: Option<&str>,
     source_schema_revision: Option<&str>,
 ) -> Result<(), String> {
@@ -396,6 +441,7 @@ pub fn write_bootstrap_marker(
         "schemaVersion": 1,
         "decision": "copied",
         "appVersion": env!("CARGO_PKG_VERSION"),
+        "installInstanceId": install_instance_id,
         "completedAt": utc_now_iso(),
         "sourceDatabaseInstanceId": source_database_instance_id,
         "sourceSchemaRevision": source_schema_revision,
@@ -484,7 +530,11 @@ fn restore_imports(_beta_root: &Path, rollback_imports: &Path, live_imports: &Pa
     }
 }
 
-pub fn activate_staged_copy(beta_root: &Path, paths: &StagePaths) -> Result<(), String> {
+pub fn activate_staged_copy(
+    beta_root: &Path,
+    paths: &StagePaths,
+    install_instance_id: Option<&str>,
+) -> Result<(), String> {
     let live_db = beta_root.join(LIVE_DB_NAME);
     let rollback_db = beta_root.join(ROLLBACK_DB_NAME);
     let live_imports = beta_root.join("imports");
@@ -522,6 +572,7 @@ pub fn activate_staged_copy(beta_root: &Path, paths: &StagePaths) -> Result<(), 
         }
         if let Err(error) = write_bootstrap_marker(
             beta_root,
+            install_instance_id,
             paths.source_database_instance_id.as_deref(),
             paths.source_schema_revision.as_deref(),
         ) {
@@ -569,8 +620,16 @@ pub fn next_apply_phase(current: ApplyPhase, event: &str) -> Result<ApplyPhase, 
     }
 }
 
-pub fn validate_staged_copy(beta_root: &Path, token: &str) -> Result<StagePaths, String> {
-    resolve_and_verify_stage(beta_root, token)
+pub fn validate_staged_copy_for_activation(
+    beta_root: &Path,
+    token: &str,
+    confirm_replace_existing_beta: bool,
+) -> Result<StagePaths, String> {
+    resolve_and_verify_stage_with_confirmation(
+        beta_root,
+        token,
+        confirm_replace_existing_beta,
+    )
 }
 
 #[cfg(test)]
@@ -640,6 +699,16 @@ mod tests {
         write_manifest_with_replacement(stage_dir, token, db_path, imports, false);
     }
 
+    fn write_library_row(db_path: &Path) {
+        let connection = rusqlite::Connection::open(db_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS source_files(id INTEGER PRIMARY KEY);
+                 INSERT INTO source_files DEFAULT VALUES;",
+            )
+            .unwrap();
+    }
+
     #[test]
     fn rejects_invalid_tokens() {
         assert!(validate_stage_token("").is_err());
@@ -662,6 +731,40 @@ mod tests {
     }
 
     #[test]
+    fn setup_gate_acknowledges_only_the_current_installation() {
+        let (_dir, beta_root) = temp_root();
+        fs::write(
+            beta_root.join(MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"current","appVersion":"1.2.3","installInstanceId":"install-a"}"#,
+        )
+        .unwrap();
+
+        assert!(marker_acknowledges_install(
+            &beta_root,
+            Some("install-a"),
+            "1.2.3",
+        ));
+        assert!(!marker_acknowledges_install(
+            &beta_root,
+            Some("install-b"),
+            "1.2.3",
+        ));
+        assert!(marker_acknowledges_install(&beta_root, None, "1.2.3"));
+        assert!(!marker_acknowledges_install(&beta_root, None, "1.2.4"));
+    }
+
+    #[test]
+    fn corrupt_setup_marker_keeps_the_first_launch_gate_closed() {
+        let (_dir, beta_root) = temp_root();
+        fs::write(beta_root.join(MARKER_NAME), "{broken").unwrap();
+        assert!(!marker_acknowledges_install(
+            &beta_root,
+            Some("install-a"),
+            "1.2.3",
+        ));
+    }
+
+    #[test]
     fn rejects_tampered_staged_database_before_mutation() {
         let (_dir, beta_root) = temp_root();
         let token = "0123456789abcdef0123456789abcdef";
@@ -680,6 +783,39 @@ mod tests {
                 .filter(|_| true)
         );
         assert!(!beta_root.join(MARKER_NAME).exists());
+    }
+
+    #[test]
+    fn setup_marker_does_not_block_retry_for_an_empty_beta_library() {
+        let (_dir, beta_root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage_dir = beta_root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(&stage_dir).unwrap();
+        let staged_db = stage_dir.join(STAGED_DB_NAME);
+        write_sqlite_file(&staged_db, "staged");
+        write_manifest(&stage_dir, token, &staged_db, &[]);
+        fs::write(
+            beta_root.join(MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"empty"}"#,
+        )
+        .unwrap();
+
+        resolve_and_verify_stage(&beta_root, token)
+            .expect("an empty acknowledged library remains safe to replace");
+    }
+
+    #[test]
+    fn setup_marker_does_not_hide_real_beta_library_content() {
+        let (_dir, beta_root) = temp_root();
+        fs::write(
+            beta_root.join(MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"empty"}"#,
+        )
+        .unwrap();
+        write_library_row(&beta_root.join(LIVE_DB_NAME));
+
+        let error = live_beta_is_pristine(&beta_root).expect_err("library content must block");
+        assert!(error.contains("library data"));
     }
 
     #[test]
@@ -709,7 +845,8 @@ mod tests {
             source_database_instance_id: Some("stable-id".into()),
             source_schema_revision: Some("0012".into()),
         };
-        let error = activate_staged_copy(&beta_root, &paths).expect_err("marker dir");
+        let error =
+            activate_staged_copy(&beta_root, &paths, Some("test-install")).expect_err("marker dir");
         assert!(!error.is_empty());
         assert!(beta_root.join("imports/keep/sentinel.nda").is_file());
         assert!(!beta_root.join("imports/nested/one.nda").exists());
@@ -732,7 +869,7 @@ mod tests {
             &[("nested/sample.nda", b"payload")],
         );
         let paths = resolve_and_verify_stage(&beta_root, token).expect("validate");
-        activate_staged_copy(&beta_root, &paths).expect("activate");
+        activate_staged_copy(&beta_root, &paths, Some("test-install")).expect("activate");
         assert!(beta_root.join(MARKER_NAME).is_file());
         assert!(beta_root.join("imports/nested/sample.nda").is_file());
         assert!(!stage_dir.join(STAGED_DB_NAME).exists());
@@ -754,6 +891,24 @@ mod tests {
     }
 
     #[test]
+    fn explicit_retry_confirmation_allows_an_older_stage_to_replace_new_beta_data() {
+        let (_dir, beta_root) = temp_root();
+        let token = "0123456789abcdef0123456789abcdef";
+        let stage_dir = beta_root.join(BOOTSTRAP_SUBDIR).join(token);
+        fs::create_dir_all(&stage_dir).unwrap();
+        let staged_db = stage_dir.join(STAGED_DB_NAME);
+        write_sqlite_file(&staged_db, "staged");
+        write_manifest(&stage_dir, token, &staged_db, &[]);
+        write_library_row(&beta_root.join(LIVE_DB_NAME));
+
+        let error = validate_staged_copy_for_activation(&beta_root, token, false)
+            .expect_err("replacement requires explicit confirmation");
+        assert!(error.contains("library data"));
+        validate_staged_copy_for_activation(&beta_root, token, true)
+            .expect("the retry action explicitly confirmed replacement");
+    }
+
+    #[test]
     fn explicit_replacement_accepts_existing_beta_and_swaps_it_atomically() {
         let (_dir, beta_root) = temp_root();
         let token = "0123456789abcdef0123456789abcdef";
@@ -770,7 +925,8 @@ mod tests {
         .unwrap();
 
         let paths = resolve_and_verify_stage(&beta_root, token).expect("validate replacement");
-        activate_staged_copy(&beta_root, &paths).expect("activate replacement");
+        activate_staged_copy(&beta_root, &paths, Some("test-install"))
+            .expect("activate replacement");
 
         let connection = rusqlite::Connection::open(beta_root.join(LIVE_DB_NAME)).unwrap();
         let value: String = connection
@@ -781,6 +937,7 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(beta_root.join(MARKER_NAME)).unwrap()).unwrap();
         assert_eq!(marker["decision"], "copied");
         assert_eq!(marker["appVersion"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(marker["installInstanceId"], "test-install");
         assert!(!beta_root.join(ROLLBACK_DB_NAME).exists());
     }
 }

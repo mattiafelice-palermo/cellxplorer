@@ -2,6 +2,7 @@ import {
   Accordion,
   ActionIcon,
   Alert,
+  Autocomplete,
   Badge,
   Box,
   Button,
@@ -13,8 +14,10 @@ import {
   Modal,
   NumberInput,
   Paper,
+  Popover,
   Radio,
   ScrollArea,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -54,11 +57,20 @@ import {
 import {
   cRateExamples,
   FILTER_FIELDS,
+  isEnumFilterField,
+  operatorLabel,
   operatorsFor,
+  protocolFilterValueOptions,
   type StepFilter,
   stepMatches,
 } from "../protocolStepFilters";
 import { normalizeGroup } from "../protocolGroupNormalization";
+import {
+  adjacentStepsAroundMatches,
+  stepsInSameGroupsAsMatches,
+  type NeighbourDirection,
+  type NeighbourScope,
+} from "../protocolStepNeighbours";
 
 export { normalizeGroup } from "../protocolGroupNormalization";
 
@@ -906,20 +918,23 @@ function StepFilterBar({
   onQuery,
   filters,
   onFilters,
+  steps,
 }: {
   query: string;
   onQuery: (value: string) => void;
   filters: StepFilter[];
   onFilters: (filters: StepFilter[]) => void;
+  steps: ProtocolStep[];
 }) {
   const update = (id: string, patch: Partial<StepFilter>) =>
     onFilters(filters.map((f) => (f.id === id ? { ...f, ...patch } : f)));
 
   return (
     <Stack gap={6}>
-      <Group gap="xs" wrap="nowrap">
+      <Group gap="xs" wrap="nowrap" align="end">
         <TextInput
           size="xs"
+          label="Filters"
           placeholder="Search steps, rates, limits or conditions"
           value={query}
           onChange={(event) => onQuery(event.currentTarget.value)}
@@ -950,8 +965,10 @@ function StepFilterBar({
       </Group>
       {filters.map((filter) => {
         const field = FILTER_FIELDS.find((entry) => entry.value === filter.field);
+        const valueOptions = protocolFilterValueOptions(steps, filter.field);
+        const enumField = isEnumFilterField(filter.field);
         return (
-          <Group key={filter.id} gap={6} wrap="nowrap">
+          <Group key={filter.id} gap={6} wrap="nowrap" align="flex-end">
             <Select
               size="xs"
               w={132}
@@ -965,29 +982,55 @@ function StepFilterBar({
                 update(filter.id, {
                   field: next,
                   operator: allowed.includes(filter.operator) ? filter.operator : allowed[0],
+                  value: "",
                 });
               }}
             />
             <Select
               size="xs"
-              w={84}
-              data={operatorsFor(filter.field).map((op) => ({ value: op, label: op }))}
+              w={enumField ? 118 : 132}
+              data={operatorsFor(filter.field).map((op) => ({
+                value: op,
+                label: operatorLabel(op),
+              }))}
               value={filter.operator}
               onChange={(value) =>
                 value && update(filter.id, { operator: value as StepFilter["operator"] })
               }
             />
-            <TextInput
-              size="xs"
-              placeholder={field?.hint ?? "value"}
-              value={filter.value}
-              onChange={(event) => update(filter.id, { value: event.currentTarget.value })}
-              style={{ flex: 1 }}
-            />
+            {enumField && filter.operator !== "contains" ? (
+              <Select
+                size="xs"
+                placeholder={valueOptions.length === 0 ? "None in protocol" : "Choose value"}
+                searchable
+                nothingFoundMessage="No matching value"
+                disabled={valueOptions.length === 0}
+                data={valueOptions}
+                value={filter.value || null}
+                onChange={(value) => update(filter.id, { value: value ?? "" })}
+                comboboxProps={{ withinPortal: true }}
+                style={{ flex: 1 }}
+              />
+            ) : (
+              <Autocomplete
+                size="xs"
+                placeholder={
+                  enumField
+                    ? "Type or choose value"
+                    : field?.hint ?? "Type or choose value"
+                }
+                data={valueOptions}
+                value={filter.value}
+                onChange={(value) => update(filter.id, { value: value ?? "" })}
+                comboboxProps={{ withinPortal: true }}
+                style={{ flex: 1 }}
+              />
+            )}
             <ActionIcon
               size="sm"
               variant="subtle"
               color="gray"
+              mb={2}
               onClick={() => onFilters(filters.filter((f) => f.id !== filter.id))}
               aria-label="Remove filter"
             >
@@ -997,6 +1040,123 @@ function StepFilterBar({
         );
       })}
     </Stack>
+  );
+}
+
+function ShowNeighboursButton({
+  disabled,
+  matchSteps,
+  allSteps,
+  groups,
+  onShow,
+}: {
+  disabled: boolean;
+  matchSteps: Set<number>;
+  allSteps: number[];
+  groups: ProtocolGroup[];
+  onShow: (steps: Set<number>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [count, setCount] = useState(1);
+  const [direction, setDirection] = useState<NeighbourDirection>("both");
+  const [scope, setScope] = useState<NeighbourScope>("group");
+
+  return (
+    <Button.Group>
+      <Button
+        size="compact-xs"
+        variant="light"
+        color="var(--mantine-primary-color-6)"
+        disabled={disabled}
+        onClick={() => onShow(stepsInSameGroupsAsMatches(groups, matchSteps))}
+      >
+        Show neighbours
+      </Button>
+      <Popover
+        withinPortal
+        position="bottom-end"
+        shadow="md"
+        width={300}
+        opened={open}
+        onChange={setOpen}
+      >
+        <Popover.Target>
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="var(--mantine-primary-color-6)"
+            px={6}
+            disabled={disabled}
+            aria-label="Show neighbour options"
+            onClick={() => setOpen((value) => !value)}
+          >
+            <IconChevronDown size={14} />
+          </Button>
+        </Popover.Target>
+        <Popover.Dropdown>
+          <Stack gap="sm">
+            <Text size="xs" fw={600}>
+              Show steps that are
+            </Text>
+            <Group justify="space-between" wrap="nowrap" align="center">
+              <Text size="xs">Adjacent steps</Text>
+              <NumberInput
+                size="xs"
+                w={72}
+                min={1}
+                max={999}
+                allowDecimal={false}
+                value={count}
+                onChange={(value) => setCount(typeof value === "number" && value >= 1 ? value : 1)}
+              />
+            </Group>
+            <SegmentedControl
+              size="xs"
+              fullWidth
+              value={direction}
+              onChange={(value) => setDirection(value as NeighbourDirection)}
+              data={[
+                { label: "Before", value: "before" },
+                { label: "After", value: "after" },
+                { label: "Both", value: "both" },
+              ]}
+            />
+            <SegmentedControl
+              size="xs"
+              fullWidth
+              value={scope}
+              onChange={(value) => setScope(value as NeighbourScope)}
+              data={[
+                { label: "Within the same group", value: "group" },
+                { label: "All", value: "all" },
+              ]}
+            />
+            <Group justify="flex-end">
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="var(--mantine-primary-color-6)"
+                onClick={() => {
+                  onShow(
+                    adjacentStepsAroundMatches(
+                      allSteps,
+                      groups,
+                      matchSteps,
+                      count,
+                      direction,
+                      scope
+                    )
+                  );
+                  setOpen(false);
+                }}
+              >
+                Apply
+              </Button>
+            </Group>
+          </Stack>
+        </Popover.Dropdown>
+      </Popover>
+    </Button.Group>
   );
 }
 
@@ -1039,6 +1199,7 @@ function SegmentEditor({
   // own their own open state; the epoch changes the React key.
   const [expandAll, setExpandAll] = useState<boolean | null>(null);
   const [expandEpoch, setExpandEpoch] = useState(0);
+  const [shownNeighbours, setShownNeighbours] = useState<Set<number> | null>(null);
   const [suggestionId, setSuggestionId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   // Pin the choice once, rather than falling back to families[0] on every
@@ -1051,6 +1212,9 @@ function SegmentEditor({
     if (loading || activeSignature !== null || families.length === 0) return;
     setActiveSignature(families[0].signature);
   }, [loading, activeSignature, families]);
+  useEffect(() => {
+    setShownNeighbours(null);
+  }, [query, filters, activeSignature]);
   const activeFamily = families.find((f) => f.signature === activeSignature) ?? null;
   const count = targetCount(targets);
 
@@ -1127,6 +1291,10 @@ function SegmentEditor({
           })
         )
       : null;
+    const displaySteps =
+      filtering && visibleSteps && shownNeighbours
+        ? new Set([...visibleSteps, ...shownNeighbours])
+        : visibleSteps;
     return (
       <Box>
         <Group justify="space-between" wrap="nowrap" mb={6}>
@@ -1137,20 +1305,32 @@ function SegmentEditor({
             {visibleSteps && (
               <Text size="xs" c="dimmed">
                 {visibleSteps.size} match the filters
+                {displaySteps && displaySteps.size > visibleSteps.size
+                  ? ` · ${displaySteps.size} shown`
+                  : ""}
               </Text>
             )}
           </Group>
           <Group gap={6} wrap="nowrap">
             {visibleSteps && (
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="var(--mantine-primary-color-6)"
-                disabled={visibleSteps.size === 0}
-                onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
-              >
-                Select {visibleSteps.size} matching
-              </Button>
+              <>
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  color="var(--mantine-primary-color-6)"
+                  disabled={visibleSteps.size === 0}
+                  onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
+                >
+                  Select {visibleSteps.size} matching
+                </Button>
+                <ShowNeighboursButton
+                  disabled={visibleSteps.size === 0}
+                  matchSteps={visibleSteps}
+                  allSteps={allSteps}
+                  groups={groups}
+                  onShow={setShownNeighbours}
+                />
+              </>
             )}
             <Button
               size="compact-xs"
@@ -1172,7 +1352,7 @@ function SegmentEditor({
               selectedSet={selectedSet}
               byNumber={byNumber}
               family={family}
-              visibleSteps={visibleSteps}
+              visibleSteps={displaySteps}
               defaultOpen={expandAll ?? group.depth === 0}
               onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
             />
@@ -1181,7 +1361,7 @@ function SegmentEditor({
       </Box>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, activeFamily, targets, filters, query, expandEpoch, expandAll]);
+  }, [loading, activeFamily, targets, filters, query, expandEpoch, expandAll, shownNeighbours]);
 
   return (
     <Modal
@@ -1192,20 +1372,51 @@ function SegmentEditor({
       // slice taken out of the step table.
       size="min(1240px, calc(100vw - 3rem))"
       centered
+      styles={{
+        content: {
+          maxHeight: "calc(100dvh - 2rem)",
+          display: "flex",
+          flexDirection: "column",
+        },
+        body: {
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          overflow: "hidden",
+        },
+      }}
     >
-      <Group align="stretch" gap="sm" wrap="nowrap">
-      <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
+      <Group
+        align="stretch"
+        gap="sm"
+        wrap="nowrap"
+        style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
+      >
+      <Stack
+        gap="sm"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         <Box
-          // Keep the name field and the Add/Done actions in view while the
-          // step list scrolls — otherwise a long protocol scrolls them away.
+          // Keep segment controls, filters, and protocol picker visible while
+          // the step list scrolls inside the modal or its ScrollArea.
           style={{
             position: "sticky",
             top: 0,
             zIndex: 3,
             background: "var(--mantine-color-body)",
             paddingBottom: 8,
+            flexShrink: 0,
           }}
         >
+        <Stack gap="sm">
         <Group align="end" wrap="nowrap">
           <TextInput
             label="Segment name"
@@ -1239,7 +1450,6 @@ function SegmentEditor({
             </Button>
           </Group>
         </Group>
-        </Box>
 
         {showSuggestions && (
           <Paper p="xs" withBorder bg="light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))">
@@ -1311,12 +1521,31 @@ function SegmentEditor({
         )}
 
         <CapacityReference families={families} />
-        <StepFilterBar
-          query={query}
-          onQuery={setQuery}
-          filters={filters}
-          onFilters={setFilters}
-        />
+
+        <Group align="flex-start" wrap="nowrap" gap="sm">
+          <Box style={{ flex: 1, minWidth: 0 }}>
+            <StepFilterBar
+              query={query}
+              onQuery={setQuery}
+              filters={filters}
+              onFilters={setFilters}
+              steps={activeFamily?.protocol?.steps ?? []}
+            />
+          </Box>
+          {!loading && families.length > 0 && (
+            <>
+              <Divider orientation="vertical" style={{ alignSelf: "stretch" }} />
+              <Box style={{ flex: 1, minWidth: 0 }}>
+                <ProtocolPicker
+                  families={families}
+                  activeSignature={activeFamily?.signature ?? null}
+                  onSelect={setActiveSignature}
+                  targets={targets}
+                />
+              </Box>
+            </>
+          )}
+        </Group>
 
         {hasErrors && (
           <Alert color="yellow">Some cell protocols could not be loaded. Available families are still selectable.</Alert>
@@ -1326,14 +1555,6 @@ function SegmentEditor({
           <Group gap="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Loading cell protocols...</Text></Group>
         )}
 
-        {!loading && families.length > 0 && (
-          <ProtocolPicker
-            families={families}
-            activeSignature={activeFamily?.signature ?? null}
-            onSelect={setActiveSignature}
-            targets={targets}
-          />
-        )}
         <Group gap={6} wrap="nowrap">
           <Button
             size="compact-xs"
@@ -1356,8 +1577,14 @@ function SegmentEditor({
             Collapse all
           </Button>
         </Group>
+        </Stack>
+        </Box>
 
-        <ScrollArea h="min(52vh, 560px)" type="auto" offsetScrollbars style={{ flex: 1, minWidth: 0 }}>
+        <ScrollArea
+          type="auto"
+          offsetScrollbars
+          style={{ flex: 1, minHeight: 0 }}
+        >
           <Stack gap="md" pr="xs">
             {!loading && families.length === 0 && (
               <Alert color="gray">Add cells or replicates with protocol data before creating a segment.</Alert>
@@ -1374,8 +1601,17 @@ function SegmentEditor({
           </Stack>
         </ScrollArea>
       </Stack>
-      <Divider orientation="vertical" />
-      <Box style={{ width: 268, flexShrink: 0, display: "flex" }}>
+      <Divider orientation="vertical" style={{ alignSelf: "stretch" }} />
+      <Box
+        style={{
+          width: 268,
+          flexShrink: 0,
+          minHeight: 0,
+          alignSelf: "stretch",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
           <SegmentSidePanel
             segments={segments}
             families={families}

@@ -4,8 +4,12 @@ import test from "node:test";
 import type { ProtocolStep } from "../src/api.ts";
 import {
   cRateExamples,
+  formatCRate,
+  operatorLabel,
+  operatorsFor,
   parseCRate,
   parseDuration,
+  protocolFilterValueOptions,
   stepMatches,
   stepMatchesFilter,
 } from "../src/protocolStepFilters.ts";
@@ -104,7 +108,7 @@ test("cut-off falls back from the CC target to the CV hold voltage", () => {
   assert.ok(stepMatchesFilter(cv, filter("cutoff", "=", "3.65")));
 });
 
-test("conditions are searchable, which is how near-identical steps are told apart", () => {
+test("conditions match by exact expression", () => {
   const soc = step({
     number: 25,
     c_rate: 0.3335,
@@ -114,8 +118,60 @@ test("conditions are searchable, which is how near-identical steps are told apar
     ],
   });
   const plain = step({ number: 15, c_rate: 0.3335, stop_voltage_v: 2.8 });
+  assert.ok(stepMatchesFilter(soc, filter("condition", "=", "DischargeAh-0.5*User1")));
+  assert.ok(!stepMatchesFilter(plain, filter("condition", "=", "DischargeAh-0.5*User1")));
+  assert.ok(stepMatchesFilter(plain, filter("condition", "!=", "DischargeAh-0.5*User1")));
+});
+
+test("step type matches the displayed type label", () => {
+  const cc = step({ type: "CC charge" });
+  assert.ok(stepMatchesFilter(cc, filter("type", "=", "CC charge")));
+  assert.ok(!stepMatchesFilter(cc, filter("type", "=", "Rest")));
+  assert.ok(stepMatchesFilter(cc, filter("type", "!=", "Rest")));
+});
+
+test("type and condition filters expose equals, different than, and contains", () => {
+  assert.deepEqual(operatorsFor("type"), ["=", "!=", "contains"]);
+  assert.deepEqual(operatorsFor("condition"), ["=", "!=", "contains"]);
+  assert.deepEqual(operatorsFor("rate"), ["=", "!=", "<", "<=", ">", ">="]);
+  assert.ok(!operatorsFor("number").includes("contains"));
+  assert.equal(operatorLabel("="), "equals");
+  assert.equal(operatorLabel("!="), "different than");
+  assert.equal(operatorLabel("contains"), "contains");
+});
+
+test("type and condition support substring contains", () => {
+  const cc = step({ type: "CCCV charge" });
+  assert.ok(stepMatchesFilter(cc, filter("type", "contains", "charge")));
+  assert.ok(!stepMatchesFilter(cc, filter("type", "contains", "rest")));
+
+  const soc = step({
+    conditions: [
+      { expression: "DischargeAh-0.5*User1", name: "AhCount", value: 0, comparator_id: 4, jump_step: null },
+    ],
+  });
   assert.ok(stepMatchesFilter(soc, filter("condition", "contains", "User1")));
-  assert.ok(!stepMatchesFilter(plain, filter("condition", "contains", "User1")));
+  assert.ok(!stepMatchesFilter(step({}), filter("condition", "contains", "User1")));
+});
+
+test("protocol filter suggestions come from the active protocol only", () => {
+  const steps = [
+    step({ number: 1, type: "Rest", c_rate: null, stop_voltage_v: 2.8 }),
+    step({
+      number: 2,
+      type: "CC charge",
+      c_rate: 0.3335318,
+      conditions: [{ expression: "2.4*User1", name: "FC", value: null, comparator_id: null, jump_step: null }],
+    }),
+    step({ number: 3, type: "CC charge", c_rate: 1.5, stop_voltage_v: 3.65 }),
+  ];
+  assert.deepEqual(protocolFilterValueOptions(steps, "type"), ["CC charge", "Rest"]);
+  assert.deepEqual(protocolFilterValueOptions(steps, "condition"), ["2.4*User1"]);
+  assert.deepEqual(protocolFilterValueOptions(steps, "number"), ["1", "2", "3"]);
+  assert.ok(protocolFilterValueOptions(steps, "rate").includes(formatCRate(0.3335318)));
+  assert.ok(protocolFilterValueOptions(steps, "rate").includes("1.5C"));
+  assert.ok(protocolFilterValueOptions(steps, "cutoff").includes("2.8"));
+  assert.ok(protocolFilterValueOptions(steps, "cutoff").includes("3.65"));
 });
 
 test("filters combine with AND", () => {

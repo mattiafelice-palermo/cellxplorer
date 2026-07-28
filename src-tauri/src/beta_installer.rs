@@ -110,6 +110,27 @@ fn read_installed_version_from_registry() -> Option<String> {
 }
 
 #[cfg(windows)]
+pub fn current_beta_install_instance_id() -> Option<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    for hive in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let root = winreg::RegKey::predef(hive);
+        if let Some(value) = read_uninstall_value(&root, "InstallInstanceId") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub fn current_beta_install_instance_id() -> Option<String> {
+    None
+}
+
+#[cfg(windows)]
 fn resolve_beta_executable_from_registry() -> Option<PathBuf> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 

@@ -6,10 +6,10 @@
 ; 400 ms delay.
 !define CELLXPLORER_HOOK_SOURCE_DIR "${__FILEDIR__}"
 
-!macro KillInstallationProcesses
+!macro KillInstallationProcesses MODE_ARGUMENT
   InitPluginsDir
   File /oname=$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1 "${CELLXPLORER_HOOK_SOURCE_DIR}\kill_installation_processes.ps1"
-  nsExec::ExecToStack 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1" -InstallDir "$INSTDIR"'
+  nsExec::ExecToStack 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cellxplorer-kill-installation-processes.ps1" -InstallDir "$INSTDIR" ${MODE_ARGUMENT}'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -19,11 +19,14 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro KillInstallationProcesses
+  !insertmacro KillInstallationProcesses ""
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  !insertmacro KillInstallationProcesses
+  ; The active uninstaller itself runs from $INSTDIR. NSIS handles the main
+  ; application immediately before this hook; only reap orphaned PyInstaller
+  ; backend processes here so uninstall.exe can never become a cleanup target.
+  !insertmacro KillInstallationProcesses "-BackendOnly"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

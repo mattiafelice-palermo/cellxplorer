@@ -226,6 +226,7 @@ export interface BetaBootstrapStatus {
   betaPristine: boolean;
   betaHasExistingLibrary: boolean;
   acknowledgedAppVersion?: string | null;
+  acknowledgedInstallInstanceId?: string | null;
   stableDatabaseExists: boolean;
   stableDatabaseCompatible: boolean;
   stableDatabasePath: string;

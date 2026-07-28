@@ -24,7 +24,13 @@ import { isTauriApp } from "../downloads";
 
 type CoordinatorPhase = "idle" | "staging" | "applying" | "restarting" | "error";
 
-export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boolean }) {
+export function BetaBootstrapCoordinator({
+  backendReady,
+  gateRequiredOnLaunch,
+}: {
+  backendReady: boolean;
+  gateRequiredOnLaunch: boolean;
+}) {
   const queryClient = useQueryClient();
   const tauri = isTauriApp();
   const devMock = parseDevBetaBootstrapMock(window.location.search, import.meta.env.DEV);
@@ -52,7 +58,13 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
     statusLoading: !devMock && (!backendReady || statusQuery.isLoading || statusQuery.isFetching),
     statusError: !devMock && statusQuery.isError,
   });
-  const gateOpen = betaBootstrapGateOpen(setupState);
+  // Rust reads the local setup marker before React renders. A new installation
+  // stays blocked while the backend performs the full validation; an already
+  // acknowledged installation checks silently and never flashes this loader.
+  const gateOpen = betaBootstrapGateOpen(
+    setupState,
+    gateRequiredOnLaunch || devMock === "loading",
+  );
 
   const outstandingToken =
     retainedToken ?? status?.outstandingStageToken ?? null;
@@ -80,7 +92,10 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
     status?.applyFailureMessage ??
     null;
 
-  const applyToken = useCallback(async (token: string) => {
+  const applyToken = useCallback(async (
+    token: string,
+    confirmReplaceExistingBeta: boolean,
+  ) => {
     setPhase("applying");
     try {
       await post("/api/session/finish");
@@ -93,7 +108,7 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
     const { invoke } = await import("@tauri-apps/api/core");
     // After a successful invoke the process exits. A returned error here is a
     // pre-stop validation failure and remains retryable with the same token.
-    await invoke("apply_beta_bootstrap", { token });
+    await invoke("apply_beta_bootstrap", { token, confirmReplaceExistingBeta });
   }, []);
 
   const runCopyFlow = useCallback(async () => {
@@ -121,12 +136,14 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
       if (!token) {
         throw new Error("The staged copy token is missing.");
       }
-      await applyToken(token);
+      await applyToken(token, hasExistingBeta && confirmReplace);
     } catch (error) {
       const message =
         error instanceof Error && error.message.trim()
           ? error.message.trim()
-          : "Could not copy the Stable library.";
+          : typeof error === "string" && error.trim()
+            ? error.trim()
+            : "Could not copy the Stable library.";
       // If we already entered restarting, the backend may be gone — keep the
       // non-dismissible restart surface rather than offering a dead retry.
       if (phase === "restarting") {
@@ -332,7 +349,7 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
               <Button variant="default" onClick={() => void runUseCurrent()} disabled={busy}>
                 {hasExistingBeta ? "Use existing Beta library" : "Start clean"}
               </Button>
-              {hasExistingBeta && confirmReplace && !outstandingToken ? (
+              {hasExistingBeta && confirmReplace ? (
                 <Button
                   variant="default"
                   onClick={() => setConfirmReplace(false)}
@@ -344,7 +361,7 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
               <Button
                 color={hasExistingBeta && confirmReplace ? "red" : APP_BRANDING.primaryColor}
                 onClick={() => {
-                  if (hasExistingBeta && !confirmReplace && !outstandingToken) {
+                  if (hasExistingBeta && !confirmReplace) {
                     setConfirmReplace(true);
                     return;
                   }
@@ -353,7 +370,9 @@ export function BetaBootstrapCoordinator({ backendReady }: { backendReady: boole
                 disabled={copyDisabled}
               >
                 {outstandingToken
-                  ? "Retry activation"
+                  ? hasExistingBeta && confirmReplace
+                    ? "Replace Beta library"
+                    : "Retry activation"
                   : hasExistingBeta && confirmReplace
                     ? "Replace Beta library"
                     : "Copy Stable library"}

@@ -33,25 +33,118 @@ export const FILTER_FIELDS: {
   value: FilterField;
   label: string;
   numeric: boolean;
+  enumValues?: boolean;
   hint?: string;
 }[] = [
   { value: "number", label: "Step number", numeric: true },
-  { value: "type", label: "Step type", numeric: false, hint: "charge, rest, CCCV…" },
+  { value: "type", label: "Step type", numeric: false, enumValues: true },
   { value: "rate", label: "Rate (C)", numeric: true, hint: "0.33 or C/3 or 1.5C" },
   { value: "current", label: "Current (mA)", numeric: true },
   { value: "cutoff", label: "Cut-off (V)", numeric: true },
   { value: "until", label: "Until (C)", numeric: true, hint: "taper, e.g. C/20" },
   { value: "maxtime", label: "Max time", numeric: true, hint: "30s, 45min, 2h" },
-  { value: "condition", label: "Condition", numeric: false, hint: "User1, ChargeAh…" },
+  { value: "condition", label: "Condition", numeric: false, enumValues: true },
 ];
 
 const NUMERIC_OPERATORS: FilterOperator[] = ["=", "!=", "<", "<=", ">", ">="];
-const TEXT_OPERATORS: FilterOperator[] = ["contains", "=", "!="];
+const TEXT_OPERATORS: FilterOperator[] = ["=", "!=", "contains"];
+
+const OPERATOR_LABELS: Record<FilterOperator, string> = {
+  "=": "equals",
+  "!=": "different than",
+  "<": "less than",
+  "<=": "less than or equal",
+  ">": "greater than",
+  ">=": "greater than or equal",
+  contains: "contains",
+};
 
 export function operatorsFor(field: FilterField): FilterOperator[] {
-  return FILTER_FIELDS.find((entry) => entry.value === field)?.numeric
-    ? NUMERIC_OPERATORS
-    : TEXT_OPERATORS;
+  const entry = FILTER_FIELDS.find((item) => item.value === field);
+  if (entry?.enumValues) return TEXT_OPERATORS;
+  return NUMERIC_OPERATORS;
+}
+
+export function operatorLabel(operator: FilterOperator): string {
+  return OPERATOR_LABELS[operator];
+}
+
+function formatNumber(value: number): string {
+  return Number(value.toPrecision(8)).toString();
+}
+
+/** Match the C-rate labels shown on protocol rows. */
+export function formatCRate(value: number): string {
+  if (value >= 1) {
+    const rounded = Math.round(value);
+    if (rounded > 0 && Math.abs(value - rounded) / rounded <= 0.02) return `${rounded}C`;
+    return `${formatNumber(value)}C`;
+  }
+  if (value > 0) {
+    const reciprocal = 1 / value;
+    const standards = [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100];
+    const closest = standards.reduce((best, candidate) =>
+      Math.abs(candidate - reciprocal) < Math.abs(best - reciprocal) ? candidate : best
+    );
+    if (Math.abs(reciprocal - closest) / closest <= 0.08) {
+      return `C/${closest}`;
+    }
+    const rounded = Math.round(reciprocal);
+    if (rounded >= 2 && Math.abs(reciprocal - rounded) / rounded <= 0.02) return `C/${rounded}`;
+  }
+  return `${formatNumber(value)}C`;
+}
+
+function formatDurationLabel(seconds: number): string {
+  if (seconds >= 3600 && Math.abs(seconds % 3600) < 1e-9) return `${seconds / 3600}h`;
+  if (seconds >= 60 && Math.abs(seconds % 60) < 1e-9) return `${seconds / 60}min`;
+  return `${formatNumber(seconds)}s`;
+}
+
+function sortedUnique(values: string[], compare?: (a: string, b: string) => number): string[] {
+  const unique = [...new Set(values)];
+  unique.sort(compare ?? ((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+  return unique;
+}
+
+/** Values present in the active protocol, for enum and numeric filter pickers. */
+export function protocolFilterValueOptions(steps: ProtocolStep[], field: FilterField): string[] {
+  if (field === "type") {
+    return sortedUnique(steps.map((step) => step.type).filter(Boolean));
+  }
+  if (field === "condition") {
+    const expressions = steps.flatMap((step) =>
+      (step.conditions ?? []).map((condition) => condition.expression).filter(Boolean)
+    );
+    return sortedUnique(expressions);
+  }
+
+  const numericValues: number[] = [];
+  for (const step of steps) {
+    const value = numericValue(step, field);
+    if (value !== null) numericValues.push(value);
+  }
+  const unique = [...new Set(numericValues)];
+  unique.sort((a, b) => a - b);
+
+  switch (field) {
+    case "number":
+      return unique.map((value) => String(value));
+    case "rate":
+    case "until":
+      return unique.map((value) => formatCRate(value));
+    case "maxtime":
+      return unique.map((value) => formatDurationLabel(value));
+    case "current":
+    case "cutoff":
+      return unique.map((value) => formatNumber(value));
+    default:
+      return [];
+  }
+}
+
+export function isEnumFilterField(field: FilterField): boolean {
+  return Boolean(FILTER_FIELDS.find((entry) => entry.value === field)?.enumValues);
 }
 
 /**
@@ -124,16 +217,6 @@ function numericValue(step: ProtocolStep, field: FilterField): number | null {
   }
 }
 
-function textValue(step: ProtocolStep, field: FilterField): string {
-  if (field === "type") return `${step.type} ${step.direction}`;
-  if (field === "condition") {
-    return (step.conditions ?? [])
-      .map((condition) => `${condition.expression} ${condition.name ?? ""}`)
-      .join(" ");
-  }
-  return "";
-}
-
 function parseFilterValue(field: FilterField, raw: string): number | null {
   if (field === "rate" || field === "until") return parseCRate(raw);
   if (field === "maxtime") return parseDuration(raw);
@@ -202,11 +285,36 @@ export function stepMatchesFilter(step: ProtocolStep, filter: StepFilter): boole
     return compare(actual, filter.operator, expected, filter.field);
   }
 
-  const haystack = textValue(step, filter.field).toLowerCase();
-  const needle = filter.value.trim().toLowerCase();
-  if (filter.operator === "contains") return haystack.includes(needle);
-  if (filter.operator === "=") return haystack.split(/\s+/).includes(needle);
-  return !haystack.includes(needle);
+  const needle = filter.value.trim();
+  if (!needle) return true;
+
+  if (filter.field === "type") {
+    const actual = step.type.trim().toLowerCase();
+    const expected = needle.toLowerCase();
+    if (filter.operator === "=") return actual === expected;
+    if (filter.operator === "!=") return actual !== expected;
+    if (filter.operator === "contains") return actual.includes(expected);
+    return true;
+  }
+
+  if (filter.field === "condition") {
+    const expressions = (step.conditions ?? []).map((condition) =>
+      condition.expression.trim().toLowerCase()
+    );
+    const expected = needle.toLowerCase();
+    if (filter.operator === "=") {
+      return expressions.some((expression) => expression === expected);
+    }
+    if (filter.operator === "!=") {
+      return !expressions.some((expression) => expression === expected);
+    }
+    if (filter.operator === "contains") {
+      return expressions.some((expression) => expression.includes(expected));
+    }
+    return true;
+  }
+
+  return true;
 }
 
 /** Free-text search across everything a reader can see on the row. */

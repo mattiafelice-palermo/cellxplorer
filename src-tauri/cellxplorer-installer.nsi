@@ -117,6 +117,7 @@ Var CxBrandFont
 Var CxLaunchMark
 Var CxLaunchText
 Var CxEstimatedMb
+Var CxInstallInstanceId
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -298,6 +299,9 @@ Page custom CellXplorerInstallPage CellXplorerInstallLeave
 ; 4. Custom page to ask user if he wants to reinstall/uninstall
 ;    only if a previous installation was detected
 Var ReinstallPageCheck
+; Never rely on an older NSIS uninstaller to repair itself. The Install
+; section can generate the current setup's uninstaller under $PLUGINSDIR.
+Var RunCurrentUninstaller
 Page custom PageReinstall PageLeaveReinstall
 Function PageReinstall
   ; Uninstall previous WiX installation if exists.
@@ -486,12 +490,11 @@ Function PageLeaveReinstall
       ReadRegStr $R1 HKLM "$R6" "UninstallString"
       ExecWait '$R1' $0
     ${Else}
-      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-      ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-      ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
-      ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
-      StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
-      ExecWait '$R1' $0
+      ; Defer NSIS removal to the Install section, where WriteUninstaller can
+      ; produce a fresh uninstaller compiled from this setup.
+      StrCpy $RunCurrentUninstaller 1
+      BringToFront
+      Goto reinst_done
     ${EndIf}
 
     BringToFront
@@ -1426,6 +1429,33 @@ SectionEnd
 Section Install
   SetOutPath $INSTDIR
 
+  ${If} $RunCurrentUninstaller = 1
+    ; Generate the current setup's uninstaller rather than executing the
+    ; registered one, which may contain the defect this release repairs.
+    InitPluginsDir
+    WriteUninstaller "$PLUGINSDIR\cellxplorer-current-uninstall.exe"
+    ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    StrCpy $R1 "$\"$PLUGINSDIR\cellxplorer-current-uninstall.exe$\""
+    ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|}
+    StrCpy $R1 "$R1 _?=$4"
+
+    HideWindow
+    ClearErrors
+    ExecWait '$R1' $0
+    BringToFront
+    ${IfThen} ${Errors} ${|} StrCpy $0 2 ${|}
+
+    ${If} $0 <> 0
+    ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+      MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
+      Abort
+    ${EndIf}
+
+    ; The child removed the old directory. Restore the output path before
+    ; cleanup and file-copy instructions recreate it.
+    SetOutPath $INSTDIR
+  ${EndIf}
+
   !ifmacrodef NSIS_HOOK_PREINSTALL
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
@@ -1484,6 +1514,13 @@ Section Install
 
   ; Save current MAINBINARYNAME for future updates
   WriteRegStr SHCTX "${UNINSTKEY}" "MainBinaryName" "${MAINBINARYNAME}.exe"
+
+  ; Every completed installer run is a distinct installation, even when the
+  ; version is unchanged. Beta uses this value to ask how to handle an
+  ; inherited library on the first launch after a reinstall.
+  System::Call 'ole32::CoCreateGuid(g .s)'
+  Pop $CxInstallInstanceId
+  WriteRegStr SHCTX "${UNINSTKEY}" "InstallInstanceId" "$CxInstallInstanceId"
 
   ; Registry information for add/remove programs
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
@@ -1586,11 +1623,13 @@ FunctionEnd
 
 Section Uninstall
 
+  ; Let NSIS close the foreground application first. The custom hook that
+  ; follows is intentionally scoped to orphaned backend processes.
+  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
-
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Delete the app directory and its content from disk
   ; Copy main executable

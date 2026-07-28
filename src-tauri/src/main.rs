@@ -202,7 +202,11 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
+fn apply_beta_bootstrap(
+    app: AppHandle,
+    token: String,
+    confirm_replace_existing_beta: bool,
+) -> Result<(), String> {
     let channel = channel_for_app(&app)?;
     if channel != AppChannel::Beta {
         return Err("Beta bootstrap is only available in the Beta channel.".to_string());
@@ -210,7 +214,11 @@ fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
     let beta_root = app_data_dir_for_channel(channel);
 
     // Pre-stop validation may return to the frontend. Nothing is mutated yet.
-    let _ = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+    let _ = beta_bootstrap::validate_staged_copy_for_activation(
+        &beta_root,
+        &token,
+        confirm_replace_existing_beta,
+    )?;
 
     // Establish relaunch capability before stopping the backend or changing data.
     relaunch::schedule_relaunch()?;
@@ -223,8 +231,17 @@ fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
     // After backend stop this command must not return a retryable error to the
     // existing frontend. Always exit; the delayed relaunch recovers the app.
     match (|| {
-        let paths = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
-        beta_bootstrap::activate_staged_copy(&beta_root, &paths)?;
+        let paths = beta_bootstrap::validate_staged_copy_for_activation(
+            &beta_root,
+            &token,
+            confirm_replace_existing_beta,
+        )?;
+        let install_instance_id = beta_installer::current_beta_install_instance_id();
+        beta_bootstrap::activate_staged_copy(
+            &beta_root,
+            &paths,
+            install_instance_id.as_deref(),
+        )?;
         Ok::<(), String>(())
     })() {
         Ok(()) => {
@@ -237,6 +254,20 @@ fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
     }
     app.exit(0);
     Ok(())
+}
+
+#[tauri::command]
+fn beta_bootstrap_gate_required(app: AppHandle) -> Result<bool, String> {
+    let channel = channel_for_app(&app)?;
+    if channel != AppChannel::Beta {
+        return Ok(false);
+    }
+    let install_instance_id = beta_installer::current_beta_install_instance_id();
+    Ok(!beta_bootstrap::marker_acknowledges_install(
+        &app_data_dir_for_channel(channel),
+        install_instance_id.as_deref(),
+        &app.package_info().version.to_string(),
+    ))
 }
 
 #[tauri::command]
@@ -504,6 +535,7 @@ fn main() {
             beta_installer::install_beta,
             beta_installer::open_beta_application,
             apply_beta_bootstrap,
+            beta_bootstrap_gate_required,
             backend_api_base,
             is_autostart_enabled,
             is_main_window_visible,
@@ -527,7 +559,12 @@ fn main() {
             let backend_port = available_backend_port()?;
             app.manage(BackendEndpoint(format!("http://127.0.0.1:{backend_port}")));
             let version = app.package_info().version.to_string();
-            let sidecar = app
+            let install_instance_id = if app_channel == AppChannel::Beta {
+                beta_installer::current_beta_install_instance_id()
+            } else {
+                None
+            };
+            let mut sidecar = app
                 .shell()
                 .sidecar("cellxplorer-backend")?
                 .env("CELLXPLORER_PORT", backend_port.to_string())
@@ -538,6 +575,10 @@ fn main() {
                     "CELLXPLORER_DATA",
                     app_data_dir_for_channel(app_channel).to_string_lossy().to_string(),
                 );
+            if let Some(install_instance_id) = install_instance_id {
+                sidecar =
+                    sidecar.env("CELLXPLORER_INSTALL_INSTANCE_ID", install_instance_id);
+            }
             let (_rx, child) = sidecar.spawn()?;
             app.manage(BackendChild(Mutex::new(Some(child))));
 

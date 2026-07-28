@@ -99,10 +99,36 @@ class NsisProcessCleanupTests(unittest.TestCase):
 
     def test_kill_script_scopes_to_install_prefix(self):
         script = KILL_SCRIPT.read_text(encoding="utf-8")
+        hooks = NSIS_HOOKS.read_text(encoding="utf-8")
         self.assertIn("StartsWith($prefix", script)
         self.assertIn("AddSeconds(10)", script)
         self.assertIn("$remaining.Count", script)
+        self.assertIn("$protectedProcessIds", script)
+        self.assertIn("ParentProcessId", script)
+        self.assertIn("[switch]$BackendOnly", script)
+        self.assertIn('-like "cellxplorer-backend*.exe"', script)
+        self.assertIn("$quietChecksRequired = 5", script)
+        self.assertIn("$quietChecks -lt $quietChecksRequired", script)
+        self.assertIn('KillInstallationProcesses "-BackendOnly"', hooks)
+        self.assertNotIn("[System.IO.File]::Open", script)
         self.assertNotIn("/IM cellxplorer", script)
+
+        template = (
+            ROOT / "src-tauri" / "cellxplorer-installer.nsi"
+        ).read_text(encoding="utf-8")
+        uninstall_section = template.split("Section Uninstall", 1)[1].split(
+            "SectionEnd", 1
+        )[0]
+        self.assertLess(
+            uninstall_section.index("CheckIfAppIsRunning"),
+            uninstall_section.index("NSIS_HOOK_PREUNINSTALL"),
+        )
+        self.assertIn("Var RunCurrentUninstaller", template)
+        self.assertIn(
+            'WriteUninstaller "$PLUGINSDIR\\cellxplorer-current-uninstall.exe"',
+            template,
+        )
+        self.assertIn("StrCpy $RunCurrentUninstaller 1", template)
 
 
 if __name__ == "__main__":
