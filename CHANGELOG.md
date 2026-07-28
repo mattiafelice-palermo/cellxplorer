@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.1 - 2026-07-28
+
+- Add separate Stable and Beta application identities, isolated Beta data, channel-specific signed updates, and explicit Stable-owned Beta installation.
+
 ## 0.16.2-beta.1 - 2026-07-27
 
 - Beta release to exercise in-app beta update filtering and the signed updater path.

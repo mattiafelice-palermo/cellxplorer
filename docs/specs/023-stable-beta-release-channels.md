@@ -1,6 +1,6 @@
 # Spec 023: Separate Stable/Beta release feeds and Beta installation UX
 
-Status: **implemented — awaiting review**  
+Status: **review R1–R9 implemented; local R10 verification passed; remote/installed matrix pending**
 Repository: `mattiafelice-palermo/cellxplorer`  
 Target branch: `feature/stable-beta-app-identities` (Specs 021–023 release train)  
 Review document: `docs/specs/reviews/023-stable-beta-release-channels-review.md`
@@ -651,21 +651,21 @@ Document:
 
 ## 18. Acceptance checklist
 
-- [ ] Stable and Beta use separate fixed updater endpoints.
-- [ ] Stable standard updater can never install Beta.
-- [ ] Beta standard updater can never install Stable.
-- [ ] Beta releases are true GitHub prereleases.
-- [ ] Stable remains GitHub's normal latest release.
-- [ ] Stable opt-in means notification/installation of a separate Beta product.
-- [ ] Beta installation is explicit and uses a separate pending state/modal.
-- [ ] verified Beta installer launches without replacing Stable.
-- [ ] Stable does not manage an already installed Beta's updates.
-- [ ] channel manifests are atomically updated only after verification.
-- [ ] Stable/Beta artifact names, versions, signatures and URLs are validated.
+- [x] Stable and Beta use separate fixed updater endpoints. (configuration tests)
+- [x] Stable standard updater rejects non-Stable SemVer before pending-state replacement.
+- [x] Beta standard updater rejects non-Beta SemVer before pending-state replacement.
+- [x] Beta release workflow configuration uses true GitHub prereleases.
+- [x] Stable workflow configuration remains a normal release.
+- [x] Stable opt-in means notification/installation of a separate Beta product.
+- [x] Beta installation is explicit and uses a distinct pending-state newtype/modal.
+- [ ] verified Beta installer launches without replacing Stable. (installed matrix pending)
+- [x] Stable does not manage an already installed Beta's updates.
+- [x] channel manifest update is gated, optimistic, target-only, and post-verification.
+- [x] Stable/Beta artifact names, versions, signatures and URLs are validated by tests.
 - [ ] first Stable bootstrap from the old endpoint is proven.
 - [ ] both build-only workflow choices succeed.
 - [ ] full Stable/Beta install and update matrix passes.
-- [ ] final version/changelog/preflight are synchronized.
+- [x] version/changelog are synchronized at `0.17.0-beta.1`; no-cache preflight passed.
 - [ ] branch is re-reviewed before release tags are pushed.
 
 ## 19. Composer handoff

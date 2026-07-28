@@ -4,6 +4,7 @@ import {
   explainUpdateCheckFailure,
   mapTauriRelease,
   normalizeUpdaterError,
+  UPDATE_SCHEDULE_CHANGED_EVENT,
   type AppUpdateDownloadEvent,
   type AppUpdateRelease,
   type TauriUpdateReleaseResponse,
@@ -28,6 +29,7 @@ export type BetaInstallationInfo = {
 export type BetaInstallState =
   | { status: "idle" }
   | { status: "checking" }
+  | { status: "unavailable" }
   | { status: "available"; release: AppUpdateRelease }
   | {
       status: "downloading";
@@ -56,6 +58,10 @@ export function readBetaNotifiedVersion(storage: Pick<Storage, "getItem">): stri
 
 export function writeBetaNotifiedVersion(storage: Pick<Storage, "setItem">, version: string): void {
   storage.setItem(BETA_NOTIFIED_VERSION_KEY, version);
+}
+
+export function clearBetaNotifiedVersion(storage: Pick<Storage, "removeItem">): void {
+  storage.removeItem(BETA_NOTIFIED_VERSION_KEY);
 }
 
 export function shouldNotifyForBetaVersion(
@@ -94,6 +100,14 @@ export function getBetaInstallRelease(state: BetaInstallState): AppUpdateRelease
   return null;
 }
 
+export function isProtectedBetaInstallFlow(state: BetaInstallState): boolean {
+  return (
+    state.status === "downloading" ||
+    state.status === "launching" ||
+    (state.status === "error" && state.phase !== "check" && Boolean(state.release))
+  );
+}
+
 export function mergeBetaCheckResult(
   current: BetaInstallState,
   release: AppUpdateRelease | null,
@@ -117,6 +131,7 @@ export function mergeBetaCheckResult(
 export type BetaInstallAction =
   | { type: "check_started" }
   | { type: "check_success"; release: AppUpdateRelease | null }
+  | { type: "manual_no_release" }
   | { type: "check_error"; message: string }
   | { type: "download_started"; release: AppUpdateRelease }
   | { type: "download_event"; release: AppUpdateRelease; event: AppUpdateDownloadEvent }
@@ -125,6 +140,7 @@ export type BetaInstallAction =
   | { type: "install_error"; release: AppUpdateRelease; message: string }
   | { type: "installed"; installedVersion: string; executablePath: string }
   | { type: "reset_available"; release: AppUpdateRelease }
+  | { type: "preference_disabled" }
   | { type: "dismiss_check_error" };
 
 export function betaInstallReducer(state: BetaInstallState, action: BetaInstallAction): BetaInstallState {
@@ -148,6 +164,11 @@ export function betaInstallReducer(state: BetaInstallState, action: BetaInstallA
       }
       if (!action.release) return { status: "idle" };
       return { status: "available", release: action.release };
+    case "manual_no_release":
+      if (isProtectedBetaInstallFlow(state)) {
+        return state;
+      }
+      return { status: "unavailable" };
     case "check_error":
       if (
         state.status === "downloading" ||
@@ -199,6 +220,11 @@ export function betaInstallReducer(state: BetaInstallState, action: BetaInstallA
       };
     case "reset_available":
       return { status: "available", release: action.release };
+    case "preference_disabled":
+      if (isProtectedBetaInstallFlow(state)) {
+        return state;
+      }
+      return { status: "idle" };
     case "dismiss_check_error":
       if (state.status === "error" && state.phase === "check") {
         return { status: "idle" };
@@ -210,11 +236,67 @@ export function betaInstallReducer(state: BetaInstallState, action: BetaInstallA
 }
 
 export function canDismissBetaInstallModal(state: BetaInstallState): boolean {
-  if (state.status === "available") return true;
+  if (state.status === "available" || state.status === "unavailable") return true;
   if (state.status === "error") {
     return state.phase === "check";
   }
   return false;
+}
+
+type BetaScheduleHost = {
+  setTimeout: typeof window.setTimeout;
+  clearTimeout: typeof window.clearTimeout;
+  addEventListener: typeof window.addEventListener;
+  removeEventListener: typeof window.removeEventListener;
+};
+
+export function startBetaCheckSchedule(options: {
+  host: BetaScheduleHost;
+  intervalMs: number;
+  initialDelayMs: number;
+  runCheck: () => void;
+  now?: () => number;
+}): () => void {
+  const now = options.now ?? Date.now;
+  let timeout: number | undefined;
+  let nextDueAt = now() + options.initialDelayMs;
+
+  const cancel = () => {
+    if (timeout !== undefined) options.host.clearTimeout(timeout);
+    timeout = undefined;
+  };
+  const schedule = (): void => {
+    cancel();
+    timeout = options.host.setTimeout(() => {
+      options.runCheck();
+      nextDueAt = now() + options.intervalMs;
+      schedule();
+    }, Math.max(0, nextDueAt - now()));
+  };
+  // The Standard updater emits this event while recalculating its own schedule. Recreate our
+  // timer without moving Beta's due time, so equal-cadence Standard events cannot starve Beta.
+  const onScheduleChanged = () => schedule();
+
+  options.host.addEventListener(UPDATE_SCHEDULE_CHANGED_EVENT, onScheduleChanged);
+  schedule();
+
+  return () => {
+    cancel();
+    options.host.removeEventListener(UPDATE_SCHEDULE_CHANGED_EVENT, onScheduleChanged);
+  };
+}
+
+export async function finishSessionAndInstallBeta(options: {
+  finishSession: () => Promise<void>;
+  install: () => Promise<void>;
+  onSessionFinishError: (error: unknown) => void;
+}): Promise<void> {
+  try {
+    await options.finishSession();
+  } catch (error) {
+    options.onSessionFinishError(error);
+  }
+  await options.install();
 }
 
 export async function detectBetaInstallationTauri(): Promise<BetaInstallationInfo> {

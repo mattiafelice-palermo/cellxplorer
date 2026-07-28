@@ -28,6 +28,21 @@ The installer is created under `src-tauri\target\release\bundle\nsis`.
 See [`docs/local-development.md`](docs/local-development.md) for options, troubleshooting, and
 the manual fallback.
 
+## Stable and Beta editions
+
+CellXplorer is available as two separate Windows applications:
+
+- **CellXplorer** receives Stable updates and stores data under
+  `%USERPROFILE%\.cellxplorer`.
+- **CellXplorer Beta** is an opt-in preview application with separate Windows identity,
+  installation, updater, and `%USERPROFILE%\.cellxplorer-beta` data root.
+
+Stable can notify you when a Beta preview is available and, after explicit confirmation, launch
+the separate Beta installer. Installing Beta does not replace Stable or its library. Once Beta is
+installed, it updates itself from the Beta channel; Stable never updates the installed Beta copy.
+On Beta's first launch you choose whether to copy a safe snapshot of the Stable library or start
+empty. The two libraries remain independent afterward.
+
 ## Manual run
 
 ```bash
@@ -44,10 +59,11 @@ Optional demo dataset (synthetic cells, clearly named `DEMO-*`):
 python backend/seed_demo.py
 ```
 
-All app state lives in `%USERPROFILE%\.cellxplorer` (override with the
-`CELLXPLORER_DATA` environment variable): `cellxplorer.db` (SQLite) and
-`cache/` (Parquet, keyed by file hash + parser/calc versions). Raw Neware
-files stay wherever they are — referenced by content hash, never copied.
+Stable app state lives in `%USERPROFILE%\.cellxplorer`; Beta app state lives in
+`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root for development and
+tests. Each root contains `cellxplorer.db` (SQLite) and `cache/` (Parquet, keyed by file hash +
+parser/calc versions). Raw Neware files stay wherever they are — referenced by content hash,
+never copied, except app-managed imports selected for the explicit Stable-to-Beta snapshot.
 
 The SQLite schema is explicitly versioned. Existing databases are backed up
 under `backups/` and migrated before normal background services start; newer,

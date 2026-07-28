@@ -6,7 +6,10 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::app_channel::{AppChannel, BETA_CHANNEL_ENDPOINT, BETA_PRODUCT_NAME, STABLE_IDENTIFIER};
+use crate::app_channel::{
+    validate_release_version, AppChannel, BETA_CHANNEL_ENDPOINT, BETA_PRODUCT_NAME,
+    STABLE_IDENTIFIER,
+};
 use crate::app_updates::{
     apply_check_result, begin_download, finish_download_failure, finish_download_success,
     take_verified_install, AppUpdateDownloadEvent, AppUpdateRelease, PendingAppUpdate,
@@ -21,12 +24,30 @@ pub struct BetaInstallationInfo {
     pub executable_path: Option<String>,
 }
 
-/// Separate mutex state from the standard self-updater; struct shape matches `PendingAppUpdate`.
-pub type PendingBetaInstall = PendingAppUpdate;
+/// Distinct Tauri-managed state for Stable-owned first-time Beta installation.
+///
+/// This must remain a real newtype: Tauri keys managed state by concrete `TypeId`, and a type
+/// alias would collide with `Mutex<PendingAppUpdate>` used by the standard self-updater.
+#[derive(Default)]
+pub struct PendingBetaInstall {
+    inner: PendingAppUpdate,
+}
+
+impl PendingBetaInstall {
+    fn inner(&self) -> &PendingAppUpdate {
+        &self.inner
+    }
+
+    fn inner_mut(&mut self) -> &mut PendingAppUpdate {
+        &mut self.inner
+    }
+}
 
 fn require_stable_channel(app: &AppHandle) -> Result<(), String> {
     if app.config().identifier.as_str() != STABLE_IDENTIFIER {
-        return Err("CellXplorer Beta installation is only available from CellXplorer Stable.".to_string());
+        return Err(
+            "CellXplorer Beta installation is only available from CellXplorer Stable.".to_string(),
+        );
     }
     let _ = AppChannel::from_identifier(app.config().identifier.as_str())?;
     Ok(())
@@ -145,8 +166,8 @@ pub fn detect_beta_installation_info() -> BetaInstallationInfo {
 
 fn beta_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     let app_for_exit = app.clone();
-    let endpoint = url::Url::parse(BETA_CHANNEL_ENDPOINT)
-        .map_err(|error| user_safe_error(error))?;
+    let endpoint =
+        url::Url::parse(BETA_CHANNEL_ENDPOINT).map_err(|error| user_safe_error(error))?;
     app.updater_builder()
         .endpoints(vec![endpoint])
         .map_err(|error| user_safe_error(error))?
@@ -171,10 +192,10 @@ pub async fn check_beta_install(
     require_stable_channel(&app)?;
     let check_revision = {
         let pending = lock_pending(&state)?;
-        if pending.is_downloading() {
+        if pending.inner().is_downloading() {
             return Err(map_pending_error(PendingUpdateError::AlreadyDownloading));
         }
-        pending.revision()
+        pending.inner().revision()
     };
 
     let update = beta_updater(&app)?
@@ -182,8 +203,12 @@ pub async fn check_beta_install(
         .await
         .map_err(|error| user_safe_error(error))?;
 
+    if let Some(candidate) = update.as_ref() {
+        validate_release_version(AppChannel::Beta, &candidate.version)?;
+    }
+
     let mut pending = lock_pending(&state)?;
-    apply_check_result(&mut pending, check_revision, update).map_err(map_pending_error)
+    apply_check_result(pending.inner_mut(), check_revision, update).map_err(map_pending_error)
 }
 
 #[tauri::command]
@@ -194,9 +219,10 @@ pub async fn download_beta_install(
     state: State<'_, Mutex<PendingBetaInstall>>,
 ) -> Result<(), String> {
     require_stable_channel(&app)?;
+    validate_release_version(AppChannel::Beta, &expected_version)?;
     let (update, generation) = {
         let mut pending = lock_pending(&state)?;
-        begin_download(&mut pending, &expected_version).map_err(map_pending_error)?
+        begin_download(pending.inner_mut(), &expected_version).map_err(map_pending_error)?
     };
 
     let mut started = false;
@@ -218,7 +244,7 @@ pub async fn download_beta_install(
     let mut pending = lock_pending(&state)?;
     match download_result {
         Ok(bytes) => {
-            if !finish_download_success(&mut pending, generation, &expected_version, bytes) {
+            if !finish_download_success(pending.inner_mut(), generation, &expected_version, bytes) {
                 return Err(
                     "The pending CellXplorer Beta release changed while the download was in progress."
                         .to_string(),
@@ -227,7 +253,7 @@ pub async fn download_beta_install(
             Ok(())
         }
         Err(error) => {
-            finish_download_failure(&mut pending, generation);
+            finish_download_failure(pending.inner_mut(), generation);
             Err(user_safe_error(error))
         }
     }
@@ -240,21 +266,24 @@ pub fn install_beta(
     state: State<'_, Mutex<PendingBetaInstall>>,
 ) -> Result<(), String> {
     require_stable_channel(&app)?;
+    validate_release_version(AppChannel::Beta, &expected_version)?;
     let (update, bytes) = {
         let mut pending = lock_pending(&state)?;
-        take_verified_install(&mut pending, &expected_version).map_err(|error| match error {
-            PendingUpdateError::AlreadyDownloading => {
-                "A CellXplorer Beta download is still in progress.".to_string()
-            }
-            other => map_pending_error(other),
-        })?
+        take_verified_install(pending.inner_mut(), &expected_version).map_err(
+            |error| match error {
+                PendingUpdateError::AlreadyDownloading => {
+                    "A CellXplorer Beta download is still in progress.".to_string()
+                }
+                other => map_pending_error(other),
+            },
+        )?
     };
 
     match update.install(&bytes) {
         Ok(()) => Ok(()),
         Err(error) => {
             if let Ok(mut pending) = state.lock() {
-                crate::app_updates::restore_failed_install(&mut pending, update, bytes);
+                crate::app_updates::restore_failed_install(pending.inner_mut(), update, bytes);
             }
             Err(user_safe_error(error))
         }
@@ -277,6 +306,7 @@ pub fn open_beta_application(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::any::TypeId;
 
     #[test]
     fn strip_registry_quotes_removes_wrapping_quotes() {
@@ -291,5 +321,33 @@ mod tests {
         let info = detect_beta_installation_info();
         assert!(!info.installed);
         assert!(info.executable_path.is_none());
+    }
+
+    #[test]
+    fn beta_pending_state_has_a_distinct_tauri_type() {
+        assert_ne!(
+            TypeId::of::<PendingBetaInstall>(),
+            TypeId::of::<PendingAppUpdate>()
+        );
+        assert_ne!(
+            TypeId::of::<Mutex<PendingBetaInstall>>(),
+            TypeId::of::<Mutex<PendingAppUpdate>>()
+        );
+    }
+
+    #[test]
+    fn beta_and_standard_pending_revisions_are_independent() {
+        let mut standard = PendingAppUpdate::default();
+        let mut beta = PendingBetaInstall::default();
+
+        crate::app_updates::bump_revision(beta.inner_mut());
+
+        assert_eq!(standard.revision(), 0);
+        assert_eq!(beta.inner().revision(), 1);
+
+        crate::app_updates::bump_revision(&mut standard);
+
+        assert_eq!(standard.revision(), 1);
+        assert_eq!(beta.inner().revision(), 1);
     }
 }

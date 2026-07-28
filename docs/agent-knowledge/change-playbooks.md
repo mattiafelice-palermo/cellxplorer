@@ -151,22 +151,27 @@ and pyarrow 84MB.
    before modifying non-disposable user data.
 5. Run `python -m unittest tests.test_updater_configuration -v` when updater config or Rust
    command wiring changes.
-6. The first updater-enabled release is a manual bootstrap install; live in-app updates require
-   public HTTPS release assets and Specs 018–019.
+6. Stable and Beta use the same committed public key from `src-tauri/tauri.conf.json`, but separate
+   fixed `release-channels/stable/latest.json` and `release-channels/beta/latest.json` endpoints.
+   The Beta overlay inherits the key; manifest verification must read the base configuration.
 7. Persist GitHub release-asset metadata as the raw `Invoke-WebRequest` response body. Do not
    re-encode with PowerShell `ConvertTo-Json`; that can emit nested arrays or stringified rows and
    fail `verify_updater_manifest.py` with `release asset at index 0 must be an object`.
 
 Updater check preferences are local UI state under `cellxplorer-update-preferences`. The default is
 12 hours with discovery notifications enabled. Saving **Settings → App updates** dispatches
-`cellxplorer-update-preferences-changed`, which makes `AppUpdateCoordinator` reschedule without an
-app restart. The notification toggle controls native Windows notifications only; automatic checks
-and the power-menu badge remain active. Manual **Check for updates** opens the existing update
-modal directly and never shows a discovery toaster. Toast display and body-click activation are
-owned by Rust (`show_update_notification` / `notify-rust`), not the Tauri notification plugin JS
-facade. Verify Windows notification identity and body-click behavior in an installed NSIS build —
-`tauri dev` may show PowerShell branding. The **Receive beta versions** toggle (off by default)
-ignores advertised versions containing `beta` unless enabled.
+`cellxplorer-update-preferences-changed`, which makes both Standard and opted-in Beta discovery
+reschedule without an app restart. The notification toggle controls native Windows notifications
+only; automatic checks and the power-menu badge remain active. Manual **Check for updates** opens
+the existing update modal directly and never shows a discovery toaster. Toast display and body-click
+activation are owned by Rust (`show_update_notification` / `notify-rust`), not the Tauri
+notification plugin JS facade. Verify Windows notification identity and body-click behavior in an
+installed NSIS build — `tauri dev` may show PowerShell branding.
+
+In Stable, `betaUpdatesEnabled` means **Notify me about CellXplorer Beta**. It schedules discovery of
+the separate Beta product and never changes Stable self-update acceptance. Disabling it clears
+non-protected Beta availability/error UI and notification eligibility without interrupting an
+explicit download/launch. Beta installations update themselves.
 
 On release days, `preflight.yml` skips its Windows job when a `v*` tag already points at the
 pushed `main` commit, and `release.yml` cancels any still-running main preflight for that SHA so
@@ -180,10 +185,13 @@ multi-spec release train), operate on `main` after the relevant features are mer
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
    Use `python scripts\bump_version.py --patch --notes "..."` for Stable, or an explicit version
    such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases.
-2. Run `python scripts/check_versions.py --expected-version <version>` and
+2. Before any production tag, pre-provision and verify the orphan `release-channels` branch. It must
+   contain exactly `README.md`, `stable/latest.json`, and `beta/latest.json`; both manifests must be
+   valid existing pointers. Never derive this branch from `main`.
+3. Run `python scripts/check_versions.py --expected-version <version>` and
    `python scripts/preflight.py --no-cache` locally. Report the exact preflight result.
-3. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
-4. Commit the version bump on `main`, push `main`, then tag and push:
+4. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
+5. Commit the version bump on `main`, push `main`, then tag and push:
    ```powershell
    git tag -a v<version> -m "CellXplorer <version>"
    git push origin main
@@ -191,15 +199,24 @@ multi-spec release train), operate on `main` after the relevant features are mer
    ```
    Validate the tag with `python scripts\release_tag.py --tag v<version>`. Stable tags use
    `vX.Y.Z`; Beta uses `vX.Y.Z-beta.N`. The tagged commit must be reachable from `main`. Tag push
-   triggers `.github/workflows/release.yml` — do not re-run a published tag to replace binaries.
+   triggers `.github/workflows/release.yml`. A Beta core must be strictly greater than the highest
+   published exact Stable tag; legacy Beta tags are not Stable baselines. Do not re-run a published
+   tag to replace binaries.
    If the workflow fails on an early step, fix on `main`, push, move the tag to the fixed commit,
    and push the tag again.
-5. Inspect the GitHub Release assets: NSIS setup executable, matching `.sig`, and `latest.json`.
-   The workflow stages a draft first and undrafts only after verification. Beta releases remain
-   non-prerelease in GitHub so `/latest` updates; Stable clients ignore Beta versions in-app when
-   **Receive beta versions** is off.
-6. For the bootstrap release, manually install the updater-enabled build on a real machine.
-7. For the first live update test, publish a real patch release `N+1` and verify discovery,
-   download, installer launch, data preservation, and backend restart from version `N`.
-8. Run `python -m unittest tests.test_release_notes_script tests.test_release_workflow -v` when
+6. The workflow runs no-cache preflight, explicitly builds/stamps the selected frontend channel,
+   stages a draft, verifies the installer/signature/manifest with the base public key, and only then
+   undrafts. Beta releases are GitHub prereleases; Stable remains GitHub's normal latest release.
+7. Inspect the GitHub Release assets: product-specific NSIS setup executable, matching `.sig`, and
+   `latest.json`. Confirm only the selected channel pointer changed and the public raw pointer
+   verifies.
+8. For the first Stable transition release, prove the legacy
+   `/releases/latest/download/latest.json` endpoint serves its Stable manifest while the new binary
+   embeds the Stable channel-branch endpoint.
+9. Complete the disposable installed matrix: side-by-side identities/data, Stable-owned first Beta
+   install, channel-specific N→N+1 updates, crossed-manifest rejection, and uninstall isolation.
+10. If release verification fails before undraft, fix `main` and move the unpublished tag. If
+   pointer publication fails after undraft, do not replace release assets; repair the pre-provisioned
+   branch with optimistic SHA protection and rerun exact manifest verification.
+11. Run `python -m unittest tests.test_release_notes_script tests.test_release_workflow -v` when
    release scripts or workflow YAML change.

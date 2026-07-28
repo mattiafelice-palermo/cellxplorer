@@ -4,10 +4,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "frontend_channel.py"
+BUILD_SCRIPT = ROOT / "scripts" / "build_frontend_channel.py"
 NSIS_HOOKS = ROOT / "src-tauri" / "nsis-hooks.nsh"
 KILL_SCRIPT = ROOT / "src-tauri" / "kill_installation_processes.ps1"
 
@@ -22,6 +24,18 @@ def load_frontend_channel():
 
 
 frontend_channel = load_frontend_channel()
+
+
+def load_build_frontend_channel():
+    spec = importlib.util.spec_from_file_location("build_frontend_channel", BUILD_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+build_frontend_channel = load_build_frontend_channel()
 
 
 class FrontendChannelStampTests(unittest.TestCase):
@@ -51,6 +65,26 @@ class FrontendChannelStampTests(unittest.TestCase):
     def test_verify_rejects_missing_stamp(self):
         with self.assertRaisesRegex(RuntimeError, "Missing frontend channel stamp"):
             frontend_channel.verify_stamp(self.root, "stable")
+
+    def test_channel_builder_consumes_requested_channel_and_writes_stamp(self):
+        completed = type("Completed", (), {"returncode": 0})()
+        calls: list[tuple[list[str], Path, dict[str, str] | None]] = []
+
+        def fake_run(command, *, cwd, env=None, check=False):
+            del check
+            calls.append((command, cwd, env))
+            return completed
+
+        with patch.object(build_frontend_channel.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(build_frontend_channel.main(["beta"]), 0)
+
+        self.assertEqual(calls[0][1], build_frontend_channel.FRONTEND)
+        self.assertEqual(calls[0][2]["VITE_CELLXPLORER_CHANNEL"], "beta")
+        self.assertEqual(calls[1][0][-3:], ["write", "--channel", "beta"])
+
+    def test_channel_builder_rejects_invalid_channel_before_build(self):
+        with self.assertRaises(SystemExit):
+            build_frontend_channel.main(["preview"])
 
 
 class NsisProcessCleanupTests(unittest.TestCase):

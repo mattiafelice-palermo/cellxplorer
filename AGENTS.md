@@ -191,7 +191,8 @@ Cellxplorer/
 │   ├── test_bump_version_script.py   Version bump script tests
 │   ├── test_updater_configuration.py  Read-only Tauri updater config and wiring checks
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
-│   ├── test_release_workflow.py    Release workflow contract tests (Spec 019)
+│   ├── test_release_tag_script.py  Exact Stable/Beta tag parser tests
+│   ├── test_release_workflow.py    Release/channel workflow contract tests
 │   └── test_preflight_script.py    Preflight command unit tests
 ├── docs/
 │   ├── specs/                      Numbered feature specs (`NNN-*.md`) and `reviews/` follow-ups
@@ -207,17 +208,20 @@ Cellxplorer/
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
-│   ├── release_tag.py              Stable SemVer tag validation for release workflow (Spec 019)
-│   ├── verify_updater_manifest.py  Read-only latest.json validation (Spec 019)
+│   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
+│   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
+│   ├── release_channels.py         Manifest-only branch contract gate (Spec 023)
+│   ├── verify_updater_manifest.py  Channel-aware latest.json validation
 │   └── run_backend_tests.py        Parallel backend unittest runner for preflight
 ├── .github/workflows/              GitHub Actions CI and release automation
 │   ├── preflight.yml               Clean Windows preflight on main pushes
-│   └── release.yml                 Signed Windows release publishing on v* tags (Spec 019)
+│   └── release.yml                 Signed Stable/Beta publishing on v* tags (Specs 019/023)
 ├── packaging/                      PyInstaller backend sidecar entry point
 ├── src-tauri/                      Tauri shell, Rust entry point, icons, NSIS configuration
 │   └── src/
 │       ├── app_channel.rs          Stable/Beta identity helpers (Spec 021)
 │       ├── app_updates.rs          Pending-update state and narrow updater commands (Spec 017)
+│       ├── beta_installer.rs       Stable-owned first Beta installation (Spec 023)
 │       └── update_notifications.rs Windows toast display and activation event (Spec 020)
 ├── run.py                          Runs FastAPI with the built frontend
 ├── README.md                       Project overview and quick-start commands
@@ -303,21 +307,26 @@ example a coordinated release train that defers tagging until several specs land
    python scripts\bump_version.py 0.16.2-beta.1 --notes "Beta release note."
    ```
 3. Verify declarations: `python scripts\check_versions.py --expected-version <version>`
-4. Run `python scripts\preflight.py --no-cache` and report the exact result.
-5. Commit the version bump on `main`, push `main`, then create and push the tag:
+4. Before tagging, verify the pre-provisioned orphan `release-channels` branch contains exactly
+   `README.md`, `stable/latest.json`, and `beta/latest.json`. Never initialize it from `main`.
+5. Run `python scripts\preflight.py --no-cache` and report the exact result.
+6. Commit the version bump on `main`, push `main`, then create and push the tag:
    ```powershell
    git tag -a v<version> -m "CellXplorer <version>"
    git push origin main
    git push origin v<version>
    ```
    Tags must pass `python scripts\release_tag.py --tag v<version>`. Stable uses `vX.Y.Z`; Beta
-   prereleases use `vX.Y.Z-beta.N`. The tag commit must be reachable from `main`.
-6. Publishing is triggered by `.github/workflows/release.yml` on tag push. Monitor the Actions run;
+   prereleases use `vX.Y.Z-beta.N`, and their core must be greater than the highest published exact
+   Stable tag. The tag commit must be reachable from `main`.
+7. Publishing is triggered by `.github/workflows/release.yml` on tag push. Monitor the Actions run;
    if a tag push fails early (for example preflight cancel), fix on `main`, push, delete and
    re-create the tag on the fixed commit, then push the tag again.
-7. Confirm GitHub Release assets: NSIS installer, matching `.sig`, and `latest.json`. Beta tags
-   stay `prerelease: false` in the workflow so opted-in clients can discover them via `/latest`;
-   in-app filtering handles Stable vs Beta.
+8. Confirm GitHub Release assets: channel-specific NSIS installer, matching `.sig`, and
+   `latest.json`. Beta tags are true GitHub prereleases; Stable remains GitHub's latest normal
+   release. Verify only the selected public raw channel pointer changed.
+9. Do not publish the first channel release until both build-only workflow choices and the complete
+   disposable installed/update matrix are recorded and the branch is re-reviewed.
 
 Detailed packaging, signing, and updater notes live in
 [`docs/agent-knowledge/change-playbooks.md`](docs/agent-knowledge/change-playbooks.md) and

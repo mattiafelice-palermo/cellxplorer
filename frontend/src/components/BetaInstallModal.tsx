@@ -68,7 +68,8 @@ export function BetaInstallModal({
 
   const checkFailed = state.status === "error" && state.phase === "check";
   const checking = state.status === "checking";
-  const showStatusOnly = !release && (checkFailed || checking);
+  const unavailable = state.status === "unavailable";
+  const showStatusOnly = !release && (checkFailed || checking || unavailable);
 
   if (!release && !showStatusOnly) return null;
 
@@ -87,7 +88,15 @@ export function BetaInstallModal({
       <Modal
         opened={opened}
         onClose={onClose}
-        title={<Text fw={600}>{checking ? "Checking for CellXplorer Beta" : "Could not check for CellXplorer Beta"}</Text>}
+        title={
+          <Text fw={600}>
+            {checking
+              ? "Checking for CellXplorer Beta"
+              : unavailable
+                ? "No CellXplorer Beta available"
+                : "Could not check for CellXplorer Beta"}
+          </Text>
+        }
         centered
         size="36rem"
         radius="md"
@@ -99,6 +108,10 @@ export function BetaInstallModal({
         <Stack gap="sm">
           {checking ? (
             <Text size="sm">Looking for a CellXplorer Beta preview release…</Text>
+          ) : unavailable ? (
+            <Text size="sm">
+              There is no newer CellXplorer Beta preview release available right now.
+            </Text>
           ) : (
             <Alert color="orange" title="Beta check failed">
               <Text size="sm">{state.message}</Text>
@@ -110,9 +123,11 @@ export function BetaInstallModal({
                 <Button variant="default" onClick={onClose}>
                   Close
                 </Button>
-                <Button color="teal" onClick={onRetryCheck}>
-                  Try again
-                </Button>
+                {!unavailable ? (
+                  <Button color="teal" onClick={onRetryCheck}>
+                    Try again
+                  </Button>
+                ) : null}
               </>
             ) : null}
           </Group>

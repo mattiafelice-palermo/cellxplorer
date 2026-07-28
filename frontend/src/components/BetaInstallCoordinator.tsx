@@ -13,6 +13,7 @@ import {
 
 import { APP_CHANNEL } from "../appChannel";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
+import { post } from "../api";
 import {
   appUpdateIntervalMs,
   DEFAULT_APP_UPDATE_PREFERENCES,
@@ -20,18 +21,20 @@ import {
   loadAppUpdatePreferences,
   showMainWindowForUpdateTauri,
   UPDATE_PREFERENCES_CHANGED_EVENT,
-  UPDATE_SCHEDULE_CHANGED_EVENT,
   type AppUpdateRelease,
   type UpdateCheckSource,
 } from "../appUpdater";
 import {
   betaInstallReducer,
   checkBetaInstallTauri,
+  clearBetaNotifiedVersion,
   detectBetaInstallationTauri,
   downloadBetaInstallTauri,
   explainBetaCheckFailure,
+  finishSessionAndInstallBeta,
   getBetaInstallRelease,
   installBetaTauri,
+  isProtectedBetaInstallFlow,
   listenForBetaInstallNotificationActivation,
   mergeBetaCheckResult,
   openBetaApplicationTauri,
@@ -39,6 +42,7 @@ import {
   resolveBetaDiscoveryFeedback,
   shouldRunBetaAvailabilityCheck,
   showBetaInstallNotificationTauri,
+  startBetaCheckSchedule,
   writeBetaNotifiedVersion,
   type BetaInstallationInfo,
   type BetaInstallState,
@@ -85,6 +89,7 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
   );
 
   const stateRef = useRef(state);
+  const preferencesRef = useRef(preferences);
   const modalOpenRef = useRef(modalOpen);
   const checkInFlight = useRef<Promise<void> | null>(null);
   const downloadInFlight = useRef(false);
@@ -96,6 +101,10 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    preferencesRef.current = preferences;
+  }, [preferences]);
 
   useEffect(() => {
     modalOpenRef.current = modalOpen;
@@ -142,7 +151,11 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
   const applyRelease = useCallback(
     (release: AppUpdateRelease | null, source: UpdateCheckSource) => {
       const merged = mergeBetaCheckResult(stateRef.current, release);
-      dispatch({ type: "check_success", release: merged });
+      dispatch(
+        source === "manual" && !merged
+          ? { type: "manual_no_release" }
+          : { type: "check_success", release: merged },
+      );
 
       const feedback = resolveBetaDiscoveryFeedback({
         source,
@@ -196,6 +209,9 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
         try {
           const release = await checkBetaInstallTauri();
           if (!mountedRef.current) return;
+          if (source === "automatic" && !preferencesRef.current.betaUpdatesEnabled) {
+            return;
+          }
           applyRelease(release, source);
         } catch (error) {
           if (!mountedRef.current) return;
@@ -225,6 +241,16 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
   );
 
   performCheckRef.current = performCheck;
+
+  useEffect(() => {
+    if (!enabled || preferences.betaUpdatesEnabled) return;
+    const protectedFlow = isProtectedBetaInstallFlow(stateRef.current);
+    dispatch({ type: "preference_disabled" });
+    clearBetaNotifiedVersion(window.localStorage);
+    if (!protectedFlow) {
+      setModalOpen(false);
+    }
+  }, [enabled, preferences.betaUpdatesEnabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -263,24 +289,14 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
     const intervalMs = appUpdateIntervalMs(preferences);
     const initialDelay = firstAutomaticCheckDelayMs(intervalMs);
 
-    const timeout = window.setTimeout(() => {
-      void performCheckRef.current("automatic");
-    }, initialDelay);
-
-    const interval = window.setInterval(() => {
-      void performCheckRef.current("automatic");
-    }, intervalMs);
-
-    const onScheduleChanged = () => {
-      window.clearInterval(interval);
-    };
-    window.addEventListener(UPDATE_SCHEDULE_CHANGED_EVENT, onScheduleChanged);
-
-    return () => {
-      window.clearTimeout(timeout);
-      window.clearInterval(interval);
-      window.removeEventListener(UPDATE_SCHEDULE_CHANGED_EVENT, onScheduleChanged);
-    };
+    return startBetaCheckSchedule({
+      host: window,
+      intervalMs,
+      initialDelayMs: initialDelay,
+      runCheck: () => {
+        void performCheckRef.current("automatic");
+      },
+    });
   }, [enabled, installationInfo?.installed, preferences]);
 
   const downloadAndInstall = useCallback(async () => {
@@ -301,7 +317,15 @@ export function BetaInstallProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "download_event", release, event });
       });
       dispatch({ type: "launching", release });
-      await installBetaTauri(release.version);
+      await finishSessionAndInstallBeta({
+        finishSession: () => post("/api/session/finish"),
+        install: () => installBetaTauri(release.version),
+        onSessionFinishError: (error) => {
+          addDebugEvent("beta-install:session-finish-error", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        },
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const phase =

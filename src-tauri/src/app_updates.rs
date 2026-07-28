@@ -5,6 +5,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::app_channel::{validate_release_version, AppChannel};
 
 #[derive(Default)]
 pub struct PendingAppUpdate {
@@ -68,12 +69,8 @@ pub struct AppUpdateRelease {
     content = "data"
 )]
 pub enum AppUpdateDownloadEvent {
-    Started {
-        content_length: Option<u64>,
-    },
-    Progress {
-        chunk_length: usize,
-    },
+    Started { content_length: Option<u64> },
+    Progress { chunk_length: usize },
     Finished,
 }
 
@@ -250,6 +247,7 @@ pub async fn check_app_update(
     app: AppHandle,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<Option<AppUpdateRelease>, String> {
+    let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
     let check_revision = {
         let pending = lock_pending(&state)?;
         if pending.downloading {
@@ -270,17 +268,23 @@ pub async fn check_app_update(
         .await
         .map_err(|error| user_safe_error(error))?;
 
+    if let Some(candidate) = update.as_ref() {
+        validate_release_version(channel, &candidate.version)?;
+    }
+
     let mut pending = lock_pending(&state)?;
     apply_check_result(&mut pending, check_revision, update).map_err(map_pending_error)
 }
 
 #[tauri::command]
 pub async fn download_app_update(
-    _app: AppHandle,
+    app: AppHandle,
     expected_version: String,
     on_progress: Channel<AppUpdateDownloadEvent>,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
+    let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
+    validate_release_version(channel, &expected_version)?;
     let (update, generation) = {
         let mut pending = lock_pending(&state)?;
         begin_download(&mut pending, &expected_version).map_err(map_pending_error)?
@@ -321,10 +325,12 @@ pub async fn download_app_update(
 
 #[tauri::command]
 pub fn install_app_update(
-    _app: AppHandle,
+    app: AppHandle,
     expected_version: String,
     state: State<'_, Mutex<PendingAppUpdate>>,
 ) -> Result<(), String> {
+    let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
+    validate_release_version(channel, &expected_version)?;
     let (update, bytes) = {
         let mut pending = lock_pending(&state)?;
         take_verified_install(&mut pending, &expected_version).map_err(|error| match error {
@@ -474,12 +480,7 @@ mod tests {
             version: Some("0.16.0".into()),
             ..Default::default()
         };
-        assert!(!finish_download_success(
-            &mut pending,
-            1,
-            "0.15.0",
-            vec![1]
-        ));
+        assert!(!finish_download_success(&mut pending, 1, "0.15.0", vec![1]));
         assert!(pending.downloaded_bytes.is_none());
         assert!(pending.downloading);
     }
@@ -490,12 +491,7 @@ mod tests {
         let before_version = pending.version.clone();
         let before_bytes = pending.downloaded_bytes.clone();
         assert_eq!(
-            validate_install_ready(
-                pending.version.as_deref(),
-                "0.16.0",
-                true,
-                false,
-            ),
+            validate_install_ready(pending.version.as_deref(), "0.16.0", true, false,),
             Err(PendingUpdateError::VersionMismatch)
         );
         assert_eq!(pending.version, before_version);

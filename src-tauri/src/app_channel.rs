@@ -16,6 +16,45 @@ pub const BETA_CHANNEL_ENDPOINT: &str =
 
 pub const BETA_PRODUCT_NAME: &str = "CellXplorer Beta";
 
+pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), String> {
+    let version = semver::Version::parse(value).map_err(|_| {
+        format!(
+            "{} update version {value:?} is not exact SemVer.",
+            channel.product_name()
+        )
+    })?;
+
+    if !version.build.is_empty() {
+        return Err(format!(
+            "{} update version {value:?} must not contain build metadata.",
+            channel.product_name()
+        ));
+    }
+
+    match channel {
+        AppChannel::Stable if version.pre.is_empty() => Ok(()),
+        AppChannel::Stable => Err(format!(
+            "CellXplorer Stable accepts only MAJOR.MINOR.PATCH update versions."
+        )),
+        AppChannel::Beta => {
+            let prerelease = version.pre.as_str();
+            let Some(sequence) = prerelease.strip_prefix("beta.") else {
+                return Err(
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N update versions."
+                        .to_string(),
+                );
+            };
+            if sequence.is_empty() || !sequence.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N update versions."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
 impl AppChannel {
     pub fn from_identifier(identifier: &str) -> Result<Self, String> {
         match identifier {
@@ -119,10 +158,7 @@ mod tests {
 
     #[test]
     fn autostart_names_match_product_names() {
-        assert_eq!(
-            AppChannel::Stable.autostart_registry_value(),
-            "CellXplorer"
-        );
+        assert_eq!(AppChannel::Stable.autostart_registry_value(), "CellXplorer");
         assert_eq!(
             AppChannel::Beta.autostart_registry_value(),
             "CellXplorer Beta"
@@ -168,5 +204,46 @@ mod tests {
         let resolved = super::resolve_data_root(AppChannel::Beta, home);
         std::env::remove_var("CELLXPLORER_DATA");
         assert_eq!(resolved, PathBuf::from(r"C:\disposable\data"));
+    }
+
+    #[test]
+    fn stable_release_versions_are_exact() {
+        for version in ["0.18.0", "1.0.0", "12.34.56"] {
+            assert!(validate_release_version(AppChannel::Stable, version).is_ok());
+        }
+        for version in [
+            "v0.18.0",
+            "0.18",
+            "0.18.0-beta.1",
+            "0.18.0+build.1",
+            "0.18.0-rc.1",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Stable, version).is_err(),
+                "{version}"
+            );
+        }
+    }
+
+    #[test]
+    fn beta_release_versions_are_exact() {
+        for version in ["0.18.0-beta.1", "1.0.0-beta.0", "12.34.56-beta.123"] {
+            assert!(validate_release_version(AppChannel::Beta, version).is_ok());
+        }
+        for version in [
+            "0.18.0",
+            "v0.18.0-beta.1",
+            "0.18.0-beta",
+            "0.18.0-beta.01",
+            "0.18.0-beta.1.extra",
+            "0.18.0-beta.1+build.1",
+            "0.18.0-BETA.1",
+            "0.18.0-rc.1",
+        ] {
+            assert!(
+                validate_release_version(AppChannel::Beta, version).is_err(),
+                "{version}"
+            );
+        }
     }
 }

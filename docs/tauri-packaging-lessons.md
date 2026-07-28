@@ -65,6 +65,15 @@ a Beta installer from a Stable-built `frontend/dist` or the inverse.
 
 `npm.cmd run tauri:build:stable|beta` expects the frontend and backend sidecar to already be built.
 
+GitHub Actions follows the same invariant: canonical no-cache preflight is followed by
+`build_frontend_channel.py <channel>` and two stamp checks, including one immediately before the
+Tauri action. Setting `VITE_CELLXPLORER_CHANNEL` on the packaging action alone does not rebuild
+`frontend/dist` and is not proof of channel provenance.
+
+Standard self-update and Stable-owned Beta installation must remain different Tauri managed state
+types. `PendingBetaInstall` is a real newtype around the shared pending-update state machine; a Rust
+type alias would register the same `TypeId` twice and can panic during builder construction.
+
 ## Codex sandbox frontend build issue
 
 In the managed Codex sandbox, `npm.cmd run build` from `frontend` can fail before Vite loads its
@@ -188,14 +197,22 @@ Without it, the main desktop app can open a terminal even if the backend sidecar
 
 ## Data location and compatibility
 
-The backend currently stores user data under `CELLXPLORER_DATA` or `%USERPROFILE%\.cellxplorer`.
-Both Stable and Beta still share that default root until Spec 022. Use disposable test data for
-installer verification. It now uses packaged forward-only schema revisions, automatic SQLite
-backups before migration,
+The backend stores Stable data under `%USERPROFILE%\.cellxplorer` and Beta data under
+`%USERPROFILE%\.cellxplorer-beta`; `CELLXPLORER_DATA` overrides either root exactly. Use disposable
+test data for installer verification. It uses packaged forward-only schema revisions, automatic
+SQLite backups before migration,
 startup compatibility checks, and schema status in diagnostics. See `docs/database-migrations.md`.
 Moving the default data location to `%LOCALAPPDATA%\Cellxplorer` remains a future packaging change.
 
 Never store the user database or cache under the app install directory.
+
+## Release-channel branch invariant
+
+`release-channels` is a pre-provisioned orphan/manifest-only branch. It contains exactly
+`README.md`, `stable/latest.json`, and `beta/latest.json`; never initialize it from `main`.
+The release workflow validates the complete Git tree and both existing pointers before draft
+staging, updates only the selected file with its prior blob SHA, and proves the other channel blob
+did not change. Missing refs/manifests or unexpected source files block publication.
 
 ## Logging gap
 

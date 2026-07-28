@@ -1,6 +1,6 @@
 [package]
 name = "cellxplorer"
-version = "0.16.2-beta.1"
+version = "0.17.0-beta.1"
 description = "CellXplorer desktop app"
 authors = ["CellXplorer"]
 edition = "2021"
@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
+semver = "1.0.28"
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4.18"

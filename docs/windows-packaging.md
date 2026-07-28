@@ -172,10 +172,11 @@ produces the normal NSIS setup executable plus an adjacent `.sig` file in
 `src-tauri/target/release/bundle/nsis/`. Tauri updater signatures are separate from Windows
 Authenticode signing.
 
-The production update manifest endpoint is:
+Production update manifest endpoints are:
 
 ```text
-https://github.com/mattiafelice-palermo/cellxplorer/releases/latest/download/latest.json
+Stable: https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json
+Beta:   https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json
 ```
 
 Only the updater **public key** belongs in `tauri.conf.json`. Store the private key outside the
@@ -196,13 +197,20 @@ Pre-hook install errors can still return to the frontend. After `on_before_exit`
 regardless of whether Windows successfully opens the installer, so there is no post-hook recovery
 UI.
 
+Runtime policy validates exact SemVer before pending state changes: Stable accepts only
+`MAJOR.MINOR.PATCH`; Beta accepts only `MAJOR.MINOR.PATCH-beta.N`. Stable-owned first Beta
+installation uses a distinct `PendingBetaInstall` newtype and the Beta endpoint. It finishes the
+Stable backend session before launching the verified installer. An installed Beta is then updated
+only by the Beta application's standard updater.
+
 The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
 alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while
 preserving the product's profile data root.
 
-**Bootstrap limitation:** existing installed builds without the updater cannot receive the first
-updater-enabled release automatically. The first updater-capable version must be installed manually;
-later releases can use the in-app update flow once public release assets are available.
+**First Stable channel transition:** the first Stable release embedding the channel-branch endpoint
+must also remain GitHub's normal latest release and retain `latest.json` as an ordinary release
+asset. This proves older Stable clients can fetch
+`/releases/latest/download/latest.json`, install the transition build, and move to the new endpoint.
 
 Automatic update discovery may show a native Windows notification. Verify notification title/body
 identity and body-click restore/focus/modal behavior in an **installed** NSIS package. Development
@@ -211,26 +219,35 @@ dev-only branding as final proof.
 
 ## Production GitHub release
 
-Stable releases are published by pushing a SemVer tag:
+Stable and Beta releases are published by pushing exact SemVer tags:
 
 ```powershell
 git tag v0.15.0
 git push origin v0.15.0
+
+git tag v0.16.0-beta.1
+git push origin v0.16.0-beta.1
 ```
 
 The `.github/workflows/release.yml` workflow then:
 
-1. verifies the tag is exact stable SemVer (`vMAJOR.MINOR.PATCH`) and reachable from `main`;
-2. refuses to replace an already published non-draft release;
-3. fails before publishing when the repository is private;
-4. extracts the matching `CHANGELOG.md` section with `scripts/release_notes.py`;
-5. runs `python scripts/preflight.py --no-cache`;
-6. builds the PyInstaller sidecar through `scripts/build-app.ps1`;
-7. stages a **draft** GitHub Release with the pinned `tauri-apps/tauri-action`, signed NSIS
+1. resolves Stable `vMAJOR.MINOR.PATCH` or Beta `vMAJOR.MINOR.PATCH-beta.N` and requires the tag
+   commit to be reachable from `main`;
+2. for Beta, lists all published releases, ignores drafts/malformed/legacy Beta tags, and requires
+   the Beta core to be strictly greater than the highest exact Stable tag;
+3. requires the pre-provisioned `release-channels` branch to contain exactly `README.md`,
+   `stable/latest.json`, and `beta/latest.json`; the workflow never initializes it from `main`;
+4. snapshots both channel blob SHAs so publication can update only the selected pointer;
+5. refuses to replace an already published non-draft release and requires a public repository;
+6. extracts exact release notes and runs `python scripts/preflight.py --no-cache`;
+7. explicitly builds and verifies the selected frontend channel stamp, then builds the sidecar;
+8. stages a **draft** GitHub Release with the pinned `tauri-apps/tauri-action`, signed NSIS
    installer, `.sig`, and workspace-root `latest.json`;
-8. validates the draft manifest against release-asset metadata with
-   `scripts/verify_updater_manifest.py`;
-9. undrafts the release only after verification succeeds.
+9. validates exact channel version/product/asset/signature against release metadata with
+   `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
+10. undrafts as a normal Stable release or true Beta prerelease only after verification;
+11. updates only the selected channel pointer using its prior SHA, verifies exact bytes through the
+    Contents API and public raw endpoint, and proves the non-target blob is unchanged.
 
 Required GitHub repository secrets:
 
@@ -239,11 +256,14 @@ TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-Use **Actions → Publish CellXplorer release → Run workflow** for a build-only rehearsal. Manual
-dispatch never creates or alters a GitHub Release.
+Use **Actions → Publish CellXplorer release → Run workflow** for both Stable and Beta build-only
+rehearsals. Manual dispatch never creates or alters a GitHub Release. Download each artifact and
+record its channel stamp, installer name, icon, and product metadata before release.
 
-Published versions are immutable. If a stable release is wrong, cut a new patch version rather than
-rebuilding the same tag.
+Published versions are immutable. If a release is wrong, cut a new patch/Beta sequence rather than
+rebuilding the same tag. If pointer publication fails after undraft, the immutable release exists
+but clients remain on the previous pointer; repair only the manifest branch with optimistic SHA
+protection and re-run verification.
 
 The repository must be public before a production tag publish is allowed, so installed applications
 can fetch `latest.json` without credentials.
