@@ -28,6 +28,8 @@ import { IconActivityHeartbeat, IconBell, IconChartLine, IconDatabaseCog, IconDe
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { APP_BRANDING } from "../appChannel";
+
 import {
   get,
   post,
@@ -65,6 +67,7 @@ import {
   type AppUpdatePreferences,
 } from "../appUpdater";
 import { useOptionalAppUpdate } from "../components/AppUpdateCoordinator";
+import { useBetaInstall } from "../components/BetaInstallCoordinator";
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -127,6 +130,7 @@ export function SettingsPage() {
     savedUpdatePreferences,
   );
   const appUpdate = useOptionalAppUpdate();
+  const betaInstall = useBetaInstall();
   const activeTab = location.pathname.endsWith("/activity")
     ? "activity"
     : location.pathname.endsWith("/cache")
@@ -293,7 +297,7 @@ export function SettingsPage() {
       setAutostartEnabled(saved);
       notifications.show({
         message: saved
-          ? "CellXplorer will launch in the tray when Windows starts."
+          ? `${APP_BRANDING.productName} will launch in the tray when Windows starts.`
           : "Launch at Windows startup disabled.",
         color: "teal",
       });
@@ -632,9 +636,13 @@ export function SettingsPage() {
   const updatePreferencesDirty =
     JSON.stringify(updatePreferences) !== JSON.stringify(savedUpdatePreferences);
   const saveUpdatePreferences = () => {
+    const betaOptInEnabled = updatePreferences.betaUpdatesEnabled;
     saveAppUpdatePreferences(window.localStorage, updatePreferences);
     setSavedUpdatePreferences(updatePreferences);
     window.dispatchEvent(new Event(UPDATE_PREFERENCES_CHANGED_EVENT));
+    if (!APP_BRANDING.isBeta && betaOptInEnabled) {
+      void betaInstall?.checkForBeta("manual");
+    }
     notifications.show({
       message: "Application update settings saved.",
       color: "teal",
@@ -1529,6 +1537,22 @@ export function SettingsPage() {
                 </Text>
               </div>
 
+              {APP_BRANDING.isBeta ? (
+                <Paper
+                  withBorder
+                  p="md"
+                  bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+                >
+                  <Stack gap={4}>
+                    <Text fw={600}>Beta release channel</Text>
+                    <Text size="sm" c="dimmed">
+                      This installation receives CellXplorer Beta updates. Stable CellXplorer remains
+                      a separate application.
+                    </Text>
+                  </Stack>
+                </Paper>
+              ) : null}
+
               {!isTauriApp() ? (
                 <Alert color="gray">
                   Update checks run only in the installed Windows application. You can still
@@ -1634,17 +1658,18 @@ export function SettingsPage() {
                 </Group>
               </Paper>
 
+              {!APP_BRANDING.isBeta ? (
               <Paper
                 withBorder
                 p="md"
                 bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
               >
-                <Group justify="space-between" wrap="nowrap">
+                <Group justify="space-between" wrap="nowrap" align="flex-start">
                   <div>
-                    <Text fw={600}>Receive beta versions</Text>
+                    <Text fw={600}>Notify me about CellXplorer Beta</Text>
                     <Text size="sm" c="dimmed">
-                      Allow updates whose version contains &quot;beta&quot;. When disabled, beta
-                      releases are ignored for both automatic and manual checks.
+                      Check for the separate Beta app. Installing Beta keeps this stable installation
+                      and its data unchanged.
                     </Text>
                   </div>
                   <Switch
@@ -1655,10 +1680,49 @@ export function SettingsPage() {
                         betaUpdatesEnabled: event.currentTarget.checked,
                       }))
                     }
-                    aria-label="Receive beta versions"
+                    aria-label="Notify me about CellXplorer Beta"
                   />
                 </Group>
               </Paper>
+              ) : null}
+
+              {!APP_BRANDING.isBeta && betaInstall?.installationInfo?.installed ? (
+                <Paper withBorder p="md">
+                  <Group justify="space-between" wrap="nowrap" align="center">
+                    <div>
+                      <Text fw={600}>CellXplorer Beta is installed</Text>
+                      <Text size="sm" c="dimmed">
+                        {betaInstall.installationInfo.installedVersion
+                          ? `Version ${betaInstall.installationInfo.installedVersion}`
+                          : "Installed beside this stable copy."}
+                      </Text>
+                    </div>
+                    <Button variant="default" onClick={() => void betaInstall.openBetaApplication()}>
+                      Open Beta
+                    </Button>
+                  </Group>
+                </Paper>
+              ) : null}
+
+              {!APP_BRANDING.isBeta &&
+              !betaInstall?.installationInfo?.installed &&
+              betaInstall?.installState.status === "available" ? (
+                <Paper withBorder p="md">
+                  <Group justify="space-between" wrap="nowrap" align="center">
+                    <div>
+                      <Text fw={600}>
+                        CellXplorer Beta {betaInstall.installState.release.version} is available
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Install the separate preview app without replacing this stable installation.
+                      </Text>
+                    </div>
+                    <Button color="betaBlue" onClick={() => betaInstall.openBetaInstallModal()}>
+                      Review Beta
+                    </Button>
+                  </Group>
+                </Paper>
+              ) : null}
 
               <Group justify="flex-end">
                 <Button

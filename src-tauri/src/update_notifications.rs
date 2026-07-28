@@ -5,13 +5,27 @@ use std::thread;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::app_channel::AppChannel;
+
 pub const UPDATE_NOTIFICATION_EVENT: &str = "app-update-notification-activated";
 pub const UPDATE_NOTIFICATION_TAG: &str = "cellxplorer-app-update";
 pub const UPDATE_NOTIFICATION_KIND: &str = "cellxplorer-app-update";
 
+pub const BETA_INSTALL_NOTIFICATION_EVENT: &str = "beta-install-notification-activated";
+pub const BETA_INSTALL_NOTIFICATION_TAG: &str = "cellxplorer-beta-install";
+pub const BETA_INSTALL_NOTIFICATION_KIND: &str = "cellxplorer-beta-install";
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateNotificationActivatedPayload {
+    pub kind: String,
+    pub tag: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BetaInstallNotificationActivatedPayload {
     pub kind: String,
     pub tag: String,
     pub version: String,
@@ -29,6 +43,12 @@ static ACTIVE_UPDATE_NOTIFICATION: Mutex<ActiveUpdateNotification> =
         version: String::new(),
     });
 
+static ACTIVE_BETA_INSTALL_NOTIFICATION: Mutex<ActiveUpdateNotification> =
+    Mutex::new(ActiveUpdateNotification {
+        generation: 0,
+        version: String::new(),
+    });
+
 pub fn activation_payload(version: &str) -> Option<UpdateNotificationActivatedPayload> {
     let version = version.trim();
     if version.is_empty() {
@@ -39,6 +59,28 @@ pub fn activation_payload(version: &str) -> Option<UpdateNotificationActivatedPa
         tag: UPDATE_NOTIFICATION_TAG.to_string(),
         version: version.to_string(),
     })
+}
+
+pub fn beta_install_activation_payload(
+    version: &str,
+) -> Option<BetaInstallNotificationActivatedPayload> {
+    let version = version.trim();
+    if version.is_empty() {
+        return None;
+    }
+    Some(BetaInstallNotificationActivatedPayload {
+        kind: BETA_INSTALL_NOTIFICATION_KIND.to_string(),
+        tag: BETA_INSTALL_NOTIFICATION_TAG.to_string(),
+        version: version.to_string(),
+    })
+}
+
+fn update_notification_title(app: &AppHandle) -> Result<String, String> {
+    let channel = AppChannel::from_identifier(app.config().identifier.as_str())?;
+    Ok(format!(
+        "{} update available",
+        channel.product_name()
+    ))
 }
 
 pub fn should_deliver_activation(
@@ -98,15 +140,15 @@ pub fn show_update_notification(app: AppHandle, version: String) -> Result<(), S
             active.generation
         };
 
-        let identifier = app.config().identifier.clone();
+        let title = update_notification_title(&app)?;
         let mut notification = notify_rust::Notification::new();
         notification
-            .summary("CellXplorer update available")
+            .summary(&title)
             .body(&format!(
                 "Version {} is ready. Click to view the update.",
                 payload.version
             ));
-        if let Some(app_id) = toast_app_id(&identifier) {
+        if let Some(app_id) = toast_app_id(&app.config().identifier) {
             notification.app_id(&app_id);
         }
 
@@ -147,6 +189,94 @@ pub fn show_update_notification(app: AppHandle, version: String) -> Result<(), S
 
                 show_main_window(&app_for_thread);
                 let _ = app_for_thread.emit(UPDATE_NOTIFICATION_EVENT, event_payload);
+            });
+        });
+
+        Ok(())
+    }
+}
+
+/// Stable-only toast when a separate CellXplorer Beta preview is available.
+#[tauri::command]
+pub fn show_beta_install_notification(app: AppHandle, version: String) -> Result<(), String> {
+    if app.config().identifier.as_str() != crate::app_channel::STABLE_IDENTIFIER {
+        return Err(
+            "CellXplorer Beta availability notifications are only shown in CellXplorer Stable."
+                .to_string(),
+        );
+    }
+
+    let Some(payload) = beta_install_activation_payload(&version) else {
+        return Err("Beta version is required.".to_string());
+    };
+
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        let _ = payload;
+        return Err("Windows notifications are only supported on Windows.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        let generation = {
+            let mut active = ACTIVE_BETA_INSTALL_NOTIFICATION
+                .lock()
+                .map_err(|_| "Beta notification state is unavailable.".to_string())?;
+            active.generation = active.generation.wrapping_add(1);
+            active.version = payload.version.clone();
+            active.generation
+        };
+
+        let mut notification = notify_rust::Notification::new();
+        notification
+            .summary("CellXplorer Beta available")
+            .body(&format!(
+                "Version {} is available as a separate preview app. Click to review.",
+                payload.version
+            ));
+        if let Some(app_id) = toast_app_id(&app.config().identifier) {
+            notification.app_id(&app_id);
+        }
+
+        let handle = notification
+            .show()
+            .map_err(|error| format!("Could not show the Beta notification: {error}"))?;
+
+        let app_for_thread = app.clone();
+        let version_for_thread = payload.version.clone();
+        thread::spawn(move || {
+            let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+                let activate = matches!(
+                    response,
+                    notify_rust::NotificationResponse::Default
+                );
+                if !activate {
+                    return;
+                }
+
+                let still_current = ACTIVE_BETA_INSTALL_NOTIFICATION
+                    .lock()
+                    .map(|active| {
+                        should_deliver_activation(
+                            active.generation,
+                            &active.version,
+                            generation,
+                            &version_for_thread,
+                        )
+                    })
+                    .unwrap_or(false);
+                if !still_current {
+                    return;
+                }
+
+                let Some(event_payload) = beta_install_activation_payload(&version_for_thread)
+                else {
+                    return;
+                };
+
+                show_main_window(&app_for_thread);
+                let _ = app_for_thread.emit(BETA_INSTALL_NOTIFICATION_EVENT, event_payload);
             });
         });
 

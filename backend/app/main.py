@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import APP_VERSION, CALC_VERSION, FRONTEND_DIST
 from .db import SessionLocal, initialize_database
 from . import models  # noqa: F401 — register tables
-from .routers import activity, analyses, automation, cache_management, diagnostics, files, library, replicates, settings, tree
+from .routers import activity, analyses, automation, beta_bootstrap, cache_management, diagnostics, files, library, replicates, settings, tree
 from .services.activity_log import record_activity
 from .services import cache_maintenance, database_identity, sessions, source_monitor
 
@@ -86,6 +86,10 @@ _COMPATIBILITY_API_PATHS = {
     "/api/diagnostics/health",
     "/api/diagnostics/resources",
     "/api/diagnostics/logs",
+    "/api/beta-bootstrap/status",
+    "/api/beta-bootstrap/stage-copy",
+    "/api/beta-bootstrap/discard-stage",
+    "/api/beta-bootstrap/start-empty",
 }
 
 
@@ -179,6 +183,7 @@ app.include_router(settings.router)
 app.include_router(automation.router)
 app.include_router(cache_management.router)
 app.include_router(diagnostics.router)
+app.include_router(beta_bootstrap.router)
 
 
 @app.get("/api/health")

@@ -1,8 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_channel;
 mod app_updates;
+mod beta_bootstrap;
+mod beta_installer;
 mod update_notifications;
 
+use app_channel::{resolve_data_root, AppChannel};
 use app_updates::PendingAppUpdate;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -56,41 +60,41 @@ fn set_dwm_color(hwnd: *mut std::ffi::c_void, attribute: u32, color: u32) {
 }
 
 #[cfg(target_os = "windows")]
-fn apply_window_frame_color_to_hwnd(hwnd: *mut std::ffi::c_void) {
-    const APP_TEAL: u32 = 0x0086_b812;
+fn apply_window_frame_color_to_hwnd(hwnd: *mut std::ffi::c_void, channel: AppChannel) {
+    let frame_color = channel.frame_color_bgr();
     const WHITE: u32 = 0x00ff_ffff;
     const DWMWA_BORDER_COLOR: u32 = 34;
     const DWMWA_CAPTION_COLOR: u32 = 35;
     const DWMWA_TEXT_COLOR: u32 = 36;
 
-    set_dwm_color(hwnd, DWMWA_BORDER_COLOR, APP_TEAL);
-    set_dwm_color(hwnd, DWMWA_CAPTION_COLOR, APP_TEAL);
+    set_dwm_color(hwnd, DWMWA_BORDER_COLOR, frame_color);
+    set_dwm_color(hwnd, DWMWA_CAPTION_COLOR, frame_color);
     set_dwm_color(hwnd, DWMWA_TEXT_COLOR, WHITE);
 }
 
 #[cfg(target_os = "windows")]
-fn apply_webview_window_frame_color(window: &tauri::WebviewWindow) {
+fn apply_webview_window_frame_color(window: &tauri::WebviewWindow, channel: AppChannel) {
     if let Ok(hwnd) = window.hwnd() {
-        apply_window_frame_color_to_hwnd(hwnd.0 as *mut std::ffi::c_void);
+        apply_window_frame_color_to_hwnd(hwnd.0 as *mut std::ffi::c_void, channel);
     }
 }
 
 #[cfg(target_os = "windows")]
-fn apply_native_window_frame_color(window: &tauri::Window) {
+fn apply_native_window_frame_color(window: &tauri::Window, channel: AppChannel) {
     if let Ok(hwnd) = window.hwnd() {
-        apply_window_frame_color_to_hwnd(hwnd.0 as *mut std::ffi::c_void);
+        apply_window_frame_color_to_hwnd(hwnd.0 as *mut std::ffi::c_void, channel);
     }
 }
 
-fn apply_window_icon(window: &tauri::WebviewWindow) {
-    let icon = Image::new(include_bytes!("../icons/icon-256.rgba"), 256, 256);
+fn apply_window_icon(window: &tauri::WebviewWindow, channel: AppChannel) {
+    let icon = Image::new(channel.window_icon_rgba(), 256, 256);
     let _ = window.set_icon(icon);
 }
 
-fn finish_window_branding(window: &tauri::WebviewWindow) {
-    apply_window_icon(window);
+fn finish_window_branding(window: &tauri::WebviewWindow, channel: AppChannel) {
+    apply_window_icon(window, channel);
     #[cfg(target_os = "windows")]
-    apply_webview_window_frame_color(window);
+    apply_webview_window_frame_color(window, channel);
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -121,8 +125,8 @@ fn is_main_window_visible(app: AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn queue_deep_link(app: &AppHandle, url: String) {
-    if !url.starts_with("cellxplorer://import-analysis") {
+fn queue_deep_link(app: &AppHandle, channel: AppChannel, url: String) {
+    if !channel.accepts_deep_link(&url) {
         return;
     }
     if let Some(state) = app.try_state::<PendingDeepLink>() {
@@ -231,6 +235,44 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn apply_beta_bootstrap(app: AppHandle, token: String) -> Result<(), String> {
+    let channel = channel_for_app(&app)?;
+    if channel != AppChannel::Beta {
+        return Err("Beta bootstrap is only available in the Beta channel.".to_string());
+    }
+    let beta_root = app_data_dir_for_channel(channel);
+
+    // Pre-stop validation may return to the frontend. Nothing is mutated yet.
+    let _ = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+
+    // Establish relaunch capability before stopping the backend or changing data.
+    schedule_relaunch()?;
+
+    if let Some(lifecycle) = app.try_state::<LifecycleState>() {
+        lifecycle.quitting.store(true, Ordering::SeqCst);
+    }
+    stop_backend(&app);
+
+    // After backend stop this command must not return a retryable error to the
+    // existing frontend. Always exit; the delayed relaunch recovers the app.
+    match (|| {
+        let paths = beta_bootstrap::validate_staged_copy(&beta_root, &token)?;
+        beta_bootstrap::activate_staged_copy(&beta_root, &paths)?;
+        Ok::<(), String>(())
+    })() {
+        Ok(()) => {
+            beta_bootstrap::clear_apply_failure_marker(&beta_root);
+            let _ = beta_bootstrap::remove_consumed_stage(&beta_root, &token);
+        }
+        Err(error) => {
+            let _ = beta_bootstrap::write_apply_failure_marker(&beta_root, &error);
+        }
+    }
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 fn startup_mode() -> String {
     if std::env::args().any(|arg| arg == "--hidden") {
         "startup".to_string()
@@ -251,15 +293,19 @@ fn backend_api_base(endpoint: tauri::State<'_, BackendEndpoint>) -> String {
     endpoint.0.clone()
 }
 
+fn channel_for_app(app: &AppHandle) -> Result<AppChannel, String> {
+    AppChannel::from_identifier(app.config().identifier.as_str())
+}
+
 #[cfg(target_os = "windows")]
-fn autostart_status() -> Result<bool, String> {
+fn autostart_status(channel: AppChannel) -> Result<bool, String> {
     use std::os::windows::process::CommandExt;
     let status = std::process::Command::new("reg.exe")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
             "/v",
-            "CellXplorer",
+            channel.autostart_registry_value(),
         ])
         .creation_flags(0x08000000)
         .status()
@@ -268,17 +314,17 @@ fn autostart_status() -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn autostart_status() -> Result<bool, String> {
+fn autostart_status(_channel: AppChannel) -> Result<bool, String> {
     Ok(false)
 }
 
 #[tauri::command]
-fn is_autostart_enabled() -> Result<bool, String> {
-    autostart_status()
+fn is_autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    autostart_status(channel_for_app(&app)?)
 }
 
 #[cfg(target_os = "windows")]
-fn update_autostart(enabled: bool) -> Result<bool, String> {
+fn update_autostart(channel: AppChannel, enabled: bool) -> Result<bool, String> {
     use std::os::windows::process::CommandExt;
     let mut command = std::process::Command::new("reg.exe");
     if enabled {
@@ -288,7 +334,7 @@ fn update_autostart(enabled: bool) -> Result<bool, String> {
             "add",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
             "/v",
-            "CellXplorer",
+            channel.autostart_registry_value(),
             "/t",
             "REG_SZ",
             "/d",
@@ -300,7 +346,7 @@ fn update_autostart(enabled: bool) -> Result<bool, String> {
             "delete",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
             "/v",
-            "CellXplorer",
+            channel.autostart_registry_value(),
             "/f",
         ]);
     }
@@ -308,7 +354,7 @@ fn update_autostart(enabled: bool) -> Result<bool, String> {
         .creation_flags(0x08000000)
         .status()
         .map_err(|error| error.to_string())?;
-    if status.success() || (!enabled && !autostart_status()?) {
+    if status.success() || (!enabled && !autostart_status(channel)?) {
         Ok(enabled)
     } else {
         Err("Windows could not update the startup setting".to_string())
@@ -316,41 +362,43 @@ fn update_autostart(enabled: bool) -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn update_autostart(_enabled: bool) -> Result<bool, String> {
+fn update_autostart(_channel: AppChannel, _enabled: bool) -> Result<bool, String> {
     Err("Launch at startup is available in the Windows app".to_string())
 }
 
 #[tauri::command]
-fn set_autostart_enabled(enabled: bool) -> Result<bool, String> {
-    update_autostart(enabled)
+fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    update_autostart(channel_for_app(&app)?, enabled)
 }
 
 #[tauri::command]
 fn set_tray_status(app: AppHandle, message: Option<String>) -> Result<(), String> {
+    let channel = channel_for_app(&app)?;
     let tray = app
         .tray_by_id("cellxplorer-tray")
         .ok_or_else(|| "Tray icon is unavailable".to_string())?;
     let tooltip = message
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "CellXplorer".to_string());
+        .unwrap_or_else(|| channel.product_name().to_string());
     tray.set_tooltip(Some(tooltip))
         .map_err(|error| error.to_string())
 }
 
-fn app_data_dir() -> PathBuf {
-    if let Some(value) = std::env::var_os("CELLXPLORER_DATA") {
-        return PathBuf::from(value);
-    }
+fn user_home_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cellxplorer")
+}
+
+fn app_data_dir_for_channel(channel: AppChannel) -> PathBuf {
+    resolve_data_root(channel, &user_home_dir())
 }
 
 #[allow(deprecated)]
 #[tauri::command]
 fn open_app_folder(app: AppHandle, kind: String) -> Result<(), String> {
-    let base = app_data_dir();
+    let channel = channel_for_app(&app)?;
+    let base = app_data_dir_for_channel(channel);
     let path = if kind == "logs" {
         base.join("logs")
     } else {
@@ -441,18 +489,19 @@ fn reveal_download(path: String) -> Result<(), String> {
 }
 
 fn main() {
+    let context = tauri::generate_context!();
+    let channel = AppChannel::from_identifier(context.config().identifier.as_str())
+        .expect("unsupported application identifier");
     let start_hidden = std::env::args().any(|arg| arg == "--hidden");
-    let initial_deep_link =
-        std::env::args().find(|arg| arg.starts_with("cellxplorer://import-analysis"));
+    let initial_deep_link = std::env::args().find(|arg| channel.accepts_deep_link(arg));
     let startup_label = if start_hidden { "startup" } else { "manual" };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(url) = args
-                .into_iter()
-                .find(|arg| arg.starts_with("cellxplorer://import-analysis"))
-            {
-                queue_deep_link(app, url);
+            let channel = AppChannel::from_identifier(app.config().identifier.as_str())
+                .expect("unsupported application identifier");
+            if let Some(url) = args.into_iter().find(|arg| channel.accepts_deep_link(arg)) {
+                queue_deep_link(app, channel, url);
             } else {
                 show_main_window(app);
             }
@@ -468,10 +517,17 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(PendingAppUpdate::default()))
+        .manage(Mutex::new(beta_installer::PendingBetaInstall::default()))
         .invoke_handler(tauri::generate_handler![
             app_updates::check_app_update,
             app_updates::download_app_update,
             app_updates::install_app_update,
+            beta_installer::detect_beta_installation,
+            beta_installer::check_beta_install,
+            beta_installer::download_beta_install,
+            beta_installer::install_beta,
+            beta_installer::open_beta_application,
+            apply_beta_bootstrap,
             backend_api_base,
             is_autostart_enabled,
             is_main_window_visible,
@@ -486,9 +542,12 @@ fn main() {
             show_main_window_for_update,
             startup_mode,
             take_pending_deep_link,
-            update_notifications::show_update_notification
+            update_notifications::show_update_notification,
+            update_notifications::show_beta_install_notification
         ])
         .setup(move |app| {
+            let app_channel = AppChannel::from_identifier(app.config().identifier.as_str())
+                .expect("unsupported application identifier");
             let backend_port = available_backend_port()?;
             app.manage(BackendEndpoint(format!("http://127.0.0.1:{backend_port}")));
             let version = app.package_info().version.to_string();
@@ -497,11 +556,17 @@ fn main() {
                 .sidecar("cellxplorer-backend")?
                 .env("CELLXPLORER_PORT", backend_port.to_string())
                 .env("CELLXPLORER_STARTUP_MODE", startup_label)
-                .env("CELLXPLORER_APP_VERSION", version);
+                .env("CELLXPLORER_APP_VERSION", version)
+                .env("CELLXPLORER_CHANNEL", app_channel.as_str())
+                .env(
+                    "CELLXPLORER_DATA",
+                    app_data_dir_for_channel(app_channel).to_string_lossy().to_string(),
+                );
             let (_rx, child) = sidecar.spawn()?;
             app.manage(BackendChild(Mutex::new(Some(child))));
 
-            let open_item = MenuItem::with_id(app, "open", "Open CellXplorer", true, None::<&str>)?;
+            let open_label = format!("Open {}", app_channel.product_name());
+            let open_item = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
             let maintain_item = MenuItem::with_id(
                 app,
                 "check_update",
@@ -510,22 +575,27 @@ fn main() {
                 None::<&str>,
             )?;
             let separator = PredefinedMenuItem::separator(app)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit CellXplorer", true, None::<&str>)?;
+            let quit_label = format!("Quit {}", app_channel.product_name());
+            let quit_item = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu =
                 Menu::with_items(app, &[&open_item, &maintain_item, &separator, &quit_item])?;
 
             TrayIconBuilder::with_id("cellxplorer-tray")
                 .icon(app.default_window_icon().expect("application icon").clone())
-                .tooltip("CellXplorer")
+                .tooltip(app_channel.product_name())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id().as_ref() {
+                .on_menu_event(|app, event| {
+                    let product_name = AppChannel::from_identifier(app.config().identifier.as_str())
+                        .map(|channel| channel.product_name().to_string())
+                        .unwrap_or_else(|_| "CellXplorer".to_string());
+                    match event.id().as_ref() {
                     "open" => show_main_window(app),
                     "check_update" => {
                         let _ = app.emit("tray-check-update", ());
                         if let Some(tray) = app.tray_by_id("cellxplorer-tray") {
                             let _ = tray
-                                .set_tooltip(Some("CellXplorer - checking and updating sources"));
+                                .set_tooltip(Some(format!("{product_name} - checking and updating sources")));
                         }
                     }
                     "quit" => {
@@ -537,7 +607,7 @@ fn main() {
                         });
                     }
                     _ => {}
-                })
+                }})
                 .on_tray_icon_event(|tray, event| {
                     if matches!(
                         event,
@@ -553,13 +623,13 @@ fn main() {
                 .build(app)?;
 
             if let Some(window) = app.get_webview_window("main") {
-                finish_window_branding(&window);
+                finish_window_branding(&window, app_channel);
                 if start_hidden {
                     let _ = window.hide();
                 }
             }
             if let Some(url) = initial_deep_link.clone() {
-                queue_deep_link(app.handle(), url);
+                queue_deep_link(app.handle(), app_channel, url);
             }
             Ok(())
         })
@@ -572,7 +642,11 @@ fn main() {
                     | WindowEvent::Resized(_)
                     | WindowEvent::ScaleFactorChanged { .. }
             ) {
-                apply_native_window_frame_color(window);
+                if let Ok(channel) =
+                    AppChannel::from_identifier(window.app_handle().config().identifier.as_str())
+                {
+                    apply_native_window_frame_color(window, channel);
+                }
             }
 
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -586,15 +660,22 @@ fn main() {
                     if let Some(state) = app.try_state::<LifecycleState>() {
                         if !state.close_notice_shown.swap(true, Ordering::SeqCst) {
                             if let Some(tray) = app.tray_by_id("cellxplorer-tray") {
-                                let _ = tray.set_tooltip(Some(
-                                    "CellXplorer is running - right-click for actions",
-                                ));
+                                let tooltip = AppChannel::from_identifier(
+                                    app.config().identifier.as_str(),
+                                )
+                                .map(|channel| {
+                                    format!("{} is running - right-click for actions", channel.product_name())
+                                })
+                                .unwrap_or_else(|_| {
+                                    "CellXplorer is running - right-click for actions".to_string()
+                                });
+                                let _ = tray.set_tooltip(Some(tooltip));
                             }
                         }
                     }
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running CellXplorer");
 }

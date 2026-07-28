@@ -12,6 +12,8 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 PREFLIGHT_WORKFLOW = ROOT / ".github" / "workflows" / "preflight.yml"
 RELEASE_TAG_PATH = ROOT / "scripts" / "release_tag.py"
 VERIFY_MANIFEST_PATH = ROOT / "scripts" / "verify_updater_manifest.py"
+RELEASE_CHANNELS_PATH = ROOT / "scripts" / "release_channels.py"
+RELEASE_CHANNEL_POLICY_PATH = ROOT / "scripts" / "release_channel_policy.py"
 
 TAURI_ACTION_SHA = "1deb371b0cd8bd54025b384f1cd735e725c4060f"
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -29,6 +31,10 @@ def load_module(path: Path, name: str):
 
 release_tag = load_module(RELEASE_TAG_PATH, "release_tag")
 verify_updater_manifest = load_module(VERIFY_MANIFEST_PATH, "verify_updater_manifest")
+release_channels = load_module(RELEASE_CHANNELS_PATH, "release_channels")
+release_channel_policy = load_module(
+    RELEASE_CHANNEL_POLICY_PATH, "release_channel_policy"
+)
 
 
 def step_names(workflow: str) -> list[str]:
@@ -41,6 +47,7 @@ def step_index(workflow: str, name: str) -> int:
 
 NOTES = "- Signed in-app updates through the power menu.\n"
 SETUP_EXE = "CellXplorer_0.15.0_x64-setup.exe"
+BETA_SETUP_EXE = "CellXplorer Beta_0.16.0-beta.1_x64-setup.exe"
 OWNER = "mattiafelice-palermo"
 REPO = "cellxplorer"
 ASSET_ID = 987654321
@@ -92,7 +99,7 @@ def sample_manifest(**overrides) -> dict:
 def sample_assets(*, asset_id: int = ASSET_ID, name: str = SETUP_EXE) -> list[dict]:
     return [
         {"id": asset_id, "name": name},
-        {"id": asset_id + 1, "name": f"{SETUP_EXE}.sig"},
+        {"id": asset_id + 1, "name": f"{name}.sig"},
         {"id": asset_id + 2, "name": "latest.json"},
     ]
 
@@ -129,6 +136,135 @@ class ReleaseTagTests(unittest.TestCase):
                     release_tag.require_publishable_release_tag(tag)
 
 
+class ReleaseChannelBranchTests(unittest.TestCase):
+    def valid_tree(self) -> dict:
+        return {
+            "truncated": False,
+            "tree": [
+                {"path": "README.md", "type": "blob", "sha": "readme"},
+                {"path": "stable", "type": "tree", "sha": "stable-tree"},
+                {
+                    "path": "stable/latest.json",
+                    "type": "blob",
+                    "sha": "stable-manifest",
+                },
+                {"path": "beta", "type": "tree", "sha": "beta-tree"},
+                {
+                    "path": "beta/latest.json",
+                    "type": "blob",
+                    "sha": "beta-manifest",
+                },
+            ],
+        }
+
+    def test_accepts_exact_manifest_only_tree(self):
+        blobs = release_channels.validate_branch_tree(self.valid_tree())
+        self.assertEqual(set(blobs), release_channels.REQUIRED_CHANNEL_PATHS)
+
+    def test_missing_ref_or_manifest_fails_closed(self):
+        missing_manifest = self.valid_tree()
+        missing_manifest["tree"] = [
+            entry
+            for entry in missing_manifest["tree"]
+            if entry["path"] != "beta/latest.json"
+        ]
+        missing_manifest["tree"] = [
+            entry for entry in missing_manifest["tree"] if entry["path"] != "beta"
+        ]
+        blobs = release_channels.validate_branch_tree(
+            missing_manifest, target_channel="beta"
+        )
+        self.assertNotIn("beta/latest.json", blobs)
+
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                missing_manifest, target_channel="stable"
+            )
+
+        missing_stable = self.valid_tree()
+        missing_stable["tree"] = [
+            entry
+            for entry in missing_stable["tree"]
+            if entry["path"] not in {"stable", "stable/latest.json"}
+        ]
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                missing_stable, target_channel="beta"
+            )
+
+    def test_rejects_source_tree_or_truncated_response(self):
+        source_tree = self.valid_tree()
+        source_tree["tree"].append(
+            {"path": "src-tauri/Cargo.toml", "type": "blob", "sha": "source"}
+        )
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(source_tree)
+
+        truncated = self.valid_tree()
+        truncated["truncated"] = True
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(truncated)
+
+
+class ReleaseChannelPolicyTests(unittest.TestCase):
+    def releases(self) -> list[dict]:
+        return [
+            {
+                "tag_name": "v0.18.0",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-07-01T00:00:00Z",
+            },
+            {
+                # Legacy Beta was incorrectly a normal release; exact tag policy ignores it.
+                "tag_name": "v0.19.0-beta.1",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-07-02T00:00:00Z",
+            },
+            {
+                "tag_name": "v9.0.0",
+                "draft": True,
+                "prerelease": False,
+                "published_at": None,
+            },
+            {
+                "tag_name": "release-20.0.0",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-07-03T00:00:00Z",
+            },
+        ]
+
+    def test_beta_core_must_be_strictly_greater_than_latest_stable(self):
+        with self.assertRaises(release_channel_policy.ReleaseChannelPolicyError):
+            release_channel_policy.require_beta_targets_future_stable(
+                "v0.18.0-beta.1", self.releases()
+            )
+        release_channel_policy.require_beta_targets_future_stable(
+            "v0.18.1-beta.1", self.releases()
+        )
+
+    def test_legacy_beta_drafts_and_malformed_tags_are_not_stable_baselines(self):
+        self.assertEqual(
+            release_channel_policy.latest_real_stable_core([self.releases()]),
+            (0, 18, 0),
+        )
+
+    def test_missing_real_stable_release_blocks_beta(self):
+        with self.assertRaises(release_channel_policy.ReleaseChannelPolicyError):
+            release_channel_policy.require_beta_targets_future_stable(
+                "v0.18.1-beta.1",
+                [
+                    {
+                        "tag_name": "v0.18.0-beta.1",
+                        "draft": False,
+                        "published_at": "2026-07-01T00:00:00Z",
+                    }
+                ],
+            )
+
+
 class ReleaseWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -159,6 +295,95 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cancel_block = cancel_block.split("- name:", 1)[0]
         self.assertIn("continue-on-error: true", cancel_block)
         self.assertIn("exit 0", cancel_block)
+
+    def test_manual_dispatch_accepts_channel_input(self):
+        self.assertIn("workflow_dispatch:", self.release)
+        self.assertIn("channel:", self.release)
+        self.assertIn("- stable", self.release)
+        self.assertIn("- beta", self.release)
+
+    def test_release_resolves_stable_and_beta_channels(self):
+        self.assertIn("Resolve release channel", self.release)
+        self.assertIn("channel_manifest=stable/latest.json", self.release)
+        self.assertIn("channel_manifest=beta/latest.json", self.release)
+        self.assertIn("VITE_CELLXPLORER_CHANNEL", self.release)
+        self.assertIn("tauri.beta.conf.json", self.release)
+
+    def test_requested_frontend_channel_is_built_and_verified_before_packaging(self):
+        build = step_index(self.release, "Build requested frontend channel")
+        verify = step_index(self.release, "Verify requested frontend channel stamp")
+        reverify = step_index(
+            self.release, "Reverify frontend channel immediately before packaging"
+        )
+        tag_package = step_index(self.release, "Stage signed draft release")
+        manual_package = step_index(self.release, "Build release artifacts only")
+
+        self.assertLess(build, verify)
+        self.assertLess(verify, reverify)
+        self.assertLess(reverify, tag_package)
+        self.assertLess(reverify, manual_package)
+        self.assertIn(
+            'python scripts/build_frontend_channel.py "${{ steps.channel.outputs.channel }}"',
+            self.release,
+        )
+        self.assertGreaterEqual(
+            self.release.count(
+                'python scripts/frontend_channel.py verify --channel "${{ steps.channel.outputs.channel }}"'
+            ),
+            2,
+        )
+
+    def test_beta_tags_publish_as_prereleases(self):
+        self.assertIn("is_prerelease=true", self.release)
+        self.assertIn("prerelease: ${{ steps.channel.outputs.is_prerelease == 'true' }}", self.release)
+
+    def test_channel_manifest_is_published_after_verification(self):
+        self.assertIn("Publish channel manifest pointer", self.release)
+        self.assertLess(
+            step_index(self.release, "Verify updater manifest"),
+            step_index(self.release, "Publish channel manifest pointer"),
+        )
+        self.assertLess(
+            step_index(self.release, "Publish verified draft release"),
+            step_index(self.release, "Publish channel manifest pointer"),
+        )
+
+    def test_manifest_only_branch_gate_runs_before_draft_staging(self):
+        self.assertLess(
+            step_index(self.release, "Require manifest-only release channel branch"),
+            step_index(self.release, "Stage signed draft release"),
+        )
+        self.assertIn(
+            "python scripts/release_channels.py `",
+            self.release,
+        )
+        self.assertIn(
+            '--target-channel "${{ steps.channel.outputs.channel }}"',
+            self.release,
+        )
+        self.assertIn("release-channels is not provisioned", self.release)
+        self.assertNotIn('git/ref/heads/main"', self.release)
+        self.assertNotIn("Initialize release channel manifests", self.release)
+
+    def test_beta_future_stable_policy_runs_before_draft_staging(self):
+        self.assertLess(
+            step_index(self.release, "Require Beta targets a future Stable version"),
+            step_index(self.release, "Stage signed draft release"),
+        )
+        self.assertIn("gh api --paginate --slurp", self.release)
+        self.assertIn("scripts/release_channel_policy.py", self.release)
+        self.assertIn(
+            "steps.channel.outputs.channel == 'beta'",
+            self.release,
+        )
+
+    def test_channel_pointer_update_is_optimistic_and_preserves_other_channel(self):
+        publish = self.release.split("Publish channel manifest pointer", 1)[1]
+        self.assertIn("steps.channel_branch.outputs.target_sha", publish)
+        self.assertIn("steps.channel_branch.outputs.other_sha", publish)
+        self.assertIn("The target channel pointer changed", publish)
+        self.assertIn("The target channel pointer appeared after the release gate", publish)
+        self.assertIn("The non-target channel pointer changed", publish)
 
     def test_manual_dispatch_is_build_only(self):
         self.assertIn("workflow_dispatch:", self.release)
@@ -203,7 +428,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_uploaded_manifest_and_signature_are_verified(self):
         self.assertIn("uploaded-latest.json", self.release)
         self.assertIn("uploaded-setup.sig", self.release)
-        self.assertIn("--tauri-conf src-tauri/tauri.conf.json", self.release)
+        self.assertIn(
+            "--tauri-conf ${{ steps.channel.outputs.updater_key_conf }}",
+            self.release,
+        )
+        self.assertIn(
+            "updater_key_conf=src-tauri/tauri.conf.json",
+            self.release,
+        )
+        self.assertNotIn(
+            "updater_key_conf=src-tauri/tauri.beta.conf.json",
+            self.release,
+        )
         self.assertIn("--uploaded-signature uploaded-setup.sig", self.release)
 
     def test_release_assets_metadata_persists_raw_github_json(self):
@@ -235,7 +471,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_sidecar_is_prepared_with_existing_build_script(self):
         self.assertIn(
-            ".\\scripts\\build-app.ps1 -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend",
+            '.\\scripts\\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" '
+            "-SkipInstall -SkipFrontend -SkipInstaller -ForceBackend",
             self.release,
         )
 
@@ -429,6 +666,74 @@ class VerifyUpdaterManifestTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(code, 0)
+
+    def test_beta_cli_uses_inherited_base_public_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "latest.json"
+            notes_path = root / "notes.md"
+            assets_path = root / "assets.json"
+            sig_path = root / "setup.sig"
+            base_conf_path = root / "tauri.conf.json"
+
+            manifest_path.write_text(
+                __import__("json").dumps(
+                    sample_manifest(version="0.16.0-beta.1")
+                ),
+                encoding="utf-8",
+            )
+            notes_path.write_text(NOTES, encoding="utf-8")
+            assets_path.write_text(
+                __import__("json").dumps(
+                    sample_assets(name=BETA_SETUP_EXE)
+                ),
+                encoding="utf-8",
+            )
+            sig_path.write_text(SIGNATURE, encoding="utf-8")
+            base_conf_path.write_text(
+                __import__("json").dumps(
+                    {"plugins": {"updater": {"pubkey": PUBKEY}}}
+                ),
+                encoding="utf-8",
+            )
+
+            arguments = [
+                "--manifest",
+                str(manifest_path),
+                "--expected-version",
+                "v0.16.0-beta.1",
+                "--notes-file",
+                str(notes_path),
+                "--owner",
+                OWNER,
+                "--repo",
+                REPO,
+                "--release-assets",
+                str(assets_path),
+                "--tauri-conf",
+                str(base_conf_path),
+                "--uploaded-signature",
+                str(sig_path),
+                "--channel",
+                "beta",
+                "--expected-product-name",
+                "CellXplorer Beta",
+            ]
+            self.assertEqual(verify_updater_manifest.main(arguments), 0)
+
+            base_conf_path.write_text(
+                __import__("json").dumps(
+                    {
+                        "plugins": {
+                            "updater": {
+                                "pubkey": encode_tauri_pubkey(OTHER_KEY_ID)
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(verify_updater_manifest.main(arguments), 1)
 
     def test_load_release_assets_unwraps_powershell_nested_array(self):
         with tempfile.TemporaryDirectory() as tmp:

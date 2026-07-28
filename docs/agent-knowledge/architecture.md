@@ -14,6 +14,42 @@ FastAPI processes documented in `docs/local-development.md`. The desktop backend
 available loopback port; frontend requests must use the desktop endpoint discovery helpers rather
 than assuming port `8642`.
 
+## Stable and Beta application channels (Spec 021)
+
+The same source tree builds two Windows products from channel-specific configuration:
+
+| Property | Stable | Beta |
+|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta |
+| Tauri identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
+| Frontend build env | `VITE_CELLXPLORER_CHANNEL=stable` | `VITE_CELLXPLORER_CHANNEL=beta` |
+| Mantine primary | `teal` | `betaBlue` |
+
+Build either channel with `.\scripts\build-app.ps1 -Channel stable|beta`. Each frontend build writes
+`frontend/dist/.cellxplorer-channel.json`; packaging verifies the stamp so a Stable-built dist cannot
+be bundled into Beta and vice versa. The PyInstaller sidecar is shared; Rust passes
+`CELLXPLORER_CHANNEL` to it. Packaged backend startup requires a valid channel and fails closed on
+missing or unsupported values.
+
+Both editions use separate default data roots after Spec 022: Stable `%USERPROFILE%\.cellxplorer`,
+Beta `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides both exactly for tests and
+development. Rust passes the resolved root to the sidecar as `CELLXPLORER_DATA`.
+
+Stable self-updates read `release-channels/stable/latest.json`; Beta self-updates read
+`release-channels/beta/latest.json`. Stable may optionally notify about and install the separate
+Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it never updates an
+installed Beta copy. Standard self-update state and Stable-owned first-Beta-install state are
+different Tauri managed types (`PendingAppUpdate` and the `PendingBetaInstall` newtype), so they
+cannot collide or clear one another. Rust validates exact channel SemVer before accepting a pending
+update: Stable is `MAJOR.MINOR.PATCH`; Beta is `MAJOR.MINOR.PATCH-beta.N`, with no other prerelease
+or build metadata.
+
+NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
+directory being changed — never by shared image name alone — so Stable and Beta can run side by side.
+
+See `docs/windows-packaging.md` for the full identity matrix and build commands.
+
 ## Startup sequence
 
 Importing `backend/app/main.py` performs database inspection and forward migration before Uvicorn
@@ -68,7 +104,7 @@ never `AppHandle::restart()`, which races `tauri_plugin_single_instance`), Appea
 (Auto/Light/Dark via Mantine `defaultColorScheme="auto"`), and pause of background automation.
 
 Chrome surfaces that need a subtle raised/hover fill must use
-`light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the teal
+`light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))` (or the primary
 equivalent for selection). Numbered Mantine shades such as `gray.0` / `teal.0` do **not**
 flip with the colour scheme.
 
@@ -170,6 +206,12 @@ object and verified installer bytes in `src-tauri/src/app_updates.rs` and expose
 commands: `check_app_update`, `download_app_update`, and `install_app_update`. The frontend must
 not call the generic updater plugin API or store manifest URLs, signatures, or raw installer bytes.
 
+The configured identifier selects the self-update channel. Stable and Beta share the updater state
+machine but accept only their exact channel version shape before pending state can change. Stable's
+separate Beta-discovery commands are Stable-only, use the Rust-owned Beta endpoint and the distinct
+`PendingBetaInstall` newtype, and stop offering first installation once the exact Beta uninstall
+registration is present.
+
 Automatic background discovery may emit one native Windows notification per new version when the
 user preference is enabled. Display and body-click activation are owned by Rust
 (`src-tauri/src/update_notifications.rs` via `notify-rust`); the frontend listens once for
@@ -186,6 +228,12 @@ Pre-hook install errors can return to the frontend with the backend still alive.
 `on_before_exit` runs on Windows, Tauri exits the process regardless of whether `ShellExecuteW`
 successfully opened the installer — there is no post-hook frontend recovery path. User database,
 caches, and source files are not touched by update infrastructure.
+
+Both Standard self-update and Stable-owned Beta installation finish the backend session immediately
+before installer launch. Session-finish failure is debug-logged and follows the existing updater
+policy of continuing to the verified installer. Automatic Beta discovery uses the same preference
+interval as Standard updates; schedule-change events cancel and recreate its timers rather than
+disabling recurrence.
 
 For packaging artifacts, signing keys, and the bootstrap-release limitation, see
 `docs/windows-packaging.md`.

@@ -12,7 +12,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_DATA_DIR = Path(os.environ.get("CELLXPLORER_DATA", Path.home() / ".cellxplorer"))
+from .services.app_channel import resolve_data_root
+
+APP_DATA_DIR = resolve_data_root(os.environ, Path.home())
 CACHE_DIR = APP_DATA_DIR / "cache"
 IMPORT_DIR = APP_DATA_DIR / "imports"
 LOG_DIR = APP_DATA_DIR / "logs"
@@ -25,7 +27,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.16.2-beta.1"
+APP_VERSION = "0.17.0-beta.1"
 
 # Version of our derived per-cycle calculation code. Bump when the
 # calculation in services/calc.py changes meaning.

@@ -24,27 +24,80 @@ explicit packaged schema migrations and automatic pre-migration backups. See
 From the repository root, run:
 
 ```powershell
-.\scripts\build-app.cmd
+.\scripts\build-app.cmd -Channel stable
+.\scripts\build-app.cmd -Channel beta
 ```
+
+`-Channel` defaults to `stable`. Each channel builds its own frontend (`VITE_CELLXPLORER_CHANNEL`)
+and writes a fail-closed stamp at `frontend/dist/.cellxplorer-channel.json`. Packaging rejects a
+stale or mismatched stamp, so a Stable-built `frontend/dist` cannot be bundled into Beta and vice
+versa.
 
 This performs the complete frontend, backend sidecar, and NSIS build. See
 `docs/local-development.md` for incremental options and the expected output path.
 
+### Stable and Beta identities (Spec 021)
+
+| Property | Stable | Beta |
+|---|---|---|
+| Product name | CellXplorer | CellXplorer Beta |
+| Identifier | `com.cellxplorer.desktop` | `com.cellxplorer.desktop.beta` |
+| Deep link | `cellxplorer://` | `cellxplorer-beta://` |
+| Default install folder | `Program Files\CellXplorer` | `Program Files\CellXplorer Beta` |
+| Updater | `release-channels/stable/latest.json` | `release-channels/beta/latest.json` |
+
+Both editions share the backend sidecar binary and NSIS template. NSIS pre-install/uninstall hooks
+kill only processes whose executable path is under the installation directory being changed — never
+by shared image name alone.
+
+**Data root:** Stable defaults to `%USERPROFILE%\.cellxplorer`; Beta defaults to
+`%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root exactly for tests and
+development. Do not install intermediate Beta builds against real user data; use disposable
+`CELLXPLORER_DATA` or a test account.
+
+**Release:** Stable and Beta publish to separate SemVer tags. Beta GitHub releases are
+prereleases. Verified updater manifests are copied to the `release-channels` branch
+(`stable/latest.json`, `beta/latest.json`) after draft verification. The first Stable release after
+Spec 023 still ships `latest.json` on the GitHub release for legacy bootstrap clients.
+
+Beta icons are generated deterministically:
+
+```powershell
+pip install -r scripts\requirements-dev.txt
+python scripts\build_beta_icons.py
+```
+
+Committed outputs live under `frontend/public/app-icon-beta.png` and `src-tauri/icons-beta/`.
+Stable icons under `src-tauri/icons/` must remain unchanged.
+
+Expected outputs:
+
+- `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
+
+The Stable app icon is sourced from `frontend/public/app-icon.png`. The Tauri bundle uses
+`src-tauri/icons/icon.ico` (Stable) or `src-tauri/icons-beta/icon.ico` (Beta overlay). The runtime
+window/taskbar icon is set from the matching `icon-256.rgba` in `src-tauri/src/main.rs`.
+
 ## Manual build sequence
+
+Prefer `.\scripts\build-app.ps1 -Channel stable|beta`. When building manually:
 
 ```powershell
 npm.cmd install
 
-cd frontend
-npm.cmd run build
-cd ..
+python scripts\build_frontend_channel.py stable
+# or: python scripts\build_frontend_channel.py beta
 
 npm.cmd run build:backend
 New-Item -ItemType Directory -Force src-tauri\binaries
 Copy-Item dist\cellxplorer-backend.exe src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe -Force
 
-npm.cmd run tauri:build
+python scripts\frontend_channel.py verify --channel stable
+npm.cmd run tauri:build:stable
 ```
+
+Direct `tauri:build:beta` verifies the frontend stamp before packaging.
 
 The backend build includes `backend/app/assets/plotly.min.js`. This offline runtime is embedded
 once in each portable HTML analysis so serialized Plotly figures remain interactive without an
@@ -65,12 +118,15 @@ command with elevated sandbox permission, then continue with the normal packagin
 
 Expected output, once the toolchain is installed:
 
-- `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
+- Beta: `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
 
-The app icon is sourced from `CellXplorer_X_teal_flat_transparent.ico`.
-The Tauri bundle uses `src-tauri/icons/icon.ico`, and the runtime window/taskbar icon
-uses `src-tauri/icons/icon-256.rgba`. If the root `.ico` is replaced, regenerate both
-of those files before rebuilding.
+The Stable app icon is sourced from `frontend/public/app-icon.png`.
+The Tauri bundle uses channel-specific icons under `src-tauri/icons/` (Stable) or
+`src-tauri/icons-beta/` (Beta overlay), and the runtime window/taskbar icon uses the matching
+`icon-256.rgba`. Regenerate Beta assets with `python scripts\build_beta_icons.py` after changing
+the Stable source icon; Stable committed assets must remain byte-for-byte unchanged unless
+intentionally replaced.
 
 ## Branded NSIS installer
 
@@ -78,8 +134,11 @@ of those files before rebuilding.
 CellXplorer installer and uninstaller surfaces built directly in nsDialogs. Tauri is configured to
 use it through `bundle.windows.nsis.template` in `src-tauri/tauri.conf.json`. The first visible
 installer page is the location step; it includes the three-step progress indicator, desktop and
-startup options, and the custom CellXplorer actions. Uninstall preserves `%USERPROFILE%\.cellxplorer`
-by default and offers deletion only as an explicit, confirmed destructive choice.
+startup options, and the custom CellXplorer actions. Uninstall preserves the product's own profile
+data root by default (`%USERPROFILE%\.cellxplorer` for Stable, `%USERPROFILE%\.cellxplorer-beta`
+for Beta) and offers deletion only as an explicit, confirmed destructive choice. The destructive
+path deletes only that product's `CX_PROFILE_DATA_DIR` derived from the exact bundle identifier —
+Beta must never remove `.cellxplorer`.
 
 The template is version-coupled to the Tauri CLI. When upgrading Tauri, compare it with the exact
 upstream template for the new CLI before carrying the branded sections forward. A template can
@@ -113,10 +172,11 @@ produces the normal NSIS setup executable plus an adjacent `.sig` file in
 `src-tauri/target/release/bundle/nsis/`. Tauri updater signatures are separate from Windows
 Authenticode signing.
 
-The production update manifest endpoint is:
+Production update manifest endpoints are:
 
 ```text
-https://github.com/mattiafelice-palermo/cellxplorer/releases/latest/download/latest.json
+Stable: https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/stable/latest.json
+Beta:   https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json
 ```
 
 Only the updater **public key** belongs in `tauri.conf.json`. Store the private key outside the
@@ -137,13 +197,20 @@ Pre-hook install errors can still return to the frontend. After `on_before_exit`
 regardless of whether Windows successfully opens the installer, so there is no post-hook recovery
 UI.
 
+Runtime policy validates exact SemVer before pending state changes: Stable accepts only
+`MAJOR.MINOR.PATCH`; Beta accepts only `MAJOR.MINOR.PATCH-beta.N`. Stable-owned first Beta
+installation uses a distinct `PendingBetaInstall` newtype and the Beta endpoint. It finishes the
+Stable backend session before launching the verified installer. An installed Beta is then updated
+only by the Beta application's standard updater.
+
 The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
 alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while
-preserving `%USERPROFILE%\.cellxplorer`.
+preserving the product's profile data root.
 
-**Bootstrap limitation:** existing installed builds without the updater cannot receive the first
-updater-enabled release automatically. The first updater-capable version must be installed manually;
-later releases can use the in-app update flow once public release assets are available.
+**First Stable channel transition:** the first Stable release embedding the channel-branch endpoint
+must also remain GitHub's normal latest release and retain `latest.json` as an ordinary release
+asset. This proves older Stable clients can fetch
+`/releases/latest/download/latest.json`, install the transition build, and move to the new endpoint.
 
 Automatic update discovery may show a native Windows notification. Verify notification title/body
 identity and body-click restore/focus/modal behavior in an **installed** NSIS package. Development
@@ -152,26 +219,36 @@ dev-only branding as final proof.
 
 ## Production GitHub release
 
-Stable releases are published by pushing a SemVer tag:
+Stable and Beta releases are published by pushing exact SemVer tags:
 
 ```powershell
 git tag v0.15.0
 git push origin v0.15.0
+
+git tag v0.16.0-beta.1
+git push origin v0.16.0-beta.1
 ```
 
 The `.github/workflows/release.yml` workflow then:
 
-1. verifies the tag is exact stable SemVer (`vMAJOR.MINOR.PATCH`) and reachable from `main`;
-2. refuses to replace an already published non-draft release;
-3. fails before publishing when the repository is private;
-4. extracts the matching `CHANGELOG.md` section with `scripts/release_notes.py`;
-5. runs `python scripts/preflight.py --no-cache`;
-6. builds the PyInstaller sidecar through `scripts/build-app.ps1`;
-7. stages a **draft** GitHub Release with the pinned `tauri-apps/tauri-action`, signed NSIS
+1. resolves Stable `vMAJOR.MINOR.PATCH` or Beta `vMAJOR.MINOR.PATCH-beta.N` and requires the tag
+   commit to be reachable from `main`;
+2. for Beta, lists all published releases, ignores drafts/malformed/legacy Beta tags, and requires
+   the Beta core to be strictly greater than the highest exact Stable tag;
+3. requires the pre-provisioned orphan `release-channels` branch to contain only its README and
+   channel manifests; the first Beta may create the initially absent Beta pointer, but Stable must
+   already have a valid pointer and the workflow never initializes from `main`;
+4. snapshots both channel blob SHAs so publication can update only the selected pointer;
+5. refuses to replace an already published non-draft release and requires a public repository;
+6. extracts exact release notes and runs `python scripts/preflight.py --no-cache`;
+7. explicitly builds and verifies the selected frontend channel stamp, then builds the sidecar;
+8. stages a **draft** GitHub Release with the pinned `tauri-apps/tauri-action`, signed NSIS
    installer, `.sig`, and workspace-root `latest.json`;
-8. validates the draft manifest against release-asset metadata with
-   `scripts/verify_updater_manifest.py`;
-9. undrafts the release only after verification succeeds.
+9. validates exact channel version/product/asset/signature against release metadata with
+   `scripts/verify_updater_manifest.py`, reading the shared public key from the base Tauri config;
+10. undrafts as a normal Stable release or true Beta prerelease only after verification;
+11. updates only the selected channel pointer using its prior SHA, verifies exact bytes through the
+    Contents API and public raw endpoint, and proves the non-target blob is unchanged.
 
 Required GitHub repository secrets:
 
@@ -180,11 +257,14 @@ TAURI_SIGNING_PRIVATE_KEY
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-Use **Actions → Publish CellXplorer release → Run workflow** for a build-only rehearsal. Manual
-dispatch never creates or alters a GitHub Release.
+Use **Actions → Publish CellXplorer release → Run workflow** for both Stable and Beta build-only
+rehearsals. Manual dispatch never creates or alters a GitHub Release. Download each artifact and
+record its channel stamp, installer name, icon, and product metadata before release.
 
-Published versions are immutable. If a stable release is wrong, cut a new patch version rather than
-rebuilding the same tag.
+Published versions are immutable. If a release is wrong, cut a new patch/Beta sequence rather than
+rebuilding the same tag. If pointer publication fails after undraft, the immutable release exists
+but clients remain on the previous pointer; repair only the manifest branch with optimistic SHA
+protection and re-run verification.
 
 The repository must be public before a production tag publish is allowed, so installed applications
 can fetch `latest.json` without credentials.

@@ -1,0 +1,36 @@
+{
+  "productName": "CellXplorer Beta",
+  "identifier": "com.cellxplorer.desktop.beta",
+  "app": {
+    "windows": [
+      {
+        "title": "CellXplorer Beta",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 720
+      }
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["cellxplorer-beta"]
+      }
+    },
+    "updater": {
+      "endpoints": [
+        "https://raw.githubusercontent.com/mattiafelice-palermo/cellxplorer/release-channels/beta/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "icon": ["icons-beta/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons-beta/icon.ico",
+        "uninstallerIcon": "icons-beta/icon.ico"
+      }
+    }
+  }
+}

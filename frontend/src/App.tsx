@@ -46,6 +46,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
+import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
 import { AnalysisWorkspaceTabs } from "./components/AnalysisWorkspaceTabs";
 import { AnalysisWorkspaceContent } from "./components/AnalysisWorkspaceContent";
@@ -59,6 +60,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
 import { invalidateAnalysisQueries } from "./analysisQueryCache";
+import { APP_BRANDING } from "./appChannel";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -352,16 +354,19 @@ export default function App() {
 
   if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
-      <Group h="100vh" justify="center" p="xl">
-        <Alert
-          color="red"
-          title="Could not contact the CellXplorer backend"
-          maw={680}
-        >
-          The application could not determine whether the database is compatible.
-          Check the backend log or restart CellXplorer.
-        </Alert>
-      </Group>
+      <>
+        <BetaBootstrapCoordinator backendReady={false} />
+        <Group h="100vh" justify="center" p="xl">
+          <Alert
+            color="red"
+            title="Could not contact the CellXplorer backend"
+            maw={680}
+          >
+            The application could not determine whether the database is compatible.
+            Check the backend log or restart CellXplorer.
+          </Alert>
+        </Group>
+      </>
     );
   }
 
@@ -471,6 +476,7 @@ export default function App() {
           databaseStatus.data?.compatible === true && !automationPause.data?.paused
         }
       />
+      <BetaBootstrapCoordinator backendReady={databaseStatus.data?.compatible === true} />
       <AppShell.Header>
         <Group
           className="cellxplorer-scaled-surface"
@@ -491,19 +497,26 @@ export default function App() {
               </ActionIcon>
             </Tooltip>
             <img
-              src="/app-icon.png"
+              src={APP_BRANDING.appIconPath}
               alt=""
               aria-hidden="true"
               style={{ width: 24, height: 24, display: "block" }}
             />
-            <Title order={4}>CellXplorer</Title>
+            <Group gap={6} wrap="nowrap" align="center">
+              <Title order={4}>{APP_BRANDING.headerTitle}</Title>
+              {APP_BRANDING.isBeta ? (
+                <Badge size="xs" color={APP_BRANDING.primaryColor} variant="filled" radius="sm">
+                  BETA
+                </Badge>
+              ) : null}
+            </Group>
           </Group>
           <Group gap="xs">
             <Button
               className="background-activity-button"
               size="compact-sm"
               variant="subtle"
-              color={backgroundJobs.data?.some((job) => job.status === "failed") ? "red" : "teal"}
+              color={backgroundJobs.data?.some((job) => job.status === "failed") ? "red" : APP_BRANDING.primaryColor}
               leftSection={
                 activeJob ? (
                   <IconLoader2 size={14} className="source-check-spin" />
@@ -523,7 +536,7 @@ export default function App() {
                       {activeJob.completed}/{activeJob.total}
                     </Text>
                   </Group>
-                  <Progress value={activityProgress} size={3} animated color="teal" />
+                  <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />
                 </Stack>
               ) : (
                 "Activity"

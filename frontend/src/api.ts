@@ -218,6 +218,41 @@ export interface DatabaseStatus {
   database_instance_id: string | null;
 }
 
+export interface BetaBootstrapStatus {
+  channel: "beta";
+  setupState?: "choice-required" | "complete" | "blocked-error";
+  decision: "copied" | "empty" | null;
+  needsChoice: boolean;
+  betaPristine: boolean;
+  stableDatabaseExists: boolean;
+  stableDatabaseCompatible: boolean;
+  stableDatabasePath: string;
+  copyBlockingReason?: string | null;
+  setupError?: string | null;
+  blockingReason: string | null;
+  outstandingStageToken?: string | null;
+  applyFailureMessage?: string | null;
+}
+
+export interface BetaBootstrapStageCopyResult {
+  token: string;
+  sourceDatabaseInstanceId: string | null;
+  sourceSchemaRevision: string | null;
+  copiedImports: number;
+  externalSourcePaths: number;
+  restartRequired: boolean;
+}
+
+export interface BetaBootstrapStartEmptyResult {
+  decision: "empty";
+  restartRequired: boolean;
+}
+
+export interface BetaBootstrapDiscardResult {
+  discarded: boolean;
+  token: string;
+}
+
 export interface ElectrodeAreaPreset {
   id: string;
   name: string;

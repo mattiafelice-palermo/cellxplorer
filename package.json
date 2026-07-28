@@ -1,13 +1,17 @@
 {
   "name": "cellxplorer-desktop",
   "private": true,
-  "version": "0.16.2-beta.1",
+  "version": "0.17.0-beta.1",
   "type": "module",
   "scripts": {
     "check:packaging-tools": "rustc --version && cargo --version && python -m PyInstaller --version && npx.cmd tauri --version",
     "build:backend": "python -m PyInstaller --noconfirm --onefile --noconsole --disable-windowed-traceback --paths backend --add-data \"backend/app/assets/plotly.min.js;app/assets\" --name cellxplorer-backend packaging/backend_entry.py",
+    "build:frontend:stable": "python scripts/build_frontend_channel.py stable",
+    "build:frontend:beta": "python scripts/build_frontend_channel.py beta",
     "tauri": "tauri",
-    "tauri:build": "npx.cmd tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:stable": "python scripts/frontend_channel.py verify --channel stable && tauri build",
+    "tauri:build:beta": "python scripts/frontend_channel.py verify --channel beta && tauri build --config src-tauri/tauri.beta.conf.json"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

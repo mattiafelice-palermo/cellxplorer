@@ -1,23 +1,18 @@
-; The PyInstaller onefile sidecar re-executes itself, so the inner
-; cellxplorer-backend.exe survives an ordinary parent kill and keeps the
-; installed exe locked — which makes upgrades and uninstalls fail to
-; replace/delete it. Reap the whole tree before any file operation.
-; The main app is closed here too (everything in CellXplorer autosaves)
-; so Tauri's fallback "running! Click OK to kill it" prompt never shows.
-!macro KillBackendProcesses
-  nsExec::Exec 'taskkill /F /T /IM cellxplorer.exe'
+; Stop only processes running from this installation directory. Stable and Beta
+; share executable image names but install to different folders; never taskkill
+; by shared process name alone.
+!macro KillInstallationProcesses
+  nsExec::ExecToStack 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& { $$ErrorActionPreference = ''SilentlyContinue''; $$root = ''$INSTDIR''.TrimEnd(''\'', ''/'') ; if ($$root) { $$prefix = $$root + ''\'' ; Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$prefix, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { taskkill.exe /F /T /PID $$_.ProcessId | Out-Null } ; Start-Sleep -Milliseconds 400 } }"'
   Pop $0
-  nsExec::Exec 'taskkill /F /T /IM cellxplorer-backend.exe'
-  Pop $0
-  Sleep 400
+  Pop $1
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  !insertmacro KillBackendProcesses
+  !insertmacro KillInstallationProcesses
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  !insertmacro KillBackendProcesses
+  !insertmacro KillInstallationProcesses
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

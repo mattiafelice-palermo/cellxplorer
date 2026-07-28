@@ -24,6 +24,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { get, post, type AutomationPauseState } from "../api";
+import { APP_BRANDING } from "../appChannel";
 import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
 import {
   getUpdateMenuLabel,
@@ -75,6 +76,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const tauri = isTauriApp();
   const appUpdate = useOptionalAppUpdate();
+  const brandColor = APP_BRANDING.primaryColor;
   const [menuOpen, setMenuOpen] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -159,7 +161,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
     >
       <Menu.Target>
         <Indicator
-          color="teal"
+          color={brandColor}
           size={16}
           label="1"
           offset={4}
@@ -177,7 +179,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
             <Button
               size="sm"
               variant="subtle"
-              color={isPaused ? "yellow" : "teal"}
+              color={isPaused ? "yellow" : brandColor}
               px="sm"
               aria-label={
                 appUpdate?.showUpdateBadge
@@ -297,7 +299,7 @@ export function QuickSettingsMenu({ onOpenDebug }: { onOpenDebug?: () => void })
             <Menu.Item
               leftSection={
                 isUpdateMenuLoading(appUpdate.state) ? (
-                  <Loader size={14} color="teal" />
+                  <Loader size={14} color={brandColor} />
                 ) : (
                   <IconDownload size={14} />
                 )

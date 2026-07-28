@@ -56,6 +56,12 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PENDING_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
+def _deep_link_import_base() -> str:
+    from .app_channel import deep_link_import_base
+
+    return deep_link_import_base()
+
+
 class PortableOriginalSourceError(RuntimeError):
     """Raised when a sources-included export cannot preserve source identity."""
 
@@ -746,6 +752,7 @@ def _write_html(destination: Path, manifest: dict, payload_paths: dict[str, Path
 
 
 def _html_head(title: str) -> str:
+    deep_link = _deep_link_import_base()
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -791,7 +798,7 @@ table{{border-collapse:collapse;width:100%}} th,td{{border-bottom:1px solid var(
 </head>
 <body>
 <div id="report-cover"><div><div class="cover-mark">X</div><h1>{title}</h1><p class="muted">CellXplorer portable battery analysis</p></div></div>
-<header><div><h1 id="title">Portable analysis</h1><p class="muted" id="subtitle">Loading report...</p></div><div class="header-actions"><a class="action-link primary" id="open-cellxplorer" href="cellxplorer://import-analysis">Open in CellXplorer</a><button class="action" id="download-originals" hidden>Download source files</button><strong style="color:var(--teal)">CellXplorer</strong></div></header>
+<header><div><h1 id="title">Portable analysis</h1><p class="muted" id="subtitle">Loading report...</p></div><div class="header-actions"><a class="action-link primary" id="open-cellxplorer" href="{deep_link}">Open in CellXplorer</a><button class="action" id="download-originals" hidden>Download source files</button><strong style="color:var(--teal)">CellXplorer</strong></div></header>
 <main>
 <aside class="panel"><h2>Saved plots</h2><div id="views"></div><div id="warnings"></div></aside>
 <section>
@@ -1338,7 +1345,7 @@ def _html_tail() -> str:
   async function start() {
     const openCellXplorer = byId("open-cellxplorer");
     if (openCellXplorer && window.location.protocol === "file:") {
-      openCellXplorer.href = "cellxplorer://import-analysis?source=" + encodeURIComponent(window.location.href);
+      openCellXplorer.href = "%%DEEP_LINK_BASE%%?source=" + encodeURIComponent(window.location.href);
     }
     const bytes = await decodePayload("report");
     report = JSON.parse(new TextDecoder().decode(bytes));
@@ -1387,7 +1394,7 @@ def _html_tail() -> str:
 })();
 </script>
 </body></html>
-"""
+""".replace("%%DEEP_LINK_BASE%%", _deep_link_import_base())
 
 
 def _index_script_bounds(path: Path) -> dict[str, tuple[int, int]]:

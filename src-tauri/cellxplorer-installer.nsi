@@ -70,6 +70,18 @@ ${StrLoc}
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
 
+; Channel-specific profile data root (Spec 022). Exact bundle identifiers only —
+; never infer from product-name substrings. Beta must never target .cellxplorer.
+!if "${BUNDLEID}" == "com.cellxplorer.desktop.beta"
+  !define CX_PROFILE_DATA_DIR ".cellxplorer-beta"
+!else
+  !if "${BUNDLEID}" == "com.cellxplorer.desktop"
+    !define CX_PROFILE_DATA_DIR ".cellxplorer"
+  !else
+    !error "Unsupported CellXplorer bundle identifier for profile data directory: ${BUNDLEID}"
+  !endif
+!endif
+
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
@@ -1184,7 +1196,7 @@ Function un.CellXplorerUninstallPage
   Pop $0
   !insertmacro CxStyleText $0 "FA5252" "FFFFFF" $CxSmallFont
 
-  ${NSD_CreateLabel} 0 210u 100% 14u "$PROFILE\.cellxplorer"
+  ${NSD_CreateLabel} 0 210u 100% 14u "$PROFILE\${CX_PROFILE_DATA_DIR}"
   Pop $0
   !insertmacro CxStyleText $0 "7A8491" "FFFFFF" $CxSmallFont
 
@@ -1204,7 +1216,7 @@ FunctionEnd
 Function un.CellXplorerUninstallLeave
   ${NSD_GetState} $CxDeleteDataRadio $0
   ${If} $0 == ${BST_CHECKED}
-    MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2 "Permanently remove the CellXplorer database, cached cycling data, analyses, folders and settings?" IDYES +2
+    MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2 "Permanently remove the ${PRODUCTNAME} database, cached cycling data, analyses, folders and settings from $PROFILE\${CX_PROFILE_DATA_DIR}?" IDYES +2
     Abort
     StrCpy $DeleteAppDataCheckboxState 1
   ${Else}
@@ -1674,7 +1686,7 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
-    RmDir /r "$PROFILE\.cellxplorer"
+    RmDir /r "$PROFILE\${CX_PROFILE_DATA_DIR}"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL
