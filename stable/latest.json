@@ -1,0 +1,15 @@
+{
+  "version": "0.16.0",
+  "notes": "- Use native Windows notifications for automatically discovered application updates and open manual update results directly.\n- Add a Receive beta versions setting; when off, updates whose version contains \"beta\" are ignored for automatic and manual checks.",
+  "pub_date": "2026-07-27T15:07:01.287Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFEb3FzRDBNdnBPTU02L3hHUXorWFQ5ZXV6S2twNnVoSTl3YzlnU0dwWm5Mc1dRdG12Rnd4R3F1Tm9UQ0JXeEkwU2Z3U2s0WFdCcTVuaVhmaXpkY3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MTY0ODE1CWZpbGU6Q2VsbFhwbG9yZXJfMC4xNi4wX3g2NC1zZXR1cC5leGUKMjczbGRkNTgvdG5ONjRHMXlTVTBScXd4TXBTTUhOVXQvSXNuby9oZ04vVTNvQTF4dTY4VGtVajJSTFZYc2FOaFc5Tk01MkRZMVc5c0tZUExuSHExQWc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/491586854"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFEb3FzRDBNdnBPTU02L3hHUXorWFQ5ZXV6S2twNnVoSTl3YzlnU0dwWm5Mc1dRdG12Rnd4R3F1Tm9UQ0JXeEkwU2Z3U2s0WFdCcTVuaVhmaXpkY3dJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MTY0ODE1CWZpbGU6Q2VsbFhwbG9yZXJfMC4xNi4wX3g2NC1zZXR1cC5leGUKMjczbGRkNTgvdG5ONjRHMXlTVTBScXd4TXBTTUhOVXQvSXNuby9oZ04vVTNvQTF4dTY4VGtVajJSTFZYc2FOaFc5Tk01MkRZMVc5c0tZUExuSHExQWc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/491586854"
+    }
+  }
+}
