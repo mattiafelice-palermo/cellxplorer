@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.5 - 2026-07-28
+
+- Protocol segment editor: sticky controls, protocol-aware filters, and show-neighbours expansion.
+- Repair NSIS upgrades with a fresh uninstaller and clearer pre-install process shutdown.
+- Track install instances and gate Beta startup until library bootstrap is resolved.
+
 ## 0.17.0-beta.4 - 2026-07-28
 
 - Run NSIS pre-install shutdown through the bundled PowerShell script instead of inline -Command.
