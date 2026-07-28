@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.4 - 2026-07-28
+
+- Run NSIS pre-install shutdown through the bundled PowerShell script instead of inline -Command.
+
 ## 0.17.0-beta.3 - 2026-07-28
 
 - Wait for install-directory processes and backend locks to clear before NSIS updates.
