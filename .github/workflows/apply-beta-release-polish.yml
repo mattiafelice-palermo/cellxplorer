@@ -38,6 +38,10 @@ jobs:
           python -m pip install -r scripts/requirements-dev.txt
           npm --prefix frontend ci
 
+      - name: Repair one-shot migration anchors
+        shell: pwsh
+        run: python scripts/fix_apply_beta_release_polish.py
+
       - name: Apply source and asset fixes
         shell: pwsh
         run: python scripts/apply_beta_release_polish.py
@@ -55,6 +59,7 @@ jobs:
         run: |
           git rm .github/workflows/apply-beta-release-polish.yml
           git rm scripts/apply_beta_release_polish.py
+          git rm scripts/fix_apply_beta_release_polish.py
 
       - name: Commit generated fixes
         shell: pwsh
