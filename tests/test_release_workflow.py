@@ -388,6 +388,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("$publishedCommit = $putResult.commit.sha", publish)
         self.assertIn("contents/$channelPath?ref=$publishedCommit", publish)
         self.assertIn("contents/$otherPath?ref=$publishedCommit", publish)
+        self.assertIn('[System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)', publish)
 
     def test_manual_dispatch_is_build_only(self):
         self.assertIn("workflow_dispatch:", self.release)

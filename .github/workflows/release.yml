@@ -606,23 +606,7 @@ jobs:
             exit 1
           }
 
-          $rawUrl = "https://raw.githubusercontent.com/$owner/$repo/$branch/$channelPath"
-          $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-          $fetched = $false
-          foreach ($attempt in 1..5) {
-            Start-Sleep -Seconds 2
-            try {
-              Invoke-WebRequest -Uri "$rawUrl?cb=$cacheBust" -OutFile remote-channel-latest.json
-              $fetched = $true
-              break
-            } catch {
-              Write-Host "Raw channel fetch attempt $attempt failed; retrying..."
-            }
-          }
-          if (-not $fetched) {
-            Write-Error "Could not fetch public raw channel manifest from $rawUrl"
-            exit 1
-          }
+          [System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)
 
           python scripts/verify_updater_manifest.py `
             --manifest remote-channel-latest.json `
