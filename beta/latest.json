@@ -1,15 +1,15 @@
 {
-  "version": "0.17.0-beta.3",
-  "notes": "- Wait for install-directory processes and backend locks to clear before NSIS updates.\n- Let Beta reuse or replace an existing library with explicit version acknowledgment.",
-  "pub_date": "2026-07-28T14:52:27.733Z",
+  "version": "0.17.0-beta.4",
+  "notes": "- Run NSIS pre-install shutdown through the bundled PowerShell script instead of inline -Command.",
+  "pub_date": "2026-07-28T18:56:28.230Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVPVVpxNi9MZHJxSFpPN2tBNnFsdU1nMk1DVEJVYTJJRGtHclpab2daM2xVTVVJR3NPa2VaWDVzS0dlSEdRQnZmcmRZeTRsTCs4TGRNeXVxY1YycndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjUwMzQyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4zX3g2NC1zZXR1cC5leGUKMGorS3U5NG1wUys1czB5MTB4OWw0SXZhb3hLMUsrQ0s3amY1bDJqZENnN0NFbThEWDZBdjg5K0lWM3ozSUhIVUZwOG54MENuUE1HQ0FWM2sxNXJsQnc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492834568"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWF3Y2IzRFc3bDNRa1J1NXNscUQ3NzBGdE1rM3VCbVZ2RVhiRHlWK3R6OFNmcDVDVG1FQzlXMTd1N2QzYm1IZE1TdFFhMXg5TXl4TkxFS3VOVkY1U0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjY0OTgzCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS40X3g2NC1zZXR1cC5leGUKU210algvWVU3Qkh0b2FpNUFhQzJFVTQ5NUtIOUExcVNJS085MFFCY1pNbXFaVkZIQWF5UTJyNVU0MDZhZzN2cXQvT0RvSnBSYUE5YlVxVGl0VDRrQlE9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/493069996"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVPVVpxNi9MZHJxSFpPN2tBNnFsdU1nMk1DVEJVYTJJRGtHclpab2daM2xVTVVJR3NPa2VaWDVzS0dlSEdRQnZmcmRZeTRsTCs4TGRNeXVxY1YycndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjUwMzQyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4zX3g2NC1zZXR1cC5leGUKMGorS3U5NG1wUys1czB5MTB4OWw0SXZhb3hLMUsrQ0s3amY1bDJqZENnN0NFbThEWDZBdjg5K0lWM3ozSUhIVUZwOG54MENuUE1HQ0FWM2sxNXJsQnc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492834568"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWF3Y2IzRFc3bDNRa1J1NXNscUQ3NzBGdE1rM3VCbVZ2RVhiRHlWK3R6OFNmcDVDVG1FQzlXMTd1N2QzYm1IZE1TdFFhMXg5TXl4TkxFS3VOVkY1U0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjY0OTgzCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS40X3g2NC1zZXR1cC5leGUKU210algvWVU3Qkh0b2FpNUFhQzJFVTQ5NUtIOUExcVNJS085MFFCY1pNbXFaVkZIQWF5UTJyNVU0MDZhZzN2cXQvT0RvSnBSYUE5YlVxVGl0VDRrQlE9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/493069996"
     }
   }
 }
