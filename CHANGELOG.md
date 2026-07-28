@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.2 - 2026-07-28
+
+- Use parent-process-aware relaunch for manual restart and Beta library copy apply.
+- Make Beta NSIS and app chrome channel-specific, and regenerate size-specific Beta icons.
+
 ## 0.17.0-beta.1 - 2026-07-28
 
 - Add separate Stable and Beta application identities, isolated Beta data, channel-specific signed updates, and explicit Stable-owned Beta installation.
