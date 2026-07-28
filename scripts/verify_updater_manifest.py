@@ -247,7 +247,9 @@ def verify_manifest(
         if channel is not None
         else infer_setup_exe_name(target_version)
     )
-    if expected_product_name and not setup_name.startswith(f"{expected_product_name}_"):
+    if expected_product_name and not setup_name.startswith(
+        f"{tauri_artifact_product_name(expected_product_name)}_"
+    ):
         raise ManifestVerificationError(
             f"Installer asset {setup_name!r} does not belong to product {expected_product_name!r}."
         )
@@ -295,9 +297,13 @@ def verify_manifest(
     assert_no_secrets(signature, "Signature")
 
 
+def tauri_artifact_product_name(product_name: str) -> str:
+    return product_name.replace(" ", ".")
+
+
 def infer_setup_exe_name(version: str, *, product_name: str = "CellXplorer") -> str:
     normalized = normalize_version(version)
-    return f"{product_name}_{normalized}_x64-setup.exe"
+    return f"{tauri_artifact_product_name(product_name)}_{normalized}_x64-setup.exe"
 
 
 def infer_setup_exe_name_for_channel(version: str, channel: str) -> str:

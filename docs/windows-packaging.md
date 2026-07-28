@@ -73,7 +73,7 @@ Stable icons under `src-tauri/icons/` must remain unchanged.
 Expected outputs:
 
 - `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
-- `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
+- `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
 
 The Stable app icon is sourced from `frontend/public/app-icon.png`. The Tauri bundle uses
 `src-tauri/icons/icon.ico` (Stable) or `src-tauri/icons-beta/icon.ico` (Beta overlay). The runtime
@@ -119,7 +119,7 @@ command with elevated sandbox permission, then continue with the normal packagin
 Expected output, once the toolchain is installed:
 
 - Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
-- Beta: `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
+- Beta: `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
 
 The Stable app icon is sourced from `frontend/public/app-icon.png`.
 The Tauri bundle uses channel-specific icons under `src-tauri/icons/` (Stable) or

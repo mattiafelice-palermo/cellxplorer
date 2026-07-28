@@ -762,7 +762,7 @@ Verification actually run so far:
 - `.\scripts\build-app.ps1 -Channel stable`: passed unsigned and produced
   `CellXplorer_0.17.0-beta.1_x64-setup.exe`;
 - `.\scripts\build-app.ps1 -Channel beta`: passed unsigned and produced
-  `CellXplorer Beta_0.17.0-beta.1_x64-setup.exe`;
+  `CellXplorer.Beta_0.17.0-beta.1_x64-setup.exe`;
 - after the final scheduling correction, both installers were rebuilt from final sources with
   `-SkipInstall -SkipBackend`; both passed channel-stamp verification and packaging;
 - installer metadata: Stable `ProductName=CellXplorer`; Beta

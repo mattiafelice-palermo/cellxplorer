@@ -13,7 +13,7 @@ into a Windows desktop app with Tauri. Read this before changing the packaging s
   channel build.
 - Default successful installer targets:
   - Stable: `src-tauri/target/release/bundle/nsis/CellXplorer_<version>_x64-setup.exe`
-  - Beta: `src-tauri/target/release/bundle/nsis/CellXplorer Beta_<version>_x64-setup.exe`
+  - Beta: `src-tauri/target/release/bundle/nsis/CellXplorer.Beta_<version>_x64-setup.exe`
 - MSI generation reached WiX linking, but WiX ICE validation failed in this environment because
   the Windows Installer service was not accessible to the build process. NSIS is the clean default.
 

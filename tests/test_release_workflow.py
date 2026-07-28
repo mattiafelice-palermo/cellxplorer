@@ -47,7 +47,7 @@ def step_index(workflow: str, name: str) -> int:
 
 NOTES = "- Signed in-app updates through the power menu.\n"
 SETUP_EXE = "CellXplorer_0.15.0_x64-setup.exe"
-BETA_SETUP_EXE = "CellXplorer Beta_0.16.0-beta.1_x64-setup.exe"
+BETA_SETUP_EXE = "CellXplorer.Beta_0.16.0-beta.1_x64-setup.exe"
 OWNER = "mattiafelice-palermo"
 REPO = "cellxplorer"
 ASSET_ID = 987654321

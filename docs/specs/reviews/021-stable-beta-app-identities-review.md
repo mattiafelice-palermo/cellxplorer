@@ -467,7 +467,7 @@ build-only; no tag/publish).
 Artifacts:
 
 - `src-tauri\target\release\bundle\nsis\CellXplorer_0.16.2-beta.1_x64-setup.exe`
-- `src-tauri\target\release\bundle\nsis\CellXplorer Beta_0.16.2-beta.1_x64-setup.exe`
+- `src-tauri\target\release\bundle\nsis\CellXplorer.Beta_0.16.2-beta.1_x64-setup.exe`
 
 Beta product name containing a space packaged successfully through the shared NSIS template.
 
