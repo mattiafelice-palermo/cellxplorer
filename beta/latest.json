@@ -1,15 +1,15 @@
 {
-  "version": "0.17.0-beta.2",
-  "notes": "- Use parent-process-aware relaunch for manual restart and Beta library copy apply.\n- Make Beta NSIS and app chrome channel-specific, and regenerate size-specific Beta icons.",
-  "pub_date": "2026-07-28T11:53:49.058Z",
+  "version": "0.17.0-beta.3",
+  "notes": "- Wait for install-directory processes and backend locks to clear before NSIS updates.\n- Let Beta reuse or replace an existing library with explicit version acknowledgment.",
+  "pub_date": "2026-07-28T14:52:27.733Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhsQWxEbTJZTDVCcHZJYit0YngrbnFpSlVkVXA2QzZQdzFrR3B5VGF2cGxsVi9HcVV6SG1GWWpnV3NvaFcwbzlqcU96aFZoK0ZTZlM5Vm5CeWZLQ1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjM5NjIyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4yX3g2NC1zZXR1cC5leGUKZUhaajQxbmtnYkM2dkVUd0g5aGpIWXFYV01Qdlh6QUJ6d1NnOGNWR0dXVDk2dENwUExCMDJIcWpta1cyZTJhbm1xREFMd3ZmZHlTdDc2VVZOMCtNREE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492658434"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVPVVpxNi9MZHJxSFpPN2tBNnFsdU1nMk1DVEJVYTJJRGtHclpab2daM2xVTVVJR3NPa2VaWDVzS0dlSEdRQnZmcmRZeTRsTCs4TGRNeXVxY1YycndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjUwMzQyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4zX3g2NC1zZXR1cC5leGUKMGorS3U5NG1wUys1czB5MTB4OWw0SXZhb3hLMUsrQ0s3amY1bDJqZENnN0NFbThEWDZBdjg5K0lWM3ozSUhIVUZwOG54MENuUE1HQ0FWM2sxNXJsQnc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492834568"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhsQWxEbTJZTDVCcHZJYit0YngrbnFpSlVkVXA2QzZQdzFrR3B5VGF2cGxsVi9HcVV6SG1GWWpnV3NvaFcwbzlqcU96aFZoK0ZTZlM5Vm5CeWZLQ1FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjM5NjIyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4yX3g2NC1zZXR1cC5leGUKZUhaajQxbmtnYkM2dkVUd0g5aGpIWXFYV01Qdlh6QUJ6d1NnOGNWR0dXVDk2dENwUExCMDJIcWpta1cyZTJhbm1xREFMd3ZmZHlTdDc2VVZOMCtNREE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492658434"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVPVVpxNi9MZHJxSFpPN2tBNnFsdU1nMk1DVEJVYTJJRGtHclpab2daM2xVTVVJR3NPa2VaWDVzS0dlSEdRQnZmcmRZeTRsTCs4TGRNeXVxY1YycndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjUwMzQyCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4zX3g2NC1zZXR1cC5leGUKMGorS3U5NG1wUys1czB5MTB4OWw0SXZhb3hLMUsrQ0s3amY1bDJqZENnN0NFbThEWDZBdjg5K0lWM3ozSUhIVUZwOG54MENuUE1HQ0FWM2sxNXJsQnc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/492834568"
     }
   }
 }
