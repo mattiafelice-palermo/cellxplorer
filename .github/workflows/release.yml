@@ -577,9 +577,15 @@ jobs:
           }
           if (-not [string]::IsNullOrWhiteSpace($expectedSha)) { $putBody.sha = $expectedSha }
           $putJson = $putBody | ConvertTo-Json
-          Invoke-RestMethod -Method Put -Uri "https://api.github.com/repos/$owner/$repo/contents/$channelPath" -Headers $headers -Body $putJson -ContentType "application/json"
+          $putResult = Invoke-RestMethod -Method Put -Uri "https://api.github.com/repos/$owner/$repo/contents/$channelPath" -Headers $headers -Body $putJson -ContentType "application/json"
+          $publishedCommit = $putResult.commit.sha
+          if ([string]::IsNullOrWhiteSpace($publishedCommit)) {
+            Write-Error "GitHub did not return the channel pointer commit SHA."
+            exit 1
+          }
 
-          $contents = Invoke-RestMethod -Method Get -Uri $existingUri -Headers $headers
+          $publishedUri = "https://api.github.com/repos/$owner/$repo/contents/$channelPath?ref=$publishedCommit"
+          $contents = Invoke-RestMethod -Method Get -Uri $publishedUri -Headers $headers
           $remoteBytes = [Convert]::FromBase64String($contents.content.Replace("`n", ""))
           $localBytes = [System.IO.File]::ReadAllBytes("uploaded-latest.json")
           if ($remoteBytes.Length -ne $localBytes.Length) {
@@ -594,7 +600,7 @@ jobs:
           }
 
           $otherPath = "${{ steps.channel_branch.outputs.other_path }}"
-          $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$otherPath?ref=$branch" -Headers $headers
+          $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$otherPath?ref=$publishedCommit" -Headers $headers
           if ($other.sha -ne "${{ steps.channel_branch.outputs.other_sha }}") {
             Write-Error "The non-target channel pointer changed during publication."
             exit 1
