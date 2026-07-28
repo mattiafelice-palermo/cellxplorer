@@ -22,7 +22,9 @@ class ReleaseChannelBranchError(Exception):
     """Raised when the release-channels branch has an unsafe tree."""
 
 
-def validate_branch_tree(payload: object) -> dict[str, str]:
+def validate_branch_tree(
+    payload: object, *, target_channel: str | None = None
+) -> dict[str, str]:
     if not isinstance(payload, dict):
         raise ReleaseChannelBranchError("Git tree response must be a JSON object.")
     if payload.get("truncated") is True:
@@ -52,8 +54,13 @@ def validate_branch_tree(payload: object) -> dict[str, str]:
             )
         blobs[path] = sha
 
+    required = set(REQUIRED_CHANNEL_PATHS)
+    if target_channel == "beta":
+        # The first real Beta release is what creates the first trustworthy Beta pointer.
+        # Stable must already be valid so no Stable transition binary can embed a 404 feed.
+        required.remove("beta/latest.json")
     actual = set(blobs)
-    missing = sorted(REQUIRED_CHANNEL_PATHS - actual)
+    missing = sorted(required - actual)
     unexpected = sorted(actual - REQUIRED_CHANNEL_PATHS)
     if missing:
         raise ReleaseChannelBranchError(
@@ -63,9 +70,12 @@ def validate_branch_tree(payload: object) -> dict[str, str]:
         raise ReleaseChannelBranchError(
             "release-channels contains unexpected files: " + ", ".join(unexpected)
         )
-    if directories != {"stable", "beta"}:
+    expected_directories = {
+        path.split("/", 1)[0] for path in actual if "/" in path
+    }
+    if directories != expected_directories:
         raise ReleaseChannelBranchError(
-            "release-channels must contain only the stable and beta directories."
+            "release-channels directory entries do not match its manifest paths."
         )
     return blobs
 
@@ -73,11 +83,12 @@ def validate_branch_tree(payload: object) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree-json", type=Path, required=True)
+    parser.add_argument("--target-channel", choices=("stable", "beta"), required=True)
     args = parser.parse_args(argv)
 
     try:
         payload = json.loads(args.tree_json.read_text(encoding="utf-8"))
-        blobs = validate_branch_tree(payload)
+        blobs = validate_branch_tree(payload, target_channel=args.target_channel)
     except (OSError, json.JSONDecodeError, ReleaseChannelBranchError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

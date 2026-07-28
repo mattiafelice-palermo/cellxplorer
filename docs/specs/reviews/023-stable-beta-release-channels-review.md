@@ -732,7 +732,7 @@ matrix is recorded.
 - **R1:** Replaced the alias with a real `PendingBetaInstall` newtype and added independent `TypeId` and state-isolation tests.
 - **R2:** The release workflow explicitly builds the selected frontend channel and verifies its stamp twice before packaging.
 - **R3:** Updater verification reads the shared key from the base `tauri.conf`, with offline Beta key tests.
-- **R4:** The workflow requires a pre-provisioned, exact manifest-only `release-channels` tree; it never derives that branch from `main`, uses the optimistic target SHA, and verifies the non-target manifest remains unchanged.
+- **R4:** The workflow requires a pre-provisioned manifest-only `release-channels` tree; it never derives that branch from `main`, permits only the race-safe first creation of `beta/latest.json`, uses optimistic target SHA protection afterward, and verifies the non-target Stable manifest remains unchanged.
 - **R5:** Rust enforces exact channel SemVer policy before accepting a pending update.
 - **R6:** A testable Beta future-Stable-core policy checks all published exact Stable tags before draft staging.
 - **R7:** Beta installation now follows download → `/api/session/finish` → install, using the debug-log-and-continue policy when session finalization fails.

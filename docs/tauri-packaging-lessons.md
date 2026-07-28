@@ -208,8 +208,10 @@ Never store the user database or cache under the app install directory.
 
 ## Release-channel branch invariant
 
-`release-channels` is a pre-provisioned orphan/manifest-only branch. It contains exactly
-`README.md`, `stable/latest.json`, and `beta/latest.json`; never initialize it from `main`.
+`release-channels` is a pre-provisioned orphan/manifest-only branch; never initialize it from
+`main`. Before the first real Beta release it may contain only `README.md` and the last verified
+`stable/latest.json`; that Beta workflow creates `beta/latest.json` with a race-safe first write.
+Afterward it contains exactly all three files.
 The release workflow validates the complete Git tree and both existing pointers before draft
 staging, updates only the selected file with its prior blob SHA, and proves the other channel blob
 did not change. Missing refs/manifests or unexpected source files block publication.

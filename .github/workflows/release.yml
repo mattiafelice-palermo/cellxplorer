@@ -239,7 +239,9 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE "release-channels-tree.json"),
             $treeResponse.Content
           )
-          python scripts/release_channels.py --tree-json release-channels-tree.json
+          python scripts/release_channels.py `
+            --tree-json release-channels-tree.json `
+            --target-channel "${{ steps.channel.outputs.channel }}"
 
           $targetPath = "${{ steps.channel.outputs.channel_manifest }}"
           $otherPath = if ($targetPath -eq "stable/latest.json") {
@@ -247,9 +249,19 @@ jobs:
           } else {
             "stable/latest.json"
           }
-          $target = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$targetPath?ref=release-channels" -Headers $headers
+          $targetSha = ""
+          try {
+            $target = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$targetPath?ref=release-channels" -Headers $headers
+            $targetSha = $target.sha
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            if ($status -ne 404 -or "${{ steps.channel.outputs.channel }}" -ne "beta") {
+              throw
+            }
+            Write-Host "The first Beta release will create beta/latest.json."
+          }
           $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$otherPath?ref=release-channels" -Headers $headers
-          "target_sha=$($target.sha)" >> $env:GITHUB_OUTPUT
+          "target_sha=$targetSha" >> $env:GITHUB_OUTPUT
           "other_path=$otherPath" >> $env:GITHUB_OUTPUT
           "other_sha=$($other.sha)" >> $env:GITHUB_OUTPUT
 
@@ -523,11 +535,22 @@ jobs:
           }
 
           $existingUri = "https://api.github.com/repos/$owner/$repo/contents/$channelPath?ref=$branch"
-          $existing = Invoke-RestMethod -Method Get -Uri $existingUri -Headers $headers
           $expectedSha = "${{ steps.channel_branch.outputs.target_sha }}"
-          if ($existing.sha -ne $expectedSha) {
-            Write-Error "The target channel pointer changed after the release gate. Refusing to overwrite it."
-            exit 1
+          if ([string]::IsNullOrWhiteSpace($expectedSha)) {
+            try {
+              $null = Invoke-RestMethod -Method Get -Uri $existingUri -Headers $headers
+              Write-Error "The target channel pointer appeared after the release gate. Refusing a racy first write."
+              exit 1
+            } catch {
+              $status = $_.Exception.Response.StatusCode.value__
+              if ($status -ne 404) { throw }
+            }
+          } else {
+            $existing = Invoke-RestMethod -Method Get -Uri $existingUri -Headers $headers
+            if ($existing.sha -ne $expectedSha) {
+              Write-Error "The target channel pointer changed after the release gate. Refusing to overwrite it."
+              exit 1
+            }
           }
 
           $commitMessage = if ("${{ steps.channel.outputs.channel }}" -eq "beta") {
@@ -539,8 +562,8 @@ jobs:
             message = $commitMessage
             content = $manifestB64
             branch = $branch
-            sha = $expectedSha
           }
+          if (-not [string]::IsNullOrWhiteSpace($expectedSha)) { $putBody.sha = $expectedSha }
           $putJson = $putBody | ConvertTo-Json
           Invoke-RestMethod -Method Put -Uri "https://api.github.com/repos/$owner/$repo/contents/$channelPath" -Headers $headers -Body $putJson -ContentType "application/json"
 

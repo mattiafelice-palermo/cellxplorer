@@ -168,8 +168,29 @@ class ReleaseChannelBranchTests(unittest.TestCase):
             for entry in missing_manifest["tree"]
             if entry["path"] != "beta/latest.json"
         ]
+        missing_manifest["tree"] = [
+            entry for entry in missing_manifest["tree"] if entry["path"] != "beta"
+        ]
+        blobs = release_channels.validate_branch_tree(
+            missing_manifest, target_channel="beta"
+        )
+        self.assertNotIn("beta/latest.json", blobs)
+
         with self.assertRaises(release_channels.ReleaseChannelBranchError):
-            release_channels.validate_branch_tree(missing_manifest)
+            release_channels.validate_branch_tree(
+                missing_manifest, target_channel="stable"
+            )
+
+        missing_stable = self.valid_tree()
+        missing_stable["tree"] = [
+            entry
+            for entry in missing_stable["tree"]
+            if entry["path"] not in {"stable", "stable/latest.json"}
+        ]
+        with self.assertRaises(release_channels.ReleaseChannelBranchError):
+            release_channels.validate_branch_tree(
+                missing_stable, target_channel="beta"
+            )
 
     def test_rejects_source_tree_or_truncated_response(self):
         source_tree = self.valid_tree()
@@ -333,7 +354,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
             step_index(self.release, "Stage signed draft release"),
         )
         self.assertIn(
-            "python scripts/release_channels.py --tree-json release-channels-tree.json",
+            "python scripts/release_channels.py `",
+            self.release,
+        )
+        self.assertIn(
+            '--target-channel "${{ steps.channel.outputs.channel }}"',
             self.release,
         )
         self.assertIn("release-channels is not provisioned", self.release)
@@ -357,6 +382,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("steps.channel_branch.outputs.target_sha", publish)
         self.assertIn("steps.channel_branch.outputs.other_sha", publish)
         self.assertIn("The target channel pointer changed", publish)
+        self.assertIn("The target channel pointer appeared after the release gate", publish)
         self.assertIn("The non-target channel pointer changed", publish)
 
     def test_manual_dispatch_is_build_only(self):

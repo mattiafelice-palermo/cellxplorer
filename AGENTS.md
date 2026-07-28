@@ -307,8 +307,9 @@ example a coordinated release train that defers tagging until several specs land
    python scripts\bump_version.py 0.16.2-beta.1 --notes "Beta release note."
    ```
 3. Verify declarations: `python scripts\check_versions.py --expected-version <version>`
-4. Before tagging, verify the pre-provisioned orphan `release-channels` branch contains exactly
-   `README.md`, `stable/latest.json`, and `beta/latest.json`. Never initialize it from `main`.
+4. Before tagging, verify the pre-provisioned orphan `release-channels` branch contains only its
+   README and valid channel manifests. The first Beta may create its initially absent pointer;
+   Stable must already have a valid pointer. Never initialize the branch from `main`.
 5. Run `python scripts\preflight.py --no-cache` and report the exact result.
 6. Commit the version bump on `main`, push `main`, then create and push the tag:
    ```powershell

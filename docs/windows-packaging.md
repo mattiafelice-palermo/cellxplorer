@@ -235,8 +235,9 @@ The `.github/workflows/release.yml` workflow then:
    commit to be reachable from `main`;
 2. for Beta, lists all published releases, ignores drafts/malformed/legacy Beta tags, and requires
    the Beta core to be strictly greater than the highest exact Stable tag;
-3. requires the pre-provisioned `release-channels` branch to contain exactly `README.md`,
-   `stable/latest.json`, and `beta/latest.json`; the workflow never initializes it from `main`;
+3. requires the pre-provisioned orphan `release-channels` branch to contain only its README and
+   channel manifests; the first Beta may create the initially absent Beta pointer, but Stable must
+   already have a valid pointer and the workflow never initializes from `main`;
 4. snapshots both channel blob SHAs so publication can update only the selected pointer;
 5. refuses to replace an already published non-draft release and requires a public repository;
 6. extracts exact release notes and runs `python scripts/preflight.py --no-cache`;

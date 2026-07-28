@@ -185,9 +185,10 @@ multi-spec release train), operate on `main` after the relevant features are mer
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
    Use `python scripts\bump_version.py --patch --notes "..."` for Stable, or an explicit version
    such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases.
-2. Before any production tag, pre-provision and verify the orphan `release-channels` branch. It must
-   contain exactly `README.md`, `stable/latest.json`, and `beta/latest.json`; both manifests must be
-   valid existing pointers. Never derive this branch from `main`.
+2. Before any production tag, pre-provision and verify the orphan `release-channels` branch. Never
+   derive it from `main`. For the first Beta it contains `README.md` plus the valid current
+   `stable/latest.json`; the workflow creates the first verified Beta pointer safely. Thereafter it
+   contains exactly both manifests and the README.
 3. Run `python scripts/check_versions.py --expected-version <version>` and
    `python scripts/preflight.py --no-cache` locally. Report the exact preflight result.
 4. Confirm `TAURI_SIGNING_PRIVATE_KEY` and password are configured in GitHub repository secrets.
