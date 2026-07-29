@@ -1,15 +1,15 @@
 {
-  "version": "0.17.0-beta.8",
-  "notes": "- Gate Beta startup on scientific cache preparation until it finishes or you continue in background.\n- Show clearer setup progress while validating a copied Stable library.\n- Block normal library interaction until the one-time preparation gate is resolved.",
-  "pub_date": "2026-07-29T13:37:29.747Z",
+  "version": "0.17.0-beta.9",
+  "notes": "### Bug fixes\n\n- Fix analysis tab switch after saving a draft plot when changing tabs with unsaved work.\n- Fix deferred destructive confirmations when the impact preview modal closes first.",
+  "pub_date": "2026-07-29T16:29:09.844Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVdZRlh2NTFUUlFHZ2I1c3NiSTF3WUVSakJNZXJlUWwwa1hqdDd0Rzc4WVZvaWN6YkNyMWY4UTczaGZDZDRYNVhUN2NueURjbFEyb0NHUTdqNGxHQ0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzMyMjQ1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS44X3g2NC1zZXR1cC5leGUKcXVBVkNhekZ4OUNFQTdWMzJKYWdFUzVUT1RmZUExZFFjVldZNEd1bW54bXVQbnBBMDJnNitaK3VYbEhWcGZpMS8zY3hUc3ROOFdpRDdzbEwyMTJIQ0E9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494083055"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVrdEk3RmpVR3BlSzRWQzFkSFRhNUJncWFzY3lWSXBEd1BCV01PZzhxK0pvRXpVTVJEK1kweWtDdHFjdmJBc1lFNU9kZXlXc2tVYkw2SCtFV29hVEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzQyNTQ0CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS45X3g2NC1zZXR1cC5leGUKcTdibm9lM09XWkI1blBVbzgxN2J3Kzk0R0RYUWNsb3JKMTQ5RGl2ZXZDdGFZMURFNXJSTGtaUnZFOXR0dTlqVEJSYjZlcEcyQnFnaE5pSzBGVlV3Q3c9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494266140"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVdZRlh2NTFUUlFHZ2I1c3NiSTF3WUVSakJNZXJlUWwwa1hqdDd0Rzc4WVZvaWN6YkNyMWY4UTczaGZDZDRYNVhUN2NueURjbFEyb0NHUTdqNGxHQ0FRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzMyMjQ1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS44X3g2NC1zZXR1cC5leGUKcXVBVkNhekZ4OUNFQTdWMzJKYWdFUzVUT1RmZUExZFFjVldZNEd1bW54bXVQbnBBMDJnNitaK3VYbEhWcGZpMS8zY3hUc3ROOFdpRDdzbEwyMTJIQ0E9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494083055"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVVrdEk3RmpVR3BlSzRWQzFkSFRhNUJncWFzY3lWSXBEd1BCV01PZzhxK0pvRXpVTVJEK1kweWtDdHFjdmJBc1lFNU9kZXlXc2tVYkw2SCtFV29hVEE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzQyNTQ0CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS45X3g2NC1zZXR1cC5leGUKcTdibm9lM09XWkI1blBVbzgxN2J3Kzk0R0RYUWNsb3JKMTQ5RGl2ZXZDdGFZMURFNXJSTGtaUnZFOXR0dTlqVEJSYjZlcEcyQnFnaE5pSzBGVlV3Q3c9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494266140"
     }
   }
 }
