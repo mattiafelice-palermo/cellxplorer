@@ -340,6 +340,14 @@ Rules:
   delays with a 10 s floor, save-time validation that the retry span cannot outlast the check
   frequency, and a "Next checks" preview computed server-side. Legacy config keys are upgraded
   on read. **Implemented.** Branch `feature/source-monitor-schedule-units`.
+- [028-per-cycle-cv-and-status-performance.md](028-per-cycle-cv-and-status-performance.md)
+  — `per_cycle` was half of import compute and 77 % of it was one function building a pandas
+  sub-frame per (cycle, step) group; status predicates also ran `str.contains` over every row
+  when a file carries four distinct status values. Now a numpy walk plus a `status_matches`
+  helper shared with `analysis_engine`. Measured 2.61× on `per_cycle` across a real library,
+  output bit-identical (the golden corpus diff is 8 paths, all `calc_version`).
+  `CALC_VERSION` 1.6.0. Also records why the parse side is **not** worth optimising.
+  **Implemented.** Branch `feature/calc-status-and-cv-vectorization`.
 
 ## Assets
 
