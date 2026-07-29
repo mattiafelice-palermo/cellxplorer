@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import platform
+import zlib
 import shutil
 import threading
 import time
@@ -284,6 +286,13 @@ def diagnostics_health():
                 "status": "ok",
                 "pid": os.getpid(),
                 "database_ok": database_ok,
+                # Build-environment facts about the *running* sidecar. The packaged
+                # backend crash loop was a build problem, so being able to see which
+                # interpreter an install actually froze is worth the two lines. zlib
+                # is here because CPython only links zlib-ng on Windows from 3.14,
+                # and that is a ~1.5x difference in .ndax inflate speed.
+                "python_version": platform.python_version(),
+                "zlib_version": zlib.ZLIB_RUNTIME_VERSION,
             },
             "database": database_status.as_dict() if database_status else None,
             "storage": {
