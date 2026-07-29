@@ -317,6 +317,28 @@ Rules:
   Stable-owned Beta installation UX, and channel-aware release automation. Part of the Spec
   021–023 release train on branch `feature/stable-beta-app-identities`. Depends on Specs 021–022.
   Review: [023-stable-beta-release-channels-review.md](reviews/023-stable-beta-release-channels-review.md).
+- [024-same-folder-drop-deletes-items.md](024-same-folder-drop-deletes-items.md)
+  — data-loss fix: dropping a cell or replicate group into the folder it already lived in
+  deleted it. `move_folder_cells` added to the target then deleted from the source, and
+  `add_cell_refs` skips ids already present, so a same-folder move removed the only membership
+  row. Backend early return + a per-item client guard that also covers Move to / Copy to.
+  **Implemented.** Branch `feature/same-folder-drop-fix`.
+- [025-project-folder-sections.md](025-project-folder-sections.md)
+  — optional collapsible Analyses / Samples sections inside each project folder, with a global
+  samples-first / analyses-first order, counts in the headers, and empty sections omitted. The
+  render and `visibleTreeItems` share one ordering function so shift-click ranges cannot drift
+  from what is on screen. Frontend-only. **Implemented.** Branch `feature/projects-folder-sections`.
+- [026-project-explorer-metric-columns.md](026-project-explorer-metric-columns.md)
+  — cycle-count and peak-discharge-capacity columns for cells, replicate groups (mean of
+  members) and folders (rollup over descendants), plus a saved-plot count with a thumbnail
+  hover preview served by a new read-only `/api/analyses/{id}/plot-thumbnails`. Aggregates are
+  one grouped query so `/api/tree` does not become N+1. **Implemented.**
+  Branch `feature/projects-explorer-metrics`.
+- [027-source-monitor-schedule-units-and-preview.md](027-source-monitor-schedule-units-and-preview.md)
+  — weekly fixed-time schedules (months deliberately excluded), seconds/minutes/hours retry
+  delays with a 10 s floor, save-time validation that the retry span cannot outlast the check
+  frequency, and a "Next checks" preview computed server-side. Legacy config keys are upgraded
+  on read. **Implemented.** Branch `feature/source-monitor-schedule-units`.
 
 ## Assets
 
