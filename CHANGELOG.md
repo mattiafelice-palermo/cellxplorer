@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.9 - 2026-07-29
+
+### Bug fixes
+
+- Fix analysis tab switch after saving a draft plot when changing tabs with unsaved work.
+- Fix deferred destructive confirmations when the impact preview modal closes first.
+
 ## 0.17.0-beta.8 - 2026-07-29
 
 - Gate Beta startup on scientific cache preparation until it finishes or you continue in background.
