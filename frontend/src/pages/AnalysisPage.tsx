@@ -9006,7 +9006,8 @@ function AnalysisPageView({
     name: string;
     description: string;
     source: DraftSaveSource;
-    afterSave?: "none" | "new_plot";
+    afterSave?: "none" | "new_plot" | "switch_tab";
+    targetTab?: AnalysisTabKey;
   } | null>(null);
   const [leavePrompt, setLeavePrompt] = useState<{
     proceed: () => void;
@@ -9710,6 +9711,31 @@ function AnalysisPageView({
   );
   const hasUnsavedPlot = Boolean(isLiveDraft || activePlotDirty);
 
+  const openColdTabWorkspace = useCallback(
+    (tab: AnalysisTabKey, sourceSpec: AnalysisSpec) => {
+      const opened = resolveColdOpenWorkspace({
+        spec: sourceSpec,
+        tab,
+        viewSignature: snapshotSignature,
+        preferredPlotId: lastPlotIdByTabRef.current[tab] ?? null,
+      });
+      setActiveTab(tab);
+      setActiveSavedPlotId(opened.activeSavedPlotId);
+      setPlotSessionActive(opened.plotSessionActive);
+      setPlotWorkspaceTouched(false);
+      setSpec(opened.spec);
+      if (opened.activeSavedPlotId) {
+        lastPlotIdByTabRef.current[tab] = opened.activeSavedPlotId;
+        setActivePlotBaselineSignature(snapshotSignature(opened.spec));
+        normalWorkspaceRef.current = captureNormalWorkspace(opened.spec, tab);
+      } else {
+        setActivePlotBaselineSignature(null);
+      }
+      if (opened.changed) setDirty(true);
+    },
+    [],
+  );
+
   const applyTabWorkspace = useCallback(
     (tab: AnalysisTabKey) => {
       if (!spec) {
@@ -9733,29 +9759,12 @@ function AnalysisPageView({
         setActiveTab(tab);
         return;
       }
-      const opened = resolveColdOpenWorkspace({
-        spec,
-        tab,
-        viewSignature: snapshotSignature,
-        preferredPlotId: lastPlotIdByTabRef.current[tab] ?? null,
-      });
-      setActiveTab(tab);
-      setActiveSavedPlotId(opened.activeSavedPlotId);
-      setPlotSessionActive(opened.plotSessionActive);
-      setPlotWorkspaceTouched(false);
-      if (opened.activeSavedPlotId) {
-        lastPlotIdByTabRef.current[tab] = opened.activeSavedPlotId;
-        setActivePlotBaselineSignature(snapshotSignature(opened.spec));
-        normalWorkspaceRef.current = captureNormalWorkspace(opened.spec, tab);
-        setSpec(opened.spec);
-        if (opened.changed) setDirty(true);
-      } else {
-        setActivePlotBaselineSignature(null);
-      }
+      openColdTabWorkspace(tab, spec);
     },
     [
       activeSavedPlotId,
       activeTab,
+      openColdTabWorkspace,
       plotSessionActive,
       plotWorkspaceTouched,
       spec,
@@ -10242,7 +10251,8 @@ function AnalysisPageView({
                     name: suggestedPlotName(activeTab, displayResult, spec),
                     description: "",
                     source: "live",
-                    afterSave: "none",
+                    afterSave: "switch_tab",
+                    targetTab: next,
                   });
                 }}
               >
@@ -10342,6 +10352,7 @@ function AnalysisPageView({
   const commitSavedPlot = () => {
     if (!saveDraft || !spec) return;
     const afterSave = saveDraft.afterSave ?? "none";
+    const targetTab = saveDraft.targetTab;
     const source = saveDraft.source;
     const draftName = saveDraft.name;
     const draftDescription = saveDraft.description;
@@ -10370,8 +10381,12 @@ function AnalysisPageView({
     next.computation = restored.computation;
     next.aggregation = restored.aggregation;
     next.presentation = restored.presentation;
-    setSpec(next);
     setDirty(true);
+    if (afterSave === "switch_tab" && targetTab) {
+      openColdTabWorkspace(targetTab, next);
+      return;
+    }
+    setSpec(next);
     setActiveSavedPlotId(plot.id);
     setActiveTab(plot.tab);
     setActivePlotBaselineSignature(snapshotSignature(next));

@@ -71,11 +71,15 @@ function makeDraft(quantity: string, tab: AnalysisDraftPlot["tab"] = "cycles"): 
   };
 }
 
-function makeSaved(quantity: string, id = "p1"): SavedAnalysisPlot {
+function makeSaved(
+  quantity: string,
+  id = "p1",
+  tab: SavedAnalysisPlot["tab"] = "cycles",
+): SavedAnalysisPlot {
   const baseline = makeSpec(quantity);
   return {
     id,
-    tab: "cycles",
+    tab,
     name: "Saved",
     subtitle: "",
     description: null,
@@ -191,6 +195,23 @@ test("cold open for a tab without saved plots stays empty even if other tabs hav
   });
   assert.equal(opened.plotSessionActive, false);
   assert.equal(opened.activeSavedPlotId, null);
+});
+
+test("cold open after saving a draft restores the requested destination tab", () => {
+  const spec = makeSpec("voltage");
+  spec.saved_plots = [
+    makeSaved("voltage", "new-time-plot", "time_capacity"),
+    makeSaved("current", "existing-steps-plot", "steps"),
+  ];
+
+  const opened = resolveColdOpenWorkspace({
+    spec,
+    tab: "steps",
+    viewSignature: plotViewSignature,
+  });
+
+  assert.equal(opened.activeSavedPlotId, "existing-steps-plot");
+  assert.equal(opened.spec.presentation.quantity, "current");
 });
 
 test("draft preview plot ids are detectable and never look like saved ids", () => {

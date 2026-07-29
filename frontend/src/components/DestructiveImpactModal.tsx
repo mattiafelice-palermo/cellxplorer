@@ -15,12 +15,12 @@ import { IconAlertTriangle } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 
 import { post, type AnalysisUsageResponse } from "../api";
+import {
+  deferredDestructiveConfirm,
+  type DestructiveImpactConfirmOptions,
+} from "../destructiveImpact";
 
-export type DestructiveImpactConfirmOptions = {
-  deleteEmptyAnalyses: boolean;
-  /** Preflight empty-after ids; backend rechecks before deleting. */
-  emptyAfterCandidateIds: number[];
-};
+export type { DestructiveImpactConfirmOptions } from "../destructiveImpact";
 
 export type DestructiveImpactModalProps = {
   opened: boolean;
@@ -91,14 +91,17 @@ export function DestructiveImpactModal({
     if (!opened || usage.isFetching || usage.isError || !usage.data) return;
     if (usage.data.analyses.length > 0 || plainConfirmArmed) return;
     setPlainConfirmArmed(true);
+    const confirm = deferredDestructiveConfirm(onConfirmRef.current, {
+      deleteEmptyAnalyses: false,
+      emptyAfterCandidateIds: [],
+    });
     onCloseRef.current();
     modals.openConfirmModal({
       title,
       children: <Text size="sm">{plainMessage}</Text>,
       labels: { confirm: confirmLabel, cancel: "Cancel" },
       confirmProps: { color: "red" },
-      onConfirm: () =>
-        onConfirmRef.current({ deleteEmptyAnalyses: false, emptyAfterCandidateIds: [] }),
+      onConfirm: confirm,
     });
   }, [
     opened,

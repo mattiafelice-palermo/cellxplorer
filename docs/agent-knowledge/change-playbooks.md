@@ -25,6 +25,9 @@
 4. Distinguish loading, error, and a confirmed empty response.
 5. If adding startup persistence, explicitly allowlist the query and verify that it contains no raw
    scientific data.
+6. When one modal closes before opening a deferred confirmation, capture the pending mutation
+   callback before closing the parent. A ref updated on every render can otherwise point at the
+   cleared request by the time the user confirms.
 
 ## UI or visual change
 
