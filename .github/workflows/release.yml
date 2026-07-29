@@ -17,6 +17,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - feature/ci-python-314-and-sidecar-smoke
   workflow_dispatch:
     inputs:
       channel:

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feature/ci-python-314-and-sidecar-smoke
 
 permissions:
   contents: read
