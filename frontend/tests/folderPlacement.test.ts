@@ -9,6 +9,7 @@ import {
   placementCheckboxState,
   placementFooterSummary,
   placementItemStatus,
+  replicatePlacementFolderIds,
 } from "../src/folderPlacement.ts";
 
 test("checkbox: empty selection is none", () => {
@@ -65,11 +66,18 @@ test("footer summary pluralises independently", () => {
   );
 });
 
-test("Apply is enabled only when something will actually be added", () => {
+test("Place is enabled only when something will actually be added", () => {
   assert.equal(placementCanApply(0, 0), false);
   assert.equal(placementCanApply(2, 0), false);
   assert.equal(placementCanApply(0, 2), false);
   assert.equal(placementCanApply(3, 2), true);
+});
+
+test("replicate placement carries existing and newly staged destinations once", () => {
+  assert.deepEqual(
+    replicatePlacementFolderIds(new Set([2, 3]), new Set([3, 4])),
+    [2, 3, 4],
+  );
 });
 
 test("folder content count is direct, not recursive", () => {

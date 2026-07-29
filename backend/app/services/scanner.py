@@ -9,10 +9,14 @@ Single-user app: one background thread, simple in-memory job registry.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import traceback
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +33,9 @@ _next_id = 1
 _capacity_backfill_lock = threading.Lock()
 _capacity_backfill_running = False
 _capacity_backfill_job_id: int | None = None
+_capacity_backfill_adaptive = False
+_capacity_backfill_foreground_active = False
+_capacity_backfill_background_requested = threading.Event()
 
 
 class SourceChangedDuringRead(RuntimeError):
@@ -64,6 +71,48 @@ def _has_current_scientific_cache(sf: SourceFile) -> bool:
     )
 
 
+def scientific_preparation_worker_count(
+    n_jobs: int,
+    *,
+    logical_cpus: int | None = None,
+) -> int:
+    """Conservative foreground worker count for copied-library preparation."""
+    available = logical_cpus if logical_cpus is not None else (os.cpu_count() or 1)
+    half_cpus = max(1, int(available) // 2)
+    return max(1, min(max(1, int(n_jobs)), 4, half_cpus))
+
+
+def request_capacity_backfill_background() -> dict[str, Any] | None:
+    """Make the active copied-library preparation drain into serial background work."""
+    with _capacity_backfill_lock:
+        if (
+            not _capacity_backfill_running
+            or not _capacity_backfill_adaptive
+            or _capacity_backfill_job_id is None
+        ):
+            return None
+        _capacity_backfill_background_requested.set()
+        job_id = _capacity_backfill_job_id
+        transition_pending = _capacity_backfill_foreground_active
+    background_jobs.update_job(
+        job_id,
+        resource_mode="background",
+        workers=1,
+        transition_pending=transition_pending,
+        description=(
+            "Finishing active files, then continuing serially in the background"
+            if transition_pending
+            else "Continuing scientific preparation serially in the background"
+        ),
+    )
+    return {
+        "jobId": job_id,
+        "resourceMode": "background",
+        "workers": 1,
+        "transitionPending": transition_pending,
+    }
+
+
 def start_capacity_summary_backfill(
     *,
     prepare_missing: bool = False,
@@ -75,7 +124,10 @@ def start_capacity_summary_backfill(
     startups only repair incomplete summaries and therefore do not recreate
     caches that the user deliberately cleaned.
     """
-    global _capacity_backfill_running, _capacity_backfill_job_id
+    global _capacity_backfill_adaptive
+    global _capacity_backfill_job_id
+    global _capacity_backfill_foreground_active
+    global _capacity_backfill_running
     with _capacity_backfill_lock:
         if _capacity_backfill_running:
             return (
@@ -88,9 +140,8 @@ def start_capacity_summary_backfill(
     db = SessionLocal()
     try:
         preparation_state = scientific_preparation.get_state(db)
-        prepare_all_missing = prepare_missing or scientific_preparation.is_pending(
-            preparation_state
-        )
+        copied_library_preparation = scientific_preparation.is_pending(preparation_state)
+        prepare_all_missing = prepare_missing or copied_library_preparation
         parsed_sources = (
             db.query(SourceFile)
             .filter(SourceFile.parse_status == "parsed")
@@ -116,6 +167,9 @@ def start_capacity_summary_backfill(
             with _capacity_backfill_lock:
                 _capacity_backfill_running = False
                 _capacity_backfill_job_id = None
+                _capacity_backfill_adaptive = False
+                _capacity_backfill_foreground_active = False
+                _capacity_backfill_background_requested.clear()
             return {"id": None, "status": "completed", "total": 0, "completed": 0}
 
         for sf in sources:
@@ -140,7 +194,22 @@ def start_capacity_summary_backfill(
             total=len(sources),
             items=[{"id": sf.id, "label": sf.filename} for sf in sources],
         )
-        _capacity_backfill_job_id = job_id
+        with _capacity_backfill_lock:
+            _capacity_backfill_job_id = job_id
+            _capacity_backfill_adaptive = copied_library_preparation
+            _capacity_backfill_foreground_active = False
+            _capacity_backfill_background_requested.clear()
+        initial_workers = (
+            scientific_preparation_worker_count(len(sources))
+            if copied_library_preparation
+            else 1
+        )
+        background_jobs.update_job(
+            job_id,
+            resource_mode="foreground" if copied_library_preparation else "background",
+            workers=initial_workers,
+            transition_pending=False,
+        )
         if scientific_preparation.is_pending(preparation_state):
             scientific_preparation.set_state(
                 db,
@@ -156,13 +225,21 @@ def start_capacity_summary_backfill(
         with _capacity_backfill_lock:
             _capacity_backfill_running = False
             _capacity_backfill_job_id = None
+            _capacity_backfill_adaptive = False
+            _capacity_backfill_foreground_active = False
+            _capacity_backfill_background_requested.clear()
         raise
     finally:
         db.close()
 
     threading.Thread(
         target=_run_capacity_summary_backfill,
-        args=(source_ids, job_id, prepare_all_missing),
+        args=(
+            source_ids,
+            job_id,
+            prepare_all_missing,
+            copied_library_preparation,
+        ),
         daemon=True,
         name="capacity-summary-backfill",
     ).start()
@@ -174,85 +251,358 @@ def start_capacity_summary_backfill(
     }
 
 
+def _capacity_source_job(
+    sf: SourceFile,
+    *,
+    prepare_all_missing: bool,
+) -> dict[str, Any]:
+    return {
+        "id": sf.id,
+        "hash": sf.hash,
+        "path": sf.path,
+        "size": sf.size,
+        "filename": sf.filename,
+        "summary_was_ready": sf.capacity_summary_status == "ready",
+        "prepare_all_missing": prepare_all_missing,
+    }
+
+
+def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
+    """Build one source cache without touching SQLite or process-local job state."""
+    location_status: str | None = None
+    try:
+        cycles = cache.load_cycles(
+            job["hash"],
+            parsing.PARSER_VERSION,
+            cache.CALC_VERSION,
+        )
+        raw_ready = cache.raw_path(job["hash"], parsing.PARSER_VERSION).is_file()
+        if cycles is None or (job["prepare_all_missing"] and not raw_ready):
+            source_path = Path(job["path"])
+            if not source_path.exists():
+                location_status = "offline"
+                raise FileNotFoundError("Original source file is unavailable")
+            try:
+                if (
+                    source_path.stat().st_size != job["size"]
+                    or parsing.compute_hash(source_path) != job["hash"]
+                ):
+                    location_status = "changed"
+                    raise SourceChangedDuringRead(
+                        "Original source has changed; update it before rebuilding the cache"
+                    )
+            except OSError as exc:
+                location_status = "offline"
+                raise FileNotFoundError("Original source file is unavailable") from exc
+            location_status = "online"
+            expected = source_signature(source_path)
+            info = cache.build(job["hash"], source_path)
+            _require_signature(source_path, expected)
+            return {
+                "ok": True,
+                "built": True,
+                "info": info,
+                "location_status": location_status,
+            }
+        return {
+            "ok": True,
+            "built": False,
+            "info": cache.capacity_totals(cycles),
+            "location_status": location_status,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "location_status": location_status,
+        }
+
+
+def _load_capacity_source_job(
+    db: Session,
+    source_id: int,
+    job_id: int,
+    prepare_all_missing: bool,
+) -> dict[str, Any] | None:
+    sf = db.get(SourceFile, source_id)
+    if sf is None:
+        background_jobs.record_result(
+            job_id,
+            source_id,
+            status="failed",
+            error="Source record no longer exists",
+            counter="failed",
+        )
+        return None
+    background_jobs.update_item(job_id, sf.id, status="processing")
+    return _capacity_source_job(sf, prepare_all_missing=prepare_all_missing)
+
+
+def _apply_capacity_source_result(
+    db: Session,
+    job_id: int,
+    source_job: dict[str, Any],
+    result: dict[str, Any],
+) -> tuple[int, int]:
+    sf = db.get(SourceFile, source_job["id"])
+    if sf is None:
+        background_jobs.record_result(
+            job_id,
+            source_job["id"],
+            status="failed",
+            error="Source record no longer exists",
+            counter="failed",
+        )
+        return 0, 1
+    if result.get("location_status"):
+        sf.location_status = result["location_status"]
+    if result.get("ok"):
+        info = result["info"]
+        if result.get("built"):
+            sf.parser_version = info["parser_version"]
+            sf.row_count = info["rows"]
+            sf.cycle_count = info["cycles"]
+            sf.parse_error = None
+        apply_capacity_summary(sf, info)
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="ready",
+            detail="Scientific cache and capacity totals ready",
+            counter="ready",
+        )
+        db.commit()
+        return 1, 0
+
+    error = str(result.get("error") or "Scientific cache preparation failed")
+    if not source_job["summary_was_ready"]:
+        sf.capacity_summary_status = "error"
+    sf.parse_error = error
+    logger.error("capacity summary backfill failed for %s: %s", sf.filename, error)
+    background_jobs.record_result(
+        job_id,
+        sf.id,
+        status="failed",
+        error=error,
+        counter="failed",
+    )
+    db.commit()
+    return 0, 1
+
+
+def _prepare_capacity_source_serial(
+    db: Session,
+    source_id: int,
+    job_id: int,
+    prepare_all_missing: bool,
+    *,
+    low_priority: bool,
+) -> tuple[int, int]:
+    from .process_priority import background_thread_priority
+
+    global _capacity_backfill_foreground_active
+
+    source_job = _load_capacity_source_job(
+        db,
+        source_id,
+        job_id,
+        prepare_all_missing,
+    )
+    if source_job is None:
+        return 0, 1
+    cache.wait_for_pending(source_job["hash"])
+    if not low_priority:
+        with _capacity_backfill_lock:
+            _capacity_backfill_foreground_active = True
+    try:
+        with (
+            cache.protect_hash_from_cleanup(source_job["hash"]),
+            background_thread_priority(low_priority),
+        ):
+            result = _prepare_capacity_source_worker(source_job)
+    finally:
+        if not low_priority:
+            with _capacity_backfill_lock:
+                _capacity_backfill_foreground_active = False
+    return _apply_capacity_source_result(db, job_id, source_job, result)
+
+
+class _ForegroundPreparationPoolUnavailable(RuntimeError):
+    pass
+
+
+def _run_adaptive_capacity_preparation(
+    db: Session,
+    source_ids: list[int],
+    job_id: int,
+    prepare_all_missing: bool,
+) -> tuple[int, int]:
+    """Run foreground workers until requested to drain into serial background work."""
+    global _capacity_backfill_foreground_active
+
+    remaining = deque(source_ids)
+    ready = 0
+    failed = 0
+    worker_count = scientific_preparation_worker_count(len(source_ids))
+
+    if worker_count > 1 and not _capacity_backfill_background_requested.is_set():
+        futures: dict[Any, tuple[dict[str, Any], Any]] = {}
+        retry_ids: list[int] = []
+        executor: ProcessPoolExecutor | None = None
+        try:
+            try:
+                executor = ProcessPoolExecutor(max_workers=worker_count)
+            except Exception as exc:
+                raise _ForegroundPreparationPoolUnavailable from exc
+            with _capacity_backfill_lock:
+                _capacity_backfill_foreground_active = True
+            background_jobs.update_job(
+                job_id,
+                resource_mode="foreground",
+                workers=worker_count,
+                transition_pending=False,
+                description=f"Preparing scientific data with up to {worker_count} foreground workers",
+            )
+            while remaining or futures:
+                while (
+                    remaining
+                    and len(futures) < worker_count
+                    and not _capacity_backfill_background_requested.is_set()
+                ):
+                    source_id = remaining.popleft()
+                    source_job = _load_capacity_source_job(
+                        db,
+                        source_id,
+                        job_id,
+                        prepare_all_missing,
+                    )
+                    if source_job is None:
+                        failed += 1
+                        continue
+                    cache.wait_for_pending(source_job["hash"])
+                    protection = cache.protect_hash_from_cleanup(source_job["hash"])
+                    protection.__enter__()
+                    try:
+                        future = executor.submit(_prepare_capacity_source_worker, source_job)
+                    except Exception as exc:
+                        protection.__exit__(None, None, None)
+                        remaining.appendleft(source_id)
+                        raise _ForegroundPreparationPoolUnavailable from exc
+                    futures[future] = (source_job, protection)
+
+                if not futures:
+                    break
+                done, _ = wait(tuple(futures), return_when=FIRST_COMPLETED)
+                for future in done:
+                    source_job, protection = futures.pop(future)
+                    try:
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            remaining.appendleft(source_job["id"])
+                            raise _ForegroundPreparationPoolUnavailable from exc
+                    finally:
+                        protection.__exit__(None, None, None)
+                    ready_delta, failed_delta = _apply_capacity_source_result(
+                        db,
+                        job_id,
+                        source_job,
+                        result,
+                    )
+                    ready += ready_delta
+                    failed += failed_delta
+        except _ForegroundPreparationPoolUnavailable:
+            logger.exception(
+                "foreground scientific preparation pool failed; continuing serially"
+            )
+            retry_ids.extend(source_job["id"] for source_job, _ in futures.values())
+            retry_ids.extend(remaining)
+            remaining = deque(dict.fromkeys(retry_ids))
+        finally:
+            if executor is not None:
+                for future in futures:
+                    future.cancel()
+                executor.shutdown(wait=True, cancel_futures=True)
+            for _, protection in futures.values():
+                protection.__exit__(None, None, None)
+            with _capacity_backfill_lock:
+                _capacity_backfill_foreground_active = False
+
+    if remaining:
+        background_mode = _capacity_backfill_background_requested.is_set()
+        background_jobs.update_job(
+            job_id,
+            resource_mode="background" if background_mode else "foreground",
+            workers=1,
+            transition_pending=False,
+            description=(
+                "Continuing scientific preparation serially in the background"
+                if background_mode
+                else "Preparing scientific data one file at a time"
+            ),
+        )
+        while remaining:
+            source_id = remaining.popleft()
+            ready_delta, failed_delta = _prepare_capacity_source_serial(
+                db,
+                source_id,
+                job_id,
+                prepare_all_missing,
+                low_priority=background_mode,
+            )
+            ready += ready_delta
+            failed += failed_delta
+            background_mode = (
+                background_mode or _capacity_backfill_background_requested.is_set()
+            )
+            if background_mode:
+                background_jobs.update_job(
+                    job_id,
+                    resource_mode="background",
+                    workers=1,
+                    transition_pending=False,
+                )
+    return ready, failed
+
+
 def _run_capacity_summary_backfill(
     source_ids: list[int],
     job_id: int,
     prepare_all_missing: bool,
+    adaptive_foreground: bool = False,
 ) -> None:
-    global _capacity_backfill_running, _capacity_backfill_job_id
-    from .process_priority import apply_background_thread_priority
+    global _capacity_backfill_adaptive
+    global _capacity_backfill_job_id
+    global _capacity_backfill_foreground_active
+    global _capacity_backfill_running
 
-    apply_background_thread_priority()
     db = SessionLocal()
     ready = 0
     failed = 0
     try:
-        for source_id in source_ids:
-            sf = db.get(SourceFile, source_id)
-            if sf is None:
-                background_jobs.record_result(
-                    job_id,
+        if adaptive_foreground:
+            ready, failed = _run_adaptive_capacity_preparation(
+                db,
+                source_ids,
+                job_id,
+                prepare_all_missing,
+            )
+        else:
+            for source_id in source_ids:
+                ready_delta, failed_delta = _prepare_capacity_source_serial(
+                    db,
                     source_id,
-                    status="failed",
-                    error="Source record no longer exists",
-                    counter="failed",
-                )
-                failed += 1
-                continue
-            summary_was_ready = sf.capacity_summary_status == "ready"
-            background_jobs.update_item(job_id, sf.id, status="processing")
-            try:
-                cycles = cache.load_cycles(
-                    sf.hash,
-                    parsing.PARSER_VERSION,
-                    cache.CALC_VERSION,
-                )
-                raw_ready = cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file()
-                if cycles is None or (prepare_all_missing and not raw_ready):
-                    check_location(db, sf)
-                    if sf.location_status == "offline":
-                        raise FileNotFoundError("Original source file is unavailable")
-                    if sf.location_status != "online":
-                        raise SourceChangedDuringRead(
-                            "Original source has changed; update it before rebuilding the cache"
-                        )
-                    source_path = Path(sf.path)
-                    expected = source_signature(source_path)
-                    with cache.protect_hash_from_cleanup(sf.hash):
-                        info = cache.build(sf.hash, source_path)
-                    _require_signature(source_path, expected)
-                    sf.parser_version = info["parser_version"]
-                    sf.row_count = info["rows"]
-                    sf.cycle_count = info["cycles"]
-                    sf.parse_error = None
-                    apply_capacity_summary(sf, info)
-                else:
-                    apply_capacity_summary(sf, cache.capacity_totals(cycles))
-                background_jobs.record_result(
                     job_id,
-                    sf.id,
-                    status="ready",
-                    detail="Scientific cache and capacity totals ready",
-                    counter="ready",
+                    prepare_all_missing,
+                    low_priority=True,
                 )
-                ready += 1
-            except Exception as exc:
-                if not summary_was_ready:
-                    sf.capacity_summary_status = "error"
-                sf.parse_error = str(exc)
-                logger.exception("capacity summary backfill failed for %s", sf.filename)
-                background_jobs.record_result(
-                    job_id,
-                    sf.id,
-                    status="failed",
-                    error=str(exc),
-                    counter="failed",
-                )
-                failed += 1
-            db.commit()
+                ready += ready_delta
+                failed += failed_delta
         background_jobs.update_job(
             job_id,
             status="completed",
+            workers=0,
+            transition_pending=False,
             description=(
                 f"Prepared {ready} source files; {failed} could not be prepared"
                 if prepare_all_missing
@@ -271,7 +621,13 @@ def _run_capacity_summary_backfill(
             )
             db.commit()
     except Exception as exc:
-        background_jobs.update_job(job_id, status="failed", error=str(exc))
+        background_jobs.update_job(
+            job_id,
+            status="failed",
+            workers=0,
+            transition_pending=False,
+            error=str(exc),
+        )
         preparation_state = scientific_preparation.get_state(db)
         if scientific_preparation.is_pending(preparation_state):
             scientific_preparation.set_state(
@@ -290,6 +646,9 @@ def _run_capacity_summary_backfill(
         with _capacity_backfill_lock:
             _capacity_backfill_running = False
             _capacity_backfill_job_id = None
+            _capacity_backfill_adaptive = False
+            _capacity_backfill_foreground_active = False
+            _capacity_backfill_background_requested.clear()
 
 
 def get_job(job_id: int) -> dict | None:

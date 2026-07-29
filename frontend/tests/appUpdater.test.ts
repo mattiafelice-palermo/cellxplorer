@@ -268,6 +268,20 @@ test("safe release-note parsing preserves mixed text and bullets", () => {
   assert.deepEqual(renderReleaseNotes("<b>raw</b>\n- item"), ["<b>raw</b>", "item"]);
 });
 
+test("release-note parsing recognizes markdown headings without visible hashes", () => {
+  assert.deepEqual(
+    parseReleaseNoteLines(
+      "## **New features**\n- Added project selection\n## Bug fixes\n- Fixed dark mode",
+    ),
+    [
+      { kind: "heading", text: "**New features**", level: 2 },
+      { kind: "bullet", text: "Added project selection" },
+      { kind: "heading", text: "Bug fixes", level: 2 },
+      { kind: "bullet", text: "Fixed dark mode" },
+    ],
+  );
+});
+
 test("normalizeUpdaterError preserves strings and Error messages", () => {
   assert.equal(
     normalizeUpdaterError(

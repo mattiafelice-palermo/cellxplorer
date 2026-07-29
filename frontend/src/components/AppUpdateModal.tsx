@@ -11,6 +11,7 @@ import {
   Text,
 } from "@mantine/core";
 import { IconDownload } from "@tabler/icons-react";
+import type { ReactNode } from "react";
 
 import { APP_BRANDING } from "../appChannel";
 import {
@@ -38,11 +39,21 @@ function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
   const lines = parseReleaseNoteLines(release.notes);
   const blocks: Array<
     | { kind: "text"; text: string; key: string }
+    | { kind: "heading"; text: string; level: number; key: string }
     | { kind: "bullets"; items: string[]; key: string }
   > = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    if (line.kind === "heading") {
+      blocks.push({
+        kind: "heading",
+        text: line.text,
+        level: line.level ?? 2,
+        key: `${index}:heading:${line.text}`,
+      });
+      continue;
+    }
     if (line.kind === "text") {
       blocks.push({ kind: "text", text: line.text, key: `${index}:text:${line.text}` });
       continue;
@@ -66,9 +77,18 @@ function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
       <ScrollArea.Autosize mah={220} type="auto">
         <Stack gap={6}>
           {blocks.map((block) =>
-            block.kind === "text" ? (
+            block.kind === "heading" ? (
+              <Text
+                key={block.key}
+                size={block.level <= 2 ? "sm" : "xs"}
+                fw={700}
+                mt={4}
+              >
+                {renderInlineEmphasis(block.text)}
+              </Text>
+            ) : block.kind === "text" ? (
               <Text key={block.key} size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                {block.text}
+                {renderInlineEmphasis(block.text)}
               </Text>
             ) : (
               <Stack
@@ -85,7 +105,7 @@ function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
                     size="sm"
                     key={`${block.key}:${itemIndex}:${item}`}
                   >
-                    {item}
+                    {renderInlineEmphasis(item)}
                   </Text>
                 ))}
               </Stack>
@@ -95,6 +115,23 @@ function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
       </ScrollArea.Autosize>
     </Paper>
   );
+}
+
+function renderInlineEmphasis(text: string): ReactNode[] {
+  return text
+    .split(/(\*\*[^*\n]+\*\*|__[^_\n]+__)/g)
+    .filter(Boolean)
+    .map((part, index) => {
+      const strong =
+        (part.startsWith("**") && part.endsWith("**")) ||
+        (part.startsWith("__") && part.endsWith("__"));
+      if (!strong) return part;
+      return (
+        <Text component="strong" inherit fw={700} key={`${index}:${part}`}>
+          {part.slice(2, -2)}
+        </Text>
+      );
+    });
 }
 
 function CurrentVersionBadge({ version }: { version: string | null }) {

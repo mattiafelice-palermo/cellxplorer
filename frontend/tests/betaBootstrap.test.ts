@@ -9,6 +9,7 @@ import {
   mockBetaBootstrapStatus,
   parseDevBetaBootstrapMock,
   resolveBetaBootstrapSetupState,
+  scientificPreparationResourceText,
   shouldRetryExistingStage,
   shouldShowBetaBootstrapUi,
 } from "../src/betaBootstrapPolicy.ts";
@@ -122,4 +123,32 @@ test("outstanding stage tokens are lower-hex only", () => {
 
 test("stable never enables bootstrap UI", () => {
   assert.equal(shouldShowBetaBootstrapUi("stable", true, "available"), false);
+});
+
+test("scientific preparation resource text reflects foreground and drained work", () => {
+  assert.match(
+    scientificPreparationResourceText({
+      resource_mode: "foreground",
+      workers: 3,
+      transition_pending: false,
+    }),
+    /3 files in parallel/,
+  );
+  assert.match(
+    scientificPreparationResourceText({
+      resource_mode: "foreground",
+      workers: 1,
+      transition_pending: false,
+    }),
+    /one file at normal priority/,
+  );
+  assert.match(
+    scientificPreparationResourceText({
+      resource_mode: "background",
+      workers: 1,
+      transition_pending: true,
+    }),
+    /already in progress/,
+  );
+  assert.match(scientificPreparationResourceText(undefined), /reduced priority/);
 });

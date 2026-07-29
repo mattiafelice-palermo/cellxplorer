@@ -56,6 +56,7 @@ import {
   ReplicateGroupPreview,
   ReplicateGroupSummary,
   RowMetrics,
+  SelectionEntry,
   Tree,
 } from "../api";
 import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
@@ -74,6 +75,10 @@ import {
   type ProjectViewPreferences,
   type SectionKey,
 } from "../folderSections";
+import {
+  adjacentProjectSelectionItem,
+  projectSelectionAfterClick,
+} from "../projectSelection";
 import { AnalysisPlotSummary } from "../components/AnalysisPlotSummary";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import {
@@ -930,7 +935,11 @@ export function ProjectsPage() {
   };
 
   const createAnalysis = useMutation({
-    mutationFn: (body: { title: string; folder_id: number | null }) =>
+    mutationFn: (body: {
+      title: string;
+      folder_id: number | null;
+      entries: SelectionEntry[];
+    }) =>
       post<AnalysisFull>("/api/analyses", body),
     onSuccess: (analysis) => {
       invalidateTree();
@@ -1002,7 +1011,7 @@ export function ProjectsPage() {
       children: <DestinationForm folders={folderOptions} onSubmit={onSubmit} />,
     });
 
-  const openCreateAnalysis = () =>
+  const openCreateAnalysis = (entries: SelectionEntry[] = []) =>
     modals.open({
       title: "New analysis",
       children: (
@@ -1011,7 +1020,7 @@ export function ProjectsPage() {
           defaultFolderId={selectedFolderId}
           defaultTitle={`${selectedFolder?.name ?? "Untitled"} analysis`}
           loading={createAnalysis.isPending}
-          onSubmit={(payload) => createAnalysis.mutate(payload)}
+          onSubmit={(payload) => createAnalysis.mutate({ ...payload, entries })}
         />
       ),
     });
@@ -1074,25 +1083,13 @@ export function ProjectsPage() {
 
 
   const handleSelect = (event: MouseEvent, item: TreeItem) => {
-    if (event.shiftKey && lastSelectedKey) {
-      const start = visibleItems.findIndex((candidate) => candidate.key === lastSelectedKey);
-      const end = visibleItems.findIndex((candidate) => candidate.key === item.key);
-      if (start >= 0 && end >= 0) {
-        const [from, to] = start < end ? [start, end] : [end, start];
-        setSelectedKeys(new Set(visibleItems.slice(from, to + 1).map((candidate) => candidate.key)));
-      }
-    } else if (event.ctrlKey || event.metaKey) {
-      setSelectedKeys((current) => {
-        const next = new Set(current);
-        if (next.has(item.key)) next.delete(item.key);
-        else next.add(item.key);
-        return next;
-      });
-      setLastSelectedKey(item.key);
-    } else {
-      setSelectedKeys(new Set([item.key]));
-      setLastSelectedKey(item.key);
-    }
+    setSelectedKeys((current) =>
+      projectSelectionAfterClick(current, visibleItems, lastSelectedKey, item, {
+        range: event.shiftKey,
+        toggle: event.ctrlKey || event.metaKey,
+      })
+    );
+    setLastSelectedKey(item.key);
     if (item.kind === "folder") setSelectedFolderId(item.id);
     if (item.kind === "cell") {
       setSelectedFolderId(item.folderId);
@@ -1107,6 +1104,52 @@ export function ProjectsPage() {
       selectPreview({ kind: "replicate_group", id: item.id, title: item.label });
     }
   };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !event.shiftKey ||
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (
+        target?.closest(
+          "input, textarea, select, button, [contenteditable='true'], [role='dialog'], [role='menu']"
+        ) ||
+        document.querySelector("[role='dialog']")
+      ) {
+        return;
+      }
+      const next = adjacentProjectSelectionItem(
+        visibleItems,
+        lastSelectedKey,
+        event.key === "ArrowUp" ? -1 : 1,
+      );
+      if (!next) return;
+      event.preventDefault();
+      setSelectedKeys((current) => new Set(current).add(next.key));
+      setLastSelectedKey(next.key);
+      setSelectedFolderId(next.kind === "folder" ? next.id : next.folderId);
+      if (next.kind === "cell") {
+        selectPreview({ kind: "cell", id: next.id });
+      } else if (next.kind === "replicate_group") {
+        selectPreview({
+          kind: "replicate_group",
+          id: next.id,
+          title: next.label,
+        });
+      } else if (next.kind === "analysis") {
+        selectPreview({ kind: "analysis", id: next.id, title: next.label });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lastSelectedKey, visibleItems]);
 
   const handleContextMenu = (event: MouseEvent, item: TreeItem) => {
     event.preventDefault();
@@ -1143,6 +1186,16 @@ export function ProjectsPage() {
   // Toolbar uses the current tree selection (not the context-menu override).
   const toolbarCells = selectedItems.filter((item) => item.kind === "cell");
   const toolbarGroups = selectedItems.filter((item) => item.kind === "replicate_group");
+  const toolbarSamples = selectedItems.filter(
+    (item) => item.kind === "cell" || item.kind === "replicate_group"
+  );
+  const toolbarAnalysisEntries: SelectionEntry[] =
+    toolbarSamples.length === selectedItems.length
+      ? toolbarSamples.map((item) => ({
+          kind: item.kind,
+          ref_id: item.id,
+        }))
+      : [];
   const toolbarCanGroupAsReplicate =
     toolbarCells.length >= 2 && toolbarCells.length === selectedItems.length;
   const toolbarCanExplodeReplicate =
@@ -1480,12 +1533,29 @@ export function ProjectsPage() {
           >
             Explode replicate
           </Button>
-          <Button
-            leftSection={<IconChartLine size={15} />}
-            onClick={openCreateAnalysis}
-          >
-            New analysis
-          </Button>
+          <Button.Group className="project-tree-toolbar-group">
+            <Button
+              leftSection={<IconChartLine size={15} />}
+              onClick={() => openCreateAnalysis(toolbarAnalysisEntries)}
+            >
+              New analysis
+              {toolbarAnalysisEntries.length > 0
+                ? ` (${toolbarAnalysisEntries.length})`
+                : ""}
+            </Button>
+            <Menu withinPortal position="bottom-end">
+              <Menu.Target>
+                <Button px={7} aria-label="New analysis options">
+                  <IconChevronDown size={14} />
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item onClick={() => openCreateAnalysis([])}>
+                  Open empty analysis
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Button.Group>
         </Group>
       </Group>
 
