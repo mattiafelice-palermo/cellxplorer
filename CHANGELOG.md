@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.7 - 2026-07-29
+
+- Fix Beta update-channel publication so in-app updates discover new Beta releases automatically.
+- Prepare scientific caches after copying a Stable library into Beta, with progress in Settings.
+- Preserve offline-source scientific caches during category cleanup.
+- Add manual scientific preparation and cache rebuild controls in Settings.
+
 ## 0.17.0-beta.6 - 2026-07-29
 
 - - Fix same-folder drag-and-drop removing cells and replicate groups instead of doing nothing.

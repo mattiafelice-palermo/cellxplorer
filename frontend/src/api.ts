@@ -235,6 +235,23 @@ export interface BetaBootstrapStatus {
   blockingReason: string | null;
   outstandingStageToken?: string | null;
   applyFailureMessage?: string | null;
+  scientificPreparation?: {
+    schemaVersion: number;
+    status: "pending" | "running" | "complete" | "failed";
+    reason?: string;
+    jobId?: number;
+    total?: number;
+    completed?: number;
+    failed?: number;
+    createdAt?: string;
+    updatedAt?: string;
+  } | null;
+  scientificPreparationPending?: boolean;
+}
+
+export interface BetaScientificPreparationStatus {
+  pending: boolean;
+  state: BetaBootstrapStatus["scientificPreparation"];
 }
 
 export interface BetaBootstrapStageCopyResult {

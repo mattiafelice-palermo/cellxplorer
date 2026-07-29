@@ -386,8 +386,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("The release channel branch changed after the first-write gate", publish)
         self.assertIn("The non-target channel pointer changed", publish)
         self.assertIn("$publishedCommit = $putResult.commit.sha", publish)
-        self.assertIn("contents/$channelPath?ref=$publishedCommit", publish)
-        self.assertIn("contents/$otherPath?ref=$publishedCommit", publish)
+        self.assertIn("contents/${channelPath}?ref=${branch}", publish)
+        self.assertIn("contents/${channelPath}?ref=${publishedCommit}", publish)
+        self.assertIn("contents/${otherPath}?ref=${publishedCommit}", publish)
+        self.assertNotRegex(publish, r"\$[A-Za-z_][A-Za-z0-9_]*\?ref=")
         self.assertIn('[System.IO.File]::WriteAllBytes("remote-channel-latest.json", $remoteBytes)', publish)
 
     def test_manual_dispatch_is_build_only(self):

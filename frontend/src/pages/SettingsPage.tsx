@@ -39,6 +39,7 @@ import {
   type ActiveMaterialPresetSettings,
   type ActivityEvent,
   type AppSession,
+  type BackgroundJob,
   type ColorPalette,
   type ColorPaletteSettings,
   type CacheInventory,
@@ -84,7 +85,7 @@ function formatBytes(value: number): string {
 
 const CACHE_CATEGORY_HINTS = {
   scientific:
-    "Parsed copies of your Neware files (raw datapoints and per-cycle tables) stored as fast Parquet caches, keyed by file checksum. Rebuilding one means re-parsing its source file — slow, and impossible while the source is offline. That is why there is no one-click cleanup here; individual items can be removed under Largest cache items.",
+    "Parsed copies of your Neware files (raw datapoints and per-cycle tables) stored as fast Parquet caches, keyed by file checksum. Cleaning the category preserves caches whose original source is offline.",
   analysis_results:
     "Numerical outputs of analysis computations: the series and metrics behind each plot view. Cheap to regenerate from the scientific cache the next time a plot is opened.",
   analysis_artifacts:
@@ -454,7 +455,7 @@ export function SettingsPage() {
       notifications.show({ message: error.message || "Could not save cache settings.", color: "red" }),
   });
   const refreshCacheNow = useMutation({
-    mutationFn: () => post<{ id?: number }>("/api/cache/warmup/start"),
+    mutationFn: () => post<{ id?: number }>("/api/cache/warmup/start?force=true"),
     onSuccess: (job) => {
       // Ask the idle coordinator to run at once instead of waiting for the
       // configured idle delay.
@@ -475,13 +476,67 @@ export function SettingsPage() {
         color: "red",
       }),
   });
+  const prepareScientific = useMutation({
+    mutationFn: () =>
+      post<BackgroundJob | { id: null; total: number; completed: number }>(
+        "/api/cache/scientific/prepare",
+      ),
+    onSuccess: (job) => {
+      queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["cells"] });
+      notifications.show({
+        message: job.total
+          ? `Preparing ${job.total} source file${job.total === 1 ? "" : "s"}.`
+          : "All scientific data is already prepared.",
+        color: "teal",
+      });
+    },
+    onError: (error: Error) =>
+      notifications.show({
+        message: error.message || "Could not start scientific preparation.",
+        color: "red",
+      }),
+  });
+  const rebuildCache = useMutation({
+    mutationFn: (kind: "thumbnails" | "saved-plots") =>
+      post<{ bytes_removed: number; job: BackgroundJob }>(
+        kind === "thumbnails"
+          ? "/api/cache/thumbnails/rebuild"
+          : "/api/cache/saved-plots/rebuild",
+      ),
+    onSuccess: (result, kind) => {
+      window.dispatchEvent(new Event(WARMUP_NOW_EVENT));
+      queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
+      queryClient.invalidateQueries({ queryKey: ["analysis-database-thumbnail"] });
+      notifications.show({
+        message: result.job.total
+          ? `${kind === "thumbnails" ? "Preview" : "Saved-plot"} rebuild queued for ${result.job.total} plot${result.job.total === 1 ? "" : "s"}.`
+          : "There are no saved plots to rebuild.",
+        color: "teal",
+      });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message, color: "red" }),
+  });
   const cleanCache = useMutation({
     mutationFn: (payload: { category?: string; kind?: string; identifier?: string; force?: boolean }) =>
-      post<{ ok: boolean; bytes_removed: number }>("/api/cache/cleanup", payload),
+      post<{
+        ok: boolean;
+        bytes_removed: number;
+        protected_items?: number;
+        protected_bytes?: number;
+      }>("/api/cache/cleanup", payload),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["cache-inventory"] });
       queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
-      notifications.show({ message: `Freed ${formatBytes(result.bytes_removed)}.`, color: "teal" });
+      notifications.show({
+        message: result.protected_items
+          ? `Freed ${formatBytes(result.bytes_removed)}. Preserved ${result.protected_items} offline or active cache item${result.protected_items === 1 ? "" : "s"} (${formatBytes(result.protected_bytes ?? 0)}).`
+          : `Freed ${formatBytes(result.bytes_removed)}.`,
+        color: result.protected_items ? "orange" : "teal",
+      });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -662,13 +717,36 @@ export function SettingsPage() {
     modals.openConfirmModal({
       title: `Clean ${label}?`,
       children: (
-        <Text size="sm">
-          This removes regenerable cache files only. Your database and original cycling files are not changed.
-        </Text>
+        <Stack gap="xs">
+          <Text size="sm">
+            This removes regenerable cache files only. Your database and original cycling files are not changed.
+          </Text>
+          {category === "scientific" ? (
+            <Alert color="orange">
+              Scientific caches whose original source is offline, plus any cache currently being
+              written, will be preserved automatically.
+            </Alert>
+          ) : null}
+        </Stack>
       ),
       labels: { confirm: "Clean cache", cancel: "Cancel" },
       confirmProps: { color: "red" },
       onConfirm: () => cleanCache.mutate({ category }),
+    });
+  const requestCacheRebuild = (
+    kind: "thumbnails" | "saved-plots",
+    label: string,
+  ) =>
+    modals.openConfirmModal({
+      title: `Rebuild ${label}?`,
+      children: (
+        <Text size="sm">
+          Existing regenerable cache files will be cleared, then every saved plot that needs them
+          will be prepared again in the background.
+        </Text>
+      ),
+      labels: { confirm: "Start rebuild", cancel: "Cancel" },
+      onConfirm: () => rebuildCache.mutate(kind),
     });
   const requestOffenderCleanup = (item: CacheOffender) => {
     const unavailable = item.kind === "scientific" && !item.source_available;
@@ -1997,10 +2075,79 @@ export function SettingsPage() {
                     />
                   </Group>
                 ) : null}
-                <Group>
-                  <Button variant="default" color="red" onClick={() => requestCategoryCleanup("analysis_results", "computed analysis results")}>Clean computed results</Button>
-                  <Button variant="default" color="red" onClick={() => requestCategoryCleanup("analysis_artifacts", "full plot artifacts")}>Clean plot artifacts</Button>
-                </Group>
+                <Stack gap="xs">
+                  <Group justify="space-between" wrap="wrap">
+                    <Text size="sm" fw={700}>Scientific data</Text>
+                    <Group gap="xs">
+                      <Button
+                        variant="default"
+                        color="red"
+                        onClick={() => requestCategoryCleanup("scientific", "eligible scientific data")}
+                      >
+                        Clean eligible
+                      </Button>
+                      <Button
+                        variant="default"
+                        leftSection={<IconRefresh size={16} />}
+                        loading={prepareScientific.isPending}
+                        onClick={() => prepareScientific.mutate()}
+                      >
+                        Prepare missing
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between" wrap="wrap">
+                    <Text size="sm" fw={700}>Computed results and plot artifacts</Text>
+                    <Group gap="xs">
+                      <Button
+                        variant="default"
+                        color="red"
+                        onClick={() => requestCategoryCleanup("analysis_results", "computed analysis results")}
+                      >
+                        Clean results
+                      </Button>
+                      <Button
+                        variant="default"
+                        color="red"
+                        onClick={() => requestCategoryCleanup("analysis_artifacts", "full plot artifacts")}
+                      >
+                        Clean artifacts
+                      </Button>
+                      <Button
+                        variant="default"
+                        leftSection={<IconRefresh size={16} />}
+                        disabled={!cacheForm.warmup_enabled}
+                        loading={rebuildCache.isPending && rebuildCache.variables === "saved-plots"}
+                        onClick={() => requestCacheRebuild("saved-plots", "all saved plots")}
+                      >
+                        Rebuild saved plots
+                      </Button>
+                    </Group>
+                  </Group>
+                  <Divider />
+                  <Group justify="space-between" wrap="wrap">
+                    <Text size="sm" fw={700}>Thumbnails</Text>
+                    <Group gap="xs">
+                      <Button
+                        variant="default"
+                        color="red"
+                        onClick={() => requestCategoryCleanup("thumbnails", "saved-plot thumbnails")}
+                      >
+                        Clean previews
+                      </Button>
+                      <Button
+                        variant="default"
+                        leftSection={<IconRefresh size={16} />}
+                        disabled={!cacheForm.warmup_enabled}
+                        loading={rebuildCache.isPending && rebuildCache.variables === "thumbnails"}
+                        onClick={() => requestCacheRebuild("thumbnails", "saved-plot previews")}
+                      >
+                        Rebuild previews
+                      </Button>
+                    </Group>
+                  </Group>
+                </Stack>
               </Stack>
             </Paper>
 

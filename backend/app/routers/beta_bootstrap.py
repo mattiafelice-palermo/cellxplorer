@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services import beta_bootstrap
+from ..services import scientific_preparation
 from ..services.app_channel import resolve_app_channel
 
 router = APIRouter(prefix="/api/beta-bootstrap", tags=["beta-bootstrap"])
@@ -34,6 +35,16 @@ def beta_bootstrap_status(db: Session = Depends(get_db)):
         return beta_bootstrap.build_status(db)
     except beta_bootstrap.BetaBootstrapValidation as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.get("/preparation-status")
+def beta_bootstrap_preparation_status(db: Session = Depends(get_db)):
+    _require_beta_channel()
+    state = scientific_preparation.get_state(db)
+    return {
+        "pending": scientific_preparation.is_pending(state),
+        "state": state,
+    }
 
 
 @router.post("/stage-copy")

@@ -24,6 +24,12 @@ Missing legacy capacity summaries may be backfilled after startup. Until ready, 
 those values as pending rather than block the whole list. Benchmark cold and warm list requests
 when changing summary fields, and test semantic parity between list and detail responses.
 
+The backfill must not assume that a per-cycle Parquet cache already exists. If a summary is
+incomplete and the current cache is missing, it verifies the source against the stored checksum,
+rebuilds the scientific cache at current parser/calculation versions, and then persists the
+summary. A missing, changed, or unreadable source is a genuine per-source failure; absence of a
+regenerable cache by itself is not.
+
 The Projects explorer gets cell metrics from `/api/tree`. Keep that endpoint relational and
 bounded too: cycle/capacity summaries and active-mass metadata are loaded in bulk for the complete
 cell set, never through per-cell relationship traversal. Its capacity column is maximum specific
@@ -176,6 +182,25 @@ The persisted policy and inventory API live in
 analysis data; both can be changed or made unlimited in Settings. Automatic cleanup must never
 remove the SQLite database, imported/source files, or a scientific cache whose source is offline.
 The UI may allow an explicit, separately confirmed cleanup of an offline scientific item.
+
+A Stable-to-Beta database snapshot deliberately excludes `cache/`. Staging writes the durable
+`beta.scientific_preparation` setting into the copied database. After activation, the normal
+background backfill uses that marker to prepare every missing current-version scientific cache,
+reports file-count progress through the background-job registry, and marks the pass complete.
+The locked Beta setup surface remains visible for this one-time pass. An interrupted `pending` or
+`running` marker is resumable on the next launch. Ordinary later startups repair incomplete
+summaries only; they do not recreate a ready cache that the user intentionally cleaned.
+
+Settings exposes category actions with different safety boundaries:
+
+- **Clean eligible** scientific data removes only orphaned or currently regenerable caches and
+  preserves offline/changed or actively written entries.
+- **Prepare missing** verifies sources and rebuilds absent current-version scientific caches.
+- Thumbnail cleanup removes both image payloads and their lookup indexes atomically from the
+  user's perspective; rebuilding them clears prepared markers and reuses the saved-plot warmup.
+- A full saved-plot rebuild clears numerical results, plot artifacts, thumbnails, and prepared
+  markers before forcing a fresh bounded warmup scan. It does not attempt to enumerate arbitrary
+  unsaved plot configurations.
 
 `frontend/src/components/CacheWarmupCoordinator.tsx` performs opportunistic preparation after an
 idle delay. It requests one saved plot at a time, renders through the same analysis preview path,

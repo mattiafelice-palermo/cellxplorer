@@ -1,4 +1,4 @@
-import { Alert, Button, Group, Loader, Modal, Stack, Text } from "@mantine/core";
+import { Alert, Button, Group, Loader, Modal, Progress, Stack, Text } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -6,6 +6,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   get,
   post,
+  type BackgroundJob,
+  type BetaScientificPreparationStatus,
   type BetaBootstrapStageCopyResult,
   type BetaBootstrapStatus,
 } from "../api";
@@ -50,6 +52,56 @@ export function BetaBootstrapCoordinator({
   });
 
   const status = devMock ? mockBetaBootstrapStatus(devMock) : statusQuery.data;
+  const preparationStatus = useQuery({
+    queryKey: ["beta-bootstrap-preparation-status"],
+    queryFn: () =>
+      get<BetaScientificPreparationStatus>(
+        "/api/beta-bootstrap/preparation-status",
+      ),
+    enabled: Boolean(
+      enabled &&
+        !devMock &&
+        backendReady &&
+        status?.scientificPreparationPending,
+    ),
+    initialData:
+      !devMock && status?.scientificPreparation
+        ? {
+            pending: Boolean(status.scientificPreparationPending),
+            state: status.scientificPreparation,
+          }
+        : undefined,
+    refetchInterval: (query) => (query.state.data?.pending ? 600 : false),
+  });
+  const preparationState =
+    preparationStatus.data?.state ?? status?.scientificPreparation;
+  const preparationPending = Boolean(
+    !devMock &&
+      (preparationStatus.data?.pending ??
+        status?.scientificPreparationPending),
+  );
+  const backgroundJobs = useQuery({
+    queryKey: ["background-jobs"],
+    queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
+    enabled: enabled && preparationPending,
+    refetchInterval: preparationPending ? 500 : false,
+  });
+  const preparationJob = backgroundJobs.data?.find(
+    (job) =>
+      job.id === preparationState?.jobId ||
+      job.kind === "scientific_preparation",
+  );
+  const preparationTotal =
+    preparationJob?.total ?? preparationState?.total ?? 0;
+  const preparationCompleted =
+    preparationJob?.completed ?? preparationState?.completed ?? 0;
+  const preparationProgress =
+    preparationTotal > 0
+      ? Math.min(100, (preparationCompleted / preparationTotal) * 100)
+      : null;
+  const preparationCurrent = preparationJob?.items.find(
+    (item) => item.status === "processing",
+  );
   const hasExistingBeta = status?.betaHasExistingLibrary ?? !status?.betaPristine;
   const setupState = resolveBetaBootstrapSetupState({
     enabled,
@@ -223,7 +275,7 @@ export function BetaBootstrapCoordinator({
     }
   }, [tauri]);
 
-  if (!enabled || !gateOpen) {
+  if (!enabled || (!gateOpen && !preparationPending)) {
     return null;
   }
 
@@ -242,10 +294,36 @@ export function BetaBootstrapCoordinator({
       closeOnEscape={false}
       centered
       size="md"
-      title="Set up CellXplorer Beta"
+      title={preparationPending ? "Preparing copied library" : "Set up CellXplorer Beta"}
       zIndex={400}
     >
       <Stack gap="md">
+        {preparationPending ? (
+          <>
+            <Text size="sm">
+              CellXplorer is preparing the copied cells and scientific data. The library will open
+              when this one-time pass finishes.
+            </Text>
+            <Progress
+              value={preparationProgress ?? 100}
+              striped
+              animated
+              color={APP_BRANDING.primaryColor}
+              aria-label="Copied library preparation progress"
+            />
+            <Text size="xs" c="dimmed">
+              {preparationTotal > 0
+                ? `${preparationCompleted} of ${preparationTotal} source files prepared`
+                : "Finding scientific data that needs preparation…"}
+            </Text>
+            {preparationCurrent ? (
+              <Text size="xs" c="dimmed" truncate title={preparationCurrent.label}>
+                Preparing {preparationCurrent.label}
+              </Text>
+            ) : null}
+          </>
+        ) : null}
+
         {showLoading ? (
           <Group gap="xs">
             <Loader size="sm" color={APP_BRANDING.primaryColor} />
@@ -307,10 +385,19 @@ export function BetaBootstrapCoordinator({
         ) : null}
 
         {phase === "staging" ? (
-          <Group gap="xs">
-            <IconLoader2 size={16} className="source-check-spin" />
-            <Text size="sm">Copying Stable library…</Text>
-          </Group>
+          <Stack gap="xs">
+            <Group gap="xs">
+              <IconLoader2 size={16} className="source-check-spin" />
+              <Text size="sm">Copying and verifying Stable library…</Text>
+            </Group>
+            <Progress
+              value={100}
+              striped
+              animated
+              color={APP_BRANDING.primaryColor}
+              aria-label="Stable library copy in progress"
+            />
+          </Stack>
         ) : null}
 
         {phase === "applying" || phase === "restarting" ? (

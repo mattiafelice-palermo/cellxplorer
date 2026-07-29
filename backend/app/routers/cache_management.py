@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services import cache_maintenance
+from ..services import cache_maintenance, scanner
 from ..services.activity_log import record_activity
 
 router = APIRouter(prefix="/api/cache", tags=["cache"])
@@ -61,7 +61,12 @@ def get_cache_inventory(limit: int = 20, db: Session = Depends(get_db)):
 @router.post("/cleanup")
 def cleanup_cache(payload: CacheCleanupRequest, db: Session = Depends(get_db)):
     try:
-        if payload.category:
+        cleanup_details: dict = {}
+        if payload.category == "scientific":
+            cleanup_details = cache_maintenance.cleanup_eligible_scientific(db)
+            removed = cleanup_details["bytes_removed"]
+            target = payload.category
+        elif payload.category:
             removed = cache_maintenance.cleanup_category(payload.category)
             target = payload.category
         elif payload.kind and payload.identifier:
@@ -83,15 +88,59 @@ def cleanup_cache(payload: CacheCleanupRequest, db: Session = Depends(get_db)):
         details={"target": target, "bytes_removed": removed},
     )
     db.commit()
-    return {"ok": True, "bytes_removed": removed}
+    return {"ok": True, "bytes_removed": removed, **cleanup_details}
+
+
+@router.post("/scientific/prepare")
+def prepare_scientific_cache():
+    return scanner.start_capacity_summary_backfill(
+        prepare_missing=True,
+    )
+
+
+def _require_warmup_enabled(db: Session) -> None:
+    if not cache_maintenance.load_policy(db).warmup_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Background cache preparation is disabled",
+        )
+
+
+def _begin_saved_plot_rebuild() -> None:
+    if not cache_maintenance.warmup.cancel_pending_for_rebuild():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A saved plot is still being prepared. Wait for that plot to finish, "
+                "then start the rebuild again."
+            ),
+        )
+
+
+@router.post("/thumbnails/rebuild")
+def rebuild_thumbnails(db: Session = Depends(get_db)):
+    _require_warmup_enabled(db)
+    _begin_saved_plot_rebuild()
+    removed = cache_maintenance.cleanup_category("thumbnails")
+    job = cache_maintenance.warmup.start(db, force=True)
+    return {"bytes_removed": removed, "job": job}
+
+
+@router.post("/saved-plots/rebuild")
+def rebuild_saved_plots(db: Session = Depends(get_db)):
+    _require_warmup_enabled(db)
+    _begin_saved_plot_rebuild()
+    removed = cache_maintenance.cleanup_category("analysis_results")
+    removed += cache_maintenance.cleanup_category("analysis_artifacts")
+    removed += cache_maintenance.cleanup_category("thumbnails")
+    job = cache_maintenance.warmup.start(db, force=True)
+    return {"bytes_removed": removed, "job": job}
 
 
 @router.post("/warmup/start")
-def start_cache_warmup(db: Session = Depends(get_db)):
-    policy = cache_maintenance.load_policy(db)
-    if not policy.warmup_enabled:
-        raise HTTPException(status_code=409, detail="Background cache preparation is disabled")
-    return cache_maintenance.warmup.start(db)
+def start_cache_warmup(force: bool = False, db: Session = Depends(get_db)):
+    _require_warmup_enabled(db)
+    return cache_maintenance.warmup.start(db, force=force)
 
 
 @router.get("/warmup/next")

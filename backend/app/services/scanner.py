@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import SourceFile
 from . import background_jobs, cache, parsing
+from . import scientific_preparation
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ _jobs: dict[int, dict] = {}
 _next_id = 1
 _capacity_backfill_lock = threading.Lock()
 _capacity_backfill_running = False
+_capacity_backfill_job_id: int | None = None
 
 
 class SourceChangedDuringRead(RuntimeError):
@@ -54,65 +56,190 @@ def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
     sf.capacity_summary_status = "ready"
 
 
-def start_capacity_summary_backfill() -> None:
-    """Populate totals added to older databases without blocking app startup."""
-    global _capacity_backfill_running
+def _has_current_scientific_cache(sf: SourceFile) -> bool:
+    return cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file() and cache.has_cycles(
+        sf.hash,
+        parsing.PARSER_VERSION,
+        cache.CALC_VERSION,
+    )
+
+
+def start_capacity_summary_backfill(
+    *,
+    prepare_missing: bool = False,
+) -> dict:
+    """Populate missing summaries and optionally prepare every missing cache.
+
+    A Stable-to-Beta copy carries a durable preparation marker, so its first
+    post-activation pass prepares all current-version scientific caches. Normal
+    startups only repair incomplete summaries and therefore do not recreate
+    caches that the user deliberately cleaned.
+    """
+    global _capacity_backfill_running, _capacity_backfill_job_id
     with _capacity_backfill_lock:
         if _capacity_backfill_running:
-            return
+            return (
+                background_jobs.get_job(_capacity_backfill_job_id)
+                if _capacity_backfill_job_id is not None
+                else {"id": None, "status": "running", "total": 0}
+            ) or {"id": _capacity_backfill_job_id, "status": "running", "total": 0}
         _capacity_backfill_running = True
+
+    db = SessionLocal()
+    try:
+        preparation_state = scientific_preparation.get_state(db)
+        prepare_all_missing = prepare_missing or scientific_preparation.is_pending(
+            preparation_state
+        )
+        parsed_sources = (
+            db.query(SourceFile)
+            .filter(SourceFile.parse_status == "parsed")
+            .all()
+        )
+        sources = [
+            sf
+            for sf in parsed_sources
+            if sf.capacity_summary_status != "ready"
+            or (prepare_all_missing and not _has_current_scientific_cache(sf))
+        ]
+
+        if not sources:
+            if scientific_preparation.is_pending(preparation_state):
+                scientific_preparation.set_state(
+                    db,
+                    "complete",
+                    total=0,
+                    completed=0,
+                    failed=0,
+                )
+                db.commit()
+            with _capacity_backfill_lock:
+                _capacity_backfill_running = False
+                _capacity_backfill_job_id = None
+            return {"id": None, "status": "completed", "total": 0, "completed": 0}
+
+        for sf in sources:
+            if sf.capacity_summary_status != "ready":
+                sf.capacity_summary_status = "pending"
+        title = (
+            "Preparing copied library"
+            if scientific_preparation.is_pending(preparation_state)
+            else "Preparing scientific data"
+            if prepare_all_missing
+            else "Capacity totals"
+        )
+        description = (
+            f"Preparing scientific data for {len(sources)} source files"
+            if prepare_all_missing
+            else f"Calculating cached capacity totals for {len(sources)} cells"
+        )
+        job_id = background_jobs.create_job(
+            kind="scientific_preparation" if prepare_all_missing else "capacity_summary",
+            title=title,
+            description=description,
+            total=len(sources),
+            items=[{"id": sf.id, "label": sf.filename} for sf in sources],
+        )
+        _capacity_backfill_job_id = job_id
+        if scientific_preparation.is_pending(preparation_state):
+            scientific_preparation.set_state(
+                db,
+                "running",
+                jobId=job_id,
+                total=len(sources),
+                completed=0,
+                failed=0,
+            )
+        db.commit()
+        source_ids = [sf.id for sf in sources]
+    except Exception:
+        with _capacity_backfill_lock:
+            _capacity_backfill_running = False
+            _capacity_backfill_job_id = None
+        raise
+    finally:
+        db.close()
+
     threading.Thread(
         target=_run_capacity_summary_backfill,
+        args=(source_ids, job_id, prepare_all_missing),
         daemon=True,
         name="capacity-summary-backfill",
     ).start()
+    return background_jobs.get_job(job_id) or {
+        "id": job_id,
+        "status": "running",
+        "total": len(source_ids),
+        "completed": 0,
+    }
 
 
-def _run_capacity_summary_backfill() -> None:
-    global _capacity_backfill_running
+def _run_capacity_summary_backfill(
+    source_ids: list[int],
+    job_id: int,
+    prepare_all_missing: bool,
+) -> None:
+    global _capacity_backfill_running, _capacity_backfill_job_id
     from .process_priority import apply_background_thread_priority
 
     apply_background_thread_priority()
     db = SessionLocal()
-    job_id: int | None = None
+    ready = 0
+    failed = 0
     try:
-        sources = (
-            db.query(SourceFile)
-            .filter(
-                SourceFile.parse_status == "parsed",
-                SourceFile.capacity_summary_status != "ready",
-            )
-            .all()
-        )
-        if not sources:
-            return
-        job_id = background_jobs.create_job(
-            kind="capacity_summary",
-            title="Capacity totals",
-            description=f"Calculating cached capacity totals for {len(sources)} cells",
-            total=len(sources),
-            items=[{"id": sf.id, "label": sf.filename} for sf in sources],
-        )
-        for sf in sources:
+        for source_id in source_ids:
+            sf = db.get(SourceFile, source_id)
+            if sf is None:
+                background_jobs.record_result(
+                    job_id,
+                    source_id,
+                    status="failed",
+                    error="Source record no longer exists",
+                    counter="failed",
+                )
+                failed += 1
+                continue
+            summary_was_ready = sf.capacity_summary_status == "ready"
             background_jobs.update_item(job_id, sf.id, status="processing")
             try:
                 cycles = cache.load_cycles(
                     sf.hash,
-                    sf.parser_version or parsing.PARSER_VERSION,
+                    parsing.PARSER_VERSION,
                     cache.CALC_VERSION,
                 )
-                if cycles is None:
-                    raise FileNotFoundError("Per-cycle cache is unavailable")
-                apply_capacity_summary(sf, cache.capacity_totals(cycles))
+                raw_ready = cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file()
+                if cycles is None or (prepare_all_missing and not raw_ready):
+                    check_location(db, sf)
+                    if sf.location_status == "offline":
+                        raise FileNotFoundError("Original source file is unavailable")
+                    if sf.location_status != "online":
+                        raise SourceChangedDuringRead(
+                            "Original source has changed; update it before rebuilding the cache"
+                        )
+                    source_path = Path(sf.path)
+                    expected = source_signature(source_path)
+                    with cache.protect_hash_from_cleanup(sf.hash):
+                        info = cache.build(sf.hash, source_path)
+                    _require_signature(source_path, expected)
+                    sf.parser_version = info["parser_version"]
+                    sf.row_count = info["rows"]
+                    sf.cycle_count = info["cycles"]
+                    sf.parse_error = None
+                    apply_capacity_summary(sf, info)
+                else:
+                    apply_capacity_summary(sf, cache.capacity_totals(cycles))
                 background_jobs.record_result(
                     job_id,
                     sf.id,
                     status="ready",
-                    detail="Capacity totals ready",
+                    detail="Scientific cache and capacity totals ready",
                     counter="ready",
                 )
+                ready += 1
             except Exception as exc:
-                sf.capacity_summary_status = "error"
+                if not summary_was_ready:
+                    sf.capacity_summary_status = "error"
+                sf.parse_error = str(exc)
                 logger.exception("capacity summary backfill failed for %s", sf.filename)
                 background_jobs.record_result(
                     job_id,
@@ -121,20 +248,48 @@ def _run_capacity_summary_backfill() -> None:
                     error=str(exc),
                     counter="failed",
                 )
+                failed += 1
             db.commit()
         background_jobs.update_job(
             job_id,
             status="completed",
-            description=f"Calculated capacity totals for {len(sources)} cells",
+            description=(
+                f"Prepared {ready} source files; {failed} could not be prepared"
+                if prepare_all_missing
+                else f"Calculated {ready} capacity summaries; {failed} failed"
+            ),
         )
+        preparation_state = scientific_preparation.get_state(db)
+        if scientific_preparation.is_pending(preparation_state):
+            scientific_preparation.set_state(
+                db,
+                "complete",
+                jobId=job_id,
+                total=len(source_ids),
+                completed=ready + failed,
+                failed=failed,
+            )
+            db.commit()
     except Exception as exc:
-        if job_id is not None:
-            background_jobs.update_job(job_id, status="failed", error=str(exc))
+        background_jobs.update_job(job_id, status="failed", error=str(exc))
+        preparation_state = scientific_preparation.get_state(db)
+        if scientific_preparation.is_pending(preparation_state):
+            scientific_preparation.set_state(
+                db,
+                "failed",
+                jobId=job_id,
+                total=len(source_ids),
+                completed=ready + failed,
+                failed=failed,
+                error=str(exc),
+            )
+            db.commit()
         logger.exception("capacity summary backfill failed")
     finally:
         db.close()
         with _capacity_backfill_lock:
             _capacity_backfill_running = False
+            _capacity_backfill_job_id = None
 
 
 def get_job(job_id: int) -> dict | None:

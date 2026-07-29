@@ -101,6 +101,112 @@ class CacheMaintenanceTests(unittest.TestCase):
             self.assertEqual(removed, len(b"cached"))
             self.assertFalse(scientific.exists())
 
+    def test_category_scientific_cleanup_preserves_offline_sources(self):
+        db = self.make_session()
+        online_hash = "1" * 64
+        offline_hash = "2" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            online_source = root / "online.ndax"
+            online_source.write_bytes(b"source")
+            db.add_all(
+                [
+                    SourceFile(
+                        hash=online_hash,
+                        path=str(online_source),
+                        filename=online_source.name,
+                        size=6,
+                        ext="ndax",
+                    ),
+                    SourceFile(
+                        hash=offline_hash,
+                        path=str(root / "offline.ndax"),
+                        filename="offline.ndax",
+                        size=7,
+                        ext="ndax",
+                    ),
+                ]
+            )
+            db.commit()
+            cache_root = root / "cache"
+            online_cache = cache_root / online_hash[:2] / online_hash
+            offline_cache = cache_root / offline_hash[:2] / offline_hash
+            online_cache.mkdir(parents=True)
+            offline_cache.mkdir(parents=True)
+            (online_cache / "raw.parquet").write_bytes(b"online")
+            (offline_cache / "raw.parquet").write_bytes(b"offline")
+
+            with (
+                patch.object(cache_maintenance, "CACHE_DIR", cache_root),
+                patch.object(cache_maintenance.cache, "pending_hashes", return_value=set()),
+            ):
+                result = cache_maintenance.cleanup_eligible_scientific(db)
+
+            self.assertEqual(result["bytes_removed"], len(b"online"))
+            self.assertEqual(result["protected_items"], 1)
+            self.assertFalse(online_cache.exists())
+            self.assertTrue(offline_cache.exists())
+
+    def test_category_scientific_cleanup_preserves_active_builds(self):
+        db = self.make_session()
+        source_hash = "3" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source_path = root / "online.ndax"
+            source_path.write_bytes(b"source")
+            db.add(
+                SourceFile(
+                    hash=source_hash,
+                    path=str(source_path),
+                    filename=source_path.name,
+                    size=6,
+                    ext="ndax",
+                    location_status="online",
+                )
+            )
+            db.commit()
+            cache_root = root / "cache"
+            scientific = cache_root / source_hash[:2] / source_hash
+            scientific.mkdir(parents=True)
+            (scientific / "raw.parquet").write_bytes(b"active")
+
+            with (
+                patch.object(cache_maintenance, "CACHE_DIR", cache_root),
+                cache.protect_hash_from_cleanup(source_hash),
+            ):
+                result = cache_maintenance.cleanup_eligible_scientific(db)
+
+            self.assertEqual(result["bytes_removed"], 0)
+            self.assertEqual(result["protected_items"], 1)
+            self.assertTrue(scientific.exists())
+
+    def test_thumbnail_cleanup_removes_images_and_indexes_together(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            thumbnails = root / "analysis" / "thumbnails" / "1"
+            indexes = root / "analysis" / "thumbnail-index" / "1"
+            thumbnails.mkdir(parents=True)
+            indexes.mkdir(parents=True)
+            (thumbnails / "plot.webp").write_bytes(b"image")
+            (indexes / "plot.json").write_bytes(b"index")
+            with (
+                patch.object(cache_maintenance, "CACHE_DIR", root),
+                patch.object(
+                    cache_maintenance.analysis_cache,
+                    "clear_prepared_markers",
+                ) as clear_markers,
+                patch.object(
+                    cache_maintenance.analysis_cache,
+                    "invalidate_size_tracker",
+                ),
+            ):
+                removed = cache_maintenance.cleanup_category("thumbnails")
+
+            self.assertEqual(removed, len(b"image") + len(b"index"))
+            self.assertFalse(thumbnails.parent.exists())
+            self.assertFalse(indexes.parent.exists())
+            clear_markers.assert_called_once_with()
+
     def test_obsolete_source_cache_is_removed_by_checksum(self):
         source_hash = "a" * 64
         with tempfile.TemporaryDirectory() as folder:
@@ -204,6 +310,7 @@ class CacheMaintenanceTests(unittest.TestCase):
         pause = coordinator.request_pause()
         self.assertTrue(pause["finishing_current"])
         self.assertEqual(background_jobs.get_job(started["id"])["status"], "running")
+        self.assertFalse(coordinator.cancel_pending_for_rebuild())
 
         coordinator.complete(first["id"], status="ready", detail="Ready", error=None)
         paused = background_jobs.get_job(started["id"])
@@ -214,6 +321,32 @@ class CacheMaintenanceTests(unittest.TestCase):
         coordinator.resume()
         self.assertEqual(background_jobs.get_job(started["id"])["status"], "running")
         self.assertEqual(coordinator.next_task(db)["plot_id"], "two")
+
+    def test_manual_rebuild_can_supersede_a_paused_queue_without_active_work(self):
+        db = self.make_session()
+        db.add(
+            Analysis(
+                title="Queued plots",
+                spec={
+                    "selection": {"entries": []},
+                    "saved_plots": [
+                        {"id": "one", "name": "One"},
+                        {"id": "two", "name": "Two"},
+                    ],
+                },
+            )
+        )
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        old = coordinator.start(db)
+        coordinator.request_pause()
+
+        self.assertTrue(coordinator.cancel_pending_for_rebuild())
+        self.assertEqual(background_jobs.get_job(old["id"])["status"], "completed")
+
+        rebuilt = coordinator.start(db, force=True)
+        self.assertNotEqual(rebuilt["id"], old["id"])
+        self.assertEqual(rebuilt["total"], 2)
 
     def test_new_source_revision_supersedes_older_queued_plot(self):
         db = self.make_session()
@@ -461,6 +594,36 @@ class CacheMaintenanceTests(unittest.TestCase):
             db.commit()
             fourth = coordinator.start(db)
             self.assertNotEqual(fourth["id"], started["id"])
+
+    def test_forced_warmup_rescans_after_prepared_markers_are_cleared(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Force refresh",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        first = coordinator.start(db)
+        task = coordinator.next_task(db)
+        cache_maintenance.analysis_cache.store_thumbnail(
+            analysis.id,
+            "plot",
+            "force-refresh-test",
+            self._THUMBNAIL,
+            self._THUMBNAIL,
+        )
+        coordinator.complete(task["id"], status="ready", detail="Ready", error=None, db=db)
+        self.assertEqual(coordinator.start(db)["id"], first["id"])
+
+        cache_maintenance.analysis_cache.clear_prepared_markers(analysis.id)
+        forced = coordinator.start(db, force=True)
+
+        self.assertNotEqual(forced["id"], first["id"])
+        self.assertEqual(forced["total"], 1)
 
     def test_analysis_budget_uses_running_total_and_survives_bulk_delete(self):
         from app.services import analysis_cache

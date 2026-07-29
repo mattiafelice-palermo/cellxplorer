@@ -285,6 +285,11 @@ The release workflow validates the complete Git tree and both existing pointers 
 staging, updates only the selected file with its prior blob SHA, and proves the other channel blob
 did not change. Missing refs/manifests or unexpected source files block publication.
 
+In PowerShell interpolated URLs, brace a variable immediately before a query string, for example
+`.../contents/${channelPath}?ref=${branch}`. Writing `$channelPath?ref=$branch` makes PowerShell
+consume `?ref` as part of the variable expression and silently produces a malformed URL, which can
+publish the GitHub release while leaving the installed-app channel pointer stale.
+
 ## Logging gap
 
 Packaging currently has weak diagnostics. Add rotating backend logs under the user data directory
