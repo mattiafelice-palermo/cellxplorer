@@ -43,6 +43,13 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 #        maximum kept only the largest step of a phase — a CC+CV charge lost its
 #        CV portion, which understated charge capacity and pushed coulombic
 #        efficiency above 100%.
-CALC_VERSION = "1.5.0"
+# 1.6.0: performance only — the CV-per-cycle walk indexes numpy arrays instead of
+#        building a pandas sub-frame per (cycle, step) group, and status
+#        predicates are evaluated over the distinct status values rather than
+#        every row. Outputs were verified bit-identical (atol=0) against 1.5.0 on
+#        the golden corpus and on a full real library. The bump is precautionary:
+#        it costs one recompute and removes any chance of a cached value produced
+#        by an edge-case path we could not exercise.
+CALC_VERSION = "1.6.0"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

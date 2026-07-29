@@ -881,9 +881,11 @@ def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
     """Charge/discharge/rest per row, vectorized (runs on full raw frames)."""
     n = len(frame)
     if "status" in frame.columns:
-        status = frame["status"].astype(str).str.lower()
-        has_dchg = status.str.contains("dchg") | status.str.contains("discharge")
-        has_chg = status.str.contains("chg") | status.str.contains("charge")
+        # Over the handful of distinct status values, not every row: these run on
+        # full raw frames, where four full-column str.contains passes dominate.
+        status = frame["status"]
+        has_dchg = pd.Series(calc.status_matches(status, "dchg", "discharge"), index=frame.index)
+        has_chg = pd.Series(calc.status_matches(status, "chg", "charge"), index=frame.index)
     else:
         has_dchg = pd.Series(False, index=frame.index)
         has_chg = pd.Series(False, index=frame.index)

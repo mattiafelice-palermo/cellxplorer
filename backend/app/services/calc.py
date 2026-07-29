@@ -55,80 +55,154 @@ QUANTITIES = {
 }
 
 
+def status_matches(status: pd.Series, *needles: str) -> np.ndarray:
+    """True where the lower-cased status contains any of `needles`.
+
+    Status is a categorical quantity stored as text: a 523 000-row file carries
+    four distinct values. Testing each row costs ~60 ms; testing the distinct
+    values and mapping back costs ~8 ms for the same answer.
+
+    `Series.str.contains` defaults to `regex=True`, but every needle used in this
+    codebase is regex-inert, so plain substring matching is equivalent. A needle
+    containing a regex metacharacter would NOT behave the same here — use a
+    literal substring, or restore `str.contains` for that call.
+
+    A missing status becomes the string "nan" and matches nothing, which is what
+    the previous `.astype(str)` produced.
+    """
+    codes, uniques = pd.factorize(status, sort=False)
+    lowered = [str(value).lower() for value in uniques]
+    flags = np.array(
+        [any(needle in value for needle in needles) for value in lowered], dtype=bool
+    )
+    if len(flags) == 0:
+        return np.zeros(len(status), dtype=bool)
+    # factorize marks unknown/NA as -1; those must not wrap around to flags[-1].
+    matched = np.zeros(len(codes), dtype=bool)
+    known = codes >= 0
+    matched[known] = flags[codes[known]]
+    return matched
+
+
 def _cv_charge_by_cycle(df: pd.DataFrame, cycle_index: pd.Index) -> tuple[np.ndarray, ...]:
     """Measure charge transferred and time spent in CV per cycle.
 
     Explicit CV_Chg steps are direct. A combined CCCV_Chg step is considered
     to have reached CV only when at least two records sit at the terminal
     voltage plateau and the absolute current measurably tapers.
+
+    The per-(cycle, step) walk below indexes numpy arrays rather than pandas
+    sub-frames: the decisions are unchanged, but building a sub-frame per group
+    cost ~0.75 ms × 200 groups and made this function 77 % of `per_cycle`.
     """
     zeros = np.zeros(len(cycle_index), dtype="float64")
     if not {"cycle", "status"}.issubset(df.columns):
         return zeros.copy(), zeros.copy(), zeros.copy()
-    work = df.copy()
-    status = work["status"].astype(str).str.lower()
-    charge_cv = status.str.contains("cv_chg") | status.str.contains("cv charge")
+
+    status = df["status"]
+    charge_cv = status_matches(status, "cv_chg", "cv charge")
     if not charge_cv.any():
         return zeros.copy(), zeros.copy(), zeros.copy()
-    step_key = "step" if "step" in work.columns else "step_index" if "step_index" in work.columns else None
+
+    step_key = "step" if "step" in df.columns else "step_index" if "step_index" in df.columns else None
+    work = df
     if step_key is None:
+        work = df.copy()
         work["__step"] = 0
         step_key = "__step"
+
+    # `cccv` is a property of the status text, so decide it once for the column.
+    is_cccv = status_matches(status, "cccv")
+
     order_cols = [col for col in ("record_index", "time_s") if col in work.columns]
     if order_cols:
-        work = work.sort_values(["cycle", step_key, *order_cols])
+        # Reproduces `sort_values(["cycle", step, *order_cols])` on the full frame
+        # before the CV rows are selected. lexsort takes keys last-significant
+        # first, hence the reversal.
+        keys = tuple(
+            work[col].to_numpy() for col in reversed(["cycle", step_key, *order_cols])
+        )
+        order = np.lexsort(keys)
+        work = work.take(order)
+        charge_cv = charge_cv[order]
+        is_cccv = is_cccv[order]
 
-    cycle_time: dict[int, float] = {}
-    cycle_capacity: dict[int, float] = {}
-    cycle_events: dict[int, int] = {}
-    for (cycle, _), group in work.loc[charge_cv].groupby(["cycle", step_key], sort=False):
-        group_status = group["status"].astype(str).str.lower()
-        combined = group_status.str.contains("cccv").any()
-        region = group
-        if combined:
-            if "voltage_v" not in group.columns or "current_ma" not in group.columns:
+    cycle_arr = work["cycle"].to_numpy()[charge_cv]
+    step_arr = work[step_key].to_numpy()[charge_cv]
+    cccv_arr = is_cccv[charge_cv]
+
+    def _column(name: str) -> np.ndarray | None:
+        if name not in work.columns:
+            return None
+        return work[name].to_numpy(dtype="float64")[charge_cv]
+
+    voltage_arr = _column("voltage_v")
+    current_arr = _column("current_ma")
+    time_arr = _column("time_s")
+    capacity_arr = _column("charge_capacity_mah")
+
+    # Contiguous blocks per (cycle, step), preserving order within each block.
+    cycle_codes, _ = pd.factorize(cycle_arr, sort=False)
+    step_codes, step_uniques = pd.factorize(step_arr, sort=False)
+    pair = cycle_codes.astype("int64") * (len(step_uniques) or 1) + step_codes.astype("int64")
+    block_order = np.argsort(pair, kind="stable")
+    pair_sorted = pair[block_order]
+    starts = np.flatnonzero(np.r_[True, pair_sorted[1:] != pair_sorted[:-1]])
+    ends = np.r_[starts[1:], len(pair_sorted)]
+
+    cycle_position = {int(cycle): index for index, cycle in enumerate(cycle_index)}
+    times = np.zeros(len(cycle_index), dtype="float64")
+    capacities = np.zeros(len(cycle_index), dtype="float64")
+    events = np.zeros(len(cycle_index), dtype="float64")
+
+    for lo, hi in zip(starts, ends):
+        rows = block_order[lo:hi]
+        region = rows
+        if cccv_arr[rows].any():
+            if voltage_arr is None or current_arr is None:
                 continue
-            voltage = group["voltage_v"].to_numpy(dtype="float64")
-            current = np.abs(group["current_ma"].to_numpy(dtype="float64"))
-            finite_v = voltage[np.isfinite(voltage)]
-            finite_i = current[np.isfinite(current)]
-            if len(finite_v) < 2 or len(finite_i) < 2:
+            voltage = voltage_arr[rows]
+            current = np.abs(current_arr[rows])
+            finite_voltage = np.isfinite(voltage)
+            finite_current = np.isfinite(current)
+            if finite_voltage.sum() < 2 or finite_current.sum() < 2:
                 continue
-            target = float(np.nanmax(finite_v))
+            target = float(voltage[finite_voltage].max())
             tolerance = max(0.002, abs(target) * 0.0005)
-            positions = np.flatnonzero(np.isfinite(voltage) & (voltage >= target - tolerance))
+            positions = np.flatnonzero(finite_voltage & (voltage >= target - tolerance))
             if len(positions) < 2:
                 continue
-            initial_current = float(np.nanmedian(finite_i[: min(5, len(finite_i))]))
+            head = current[finite_current][: min(5, int(finite_current.sum()))]
+            initial_current = float(np.median(head))
             plateau_current = current[positions]
             taper = initial_current > 0 and np.nanmin(plateau_current) <= initial_current * 0.98
             if not taper:
                 continue
-            region = group.iloc[positions[0] : positions[-1] + 1]
+            region = rows[positions[0] : positions[-1] + 1]
 
         duration_h = 0.0
-        if "time_s" in region.columns:
-            times = region["time_s"].to_numpy(dtype="float64")
-            finite = times[np.isfinite(times)]
+        if time_arr is not None:
+            finite = time_arr[region]
+            finite = finite[np.isfinite(finite)]
             if len(finite):
                 duration_h = max(0.0, float(finite.max() - finite.min())) / 3600.0
         capacity_mah = 0.0
-        if "charge_capacity_mah" in region.columns:
-            capacities = region["charge_capacity_mah"].to_numpy(dtype="float64")
-            finite = capacities[np.isfinite(capacities)]
+        if capacity_arr is not None:
+            finite = capacity_arr[region]
+            finite = finite[np.isfinite(finite)]
             if len(finite):
                 # The step's own delta. A dedicated CV step restarts the counter
                 # at 0, so this equals its max; taking the delta also stays
                 # correct if a file ever carries the count over from the CC step.
                 capacity_mah = max(0.0, float(finite.max() - finite.min()))
-        cycle_id = int(cycle)
-        cycle_time[cycle_id] = cycle_time.get(cycle_id, 0.0) + duration_h
-        cycle_capacity[cycle_id] = cycle_capacity.get(cycle_id, 0.0) + capacity_mah
-        cycle_events[cycle_id] = cycle_events.get(cycle_id, 0) + 1
 
-    times = np.array([cycle_time.get(int(cycle), 0.0) for cycle in cycle_index], dtype="float64")
-    capacities = np.array([cycle_capacity.get(int(cycle), 0.0) for cycle in cycle_index], dtype="float64")
-    events = np.array([cycle_events.get(int(cycle), 0) for cycle in cycle_index], dtype="float64")
+        position = cycle_position.get(int(cycle_arr[rows[0]]))
+        if position is None:
+            continue
+        times[position] += duration_h
+        capacities[position] += capacity_mah
+        events[position] += 1
+
     return times, capacities, events
 
 

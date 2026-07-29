@@ -330,3 +330,158 @@ class CapacityTotalsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusMatchesTests(unittest.TestCase):
+    """Spec 028: status predicates evaluated over distinct values, not every row."""
+
+    def reference(self, status, *needles):
+        """What the code did before: lower-case every row, then str.contains."""
+        lowered = status.astype(str).str.lower()
+        mask = pd.Series(False, index=status.index)
+        for needle in needles:
+            mask = mask | lowered.str.contains(needle)
+        return mask.to_numpy()
+
+    def test_matches_the_row_wise_implementation(self):
+        status = pd.Series(["CC_Chg", "CV_Chg", "CCCV_Chg", "CC_DChg", "Rest"])
+        for needles in [("cv_chg",), ("cv_chg", "cv charge"), ("chg", "charge"), ("cccv",)]:
+            with self.subTest(needles=needles):
+                np.testing.assert_array_equal(
+                    calc.status_matches(status, *needles),
+                    self.reference(status, *needles),
+                )
+
+    def test_matching_is_case_insensitive(self):
+        status = pd.Series(["cv_chg", "CV_CHG", "Cv_ChG"])
+        self.assertTrue(calc.status_matches(status, "cv_chg").all())
+
+    def test_a_missing_status_matches_nothing(self):
+        # The old code ran .astype(str) first, turning NaN into the string "nan".
+        status = pd.Series(["CV_Chg", None, np.nan])
+        result = calc.status_matches(status, "cv_chg")
+        np.testing.assert_array_equal(result, np.array([True, False, False]))
+        np.testing.assert_array_equal(result, self.reference(status, "cv_chg"))
+
+    def test_an_empty_column_returns_an_empty_mask(self):
+        result = calc.status_matches(pd.Series([], dtype=object), "cv_chg")
+        self.assertEqual(len(result), 0)
+        self.assertEqual(result.dtype, bool)
+
+    def test_a_single_repeated_value_is_handled(self):
+        status = pd.Series(["Rest"] * 50)
+        self.assertFalse(calc.status_matches(status, "cv_chg").any())
+        self.assertTrue(calc.status_matches(status, "rest").all())
+
+
+class CvChargeByCycleTests(unittest.TestCase):
+    """Spec 028: the CV walk's decisions, including paths absent from the corpus."""
+
+    def frame(self, rows):
+        return pd.DataFrame(rows)
+
+    def test_explicit_cv_step_contributes_its_own_delta(self):
+        df = self.frame({
+            "cycle": [1, 1, 1],
+            "step": [2, 2, 2],
+            "status": ["CV_Chg", "CV_Chg", "CV_Chg"],
+            "time_s": [0.0, 1800.0, 3600.0],
+            "charge_capacity_mah": [0.0, 1.0, 2.0],
+            "voltage_v": [4.2, 4.2, 4.2],
+            "current_ma": [100.0, 50.0, 10.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertAlmostEqual(times[0], 1.0)
+        self.assertAlmostEqual(caps[0], 2.0)
+        self.assertEqual(events[0], 1)
+
+    def test_a_cccv_step_that_tapers_counts_only_the_plateau(self):
+        df = self.frame({
+            "cycle": [1] * 4,
+            "step": [1] * 4,
+            "status": ["CCCV_Chg"] * 4,
+            "time_s": [0.0, 3600.0, 7200.0, 10800.0],
+            "charge_capacity_mah": [0.0, 1.0, 2.0, 3.0],
+            # first two rows climb to the plateau, last two sit on it
+            "voltage_v": [4.0, 4.1, 4.2, 4.2],
+            "current_ma": [100.0, 100.0, 100.0, 10.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        # plateau is rows 2..3 only: 1 h and 1 mAh, not the whole step
+        self.assertAlmostEqual(times[0], 1.0)
+        self.assertAlmostEqual(caps[0], 1.0)
+        self.assertEqual(events[0], 1)
+
+    def test_a_cccv_step_that_never_tapers_contributes_nothing(self):
+        df = self.frame({
+            "cycle": [1] * 4,
+            "step": [1] * 4,
+            "status": ["CCCV_Chg"] * 4,
+            "time_s": [0.0, 3600.0, 7200.0, 10800.0],
+            "charge_capacity_mah": [0.0, 1.0, 2.0, 3.0],
+            "voltage_v": [4.2, 4.2, 4.2, 4.2],
+            "current_ma": [100.0, 100.0, 100.0, 100.0],  # flat: no CV reached
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertEqual(list(times), [0.0])
+        self.assertEqual(list(caps), [0.0])
+        self.assertEqual(list(events), [0.0])
+
+    def test_a_cycle_with_no_cv_at_all_is_zero(self):
+        df = self.frame({
+            "cycle": [1, 1],
+            "step": [1, 1],
+            "status": ["CC_Chg", "CC_DChg"],
+            "time_s": [0.0, 3600.0],
+            "charge_capacity_mah": [0.0, 1.0],
+            "voltage_v": [4.0, 3.0],
+            "current_ma": [100.0, -100.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertEqual(list(times), [0.0])
+        self.assertEqual(list(events), [0.0])
+
+    def test_frames_without_a_step_column_still_work(self):
+        # The corpus always has `step`; the __step fallback would otherwise be
+        # exercised by nothing.
+        df = self.frame({
+            "cycle": [1, 1],
+            "status": ["CV_Chg", "CV_Chg"],
+            "time_s": [0.0, 3600.0],
+            "charge_capacity_mah": [0.0, 2.0],
+            "voltage_v": [4.2, 4.2],
+            "current_ma": [100.0, 10.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertAlmostEqual(times[0], 1.0)
+        self.assertAlmostEqual(caps[0], 2.0)
+        self.assertEqual(events[0], 1)
+
+    def test_two_cv_steps_in_one_cycle_accumulate(self):
+        df = self.frame({
+            "cycle": [1] * 4,
+            "step": [2, 2, 5, 5],
+            "status": ["CV_Chg"] * 4,
+            "time_s": [0.0, 3600.0, 7200.0, 10800.0],
+            "charge_capacity_mah": [0.0, 1.0, 0.0, 2.0],
+            "voltage_v": [4.2] * 4,
+            "current_ma": [100.0, 10.0, 100.0, 10.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertAlmostEqual(times[0], 2.0)
+        self.assertAlmostEqual(caps[0], 3.0)
+        self.assertEqual(events[0], 2)
+
+    def test_cycles_absent_from_the_index_are_ignored(self):
+        df = self.frame({
+            "cycle": [1, 1, 99, 99],
+            "step": [1, 1, 1, 1],
+            "status": ["CV_Chg"] * 4,
+            "time_s": [0.0, 3600.0, 0.0, 3600.0],
+            "charge_capacity_mah": [0.0, 1.0, 0.0, 5.0],
+            "voltage_v": [4.2] * 4,
+            "current_ma": [100.0, 10.0, 100.0, 10.0],
+        })
+        times, caps, events = calc._cv_charge_by_cycle(df, pd.Index([1]))
+        self.assertEqual(len(caps), 1)
+        self.assertAlmostEqual(caps[0], 1.0)
