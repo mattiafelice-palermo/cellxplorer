@@ -4,6 +4,15 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.6 - 2026-07-29
+
+- - Fix same-folder drag-and-drop removing cells and replicate groups instead of doing nothing.
+- - Add collapsible Analyses and Samples sections in the project folder tree.
+- - Show cycle count, specific capacity, and plot previews in aligned project explorer columns.
+- - Align metric column headers and dividers through section splits; separate the Folders toolbar from the tree.
+- - Restore Expand all and Collapse all, with root-folder options in each chevron menu.
+- - Add weekly source-monitor schedules, retry delay units, and a schedule preview in Settings.
+
 ## 0.17.0-beta.5 - 2026-07-28
 
 - Protocol segment editor: sticky controls, protocol-aware filters, and show-neighbours expansion.
