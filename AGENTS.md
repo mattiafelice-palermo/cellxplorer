@@ -174,6 +174,7 @@ Cellxplorer/
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
+│   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views

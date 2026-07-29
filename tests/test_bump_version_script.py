@@ -153,6 +153,49 @@ class BumpVersionScriptTests(unittest.TestCase):
                 0,
             )
 
+    def test_sectioned_changelog_omits_empty_sections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_min_repo(root, "0.1.0")
+            code = bump_version.main(
+                [
+                    "0.1.1",
+                    "--bugfix",
+                    "Fix tab switching.",
+                    "--repo-root",
+                    str(root),
+                ]
+            )
+            self.assertEqual(code, 0)
+            changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertIn("### Bug fixes", changelog)
+            self.assertIn("- Fix tab switching.", changelog)
+            self.assertNotIn("### New features", changelog)
+
+    def test_notes_file_supports_section_headings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_min_repo(root, "0.1.0")
+            notes_file = root / "notes.txt"
+            notes_file.write_text(
+                "New features\nFirst feature.\n\nBug fixes\nFirst fix.\n",
+                encoding="utf-8",
+            )
+            code = bump_version.main(
+                [
+                    "0.1.1",
+                    "--notes-file",
+                    str(notes_file),
+                    "--repo-root",
+                    str(root),
+                ]
+            )
+            self.assertEqual(code, 0)
+            changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertLess(changelog.index("### New features"), changelog.index("### Bug fixes"))
+            self.assertIn("- First feature.", changelog)
+            self.assertIn("- First fix.", changelog)
+
 
 if __name__ == "__main__":
     unittest.main()

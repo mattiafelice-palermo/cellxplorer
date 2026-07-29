@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -28,6 +29,26 @@ PUBLISHABLE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
 CHANGELOG_HEADING_RE = re.compile(
     r"^##\s+(?:\[)?(?P<version>v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\])?"
 )
+CHANGELOG_SECTION_KEYS = {
+    "new features": "New features",
+    "bug fixes": "Bug fixes",
+}
+
+
+@dataclass
+class ChangelogNotes:
+    flat: list[str] = field(default_factory=list)
+    new_features: list[str] = field(default_factory=list)
+    bug_fixes: list[str] = field(default_factory=list)
+
+    @property
+    def is_sectioned(self) -> bool:
+        return bool(self.new_features or self.bug_fixes)
+
+    def all_items(self) -> list[str]:
+        if self.is_sectioned:
+            return [*self.new_features, *self.bug_fixes]
+        return self.flat
 
 
 class BumpVersionError(Exception):
@@ -178,7 +199,82 @@ def _changelog_has_version(content: str, version: str) -> bool:
     return False
 
 
-def prepend_changelog(repo_root: Path, version: str, notes: list[str], *, release_date: date) -> Path:
+def _normalize_note_line(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith("- "):
+        return stripped[2:].strip()
+    return stripped
+
+
+def parse_changelog_notes(lines: list[str]) -> ChangelogNotes:
+    notes = ChangelogNotes()
+    current_section: str | None = None
+    saw_section_header = False
+
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        section_key = stripped.lower().rstrip(":")
+        if section_key in CHANGELOG_SECTION_KEYS:
+            current_section = section_key
+            saw_section_header = True
+            continue
+
+        item = _normalize_note_line(stripped)
+        if not item:
+            continue
+
+        if current_section == "new features":
+            notes.new_features.append(item)
+        elif current_section == "bug fixes":
+            notes.bug_fixes.append(item)
+        elif saw_section_header:
+            raise BumpVersionError(
+                f"Release note {item!r} is outside a recognized section. "
+                "Use 'New features' or 'Bug fixes' headings."
+            )
+        else:
+            notes.flat.append(item)
+
+    if not notes.all_items():
+        raise BumpVersionError("At least one non-empty release note is required.")
+    if notes.flat and notes.is_sectioned:
+        raise BumpVersionError(
+            "Mix flat release notes with section headings is not supported."
+        )
+    return notes
+
+
+def format_changelog_section(
+    version: str,
+    notes: ChangelogNotes,
+    *,
+    release_date: date,
+) -> str:
+    lines = [f"## {version} - {release_date.isoformat()}", ""]
+    if notes.is_sectioned:
+        if notes.new_features:
+            lines.extend(["### New features", ""])
+            lines.extend(f"- {item}" for item in notes.new_features)
+            lines.append("")
+        if notes.bug_fixes:
+            lines.extend(["### Bug fixes", ""])
+            lines.extend(f"- {item}" for item in notes.bug_fixes)
+            lines.append("")
+    else:
+        lines.extend(f"- {item}" for item in notes.flat)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n\n"
+
+
+def prepend_changelog(
+    repo_root: Path,
+    version: str,
+    notes: ChangelogNotes,
+    *,
+    release_date: date,
+) -> Path:
     changelog_path = repo_root / "CHANGELOG.md"
     if not changelog_path.is_file():
         raise BumpVersionError("CHANGELOG.md is missing.")
@@ -186,12 +282,7 @@ def prepend_changelog(repo_root: Path, version: str, notes: list[str], *, releas
     if _changelog_has_version(content, version):
         raise BumpVersionError(f"CHANGELOG.md already contains a section for {version}.")
 
-    cleaned = [line.strip() for line in notes if line.strip()]
-    if not cleaned:
-        raise BumpVersionError("At least one non-empty release note is required.")
-
-    bullets = "\n".join(f"- {line}" for line in cleaned)
-    section = f"## {version} - {release_date.isoformat()}\n\n{bullets}\n\n"
+    section = format_changelog_section(version, notes, release_date=release_date)
     marker = "\n## "
     insert_at = content.find(marker)
     if insert_at == -1:
@@ -202,13 +293,20 @@ def prepend_changelog(repo_root: Path, version: str, notes: list[str], *, releas
     return changelog_path
 
 
-def load_notes(args: argparse.Namespace) -> list[str]:
+def load_notes(args: argparse.Namespace) -> ChangelogNotes:
+    lines: list[str] = []
     if args.notes_file is not None:
-        text = args.notes_file.read_text(encoding="utf-8")
-        return text.splitlines()
-    if args.notes:
-        return args.notes
-    raise BumpVersionError("Provide --notes or --notes-file.")
+        lines.extend(args.notes_file.read_text(encoding="utf-8").splitlines())
+    lines.extend(args.notes)
+    for feature in args.feature:
+        lines.extend(["New features", feature])
+    for bugfix in args.bugfix:
+        lines.extend(["Bug fixes", bugfix])
+    if not lines:
+        raise BumpVersionError(
+            "Provide --notes, --notes-file, --feature, and/or --bugfix."
+        )
+    return parse_changelog_notes(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -228,12 +326,27 @@ def main(argv: list[str] | None = None) -> int:
         "--notes",
         action="append",
         default=[],
-        help="Release-note bullet (repeatable).",
+        help="Release-note bullet without a section (repeatable, legacy flat format).",
+    )
+    parser.add_argument(
+        "--feature",
+        action="append",
+        default=[],
+        help="New-feature bullet for a sectioned changelog (repeatable).",
+    )
+    parser.add_argument(
+        "--bugfix",
+        action="append",
+        default=[],
+        help="Bug-fix bullet for a sectioned changelog (repeatable).",
     )
     parser.add_argument(
         "--notes-file",
         type=Path,
-        help="Read release-note bullets from a text file (one bullet per line).",
+        help=(
+            "Read release notes from a text file. Use 'New features' and 'Bug fixes' "
+            "headings for sectioned changelogs; otherwise one bullet per line."
+        ),
     )
     parser.add_argument(
         "--date",
@@ -270,9 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         notes = load_notes(args)
         if args.dry_run:
             print(f"Would bump to {target}")
-            for line in notes:
-                if line.strip():
-                    print(f"  - {line.strip()}")
+            print(format_changelog_section(target, notes, release_date=args.date).rstrip())
             return 0
 
         changed = apply_version_bump(args.repo_root, target)
