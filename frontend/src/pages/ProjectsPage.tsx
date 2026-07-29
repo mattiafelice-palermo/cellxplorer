@@ -58,6 +58,7 @@ import {
   Tree,
 } from "../api";
 import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
+import { groupTransfersBySource, isNoOpDrop } from "../folderDrop";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import {
   deleteEmptyAnalysesIfRequested,
@@ -465,6 +466,9 @@ export function ProjectsPage() {
   const [previewOpen, setPreviewOpen] = useState(true);
   const [preview, setPreview] = useState<PreviewSelection>(null);
   const [dropTargetFolderId, setDropTargetFolderId] = useState<number | null>(null);
+  // Items currently being dragged, mirrored out of `dataTransfer` because that is
+  // unreadable during `dragover` (see handleDragStart).
+  const dragItemsRef = useRef<TreeItem[]>([]);
   const [impactRequest, setImpactRequest] = useState<ProjectImpactRequest | null>(null);
 
   const tree = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
@@ -1007,27 +1011,19 @@ export function ProjectsPage() {
     selectedAnalyses.length > 0 && selectedAnalyses.length === selectedActionItems.length;
   const hasSingleAnalysis = selectedAnalyses.length === 1 && selectedActionItems.length === 1;
 
+  // `groupTransfersBySource` omits items already filed in the target. That guard
+  // lives here rather than in the drop handler so the "Move to" / "Copy to"
+  // destination picker gets it too — picking an item's current folder there hit
+  // the same data-loss path as dropping it on itself (spec 024).
   const transferCells = (targetFolderId: number, copy: boolean, items = selectedCells) => {
-    const bySource = new Map<number, number[]>();
-    items.forEach((item) => {
-      const ids = bySource.get(item.folderId) ?? [];
-      ids.push(item.id);
-      bySource.set(item.folderId, ids);
-    });
-    bySource.forEach((cellIds, sourceFolderId) => {
+    groupTransfersBySource(items, targetFolderId).forEach((cellIds, sourceFolderId) => {
       if (copy) copyCells.mutate({ sourceFolderId, targetFolderId, cellIds });
       else moveCells.mutate({ sourceFolderId, targetFolderId, cellIds });
     });
   };
 
   const transferGroups = (targetFolderId: number, copy: boolean, items = selectedGroups) => {
-    const bySource = new Map<number, number[]>();
-    items.forEach((item) => {
-      const ids = bySource.get(item.folderId) ?? [];
-      ids.push(item.id);
-      bySource.set(item.folderId, ids);
-    });
-    bySource.forEach((groupIds, sourceFolderId) => {
+    groupTransfersBySource(items, targetFolderId).forEach((groupIds, sourceFolderId) => {
       if (copy) copyGroups.mutate({ sourceFolderId, targetFolderId, groupIds });
       else moveGroups.mutate({ sourceFolderId, targetFolderId, groupIds });
     });
@@ -1035,6 +1031,8 @@ export function ProjectsPage() {
 
   const transferFolders = (targetParentId: number | null, copy: boolean, items = selectedFolders) => {
     items.forEach((item) => {
+      // Dropping a folder onto itself is rejected server-side with 422; don't ask.
+      if (item.id === targetParentId) return;
       if (copy) copyFolder.mutate({ id: item.id, parent_id: targetParentId });
       else moveFolder.mutate({ id: item.id, parent_id: targetParentId });
     });
@@ -1046,6 +1044,9 @@ export function ProjectsPage() {
     items = selectedAnalyses
   ) => {
     items.forEach((item) => {
+      // Re-filing an analysis where it already is is a harmless assignment, but it
+      // still round-trips and touches the record. Skip it.
+      if (!copy && item.folderId === targetFolderId) return;
       if (copy) copyAnalysis.mutate({ id: item.id, folderId: targetFolderId });
       else updateAnalysis.mutate({ id: item.id, folderId: targetFolderId });
     });
@@ -1053,8 +1054,18 @@ export function ProjectsPage() {
 
   const handleDragStart = (event: DragEvent, item: TreeItem) => {
     const dragItems = selectedKeys.has(item.key) ? selectedActionItems : [item];
+    // `dataTransfer` is write-only until `drop` — `getData` returns "" during
+    // `dragover` — so stash the payload to decide whether a folder should light
+    // up as a drop target. The drop handler still reads `dataTransfer`, which
+    // stays the source of truth for what actually moves.
+    dragItemsRef.current = dragItems;
     event.dataTransfer.effectAllowed = "copyMove";
     event.dataTransfer.setData("application/x-cellxplorer-items", JSON.stringify(dragItems));
+  };
+
+  const handleDragEnd = () => {
+    dragItemsRef.current = [];
+    setDropTargetFolderId(null);
   };
 
   const handleDropOnFolder = (event: DragEvent, folder: FolderNode) => {
@@ -1064,6 +1075,7 @@ export function ProjectsPage() {
     // under the cursor win instead of every ancestor also handling it.
     event.stopPropagation();
     setDropTargetFolderId(null);
+    dragItemsRef.current = [];
     const raw = event.dataTransfer.getData("application/x-cellxplorer-items");
     if (!raw) return;
     const items = JSON.parse(raw) as TreeItem[];
@@ -1444,6 +1456,13 @@ export function ProjectsPage() {
         onDragOver={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          // Don't advertise a drop that would change nothing. Before spec 024 this
+          // highlight was worse than useless — the drop it invited deleted the row.
+          if (isNoOpDrop(dragItemsRef.current, folder.id)) {
+            event.dataTransfer.dropEffect = "none";
+            if (dropTargetFolderId === folder.id) setDropTargetFolderId(null);
+            return;
+          }
           setDropTargetFolderId(folder.id);
         }}
         onDragLeave={(event) => {
@@ -1459,6 +1478,7 @@ export function ProjectsPage() {
           p={6}
           draggable
           onDragStart={(event) => handleDragStart(event, item)}
+          onDragEnd={handleDragEnd}
           onDoubleClick={() => toggleFolder(folder.id)}
           onContextMenu={(event) => handleContextMenu(event, item)}
           style={{
@@ -1583,6 +1603,7 @@ export function ProjectsPage() {
         p={6}
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
+        onDragEnd={handleDragEnd}
         onContextMenu={(event) => handleContextMenu(event, item)}
         onDoubleClick={(event) => {
           event.stopPropagation();
@@ -1642,6 +1663,7 @@ export function ProjectsPage() {
         p={6}
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
+        onDragEnd={handleDragEnd}
         onContextMenu={(event) => handleContextMenu(event, item)}
         onDoubleClick={(event) => {
           event.stopPropagation();
@@ -1709,6 +1731,7 @@ export function ProjectsPage() {
         p={6}
         draggable={editingAnalysisId !== analysis.id}
         onDragStart={(event) => handleDragStart(event, item)}
+        onDragEnd={handleDragEnd}
         onContextMenu={(event) => handleContextMenu(event, item)}
         onDoubleClick={(event) => {
           event.stopPropagation();

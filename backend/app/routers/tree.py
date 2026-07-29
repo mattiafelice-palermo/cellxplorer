@@ -183,6 +183,14 @@ def move_folder_cells(
 ) -> None:
     if db.get(Folder, source_folder_id) is None or db.get(Folder, target_folder_id) is None:
         raise HTTPException(404, "No such folder")
+    if source_folder_id == target_folder_id:
+        # Nothing to do — and doing it would destroy the membership. `add_cell_refs`
+        # skips ids already in the folder, so the add below becomes a no-op and the
+        # delete then removes the only FolderCell row: the cell vanishes from the
+        # folder it was merely dropped back into. Keep this return before the
+        # add/delete pair, and do not "fix" that pair by deleting first — the
+        # re-add would reassign `position` and silently reorder the folder.
+        return
     add_cell_refs(db, target_folder_id, cell_ids)
     db.query(FolderCell).filter(
         FolderCell.folder_id == source_folder_id,
@@ -195,6 +203,10 @@ def move_folder_groups(
 ) -> None:
     if db.get(Folder, source_folder_id) is None or db.get(Folder, target_folder_id) is None:
         raise HTTPException(404, "No such folder")
+    if source_folder_id == target_folder_id:
+        # Same reason as move_folder_cells: add_group_refs dedupes, so the
+        # delete below would strip the group's only membership row.
+        return
     add_group_refs(db, target_folder_id, group_ids)
     db.query(FolderReplicateGroup).filter(
         FolderReplicateGroup.folder_id == source_folder_id,
