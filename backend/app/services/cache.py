@@ -16,6 +16,7 @@ import re
 import shutil
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pandas as pd
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 # any in-flight write for that hash first.
 _pending_lock = threading.Lock()
 _pending: dict[str, threading.Thread] = {}
+_protected_hashes: set[str] = set()
 
 
 def _wait_for_pending(file_hash: str) -> None:
@@ -49,7 +51,19 @@ def wait_for_pending(file_hash: str) -> None:
 def pending_hashes() -> set[str]:
     """Return hashes whose Parquet files are currently being written."""
     with _pending_lock:
-        return set(_pending)
+        return set(_pending) | set(_protected_hashes)
+
+
+@contextmanager
+def protect_hash_from_cleanup(file_hash: str):
+    """Keep category cleanup away from a synchronous cache build."""
+    with _pending_lock:
+        _protected_hashes.add(file_hash)
+    try:
+        yield
+    finally:
+        with _pending_lock:
+            _protected_hashes.discard(file_hash)
 
 
 def remove_hash_cache(file_hash: str) -> int:

@@ -134,7 +134,9 @@ def _source_labels(db: Session) -> dict[str, dict[str, Any]]:
             "cell_id": cell.id if cell else None,
             "label": cell.name if cell else source.filename,
             "source_path": source.path,
-            "source_available": Path(source.path).is_file(),
+            "source_available": (
+                source.location_status == "online" and Path(source.path).is_file()
+            ),
         }
         for source, cell in rows
     }
@@ -223,10 +225,15 @@ def _remove_directory(directory: Path) -> int:
 
 
 def cleanup_category(category: str) -> int:
+    if category == "thumbnails":
+        removed = _remove_directory(CACHE_DIR / "analysis" / "thumbnails")
+        removed += _remove_directory(CACHE_DIR / "analysis" / "thumbnail-index")
+        analysis_cache.clear_prepared_markers()
+        analysis_cache.invalidate_size_tracker()
+        return removed
     targets = {
         "analysis_results": CACHE_DIR / "analysis" / "results",
         "analysis_artifacts": CACHE_DIR / "analysis" / "artifacts",
-        "thumbnails": CACHE_DIR / "analysis" / "thumbnails",
         "thumbnail_indexes": CACHE_DIR / "analysis" / "thumbnail-index",
     }
     if category not in targets:
@@ -238,6 +245,35 @@ def cleanup_category(category: str) -> int:
         analysis_cache.clear_prepared_markers()
     analysis_cache.invalidate_size_tracker()
     return removed
+
+
+def cleanup_eligible_scientific(db: Session) -> dict[str, int]:
+    """Remove caches that can be regenerated, preserving offline-only data."""
+    labels = _source_labels(db)
+    pending = cache.pending_hashes()
+    removed = 0
+    protected_bytes = 0
+    protected = 0
+    cleaned = 0
+    for directory in _scientific_directories():
+        _count, size, _modified = _directory_stats(directory)
+        source = labels.get(directory.name)
+        if directory.name in pending:
+            protected += 1
+            protected_bytes += size
+            continue
+        if source and not source.get("source_available"):
+            protected += 1
+            protected_bytes += size
+            continue
+        removed += _remove_directory(directory)
+        cleaned += 1
+    return {
+        "bytes_removed": removed,
+        "items_removed": cleaned,
+        "protected_items": protected,
+        "protected_bytes": protected_bytes,
+    }
 
 
 def cleanup_offender(db: Session, kind: str, identifier: str, *, force: bool = False) -> int:
@@ -301,6 +337,29 @@ class WarmupCoordinator:
         self._generation = 0
         self._paused = False
         self._pause_requested = False
+
+    def cancel_pending_for_rebuild(self) -> bool:
+        """Supersede queued idle work, but never interrupt an active render."""
+        with self._lock:
+            if self._active is not None:
+                return False
+            if self._job_id is not None:
+                current = background_jobs.get_job(self._job_id)
+                if current and current.get("status") in {"running", "paused"}:
+                    background_jobs.update_job(
+                        self._job_id,
+                        status="completed",
+                        description="Superseded by a manual cache rebuild",
+                        completed=current.get("total", current.get("completed", 0)),
+                    )
+            self._tasks = []
+            self._next_index = 0
+            self._job_id = None
+            self._fingerprint = None
+            self._probe = None
+            self._paused = False
+            self._pause_requested = False
+            return True
 
     def _tasks_for_analyses(
         self,
@@ -381,14 +440,14 @@ class WarmupCoordinator:
             f"{count}:{latest.isoformat() if latest else ''}"
         )
 
-    def start(self, db: Session) -> dict[str, Any]:
+    def start(self, db: Session, *, force: bool = False) -> dict[str, Any]:
         probe = self._analysis_probe(db)
         with self._lock:
             if self._job_id is not None:
                 current = background_jobs.get_job(self._job_id)
                 if current and current.get("status") in {"running", "paused"}:
                     return current
-                if current and probe == self._probe:
+                if not force and current and probe == self._probe:
                     return current
 
         analyses = db.query(Analysis).order_by(Analysis.id).all()
@@ -412,7 +471,7 @@ class WarmupCoordinator:
                 current = background_jobs.get_job(self._job_id)
                 if current and current.get("status") in {"running", "paused"}:
                     return current
-                if fingerprint == self._fingerprint:
+                if not force and fingerprint == self._fingerprint:
                     self._probe = probe
                     return current or {"status": "completed", "total": len(tasks), "completed": len(tasks)}
                 if not tasks and current:

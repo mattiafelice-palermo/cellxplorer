@@ -147,7 +147,9 @@ Cellxplorer/
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
-│           └── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+│           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+│           └── scientific_preparation.py
+│                                  Durable post-copy cache-preparation state
 ├── frontend/
 │   ├── package.json, vite.config.ts, tsconfig.json, index.html
 │   ├── public/                     Static application assets
@@ -188,6 +190,7 @@ Cellxplorer/
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
+│   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_app_channels.py        Stable/Beta identity and build contract tests (Spec 021)
 │   ├── test_check_versions_script.py Version declaration consistency checker tests
 │   ├── test_bump_version_script.py   Version bump script tests

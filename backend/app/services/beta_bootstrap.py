@@ -24,6 +24,12 @@ from ..config import APP_DATA_DIR, APP_VERSION, IMPORT_DIR, INSTALL_INSTANCE_ID
 from ..models import Analysis, Cell, Folder, ReplicateGroup, SourceFile, Test
 from ..services.app_channel import resolve_app_channel, stable_default_data_root
 from ..services.database_identity import DATABASE_INSTANCE_ID_KEY
+from ..services.scientific_preparation import (
+    SCIENTIFIC_PREPARATION_KEY,
+    get_state as get_scientific_preparation_state,
+    is_pending as scientific_preparation_is_pending,
+    pending_value as scientific_preparation_pending_value,
+)
 from ..services.database_migrations import (
     CORE_TABLES,
     REVISION_BY_ID,
@@ -559,6 +565,7 @@ def build_status(db: Session) -> dict[str, Any]:
         copy_blocking = stable.message or "The Stable library cannot be copied safely."
 
     outstanding = _reconcile_active_stage_token() or find_outstanding_stage_token()
+    scientific_preparation = get_scientific_preparation_state(db)
 
     if setup_error:
         setup_state = "blocked-error"
@@ -588,6 +595,10 @@ def build_status(db: Session) -> dict[str, Any]:
         "blockingReason": setup_error or (copy_blocking if needs_choice else None),
         "outstandingStageToken": outstanding,
         "applyFailureMessage": apply_failure_message,
+        "scientificPreparation": scientific_preparation,
+        "scientificPreparationPending": scientific_preparation_is_pending(
+            scientific_preparation
+        ),
     }
 
 
@@ -689,6 +700,15 @@ def stage_stable_copy(
                 "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                 (DATABASE_INSTANCE_ID_KEY, new_instance_id, now),
+            )
+            connection.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (
+                    SCIENTIFIC_PREPARATION_KEY,
+                    scientific_preparation_pending_value(),
+                    now,
+                ),
             )
             rows = connection.execute("SELECT id, path, hash, size FROM source_files").fetchall()
             for row_id, raw_path, file_hash, file_size in rows:

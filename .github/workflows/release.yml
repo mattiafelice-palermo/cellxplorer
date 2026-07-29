@@ -549,7 +549,7 @@ jobs:
             "User-Agent" = "cellxplorer-release-workflow"
           }
 
-          $existingUri = "https://api.github.com/repos/$owner/$repo/contents/$channelPath?ref=$branch"
+          $existingUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${branch}"
           $expectedSha = "${{ steps.channel_branch.outputs.target_sha }}"
           if ([string]::IsNullOrWhiteSpace($expectedSha)) {
             $branchRef = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/git/ref/heads/$branch" -Headers $headers
@@ -584,7 +584,7 @@ jobs:
             exit 1
           }
 
-          $publishedUri = "https://api.github.com/repos/$owner/$repo/contents/$channelPath?ref=$publishedCommit"
+          $publishedUri = "https://api.github.com/repos/$owner/$repo/contents/${channelPath}?ref=${publishedCommit}"
           $contents = Invoke-RestMethod -Method Get -Uri $publishedUri -Headers $headers
           $remoteBytes = [Convert]::FromBase64String($contents.content.Replace("`n", ""))
           $localBytes = [System.IO.File]::ReadAllBytes("uploaded-latest.json")
@@ -600,7 +600,7 @@ jobs:
           }
 
           $otherPath = "${{ steps.channel_branch.outputs.other_path }}"
-          $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/$otherPath?ref=$publishedCommit" -Headers $headers
+          $other = Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$owner/$repo/contents/${otherPath}?ref=${publishedCommit}" -Headers $headers
           if ($other.sha -ne "${{ steps.channel_branch.outputs.other_sha }}") {
             Write-Error "The non-target channel pointer changed during publication."
             exit 1

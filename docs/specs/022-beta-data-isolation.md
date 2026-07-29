@@ -329,6 +329,13 @@ For every source path in the copied database:
 - do not rewrite external network/local paths;
 - do not parse source files during bootstrap.
 
+The staged database carries a durable post-activation scientific-preparation marker. This does not
+copy or parse cache data inside the snapshot transaction. After the copied database is active and
+the ordinary Beta backend has started, a resumable background job verifies available sources,
+builds missing current-version scientific caches, and refreshes capacity summaries. The setup
+surface shows real file-count progress and remains gated until that one-time pass finishes; genuine
+offline/changed/parser failures remain visible per source afterward.
+
 Do not copy:
 
 - `cache/`;

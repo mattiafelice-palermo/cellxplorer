@@ -20,6 +20,7 @@ from app.db import _enable_write_ahead_logging, _set_sqlite_pragma
 from app.models import Cell, SourceFile
 from app.routers import beta_bootstrap as beta_bootstrap_router
 from app.services import beta_bootstrap
+from app.services.scientific_preparation import SCIENTIFIC_PREPARATION_KEY
 from app.services.database_migrations import migrate_database
 
 
@@ -407,6 +408,15 @@ class BetaBootstrapTests(unittest.TestCase):
             staged_instance = beta_bootstrap._read_instance_id(stage_dir / beta_bootstrap.STAGED_DB_NAME)
             self.assertIsNotNone(staged_instance)
             self.assertNotEqual(staged_instance, stable_instance)
+            with closing(
+                sqlite3.connect(stage_dir / beta_bootstrap.STAGED_DB_NAME)
+            ) as staged:
+                raw_preparation = staged.execute(
+                    "SELECT value FROM app_settings WHERE key = ?",
+                    (SCIENTIFIC_PREPARATION_KEY,),
+                ).fetchone()
+            self.assertIsNotNone(raw_preparation)
+            self.assertEqual(json.loads(raw_preparation[0])["status"], "pending")
             self.assertEqual(beta_bootstrap._sha256_file(stable_path), before_hash)
         finally:
             beta_db.close()
