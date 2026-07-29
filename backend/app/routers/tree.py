@@ -9,6 +9,7 @@ import copy
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -23,10 +24,103 @@ from ..models import (
     Project,
     ProjectCell,
     ReplicateGroup,
+    SourceFile,
+    Test,
+    TestFile,
 )
 from ..services.entity_ids import next_analysis_id
 
 router = APIRouter(prefix="/api", tags=["tree"])
+
+EMPTY_METRICS: dict = {
+    "cycle_count": None,
+    "max_discharge_capacity_mah": None,
+    "summary_pending": False,
+}
+
+
+def cell_metrics(db: Session, cell_ids: list[int]) -> dict[int, dict]:
+    """Cached cycle counts and peak discharge capacity, one cell per row.
+
+    One grouped query for the whole tree, deliberately: `/api/tree` already loads
+    every folder, cell, group and analysis in a single pass, and a per-node lookup
+    would make the endpoint N+1 for everybody. The join shape mirrors
+    `library._cell_file_summaries`, which computes the same rollup for the Cell
+    Database table.
+
+    A cell whose files are not all summarised reports `None` rather than a partial
+    total: showing a half-counted number, or a 0 during import, reads as data loss.
+    """
+    if not cell_ids:
+        return {}
+    rows = (
+        db.query(
+            Test.cell_id.label("cell_id"),
+            func.count(SourceFile.id).label("n_files"),
+            func.coalesce(func.sum(SourceFile.cycle_count), 0).label("total_cycles"),
+            func.max(SourceFile.max_discharge_capacity_mah).label("max_discharge"),
+            func.sum(
+                case(
+                    (
+                        SourceFile.id.is_not(None)
+                        & (func.coalesce(SourceFile.capacity_summary_status, "") != "ready"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("not_ready"),
+        )
+        .outerjoin(TestFile, TestFile.test_id == Test.id)
+        .outerjoin(SourceFile, SourceFile.id == TestFile.file_id)
+        .filter(Test.cell_id.in_(cell_ids))
+        .group_by(Test.cell_id)
+        .all()
+    )
+    metrics: dict[int, dict] = {}
+    for row in rows:
+        n_files = int(row.n_files or 0)
+        pending = n_files > 0 and int(row.not_ready or 0) > 0
+        ready = n_files > 0 and not pending
+        metrics[int(row.cell_id)] = {
+            "cycle_count": int(row.total_cycles or 0) if ready else None,
+            "max_discharge_capacity_mah": (
+                round(float(row.max_discharge), 6)
+                if ready and row.max_discharge is not None
+                else None
+            ),
+            "summary_pending": pending,
+        }
+    return metrics
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 6) if values else None
+
+
+def aggregate_metrics(entries: list[dict], *, average: bool) -> dict:
+    """Combine per-cell metrics for a replicate group (mean) or a folder (total).
+
+    Replicate groups are nominally identical cells, so their row reports the mean
+    of the member maxima rather than a raw maximum — the UI labels it as such.
+    """
+    cycles = [e["cycle_count"] for e in entries if e.get("cycle_count") is not None]
+    caps = [
+        e["max_discharge_capacity_mah"]
+        for e in entries
+        if e.get("max_discharge_capacity_mah") is not None
+    ]
+    if average:
+        mean_cycles = _mean([float(v) for v in cycles])
+        return {
+            "cycle_count": int(round(mean_cycles)) if mean_cycles is not None else None,
+            "max_discharge_capacity_mah": _mean([float(v) for v in caps]),
+            "summary_pending": any(e.get("summary_pending") for e in entries),
+        }
+    return {
+        "cycle_count": sum(int(v) for v in cycles) if cycles else None,
+        "max_discharge_capacity_mah": max(float(v) for v in caps) if caps else None,
+        "summary_pending": any(e.get("summary_pending") for e in entries),
+    }
 
 
 def group_dict(g: Group) -> dict:
@@ -49,25 +143,43 @@ def project_dict(p: Project, analyses: list[Analysis]) -> dict:
         "description": p.description,
         "cell_ids": [l.cell_id for l in p.cell_links],
         "groups": [group_dict(g) for g in p.groups],
-        "analyses": [{"id": a.id, "title": a.title} for a in analyses if a.project_id == p.id],
+        "analyses": [analysis_ref_dict(a) for a in analyses if a.project_id == p.id],
     }
 
 
-def cell_ref_dict(c: Cell) -> dict:
+def cell_ref_dict(c: Cell, metrics: dict[int, dict] | None = None) -> dict:
     return {
         "id": c.id,
         "name": c.name,
         "description": c.description,
         "archived": c.archived,
+        **(metrics or {}).get(c.id, EMPTY_METRICS),
     }
 
 
-def replicate_group_ref_dict(group: ReplicateGroup) -> dict:
+def replicate_group_ref_dict(
+    group: ReplicateGroup, metrics: dict[int, dict] | None = None
+) -> dict:
+    cell_ids = [
+        link.cell_id for link in sorted(group.cell_links, key=lambda link: link.position)
+    ]
+    members = [(metrics or {}).get(cid, EMPTY_METRICS) for cid in cell_ids]
     return {
         "id": group.id,
         "name": group.name,
         "description": group.description,
-        "cell_ids": [link.cell_id for link in sorted(group.cell_links, key=lambda link: link.position)],
+        "cell_ids": cell_ids,
+        "member_count": len(cell_ids),
+        **aggregate_metrics(members, average=True),
+    }
+
+
+def analysis_ref_dict(a: Analysis) -> dict:
+    # Saved plots live in the spec document, so the count costs no extra query.
+    return {
+        "id": a.id,
+        "title": a.title,
+        "plot_count": len(a.spec.get("saved_plots") or []) if a.spec else 0,
     }
 
 
@@ -80,6 +192,7 @@ def folder_dict(
     replicate_groups: list[ReplicateGroup],
     analyses: list[Analysis],
     projects: list[Project],
+    metrics: dict[int, dict] | None = None,
 ) -> dict:
     cells_by_id = {c.id: c for c in cells}
     ordered_links = sorted(
@@ -87,6 +200,30 @@ def folder_dict(
         key=lambda link: (link.position, link.id or 0),
     )
     folder_cell_ids = [link.cell_id for link in ordered_links]
+    children = [
+        folder_dict(
+            child, folders, folder_cells, folder_groups, cells, replicate_groups,
+            analyses, projects, metrics,
+        )
+        for child in folders
+        if child.parent_id == folder.id
+    ]
+    group_refs = [
+        replicate_group_ref_dict(link.group, metrics)
+        for link in sorted(
+            (link for link in folder_groups if link.folder_id == folder.id),
+            key=lambda link: (link.position, link.id or 0),
+        )
+        if link.group is not None
+    ]
+    # A folder's row summarises everything beneath it, so a collapsed folder still
+    # says something. Cells are gathered by id first: the same cell can be filed in
+    # this folder and in a descendant, and must not be counted twice.
+    rollup_cell_ids = set(folder_cell_ids)
+    for group in group_refs:
+        rollup_cell_ids.update(group["cell_ids"])
+    for child in children:
+        rollup_cell_ids.update(child["metrics_cell_ids"])
     return {
         "id": folder.id,
         "type": "folder",
@@ -94,29 +231,23 @@ def folder_dict(
         "parent_id": folder.parent_id,
         "cell_ids": folder_cell_ids,
         "cells": [
-            cell_ref_dict(cells_by_id[link.cell_id])
+            cell_ref_dict(cells_by_id[link.cell_id], metrics)
             for link in ordered_links
             if link.cell_id in cells_by_id
         ],
-        "replicate_groups": [
-            replicate_group_ref_dict(link.group)
-            for link in sorted(
-                (link for link in folder_groups if link.folder_id == folder.id),
-                key=lambda link: (link.position, link.id or 0),
-            )
-            if link.group is not None
-        ],
-        "children": [
-            folder_dict(child, folders, folder_cells, folder_groups, cells, replicate_groups, analyses, projects)
-            for child in folders
-            if child.parent_id == folder.id
-        ],
+        "replicate_groups": group_refs,
+        "children": children,
         "projects": [project_dict(p, analyses) for p in projects if p.folder_id == folder.id],
         "analyses": [
-            {"id": a.id, "title": a.title}
+            analysis_ref_dict(a)
             for a in analyses
             if a.folder_id == folder.id and a.project_id is None
         ],
+        "metrics_cell_ids": sorted(rollup_cell_ids),
+        "metrics": aggregate_metrics(
+            [(metrics or {}).get(cid, EMPTY_METRICS) for cid in rollup_cell_ids],
+            average=False,
+        ),
     }
 
 
@@ -276,9 +407,14 @@ def get_tree(db: Session = Depends(get_db)):
         FolderReplicateGroup.position, FolderReplicateGroup.id
     ).all()
 
+    metrics = cell_metrics(db, [c.id for c in cells])
+
     def children_of(parent_id: int | None) -> list[dict]:
         return [
-            folder_dict(f, folders, folder_cells, folder_groups, cells, replicate_groups, analyses, projects)
+            folder_dict(
+                f, folders, folder_cells, folder_groups, cells, replicate_groups,
+                analyses, projects, metrics,
+            )
             for f in folders
             if f.parent_id == parent_id
         ]

@@ -7,11 +7,13 @@ import {
   Collapse,
   Divider,
   Group,
+  HoverCard,
   Menu,
   Modal,
   Paper,
   ScrollArea,
   Select,
+  Skeleton,
   SegmentedControl,
   Stack,
   Switch,
@@ -53,12 +55,18 @@ import {
   patch,
   post,
   put,
+  PlotThumbnails,
   ReplicateGroupPreview,
   ReplicateGroupSummary,
+  RowMetrics,
   Tree,
 } from "../api";
 import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
 import { groupTransfersBySource, isNoOpDrop } from "../folderDrop";
+import {
+  formatCapacity as formatMetricCapacity,
+  formatCycleCount,
+} from "../explorerMetrics";
 import {
   loadViewPreferences,
   saveViewPreferences,
@@ -226,6 +234,138 @@ function visibleTreeItems(
     );
     return [folderItem, ...childItems, ...sectionItems];
   });
+}
+
+const METRIC_GUTTER_WIDTH = 132;
+const EAGER_PREVIEW_PLOTS = 6;
+
+/**
+ * The right-hand metric columns.
+ *
+ * Fixed width so the numbers line up down the whole tree regardless of how deep
+ * a row is indented; the label column truncates instead of pushing them around.
+ */
+function MetricColumns({ metrics, hint }: { metrics: RowMetrics; hint?: string }) {
+  const body = (
+    <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
+      <Text size="xs" c="dimmed" ta="right" style={{ width: 62, fontVariantNumeric: "tabular-nums" }}>
+        {formatCycleCount(metrics.cycle_count)}
+      </Text>
+      <Text size="xs" c="dimmed" ta="right" style={{ width: 70, fontVariantNumeric: "tabular-nums" }}>
+        {formatMetricCapacity(metrics.max_discharge_capacity_mah)}
+      </Text>
+    </Group>
+  );
+  const label =
+    hint ??
+    (metrics.summary_pending
+      ? "Still reading cycling data for these files"
+      : "Cycles · max discharge capacity (mAh)");
+  return (
+    <Tooltip label={label} openDelay={400} withArrow>
+      {body}
+    </Tooltip>
+  );
+}
+
+/** Column headings for the metric gutter, aligned with `MetricColumns`. */
+function MetricColumnHeadings() {
+  return (
+    <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
+      <Text size="xs" c="dimmed" fw={700} ta="right" style={{ width: 62 }}>
+        Cycles
+      </Text>
+      <Text size="xs" c="dimmed" fw={700} ta="right" style={{ width: 70 }}>
+        Max mAh
+      </Text>
+    </Group>
+  );
+}
+
+/**
+ * Hover preview of an analysis's saved plots.
+ *
+ * The first few thumbnails are requested on open and the rest immediately after,
+ * so sweeping the pointer down a folder of analyses cannot fire an unbounded
+ * burst — `openDelay` means a pass-through fetches nothing at all, and React
+ * Query makes a second hover free.
+ */
+function AnalysisPlotsHover({ analysisId, plotCount }: { analysisId: number; plotCount: number }) {
+  const [opened, setOpened] = useState(false);
+  const [wantAll, setWantAll] = useState(false);
+  const limit = wantAll ? undefined : EAGER_PREVIEW_PLOTS;
+  const preview = useQuery({
+    queryKey: ["analysis-plot-thumbnails", analysisId, limit ?? "all"],
+    queryFn: () =>
+      get<PlotThumbnails>(
+        `/api/analyses/${analysisId}/plot-thumbnails${limit === undefined ? "" : `?limit=${limit}`}`
+      ),
+    enabled: opened && plotCount > 0,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!opened || wantAll) return;
+    if (preview.data && preview.data.total > preview.data.plots.length) setWantAll(true);
+  }, [opened, wantAll, preview.data]);
+
+  const count = (
+    <Text size="xs" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+      {plotCount} {plotCount === 1 ? "plot" : "plots"}
+    </Text>
+  );
+  // Nothing to preview: render the count alone rather than an empty hover card.
+  if (plotCount === 0) {
+    return (
+      <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
+        {count}
+      </Group>
+    );
+  }
+  return (
+    <HoverCard withinPortal width={330} shadow="md" openDelay={350} onOpen={() => setOpened(true)}>
+      <HoverCard.Target>
+        <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
+          {count}
+        </Group>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Stack gap="xs">
+          {preview.isLoading || !preview.data ? (
+            Array.from({ length: Math.min(plotCount, 2) }, (_, index) => (
+              <Skeleton key={index} height={90} radius="sm" />
+            ))
+          ) : (
+            preview.data.plots.map((plot) => (
+              <div key={plot.plot_id}>
+                <Text size="xs" fw={600} truncate>
+                  {plot.title}
+                </Text>
+                {plot.thumbnail ? (
+                  <img
+                    src={plot.thumbnail}
+                    alt={plot.title}
+                    style={{ width: "100%", borderRadius: 4, display: "block" }}
+                  />
+                ) : (
+                  // Not an error: the background warmup simply has not reached
+                  // this plot yet.
+                  <Text size="xs" c="dimmed">
+                    Not rendered yet — open the analysis to build it.
+                  </Text>
+                )}
+              </div>
+            ))
+          )}
+          {preview.data && preview.data.total > preview.data.plots.length ? (
+            <Text size="xs" c="dimmed">
+              Loading {preview.data.total - preview.data.plots.length} more…
+            </Text>
+          ) : null}
+        </Stack>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
 }
 
 function AddReferencesModal({
@@ -1351,6 +1491,15 @@ export function ProjectsPage() {
                     <Stack gap="sm" p="xs">
                       <Switch
                         size="sm"
+                        label="Show metrics"
+                        description="Cycles, capacity and plot counts on the right."
+                        checked={viewPreferences.showMetrics}
+                        onChange={(event) =>
+                          updateViewPreferences({ showMetrics: event.currentTarget.checked })
+                        }
+                      />
+                      <Switch
+                        size="sm"
                         label="Group into sections"
                         description="Split each folder into Analyses and Samples."
                         checked={viewPreferences.sectioned}
@@ -1383,6 +1532,7 @@ export function ProjectsPage() {
                     </Stack>
                   </Menu.Dropdown>
                 </Menu>
+                {viewPreferences.showMetrics ? <MetricColumnHeadings /> : null}
                 <Tooltip label="New root folder">
                   <ActionIcon variant="subtle" onClick={() => openCreateFolder(null)}>
                     <IconFolderPlus size={17} />
@@ -1647,6 +1797,12 @@ export function ProjectsPage() {
               {folder.cells.length + folder.replicate_groups.length + folder.analyses.length}
             </Badge>
           </Group>
+          {viewPreferences.showMetrics ? (
+            <MetricColumns
+              metrics={folder.metrics}
+              hint="Totals for this folder and everything inside it"
+            />
+          ) : null}
           <Group gap={2} wrap="nowrap">
             <ActionIcon
               className="project-tree-hover-actions"
@@ -1798,6 +1954,12 @@ export function ProjectsPage() {
             {group.cell_ids.length}
           </Badge>
         </Group>
+        {viewPreferences.showMetrics ? (
+          <MetricColumns
+            metrics={group}
+            hint={`Average over ${group.member_count} cells: cycles · max discharge capacity (mAh)`}
+          />
+        ) : null}
         <Menu withinPortal position="bottom-end">
           <Menu.Target>
             <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
@@ -1860,6 +2022,7 @@ export function ProjectsPage() {
             </Badge>
           )}
         </Group>
+        {viewPreferences.showMetrics ? <MetricColumns metrics={cell} /> : null}
         <Menu withinPortal position="bottom-end">
           <Menu.Target>
             <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
@@ -1938,6 +2101,9 @@ export function ProjectsPage() {
             </Text>
           )}
         </Group>
+        {viewPreferences.showMetrics ? (
+          <AnalysisPlotsHover analysisId={analysis.id} plotCount={analysis.plot_count} />
+        ) : null}
         <Menu withinPortal position="bottom-end">
           <Menu.Target>
             <ActionIcon

@@ -54,6 +54,7 @@ test("preferences round-trip through storage", () => {
   assert.deepEqual(loadViewPreferences(storage), {
     sectioned: true,
     order: "analyses-first",
+    showMetrics: true,
   });
 });
 
@@ -78,10 +79,18 @@ test("a partial stored value keeps the fields it does have", () => {
   assert.deepEqual(loadViewPreferences({ getItem: () => '{"sectioned":true}' }), {
     sectioned: true,
     order: "samples-first",
+    showMetrics: true,
   });
   assert.deepEqual(loadViewPreferences({ getItem: () => '{"order":"analyses-first"}' }), {
     sectioned: false,
     order: "analyses-first",
+    showMetrics: true,
+  });
+  // Metrics default on, so an older stored preference gains the columns.
+  assert.deepEqual(loadViewPreferences({ getItem: () => '{"showMetrics":false}' }), {
+    sectioned: false,
+    order: "samples-first",
+    showMetrics: false,
   });
 });
 
@@ -89,6 +98,7 @@ test("an unknown order value falls back rather than rendering nothing", () => {
   assert.deepEqual(loadViewPreferences({ getItem: () => '{"order":"cells-first"}' }), {
     sectioned: false,
     order: "samples-first",
+    showMetrics: true,
   });
 });
 

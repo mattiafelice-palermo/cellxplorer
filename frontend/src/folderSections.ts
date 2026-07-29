@@ -21,12 +21,15 @@ export type SectionableFolder = {
 export type ProjectViewPreferences = {
   sectioned: boolean;
   order: SectionOrder;
+  /** Metric columns (spec 026). On by default — they are the reason to look here. */
+  showMetrics: boolean;
 };
 
-/** Off, and samples first — i.e. exactly what the tree did before sections existed. */
+/** Sections off and samples first — i.e. what the tree did before they existed. */
 export const DEFAULT_VIEW_PREFERENCES: ProjectViewPreferences = {
   sectioned: false,
   order: "samples-first",
+  showMetrics: true,
 };
 
 const STORAGE_KEY = "cellxplorer.projects.view";
@@ -82,6 +85,10 @@ export function loadViewPreferences(
       candidate.order === "analyses-first" || candidate.order === "samples-first"
         ? candidate.order
         : DEFAULT_VIEW_PREFERENCES.order,
+    showMetrics:
+      typeof candidate.showMetrics === "boolean"
+        ? candidate.showMetrics
+        : DEFAULT_VIEW_PREFERENCES.showMetrics,
   };
 }
 

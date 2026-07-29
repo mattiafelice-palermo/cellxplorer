@@ -13,7 +13,8 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Analysis, Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell
+from app.models import (Analysis, Cell, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup,
+                        ReplicateGroupCell, SourceFile, Test, TestFile)
 from app.routers import tree
 
 
@@ -56,7 +57,9 @@ class TreeRouterTests(unittest.TestCase):
 
         self.assertEqual([c["id"] for c in result["cells"]], [11, 10])
         self.assertEqual(result["cells"][0]["name"], "Cell A")
-        self.assertEqual(result["analyses"], [{"id": 20, "title": "Folder analysis"}])
+        self.assertEqual(
+            result["analyses"], [{"id": 20, "title": "Folder analysis", "plot_count": 0}]
+        )
         self.assertEqual(result["children"][0]["id"], 2)
 
     def test_move_folder_cells_moves_refs_without_duplication(self):
@@ -190,6 +193,112 @@ class TreeRouterTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as caught:
             tree.move_folder_cells(db, 4242, 4242, [cell.id])
         self.assertEqual(caught.exception.status_code, 404)
+
+    def make_summarised_cell(self, db, name, files):
+        """files: list of (cycle_count, max_discharge_mah, capacity_summary_status)."""
+        cell = Cell(name=name)
+        db.add(cell)
+        db.flush()
+        test = Test(cell_id=cell.id, name=f"{name} test")
+        db.add(test)
+        db.flush()
+        for index, (cycles, max_mah, status) in enumerate(files):
+            source = SourceFile(
+                hash=f"{name}-{index}",
+                path=f"C:/data/{name}-{index}.ndax",
+                filename=f"{name}-{index}.ndax",
+                size=1,
+                ext="ndax",
+                cycle_count=cycles,
+                max_discharge_capacity_mah=max_mah,
+                capacity_summary_status=status,
+            )
+            db.add(source)
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=source.id, position=index))
+        db.flush()
+        return cell
+
+    def test_cell_metrics_sum_cycles_and_take_the_peak_capacity(self):
+        db = self.make_session()
+        cell = self.make_summarised_cell(db, "A", [(100, 2.5, "ready"), (150, 3.25, "ready")])
+
+        metrics = tree.cell_metrics(db, [cell.id])[cell.id]
+
+        self.assertEqual(metrics["cycle_count"], 250)
+        self.assertEqual(metrics["max_discharge_capacity_mah"], 3.25)
+        self.assertFalse(metrics["summary_pending"])
+
+    def test_a_cell_still_being_summarised_reports_nothing_rather_than_a_partial(self):
+        db = self.make_session()
+        # A half-counted total, or a 0 during import, reads to the user as data loss.
+        cell = self.make_summarised_cell(db, "B", [(100, 2.5, "ready"), (None, None, "pending")])
+
+        metrics = tree.cell_metrics(db, [cell.id])[cell.id]
+
+        self.assertIsNone(metrics["cycle_count"])
+        self.assertIsNone(metrics["max_discharge_capacity_mah"])
+        self.assertTrue(metrics["summary_pending"])
+
+    def test_a_replicate_group_averages_its_members(self):
+        entries = [
+            {"cycle_count": 100, "max_discharge_capacity_mah": 2.0, "summary_pending": False},
+            {"cycle_count": 102, "max_discharge_capacity_mah": 3.0, "summary_pending": False},
+        ]
+        result = tree.aggregate_metrics(entries, average=True)
+        self.assertEqual(result["max_discharge_capacity_mah"], 2.5)
+        # Cycles are averaged too, then rounded — a group row showing "101.5 cycles"
+        # would be nonsense.
+        self.assertEqual(result["cycle_count"], 101)
+
+    def test_a_folder_totals_cycles_and_takes_the_peak_capacity(self):
+        entries = [
+            {"cycle_count": 100, "max_discharge_capacity_mah": 2.0, "summary_pending": False},
+            {"cycle_count": 150, "max_discharge_capacity_mah": 3.0, "summary_pending": False},
+        ]
+        result = tree.aggregate_metrics(entries, average=False)
+        self.assertEqual(result["cycle_count"], 250)
+        self.assertEqual(result["max_discharge_capacity_mah"], 3.0)
+
+    def test_metrics_with_no_usable_members_are_absent_not_zero(self):
+        entries = [{"cycle_count": None, "max_discharge_capacity_mah": None, "summary_pending": True}]
+        for average in (True, False):
+            with self.subTest(average=average):
+                result = tree.aggregate_metrics(entries, average=average)
+                self.assertIsNone(result["cycle_count"])
+                self.assertIsNone(result["max_discharge_capacity_mah"])
+                self.assertTrue(result["summary_pending"])
+
+    def test_a_folder_rollup_counts_a_cell_filed_twice_only_once(self):
+        db = self.make_session()
+        cell = self.make_summarised_cell(db, "Shared", [(100, 2.0, "ready")])
+        parent = Folder(name="Parent")
+        child = Folder(name="Child")
+        db.add_all([parent, child])
+        db.flush()
+        child.parent_id = parent.id
+        links = [
+            FolderCell(folder_id=parent.id, cell_id=cell.id, position=0),
+            FolderCell(folder_id=child.id, cell_id=cell.id, position=0),
+        ]
+        db.add_all(links)
+        db.flush()
+
+        metrics = tree.cell_metrics(db, [cell.id])
+        result = tree.folder_dict(
+            parent,
+            folders=[parent, child],
+            folder_cells=links,
+            folder_groups=[],
+            cells=[cell],
+            replicate_groups=[],
+            analyses=[],
+            projects=[],
+            metrics=metrics,
+        )
+
+        self.assertEqual(result["metrics_cell_ids"], [cell.id])
+        self.assertEqual(result["metrics"]["cycle_count"], 100)
 
     def test_copy_folder_tree_duplicates_structure_references_and_analyses(self):
         db = self.make_session()

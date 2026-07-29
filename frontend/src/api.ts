@@ -651,7 +651,26 @@ export interface ProjectNode {
   description: string | null;
   cell_ids: number[];
   groups: GroupInfo[];
-  analyses: { id: number; title: string }[];
+  analyses: AnalysisRef[];
+}
+
+/** Cached cycling metrics shown in the project explorer's right-hand columns. */
+export interface RowMetrics {
+  /** null while the capacity summary is still being backfilled — not zero. */
+  cycle_count: number | null;
+  max_discharge_capacity_mah: number | null;
+  summary_pending: boolean;
+}
+
+export interface AnalysisRef {
+  id: number;
+  title: string;
+  plot_count: number;
+}
+
+export interface PlotThumbnails {
+  total: number;
+  plots: { plot_id: string; title: string; thumbnail: string | null }[];
 }
 
 export interface FolderNode {
@@ -660,14 +679,18 @@ export interface FolderNode {
   name: string;
   parent_id: number | null;
   cell_ids: number[];
-  cells: Pick<CellSummary, "id" | "name" | "description" | "archived">[];
-  replicate_groups: Pick<
+  cells: (Pick<CellSummary, "id" | "name" | "description" | "archived"> & RowMetrics)[];
+  replicate_groups: (Pick<
     ReplicateGroupSummary,
     "id" | "name" | "description" | "cell_ids"
-  >[];
+  > &
+    RowMetrics & { member_count: number })[];
   children: FolderNode[];
   projects: ProjectNode[];
-  analyses: { id: number; title: string }[];
+  analyses: AnalysisRef[];
+  /** Rollup over this folder and every descendant, deduplicated by cell id. */
+  metrics: RowMetrics;
+  metrics_cell_ids: number[];
 }
 
 export interface Tree {
