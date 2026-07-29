@@ -81,7 +81,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
@@ -358,6 +358,12 @@ jobs:
             Write-Error "Missing backend sidecar at $sidecar"
             exit 1
           }
+
+      # A file-existence check cannot catch a sidecar that starts and dies at
+      # import -- which is exactly what release 0.17.0 shipped. Run the binary.
+      - name: Smoke test the packaged backend
+        shell: pwsh
+        run: python scripts/smoke_packaged_backend.py
 
       - name: Load release notes body
         id: release_notes

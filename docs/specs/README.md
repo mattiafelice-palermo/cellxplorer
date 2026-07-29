@@ -348,6 +348,14 @@ Rules:
   output bit-identical (the golden corpus diff is 8 paths, all `calc_version`).
   `CALC_VERSION` 1.6.0. Also records why the parse side is **not** worth optimising.
   **Implemented.** Branch `feature/calc-status-and-cv-vectorization`.
+- [029-ci-python-314-and-packaged-backend-smoke-test.md](029-ci-python-314-and-packaged-backend-smoke-test.md)
+  — CI built the sidecar on Python 3.12 while `requirements.txt` was pinned from 3.14, and
+  `release.yml` checked only that the sidecar *file* existed. Now both workflows use 3.14
+  (which also brings zlib-ng: 1.54x on `.ndax` inflate, ~4% of import compute, no new
+  dependency), and `scripts/smoke_packaged_backend.py` starts the real frozen binary and
+  asserts the API before anything is published. **Implemented** — the 3.14 bump still needs a
+  real `windows-latest` CI run to prove wheel availability and PyInstaller support.
+  Branch `feature/ci-python-314-and-sidecar-smoke`.
 
 ## Assets
 
