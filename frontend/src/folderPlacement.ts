@@ -54,6 +54,14 @@ export function placementCanApply(itemsAdded: number, foldersReceiving: number):
   return itemsAdded > 0 && foldersReceiving > 0;
 }
 
+/** Default reviewed destinations when converting placed cells into a replicate. */
+export function replicatePlacementFolderIds(
+  presentFolderIds: Iterable<number>,
+  stagedFolderIds: Iterable<number>,
+): number[] {
+  return [...new Set([...presentFolderIds, ...stagedFolderIds])];
+}
+
 export function folderContentCount(folder: {
   cells: unknown[];
   replicate_groups: unknown[];

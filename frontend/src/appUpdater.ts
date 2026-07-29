@@ -136,8 +136,9 @@ export type AppUpdateDownloadEvent =
   | { event: "finished" };
 
 export type ReleaseNoteLine = {
-  kind: "bullet" | "text";
+  kind: "bullet" | "text" | "heading";
   text: string;
+  level?: number;
 };
 
 export type AppUpdateMenuState = {
@@ -288,6 +289,14 @@ export function parseReleaseNoteLines(notes: string | null | undefined): Release
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
+      const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
+      if (heading) {
+        return {
+          kind: "heading" as const,
+          text: heading[2].trim(),
+          level: heading[1].length,
+        };
+      }
       const bullet = line.match(/^[-*]\s+(.*)$/);
       if (bullet) {
         return { kind: "bullet" as const, text: bullet[1].trim() };

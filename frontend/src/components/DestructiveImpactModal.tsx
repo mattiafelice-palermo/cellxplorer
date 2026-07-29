@@ -4,19 +4,17 @@ import {
   Button,
   Checkbox,
   Group,
-  Loader,
   Modal,
   Stack,
   Text,
 } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { useQuery } from "@tanstack/react-query";
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { post, type AnalysisUsageResponse } from "../api";
 import {
-  deferredDestructiveConfirm,
+  destructiveImpactModalVisible,
   type DestructiveImpactConfirmOptions,
 } from "../destructiveImpact";
 
@@ -63,11 +61,6 @@ export function DestructiveImpactModal({
   onConfirm,
 }: DestructiveImpactModalProps) {
   const [deleteEmpty, setDeleteEmpty] = useState(false);
-  const [plainConfirmArmed, setPlainConfirmArmed] = useState(false);
-  const onConfirmRef = useRef(onConfirm);
-  const onCloseRef = useRef(onClose);
-  onConfirmRef.current = onConfirm;
-  onCloseRef.current = onClose;
 
   const usage = useQuery({
     queryKey: ["analyses-usage", cellIds, groupIds],
@@ -83,36 +76,8 @@ export function DestructiveImpactModal({
   useEffect(() => {
     if (!opened) {
       setDeleteEmpty(false);
-      setPlainConfirmArmed(false);
     }
   }, [opened]);
-
-  useEffect(() => {
-    if (!opened || usage.isFetching || usage.isError || !usage.data) return;
-    if (usage.data.analyses.length > 0 || plainConfirmArmed) return;
-    setPlainConfirmArmed(true);
-    const confirm = deferredDestructiveConfirm(onConfirmRef.current, {
-      deleteEmptyAnalyses: false,
-      emptyAfterCandidateIds: [],
-    });
-    onCloseRef.current();
-    modals.openConfirmModal({
-      title,
-      children: <Text size="sm">{plainMessage}</Text>,
-      labels: { confirm: confirmLabel, cancel: "Cancel" },
-      confirmProps: { color: "red" },
-      onConfirm: confirm,
-    });
-  }, [
-    opened,
-    usage.isFetching,
-    usage.isError,
-    usage.data,
-    plainConfirmArmed,
-    title,
-    plainMessage,
-    confirmLabel,
-  ]);
 
   const analyses = usage.data?.analyses ?? [];
   const emptyCount = usage.data?.empty_after.length ?? 0;
@@ -134,27 +99,20 @@ export function DestructiveImpactModal({
 
   return (
     <Modal
-      opened={opened && (usage.isFetching || usage.isError || hasImpact)}
+      opened={destructiveImpactModalVisible(opened, usage.isFetching)}
       onClose={onClose}
       title={title}
       size="lg"
     >
       <Stack gap="md">
-        {usage.isFetching ? (
-          <Group gap="sm">
-            <Loader size="sm" />
-            <Text size="sm" c="dimmed">
-              Checking where this is used…
-            </Text>
-          </Group>
-        ) : null}
-
         {usage.isError ? (
           <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
             Could not check analysis usage
             {usage.error instanceof Error ? `: ${usage.error.message}` : "."} You can still
             proceed, but affected analyses will not be listed.
           </Alert>
+        ) : !hasImpact ? (
+          <Text size="sm">{plainMessage}</Text>
         ) : null}
 
         {hasImpact ? (
@@ -232,7 +190,6 @@ export function DestructiveImpactModal({
           </Button>
           <Button
             color="red"
-            disabled={usage.isFetching}
             onClick={() => {
               onClose();
               onConfirm({

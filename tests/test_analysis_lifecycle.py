@@ -98,6 +98,61 @@ class AnalysisLifecycleTests(unittest.TestCase):
         self.assertEqual(created["selection_groups"][0]["name"], "Replicate A")
         self.assertEqual(created["selection_groups"][0]["cells"][0]["name"], "Grouped")
 
+    def test_analysis_can_be_created_with_validated_initial_entries(self):
+        db = self.make_session()
+        cell = Cell(name="Selected cell")
+        group = ReplicateGroup(name="Selected replicate")
+        db.add_all([cell, group])
+        db.commit()
+
+        created = analyses.create_analysis(
+            analyses.AnalysisCreate(
+                title="Selected samples",
+                entries=[
+                    analyses.AnalysisSelectionEntryCreate(
+                        kind="cell",
+                        ref_id=cell.id,
+                    ),
+                    analyses.AnalysisSelectionEntryCreate(
+                        kind="replicate_group",
+                        ref_id=group.id,
+                    ),
+                    analyses.AnalysisSelectionEntryCreate(
+                        kind="cell",
+                        ref_id=cell.id,
+                    ),
+                ],
+            ),
+            db=db,
+        )
+
+        self.assertEqual(
+            created["spec"]["selection"]["entries"],
+            [
+                {"kind": "cell", "ref_id": cell.id},
+                {"kind": "replicate_group", "ref_id": group.id},
+            ],
+        )
+
+    def test_analysis_initial_entries_reject_missing_references(self):
+        db = self.make_session()
+
+        with self.assertRaises(HTTPException) as error:
+            analyses.create_analysis(
+                analyses.AnalysisCreate(
+                    title="Missing sample",
+                    entries=[
+                        analyses.AnalysisSelectionEntryCreate(
+                            kind="cell",
+                            ref_id=999,
+                        )
+                    ],
+                ),
+                db=db,
+            )
+
+        self.assertEqual(error.exception.status_code, 404)
+
     def test_analysis_index_summarizes_unique_cells_replicates_and_saved_plots(self):
         db = self.make_session()
         standalone = Cell(name="Standalone")

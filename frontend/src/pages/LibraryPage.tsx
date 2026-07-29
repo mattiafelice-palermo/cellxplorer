@@ -95,6 +95,7 @@ import {
   type CellLibraryStatus,
   type SortDirection,
 } from "../libraryTableLogic";
+import { adjacentListItem } from "../projectSelection";
 
 type LibraryImpactRequest = {
   title: string;
@@ -249,6 +250,7 @@ function ReplicateMembershipCell({
           onMouseEnter={() => setOpened(true)}
           onMouseLeave={() => setOpened(false)}
           onFocus={() => setOpened(true)}
+          onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
@@ -440,6 +442,7 @@ export function LibraryPage() {
   const [targetGroupId, setTargetGroupId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
   const [groupFolderIds, setGroupFolderIds] = useState<Set<number>>(new Set());
+  const [groupReplacesFolderCells, setGroupReplacesFolderCells] = useState(false);
   // Prefill from the tree must not overwrite ticks made while a cold fetch settles.
   const groupFoldersTouched = useRef(false);
   const [groupFolderSearch, setGroupFolderSearch] = useState("");
@@ -659,11 +662,17 @@ export function LibraryPage() {
   });
 
   const createReplicateGroup = useMutation({
-    mutationFn: async (body: { name: string; cell_ids: number[]; folder_ids: number[] }) => {
+    mutationFn: async (body: {
+      name: string;
+      cell_ids: number[];
+      folder_ids: number[];
+      remove_folder_cells?: { cell_id: number; folder_id: number }[];
+    }) => {
       return post<ReplicateGroupSummary>("/api/replicate-groups", {
         name: body.name,
         cell_ids: body.cell_ids,
         folder_ids: body.folder_ids,
+        remove_folder_cells: body.remove_folder_cells ?? [],
       });
     },
     onSuccess: (group) => {
@@ -671,6 +680,7 @@ export function LibraryPage() {
       setGroupDialogOpen(false);
       setGroupName("");
       setGroupFolderIds(new Set());
+      setGroupReplacesFolderCells(false);
       groupFoldersTouched.current = false;
       setGroupFolderSearch("");
       setSelectedCellIds(new Set());
@@ -1230,6 +1240,55 @@ export function LibraryPage() {
     setLastSelectedCellId(cellId);
   };
 
+  const openCreateReplicateDialog = (
+    folderIds?: number[],
+    replaceFolderCells = false,
+  ) => {
+    setGroupName(
+      selectedCells.length > 0
+        ? `${selectedCells[0].name} replicates`
+        : "Replicate group"
+    );
+    groupFoldersTouched.current = folderIds !== undefined;
+    setGroupReplacesFolderCells(replaceFolderCells);
+    setGroupFolderSearch("");
+    setGroupFolderSessionKey((value) => value + 1);
+    if (folderIds !== undefined) {
+      setGroupFolderIds(new Set(folderIds));
+      setGroupDialogOpen(true);
+      return;
+    }
+    setGroupFolderIds(foldersContainingCells(tree.data?.folders ?? [], selectedIds));
+    void qc.ensureQueryData({
+      queryKey: ["tree"],
+      queryFn: () => get<Tree>("/api/tree"),
+    }).then((data) => {
+      if (groupFoldersTouched.current) return;
+      setGroupFolderIds(foldersContainingCells(data.folders ?? [], selectedIds));
+    });
+    setGroupDialogOpen(true);
+  };
+
+  const extendCellSelectionWithArrow = (
+    currentCellId: number,
+    direction: -1 | 1,
+  ) => {
+    const next = adjacentListItem(
+      pageCells.map((cell) => cell.id),
+      currentCellId,
+      direction,
+    );
+    if (next === null) return false;
+    setSelectedCellIds((current) => new Set(current).add(next));
+    setLastSelectedCellId(next);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTableRowElement>(`tr[data-cell-row-id="${next}"]`)
+        ?.focus({ preventScroll: true });
+    });
+    return true;
+  };
+
   return (
     <Stack>
       <Group justify="space-between" align="end">
@@ -1324,29 +1383,7 @@ export function LibraryPage() {
               <Menu.Item
                 leftSection={<IconLayersIntersect size={14} />}
                 disabled={selectedCellIds.size < 2}
-                onClick={() => {
-                  setGroupName(
-                    selectedCells.length > 0
-                      ? `${selectedCells[0].name} replicates`
-                      : "Replicate group"
-                  );
-                  groupFoldersTouched.current = false;
-                  setGroupFolderSearch("");
-                  setGroupFolderSessionKey((value) => value + 1);
-                  setGroupFolderIds(
-                    foldersContainingCells(tree.data?.folders ?? [], selectedIds)
-                  );
-                  // Ensure tree is fresh when the dialog opens. Do not overwrite
-                  // any folder the user already toggled while this fetch settles.
-                  void qc.ensureQueryData({
-                    queryKey: ["tree"],
-                    queryFn: () => get<Tree>("/api/tree"),
-                  }).then((data) => {
-                    if (groupFoldersTouched.current) return;
-                    setGroupFolderIds(foldersContainingCells(data.folders ?? [], selectedIds));
-                  });
-                  setGroupDialogOpen(true);
-                }}
+                onClick={() => openCreateReplicateDialog()}
               >
                 Group selected as replicate
               </Menu.Item>
@@ -1606,11 +1643,51 @@ export function LibraryPage() {
                 pageCells.map((cell) => {
                   const cellGroups = groupsByCellId.get(cell.id) ?? [];
                   return (
-                  <Table.Tr key={cell.id} bg={selectedCellIds.has(cell.id) ? "var(--mantine-primary-color-0)" : undefined}>
+                  <Table.Tr
+                    key={cell.id}
+                    data-cell-row-id={cell.id}
+                    tabIndex={0}
+                    bg={
+                      selectedCellIds.has(cell.id)
+                        ? "var(--mantine-primary-color-light)"
+                        : undefined
+                    }
+                    onClick={(event) => {
+                      event.currentTarget.focus({ preventScroll: true });
+                      toggleCellSelection(cell.id, event.shiftKey);
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.target !== event.currentTarget ||
+                        !event.shiftKey ||
+                        (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.altKey
+                      ) {
+                        return;
+                      }
+                      if (
+                        extendCellSelectionWithArrow(
+                          cell.id,
+                          event.key === "ArrowUp" ? -1 : 1,
+                        )
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    style={{ cursor: "pointer" }}
+                  >
                     <Table.Td>
                       <Checkbox
                         aria-label={`Select ${cell.name}`}
                         checked={selectedCellIds.has(cell.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          event.currentTarget
+                            .closest<HTMLTableRowElement>("tr")
+                            ?.focus({ preventScroll: true });
+                        }}
                         onChange={(event) =>
                           toggleCellSelection(cell.id, (event.nativeEvent as MouseEvent).shiftKey)
                         }
@@ -1618,7 +1695,21 @@ export function LibraryPage() {
                     </Table.Td>
                     <Table.Td>
                       <CellHoverCard cell={cell} result={undefined}>
-                        <>
+                        <UnstyledButton
+                          aria-label={`Open ${cell.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMetadataOpen(false);
+                            setSelectedId(cell.id);
+                          }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            minWidth: 0,
+                            textAlign: "left",
+                            cursor: "pointer",
+                          }}
+                        >
                           <Text fw={700} lineClamp={1}>
                             {cell.name}
                           </Text>
@@ -1627,7 +1718,7 @@ export function LibraryPage() {
                               {cell.description}
                             </Text>
                           )}
-                        </>
+                        </UnstyledButton>
                       </CellHoverCard>
                     </Table.Td>
                     <Table.Td>
@@ -1668,7 +1759,12 @@ export function LibraryPage() {
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap="xs" justify="end" wrap="nowrap">
+                      <Group
+                        gap="xs"
+                        justify="end"
+                        wrap="nowrap"
+                        onClick={(event) => event.stopPropagation()}
+                      >
                       <Tooltip label="Edit cell details">
                         <ActionIcon
                           variant="default"
@@ -1921,6 +2017,10 @@ export function LibraryPage() {
         onClose={() => setPlaceCellsOpen(false)}
         cellIds={selectedIds}
         title={`Place ${selectedIds.length} cell${selectedIds.length === 1 ? "" : "s"} in folders`}
+        onPlaceAsReplicate={(folderIds) => {
+          setPlaceCellsOpen(false);
+          openCreateReplicateDialog(folderIds, true);
+        }}
       />
       <PlaceInFoldersModal
         opened={placeCellOpen}
@@ -1936,8 +2036,9 @@ export function LibraryPage() {
       >
         <Stack>
           <Text size="sm" c="dimmed">
-            {selectedCellIds.size} selected cells will remain separate cells in the database, linked
-            as replicates for grouped previews and future analyses.
+            {groupReplacesFolderCells
+              ? `${selectedCellIds.size} selected cells will remain in the database. In the chosen folders, their individual references will be replaced by one replicate group.`
+              : `${selectedCellIds.size} selected cells will remain separate cells in the database, linked as replicates for grouped previews and future analyses.`}
           </Text>
           <TextInput
             label="Group name"
@@ -1949,6 +2050,14 @@ export function LibraryPage() {
                   name: groupName.trim(),
                   cell_ids: selectedIds,
                   folder_ids: [...groupFolderIds],
+                  remove_folder_cells: groupReplacesFolderCells
+                    ? [...groupFolderIds].flatMap((folderId) =>
+                        selectedIds.map((cellId) => ({
+                          cell_id: cellId,
+                          folder_id: folderId,
+                        }))
+                      )
+                    : [],
                 });
               }
             }}
@@ -2004,6 +2113,14 @@ export function LibraryPage() {
                 name: groupName.trim(),
                 cell_ids: selectedIds,
                 folder_ids: [...groupFolderIds],
+                remove_folder_cells: groupReplacesFolderCells
+                  ? [...groupFolderIds].flatMap((folderId) =>
+                      selectedIds.map((cellId) => ({
+                        cell_id: cellId,
+                        folder_id: folderId,
+                      }))
+                    )
+                  : [],
               })
             }
           >

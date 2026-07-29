@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services import beta_bootstrap
+from ..services import scanner
 from ..services import scientific_preparation
 from ..services.app_channel import resolve_app_channel
 
@@ -45,6 +46,18 @@ def beta_bootstrap_preparation_status(db: Session = Depends(get_db)):
         "pending": scientific_preparation.is_pending(state),
         "state": state,
     }
+
+
+@router.post("/preparation-background")
+def beta_bootstrap_preparation_background():
+    _require_beta_channel()
+    result = scanner.request_capacity_backfill_background()
+    if result is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No copied-library scientific preparation is active.",
+        )
+    return result
 
 
 @router.post("/stage-copy")

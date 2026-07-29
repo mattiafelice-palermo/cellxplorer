@@ -261,17 +261,46 @@ def list_analyses(search: str | None = None, db: Session = Depends(get_db)):
     ]
 
 
+class AnalysisSelectionEntryCreate(BaseModel):
+    kind: Literal["cell", "replicate_group"]
+    ref_id: int
+    label_override: str | None = None
+
+
 class AnalysisCreate(BaseModel):
     title: str
     folder_id: int | None = None
     spec: dict | None = None
+    entries: list[AnalysisSelectionEntryCreate] | None = None
 
 
 @router.post("/analyses")
 def create_analysis(req: AnalysisCreate, db: Session = Depends(get_db)):
     title = req.title.strip() or "Untitled analysis"
-    spec = req.spec or engine.default_spec(title)
+    spec = deepcopy(req.spec) if req.spec is not None else engine.default_spec(title)
     spec["title"] = title
+    if req.entries is not None:
+        entries: list[dict] = []
+        seen: set[tuple[str, int]] = set()
+        for entry in req.entries:
+            key = (entry.kind, entry.ref_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            if entry.kind == "cell":
+                if db.get(Cell, entry.ref_id) is None:
+                    raise HTTPException(404, f"No such cell: {entry.ref_id}")
+            elif db.get(ReplicateGroup, entry.ref_id) is None:
+                raise HTTPException(404, f"No such replicate group: {entry.ref_id}")
+            payload = {"kind": entry.kind, "ref_id": entry.ref_id}
+            if entry.label_override is not None:
+                payload["label_override"] = entry.label_override
+            entries.append(payload)
+        selection = spec.get("selection")
+        if not isinstance(selection, dict):
+            selection = {}
+            spec["selection"] = selection
+        selection["entries"] = entries
     if req.folder_id is not None and db.get(Folder, req.folder_id) is None:
         raise HTTPException(404, "No such folder")
     if analysis_name_exists(db, title, req.folder_id):

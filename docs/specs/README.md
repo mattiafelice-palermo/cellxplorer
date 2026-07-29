@@ -356,6 +356,19 @@ Rules:
   asserts the API before anything is published. **Implemented** — the 3.14 bump still needs a
   real `windows-latest` CI run to prove wheel availability and PyInstaller support.
   Branch `feature/ci-python-314-and-sidecar-smoke`.
+- [030-adaptive-beta-scientific-preparation.md](030-adaptive-beta-scientific-preparation.md)
+  — copied-library preparation uses a conservative normal-priority process pool while its
+  blocking first-run modal is open, then stops new parallel submissions and returns to serial
+  below-normal work after **Continue in background**. Ordinary startup repair and manual
+  preparation remain low-impact. **Implemented.**
+  Branch `feature/adaptive-beta-scientific-preparation`.
+- [031-library-project-selection-and-update-notes.md](031-library-project-selection-and-update-notes.md)
+  — create Projects analyses from selected samples, constrain range selection to meaningful
+  folder-local scopes, add Shift+Arrow extension, fix Cell Database row selection and dark-mode
+  contrast, offer reviewed replicate placement, remove the destructive-confirmation modal flash,
+  and render updater headings/bold text. **Implemented.**
+  Branch `feature/adaptive-beta-scientific-preparation` (shared because requested before Spec 030
+  was committed).
 
 ## Assets
 

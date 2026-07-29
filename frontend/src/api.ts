@@ -1511,6 +1511,9 @@ export interface BackgroundJob {
   error: string | null;
   started_at: string;
   completed_at: string | null;
+  resource_mode?: "foreground" | "background";
+  workers?: number;
+  transition_pending?: boolean;
 }
 
 export interface AppSession {

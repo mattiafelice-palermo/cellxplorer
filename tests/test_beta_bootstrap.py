@@ -125,6 +125,40 @@ class BetaBootstrapTests(unittest.TestCase):
             with self.assertRaises(Exception) as raised:
                 beta_bootstrap_router._require_beta_channel()
             self.assertEqual(getattr(raised.exception, "status_code", None), 404)
+            with self.assertRaises(Exception) as transition:
+                beta_bootstrap_router.beta_bootstrap_preparation_background()
+            self.assertEqual(getattr(transition.exception, "status_code", None), 404)
+
+    def test_preparation_background_rejects_when_no_copied_job_is_active(self):
+        with (
+            patch("app.routers.beta_bootstrap.resolve_app_channel", return_value="beta"),
+            patch.object(
+                beta_bootstrap_router.scanner,
+                "request_capacity_backfill_background",
+                return_value=None,
+            ),
+        ):
+            with self.assertRaises(Exception) as raised:
+                beta_bootstrap_router.beta_bootstrap_preparation_background()
+        self.assertEqual(getattr(raised.exception, "status_code", None), 409)
+
+    def test_preparation_background_returns_active_job_transition(self):
+        expected = {
+            "jobId": 42,
+            "resourceMode": "background",
+            "workers": 1,
+            "transitionPending": True,
+        }
+        with (
+            patch("app.routers.beta_bootstrap.resolve_app_channel", return_value="beta"),
+            patch.object(
+                beta_bootstrap_router.scanner,
+                "request_capacity_backfill_background",
+                return_value=expected,
+            ),
+        ):
+            result = beta_bootstrap_router.beta_bootstrap_preparation_background()
+        self.assertEqual(result, expected)
 
     def test_pristine_beta_requires_choice(self):
         db = self.beta_session()

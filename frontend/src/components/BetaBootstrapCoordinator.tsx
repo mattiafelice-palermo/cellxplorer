@@ -1,5 +1,5 @@
 import { Alert, Button, Group, Loader, Modal, Paper, Progress, Stack, Text } from "@mantine/core";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -19,6 +19,7 @@ import {
   mockBetaBootstrapStatus,
   parseDevBetaBootstrapMock,
   resolveBetaBootstrapSetupState,
+  scientificPreparationResourceText,
   shouldRetryExistingStage,
   shouldShowBetaBootstrapUi,
 } from "../betaBootstrapPolicy";
@@ -46,6 +47,7 @@ export function BetaBootstrapCoordinator({
   const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
   const [preparationContinuesInBackground, setPreparationContinuesInBackground] =
     useState(false);
+  const [preparationModeError, setPreparationModeError] = useState<string | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ["beta-bootstrap-status"],
@@ -106,6 +108,16 @@ export function BetaBootstrapCoordinator({
   const preparationCurrent = preparationJob?.items.find(
     (item) => item.status === "processing",
   );
+  const preparationResourceText = scientificPreparationResourceText(
+    preparationJob ??
+      (preparationPending
+        ? {
+            resource_mode: "foreground",
+            workers: 1,
+            transition_pending: false,
+          }
+        : undefined),
+  );
   const hasExistingBeta = status?.betaHasExistingLibrary ?? !status?.betaPristine;
   const setupState = resolveBetaBootstrapSetupState({
     enabled,
@@ -144,8 +156,29 @@ export function BetaBootstrapCoordinator({
   useEffect(() => {
     if (!preparationPending) {
       setPreparationContinuesInBackground(false);
+      setPreparationModeError(null);
     }
   }, [preparationPending]);
+
+  const continuePreparationInBackground = useMutation({
+    mutationFn: () =>
+      post<{
+        jobId: number;
+        resourceMode: "background";
+        workers: number;
+        transitionPending: boolean;
+      }>("/api/beta-bootstrap/preparation-background", {}),
+    onSuccess: async () => {
+      setPreparationModeError(null);
+      setPreparationContinuesInBackground(true);
+      await queryClient.invalidateQueries({ queryKey: ["background-jobs"] });
+    },
+    onError: (error: Error) => {
+      setPreparationModeError(
+        error.message || "Could not move preparation to the background.",
+      );
+    },
+  });
 
   const outstandingToken =
     retainedToken ?? status?.outstandingStageToken ?? null;
@@ -357,13 +390,22 @@ export function BetaBootstrapCoordinator({
               </Text>
             ) : null}
             <Text size="xs" c="dimmed">
+              {preparationResourceText}
+            </Text>
+            <Text size="xs" c="dimmed">
               You may continue using CellXplorer while this job runs. Existing cells can remain
               incomplete until their source files have been prepared.
             </Text>
+            {preparationModeError ? (
+              <Alert color="red" title="Could not continue in background">
+                {preparationModeError}
+              </Alert>
+            ) : null}
             <Group justify="flex-end">
               <Button
                 variant="default"
-                onClick={() => setPreparationContinuesInBackground(true)}
+                loading={continuePreparationInBackground.isPending}
+                onClick={() => continuePreparationInBackground.mutate()}
               >
                 Continue in background
               </Button>

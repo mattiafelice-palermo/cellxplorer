@@ -32,6 +32,7 @@ import {
   placementCheckboxState,
   placementFooterSummary,
   placementItemStatus,
+  replicatePlacementFolderIds,
   type PlacementCheckbox,
 } from "../folderPlacement";
 import { findFolderPath, FolderTree } from "./FolderTree";
@@ -69,6 +70,7 @@ export function PlaceInFoldersModal({
   groupIds = [],
   title = "Place in folders",
   onSaved,
+  onPlaceAsReplicate,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -76,6 +78,7 @@ export function PlaceInFoldersModal({
   groupIds?: number[];
   title?: string;
   onSaved?: () => void;
+  onPlaceAsReplicate?: (folderIds: number[]) => void;
 }) {
   const qc = useQueryClient();
   const tree = useQuery({
@@ -203,6 +206,15 @@ export function PlaceInFoldersModal({
     foldersReceiving,
   });
   const canApply = placementCanApply(itemsAdded, foldersReceiving);
+  const replicateFolderIds = useMemo(
+    () => replicatePlacementFolderIds(presentFolderIds, staged),
+    [presentFolderIds, staged],
+  );
+  const canPlaceAsReplicate =
+    Boolean(onPlaceAsReplicate) &&
+    cellIds.length >= 2 &&
+    groupIds.length === 0 &&
+    replicateFolderIds.length > 0;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -425,6 +437,17 @@ export function PlaceInFoldersModal({
           <Button variant="default" h={38} onClick={onClose}>
             Cancel
           </Button>
+          {onPlaceAsReplicate && cellIds.length >= 2 && groupIds.length === 0 ? (
+            <Button
+              variant="default"
+              h={38}
+              leftSection={<IconLayersIntersect size={16} />}
+              disabled={!canPlaceAsReplicate || save.isPending}
+              onClick={() => onPlaceAsReplicate(replicateFolderIds)}
+            >
+              Place as replicate
+            </Button>
+          ) : null}
           <Button
             color="var(--mantine-primary-color-6)"
             h={38}
@@ -433,7 +456,7 @@ export function PlaceInFoldersModal({
             disabled={!canApply || save.isPending}
             onClick={() => save.mutate()}
           >
-            Apply
+            Place
           </Button>
         </Group>
       </Group>

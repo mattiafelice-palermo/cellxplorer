@@ -1,5 +1,5 @@
 import type { AppChannel } from "./appChannel";
-import type { BetaBootstrapStatus } from "./api";
+import type { BackgroundJob, BetaBootstrapStatus } from "./api";
 
 export type DevBetaBootstrapMockMode =
   | "available"
@@ -182,4 +182,19 @@ export function copyStableLibraryDisabled(
 
 export function shouldRetryExistingStage(token: string | null | undefined): boolean {
   return typeof token === "string" && /^[0-9a-f]{32}$/.test(token);
+}
+
+export function scientificPreparationResourceText(
+  job: Pick<BackgroundJob, "resource_mode" | "workers" | "transition_pending"> | undefined,
+): string {
+  if (job?.transition_pending) {
+    return "Finishing the files already in progress, then continuing one file at a time at reduced priority.";
+  }
+  if (job?.resource_mode === "foreground") {
+    const workers = Math.max(1, job.workers ?? 1);
+    return workers > 1
+      ? `Preparing up to ${workers} files in parallel at normal priority.`
+      : "Preparing one file at normal priority.";
+  }
+  return "Preparing one file at a time at reduced priority.";
 }

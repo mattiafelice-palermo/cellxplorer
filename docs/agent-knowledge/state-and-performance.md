@@ -190,8 +190,14 @@ reports file-count progress through the background-job registry, and marks the p
 Before React renders, the Tauri setup gate reads this setting directly from the copied SQLite
 database, so normal library content cannot appear interactive before the preparation surface.
 The surface remains locked by default for this one-time pass, but the user may explicitly continue
-in the background; that dismisses only the current UI gate and does not cancel or duplicate the
-job. An interrupted `pending` or `running` marker is resumable and gates the next launch again.
+in the background. While the blocking setup surface is open, only this copied-library pass may use
+a bounded normal-priority process pool: at most half the logical CPUs and never more than four
+files at once. `POST /api/beta-bootstrap/preparation-background` is a one-way drain request. It
+stops new pool submissions, lets already-running cache writes finish, then continues the remaining
+queue serially on a below-normal-priority thread. Worker processes never own SQLAlchemy sessions;
+the coordinator alone commits source metadata and progress. Ordinary startup repair and
+Settings-triggered scientific preparation stay serial and below normal from their first item.
+An interrupted `pending` or `running` marker is resumable and gates the next launch again.
 Ordinary later startups repair incomplete summaries only; they do not recreate a ready cache that
 the user intentionally cleaned.
 
