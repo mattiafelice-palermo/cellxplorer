@@ -187,9 +187,13 @@ A Stable-to-Beta database snapshot deliberately excludes `cache/`. Staging write
 `beta.scientific_preparation` setting into the copied database. After activation, the normal
 background backfill uses that marker to prepare every missing current-version scientific cache,
 reports file-count progress through the background-job registry, and marks the pass complete.
-The locked Beta setup surface remains visible for this one-time pass. An interrupted `pending` or
-`running` marker is resumable on the next launch. Ordinary later startups repair incomplete
-summaries only; they do not recreate a ready cache that the user intentionally cleaned.
+Before React renders, the Tauri setup gate reads this setting directly from the copied SQLite
+database, so normal library content cannot appear interactive before the preparation surface.
+The surface remains locked by default for this one-time pass, but the user may explicitly continue
+in the background; that dismisses only the current UI gate and does not cancel or duplicate the
+job. An interrupted `pending` or `running` marker is resumable and gates the next launch again.
+Ordinary later startups repair incomplete summaries only; they do not recreate a ready cache that
+the user intentionally cleaned.
 
 Settings exposes category actions with different safety boundaries:
 

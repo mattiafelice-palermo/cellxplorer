@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.8 - 2026-07-29
+
+- Gate Beta startup on scientific cache preparation until it finishes or you continue in background.
+- Show clearer setup progress while validating a copied Stable library.
+- Block normal library interaction until the one-time preparation gate is resolved.
+
 ## 0.17.0-beta.7 - 2026-07-29
 
 - Fix Beta update-channel publication so in-app updates discover new Beta releases automatically.

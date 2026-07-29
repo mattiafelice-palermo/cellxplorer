@@ -4,6 +4,7 @@ import test from "node:test";
 import type { BetaBootstrapStatus } from "../src/api.ts";
 import {
   betaBootstrapGateOpen,
+  betaBootstrapLoadingStatus,
   copyStableLibraryDisabled,
   mockBetaBootstrapStatus,
   parseDevBetaBootstrapMock,
@@ -90,6 +91,13 @@ test("installed Beta checks silently while loading and gates confirmed errors or
   assert.equal(betaBootstrapGateOpen("blocked-error"), true);
   assert.equal(betaBootstrapGateOpen("complete"), false);
   assert.equal(betaBootstrapGateOpen("inactive"), false);
+});
+
+test("bootstrap loading status explains long local checks", () => {
+  assert.match(betaBootstrapLoadingStatus(false, 0).title, /Starting/);
+  assert.match(betaBootstrapLoadingStatus(true, 1).title, /Reading/);
+  assert.match(betaBootstrapLoadingStatus(true, 4).title, /compatibility/);
+  assert.match(betaBootstrapLoadingStatus(true, 10).detail, /large database/i);
 });
 
 test("corrupt marker remains blocked", () => {

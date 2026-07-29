@@ -263,7 +263,7 @@ fn beta_bootstrap_gate_required(app: AppHandle) -> Result<bool, String> {
         return Ok(false);
     }
     let install_instance_id = beta_installer::current_beta_install_instance_id();
-    Ok(!beta_bootstrap::marker_acknowledges_install(
+    Ok(beta_bootstrap::bootstrap_gate_required(
         &app_data_dir_for_channel(channel),
         install_instance_id.as_deref(),
         &app.package_info().version.to_string(),

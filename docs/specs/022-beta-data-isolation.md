@@ -333,8 +333,10 @@ The staged database carries a durable post-activation scientific-preparation mar
 copy or parse cache data inside the snapshot transaction. After the copied database is active and
 the ordinary Beta backend has started, a resumable background job verifies available sources,
 builds missing current-version scientific caches, and refreshes capacity summaries. The setup
-surface shows real file-count progress and remains gated until that one-time pass finishes; genuine
-offline/changed/parser failures remain visible per source afterward.
+surface appears before normal library interaction and shows real file-count progress. It remains
+gated by default until that one-time pass finishes, but the user may explicitly continue in the
+background without cancelling the same preparation job; genuine offline/changed/parser failures
+remain visible per source afterward.
 
 Do not copy:
 

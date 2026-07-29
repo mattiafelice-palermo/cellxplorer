@@ -1,7 +1,7 @@
-import { Alert, Button, Group, Loader, Modal, Progress, Stack, Text } from "@mantine/core";
+import { Alert, Button, Group, Loader, Modal, Paper, Progress, Stack, Text } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconLoader2 } from "@tabler/icons-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   get,
@@ -14,6 +14,7 @@ import {
 import { APP_BRANDING } from "../appChannel";
 import {
   betaBootstrapGateOpen,
+  betaBootstrapLoadingStatus,
   copyStableLibraryDisabled,
   mockBetaBootstrapStatus,
   parseDevBetaBootstrapMock,
@@ -42,6 +43,9 @@ export function BetaBootstrapCoordinator({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retainedToken, setRetainedToken] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
+  const [preparationContinuesInBackground, setPreparationContinuesInBackground] =
+    useState(false);
 
   const statusQuery = useQuery({
     queryKey: ["beta-bootstrap-status"],
@@ -62,7 +66,7 @@ export function BetaBootstrapCoordinator({
       enabled &&
         !devMock &&
         backendReady &&
-        status?.scientificPreparationPending,
+        (gateRequiredOnLaunch || status?.scientificPreparationPending),
     ),
     initialData:
       !devMock && status?.scientificPreparation
@@ -117,6 +121,31 @@ export function BetaBootstrapCoordinator({
     setupState,
     gateRequiredOnLaunch || devMock === "loading",
   );
+  const setupLoading = setupState === "loading" && !preparationPending;
+  const loadingStatus = betaBootstrapLoadingStatus(
+    backendReady,
+    loadingElapsedSeconds,
+  );
+
+  useEffect(() => {
+    if (!setupLoading) {
+      setLoadingElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setLoadingElapsedSeconds(
+        Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
+      );
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [setupLoading]);
+
+  useEffect(() => {
+    if (!preparationPending) {
+      setPreparationContinuesInBackground(false);
+    }
+  }, [preparationPending]);
 
   const outstandingToken =
     retainedToken ?? status?.outstandingStageToken ?? null;
@@ -275,15 +304,21 @@ export function BetaBootstrapCoordinator({
     }
   }, [tauri]);
 
-  if (!enabled || (!gateOpen && !preparationPending)) {
-    return null;
-  }
-
   const busy = phase === "staging" || phase === "applying" || phase === "restarting";
   const copyDisabled = copyStableLibraryDisabled(status, busy, devMock);
   const showChoice = setupState === "choice-required";
-  const showLoading = setupState === "loading";
+  const showLoading = setupLoading;
   const showBlocked = setupState === "blocked-error";
+  const requiresSetupDecisionOrRecovery = showChoice || showBlocked;
+  const modalOpen =
+    requiresSetupDecisionOrRecovery ||
+    (preparationPending
+      ? !preparationContinuesInBackground
+      : gateOpen);
+
+  if (!enabled || !modalOpen) {
+    return null;
+  }
 
   return (
     <Modal
@@ -321,14 +356,41 @@ export function BetaBootstrapCoordinator({
                 Preparing {preparationCurrent.label}
               </Text>
             ) : null}
+            <Text size="xs" c="dimmed">
+              You may continue using CellXplorer while this job runs. Existing cells can remain
+              incomplete until their source files have been prepared.
+            </Text>
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                onClick={() => setPreparationContinuesInBackground(true)}
+              >
+                Continue in background
+              </Button>
+            </Group>
           </>
         ) : null}
 
         {showLoading ? (
-          <Group gap="xs">
-            <Loader size="sm" color={APP_BRANDING.primaryColor} />
-            <Text size="sm">Checking Beta setup…</Text>
-          </Group>
+          <Paper withBorder p="sm">
+            <Group gap="sm" align="flex-start" wrap="nowrap">
+              <Loader size="sm" mt={2} color={APP_BRANDING.primaryColor} />
+              <Stack gap={2}>
+                <Text size="sm" fw={600}>
+                  {loadingStatus.title}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {loadingStatus.detail}
+                </Text>
+                {loadingElapsedSeconds > 0 ? (
+                  <Text size="xs" c="dimmed">
+                    Elapsed time: {loadingElapsedSeconds} second
+                    {loadingElapsedSeconds === 1 ? "" : "s"}
+                  </Text>
+                ) : null}
+              </Stack>
+            </Group>
+          </Paper>
         ) : null}
 
         {showChoice ? (
