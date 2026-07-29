@@ -1412,6 +1412,22 @@ def _retry_deferred_sources_once(
         _record_source_retry_result(job_id, db, source_job, result)
 
 
+def _humanised_delay(seconds: float) -> str:
+    """Short human label for a retry gap, for the background-jobs description.
+
+    Retry spacing is configurable in seconds, so the old fixed "N min" wording
+    reported a 30-second gap as "in 0 min".
+    """
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3_600:
+        minutes = seconds / 60
+        return f"{minutes:.0f} min" if minutes.is_integer() else f"{minutes:.1f} min"
+    hours = seconds / 3_600
+    return f"{hours:.0f} h" if hours.is_integer() else f"{hours:.1f} h"
+
+
 def _run_deferred_source_retries(
     job_id: int,
     db: Session,
@@ -1421,7 +1437,7 @@ def _run_deferred_source_retries(
     worker_count: int,
     stability_seconds: float,
     retry_count: int,
-    retry_delay_minutes: int,
+    retry_delay_seconds: int,
     retry_deadline_at: str | None,
 ) -> None:
     jobs_by_id = {source_job["id"]: source_job for source_job in jobs}
@@ -1431,7 +1447,7 @@ def _run_deferred_source_retries(
             deadline = deadline.replace(tzinfo=timezone.utc)
     except ValueError:
         deadline = None
-    delay_seconds = retry_delay_minutes * 60
+    delay_seconds = retry_delay_seconds
 
     for attempt in range(1, retry_count + 1):
         snapshot = _source_check_job_snapshot(job_id)
@@ -1479,7 +1495,7 @@ def _run_deferred_source_retries(
                 total=background_total,
                 description=(
                     f"Retry {attempt} of {retry_count} for {len(retry_jobs)} changing source file"
-                    f"{'s' if len(retry_jobs) != 1 else ''} in {retry_delay_minutes} min"
+                    f"{'s' if len(retry_jobs) != 1 else ''} in {_humanised_delay(delay_seconds)}"
                 ),
             )
         _sleep(delay_seconds)
@@ -1512,7 +1528,7 @@ def _run_source_check_job(
     stability_seconds: float = 5.0,
     low_impact: bool = False,
     retry_count: int = 0,
-    retry_delay_minutes: int = 5,
+    retry_delay_seconds: int = 300,
     retry_deadline_at: str | None = None,
 ) -> None:
     apply_background_thread_priority()
@@ -1550,7 +1566,7 @@ def _run_source_check_job(
                     worker_count=worker_count,
                     stability_seconds=stability_seconds,
                     retry_count=retry_count,
-                    retry_delay_minutes=retry_delay_minutes,
+                    retry_delay_seconds=retry_delay_seconds,
                     retry_deadline_at=retry_deadline_at,
                 )
         elif worker_count == 1:
@@ -1764,7 +1780,7 @@ def _run_source_check_job(
                     "stability_seconds": snapshot.get("stability_seconds"),
                     "retry_count": snapshot.get("retry_count", 0),
                     "retry_attempts_used": snapshot.get("retry_attempt", 0),
-                    "retry_delay_minutes": snapshot.get("retry_delay_minutes"),
+                    "retry_delay_seconds": snapshot.get("retry_delay_seconds"),
                     "retry_completed": snapshot.get("retry_completed", 0),
                     "retries_stopped": snapshot.get("retries_stopped"),
                     "updated": snapshot.get("updated", 0),
@@ -1808,7 +1824,7 @@ def start_source_check_job(
     trigger: Literal["manual", "tray", "scheduled"] = "manual",
     low_impact: bool = True,
     retry_count: int = 0,
-    retry_delay_minutes: int = 5,
+    retry_delay_seconds: int = 300,
     retry_deadline_at: str | None = None,
 ) -> dict:
     global _latest_source_check_job_id, _next_source_check_job_id
@@ -1910,7 +1926,7 @@ def start_source_check_job(
             "low_impact": low_impact,
             "deferred_file_ids": [],
             "retry_count": retry_count,
-            "retry_delay_minutes": retry_delay_minutes,
+            "retry_delay_seconds": retry_delay_seconds,
             "retry_deadline_at": retry_deadline_at,
             "retry_attempt": 0,
             "retry_total": 0,
@@ -1936,7 +1952,7 @@ def start_source_check_job(
             stability_seconds,
             low_impact,
             retry_count,
-            retry_delay_minutes,
+            retry_delay_seconds,
             retry_deadline_at,
         ),
         daemon=True,

@@ -31,6 +31,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { APP_BRANDING } from "../appChannel";
 
 import {
+  ApiError,
   get,
   post,
   put,
@@ -113,6 +114,62 @@ function CacheStat({
       </Group>
       <Text fw={700}>{formatBytes(bytes)}</Text>
     </div>
+  );
+}
+
+/**
+ * The next three checks the current form would produce.
+ *
+ * Computed on the server: `calculate_next_run` handles interval and fixed-time
+ * schedules, weekly steps, and local-time resolution, and reimplementing any of
+ * that here would give us two schedule implementations to keep in agreement.
+ *
+ * The endpoint runs the same validation as the save, so an impossible retry span
+ * surfaces here while the user is still editing rather than on Save.
+ */
+function SchedulePreviewLine({ form }: { form: SourceMonitoringSettings }) {
+  const [debounced, setDebounced] = useState(form);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(form), 400);
+    return () => window.clearTimeout(timer);
+  }, [form]);
+
+  const preview = useQuery({
+    queryKey: ["source-monitor-schedule-preview", JSON.stringify(debounced)],
+    queryFn: () =>
+      post<{ runs: string[] }>("/api/source-monitor/schedule-preview", debounced),
+    retry: false,
+    // Keep the last good schedule on screen while a new one is in flight, so the
+    // line does not flicker empty on every keystroke.
+    placeholderData: (previous) => previous,
+  });
+
+  const error = preview.error;
+  if (error instanceof ApiError && error.status === 422) {
+    return (
+      <Alert color="orange" variant="light" title="This schedule will not work">
+        {error.message}
+      </Alert>
+    );
+  }
+  // Any other failure (backend down, network) — say nothing rather than show a
+  // schedule that might no longer be what the server would do.
+  if (!preview.data) return null;
+
+  return (
+    <Paper withBorder p="sm">
+      <Text size="xs" c="dimmed" tt="uppercase" fw={700} mb={4}>
+        Next checks
+      </Text>
+      <Text size="sm" c={form.enabled ? undefined : "dimmed"}>
+        {preview.data.runs.map((run) => new Date(run).toLocaleString()).join(" · ")}
+      </Text>
+      {form.enabled ? null : (
+        <Text size="xs" c="dimmed" mt={4}>
+          Automatic checks are off — this is what the schedule would do once enabled.
+        </Text>
+      )}
+    </Paper>
   );
 }
 
@@ -225,14 +282,16 @@ export function SettingsPage() {
     schedule_mode: "interval",
     interval_value: 6,
     interval_unit: "hours",
-    daily_every_days: 1,
+    scheduled_every_value: 1,
+    scheduled_every_unit: "days",
     daily_time: "02:00",
     auto_update: false,
     scan_batch_size: 100,
     stability_value: 5,
     stability_unit: "seconds",
     retry_count: 3,
-    retry_delay_minutes: 5,
+    retry_delay_value: 5,
+    retry_delay_unit: "minutes",
     next_run_at: null,
     last_started_at: null,
     last_finished_at: null,
@@ -491,14 +550,16 @@ export function SettingsPage() {
     schedule_mode: value.schedule_mode,
     interval_value: value.interval_value,
     interval_unit: value.interval_unit,
-    daily_every_days: value.daily_every_days,
+    scheduled_every_value: value.scheduled_every_value,
+    scheduled_every_unit: value.scheduled_every_unit,
     daily_time: value.daily_time,
     auto_update: value.auto_update,
     scan_batch_size: value.scan_batch_size,
     stability_value: value.stability_value,
     stability_unit: value.stability_unit,
     retry_count: value.retry_count,
-    retry_delay_minutes: value.retry_delay_minutes,
+    retry_delay_value: value.retry_delay_value,
+    retry_delay_unit: value.retry_delay_unit,
   });
   const monitoringDirty = Boolean(monitoring.data) &&
     JSON.stringify(monitorConfig(monitorForm)) !== JSON.stringify(monitorConfig(monitoring.data!));
@@ -1314,7 +1375,7 @@ export function SettingsPage() {
                   }))}
                   data={[
                     { label: "Every interval", value: "interval" },
-                    { label: "At a set time", value: "daily" },
+                    { label: "At a set time", value: "scheduled" },
                   ]}
                 />
               </div>
@@ -1349,13 +1410,26 @@ export function SettingsPage() {
               ) : (
                 <Group align="end" grow>
                   <NumberInput
-                    label="Every number of days"
+                    label="Every"
                     min={1}
-                    max={365}
-                    value={monitorForm.daily_every_days}
+                    max={monitorForm.scheduled_every_unit === "weeks" ? 52 : 365}
+                    value={monitorForm.scheduled_every_value}
                     onChange={(value) => setMonitorForm((current) => ({
                       ...current,
-                      daily_every_days: Number(value) || 1,
+                      scheduled_every_value: Number(value) || 1,
+                    }))}
+                  />
+                  <Select
+                    label="Unit"
+                    value={monitorForm.scheduled_every_unit}
+                    allowDeselect={false}
+                    data={[
+                      { label: "Days", value: "days" },
+                      { label: "Weeks", value: "weeks" },
+                    ]}
+                    onChange={(value) => value && setMonitorForm((current) => ({
+                      ...current,
+                      scheduled_every_unit: value as SourceMonitoringSettings["scheduled_every_unit"],
                     }))}
                   />
                   <TextInput
@@ -1442,15 +1516,30 @@ export function SettingsPage() {
                   label="Retry every"
                   description="Retries stop before the next regular source check."
                   min={1}
-                  max={1440}
-                  suffix=" min"
-                  value={monitorForm.retry_delay_minutes}
+                  max={monitorForm.retry_delay_unit === "hours" ? 24 : monitorForm.retry_delay_unit === "minutes" ? 1440 : 3600}
+                  value={monitorForm.retry_delay_value}
                   onChange={(value) => setMonitorForm((current) => ({
                     ...current,
-                    retry_delay_minutes: Number(value) || 1,
+                    retry_delay_value: Number(value) || 1,
+                  }))}
+                />
+                <Select
+                  label="Retry delay unit"
+                  value={monitorForm.retry_delay_unit}
+                  allowDeselect={false}
+                  data={[
+                    { label: "Seconds", value: "seconds" },
+                    { label: "Minutes", value: "minutes" },
+                    { label: "Hours", value: "hours" },
+                  ]}
+                  onChange={(value) => value && setMonitorForm((current) => ({
+                    ...current,
+                    retry_delay_unit: value as SourceMonitoringSettings["retry_delay_unit"],
                   }))}
                 />
               </Group>
+
+              <SchedulePreviewLine form={monitorForm} />
 
               <Paper withBorder p="md">
                 <Group justify="space-between" align="flex-start">

@@ -22,18 +22,38 @@ LAST_STATUS_KEY = "source_monitor_last_status"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
+    # "interval" = every N minutes/hours/days from the last run.
+    # "scheduled" = every N days/weeks at a fixed wall-clock time.
     "schedule_mode": "interval",
     "interval_value": 6,
     "interval_unit": "hours",
-    "daily_every_days": 1,
+    "scheduled_every_value": 1,
+    "scheduled_every_unit": "days",
     "daily_time": "02:00",
     "auto_update": False,
     "scan_batch_size": 100,
     "stability_value": 5,
     "stability_unit": "seconds",
     "retry_count": 3,
-    "retry_delay_minutes": 5,
+    "retry_delay_value": 5,
+    "retry_delay_unit": "minutes",
 }
+
+# Keys this module used to store, mapped to the value+unit pairs that replaced them.
+# `load_config` translates on read; the stored JSON is never rewritten in place, so a
+# database written by an older build keeps working and a downgrade keeps its schedule.
+_LEGACY_VALUE_KEYS = {
+    "daily_every_days": ("scheduled_every_value", "scheduled_every_unit", "days"),
+    "retry_delay_minutes": ("retry_delay_value", "retry_delay_unit", "minutes"),
+}
+
+_RETRY_DELAY_UNIT_SECONDS = {"seconds": 1, "minutes": 60, "hours": 3600}
+
+# The smallest retry spacing we will honour. Sub-minute retries are the reason the
+# unit exists — a file still being written settles in seconds — but retrying a
+# network share every second or two turns a freshness check into a denial of
+# service against the user's own file server.
+MIN_RETRY_DELAY_SECONDS = 10
 
 _stop_event = threading.Event()
 _wake_event = threading.Event()
@@ -54,6 +74,26 @@ def _set(db: Session, key: str, value: str | None) -> None:
         row.value = value
 
 
+def upgrade_config(saved: dict[str, Any]) -> dict[str, Any]:
+    """Translate a config written by an older build into the current key names.
+
+    Without this, merging `{**DEFAULT_CONFIG, **saved}` would leave the user's saved
+    `daily_every_days` sitting unread beside a freshly defaulted
+    `scheduled_every_value`, silently reverting their schedule to "every 1 day".
+    A key already stored in the new form always wins over its legacy counterpart.
+    """
+    upgraded = dict(saved)
+    for legacy_key, (value_key, unit_key, unit) in _LEGACY_VALUE_KEYS.items():
+        if legacy_key in upgraded and value_key not in upgraded:
+            upgraded[value_key] = upgraded[legacy_key]
+            upgraded.setdefault(unit_key, unit)
+        upgraded.pop(legacy_key, None)
+    # The mode is no longer necessarily daily now that it can count in weeks.
+    if upgraded.get("schedule_mode") == "daily":
+        upgraded["schedule_mode"] = "scheduled"
+    return upgraded
+
+
 def load_config(db: Session) -> dict[str, Any]:
     raw = _get(db, CONFIG_KEY)
     if not raw:
@@ -62,12 +102,47 @@ def load_config(db: Session) -> dict[str, Any]:
         saved = json.loads(raw)
     except (TypeError, ValueError):
         return dict(DEFAULT_CONFIG)
-    return {**DEFAULT_CONFIG, **saved}
+    if not isinstance(saved, dict):
+        return dict(DEFAULT_CONFIG)
+    return {**DEFAULT_CONFIG, **upgrade_config(saved)}
 
 
 def stability_seconds(config: dict[str, Any]) -> float:
     multiplier = 60 if config.get("stability_unit") == "minutes" else 1
     return float(config.get("stability_value", 5)) * multiplier
+
+
+def is_scheduled_mode(config: dict[str, Any]) -> bool:
+    """True for fixed-time schedules. Accepts the legacy "daily" spelling."""
+    return config.get("schedule_mode") in ("scheduled", "daily")
+
+
+def scheduled_step_days(config: dict[str, Any]) -> int:
+    """How many days a fixed-time schedule advances between runs."""
+    value = max(1, int(config.get("scheduled_every_value", 1)))
+    return value * 7 if config.get("scheduled_every_unit") == "weeks" else value
+
+
+def retry_delay_seconds(config: dict[str, Any]) -> int:
+    multiplier = _RETRY_DELAY_UNIT_SECONDS.get(str(config.get("retry_delay_unit")), 60)
+    return int(config.get("retry_delay_value", 5)) * multiplier
+
+
+def retry_span_seconds(config: dict[str, Any]) -> float:
+    """Worst-case time the retry sequence can occupy after a check comes due."""
+    return int(config.get("retry_count", 0)) * retry_delay_seconds(config)
+
+
+def schedule_period_seconds(config: dict[str, Any]) -> float:
+    """Nominal gap between two consecutive checks, for validating the retry span.
+
+    For fixed-time schedules this treats a day as exactly 86 400 s; DST nights are
+    an hour off, which does not matter for a bound whose purpose is to stop a retry
+    sequence from swallowing the next check.
+    """
+    if is_scheduled_mode(config):
+        return scheduled_step_days(config) * 86_400
+    return _interval_delta(config).total_seconds()
 
 
 def _interval_delta(config: dict[str, Any]) -> timedelta:
@@ -80,25 +155,30 @@ def _interval_delta(config: dict[str, Any]) -> timedelta:
     return timedelta(hours=value)
 
 
+def _daily_hour_minute(config: dict[str, Any]) -> tuple[int, int]:
+    hour, minute = (int(part) for part in str(config.get("daily_time", "02:00")).split(":"))
+    return hour, minute
+
+
 def calculate_next_run(config: dict[str, Any], after: datetime | None = None) -> datetime:
     now = after or datetime.now(timezone.utc)
-    if config.get("schedule_mode") == "daily":
+    if is_scheduled_mode(config):
         local_now = now.astimezone()
-        hour, minute = (int(part) for part in str(config.get("daily_time", "02:00")).split(":"))
+        hour, minute = _daily_hour_minute(config)
         candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= local_now:
-            candidate += timedelta(days=max(1, int(config.get("daily_every_days", 1))))
+            candidate += timedelta(days=scheduled_step_days(config))
         return candidate.astimezone(timezone.utc)
     return now + _interval_delta(config)
 
 
 def following_scheduled_run(config: dict[str, Any], scheduled_for: datetime) -> datetime:
     """Return the next fixed schedule boundary after a due run."""
-    if config.get("schedule_mode") != "daily":
+    if not is_scheduled_mode(config):
         return scheduled_for + _interval_delta(config)
     local_due = scheduled_for.astimezone()
-    next_local = local_due + timedelta(days=max(1, int(config.get("daily_every_days", 1))))
-    hour, minute = (int(part) for part in str(config.get("daily_time", "02:00")).split(":"))
+    next_local = local_due + timedelta(days=scheduled_step_days(config))
+    hour, minute = _daily_hour_minute(config)
     return next_local.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(
         timezone.utc
     )
@@ -189,7 +269,7 @@ def _run_scheduler() -> None:
                         trigger="scheduled",
                         low_impact=True,
                         retry_count=int(config["retry_count"]),
-                        retry_delay_minutes=int(config["retry_delay_minutes"]),
+                        retry_delay_seconds=retry_delay_seconds(config),
                         retry_deadline_at=following_scheduled_run(config, next_run).isoformat(),
                     )
                     while not _stop_event.wait(1):

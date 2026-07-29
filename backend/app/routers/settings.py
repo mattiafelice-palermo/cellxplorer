@@ -36,17 +36,19 @@ class DownloadSettings(BaseModel):
 
 class SourceMonitoringSettings(BaseModel):
     enabled: bool = False
-    schedule_mode: Literal["interval", "daily"] = "interval"
+    schedule_mode: Literal["interval", "scheduled"] = "interval"
     interval_value: int = 6
     interval_unit: Literal["minutes", "hours", "days"] = "hours"
-    daily_every_days: int = 1
+    scheduled_every_value: int = 1
+    scheduled_every_unit: Literal["days", "weeks"] = "days"
     daily_time: str = "02:00"
     auto_update: bool = False
     scan_batch_size: int = 100
     stability_value: int = 5
     stability_unit: Literal["seconds", "minutes"] = "seconds"
     retry_count: int = 3
-    retry_delay_minutes: int = 5
+    retry_delay_value: int = 5
+    retry_delay_unit: Literal["seconds", "minutes", "hours"] = "minutes"
     next_run_at: str | None = None
     last_started_at: str | None = None
     last_finished_at: str | None = None
@@ -443,15 +445,37 @@ def get_source_monitor_settings(db: Session = Depends(get_db)):
     return source_monitor.monitoring_state(db)
 
 
-@router.put("/source-monitor/settings", response_model=SourceMonitoringSettings)
-def update_source_monitor_settings(
-    payload: SourceMonitoringSettings,
-    db: Session = Depends(get_db),
-):
+def _duration_label(seconds: float) -> str:
+    """Human phrase for a span, used in validation messages."""
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3_600:
+        return f"{seconds // 60} min" + (f" {seconds % 60} s" if seconds % 60 else "")
+    if seconds < 86_400:
+        return f"{seconds // 3_600} h" + (
+            f" {(seconds % 3_600) // 60} min" if (seconds % 3_600) // 60 else ""
+        )
+    days = seconds / 86_400
+    if not days.is_integer():
+        return f"{days:.1f} days"
+    return "1 day" if days == 1 else f"{days:.0f} days"
+
+
+def _validated_monitor_config(payload: SourceMonitoringSettings) -> dict:
+    """Check a proposed source-monitor configuration and return it as a config dict.
+
+    Shared by the save endpoint and the schedule preview, so the preview surfaces
+    exactly the errors a save would, before the user commits to it.
+    """
     if not 1 <= payload.interval_value <= 10_000:
         raise HTTPException(status_code=422, detail="Interval must be between 1 and 10,000.")
-    if not 1 <= payload.daily_every_days <= 365:
-        raise HTTPException(status_code=422, detail="Scheduled days must be between 1 and 365.")
+    max_every = 52 if payload.scheduled_every_unit == "weeks" else 365
+    if not 1 <= payload.scheduled_every_value <= max_every:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Schedule repeat must be between 1 and {max_every} {payload.scheduled_every_unit}.",
+        )
     try:
         hour_text, minute_text = payload.daily_time.split(":", 1)
         hour, minute = int(hour_text), int(minute_text)
@@ -471,13 +495,69 @@ def update_source_monitor_settings(
         )
     if not 2 <= payload.retry_count <= 10:
         raise HTTPException(status_code=422, detail="Retry attempts must be between 2 and 10.")
-    if not 1 <= payload.retry_delay_minutes <= 1_440:
-        raise HTTPException(status_code=422, detail="Retry delay must be between 1 and 1,440 minutes.")
+
     config = payload.model_dump(
         exclude={"next_run_at", "last_started_at", "last_finished_at", "last_status"}
     )
     config["daily_time"] = f"{hour:02d}:{minute:02d}"
-    return source_monitor.save_config(db, config)
+
+    delay_seconds = source_monitor.retry_delay_seconds(config)
+    if delay_seconds < source_monitor.MIN_RETRY_DELAY_SECONDS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Retry delay must be at least "
+                f"{source_monitor.MIN_RETRY_DELAY_SECONDS} seconds — retrying faster hammers "
+                "the source location without giving a file time to finish being written."
+            ),
+        )
+    if delay_seconds > 86_400:
+        raise HTTPException(status_code=422, detail="Retry delay must be at most 24 hours.")
+
+    # The user's "not exceeding the main frequency" rule. A runtime deadline already
+    # cuts retries off at the next scheduled check, but silently truncating a schedule
+    # the user deliberately configured is worse than refusing to accept it.
+    span = source_monitor.retry_span_seconds(config)
+    period = source_monitor.schedule_period_seconds(config)
+    if span >= period:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{payload.retry_count} retries every {_duration_label(delay_seconds)} need "
+                f"{_duration_label(span)}, which does not fit inside a "
+                f"{_duration_label(period)} check schedule. Reduce the retries or the delay, "
+                "or check less often."
+            ),
+        )
+    return config
+
+
+@router.put("/source-monitor/settings", response_model=SourceMonitoringSettings)
+def update_source_monitor_settings(
+    payload: SourceMonitoringSettings,
+    db: Session = Depends(get_db),
+):
+    return source_monitor.save_config(db, _validated_monitor_config(payload))
+
+
+class SchedulePreview(BaseModel):
+    runs: list[str]
+
+
+@router.post("/source-monitor/schedule-preview", response_model=SchedulePreview)
+def preview_source_monitor_schedule(payload: SourceMonitoringSettings):
+    """Return the next three run times for an unsaved configuration.
+
+    Read-only despite being a POST: previewing a form the user has not saved yet
+    needs a request body, and this writes nothing. It runs the same validation as
+    the save endpoint so an impossible retry span is reported while the user is
+    still editing.
+    """
+    config = _validated_monitor_config(payload)
+    first = source_monitor.calculate_next_run(config)
+    second = source_monitor.following_scheduled_run(config, first)
+    third = source_monitor.following_scheduled_run(config, second)
+    return SchedulePreview(runs=[run.isoformat() for run in (first, second, third)])
 
 
 @router.post("/downloads")

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -5,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,8 +16,9 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, SourceFile, Test, TestFile
+from app.models import AppSetting, Cell, SourceFile, Test, TestFile
 from app.routers import library
+from app.routers import settings as settings_router
 from app.services import background_jobs, parsing, scanner, source_monitor
 
 
@@ -220,7 +223,7 @@ class SourceMonitorTests(unittest.TestCase):
                 stability_seconds=5,
                 trigger="scheduled",
                 retry_count=3,
-                retry_delay_minutes=1,
+                retry_delay_seconds=60,
                 retry_deadline_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             )
         finally:
@@ -289,7 +292,7 @@ class SourceMonitorTests(unittest.TestCase):
                 stability_seconds=5,
                 trigger="scheduled",
                 retry_count=3,
-                retry_delay_minutes=1,
+                retry_delay_seconds=60,
                 retry_deadline_at=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
             )
         finally:
@@ -362,7 +365,7 @@ class SourceMonitorTests(unittest.TestCase):
             "stability_unit": "minutes",
             "auto_update": True,
             "retry_count": 4,
-            "retry_delay_minutes": 7,
+            "retry_delay_value": 7,
         }
 
         saved = source_monitor.save_config(db, config)
@@ -375,7 +378,215 @@ class SourceMonitorTests(unittest.TestCase):
         self.assertEqual(loaded["stability_unit"], "minutes")
         self.assertTrue(loaded["auto_update"])
         self.assertEqual(loaded["retry_count"], 4)
-        self.assertEqual(loaded["retry_delay_minutes"], 7)
+        self.assertEqual(loaded["retry_delay_value"], 7)
+
+
+class SourceMonitorScheduleTests(unittest.TestCase):
+    """Spec 027: weekly schedules, retry-delay units, and the legacy upgrade path."""
+
+    def make_session(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def test_a_config_written_by_an_older_build_keeps_its_schedule(self):
+        db = self.make_session()
+        # Exactly what 0.17.0-beta.5 and earlier persisted.
+        db.add(
+            AppSetting(
+                key=source_monitor.CONFIG_KEY,
+                value=json.dumps(
+                    {
+                        "enabled": True,
+                        "schedule_mode": "daily",
+                        "daily_every_days": 3,
+                        "daily_time": "04:30",
+                        "retry_count": 4,
+                        "retry_delay_minutes": 15,
+                    }
+                ),
+            )
+        )
+        db.commit()
+
+        loaded = source_monitor.load_config(db)
+
+        self.assertEqual(loaded["schedule_mode"], "scheduled")
+        self.assertEqual(loaded["scheduled_every_value"], 3)
+        self.assertEqual(loaded["scheduled_every_unit"], "days")
+        self.assertEqual(loaded["retry_delay_value"], 15)
+        self.assertEqual(loaded["retry_delay_unit"], "minutes")
+        self.assertEqual(source_monitor.retry_delay_seconds(loaded), 900)
+        # The dropped keys must not leak through, or save_config would round-trip them.
+        self.assertNotIn("daily_every_days", loaded)
+        self.assertNotIn("retry_delay_minutes", loaded)
+
+    def test_a_new_style_key_wins_over_its_legacy_counterpart(self):
+        upgraded = source_monitor.upgrade_config(
+            {"daily_every_days": 3, "scheduled_every_value": 2, "scheduled_every_unit": "weeks"}
+        )
+        self.assertEqual(upgraded["scheduled_every_value"], 2)
+        self.assertEqual(upgraded["scheduled_every_unit"], "weeks")
+
+    def test_weekly_schedules_advance_seven_days_per_unit(self):
+        config = {
+            **source_monitor.DEFAULT_CONFIG,
+            "schedule_mode": "scheduled",
+            "scheduled_every_value": 2,
+            "scheduled_every_unit": "weeks",
+            "daily_time": "02:00",
+        }
+        self.assertEqual(source_monitor.scheduled_step_days(config), 14)
+
+        # Compare local calendar dates: `daily_time` is a local wall-clock time, so
+        # anchoring the test to a UTC instant would be off by the UTC offset.
+        first = source_monitor.calculate_next_run(config).astimezone()
+        second = source_monitor.following_scheduled_run(config, first).astimezone()
+        self.assertEqual((second.date() - first.date()).days, 14)
+        self.assertEqual((first.hour, first.minute), (2, 0))
+
+    def test_daily_schedules_are_unchanged_by_the_unit(self):
+        config = {
+            **source_monitor.DEFAULT_CONFIG,
+            "schedule_mode": "scheduled",
+            "scheduled_every_value": 3,
+            "scheduled_every_unit": "days",
+        }
+        self.assertEqual(source_monitor.scheduled_step_days(config), 3)
+
+    def test_retry_delay_resolves_every_unit_to_seconds(self):
+        base = dict(source_monitor.DEFAULT_CONFIG)
+        cases = [("seconds", 30, 30), ("minutes", 5, 300), ("hours", 2, 7_200)]
+        for unit, value, expected in cases:
+            with self.subTest(unit=unit):
+                config = {**base, "retry_delay_unit": unit, "retry_delay_value": value}
+                self.assertEqual(source_monitor.retry_delay_seconds(config), expected)
+
+    def test_schedule_period_covers_both_modes(self):
+        interval = {**source_monitor.DEFAULT_CONFIG, "interval_value": 6, "interval_unit": "hours"}
+        self.assertEqual(source_monitor.schedule_period_seconds(interval), 21_600)
+
+        weekly = {
+            **source_monitor.DEFAULT_CONFIG,
+            "schedule_mode": "scheduled",
+            "scheduled_every_value": 1,
+            "scheduled_every_unit": "weeks",
+        }
+        self.assertEqual(source_monitor.schedule_period_seconds(weekly), 7 * 86_400)
+
+
+class SourceMonitorValidationTests(unittest.TestCase):
+    """Spec 027 T3/T4: the frequency cap and the schedule preview."""
+
+    def make_session(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def payload(self, **overrides):
+        return settings_router.SourceMonitoringSettings(**overrides)
+
+    def test_retries_that_outlast_the_check_interval_are_rejected(self):
+        db = self.make_session()
+        payload = self.payload(
+            enabled=True,
+            interval_value=1,
+            interval_unit="hours",
+            retry_count=10,
+            retry_delay_value=1,
+            retry_delay_unit="hours",
+        )
+        with self.assertRaises(HTTPException) as caught:
+            settings_router.update_source_monitor_settings(payload, db=db)
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("does not fit inside", caught.exception.detail)
+        # Nothing may be persisted by a rejected save.
+        self.assertIsNone(db.get(AppSetting, source_monitor.CONFIG_KEY))
+
+    def test_duration_labels_read_naturally(self):
+        label = settings_router._duration_label
+        self.assertEqual(label(30), "30 s")
+        self.assertEqual(label(300), "5 min")
+        self.assertEqual(label(3_600), "1 h")
+        self.assertEqual(label(5_400), "1 h 30 min")
+        # 1440 minutes is exactly one day; "1 days" showed up in the UI.
+        self.assertEqual(label(86_400), "1 day")
+        self.assertEqual(label(864_000), "10 days")
+
+    def test_a_retry_span_that_fits_is_accepted(self):
+        db = self.make_session()
+        payload = self.payload(
+            enabled=True,
+            interval_value=6,
+            interval_unit="hours",
+            retry_count=3,
+            retry_delay_value=5,
+            retry_delay_unit="minutes",
+        )
+        saved = settings_router.update_source_monitor_settings(payload, db=db)
+        self.assertEqual(saved["retry_delay_value"], 5)
+        self.assertEqual(saved["retry_delay_unit"], "minutes")
+
+    def test_sub_ten_second_retry_delays_are_rejected(self):
+        db = self.make_session()
+        payload = self.payload(retry_delay_value=2, retry_delay_unit="seconds")
+        with self.assertRaises(HTTPException) as caught:
+            settings_router.update_source_monitor_settings(payload, db=db)
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertIn("at least", caught.exception.detail)
+
+    def test_a_thirty_second_retry_delay_is_allowed(self):
+        db = self.make_session()
+        payload = self.payload(
+            enabled=True, retry_count=3, retry_delay_value=30, retry_delay_unit="seconds"
+        )
+        saved = settings_router.update_source_monitor_settings(payload, db=db)
+        self.assertEqual(saved["retry_delay_unit"], "seconds")
+
+    def test_preview_returns_three_increasing_interval_runs(self):
+        preview = settings_router.preview_source_monitor_schedule(
+            self.payload(interval_value=6, interval_unit="hours")
+        )
+        runs = [datetime.fromisoformat(value) for value in preview.runs]
+        self.assertEqual(len(runs), 3)
+        self.assertEqual((runs[1] - runs[0]).total_seconds(), 21_600)
+        self.assertEqual((runs[2] - runs[1]).total_seconds(), 21_600)
+
+    def test_preview_spaces_weekly_runs_fourteen_days_apart(self):
+        preview = settings_router.preview_source_monitor_schedule(
+            self.payload(
+                schedule_mode="scheduled",
+                scheduled_every_value=2,
+                scheduled_every_unit="weeks",
+                daily_time="02:00",
+            )
+        )
+        runs = [datetime.fromisoformat(value).astimezone() for value in preview.runs]
+        self.assertEqual((runs[1] - runs[0]).days, 14)
+        self.assertEqual((runs[2] - runs[1]).days, 14)
+        for run in runs:
+            self.assertEqual((run.hour, run.minute), (2, 0))
+
+    def test_preview_reports_the_same_error_a_save_would(self):
+        with self.assertRaises(HTTPException) as caught:
+            settings_router.preview_source_monitor_schedule(
+                self.payload(
+                    interval_value=1,
+                    interval_unit="hours",
+                    retry_count=10,
+                    retry_delay_value=1,
+                    retry_delay_unit="hours",
+                )
+            )
+        self.assertEqual(caught.exception.status_code, 422)
 
 
 if __name__ == "__main__":

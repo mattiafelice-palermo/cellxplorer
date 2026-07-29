@@ -306,17 +306,19 @@ export interface ColorPaletteSettings {
 
 export interface SourceMonitoringSettings {
   enabled: boolean;
-  schedule_mode: "interval" | "daily";
+  schedule_mode: "interval" | "scheduled";
   interval_value: number;
   interval_unit: "minutes" | "hours" | "days";
-  daily_every_days: number;
+  scheduled_every_value: number;
+  scheduled_every_unit: "days" | "weeks";
   daily_time: string;
   auto_update: boolean;
   scan_batch_size: number;
   stability_value: number;
   stability_unit: "seconds" | "minutes";
   retry_count: number;
-  retry_delay_minutes: number;
+  retry_delay_value: number;
+  retry_delay_unit: "seconds" | "minutes" | "hours";
   next_run_at: string | null;
   last_started_at: string | null;
   last_finished_at: string | null;
@@ -386,7 +388,7 @@ export interface SourceCheckJob {
   scan_mode?: "checksum" | "metadata";
   trigger?: "manual" | "tray" | "scheduled";
   retry_count?: number;
-  retry_delay_minutes?: number;
+  retry_delay_seconds?: number;
   retry_attempt?: number;
   retry_total?: number;
   retry_completed?: number;
