@@ -12,6 +12,7 @@ export const UNKNOWN = "—";
 export type RowMetrics = {
   cycle_count: number | null;
   max_discharge_capacity_mah: number | null;
+  max_specific_discharge_capacity_mah_g: number | null;
   summary_pending: boolean;
 };
 
@@ -20,22 +21,20 @@ export function formatCycleCount(value: number | null): string {
   return value.toLocaleString();
 }
 
-export function formatCapacity(value: number | null): string {
+/**
+ * Specific capacity in mAh/g.
+ *
+ * Whole numbers: specific capacities sit in the tens to low hundreds, where a
+ * decimal is noise, and an integer column is far easier to scan down.
+ */
+export function formatSpecificCapacity(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return UNKNOWN;
-  // Cell capacities span mAh to tens of Ah; past 10 000 mAh the extra digits are
-  // noise in a narrow column.
-  if (Math.abs(value) >= 10_000) return `${(value / 1000).toFixed(1)} k`;
-  return value.toFixed(1);
+  return Math.round(value).toLocaleString();
 }
 
-/**
- * Split plots into the batch fetched immediately and the rest, which load after.
- *
- * Nothing is hidden behind a "+N more": hovering a folder of analyses must not
- * fire an unbounded burst of thumbnail requests, but the user still ends up
- * seeing every plot.
- */
-export function eagerAndLazyPlots<T>(plots: T[], eager: number): { eager: T[]; lazy: T[] } {
-  const cut = Math.max(0, eager);
-  return { eager: plots.slice(0, cut), lazy: plots.slice(cut) };
+/** Raw capacity in mAh, used in tooltips rather than the column. */
+export function formatCapacity(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return UNKNOWN;
+  if (Math.abs(value) >= 10_000) return `${(value / 1000).toFixed(1)} k`;
+  return value.toFixed(1);
 }

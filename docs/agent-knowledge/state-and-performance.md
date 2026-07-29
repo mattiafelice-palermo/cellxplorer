@@ -24,6 +24,14 @@ Missing legacy capacity summaries may be backfilled after startup. Until ready, 
 those values as pending rather than block the whole list. Benchmark cold and warm list requests
 when changing summary fields, and test semantic parity between list and detail responses.
 
+The Projects explorer gets cell metrics from `/api/tree`. Keep that endpoint relational and
+bounded too: cycle/capacity summaries and active-mass metadata are loaded in bulk for the complete
+cell set, never through per-cell relationship traversal. Its capacity column is maximum specific
+discharge capacity (mAh/g), resolved with the Cell Database precedence
+`override → legacy metadata → source file`; raw mAh is tooltip context. Folder rows deliberately
+have no scientific rollup because summing cycles across unrelated cells and choosing one subtree
+capacity is not a meaningful sample statistic.
+
 ## Frontend startup summaries
 
 `frontend/src/startupQueryPersistence.ts` persists only compact navigation summaries:
@@ -60,6 +68,11 @@ update by comparing width and height with the current state. Plotly's `onUpdate`
 React rerenders; storing an equivalent new size object on every callback creates an update loop
 that becomes visible when opening or closing the style panel resizes the plot. Follow the guarded
 `rememberPlotDiv` pattern used by the Cycles and Time/Capacity cards.
+
+The Analysis Database and Projects explorer render saved-plot counts and hover previews through
+the same `frontend/src/components/AnalysisPlotSummary.tsx` component. It uses the dedicated 4:3
+`variant=preview` asset, not the wide saved-row thumbnail. Keep preview presentation and cache
+lookup behavior there rather than rebuilding a second hover card in another page.
 
 Each saved plot has two lightweight, legend-free image derivatives stored in the same cache record:
 a compact wide thumbnail for saved-plot rows and portable-report selection, plus a separately

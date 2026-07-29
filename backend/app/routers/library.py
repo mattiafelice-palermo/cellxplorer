@@ -362,6 +362,34 @@ def _scientific_metadata_values(
     return values
 
 
+def effective_active_mass_mg(db: Session, cell_ids: list[int]) -> dict[int, float | None]:
+    """Active mass per cell, resolved exactly as the Cell Database resolves it.
+
+    Public because the project explorer needs the same number: override beats the
+    legacy metadata key, which beats the value read out of the source file. If the
+    two views resolved mass differently they would report different specific
+    capacities for the same cell.
+    """
+    if not cell_ids:
+        return {}
+    source = _cell_source_scientific_values(db, cell_ids)
+    by_cell: dict[int, dict[str, str]] = {}
+    for cell_id, key, value in (
+        db.query(CellMetadata.cell_id, CellMetadata.key, CellMetadata.value)
+        .filter(CellMetadata.cell_id.in_(cell_ids))
+        .all()
+    ):
+        by_cell.setdefault(int(cell_id), {})[key] = value
+    masses: dict[int, float | None] = {}
+    for cell_id in cell_ids:
+        source_mass, source_nominal = source.get(cell_id, (None, None))
+        values = _scientific_metadata_values(
+            by_cell.get(cell_id, {}), source_mass, source_nominal
+        )
+        masses[cell_id] = values["active_mass_mg"]["effective_value"]
+    return masses
+
+
 def _max_specific_from_summary(
     summary: dict,
     metadata: dict[str, str],

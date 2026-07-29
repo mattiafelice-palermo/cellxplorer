@@ -7,13 +7,11 @@ import {
   Collapse,
   Divider,
   Group,
-  HoverCard,
   Menu,
   Modal,
   Paper,
   ScrollArea,
   Select,
-  Skeleton,
   SegmentedControl,
   Stack,
   Switch,
@@ -55,7 +53,6 @@ import {
   patch,
   post,
   put,
-  PlotThumbnails,
   ReplicateGroupPreview,
   ReplicateGroupSummary,
   RowMetrics,
@@ -66,6 +63,7 @@ import { groupTransfersBySource, isNoOpDrop } from "../folderDrop";
 import {
   formatCapacity as formatMetricCapacity,
   formatCycleCount,
+  formatSpecificCapacity,
 } from "../explorerMetrics";
 import {
   loadViewPreferences,
@@ -76,6 +74,7 @@ import {
   type ProjectViewPreferences,
   type SectionKey,
 } from "../folderSections";
+import { AnalysisPlotSummary } from "../components/AnalysisPlotSummary";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import {
   deleteEmptyAnalysesIfRequested,
@@ -236,135 +235,119 @@ function visibleTreeItems(
   });
 }
 
-const METRIC_GUTTER_WIDTH = 132;
-const EAGER_PREVIEW_PLOTS = 6;
+const CYCLES_COLUMN_WIDTH = 64;
+const CAPACITY_COLUMN_WIDTH = 72;
+const PLOTS_COLUMN_WIDTH = 72;
+const TREE_ACTIONS_WIDTH = 52;
+
+function treeGridTemplate(showMetrics: boolean) {
+  return showMetrics
+    ? `minmax(0, 1fr) ${CYCLES_COLUMN_WIDTH}px ${CAPACITY_COLUMN_WIDTH}px ${PLOTS_COLUMN_WIDTH}px ${TREE_ACTIONS_WIDTH}px`
+    : `minmax(0, 1fr) ${TREE_ACTIONS_WIDTH}px`;
+}
+
+function treeRowGridStyle(showMetrics: boolean) {
+  return {
+    display: "grid",
+    gridTemplateColumns: treeGridTemplate(showMetrics),
+    alignItems: "center" as const,
+    columnGap: 0,
+    width: "100%",
+    boxSizing: "border-box" as const,
+  };
+}
+
+function EmptyMetricCells() {
+  return (
+    <>
+      <div className="project-tree-metric-cell" aria-hidden />
+      <div className="project-tree-metric-cell" aria-hidden />
+      <div className="project-tree-metric-cell" aria-hidden />
+    </>
+  );
+}
+
+/** Sticky header inside the scroll area so it shares the scrollbar width with rows. */
+function ProjectTreeColumnHeader() {
+  return (
+    <div
+      className="project-tree-header"
+      style={{ ...treeRowGridStyle(true), position: "sticky", top: 0, zIndex: 2 }}
+    >
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} component="div" className="project-tree-header-name">
+        Name
+      </Text>
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+        Cycles
+      </Text>
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+        mAh/g
+      </Text>
+      <Text size="xs" fw={700} c="dimmed" lh={1.4} ta="right" component="div" className="project-tree-header-metric">
+        Plots
+      </Text>
+      <div aria-hidden />
+    </div>
+  );
+}
 
 /**
- * The right-hand metric columns.
- *
- * Fixed width so the numbers line up down the whole tree regardless of how deep
- * a row is indented; the label column truncates instead of pushing them around.
+ * Fixed-width metric cells in the shared tree grid. Indentation applies only to
+ * the name column, so these dividers stay vertically continuous.
  */
 function MetricColumns({ metrics, hint }: { metrics: RowMetrics; hint?: string }) {
-  const body = (
-    <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
-      <Text size="xs" c="dimmed" ta="right" style={{ width: 62, fontVariantNumeric: "tabular-nums" }}>
-        {formatCycleCount(metrics.cycle_count)}
-      </Text>
-      <Text size="xs" c="dimmed" ta="right" style={{ width: 70, fontVariantNumeric: "tabular-nums" }}>
-        {formatMetricCapacity(metrics.max_discharge_capacity_mah)}
-      </Text>
-    </Group>
-  );
-  const label =
+  const specific = metrics.max_specific_discharge_capacity_mah_g;
+  const cyclesLabel =
+    metrics.summary_pending
+      ? "Still reading cycling data for these files"
+      : `Cycle count${metrics.cycle_count === null ? "" : `: ${formatCycleCount(metrics.cycle_count)}`}`;
+  const capacityLabel =
     hint ??
     (metrics.summary_pending
       ? "Still reading cycling data for these files"
-      : "Cycles · max discharge capacity (mAh)");
+      : specific === null && metrics.max_discharge_capacity_mah !== null
+        ? `Max discharge ${formatMetricCapacity(metrics.max_discharge_capacity_mah)} mAh — set an active mass to get mAh/g`
+        : `Max specific discharge capacity (mAh/g)${
+            metrics.max_discharge_capacity_mah === null
+              ? ""
+              : ` · ${formatMetricCapacity(metrics.max_discharge_capacity_mah)} mAh`
+          }`);
   return (
-    <Tooltip label={label} openDelay={400} withArrow>
-      {body}
-    </Tooltip>
+    <>
+      <Tooltip label={cyclesLabel} openDelay={400} withArrow>
+        <div className="project-tree-metric-cell">
+          <Text size="xs" c="dimmed">
+            {formatCycleCount(metrics.cycle_count)}
+          </Text>
+        </div>
+      </Tooltip>
+      <Tooltip label={capacityLabel} openDelay={400} withArrow>
+        <div className="project-tree-metric-cell">
+          <Text size="xs" c="dimmed">
+            {formatSpecificCapacity(specific)}
+          </Text>
+        </div>
+      </Tooltip>
+      <div className="project-tree-metric-cell" aria-hidden />
+    </>
   );
 }
 
-/** Column headings for the metric gutter, aligned with `MetricColumns`. */
-function MetricColumnHeadings() {
+function AnalysisPlotsHover({ analysis }: { analysis: FolderNode["analyses"][number] }) {
+  const navigate = useNavigate();
   return (
-    <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
-      <Text size="xs" c="dimmed" fw={700} ta="right" style={{ width: 62 }}>
-        Cycles
-      </Text>
-      <Text size="xs" c="dimmed" fw={700} ta="right" style={{ width: 70 }}>
-        Max mAh
-      </Text>
-    </Group>
-  );
-}
-
-/**
- * Hover preview of an analysis's saved plots.
- *
- * The first few thumbnails are requested on open and the rest immediately after,
- * so sweeping the pointer down a folder of analyses cannot fire an unbounded
- * burst — `openDelay` means a pass-through fetches nothing at all, and React
- * Query makes a second hover free.
- */
-function AnalysisPlotsHover({ analysisId, plotCount }: { analysisId: number; plotCount: number }) {
-  const [opened, setOpened] = useState(false);
-  const [wantAll, setWantAll] = useState(false);
-  const limit = wantAll ? undefined : EAGER_PREVIEW_PLOTS;
-  const preview = useQuery({
-    queryKey: ["analysis-plot-thumbnails", analysisId, limit ?? "all"],
-    queryFn: () =>
-      get<PlotThumbnails>(
-        `/api/analyses/${analysisId}/plot-thumbnails${limit === undefined ? "" : `?limit=${limit}`}`
-      ),
-    enabled: opened && plotCount > 0,
-    staleTime: 60_000,
-  });
-
-  useEffect(() => {
-    if (!opened || wantAll) return;
-    if (preview.data && preview.data.total > preview.data.plots.length) setWantAll(true);
-  }, [opened, wantAll, preview.data]);
-
-  const count = (
-    <Text size="xs" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
-      {plotCount} {plotCount === 1 ? "plot" : "plots"}
-    </Text>
-  );
-  // Nothing to preview: render the count alone rather than an empty hover card.
-  if (plotCount === 0) {
-    return (
-      <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
-        {count}
-      </Group>
-    );
-  }
-  return (
-    <HoverCard withinPortal width={330} shadow="md" openDelay={350} onOpen={() => setOpened(true)}>
-      <HoverCard.Target>
-        <Group gap={0} wrap="nowrap" justify="flex-end" style={{ width: METRIC_GUTTER_WIDTH, flexShrink: 0 }}>
-          {count}
-        </Group>
-      </HoverCard.Target>
-      <HoverCard.Dropdown>
-        <Stack gap="xs">
-          {preview.isLoading || !preview.data ? (
-            Array.from({ length: Math.min(plotCount, 2) }, (_, index) => (
-              <Skeleton key={index} height={90} radius="sm" />
-            ))
-          ) : (
-            preview.data.plots.map((plot) => (
-              <div key={plot.plot_id}>
-                <Text size="xs" fw={600} truncate>
-                  {plot.title}
-                </Text>
-                {plot.thumbnail ? (
-                  <img
-                    src={plot.thumbnail}
-                    alt={plot.title}
-                    style={{ width: "100%", borderRadius: 4, display: "block" }}
-                  />
-                ) : (
-                  // Not an error: the background warmup simply has not reached
-                  // this plot yet.
-                  <Text size="xs" c="dimmed">
-                    Not rendered yet — open the analysis to build it.
-                  </Text>
-                )}
-              </div>
-            ))
-          )}
-          {preview.data && preview.data.total > preview.data.plots.length ? (
-            <Text size="xs" c="dimmed">
-              Loading {preview.data.total - preview.data.plots.length} more…
-            </Text>
-          ) : null}
-        </Stack>
-      </HoverCard.Dropdown>
-    </HoverCard>
+    <>
+      <div className="project-tree-metric-cell" aria-hidden />
+      <div className="project-tree-metric-cell" aria-hidden />
+      <div className="project-tree-metric-cell">
+        <AnalysisPlotSummary
+          analysis={analysis}
+          onOpenPlot={(_source, plot) =>
+            navigate(`/analyses/${analysis.id}?plot=${encodeURIComponent(plot.id)}`)
+          }
+        />
+      </div>
+    </>
   );
 }
 
@@ -674,6 +657,7 @@ export function ProjectsPage() {
   const selectedFolder = findFolder(folders, selectedFolderId);
   const folderOptions = useMemo(() => flattenFolders(folders), [folders]);
   const folderIds = useMemo(() => collectFolderIds(folders), [folders]);
+  const rootFolderIds = useMemo(() => folders.map((folder) => folder.id), [folders]);
   const visibleItems = useMemo(
     () => visibleTreeItems(folders, expandedFolders, viewPreferences, collapsedSections),
     [folders, expandedFolders, viewPreferences, collapsedSections]
@@ -721,11 +705,12 @@ export function ProjectsPage() {
     if (firstFolder !== null) setSelectedKeys(new Set([folderKey(firstFolder)]));
   }, [tree.data, selectedFolderId, searchParams]);
 
+  const initialFolderExpansionRef = useRef(false);
   useEffect(() => {
-    if (folderIds.length > 0 && expandedFolders.size === 0) {
-      setExpandedFolders(new Set(folderIds));
-    }
-  }, [expandedFolders.size, folderIds]);
+    if (initialFolderExpansionRef.current || folderIds.length === 0) return;
+    initialFolderExpansionRef.current = true;
+    setExpandedFolders(new Set(folderIds));
+  }, [folderIds]);
 
   const selectedCellDetail = useQuery({
     queryKey: ["cell", preview?.kind === "cell" ? preview.id : null],
@@ -1197,7 +1182,10 @@ export function ProjectsPage() {
     // would otherwise stay hidden inside a folder that now claims to be open.
     setCollapsedSections(new Set());
   };
-  const collapseAll = () => setExpandedFolders(new Set());
+  const expandRoots = () =>
+    setExpandedFolders((current) => new Set([...current, ...rootFolderIds]));
+  const collapseAll = () => setExpandedFolders(new Set(rootFolderIds));
+  const collapseIncludingRoots = () => setExpandedFolders(new Set());
   const branchIds = (targets: number[]) => {
     const ids = new Set<number>();
     for (const id of targets) {
@@ -1372,8 +1360,82 @@ export function ProjectsPage() {
   return (
     <Stack>
       <style>{`
+        .project-tree-header {
+          box-sizing: border-box;
+          width: 100%;
+          padding: 0 6px;
+          margin: 0;
+          background: light-dark(var(--mantine-color-body), var(--mantine-color-dark-7));
+          border-bottom: 1px solid var(--mantine-color-default-border);
+        }
+        .project-tree-header-name,
+        .project-tree-header-metric {
+          margin: 0 !important;
+          padding: 10px 8px;
+          white-space: nowrap;
+          overflow: visible;
+          line-height: 1.45 !important;
+        }
+        .project-tree-header-name {
+          padding-left: 0;
+        }
+        .project-tree-header-metric {
+          box-sizing: border-box;
+          border-left: 1px solid var(--mantine-color-default-border);
+        }
+        .project-tree-row {
+          width: 100%;
+          box-sizing: border-box;
+          padding-inline: 6px !important;
+          padding-block: 0 !important;
+        }
+        .project-tree-metric-cell {
+          box-sizing: border-box;
+          border-left: 1px solid var(--mantine-color-default-border);
+          padding: 6px 8px;
+          min-height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          align-self: stretch;
+          font-variant-numeric: tabular-nums;
+        }
+        .project-tree-metric-cell .mantine-Text-root {
+          margin: 0;
+          line-height: 1.4;
+        }
+        .project-tree-name-cell {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding-block: 6px;
+          align-self: stretch;
+        }
+        .project-tree-actions-cell {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 2px;
+          padding-block: 6px;
+          align-self: stretch;
+        }
+        .project-tree-scroll > .mantine-ScrollArea-viewport > div {
+          display: block !important;
+          width: 100% !important;
+          min-width: 100% !important;
+        }
         .project-tree-row .project-tree-hover-actions { opacity: 0; transition: opacity 120ms ease; }
         .project-tree-row:hover .project-tree-hover-actions { opacity: 1; }
+        .project-tree-toolbar-group > .mantine-Button-root:first-of-type {
+          border-top-right-radius: 0;
+          border-bottom-right-radius: 0;
+        }
+        .project-tree-toolbar-group > .mantine-Button-root:last-of-type {
+          border-top-left-radius: 0;
+          border-bottom-left-radius: 0;
+          border-left-width: 0;
+        }
       `}</style>
       <Group justify="space-between" align="center">
         <Title order={3}>Projects</Title>
@@ -1435,17 +1497,23 @@ export function ProjectsPage() {
                 Folders
               </Text>
               <Group gap={6} wrap="nowrap">
-                <Button.Group>
+                <Button.Group className="project-tree-toolbar-group">
                   <Button size="compact-xs" variant="default" onClick={expandAll}>
                     Expand all
                   </Button>
                   <Menu withinPortal position="bottom-end">
                     <Menu.Target>
-                      <ActionIcon size="22" variant="default" aria-label="Expand options">
+                      <Button
+                        size="compact-xs"
+                        variant="default"
+                        px={6}
+                        aria-label="Expand options"
+                      >
                         <IconChevronDown size={13} />
-                      </ActionIcon>
+                      </Button>
                     </Menu.Target>
                     <Menu.Dropdown>
+                      <Menu.Item onClick={expandRoots}>Expand root folders</Menu.Item>
                       <Menu.Item
                         disabled={selectedFolderIds.length === 0}
                         onClick={expandSelected}
@@ -1455,17 +1523,23 @@ export function ProjectsPage() {
                     </Menu.Dropdown>
                   </Menu>
                 </Button.Group>
-                <Button.Group>
+                <Button.Group className="project-tree-toolbar-group">
                   <Button size="compact-xs" variant="default" onClick={collapseAll}>
                     Collapse all
                   </Button>
                   <Menu withinPortal position="bottom-end">
                     <Menu.Target>
-                      <ActionIcon size="22" variant="default" aria-label="Collapse options">
+                      <Button
+                        size="compact-xs"
+                        variant="default"
+                        px={6}
+                        aria-label="Collapse options"
+                      >
                         <IconChevronDown size={13} />
-                      </ActionIcon>
+                      </Button>
                     </Menu.Target>
                     <Menu.Dropdown>
+                      <Menu.Item onClick={collapseIncludingRoots}>Collapse root folders too</Menu.Item>
                       <Menu.Item
                         disabled={selectedFolderIds.length === 0}
                         onClick={collapseSelected}
@@ -1532,21 +1606,24 @@ export function ProjectsPage() {
                     </Stack>
                   </Menu.Dropdown>
                 </Menu>
-                {viewPreferences.showMetrics ? <MetricColumnHeadings /> : null}
                 <Tooltip label="New root folder">
-                  <ActionIcon variant="subtle" onClick={() => openCreateFolder(null)}>
+                  <ActionIcon size="sm" variant="subtle" onClick={() => openCreateFolder(null)}>
                     <IconFolderPlus size={17} />
                   </ActionIcon>
                 </Tooltip>
               </Group>
             </Group>
-            <ScrollArea h={650} type="auto">
+            <Divider />
+            <ScrollArea h={650} type="auto" offsetScrollbars className="project-tree-scroll">
+              {viewPreferences.showMetrics ? <ProjectTreeColumnHeader /> : null}
               {tree.isLoading ? (
                 <Text size="sm" c="dimmed">
                   Loading folders
                 </Text>
               ) : folders.length ? (
-                <Stack gap={2}>{folders.map((folder) => renderFolderNode(folder, 0))}</Stack>
+                <Stack gap={0} style={{ width: "100%" }}>
+                  {folders.map((folder) => renderFolderNode(folder, 0))}
+                </Stack>
               ) : (
                 <Alert color="gray">Create a folder to start organizing cells and analyses.</Alert>
               )}
@@ -1735,18 +1812,16 @@ export function ProjectsPage() {
         }}
         onDrop={(event) => handleDropOnFolder(event, folder)}
       >
-        <Group
+        <div
           className="project-tree-row"
-          justify="space-between"
-          wrap="nowrap"
-          p={6}
           draggable
           onDragStart={(event) => handleDragStart(event, item)}
           onDragEnd={handleDragEnd}
           onDoubleClick={() => toggleFolder(folder.id)}
           onContextMenu={(event) => handleContextMenu(event, item)}
           style={{
-            marginLeft: depth * 18,
+            ...treeRowGridStyle(viewPreferences.showMetrics),
+            padding: 6,
             borderRadius: 6,
             cursor: "pointer",
             background: dropTarget
@@ -1758,7 +1833,7 @@ export function ProjectsPage() {
           }}
           onClick={(event) => handleSelect(event, item)}
         >
-          <Group gap={4} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+          <div className="project-tree-name-cell" style={{ paddingLeft: depth * 18 }}>
             <ActionIcon
               size="sm"
               variant="subtle"
@@ -1769,11 +1844,11 @@ export function ProjectsPage() {
                 event.stopPropagation();
                 toggleFolder(folder.id);
               }}
-              style={{ visibility: hasChildren ? "visible" : "hidden" }}
+              style={{ visibility: hasChildren ? "visible" : "hidden", flexShrink: 0 }}
             >
               {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
             </ActionIcon>
-            <IconFolder size={16} color="var(--mantine-primary-color-6)" />
+            <IconFolder size={16} color="var(--mantine-primary-color-6)" style={{ flexShrink: 0 }} />
             {editingFolderId === folder.id ? (
               <TextInput
                 size="xs"
@@ -1786,24 +1861,19 @@ export function ProjectsPage() {
                   if (event.key === "Escape") setEditingFolderId(null);
                 }}
                 autoFocus
-                style={{ flex: 1 }}
+                style={{ flex: 1, minWidth: 0 }}
               />
             ) : (
-              <Text size="sm" fw={selected ? 700 : 500} truncate>
+              <Text size="sm" fw={selected ? 700 : 500} truncate style={{ minWidth: 0 }}>
                 {folder.name}
               </Text>
             )}
-            <Badge size="xs" variant="light">
+            <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
               {folder.cells.length + folder.replicate_groups.length + folder.analyses.length}
             </Badge>
-          </Group>
-          {viewPreferences.showMetrics ? (
-            <MetricColumns
-              metrics={folder.metrics}
-              hint="Totals for this folder and everything inside it"
-            />
-          ) : null}
-          <Group gap={2} wrap="nowrap">
+          </div>
+          {viewPreferences.showMetrics ? <EmptyMetricCells /> : null}
+          <div className="project-tree-actions-cell">
             <ActionIcon
               className="project-tree-hover-actions"
               size="sm"
@@ -1834,8 +1904,8 @@ export function ProjectsPage() {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-          </Group>
-        </Group>
+          </div>
+        </div>
 
         {expanded && (
           <>
@@ -1874,32 +1944,38 @@ export function ProjectsPage() {
     const label = section === "analyses" ? "Analyses" : "Samples";
     return (
       <div key={key}>
-        <Group
-          gap={4}
-          wrap="nowrap"
-          px={6}
-          py={2}
+        <div
           // Not draggable and not selectable: a section header is a grouping
           // affordance, not a row. Drops still land on the enclosing folder,
-          // whose drop zone wraps this whole subtree.
+          // whose drop zone wraps this whole subtree. Keep the same metric
+          // grid so column dividers stay continuous through the split.
+          className="project-tree-row"
           onClick={() => toggleSection(folder.id, section)}
-          style={{ marginLeft: depth * 18, cursor: "pointer", userSelect: "none" }}
+          style={{
+            ...treeRowGridStyle(viewPreferences.showMetrics),
+            cursor: "pointer",
+            userSelect: "none",
+          }}
         >
-          <IconChevronRight
-            size={12}
-            style={{
-              transform: collapsed ? undefined : "rotate(90deg)",
-              transition: "transform 120ms ease",
-              flexShrink: 0,
-            }}
-          />
-          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
-            {label}
-          </Text>
-          <Text size="xs" c="dimmed">
-            ({sectionCount(folder, section)})
-          </Text>
-        </Group>
+          <div className="project-tree-name-cell" style={{ paddingLeft: depth * 18, gap: 4 }}>
+            <IconChevronRight
+              size={12}
+              style={{
+                transform: collapsed ? undefined : "rotate(90deg)",
+                transition: "transform 120ms ease",
+                flexShrink: 0,
+              }}
+            />
+            <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+              {label}
+            </Text>
+            <Text size="xs" c="dimmed">
+              ({sectionCount(folder, section)})
+            </Text>
+          </div>
+          {viewPreferences.showMetrics ? <EmptyMetricCells /> : null}
+          <div className="project-tree-actions-cell" aria-hidden />
+        </div>
         {collapsed ? null : renderSectionRows(folder, section, depth + 1)}
       </div>
     );
@@ -1920,13 +1996,9 @@ export function ProjectsPage() {
       label: group.name,
     };
     return (
-      <Group
+      <div
         key={key}
         className="project-tree-row"
-        justify="space-between"
-        gap={6}
-        wrap="nowrap"
-        p={6}
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
         onDragEnd={handleDragEnd}
@@ -1937,7 +2009,8 @@ export function ProjectsPage() {
           selectPreview({ kind: "replicate_group", id: group.id, title: group.name });
         }}
         style={{
-          marginLeft: depth * 18,
+          ...treeRowGridStyle(viewPreferences.showMetrics),
+          padding: 6,
           borderRadius: 6,
           cursor: "pointer",
           background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
@@ -1945,40 +2018,46 @@ export function ProjectsPage() {
         }}
         onClick={(event) => handleSelect(event, item)}
       >
-        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-          <IconLayersIntersect size={15} color="var(--mantine-primary-color-6)" />
-          <Text size="sm" fw={selected ? 700 : 400} truncate>
+        <div className="project-tree-name-cell" style={{ paddingLeft: depth * 18, gap: 6 }}>
+          <IconLayersIntersect size={15} color="var(--mantine-primary-color-6)" style={{ flexShrink: 0 }} />
+          <Text size="sm" fw={selected ? 700 : 400} truncate style={{ minWidth: 0 }}>
             {group.name}
           </Text>
-          <Badge size="xs" variant="light">
+          <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
             {group.cell_ids.length}
           </Badge>
-        </Group>
+        </div>
         {viewPreferences.showMetrics ? (
           <MetricColumns
             metrics={group}
-            hint={`Average over ${group.member_count} cells: cycles · max discharge capacity (mAh)`}
+            hint={`Average over ${group.member_count} cells: cycles · max specific discharge capacity (mAh/g)${
+              group.max_discharge_capacity_mah === null
+                ? ""
+                : ` · ${formatMetricCapacity(group.max_discharge_capacity_mah)} mAh average`
+            }`}
           />
         ) : null}
-        <Menu withinPortal position="bottom-end">
-          <Menu.Target>
-            <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
-              <IconDotsVertical size={14} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item onClick={() => openDestination("Move to", (targetFolderId) => targetFolderId !== null && transferGroups(targetFolderId, false, [item]))}>
-              Move to...
-            </Menu.Item>
-            <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => openDestination("Copy to", (targetFolderId) => targetFolderId !== null && transferGroups(targetFolderId, true, [item]))}>
-              Copy to...
-            </Menu.Item>
-            <Menu.Item color="red" onClick={() => removeGroup.mutate({ folderId: folder.id, groupId: group.id })}>
-              Remove
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
+        <div className="project-tree-actions-cell">
+          <Menu withinPortal position="bottom-end">
+            <Menu.Target>
+              <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
+                <IconDotsVertical size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => openDestination("Move to", (targetFolderId) => targetFolderId !== null && transferGroups(targetFolderId, false, [item]))}>
+                Move to...
+              </Menu.Item>
+              <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => openDestination("Copy to", (targetFolderId) => targetFolderId !== null && transferGroups(targetFolderId, true, [item]))}>
+                Copy to...
+              </Menu.Item>
+              <Menu.Item color="red" onClick={() => removeGroup.mutate({ folderId: folder.id, groupId: group.id })}>
+                Remove
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        </div>
+      </div>
     );
   }
 
@@ -1987,12 +2066,9 @@ export function ProjectsPage() {
     const selected = selectedKeys.has(key);
     const item: TreeItem = { key, kind: "cell", id: cell.id, folderId: folder.id, label: cell.name };
     return (
-      <Group
+      <div
         key={key}
         className="project-tree-row"
-        justify="space-between"
-        wrap="nowrap"
-        p={6}
         draggable
         onDragStart={(event) => handleDragStart(event, item)}
         onDragEnd={handleDragEnd}
@@ -2003,7 +2079,8 @@ export function ProjectsPage() {
           selectPreview({ kind: "cell", id: cell.id });
         }}
         style={{
-          marginLeft: depth * 18,
+          ...treeRowGridStyle(viewPreferences.showMetrics),
+          padding: 6,
           borderRadius: 6,
           cursor: "pointer",
           background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
@@ -2011,37 +2088,39 @@ export function ProjectsPage() {
         }}
         onClick={(event) => handleSelect(event, item)}
       >
-        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-          <IconDatabase size={15} color="var(--mantine-color-gray-6)" />
-          <Text size="sm" fw={selected ? 700 : 400} truncate>
+        <div className="project-tree-name-cell" style={{ paddingLeft: depth * 18, gap: 6 }}>
+          <IconDatabase size={15} color="var(--mantine-color-gray-6)" style={{ flexShrink: 0 }} />
+          <Text size="sm" fw={selected ? 700 : 400} truncate style={{ minWidth: 0 }}>
             {cell.name}
           </Text>
           {cell.archived && (
-            <Badge size="xs" color="gray" variant="light">
+            <Badge size="xs" color="gray" variant="light" style={{ flexShrink: 0 }}>
               archived
             </Badge>
           )}
-        </Group>
+        </div>
         {viewPreferences.showMetrics ? <MetricColumns metrics={cell} /> : null}
-        <Menu withinPortal position="bottom-end">
-          <Menu.Target>
-            <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
-              <IconDotsVertical size={14} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item onClick={() => openDestination("Move to", (targetFolderId) => targetFolderId !== null && transferCells(targetFolderId, false, [item]))}>
-              Move to...
-            </Menu.Item>
-            <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => openDestination("Copy to", (targetFolderId) => targetFolderId !== null && transferCells(targetFolderId, true, [item]))}>
-              Copy to...
-            </Menu.Item>
-            <Menu.Item color="red" onClick={() => removeCell.mutate({ folderId: folder.id, cellId: cell.id })}>
-              Remove
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
+        <div className="project-tree-actions-cell">
+          <Menu withinPortal position="bottom-end">
+            <Menu.Target>
+              <ActionIcon className="project-tree-hover-actions" size="sm" variant="subtle" onClick={(event) => event.stopPropagation()}>
+                <IconDotsVertical size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => openDestination("Move to", (targetFolderId) => targetFolderId !== null && transferCells(targetFolderId, false, [item]))}>
+                Move to...
+              </Menu.Item>
+              <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => openDestination("Copy to", (targetFolderId) => targetFolderId !== null && transferCells(targetFolderId, true, [item]))}>
+                Copy to...
+              </Menu.Item>
+              <Menu.Item color="red" onClick={() => removeCell.mutate({ folderId: folder.id, cellId: cell.id })}>
+                Remove
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        </div>
+      </div>
     );
   }
 
@@ -2056,12 +2135,9 @@ export function ProjectsPage() {
       label: analysis.title,
     };
     return (
-      <Group
+      <div
         key={key}
         className="project-tree-row"
-        justify="space-between"
-        wrap="nowrap"
-        p={6}
         draggable={editingAnalysisId !== analysis.id}
         onDragStart={(event) => handleDragStart(event, item)}
         onDragEnd={handleDragEnd}
@@ -2071,7 +2147,8 @@ export function ProjectsPage() {
           navigate(`/analyses/${analysis.id}`);
         }}
         style={{
-          marginLeft: depth * 18,
+          ...treeRowGridStyle(viewPreferences.showMetrics),
+          padding: 6,
           borderRadius: 6,
           cursor: "pointer",
           background: selected ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
@@ -2079,8 +2156,8 @@ export function ProjectsPage() {
         }}
         onClick={(event) => handleSelect(event, item)}
       >
-        <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-          <IconChartLine size={15} color="var(--mantine-color-gray-6)" />
+        <div className="project-tree-name-cell" style={{ paddingLeft: depth * 18, gap: 6 }}>
+          <IconChartLine size={15} color="var(--mantine-color-gray-6)" style={{ flexShrink: 0 }} />
           {editingAnalysisId === analysis.id ? (
             <TextInput
               size="xs"
@@ -2093,53 +2170,52 @@ export function ProjectsPage() {
                 if (event.key === "Escape") setEditingAnalysisId(null);
               }}
               autoFocus
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0 }}
             />
           ) : (
-            <Text size="sm" fw={selected ? 700 : 400} truncate>
+            <Text size="sm" fw={selected ? 700 : 400} truncate style={{ minWidth: 0 }}>
               {analysis.title}
             </Text>
           )}
-        </Group>
-        {viewPreferences.showMetrics ? (
-          <AnalysisPlotsHover analysisId={analysis.id} plotCount={analysis.plot_count} />
-        ) : null}
-        <Menu withinPortal position="bottom-end">
-          <Menu.Target>
-            <ActionIcon
-              className="project-tree-hover-actions"
-              size="sm"
-              variant="subtle"
-              onClick={(event) => event.stopPropagation()}
-              aria-label={`Actions for ${analysis.title}`}
-            >
-              <IconDotsVertical size={14} />
-            </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item onClick={() => startAnalysisRename(analysis)}>Rename</Menu.Item>
-            <Menu.Item
-              onClick={() =>
-                openDestination("Move to", (targetFolderId) =>
-                  transferAnalyses(targetFolderId, false, [item])
-                )
-              }
-            >
-              Move to...
-            </Menu.Item>
-            <Menu.Item
-              leftSection={<IconCopy size={14} />}
-              onClick={() =>
-                openDestination("Copy to", (targetFolderId) =>
-                  transferAnalyses(targetFolderId, true, [item])
-                )
-              }
-            >
-              Copy to...
-            </Menu.Item>
-            <Menu.Item
-              color="red"
-              onClick={() => {
+        </div>
+        {viewPreferences.showMetrics ? <AnalysisPlotsHover analysis={analysis} /> : null}
+        <div className="project-tree-actions-cell">
+          <Menu withinPortal position="bottom-end">
+            <Menu.Target>
+              <ActionIcon
+                className="project-tree-hover-actions"
+                size="sm"
+                variant="subtle"
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Actions for ${analysis.title}`}
+              >
+                <IconDotsVertical size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => startAnalysisRename(analysis)}>Rename</Menu.Item>
+              <Menu.Item
+                onClick={() =>
+                  openDestination("Move to", (targetFolderId) =>
+                    transferAnalyses(targetFolderId, false, [item])
+                  )
+                }
+              >
+                Move to...
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconCopy size={14} />}
+                onClick={() =>
+                  openDestination("Copy to", (targetFolderId) =>
+                    transferAnalyses(targetFolderId, true, [item])
+                  )
+                }
+              >
+                Copy to...
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                onClick={() => {
                 modals.openConfirmModal({
                   title: `Delete ${analysis.title}?`,
                   children: (
@@ -2156,8 +2232,9 @@ export function ProjectsPage() {
               Delete
             </Menu.Item>
           </Menu.Dropdown>
-        </Menu>
-      </Group>
+          </Menu>
+        </div>
+      </div>
     );
   }
 }

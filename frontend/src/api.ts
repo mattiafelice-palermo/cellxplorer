@@ -659,6 +659,8 @@ export interface RowMetrics {
   /** null while the capacity summary is still being backfilled — not zero. */
   cycle_count: number | null;
   max_discharge_capacity_mah: number | null;
+  /** Peak discharge capacity per gram of active material; null when no mass is known. */
+  max_specific_discharge_capacity_mah_g: number | null;
   summary_pending: boolean;
 }
 
@@ -666,11 +668,7 @@ export interface AnalysisRef {
   id: number;
   title: string;
   plot_count: number;
-}
-
-export interface PlotThumbnails {
-  total: number;
-  plots: { plot_id: string; title: string; thumbnail: string | null }[];
+  saved_plots: AnalysisSavedPlotSummary[];
 }
 
 export interface FolderNode {
@@ -688,9 +686,6 @@ export interface FolderNode {
   children: FolderNode[];
   projects: ProjectNode[];
   analyses: AnalysisRef[];
-  /** Rollup over this folder and every descendant, deduplicated by cell id. */
-  metrics: RowMetrics;
-  metrics_cell_ids: number[];
 }
 
 export interface Tree {

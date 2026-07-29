@@ -3,9 +3,9 @@ import test from "node:test";
 
 import {
   UNKNOWN,
-  eagerAndLazyPlots,
   formatCapacity,
   formatCycleCount,
+  formatSpecificCapacity,
 } from "../src/explorerMetrics.ts";
 
 test("an unknown cycle count renders as a dash, not zero", () => {
@@ -40,19 +40,15 @@ test("non-finite values are treated as unknown", () => {
   assert.equal(formatCapacity(Number.POSITIVE_INFINITY), UNKNOWN);
 });
 
-test("plots split into an eager batch and a lazy remainder", () => {
-  const plots = [1, 2, 3, 4, 5, 6, 7, 8];
-  assert.deepEqual(eagerAndLazyPlots(plots, 6), {
-    eager: [1, 2, 3, 4, 5, 6],
-    lazy: [7, 8],
-  });
+test("specific capacity is shown as a whole number", () => {
+  // Specific capacities sit in the tens to low hundreds of mAh/g, where a decimal
+  // is noise and an integer column is much easier to scan down.
+  assert.equal(formatSpecificCapacity(148.6), "149");
+  assert.equal(formatSpecificCapacity(0), "0");
 });
 
-test("fewer plots than the eager count leaves nothing lazy", () => {
-  assert.deepEqual(eagerAndLazyPlots([1, 2], 6), { eager: [1, 2], lazy: [] });
-  assert.deepEqual(eagerAndLazyPlots([], 6), { eager: [], lazy: [] });
-});
-
-test("a negative eager count does not reverse the split", () => {
-  assert.deepEqual(eagerAndLazyPlots([1, 2], -3), { eager: [], lazy: [1, 2] });
+test("an unknown specific capacity renders as a dash", () => {
+  // A cell with no active mass recorded has no mAh/g to report.
+  assert.equal(formatSpecificCapacity(null), UNKNOWN);
+  assert.equal(formatSpecificCapacity(Number.NaN), UNKNOWN);
 });

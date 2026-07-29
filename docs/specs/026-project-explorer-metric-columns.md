@@ -9,7 +9,8 @@
 
 Two right-hand columns in the project explorer:
 
-- **cells and replicate groups** — number of cycles, and maximum discharge capacity;
+- **cells and replicate groups** — number of cycles, and maximum specific discharge capacity
+  in mAh/g (raw mAh remains available in the tooltip);
 - **analyses** — number of saved plots, with a hover preview of those plots.
 
 ## What exists (do not rebuild)
@@ -35,17 +36,17 @@ Two right-hand columns in the project explorer:
    reads as data loss. A cell whose files are not all `ready` reports `null`.
 4. **The columns are not sortable.** Sorting fights the manual `position` drag-ordering that the
    tree already supports, and reconciling the two is a larger feature than the columns.
-5. **Folder rows show a rollup of everything beneath them** (their own cells plus all
-   descendants', deduplicated by cell id). A collapsed folder that says nothing about its
-   contents makes Collapse all tidy but useless.
-6. **The hover preview uses a dedicated endpoint, not the existing artifact lookup.**
-   `POST .../thumbnail/lookup` requires a client-computed plot `signature`; reproducing that
-   derivation in the Projects page would duplicate non-trivial logic that must stay in step
-   with the analysis engine. A read-only `GET /api/analyses/{id}/plot-thumbnails` returning the
-   latest cached thumbnails is what a preview actually wants.
-7. **Six thumbnails are fetched eagerly, the rest lazily after them.** Hovering across a folder
-   of analyses must not fire an unbounded burst; but nothing is hidden behind a "+N more" —
-   the remainder streams in.
+5. **Folder rows do not show scientific metric rollups.** Summing cycle counts across unrelated
+   cells and presenting one peak capacity for a heterogeneous subtree creates a number without a
+   useful scientific interpretation. Folder rows keep their direct-item count; metric columns
+   belong to cell and replicate-group rows.
+6. **Projects and the Analysis Database use the same preview component.** The tree carries the
+   same compact saved-plot index (id, name, tab, subtitle, quantity) as the Analysis Database
+   summary. Both render `components/AnalysisPlotSummary.tsx`, including its list selection,
+   loading state, click behavior, and 4:3 preview.
+7. **Only the selected preview image is fetched.** The shared component reads the cached
+   `variant=preview` asset through the existing latest-thumbnail endpoint when its hover card
+   opens. Sweeping the pointer through the tree does not request every saved thumbnail.
 
 ## Tasks
 
@@ -57,52 +58,57 @@ New `cell_metrics(db, cell_ids) -> dict[int, CellMetrics]` using one grouped que
 `Test → TestFile → SourceFile`, returning per cell:
 
 ```python
-{"cycle_count": int | None, "max_discharge_capacity_mah": float | None, "summary_pending": bool}
+{
+    "cycle_count": int | None,
+    "max_discharge_capacity_mah": float | None,
+    "max_specific_discharge_capacity_mah_g": float | None,
+    "summary_pending": bool,
+}
 ```
 
 `summary_pending` is true when the cell has files whose `capacity_summary_status` is not
 `ready`; both metrics are `None` in that case rather than a partial total.
 
-`cell_ref_dict` gains those three fields. `replicate_group_ref_dict` gains the same shape,
+Specific capacity uses the same effective active-mass precedence as the Cell Database:
+`override.active_mass_mg` → legacy active-mass metadata → source-file active mass. The mass and
+metadata values are bulk-loaded for the complete cell set; this must not introduce per-cell
+queries.
+
+`cell_ref_dict` gains those four metric fields. `replicate_group_ref_dict` gains the same shape,
 computed as the mean over member cells that have values, plus `member_count`.
 Folder analyses and `project_dict` analyses gain `plot_count` from
-`len(a.spec.get("saved_plots") or [])`. `folder_dict` gains a `metrics` rollup over its own
-cells and its children's rollups, deduplicated by cell id.
+`len(a.spec.get("saved_plots") or [])`. `folder_dict` does not carry metric rollups.
 
 **Acceptance:** a cell with two files of 100 and 150 cycles reports 250; its max capacity is the
 max of the two file maxima; a cell with a `pending` file reports `None` and `summary_pending`;
-a group of three cells reports the mean of their maxima; a folder reports the union of its own
-and its descendants' cells, counting a cell filed in both places once.
+a group of three cells reports the mean of their maxima; a cell with 2 mAh maximum discharge and
+10 mg effective active mass reports 200 mAh/g; an explicit mass override wins over legacy and
+source mass.
 
-### T2 — Latest-thumbnail endpoint
+### T2 — Compact plot index in `/api/tree`
 
-**File:** `backend/app/routers/analyses.py`
+**File:** `backend/app/routers/tree.py`
 
-```
-GET /api/analyses/{analysis_id}/plot-thumbnails?limit=<n>  →
-  {"plots": [{"plot_id": str, "title": str, "thumbnail": str | null}], "total": int}
-```
+`analysis_ref_dict` includes `saved_plots`, using the same compact fields exposed by
+`analyses.analysis_dict`: id, name, tab, subtitle, and quantity. This reads the already-loaded
+analysis spec and issues no additional query.
 
-Reads `spec["saved_plots"]` for identity and `analysis_cache.load_latest_thumbnail` for the
-image. A plot the warmup coordinator has not reached yet returns `thumbnail: null` — the
-caller shows a placeholder, never an error.
-
-**Acceptance:** returns every saved plot in spec order; `limit` slices from the front and
-`total` still reports the full count; an analysis with no saved plots returns an empty list.
+**Acceptance:** plot order matches the saved spec; `plot_count` equals the compact index length;
+an analysis without plots returns an empty index.
 
 ### T3 — Formatting rules as a pure module
 
 **File (new):** `frontend/src/explorerMetrics.ts` + `frontend/tests/explorerMetrics.test.ts`
 
 ```ts
-export function formatCycleCount(value: number | null, pending: boolean): string;
-export function formatCapacity(value: number | null, pending: boolean): string;  // mAh, 1 dp; k for ≥ 10 000
-export function eagerAndLazyPlots<T>(plots: T[], eager: number): { eager: T[]; lazy: T[] };
+export function formatCycleCount(value: number | null): string;
+export function formatCapacity(value: number | null): string;  // mAh, 1 dp; k for ≥ 10 000
+export function formatSpecificCapacity(value: number | null): string;  // mAh/g, whole number
 ```
 
 **Acceptance:** `null` → `"—"` whether or not pending; 0 cycles → `"0"` (a real zero is not
-unknown); capacity rounds to one decimal; 12 500 mAh → `"12.5 k"`; the split is stable when
-there are fewer plots than the eager count.
+unknown); raw capacity rounds to one decimal; 12 500 mAh → `"12.5 k"`; specific capacity is
+shown as a whole number.
 
 ### T4 — Columns in the tree
 
@@ -110,9 +116,10 @@ there are fewer plots than the eager count.
 
 A fixed-width right-hand gutter on every row, before the existing action buttons, so the
 columns line up down the tree regardless of indentation; the label column truncates rather than
-pushing the numbers around. Cells, replicate groups and folders show cycles + capacity;
-analyses show the plot count. A replicate group's numbers carry a tooltip naming them as an
-average over N cells.
+pushing the numbers around. Cells and replicate groups show cycles + maximum specific discharge
+capacity; analyses show the plot count; folders show neither. Raw maximum discharge capacity
+remains in the cell/group tooltip. A replicate group's numbers carry a tooltip naming them as an
+average over N cells and using the same units as the visible column.
 
 Visibility is a **Show metrics** switch in the View menu added by spec 025, persisted with the
 other view preferences. Default on.
@@ -123,19 +130,20 @@ numbers are dimmed, tabular, and smaller than the row label so they read as meta
 **Acceptance:** columns align across depths; long names truncate with an ellipsis; the page body
 never scrolls horizontally; turning the switch off removes the gutter entirely.
 
-### T5 — Plot hover preview
+### T5 — Shared plot hover preview
 
-**File:** `frontend/src/pages/ProjectsPage.tsx`
+**Files:** `frontend/src/components/AnalysisPlotSummary.tsx`,
+`frontend/src/components/AnalysisDatabaseTable.tsx`, `frontend/src/pages/ProjectsPage.tsx`
 
-Hovering an analysis row's plot count opens a `HoverCard` with the plot thumbnails, using the
-same image presentation as the analysis page. Fetched through React Query so repeat hovers are
-free, with `openDelay` so sweeping the pointer down the tree fetches nothing.
+The Analysis Database's plot-count/preview UI lives in the shared component. Both surfaces render
+that exact component. Hovering opens the saved-plot list and selected 4:3 preview; selecting a
+different list item updates the preview, and clicking it opens that saved plot.
 
-States: in flight → skeletons; `thumbnail: null` → a placeholder tile with the plot title and a
-note that it has not been rendered yet; zero saved plots → the hover does not open at all.
+States and timing remain owned by the shared component: loading text while the current preview is
+requested, a cache-miss message when warmup has not rendered it, and no hover for zero plots.
 
-**Acceptance:** hovering repeatedly issues one request; moving quickly across several analyses
-issues none; an analysis whose thumbnails are not cached shows placeholders, not an error.
+**Acceptance:** the Projects and Analysis Database hover cards are visually and behaviorally
+identical because there is only one implementation; repeat hovers reuse the React Query cache.
 
 ## Implementation order
 
@@ -146,8 +154,8 @@ T1 → T2 → T3 → T4 → T5.
 - `python -m unittest tests.test_tree_router tests.test_analysis_lifecycle`
 - `node --test frontend/tests/explorerMetrics.test.ts`
 - `npx tsc --noEmit`, `npx vite build`.
-- Manual: confirm a folder's rollup equals the sum of its descendants, and that a cell mid-import
-  shows "—" rather than 0.
+- Manual: confirm the mAh/g column agrees with the Cell Database for cells with source, legacy,
+  and overridden active mass, and that a cell mid-import shows "—" rather than 0.
 
 ## Environment note
 

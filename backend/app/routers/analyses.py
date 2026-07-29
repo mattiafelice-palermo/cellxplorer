@@ -1035,45 +1035,6 @@ def lookup_plot_artifact(
     return fast_json({"signature": req.signature, **artifact})
 
 
-@router.get("/analyses/{analysis_id}/plot-thumbnails")
-def list_plot_thumbnails(
-    analysis_id: int,
-    limit: int | None = None,
-    db: Session = Depends(get_db),
-):
-    """Latest cached thumbnails for an analysis's saved plots.
-
-    Separate from `plot-artifacts/.../thumbnail/lookup` on purpose: that endpoint
-    resolves a client-computed plot *signature*, and reproducing that derivation
-    outside the analysis page would duplicate logic that has to stay in step with
-    the analysis engine. A hover preview only wants the newest image there is.
-
-    A plot the warmup coordinator has not reached yet comes back with
-    `thumbnail: null` so the caller can show a placeholder rather than an error.
-    """
-    analysis = db.get(Analysis, analysis_id)
-    if analysis is None:
-        raise HTTPException(404, "No such analysis")
-    saved = (analysis.spec or {}).get("saved_plots") or []
-    selected = saved[:limit] if limit is not None and limit >= 0 else saved
-    return fast_json(
-        {
-            "total": len(saved),
-            "plots": [
-                {
-                    "plot_id": plot.get("id"),
-                    "title": plot.get("title") or "Untitled plot",
-                    "thumbnail": analysis_cache.load_latest_thumbnail(
-                        analysis_id, str(plot.get("id"))
-                    ),
-                }
-                for plot in selected
-                if plot.get("id")
-            ],
-        }
-    )
-
-
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/thumbnail/lookup")
 def lookup_plot_thumbnail(
     analysis_id: int,

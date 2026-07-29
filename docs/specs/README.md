@@ -329,10 +329,11 @@ Rules:
   render and `visibleTreeItems` share one ordering function so shift-click ranges cannot drift
   from what is on screen. Frontend-only. **Implemented.** Branch `feature/projects-folder-sections`.
 - [026-project-explorer-metric-columns.md](026-project-explorer-metric-columns.md)
-  — cycle-count and peak-discharge-capacity columns for cells, replicate groups (mean of
-  members) and folders (rollup over descendants), plus a saved-plot count with a thumbnail
-  hover preview served by a new read-only `/api/analyses/{id}/plot-thumbnails`. Aggregates are
-  one grouped query so `/api/tree` does not become N+1. **Implemented.**
+  — cycle-count and peak-specific-discharge-capacity columns for cells and replicate groups
+  (mean of members), plus a saved-plot count using the exact shared Analysis Database hover
+  preview and its cached 4:3 assets. Folder rows deliberately have no scientific rollup.
+  Aggregates, effective active masses, and compact saved-plot indexes are bulk-loaded so
+  `/api/tree` does not become N+1. **Implemented.**
   Branch `feature/projects-explorer-metrics`.
 - [027-source-monitor-schedule-units-and-preview.md](027-source-monitor-schedule-units-and-preview.md)
   — weekly fixed-time schedules (months deliberately excluded), seconds/minutes/hours retry

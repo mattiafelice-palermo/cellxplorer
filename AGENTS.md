@@ -155,6 +155,7 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
+│   │   │   ├── AnalysisPlotSummary.tsx Shared saved-plot count and hover preview
 │   │   │   ├── ChargeabilityPlotCard.tsx
 │   │   │   ├── RateCapabilityPlotCard.tsx
 │   │   │   ├── DestructiveImpactModal.tsx

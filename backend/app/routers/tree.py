@@ -29,12 +29,14 @@ from ..models import (
     TestFile,
 )
 from ..services.entity_ids import next_analysis_id
+from . import library
 
 router = APIRouter(prefix="/api", tags=["tree"])
 
 EMPTY_METRICS: dict = {
     "cycle_count": None,
     "max_discharge_capacity_mah": None,
+    "max_specific_discharge_capacity_mah_g": None,
     "summary_pending": False,
 }
 
@@ -76,17 +78,26 @@ def cell_metrics(db: Session, cell_ids: list[int]) -> dict[int, dict]:
         .group_by(Test.cell_id)
         .all()
     )
+    # Specific capacity needs the active mass, resolved by the Cell Database's own
+    # rule (override > legacy metadata > source file) so the two views cannot
+    # disagree about the same cell.
+    masses = library.effective_active_mass_mg(db, cell_ids)
     metrics: dict[int, dict] = {}
     for row in rows:
+        cell_id = int(row.cell_id)
         n_files = int(row.n_files or 0)
         pending = n_files > 0 and int(row.not_ready or 0) > 0
         ready = n_files > 0 and not pending
-        metrics[int(row.cell_id)] = {
+        max_mah = (
+            round(float(row.max_discharge), 6)
+            if ready and row.max_discharge is not None
+            else None
+        )
+        metrics[cell_id] = {
             "cycle_count": int(row.total_cycles or 0) if ready else None,
-            "max_discharge_capacity_mah": (
-                round(float(row.max_discharge), 6)
-                if ready and row.max_discharge is not None
-                else None
+            "max_discharge_capacity_mah": max_mah,
+            "max_specific_discharge_capacity_mah_g": library.max_specific_discharge_capacity(
+                max_mah, masses.get(cell_id)
             ),
             "summary_pending": pending,
         }
@@ -97,28 +108,24 @@ def _mean(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 6) if values else None
 
 
-def aggregate_metrics(entries: list[dict], *, average: bool) -> dict:
-    """Combine per-cell metrics for a replicate group (mean) or a folder (total).
+def _present(entries: list[dict], key: str) -> list[float]:
+    return [float(e[key]) for e in entries if e.get(key) is not None]
 
-    Replicate groups are nominally identical cells, so their row reports the mean
-    of the member maxima rather than a raw maximum — the UI labels it as such.
+
+def average_metrics(entries: list[dict]) -> dict:
+    """Mean metrics across a replicate group's member cells.
+
+    Replicate groups are nominally identical cells, so the row reports the mean of
+    the member maxima rather than a raw maximum — the UI labels it as an average.
+    Cycles are rounded: a row reading "101.5 cycles" would be nonsense.
     """
-    cycles = [e["cycle_count"] for e in entries if e.get("cycle_count") is not None]
-    caps = [
-        e["max_discharge_capacity_mah"]
-        for e in entries
-        if e.get("max_discharge_capacity_mah") is not None
-    ]
-    if average:
-        mean_cycles = _mean([float(v) for v in cycles])
-        return {
-            "cycle_count": int(round(mean_cycles)) if mean_cycles is not None else None,
-            "max_discharge_capacity_mah": _mean([float(v) for v in caps]),
-            "summary_pending": any(e.get("summary_pending") for e in entries),
-        }
+    mean_cycles = _mean(_present(entries, "cycle_count"))
     return {
-        "cycle_count": sum(int(v) for v in cycles) if cycles else None,
-        "max_discharge_capacity_mah": max(float(v) for v in caps) if caps else None,
+        "cycle_count": int(round(mean_cycles)) if mean_cycles is not None else None,
+        "max_discharge_capacity_mah": _mean(_present(entries, "max_discharge_capacity_mah")),
+        "max_specific_discharge_capacity_mah_g": _mean(
+            _present(entries, "max_specific_discharge_capacity_mah_g")
+        ),
         "summary_pending": any(e.get("summary_pending") for e in entries),
     }
 
@@ -170,16 +177,30 @@ def replicate_group_ref_dict(
         "description": group.description,
         "cell_ids": cell_ids,
         "member_count": len(cell_ids),
-        **aggregate_metrics(members, average=True),
+        **average_metrics(members),
     }
 
 
 def analysis_ref_dict(a: Analysis) -> dict:
-    # Saved plots live in the spec document, so the count costs no extra query.
+    # Saved plots live in the spec document, so this compact preview index costs
+    # no extra query. Keep it aligned with analyses.analysis_dict: Projects and
+    # the Analysis Database intentionally render the same preview component.
+    saved_plots = [
+        {
+            "id": str(plot.get("id")),
+            "name": str(plot.get("name") or "Saved plot"),
+            "tab": str(plot.get("tab") or "cycles"),
+            "subtitle": str(plot.get("subtitle") or ""),
+            "quantity": str((plot.get("presentation") or {}).get("quantity") or ""),
+        }
+        for plot in ((a.spec or {}).get("saved_plots") or [])
+        if plot.get("id")
+    ]
     return {
         "id": a.id,
         "title": a.title,
-        "plot_count": len(a.spec.get("saved_plots") or []) if a.spec else 0,
+        "plot_count": len(saved_plots),
+        "saved_plots": saved_plots,
     }
 
 
@@ -216,14 +237,6 @@ def folder_dict(
         )
         if link.group is not None
     ]
-    # A folder's row summarises everything beneath it, so a collapsed folder still
-    # says something. Cells are gathered by id first: the same cell can be filed in
-    # this folder and in a descendant, and must not be counted twice.
-    rollup_cell_ids = set(folder_cell_ids)
-    for group in group_refs:
-        rollup_cell_ids.update(group["cell_ids"])
-    for child in children:
-        rollup_cell_ids.update(child["metrics_cell_ids"])
     return {
         "id": folder.id,
         "type": "folder",
@@ -243,11 +256,6 @@ def folder_dict(
             for a in analyses
             if a.folder_id == folder.id and a.project_id is None
         ],
-        "metrics_cell_ids": sorted(rollup_cell_ids),
-        "metrics": aggregate_metrics(
-            [(metrics or {}).get(cid, EMPTY_METRICS) for cid in rollup_cell_ids],
-            average=False,
-        ),
     }
 
 
