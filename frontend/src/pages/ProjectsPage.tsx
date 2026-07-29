@@ -59,6 +59,15 @@ import {
 } from "../api";
 import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
 import { groupTransfersBySource, isNoOpDrop } from "../folderDrop";
+import {
+  loadViewPreferences,
+  saveViewPreferences,
+  sectionCount,
+  sectionStateKey,
+  visibleSections,
+  type ProjectViewPreferences,
+  type SectionKey,
+} from "../folderSections";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import {
   deleteEmptyAnalysesIfRequested,
@@ -145,7 +154,55 @@ function collectFiledReferences(nodes: FolderNode[], cellIds: Set<number>, group
   });
 }
 
-function visibleTreeItems(nodes: FolderNode[], expanded: Set<number>): TreeItem[] {
+function sampleItemsOf(folder: FolderNode): TreeItem[] {
+  return [
+    ...folder.cells.map(
+      (cell): TreeItem => ({
+        key: cellKey(folder.id, cell.id),
+        kind: "cell",
+        id: cell.id,
+        folderId: folder.id,
+        label: cell.name,
+      })
+    ),
+    ...folder.replicate_groups.map(
+      (group): TreeItem => ({
+        key: replicateGroupKey(folder.id, group.id),
+        kind: "replicate_group",
+        id: group.id,
+        folderId: folder.id,
+        label: group.name,
+      })
+    ),
+  ];
+}
+
+function analysisItemsOf(folder: FolderNode): TreeItem[] {
+  return folder.analyses.map(
+    (analysis): TreeItem => ({
+      key: analysisKey(folder.id, analysis.id),
+      kind: "analysis",
+      id: analysis.id,
+      folderId: folder.id,
+      label: analysis.title,
+    })
+  );
+}
+
+/**
+ * The rows on screen, in screen order.
+ *
+ * This is what shift-click range selection walks, so it must stay in exact
+ * lockstep with the JSX in `renderFolderNode`. Both derive their ordering from
+ * `visibleSections`, and section headers are deliberately absent here: they are
+ * not selectable rows.
+ */
+function visibleTreeItems(
+  nodes: FolderNode[],
+  expanded: Set<number>,
+  view: ProjectViewPreferences,
+  collapsedSections: Set<string>
+): TreeItem[] {
   return nodes.flatMap((folder) => {
     const folderItem: TreeItem = {
       key: folderKey(folder.id),
@@ -155,37 +212,19 @@ function visibleTreeItems(nodes: FolderNode[], expanded: Set<number>): TreeItem[
       label: folder.name,
     };
     if (!expanded.has(folder.id)) return [folderItem];
-    return [
-      folderItem,
-      ...visibleTreeItems(folder.children, expanded),
-      ...folder.cells.map(
-        (cell): TreeItem => ({
-          key: cellKey(folder.id, cell.id),
-          kind: "cell",
-          id: cell.id,
-          folderId: folder.id,
-          label: cell.name,
-        })
-      ),
-      ...folder.replicate_groups.map(
-        (group): TreeItem => ({
-          key: replicateGroupKey(folder.id, group.id),
-          kind: "replicate_group",
-          id: group.id,
-          folderId: folder.id,
-          label: group.name,
-        })
-      ),
-      ...folder.analyses.map(
-        (analysis): TreeItem => ({
-          key: analysisKey(folder.id, analysis.id),
-          kind: "analysis",
-          id: analysis.id,
-          folderId: folder.id,
-          label: analysis.title,
-        })
-      ),
-    ];
+
+    const childItems = visibleTreeItems(folder.children, expanded, view, collapsedSections);
+    if (!view.sectioned) {
+      return [folderItem, ...childItems, ...sampleItemsOf(folder), ...analysisItemsOf(folder)];
+    }
+    const sectionItems = visibleSections(folder, view.order).flatMap((section) =>
+      collapsedSections.has(sectionStateKey(folder.id, section))
+        ? []
+        : section === "analyses"
+          ? analysisItemsOf(folder)
+          : sampleItemsOf(folder)
+    );
+    return [folderItem, ...childItems, ...sectionItems];
   });
 }
 
@@ -465,6 +504,25 @@ export function ProjectsPage() {
   const [previewWidth, setPreviewWidth] = useState(390);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [preview, setPreview] = useState<PreviewSelection>(null);
+  const [viewPreferences, setViewPreferences] = useState<ProjectViewPreferences>(() =>
+    loadViewPreferences(window.localStorage)
+  );
+  // Per (folder, section). Transient like folder expansion — deliberately not persisted.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const updateViewPreferences = (patch: Partial<ProjectViewPreferences>) =>
+    setViewPreferences((current) => {
+      const next = { ...current, ...patch };
+      saveViewPreferences(window.localStorage, next);
+      return next;
+    });
+  const toggleSection = (folderId: number, section: SectionKey) =>
+    setCollapsedSections((current) => {
+      const key = sectionStateKey(folderId, section);
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const [dropTargetFolderId, setDropTargetFolderId] = useState<number | null>(null);
   // Items currently being dragged, mirrored out of `dataTransfer` because that is
   // unreadable during `dragover` (see handleDragStart).
@@ -476,7 +534,10 @@ export function ProjectsPage() {
   const selectedFolder = findFolder(folders, selectedFolderId);
   const folderOptions = useMemo(() => flattenFolders(folders), [folders]);
   const folderIds = useMemo(() => collectFolderIds(folders), [folders]);
-  const visibleItems = useMemo(() => visibleTreeItems(folders, expandedFolders), [folders, expandedFolders]);
+  const visibleItems = useMemo(
+    () => visibleTreeItems(folders, expandedFolders, viewPreferences, collapsedSections),
+    [folders, expandedFolders, viewPreferences, collapsedSections]
+  );
   const itemsByKey = useMemo(() => new Map(visibleItems.map((item) => [item.key, item])), [visibleItems]);
 
   // Deep link from the command palette: ?folder=<id> selects the folder and
@@ -990,7 +1051,12 @@ export function ProjectsPage() {
     if (ids.length) return ids;
     return selectedFolderId != null ? [selectedFolderId] : [];
   })();
-  const expandAll = () => setExpandedFolders(new Set(collectFolderIds(folders)));
+  const expandAll = () => {
+    setExpandedFolders(new Set(collectFolderIds(folders)));
+    // "Expand all" must mean all: a section the user collapsed by hand earlier
+    // would otherwise stay hidden inside a folder that now claims to be open.
+    setCollapsedSections(new Set());
+  };
   const collapseAll = () => setExpandedFolders(new Set());
   const branchIds = (targets: number[]) => {
     const ids = new Set<number>();
@@ -1269,6 +1335,54 @@ export function ProjectsPage() {
                     </Menu.Dropdown>
                   </Menu>
                 </Button.Group>
+                {/* One popover rather than a button per preference: this toolbar
+                    already carries two split buttons and an icon action. */}
+                {/* A Menu, like the Expand/Collapse dropdowns beside it, so the
+                    toolbar behaves consistently. `closeOnItemClick` is off because
+                    these are preferences, not commands: flipping one must not
+                    dismiss the panel. */}
+                <Menu withinPortal position="bottom-end" width={250} closeOnItemClick={false}>
+                  <Menu.Target>
+                    <Button size="compact-xs" variant="default">
+                      View
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Stack gap="sm" p="xs">
+                      <Switch
+                        size="sm"
+                        label="Group into sections"
+                        description="Split each folder into Analyses and Samples."
+                        checked={viewPreferences.sectioned}
+                        onChange={(event) =>
+                          updateViewPreferences({ sectioned: event.currentTarget.checked })
+                        }
+                      />
+                      <div>
+                        <Text size="xs" fw={600} mb={4} c={viewPreferences.sectioned ? undefined : "dimmed"}>
+                          Order
+                        </Text>
+                        <SegmentedControl
+                          fullWidth
+                          size="xs"
+                          // Disabled rather than hidden, so the dependency between
+                          // the switch and the order stays visible.
+                          disabled={!viewPreferences.sectioned}
+                          value={viewPreferences.order}
+                          onChange={(value) =>
+                            updateViewPreferences({
+                              order: value as ProjectViewPreferences["order"],
+                            })
+                          }
+                          data={[
+                            { label: "Samples first", value: "samples-first" },
+                            { label: "Analyses first", value: "analyses-first" },
+                          ]}
+                        />
+                      </div>
+                    </Stack>
+                  </Menu.Dropdown>
+                </Menu>
                 <Tooltip label="New root folder">
                   <ActionIcon variant="subtle" onClick={() => openCreateFolder(null)}>
                     <IconFolderPlus size={17} />
@@ -1569,12 +1683,68 @@ export function ProjectsPage() {
 
         {expanded && (
           <>
+            {/* Sub-folders stay unsectioned and first: they are the navigational
+                spine, and burying them under a header would be a regression. */}
             {folder.children.map((child) => renderFolderNode(child, depth + 1))}
-            {folder.cells.map((cell) => renderCellNode(folder, cell, depth + 1))}
-            {folder.replicate_groups.map((group) => renderReplicateGroupNode(folder, group, depth + 1))}
-            {folder.analyses.map((analysis) => renderAnalysisNode(folder, analysis, depth + 1))}
+            {viewPreferences.sectioned
+              ? visibleSections(folder, viewPreferences.order).map((section) =>
+                  renderSection(folder, section, depth + 1)
+                )
+              : renderSectionRows(folder, "samples", depth + 1).concat(
+                  renderSectionRows(folder, "analyses", depth + 1)
+                )}
           </>
         )}
+      </div>
+    );
+  }
+
+  /** The rows of one section, in the order `visibleTreeItems` expects them. */
+  function renderSectionRows(folder: FolderNode, section: SectionKey, depth: number): ReactNode[] {
+    if (section === "analyses") {
+      return folder.analyses.map((analysis) => renderAnalysisNode(folder, analysis, depth));
+    }
+    return [
+      ...folder.cells.map((cell) => renderCellNode(folder, cell, depth)),
+      ...folder.replicate_groups.map((group) =>
+        renderReplicateGroupNode(folder, group, depth)
+      ),
+    ];
+  }
+
+  function renderSection(folder: FolderNode, section: SectionKey, depth: number) {
+    const key = sectionStateKey(folder.id, section);
+    const collapsed = collapsedSections.has(key);
+    const label = section === "analyses" ? "Analyses" : "Samples";
+    return (
+      <div key={key}>
+        <Group
+          gap={4}
+          wrap="nowrap"
+          px={6}
+          py={2}
+          // Not draggable and not selectable: a section header is a grouping
+          // affordance, not a row. Drops still land on the enclosing folder,
+          // whose drop zone wraps this whole subtree.
+          onClick={() => toggleSection(folder.id, section)}
+          style={{ marginLeft: depth * 18, cursor: "pointer", userSelect: "none" }}
+        >
+          <IconChevronRight
+            size={12}
+            style={{
+              transform: collapsed ? undefined : "rotate(90deg)",
+              transition: "transform 120ms ease",
+              flexShrink: 0,
+            }}
+          />
+          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+            {label}
+          </Text>
+          <Text size="xs" c="dimmed">
+            ({sectionCount(folder, section)})
+          </Text>
+        </Group>
+        {collapsed ? null : renderSectionRows(folder, section, depth + 1)}
       </div>
     );
   }
