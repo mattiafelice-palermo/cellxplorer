@@ -15,6 +15,7 @@ pub const ROLLBACK_DB_NAME: &str = "cellxplorer.db.bootstrap-rollback";
 pub const IMPORTS_ROLLBACK_NAME: &str = "imports.bootstrap-rollback";
 pub const LOCK_NAME: &str = ".stage-copy.lock";
 pub const LIVE_DB_NAME: &str = "cellxplorer.db";
+pub const SCIENTIFIC_PREPARATION_KEY: &str = "beta.scientific_preparation";
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const MARKER_SCHEMA_VERSION: u32 = 1;
 
@@ -104,6 +105,41 @@ pub fn marker_acknowledges_install(
             == Some(install_instance_id);
     }
     marker.get("appVersion").and_then(|value| value.as_str()) == Some(app_version)
+}
+
+pub fn scientific_preparation_pending(beta_root: &Path) -> bool {
+    let db_path = beta_root.join(LIVE_DB_NAME);
+    if !db_path.is_file() {
+        return false;
+    }
+    let Ok(connection) =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return false;
+    };
+    let Ok(raw) = connection.query_row(
+        "SELECT value FROM app_settings WHERE key = ?1",
+        [SCIENTIFIC_PREPARATION_KEY],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return false;
+    };
+    let Ok(state) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    matches!(
+        state.get("status").and_then(|value| value.as_str()),
+        Some("pending" | "running")
+    )
+}
+
+pub fn bootstrap_gate_required(
+    beta_root: &Path,
+    install_instance_id: Option<&str>,
+    app_version: &str,
+) -> bool {
+    !marker_acknowledges_install(beta_root, install_instance_id, app_version)
+        || scientific_preparation_pending(beta_root)
 }
 
 pub fn validate_stage_token(token: &str) -> Result<(), TokenValidationError> {
@@ -751,6 +787,45 @@ mod tests {
         ));
         assert!(marker_acknowledges_install(&beta_root, None, "1.2.3"));
         assert!(!marker_acknowledges_install(&beta_root, None, "1.2.4"));
+    }
+
+    #[test]
+    fn setup_gate_remains_closed_while_copied_library_preparation_is_pending() {
+        let (_dir, beta_root) = temp_root();
+        fs::write(
+            beta_root.join(MARKER_NAME),
+            r#"{"schemaVersion":1,"decision":"copied","appVersion":"1.2.3","installInstanceId":"install-a"}"#,
+        )
+        .unwrap();
+        let connection = rusqlite::Connection::open(beta_root.join(LIVE_DB_NAME)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO app_settings(key, value)
+                 VALUES ('beta.scientific_preparation', '{\"schemaVersion\":1,\"status\":\"pending\"}');",
+            )
+            .unwrap();
+
+        assert!(bootstrap_gate_required(
+            &beta_root,
+            Some("install-a"),
+            "1.2.3",
+        ));
+
+        connection
+            .execute(
+                "UPDATE app_settings SET value = ?1 WHERE key = ?2",
+                [
+                    r#"{"schemaVersion":1,"status":"complete"}"#,
+                    SCIENTIFIC_PREPARATION_KEY,
+                ],
+            )
+            .unwrap();
+        assert!(!bootstrap_gate_required(
+            &beta_root,
+            Some("install-a"),
+            "1.2.3",
+        ));
     }
 
     #[test]

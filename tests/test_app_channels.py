@@ -198,12 +198,14 @@ class AppChannelConfigurationTests(unittest.TestCase):
 
     def test_beta_first_render_gate_uses_the_installation_marker(self):
         main = MAIN_RS.read_text(encoding="utf-8")
+        rust = BETA_BOOTSTRAP_RS.read_text(encoding="utf-8")
         frontend_main = (ROOT / "frontend" / "src" / "main.tsx").read_text(
             encoding="utf-8"
         )
         coordinator = BETA_BOOTSTRAP_COORDINATOR.read_text(encoding="utf-8")
         self.assertIn("beta_bootstrap_gate_required", main)
-        self.assertIn("marker_acknowledges_install", main)
+        self.assertIn("bootstrap_gate_required", main)
+        self.assertIn("scientific_preparation_pending", rust)
         self.assertIn(
             'invoke<boolean>("beta_bootstrap_gate_required")',
             frontend_main,
@@ -212,6 +214,7 @@ class AppChannelConfigurationTests(unittest.TestCase):
             "gateRequiredOnLaunch || devMock === \"loading\"",
             coordinator,
         )
+        self.assertIn("Continue in background", coordinator)
 
     def test_beta_chrome_uses_channel_colors_without_redefining_semantic_teal(self):
         main = (ROOT / "frontend" / "src" / "main.tsx").read_text(encoding="utf-8")

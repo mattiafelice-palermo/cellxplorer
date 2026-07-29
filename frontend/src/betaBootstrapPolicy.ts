@@ -141,6 +141,34 @@ export function betaBootstrapGateOpen(
   );
 }
 
+export function betaBootstrapLoadingStatus(
+  backendReady: boolean,
+  elapsedSeconds: number,
+): { title: string; detail: string } {
+  if (!backendReady) {
+    return {
+      title: "Starting the local database service…",
+      detail: "Setup will continue automatically as soon as the Beta library is available.",
+    };
+  }
+  if (elapsedSeconds < 3) {
+    return {
+      title: "Reading Beta setup state…",
+      detail: "Checking the installation decision and the current Beta library.",
+    };
+  }
+  if (elapsedSeconds < 8) {
+    return {
+      title: "Checking local library compatibility…",
+      detail: "CellXplorer is validating whether the Stable library can be copied safely.",
+    };
+  }
+  return {
+    title: "Still validating the local libraries…",
+    detail: "A large database can make this one-time safety check take a little longer.",
+  };
+}
+
 export function copyStableLibraryDisabled(
   status: BetaBootstrapStatus | undefined,
   busy: boolean,
