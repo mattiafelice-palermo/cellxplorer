@@ -4,6 +4,23 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta.10 - 2026-07-29
+
+### New features
+
+- Speed up per-cycle import compute (~2.6× on real libraries) with faster CV-cycle aggregation and status matching.
+- Speed up Beta scientific preparation after copying a Stable library with parallel foreground workers until you continue in background.
+- Create a new analysis from selected samples in Projects, with an empty-analysis option in the split menu.
+- Extend Projects and Cell Database selection with Shift+Up/Down and folder-scoped range rules.
+- Place multiple selected cells as a replicate group from the Cell Database, with folder review before commit.
+- Render updater release-note headings and bold text in the update modal.
+- Ship Beta builds on Python 3.14 so the packaged backend uses the faster zlib-ng runtime.
+
+### Bug fixes
+
+- Fix Cell Database row selection, name preview clicks, and dark-mode selected-row contrast.
+- Fix destructive confirmation so impact preflight no longer flashes a second loading modal.
+
 ## 0.17.0-beta.9 - 2026-07-29
 
 ### Bug fixes
