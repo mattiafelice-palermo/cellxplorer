@@ -429,7 +429,12 @@ class ImportFlowTests(unittest.TestCase):
             original_start = files.start_import_cache_jobs
             original_hash = parsing.compute_hash
             original_meta = parsing.read_header_metadata
+            original_inspect = files._inspect_cell_draft_chain
             files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
+            files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
+                "can_submit": True,
+                "findings": [],
+            }
             parsing.compute_hash = lambda _path: "import-test-hash"
             parsing.read_header_metadata = lambda _path: {"builder": "test"}
             try:
@@ -457,6 +462,7 @@ class ImportFlowTests(unittest.TestCase):
                 )
             finally:
                 files.start_import_cache_jobs = original_start
+                files._inspect_cell_draft_chain = original_inspect
                 parsing.compute_hash = original_hash
                 parsing.read_header_metadata = original_meta
 

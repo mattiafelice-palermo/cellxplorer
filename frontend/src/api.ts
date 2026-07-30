@@ -1731,3 +1731,125 @@ export interface ContinuationInspectResult {
 export function inspectContinuationSources(body: ContinuationInspectRequest) {
   return post<ContinuationInspectResult>("/api/imports/continuations/inspect", body);
 }
+
+export interface ImportSourceDraft {
+  staged_name: string;
+  source_path?: string | null;
+  filename: string;
+}
+
+export interface ImportCellDraft {
+  staged_name?: string | null;
+  source_path?: string | null;
+  filename?: string | null;
+  sources?: ImportSourceDraft[];
+  cell_name: string;
+  description?: string | null;
+  test_name?: string | null;
+  metadata?: Record<string, string>;
+  active_mass_mg_override?: number | null;
+  nominal_capacity_mah_override?: number | null;
+  electrode_area_cm2_override?: number | null;
+  active_material_preset_id?: string | null;
+  active_material_name?: string | null;
+  active_material_specific_capacity_mah_g?: number | null;
+  electrode_area_preset_id?: string | null;
+  electrode_area_preset_name?: string | null;
+  acknowledged_finding_ids?: string[];
+}
+
+export interface ImportCellsRequest {
+  cells: ImportCellDraft[];
+  folder_id?: number | null;
+  folder_ids?: number[];
+  replicate_group_name?: string | null;
+  replicate_group_description?: string | null;
+}
+
+export interface TestSourceSummary {
+  file_id: number;
+  position: number;
+  filename: string;
+  hash_prefix: string | null;
+}
+
+export interface SourceLifecycleMutationResult {
+  cell: { id: number; name: string };
+  test: { id: number; name: string; sources: TestSourceSummary[] };
+  tracked_source_id: number | null;
+  invalidated_analysis_ids: number[];
+  queued_warmup_plots: number;
+  cache_jobs: Record<string, unknown>;
+  detached_source_id?: number;
+}
+
+export interface AttachContinuationsRequest {
+  sources: ContinuationInspectSourceRequest[];
+  acknowledged_finding_ids?: string[];
+}
+
+export interface ReorderSourcesRequest {
+  file_ids: number[];
+  acknowledged_finding_ids?: string[];
+}
+
+export interface DetachSourceRequest {
+  confirm?: boolean;
+  confirmation_token?: string | null;
+}
+
+export interface SourceChangeImpactAnalysis {
+  id: number;
+  title: string;
+  plot_count: number;
+  plots: Array<{ id: string; name: string; tab: string }>;
+}
+
+export interface SourceChangeImpactPreview {
+  cell_id: number;
+  cell_name: string;
+  test_id: number;
+  test_name: string;
+  operation: "attach" | "reorder" | "detach";
+  current_file_ids: number[];
+  proposed_file_ids: number[];
+  staged_filenames: string[];
+  old_tracked_source_id: number | null;
+  new_tracked_source_id: number | null;
+  new_tracked_staged_name: string | null;
+  new_tracked_filename: string | null;
+  tracked_tail_changes: boolean;
+  global_cycle_numbering_changes: boolean;
+  destructive: boolean;
+  reversible_by_reordering: boolean;
+  analysis_count: number;
+  saved_plot_count: number;
+  analyses: SourceChangeImpactAnalysis[];
+  confirmation_token: string;
+}
+
+export interface SourceChangeImpactRequest {
+  operation: "attach" | "reorder" | "detach";
+  sources?: ContinuationInspectSourceRequest[];
+  file_ids?: number[];
+  detach_file_id?: number | null;
+}
+
+export function previewTestSourceChange(testId: number, body: SourceChangeImpactRequest) {
+  return post<SourceChangeImpactPreview>(`/api/tests/${testId}/source-change/impact`, body);
+}
+
+export function attachContinuations(testId: number, body: AttachContinuationsRequest) {
+  return post<SourceLifecycleMutationResult>(`/api/tests/${testId}/continuations`, body);
+}
+
+export function reorderTestSources(testId: number, body: ReorderSourcesRequest) {
+  return post<SourceLifecycleMutationResult>(`/api/tests/${testId}/reorder`, body);
+}
+
+export function detachTestSource(testId: number, fileId: number, body?: DetachSourceRequest) {
+  return post<SourceLifecycleMutationResult>(
+    `/api/tests/${testId}/detach/${fileId}`,
+    body ?? {},
+  );
+}

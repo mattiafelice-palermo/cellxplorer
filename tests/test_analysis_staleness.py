@@ -108,6 +108,19 @@ class SourceStalenessTests(unittest.TestCase):
             engine.sources_changed_since_compute(self.provenance(["a" * 64, "b" * 64]), {})
         )
 
+    def test_tracked_source_is_final_file_in_final_test(self):
+        from app.services import analysis_usage
+
+        second_test = Test(cell_id=self.cell.id, name="tail-test")
+        self.db.add(second_test)
+        self.db.flush()
+        tail = SourceFile(hash="d" * 64, path="d", filename="d.ndax", size=1, ext="ndax")
+        self.db.add(tail)
+        self.db.flush()
+        self.db.add(TestFile(test_id=second_test.id, file_id=tail.id, position=0))
+        self.db.commit()
+        self.assertEqual(analysis_usage.tracked_source_file_id(self.cell), tail.id)
+
 
 if __name__ == "__main__":
     unittest.main()

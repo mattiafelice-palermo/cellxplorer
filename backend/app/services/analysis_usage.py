@@ -8,13 +8,16 @@ rows the user already acknowledged in the impact modal.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from sqlalchemy.orm import Session
 
-from ..models import Analysis, Cell, ReplicateGroup, ReplicateGroupCell
+from ..models import Analysis, Cell, ReplicateGroup, ReplicateGroupCell, Test, TestFile
 from . import analysis_cache, analysis_engine
+from . import cache_maintenance
 
 
 def _as_id_set(values: Iterable[int] | None) -> set[int]:
@@ -386,3 +389,148 @@ def purge_empty_candidates(
         for analysis_id in deleted:
             analysis_cache.delete_analysis_artifacts(analysis_id)
     return {"deleted_ids": deleted}
+
+
+SourceChangeOperation = Literal["attach", "reorder", "detach"]
+
+
+def ordered_test_file_ids(test: Test) -> list[int]:
+    return [
+        int(link.file_id)
+        for link in sorted(test.file_links, key=lambda item: item.position)
+    ]
+
+
+def tracked_source_file_id(cell: Cell) -> int | None:
+    """Final file in the final non-empty test for a cell."""
+    tests = sorted(cell.tests, key=lambda item: item.id)
+    for test in reversed(tests):
+        links = sorted(test.file_links, key=lambda item: item.position)
+        if links:
+            return int(links[-1].file_id)
+    return None
+
+
+def _analysis_plot_summaries(db: Session, analysis_ids: list[int]) -> list[dict[str, Any]]:
+    if not analysis_ids:
+        return []
+    rows = db.query(Analysis).filter(Analysis.id.in_(analysis_ids)).all()
+    rows.sort(key=lambda row: (row.title.casefold(), row.id))
+    summaries: list[dict[str, Any]] = []
+    for analysis in rows:
+        plots = analysis.spec.get("saved_plots") if isinstance(analysis.spec, dict) else []
+        plot_rows = []
+        for plot in plots or []:
+            if not isinstance(plot, dict):
+                continue
+            plot_id = plot.get("id")
+            if not plot_id:
+                continue
+            plot_rows.append(
+                {
+                    "id": str(plot_id),
+                    "name": str(plot.get("name") or "Saved plot"),
+                    "tab": str(plot.get("tab") or ""),
+                }
+            )
+        summaries.append(
+            {
+                "id": analysis.id,
+                "title": analysis.title,
+                "plot_count": len(plot_rows),
+                "plots": plot_rows,
+            }
+        )
+    return summaries
+
+
+def source_change_impact_token(
+    *,
+    test_id: int,
+    operation: SourceChangeOperation,
+    proposed_file_ids: list[int],
+    detach_file_id: int | None = None,
+    staged_names: list[str] | None = None,
+) -> str:
+    payload = json.dumps(
+        {
+            "test_id": test_id,
+            "operation": operation,
+            "proposed_file_ids": proposed_file_ids,
+            "detach_file_id": detach_file_id,
+            "staged_names": staged_names or [],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def preview_source_change_impact(
+    db: Session,
+    *,
+    test: Test,
+    operation: SourceChangeOperation,
+    proposed_file_ids: list[int],
+    detach_file_id: int | None = None,
+    staged_filenames: list[str] | None = None,
+    staged_names: list[str] | None = None,
+) -> dict[str, Any]:
+    cell = test.cell
+    current_file_ids = ordered_test_file_ids(test)
+    old_tracked = tracked_source_file_id(cell)
+    if operation == "attach":
+        global_cycles_change = bool(staged_filenames)
+        destructive = False
+        reversible = True
+        new_tracked = None
+        new_tracked_staged_name = (staged_names or [])[-1] if staged_names else None
+        new_tracked_filename = (staged_filenames or [])[-1] if staged_filenames else None
+        tracked_tail_changes = bool(staged_filenames or staged_names)
+    elif operation == "reorder":
+        global_cycles_change = proposed_file_ids != current_file_ids
+        destructive = False
+        reversible = True
+        new_tracked = proposed_file_ids[-1] if proposed_file_ids else old_tracked
+        new_tracked_staged_name = None
+        new_tracked_filename = None
+        tracked_tail_changes = old_tracked != new_tracked
+    else:
+        global_cycles_change = True
+        destructive = True
+        reversible = False
+        new_tracked = proposed_file_ids[-1] if proposed_file_ids else None
+        new_tracked_staged_name = None
+        new_tracked_filename = None
+        tracked_tail_changes = old_tracked != new_tracked
+
+    analysis_ids = cache_maintenance.dependent_analysis_ids(db, [cell.id])
+    analyses = _analysis_plot_summaries(db, analysis_ids)
+    plot_count = sum(item["plot_count"] for item in analyses)
+    return {
+        "cell_id": cell.id,
+        "cell_name": cell.name,
+        "test_id": test.id,
+        "test_name": test.name,
+        "operation": operation,
+        "current_file_ids": current_file_ids,
+        "proposed_file_ids": proposed_file_ids,
+        "staged_filenames": staged_filenames or [],
+        "old_tracked_source_id": old_tracked,
+        "new_tracked_source_id": new_tracked,
+        "new_tracked_staged_name": new_tracked_staged_name,
+        "new_tracked_filename": new_tracked_filename,
+        "tracked_tail_changes": tracked_tail_changes,
+        "global_cycle_numbering_changes": global_cycles_change,
+        "destructive": destructive,
+        "reversible_by_reordering": reversible,
+        "analysis_count": len(analyses),
+        "saved_plot_count": plot_count,
+        "analyses": analyses,
+        "confirmation_token": source_change_impact_token(
+            test_id=test.id,
+            operation=operation,
+            proposed_file_ids=proposed_file_ids,
+            detach_file_id=detach_file_id,
+            staged_names=staged_names,
+        ),
+    }

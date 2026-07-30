@@ -81,6 +81,18 @@ def _load_continuations():
     return module
 
 
+def _load_analysis_usage():
+    from ..services import analysis_usage as module
+
+    return module
+
+
+def _load_cache_maintenance():
+    from ..services import cache_maintenance as module
+
+    return module
+
+
 np = LazyModule(_load_numpy)
 pd = LazyModule(_load_pandas)
 cache = LazyModule(_load_cache)
@@ -88,6 +100,8 @@ calc = LazyModule(_load_calc)
 parsing = LazyModule(_load_parsing)
 scanner = LazyModule(_load_scanner)
 continuations = LazyModule(_load_continuations)
+analysis_usage = LazyModule(_load_analysis_usage)
+cache_maintenance = LazyModule(_load_cache_maintenance)
 
 router = APIRouter(prefix="/api", tags=["files"])
 
@@ -548,10 +562,17 @@ class ScanRequest(BaseModel):
     parse_now: bool = False
 
 
-class ImportCellDraft(BaseModel):
+class ImportSourceDraft(BaseModel):
     staged_name: str
     source_path: str | None = None
     filename: str
+
+
+class ImportCellDraft(BaseModel):
+    staged_name: str | None = None
+    source_path: str | None = None
+    filename: str | None = None
+    sources: list[ImportSourceDraft] = []
     cell_name: str
     description: str | None = None
     test_name: str | None = None
@@ -564,6 +585,7 @@ class ImportCellDraft(BaseModel):
     active_material_specific_capacity_mah_g: float | None = None
     electrode_area_preset_id: str | None = None
     electrode_area_preset_name: str | None = None
+    acknowledged_finding_ids: list[str] = []
 
 
 class ImportReplicateGroupDraft(BaseModel):
@@ -581,6 +603,27 @@ class ImportCellsRequest(BaseModel):
     replicate_groups: list[ImportReplicateGroupDraft] = []
 
 
+def normalize_import_cell_sources(draft: ImportCellDraft) -> list[ImportSourceDraft]:
+    if draft.sources:
+        return draft.sources
+    if draft.staged_name and draft.filename:
+        return [
+            ImportSourceDraft(
+                staged_name=draft.staged_name,
+                source_path=draft.source_path,
+                filename=draft.filename,
+            )
+        ]
+    raise HTTPException(400, "Each cell draft needs at least one source")
+
+
+def import_cell_replicate_key(draft: ImportCellDraft) -> str:
+    if draft.staged_name:
+        return draft.staged_name
+    sources = normalize_import_cell_sources(draft)
+    return sources[0].staged_name
+
+
 class ImportPlanError(ValueError):
     pass
 
@@ -589,7 +632,7 @@ def import_replicate_plan(
     cells: list[ImportCellDraft],
     groups: list[ImportReplicateGroupDraft],
 ) -> dict:
-    staged_names = [cell.staged_name for cell in cells]
+    staged_names = [import_cell_replicate_key(cell) for cell in cells]
     known = set(staged_names)
     assigned: set[str] = set()
     planned_groups = []
@@ -1131,6 +1174,179 @@ def _ordered_continuation_sources(
     return existing_sources + ordered_staged, staged_keys
 
 
+def _raise_continuation_validation(exc: continuations.ContinuationValidationError) -> None:
+    raise HTTPException(exc.status_code, exc.payload) from exc
+
+
+def _inspect_cell_draft_chain(
+    draft: ImportCellDraft,
+    db: Session,
+    *,
+    existing_test_id: int | None = None,
+) -> dict:
+    sources = normalize_import_cell_sources(draft)
+    inspect_req = ContinuationInspectRequest(
+        sources=[
+            ContinuationInspectSourceRequest(
+                staged_name=source.staged_name,
+                source_path=source.source_path,
+            )
+            for source in sources
+        ],
+        existing_test_id=existing_test_id,
+        proposed_order=None,
+    )
+    ordered_sources, staged_keys = _ordered_continuation_sources(inspect_req, db)
+    return continuations.analyze_continuation_chain(
+        ordered_sources,
+        staged_keys=staged_keys,
+    )
+
+
+def _test_sources_payload(test: Test) -> list[dict]:
+    return [
+        {
+            "file_id": link.file_id,
+            "position": link.position,
+            "filename": link.file.filename,
+            "hash_prefix": continuations.hash_prefix(link.file.hash),
+        }
+        for link in sorted(test.file_links, key=lambda item: item.position)
+    ]
+
+
+def _lifecycle_mutation_response(
+    test: Test,
+    cell: Cell,
+    *,
+    invalidated: dict,
+    cache_jobs: dict | None = None,
+) -> dict:
+    return {
+        "cell": {"id": cell.id, "name": cell.name},
+        "test": {
+            "id": test.id,
+            "name": test.name,
+            "sources": _test_sources_payload(test),
+        },
+        "tracked_source_id": analysis_usage.tracked_source_file_id(cell),
+        "invalidated_analysis_ids": invalidated.get("analysis_ids", []),
+        "queued_warmup_plots": invalidated.get("queued_plots", 0),
+        "cache_jobs": cache_jobs or {},
+    }
+
+
+def _register_or_refresh_source_file(
+    db: Session,
+    *,
+    source_path: Path,
+    filename: str,
+) -> SourceFile:
+    if not source_path.exists():
+        raise HTTPException(404, f"Source file is missing: {filename}")
+
+    file_hash = parsing.compute_hash(source_path)
+    existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
+    if existing is not None:
+        remove_archived_cell_blocking_source(db, existing)
+        db.flush()
+        existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
+    if existing is not None and existing.test_link is not None:
+        raise HTTPException(409, f"{filename} is already registered")
+
+    meta = parsing.read_header_metadata(source_path)
+    source_stat = source_path.stat()
+    if existing is None:
+        sf = SourceFile(
+            hash=file_hash,
+            path=str(source_path),
+            filename=filename,
+            size=source_stat.st_size,
+            ext=Path(filename).suffix.lower().lstrip("."),
+            observed_size=source_stat.st_size,
+            observed_mtime_ns=source_stat.st_mtime_ns,
+            last_source_check_at=datetime.now(timezone.utc),
+            nda_version=meta.get("nda_version"),
+            device_info=meta.get("device_info"),
+            channel=meta.get("channel"),
+            barcode=meta.get("barcode"),
+            remarks=meta.get("remarks"),
+            start_time=meta.get("start_time"),
+            active_mass_mg=meta.get("active_mass_mg"),
+            nominal_capacity_mah=meta.get("nominal_capacity_mah"),
+            header_meta=meta.get("raw") or None,
+            location_status="online",
+            parse_status="unparsed",
+        )
+        db.add(sf)
+        db.flush()
+        return sf
+
+    sf = existing
+    sf.path = str(source_path)
+    sf.filename = filename
+    sf.size = source_stat.st_size
+    sf.ext = Path(filename).suffix.lower().lstrip(".")
+    sf.observed_size = source_stat.st_size
+    sf.observed_mtime_ns = source_stat.st_mtime_ns
+    sf.last_source_check_at = datetime.now(timezone.utc)
+    sf.nda_version = meta.get("nda_version")
+    sf.device_info = meta.get("device_info")
+    sf.channel = meta.get("channel")
+    sf.barcode = meta.get("barcode")
+    sf.remarks = meta.get("remarks")
+    sf.start_time = meta.get("start_time")
+    sf.active_mass_mg = meta.get("active_mass_mg")
+    sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
+    sf.header_meta = meta.get("raw") or None
+    sf.location_status = "online"
+    return sf
+
+
+def _record_source_lifecycle_activity(
+    db: Session,
+    *,
+    action: str,
+    message: str,
+    cell: Cell,
+    test: Test,
+    details: dict,
+) -> None:
+    record_activity(
+        db,
+        category="source",
+        action=action,
+        message=message,
+        entity_type="cell",
+        entity_id=cell.id,
+        details={
+            **details,
+            "cell_id": cell.id,
+            "test_id": test.id,
+            "source_order": _test_sources_payload(test),
+        },
+    )
+
+
+def _post_commit_source_invalidation(
+    db: Session,
+    cell: Cell,
+    *,
+    reason: str,
+    source_id: int | None = None,
+    queue_warmup: bool = True,
+) -> dict:
+    invalidated = cache_maintenance.invalidate_cell_dependents(
+        db,
+        cell.id,
+        source_id=source_id,
+        reason=reason,
+        queue_warmup=queue_warmup,
+    )
+    db.commit()
+    return invalidated
+
+
 @router.post("/imports/continuations/inspect")
 def inspect_continuation_sources(req: ContinuationInspectRequest, db: Session = Depends(get_db)):
     if not req.sources and req.existing_test_id is None:
@@ -1266,7 +1482,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             ImportReplicateGroupDraft(
                 name=(req.replicate_group_name or "").strip(),
                 description=req.replicate_group_description,
-                staged_names=[cell.staged_name for cell in req.cells],
+                staged_names=[import_cell_replicate_key(cell) for cell in req.cells],
             )
         )
     try:
@@ -1284,113 +1500,96 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
     cell_ids_by_staged_name: dict[str, int] = {}
     source_file_ids_by_staged_name: dict[str, int] = {}
     cache_jobs: list[dict] = []
+
     for draft in req.cells:
         name = draft.cell_name.strip()
         if not name:
-            raise HTTPException(400, "Every imported file needs a cell name")
+            raise HTTPException(400, "Every imported cell needs a name")
         if db.query(Cell).filter(Cell.name == name).first() is not None:
             raise HTTPException(409, f"Cell already exists: {name}")
-
+        normalize_import_cell_sources(draft)
+        analysis = _inspect_cell_draft_chain(draft, db)
         try:
-            source_path = resolve_import_source_path(draft.staged_name, draft.source_path)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        if not source_path.exists():
-            raise HTTPException(404, f"Source file is missing: {draft.filename}")
-
-        file_hash = parsing.compute_hash(source_path)
-        existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
-        if existing is not None:
-            remove_archived_cell_blocking_source(db, existing)
-            db.flush()
-            existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
-        if existing is not None and existing.test_link is not None:
-            raise HTTPException(409, f"{draft.filename} is already registered")
-
-        meta = parsing.read_header_metadata(source_path)
-        source_stat = source_path.stat()
-        if existing is None:
-            sf = SourceFile(
-                hash=file_hash,
-                path=str(source_path),
-                filename=draft.filename,
-                size=source_stat.st_size,
-                ext=Path(draft.filename).suffix.lower().lstrip("."),
-                observed_size=source_stat.st_size,
-                observed_mtime_ns=source_stat.st_mtime_ns,
-                last_source_check_at=datetime.now(timezone.utc),
-                nda_version=meta.get("nda_version"),
-                device_info=meta.get("device_info"),
-                channel=meta.get("channel"),
-                barcode=meta.get("barcode"),
-                remarks=meta.get("remarks"),
-                start_time=meta.get("start_time"),
-                active_mass_mg=meta.get("active_mass_mg"),
-                nominal_capacity_mah=meta.get("nominal_capacity_mah"),
-                header_meta=meta.get("raw") or None,
-                location_status="online",
-                parse_status="unparsed",
+            continuations.ensure_submittable_chain(
+                analysis,
+                draft.acknowledged_finding_ids,
             )
-            db.add(sf)
-            db.flush()
-        else:
-            sf = existing
-            sf.path = str(source_path)
-            sf.filename = draft.filename
-            sf.size = source_stat.st_size
-            sf.ext = Path(draft.filename).suffix.lower().lstrip(".")
-            sf.observed_size = source_stat.st_size
-            sf.observed_mtime_ns = source_stat.st_mtime_ns
-            sf.last_source_check_at = datetime.now(timezone.utc)
-            sf.nda_version = meta.get("nda_version")
-            sf.device_info = meta.get("device_info")
-            sf.channel = meta.get("channel")
-            sf.barcode = meta.get("barcode")
-            sf.remarks = meta.get("remarks")
-            sf.start_time = meta.get("start_time")
-            sf.active_mass_mg = meta.get("active_mass_mg")
-            sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
-            sf.header_meta = meta.get("raw") or None
-            sf.location_status = "online"
+        except continuations.ContinuationValidationError as exc:
+            _raise_continuation_validation(exc)
 
-        cell = Cell(name=name, description=(draft.description or "").strip() or None)
+    for draft in req.cells:
+        sources = normalize_import_cell_sources(draft)
+        replicate_key = import_cell_replicate_key(draft)
+
+        cell = Cell(name=draft.cell_name.strip(), description=(draft.description or "").strip() or None)
         db.add(cell)
         db.flush()
-
-        imported_metadata = full_cell_metadata_from_header(meta, draft.metadata)
-        override_values = {
-            "override.active_mass_mg": draft.active_mass_mg_override,
-            "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
-            "override.electrode_area_cm2": draft.electrode_area_cm2_override,
-            "override.active_material_specific_capacity_mah_g":
-                draft.active_material_specific_capacity_mah_g,
-        }
-        for key, value in override_values.items():
-            if value is not None:
-                if value <= 0:
-                    raise HTTPException(422, f"{key} must be positive")
-                imported_metadata[key] = str(float(value))
-        text_overrides = {
-            "override.active_material_preset_id": draft.active_material_preset_id,
-            "override.active_material_name": draft.active_material_name,
-            "override.electrode_area_preset_id": draft.electrode_area_preset_id,
-            "override.electrode_area_preset_name": draft.electrode_area_preset_name,
-        }
-        for key, value in text_overrides.items():
-            text = (value or "").strip()
-            if text:
-                imported_metadata[key] = text
-        for key, value in imported_metadata.items():
-            k = key.strip()
-            v = str(value).strip()
-            if k and v:
-                db.add(CellMetadata(cell_id=cell.id, key=k, value=v))
 
         test = Test(cell_id=cell.id, name=(draft.test_name or "").strip() or "Imported file")
         db.add(test)
         db.flush()
-        db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
-        if draft.staged_name not in grouped_staged_names:
+
+        created_source_ids: list[int] = []
+        for position, source_draft in enumerate(sources):
+            try:
+                source_path = resolve_import_source_path(
+                    source_draft.staged_name,
+                    source_draft.source_path,
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+
+            sf = _register_or_refresh_source_file(
+                db,
+                source_path=source_path,
+                filename=source_draft.filename,
+            )
+            if position == 0:
+                header_meta = parsing.read_header_metadata(source_path)
+                imported_metadata = full_cell_metadata_from_header(header_meta, draft.metadata)
+                override_values = {
+                    "override.active_mass_mg": draft.active_mass_mg_override,
+                    "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
+                    "override.electrode_area_cm2": draft.electrode_area_cm2_override,
+                    "override.active_material_specific_capacity_mah_g":
+                        draft.active_material_specific_capacity_mah_g,
+                }
+                for key, value in override_values.items():
+                    if value is not None:
+                        if value <= 0:
+                            raise HTTPException(422, f"{key} must be positive")
+                        imported_metadata[key] = str(float(value))
+                text_overrides = {
+                    "override.active_material_preset_id": draft.active_material_preset_id,
+                    "override.active_material_name": draft.active_material_name,
+                    "override.electrode_area_preset_id": draft.electrode_area_preset_id,
+                    "override.electrode_area_preset_name": draft.electrode_area_preset_name,
+                }
+                for key, value in text_overrides.items():
+                    text = (value or "").strip()
+                    if text:
+                        imported_metadata[key] = text
+                for key, value in imported_metadata.items():
+                    k = key.strip()
+                    v = str(value).strip()
+                    if k and v:
+                        db.add(CellMetadata(cell_id=cell.id, key=k, value=v))
+
+            db.add(TestFile(test_id=test.id, file_id=sf.id, position=position))
+            sf.parse_status = "parsing"
+            sf.capacity_summary_status = "pending"
+            db.flush()
+            source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
+            cache_jobs.append(
+                {
+                    "staged_name": source_draft.staged_name,
+                    "hash": sf.hash,
+                    "path": str(source_path),
+                }
+            )
+            created_source_ids.append(sf.id)
+
+        if replicate_key not in grouped_staged_names:
             for folder_id in target_folder_ids:
                 exists = (
                     db.query(FolderCell)
@@ -1409,29 +1608,20 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
                     )
                     db.add(FolderCell(folder_id=folder_id, cell_id=cell.id, position=position + 1))
 
-        sf.parse_status = "parsing"
-        sf.capacity_summary_status = "pending"
-        db.flush()
-        source_file_ids_by_staged_name[draft.staged_name] = sf.id
-        cache_jobs.append(
-            {
-                "staged_name": draft.staged_name,
-                "hash": sf.hash,
-                "path": str(source_path),
-            }
-        )
         created.append(
             {
                 "cell_id": cell.id,
                 "cell_name": cell.name,
                 "test_id": test.id,
                 "test_name": test.name,
-                "file_id": sf.id,
-                "filename": sf.filename,
+                "source_file_ids": created_source_ids,
+                "file_id": created_source_ids[0] if created_source_ids else None,
+                "filename": sources[0].filename,
+                "sources": _test_sources_payload(test),
             }
         )
         created_cell_ids.append(cell.id)
-        cell_ids_by_staged_name[draft.staged_name] = cell.id
+        cell_ids_by_staged_name[replicate_key] = cell.id
 
     replicate_groups = []
     for planned_group in replicate_plan["groups"]:
@@ -1650,30 +1840,341 @@ def register_files(req: RegisterRequest, db: Session = Depends(get_db)):
     return {"cell_id": cell.id, "cell_name": cell.name, "test_id": test.id, "test_name": test.name}
 
 
+class AttachContinuationsRequest(BaseModel):
+    sources: list[ContinuationInspectSourceRequest]
+    acknowledged_finding_ids: list[str] = []
+
+
+class SourceChangeImpactRequest(BaseModel):
+    operation: str
+    sources: list[ContinuationInspectSourceRequest] = []
+    file_ids: list[int] = []
+    detach_file_id: int | None = None
+
+
+class DetachSourceRequest(BaseModel):
+    confirm: bool = False
+    confirmation_token: str | None = None
+
+
+class ReorderRequest(BaseModel):
+    file_ids: list[int]
+    acknowledged_finding_ids: list[str] = []
+
+
+def _load_test_or_404(db: Session, test_id: int) -> Test:
+    test = db.get(Test, test_id)
+    if test is None:
+        raise HTTPException(404, "No such test")
+    return test
+
+
+def _inspect_test_chain(
+    db: Session,
+    test: Test,
+    staged_sources: list[ContinuationInspectSourceRequest],
+    *,
+    proposed_order: list[str] | None = None,
+) -> dict:
+    inspect_req = ContinuationInspectRequest(
+        sources=staged_sources,
+        existing_test_id=test.id,
+        proposed_order=proposed_order,
+    )
+    ordered_sources, staged_keys = _ordered_continuation_sources(inspect_req, db)
+    return continuations.analyze_continuation_chain(
+        ordered_sources,
+        staged_keys=staged_keys,
+        proposed_staged_order=proposed_order,
+    )
+
+
+def _inspect_existing_order(
+    db: Session,
+    test: Test,
+    proposed_file_ids: list[int],
+) -> dict:
+    links_by_id = {link.file_id: link for link in test.file_links}
+    ordered_sources = [
+        _continuation_existing_source(links_by_id[file_id], existing_test_id=test.id)
+        for file_id in proposed_file_ids
+    ]
+    return continuations.analyze_existing_order_chain(ordered_sources)
+
+
+@router.post("/tests/{test_id}/source-change/impact")
+def preview_test_source_change(
+    test_id: int,
+    req: SourceChangeImpactRequest,
+    db: Session = Depends(get_db),
+):
+    test = _load_test_or_404(db, test_id)
+    operation = req.operation.strip().lower()
+    if operation not in {"attach", "reorder", "detach"}:
+        raise HTTPException(400, "operation must be attach, reorder, or detach")
+
+    current_file_ids = analysis_usage.ordered_test_file_ids(test)
+    if operation == "attach":
+        if not req.sources:
+            raise HTTPException(400, "Attach impact preview requires staged sources")
+        staged_filenames = [
+            _clean_filename(Path(source.source_path or source.staged_name).name)
+            for source in req.sources
+        ]
+        return analysis_usage.preview_source_change_impact(
+            db,
+            test=test,
+            operation="attach",
+            proposed_file_ids=current_file_ids,
+            staged_filenames=staged_filenames,
+            staged_names=[source.staged_name for source in req.sources],
+        )
+
+    if operation == "reorder":
+        try:
+            continuations.validate_exact_file_id_permutation(current_file_ids, req.file_ids)
+        except continuations.ContinuationValidationError as exc:
+            _raise_continuation_validation(exc)
+        return analysis_usage.preview_source_change_impact(
+            db,
+            test=test,
+            operation="reorder",
+            proposed_file_ids=req.file_ids,
+        )
+
+    if req.detach_file_id is None:
+        raise HTTPException(400, "Detach impact preview requires detach_file_id")
+    if req.detach_file_id not in current_file_ids:
+        raise HTTPException(404, "File is not attached to that test")
+    if len(current_file_ids) <= 1:
+        raise HTTPException(409, "Cannot detach the last source from a test")
+    proposed = [file_id for file_id in current_file_ids if file_id != req.detach_file_id]
+    return analysis_usage.preview_source_change_impact(
+        db,
+        test=test,
+        operation="detach",
+        proposed_file_ids=proposed,
+        detach_file_id=req.detach_file_id,
+    )
+
+
+@router.post("/tests/{test_id}/continuations")
+def attach_continuations(
+    test_id: int,
+    req: AttachContinuationsRequest,
+    db: Session = Depends(get_db),
+):
+    if not req.sources:
+        raise HTTPException(400, "At least one staged source is required")
+    test = _load_test_or_404(db, test_id)
+    cell = test.cell
+    old_order = _test_sources_payload(test)
+    old_tracked = analysis_usage.tracked_source_file_id(cell)
+
+    analysis = _inspect_test_chain(db, test, req.sources)
+    try:
+        continuations.ensure_submittable_chain(analysis, req.acknowledged_finding_ids)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
+    base_position = max((link.position for link in test.file_links), default=-1) + 1
+    attached_ids: list[int] = []
+    cache_jobs: list[dict] = []
+    source_file_ids_by_staged_name: dict[str, int] = {}
+    try:
+        for offset, source_draft in enumerate(req.sources):
+            filename = _clean_filename(Path(source_draft.source_path or source_draft.staged_name).name)
+            try:
+                source_path = resolve_import_source_path(
+                    source_draft.staged_name,
+                    source_draft.source_path,
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            sf = _register_or_refresh_source_file(
+                db,
+                source_path=source_path,
+                filename=filename,
+            )
+            db.add(TestFile(test_id=test.id, file_id=sf.id, position=base_position + offset))
+            sf.parse_status = "parsing"
+            sf.capacity_summary_status = "pending"
+            db.flush()
+            attached_ids.append(sf.id)
+            source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
+            cache_jobs.append(
+                {
+                    "staged_name": source_draft.staged_name,
+                    "hash": sf.hash,
+                    "path": str(source_path),
+                }
+            )
+        _record_source_lifecycle_activity(
+            db,
+            action="continuation_attached",
+            message=(
+                f"Attached {len(attached_ids)} continuation"
+                f"{'s' if len(attached_ids) != 1 else ''} to {cell.name}"
+            ),
+            cell=cell,
+            test=test,
+            details={
+                "attached_source_ids": attached_ids,
+                "attached_hash_prefixes": [
+                    continuations.hash_prefix(db.get(SourceFile, source_id).hash)
+                    for source_id in attached_ids
+                ],
+                "old_tracked_source_id": old_tracked,
+                "previous_source_order": old_order,
+            },
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+    start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
+    invalidated = _post_commit_source_invalidation(
+        db,
+        cell,
+        reason="continuation_attached",
+        source_id=attached_ids[-1] if attached_ids else None,
+        queue_warmup=False,
+    )
+    db.refresh(test)
+    return _lifecycle_mutation_response(
+        test,
+        cell,
+        invalidated=invalidated,
+        cache_jobs={"parsing_started": bool(cache_jobs), "attached_source_ids": attached_ids},
+    )
+
+
 @router.post("/tests/{test_id}/detach/{file_id}")
-def detach_file(test_id: int, file_id: int, db: Session = Depends(get_db)):
+def detach_file(
+    test_id: int,
+    file_id: int,
+    req: DetachSourceRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    test = _load_test_or_404(db, test_id)
+    cell = test.cell
+    current_file_ids = analysis_usage.ordered_test_file_ids(test)
     link = (
         db.query(TestFile).filter(TestFile.test_id == test_id, TestFile.file_id == file_id).first()
     )
     if link is None:
         raise HTTPException(404, "File is not attached to that test")
-    db.delete(link)
-    db.commit()
-    return {"ok": True}
+    if len(current_file_ids) <= 1:
+        raise HTTPException(409, "Cannot detach the last source from a test")
 
+    proposed = [current_id for current_id in current_file_ids if current_id != file_id]
+    impact = analysis_usage.preview_source_change_impact(
+        db,
+        test=test,
+        operation="detach",
+        proposed_file_ids=proposed,
+        detach_file_id=file_id,
+    )
+    body = req or DetachSourceRequest()
+    if not body.confirm or body.confirmation_token != impact["confirmation_token"]:
+        raise HTTPException(
+            422,
+            {
+                "message": "Impact confirmation is required before detaching a source.",
+                "impact": impact,
+            },
+        )
 
-class ReorderRequest(BaseModel):
-    file_ids: list[int]  # new order
+    detached = db.get(SourceFile, file_id)
+    old_order = _test_sources_payload(test)
+    old_tracked = analysis_usage.tracked_source_file_id(cell)
+    detached_filename = detached.filename if detached is not None else f"Source {file_id}"
+    detached_hash_prefix = continuations.hash_prefix(detached.hash if detached else None)
+    try:
+        db.delete(link)
+        db.flush()
+        _record_source_lifecycle_activity(
+            db,
+            action="continuation_detached",
+            message=f"Detached {detached_filename} from {cell.name}",
+            cell=cell,
+            test=test,
+            details={
+                "detached_source_id": file_id,
+                "detached_hash_prefix": detached_hash_prefix,
+                "old_tracked_source_id": old_tracked,
+                "previous_source_order": old_order,
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    invalidated = _post_commit_source_invalidation(
+        db,
+        cell,
+        reason="continuation_detached",
+        source_id=file_id,
+    )
+    db.refresh(test)
+    response = _lifecycle_mutation_response(test, cell, invalidated=invalidated)
+    response["detached_source_id"] = file_id
+    return response
 
 
 @router.post("/tests/{test_id}/reorder")
 def reorder_files(test_id: int, req: ReorderRequest, db: Session = Depends(get_db)):
-    test = db.get(Test, test_id)
-    if test is None:
-        raise HTTPException(404, "No such test")
-    pos = {fid: i for i, fid in enumerate(req.file_ids)}
-    for link in test.file_links:
-        if link.file_id in pos:
+    test = _load_test_or_404(db, test_id)
+    cell = test.cell
+    current_file_ids = analysis_usage.ordered_test_file_ids(test)
+    try:
+        continuations.validate_exact_file_id_permutation(current_file_ids, req.file_ids)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
+    if req.file_ids == current_file_ids:
+        invalidated = {"analysis_ids": [], "queued_plots": 0}
+        return _lifecycle_mutation_response(test, cell, invalidated=invalidated)
+
+    analysis = _inspect_existing_order(db, test, req.file_ids)
+    try:
+        continuations.ensure_submittable_chain(analysis, req.acknowledged_finding_ids)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
+    old_order = _test_sources_payload(test)
+    old_tracked = analysis_usage.tracked_source_file_id(cell)
+    pos = {fid: index for index, fid in enumerate(req.file_ids)}
+    try:
+        for link in test.file_links:
             link.position = pos[link.file_id]
-    db.commit()
-    return {"ok": True}
+        db.flush()
+        _record_source_lifecycle_activity(
+            db,
+            action="source_order_changed",
+            message=f"Reordered sources for {cell.name}",
+            cell=cell,
+            test=test,
+            details={
+                "old_tracked_source_id": old_tracked,
+                "previous_source_order": old_order,
+                "proposed_source_order": _test_sources_payload(test),
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    invalidated = _post_commit_source_invalidation(
+        db,
+        cell,
+        reason="source_order_changed",
+    )
+    db.refresh(test)
+    return _lifecycle_mutation_response(test, cell, invalidated=invalidated)

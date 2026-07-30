@@ -162,17 +162,22 @@ def protocol_signature_from_header(header_meta: dict[str, str] | None, nominal_c
     return reconstructed.get("signature")
 
 
+def _chronological_sort_key(source: dict[str, Any]) -> tuple:
+    first_ts = source.get("first_record_timestamp")
+    start_ts = _parse_timestamp(source.get("start_time"))
+    reliable = 0 if first_ts is not None else 1
+    primary = first_ts or start_ts or datetime.max.replace(tzinfo=timezone.utc)
+    return (reliable, primary, source.get("input_order", 0))
+
+
+def suggest_chronological_order(sources: list[dict[str, Any]]) -> list[str]:
+    """Chronological order for any source list using the staged suggestion rules."""
+    return [source["key"] for source in sorted(sources, key=_chronological_sort_key)]
+
+
 def suggest_staged_order(sources: list[dict[str, Any]]) -> list[str]:
     staged = [source for source in sources if source.get("kind") == "staged"]
-
-    def sort_key(source: dict[str, Any]) -> tuple:
-        first_ts = source.get("first_record_timestamp")
-        start_ts = _parse_timestamp(source.get("start_time"))
-        reliable = 0 if first_ts is not None else 1
-        primary = first_ts or start_ts or datetime.max.replace(tzinfo=timezone.utc)
-        return (reliable, primary, source.get("input_order", 0))
-
-    return [source["key"] for source in sorted(staged, key=sort_key)]
+    return suggest_chronological_order(staged)
 
 
 def _append_finding(
@@ -563,28 +568,12 @@ def _order_reversed_findings(
     ]
 
 
-def analyze_continuation_chain(
+def _continuation_chain_response(
     ordered_sources: list[dict[str, Any]],
     *,
-    staged_keys: list[str],
-    proposed_staged_order: list[str] | None = None,
+    findings: list[dict[str, Any]],
+    suggested_order: list[str],
 ) -> dict[str, Any]:
-    findings: list[dict[str, Any]] = []
-    findings.extend(validate_proposed_order(staged_keys, proposed_staged_order))
-    for source in ordered_sources:
-        findings.extend(_identity_findings(source))
-    findings.extend(_duplicate_hash_findings(ordered_sources))
-
-    suggested_order = suggest_staged_order(ordered_sources)
-    effective_staged_order = proposed_staged_order if proposed_staged_order is not None else staged_keys
-    findings.extend(
-        _order_reversed_findings(staged_keys, effective_staged_order, suggested_order)
-    )
-
-    baseline = ordered_sources[0] if ordered_sources else None
-    for left, right in zip(ordered_sources, ordered_sources[1:]):
-        findings.extend(_pair_findings(left, right, baseline=baseline))
-
     deduped: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for finding in findings:
@@ -623,6 +612,61 @@ def analyze_continuation_chain(
         "findings": deduped,
         "can_submit": can_submit,
     }
+
+
+def analyze_existing_order_chain(
+    ordered_sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Inspect a proposed order of sources already attached to a test."""
+    findings: list[dict[str, Any]] = []
+    for source in ordered_sources:
+        findings.extend(_identity_findings(source))
+    findings.extend(_duplicate_hash_findings(ordered_sources))
+
+    source_keys = [source["key"] for source in ordered_sources]
+    suggested_order = suggest_chronological_order(ordered_sources)
+    findings.extend(
+        _order_reversed_findings(source_keys, source_keys, suggested_order)
+    )
+
+    baseline = ordered_sources[0] if ordered_sources else None
+    for left, right in zip(ordered_sources, ordered_sources[1:]):
+        findings.extend(_pair_findings(left, right, baseline=baseline))
+
+    return _continuation_chain_response(
+        ordered_sources,
+        findings=findings,
+        suggested_order=suggested_order,
+    )
+
+
+def analyze_continuation_chain(
+    ordered_sources: list[dict[str, Any]],
+    *,
+    staged_keys: list[str],
+    proposed_staged_order: list[str] | None = None,
+) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    findings.extend(validate_proposed_order(staged_keys, proposed_staged_order))
+    for source in ordered_sources:
+        findings.extend(_identity_findings(source))
+    findings.extend(_duplicate_hash_findings(ordered_sources))
+
+    suggested_order = suggest_staged_order(ordered_sources)
+    effective_staged_order = proposed_staged_order if proposed_staged_order is not None else staged_keys
+    findings.extend(
+        _order_reversed_findings(staged_keys, effective_staged_order, suggested_order)
+    )
+
+    baseline = ordered_sources[0] if ordered_sources else None
+    for left, right in zip(ordered_sources, ordered_sources[1:]):
+        findings.extend(_pair_findings(left, right, baseline=baseline))
+
+    return _continuation_chain_response(
+        ordered_sources,
+        findings=findings,
+        suggested_order=suggested_order,
+    )
 
 
 def _maybe_schedule_cache_build(file_hash: str, source_path) -> None:
@@ -698,6 +742,111 @@ def header_fields_from_metadata(meta: dict[str, Any]) -> dict[str, Any]:
         "protocol_signature": protocol_signature_from_header(header_meta, nominal),
         "metadata_error": meta.get("error"),
     }
+
+
+class ContinuationValidationError(Exception):
+    """Structured rejection for lifecycle mutations."""
+
+    def __init__(self, status_code: int, payload: dict[str, Any]):
+        self.status_code = status_code
+        self.payload = payload
+        super().__init__(payload.get("message") or "Continuation validation failed")
+
+
+def hash_prefix(file_hash: str | None) -> str | None:
+    if not file_hash:
+        return None
+    return file_hash[:8]
+
+
+def unacknowledged_confirmation_findings(
+    findings: list[dict[str, Any]],
+    acknowledged_finding_ids: list[str] | None,
+) -> list[dict[str, Any]]:
+    acknowledged = set(acknowledged_finding_ids or [])
+    return [
+        finding
+        for finding in findings
+        if finding.get("severity") == "confirmation" and finding["id"] not in acknowledged
+    ]
+
+
+def ensure_submittable_chain(
+    analysis: dict[str, Any],
+    acknowledged_finding_ids: list[str] | None,
+) -> None:
+    if not analysis.get("can_submit"):
+        blocking = [
+            finding for finding in analysis.get("findings") or [] if finding.get("severity") == "blocking"
+        ]
+        raise ContinuationValidationError(
+            409,
+            {
+                "message": "The proposed continuation chain cannot be submitted.",
+                "findings": blocking,
+            },
+        )
+    unacknowledged = unacknowledged_confirmation_findings(
+        analysis.get("findings") or [],
+        acknowledged_finding_ids,
+    )
+    if unacknowledged:
+        raise ContinuationValidationError(
+            422,
+            {
+                "message": "Confirmation is required before continuing.",
+                "findings": unacknowledged,
+            },
+        )
+
+
+def validate_exact_file_id_permutation(
+    current_file_ids: list[int],
+    proposed_file_ids: list[int],
+) -> None:
+    current = list(current_file_ids)
+    proposed = list(proposed_file_ids)
+    if len(proposed) != len(current):
+        raise ContinuationValidationError(
+            409,
+            {
+                "message": "Reorder must list every current test source exactly once.",
+                "findings": [
+                    {
+                        "id": finding_id("invalid_proposed_order", [str(value) for value in current]),
+                        "code": "invalid_proposed_order",
+                        "severity": "blocking",
+                        "source_keys": [str(value) for value in current],
+                        "title": "Reorder is not a full permutation",
+                        "message": (
+                            "The reorder request must include every attached source ID exactly once."
+                        ),
+                        "details": {
+                            "expected_count": len(current),
+                            "received_count": len(proposed),
+                            "expected": current,
+                            "proposed": proposed,
+                        },
+                    }
+                ],
+            },
+        )
+    if len(set(proposed)) != len(proposed):
+        raise ContinuationValidationError(
+            409,
+            {
+                "message": "Reorder cannot contain duplicate source IDs.",
+                "findings": [],
+            },
+        )
+    if set(proposed) != set(current):
+        raise ContinuationValidationError(
+            409,
+            {
+                "message": "Reorder cannot include unknown or foreign source IDs.",
+                "findings": [],
+            },
+        )
 
 
 def inspect_path_integrity(path) -> dict[str, Any]:

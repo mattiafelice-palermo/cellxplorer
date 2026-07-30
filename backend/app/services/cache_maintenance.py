@@ -951,7 +951,14 @@ def invalidate_cell_dependents(
     if affected and queue_warmup and load_policy(db).warmup_enabled:
         queued = warmup.enqueue_analyses(db, affected)
     if affected:
-        cause = "Source update" if reason == "source_update" else "Cell property change"
+        cause_labels = {
+            "source_update": "Source update",
+            "cell_edit": "Cell property change",
+            "continuation_attached": "Continuation attached",
+            "source_order_changed": "Source order changed",
+            "continuation_detached": "Continuation detached",
+        }
+        cause = cause_labels.get(reason, "Cell data change")
         titles = _analysis_title_summary(
             [affected_titles[analysis_id] for analysis_id in sorted(affected)]
         )

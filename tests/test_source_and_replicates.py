@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import ActivityEvent, Cell, CellMetadata, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
-from app.services import background_jobs, cache, parsing, scanner
+from app.services import background_jobs, cache, parsing, scanner, analysis_usage
 from app.routers import files, library, replicates
 
 
@@ -1229,6 +1229,226 @@ class MaxSpecificDischargeTests(unittest.TestCase):
 
         payload = library.list_cells(db=db)[0]
         self.assertIsNone(payload["max_specific_discharge_capacity_mah_g"])
+
+
+class MultiSourceLifecycleApiTests(unittest.TestCase):
+    def make_session(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+
+    def _seed_test_with_sources(self, db, count: int = 2):
+        cell = Cell(name="Lifecycle cell")
+        test = Test(cell=cell, name="Main test")
+        links = []
+        for index in range(count):
+            source = SourceFile(
+                hash=f"hash-{index}" + "a" * 58,
+                path=f"C:/data/source-{index}.ndax",
+                filename=f"source-{index}.ndax",
+                size=10,
+                ext="ndax",
+                location_status="online",
+                parse_status="parsed",
+            )
+            links.append(TestFile(position=index, file=source))
+        test.file_links = links
+        db.add(cell)
+        db.commit()
+        return cell, test, [link.file for link in links]
+
+    def test_reorder_requires_exact_permutation(self):
+        db = self.make_session()
+        _cell, test, sources = self._seed_test_with_sources(db)
+        with self.assertRaises(HTTPException) as ctx:
+            files.reorder_files(
+                test.id,
+                files.ReorderRequest(file_ids=[sources[0].id]),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_reorder_updates_dense_positions(self):
+        db = self.make_session()
+        cell, test, sources = self._seed_test_with_sources(db)
+        sources[0].start_time = "2026-01-01 00:00:00"
+        sources[1].start_time = "2026-01-03 00:00:00"
+        db.commit()
+        analysis = files._inspect_existing_order(
+            db,
+            test,
+            [sources[1].id, sources[0].id],
+        )
+        finding_id = next(
+            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
+        )
+        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+            result = files.reorder_files(
+                test.id,
+                files.ReorderRequest(
+                    file_ids=[sources[1].id, sources[0].id],
+                    acknowledged_finding_ids=[finding_id],
+                ),
+                db=db,
+            )
+        self.assertEqual(
+            [item["file_id"] for item in result["test"]["sources"]],
+            [sources[1].id, sources[0].id],
+        )
+        self.assertEqual(result["tracked_source_id"], sources[0].id)
+
+    def test_reorder_reverse_requires_acknowledgement(self):
+        db = self.make_session()
+        _cell, test, sources = self._seed_test_with_sources(db)
+        sources[0].start_time = "2026-01-01 00:00:00"
+        sources[1].start_time = "2026-01-03 00:00:00"
+        db.commit()
+        with self.assertRaises(HTTPException) as ctx:
+            files.reorder_files(
+                test.id,
+                files.ReorderRequest(file_ids=[sources[1].id, sources[0].id]),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertTrue(
+            any(item["code"] == "order_reversed" for item in ctx.exception.detail["findings"])
+        )
+        analysis = files._inspect_existing_order(
+            db,
+            test,
+            [sources[1].id, sources[0].id],
+        )
+        finding_id = next(
+            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
+        )
+        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+            result = files.reorder_files(
+                test.id,
+                files.ReorderRequest(
+                    file_ids=[sources[1].id, sources[0].id],
+                    acknowledged_finding_ids=[finding_id],
+                ),
+                db=db,
+            )
+        self.assertEqual(result["tracked_source_id"], sources[0].id)
+
+    def test_attach_impact_preview_reports_proposed_tracked_tail(self):
+        db = self.make_session()
+        _cell, test, _sources = self._seed_test_with_sources(db)
+        impact = files.preview_test_source_change(
+            test.id,
+            files.SourceChangeImpactRequest(
+                operation="attach",
+                sources=[
+                    files.ContinuationInspectSourceRequest(staged_name="continue.ndax"),
+                ],
+            ),
+            db=db,
+        )
+        self.assertTrue(impact["tracked_tail_changes"])
+        self.assertEqual(impact["new_tracked_staged_name"], "continue.ndax")
+        self.assertEqual(impact["new_tracked_filename"], "continue.ndax")
+        self.assertIsNone(impact["new_tracked_source_id"])
+
+    def test_detach_last_source_is_rejected(self):
+        db = self.make_session()
+        _cell, test, sources = self._seed_test_with_sources(db, count=1)
+        with self.assertRaises(HTTPException) as ctx:
+            files.preview_test_source_change(
+                test.id,
+                files.SourceChangeImpactRequest(operation="detach", detach_file_id=sources[0].id),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_detach_requires_confirmation_token(self):
+        db = self.make_session()
+        cell, test, sources = self._seed_test_with_sources(db)
+        with self.assertRaises(HTTPException) as ctx:
+            files.detach_file(test.id, sources[0].id, db=db)
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_detach_keeps_source_file_row(self):
+        db = self.make_session()
+        cell, test, sources = self._seed_test_with_sources(db)
+        impact = files.preview_test_source_change(
+            test.id,
+            files.SourceChangeImpactRequest(operation="detach", detach_file_id=sources[0].id),
+            db=db,
+        )
+        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+            files.detach_file(
+                test.id,
+                sources[0].id,
+                files.DetachSourceRequest(
+                    confirm=True,
+                    confirmation_token=impact["confirmation_token"],
+                ),
+                db=db,
+            )
+        self.assertIsNotNone(db.get(SourceFile, sources[0].id))
+        remaining = analysis_usage.ordered_test_file_ids(test)
+        self.assertEqual(remaining, [sources[1].id])
+
+    def test_multi_source_import_normalizes_legacy_flat_draft(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "a.ndax"
+            second = Path(tmp) / "b.ndax"
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            started = []
+            original_start = files.start_import_cache_jobs
+            original_hash = parsing.compute_hash
+            original_meta = parsing.read_header_metadata
+            files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
+            original_inspect = files._inspect_cell_draft_chain
+            files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
+                "can_submit": True,
+                "findings": [],
+            }
+            hash_by_name = {
+                "a.ndax": "hash-a" + "0" * 58,
+                "b.ndax": "hash-b" + "0" * 58,
+            }
+            parsing.compute_hash = lambda path: hash_by_name[Path(path).name]
+            parsing.read_header_metadata = lambda _path: {"builder": "test"}
+            try:
+                result = files.create_imported_cells(
+                    files.ImportCellsRequest(
+                        cells=[
+                            files.ImportCellDraft(
+                                cell_name="Multi cell",
+                                test_name="Interrupted",
+                                sources=[
+                                    files.ImportSourceDraft(
+                                        staged_name="a.ndax",
+                                        source_path=str(first),
+                                        filename=first.name,
+                                    ),
+                                    files.ImportSourceDraft(
+                                        staged_name="b.ndax",
+                                        source_path=str(second),
+                                        filename=second.name,
+                                    ),
+                                ],
+                            )
+                        ]
+                    ),
+                    db=db,
+                )
+            finally:
+                files.start_import_cache_jobs = original_start
+                files._inspect_cell_draft_chain = original_inspect
+                parsing.compute_hash = original_hash
+                parsing.read_header_metadata = original_meta
+
+        self.assertEqual(len(result["created"][0]["sources"]), 2)
+        self.assertEqual(len(started[0][1]), 2)
 
 
 if __name__ == "__main__":

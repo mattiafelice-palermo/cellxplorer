@@ -292,5 +292,59 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertTrue(any(item["code"] == "local_cycles_restart" for item in result["findings"]))
 
 
+class ContinuationLifecycleValidationTests(unittest.TestCase):
+    def test_unacknowledged_confirmation_blocks_submit(self):
+        finding = {
+            "id": "confirm-1",
+            "code": "order_reversed",
+            "severity": "confirmation",
+            "source_keys": ["a"],
+            "title": "Confirm",
+            "message": "Confirm order",
+            "details": {},
+        }
+        analysis = {"can_submit": True, "findings": [finding]}
+        with self.assertRaises(continuations.ContinuationValidationError) as ctx:
+            continuations.ensure_submittable_chain(analysis, [])
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_acknowledged_confirmation_allows_submit(self):
+        finding = {
+            "id": "confirm-1",
+            "code": "order_reversed",
+            "severity": "confirmation",
+            "source_keys": ["a"],
+            "title": "Confirm",
+            "message": "Confirm order",
+            "details": {},
+        }
+        analysis = {"can_submit": True, "findings": [finding]}
+        continuations.ensure_submittable_chain(analysis, ["confirm-1"])
+
+    def test_validate_exact_permutation_rejects_partial_list(self):
+        with self.assertRaises(continuations.ContinuationValidationError) as ctx:
+            continuations.validate_exact_file_id_permutation([1, 2, 3], [1, 2])
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_analyze_existing_order_chain_flags_reversed_chronology(self):
+        earlier = _source(
+            "existing-a",
+            kind="existing",
+            start_time="2026-01-01 00:00:00",
+            first_record_timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            input_order=0,
+        )
+        later = _source(
+            "existing-b",
+            kind="existing",
+            hash="hash-b",
+            start_time="2026-01-03 00:00:00",
+            first_record_timestamp=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            input_order=1,
+        )
+        result = continuations.analyze_existing_order_chain([later, earlier])
+        self.assertTrue(any(item["code"] == "order_reversed" for item in result["findings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

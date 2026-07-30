@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import (
+    ActivityEvent,
     Analysis,
     Cell,
     ReplicateGroup,
@@ -938,6 +939,23 @@ class CacheMaintenanceTests(unittest.TestCase):
             analyses_router.store_plot_artifact(analysis.id, "plot", request, db)
 
         self.assertEqual(raised.exception.status_code, 409)
+
+    def test_invalidation_supports_continuation_reason_labels(self):
+        db = self.make_session()
+        cell, _source, analysis = self._seed_cell_with_source(db)
+        with patch.object(
+            cache_maintenance.warmup,
+            "enqueue_analyses",
+            return_value={"analyses": 1, "plots": 1},
+        ):
+            cache_maintenance.invalidate_cell_dependents(
+                db,
+                cell.id,
+                reason="continuation_attached",
+                queue_warmup=False,
+            )
+        event = db.query(ActivityEvent).order_by(ActivityEvent.id.desc()).first()
+        self.assertEqual(event.details["reason"], "continuation_attached")
 
 
 if __name__ == "__main__":
