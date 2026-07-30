@@ -73,7 +73,7 @@ No installed-Windows or browser interaction is required for the policy mapping i
 - [x] Known updater failures render distinct, understandable recovery messages.
 - [x] Incompatible-format failures do not offer a misleading retry.
 - [x] Focused checks and canonical preflight pass.
-- [ ] Implementation is committed and pushed on the feature branch.
+- [x] Implementation is committed and pushed on the feature branch.
 
 ## Implementation record
 
