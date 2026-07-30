@@ -1,15 +1,15 @@
 {
-  "version": "0.17.0-beta.10",
-  "notes": "### New features\n\n- Speed up per-cycle import compute (~2.6× on real libraries) with faster CV-cycle aggregation and status matching.\n- Speed up Beta scientific preparation after copying a Stable library with parallel foreground workers until you continue in background.\n- Create a new analysis from selected samples in Projects, with an empty-analysis option in the split menu.\n- Extend Projects and Cell Database selection with Shift+Up/Down and folder-scoped range rules.\n- Place multiple selected cells as a replicate group from the Cell Database, with folder review before commit.\n- Render updater release-note headings and bold text in the update modal.\n- Ship Beta builds on Python 3.14 so the packaged backend uses the faster zlib-ng runtime.\n\n### Bug fixes\n\n- Fix Cell Database row selection, name preview clicks, and dark-mode selected-row contrast.\n- Fix destructive confirmation so impact preflight no longer flashes a second loading modal.",
-  "pub_date": "2026-07-29T21:57:21.634Z",
+  "version": "0.17.0-beta011",
+  "notes": "### New features\n\n- CellXplorer Beta opens noticeably faster, especially right after install or an update. The backend no longer unpacks a large temporary bundle on every launch — it runs directly from the installed app folder.\n- Everyday screens such as your library and project folders appear sooner. Heavy scientific libraries now load in the background and only when a feature actually needs them.",
+  "pub_date": "2026-07-30T15:21:24.644Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhBL3BhNmtaZ3pCVHlKWGJONEhTQXNmZEtiSG85Q1NCUTNYd2VCVHhDZUgveG9HaE9QL1JYc3ZPZmlGNldNK1dONGpISTQvbkc2UFJRMjNYVk1zMWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzYyMjM1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4xMF94NjQtc2V0dXAuZXhlCnJ6RmNGS2M0Tjc3VEF6Vm1USmF2Q3gyR1V1S1JYd0JLSVZubzYvV0JmTGJGREtVRGtyNzJCeWJaMldvSnZqU1FDMkxMSnRuTVlvMWVEa0hLMW4xTER3PT0K",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494570030"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVCUWxkYnlLUjNjYUNPTXFJRUp6NURKckN5TDl1bG1tbVRaRkNCS21rd2FZank3WmlBTGs2KzN1TEhMK0NkS2E0aXV0REphLzJSQXZBZmt1NkhDeUFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1NDI0ODc3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YTAxMV94NjQtc2V0dXAuZXhlCmJ3c0lPbS9heDArR3ROdUVKZ3MxV3o4UHR3cnRLY3pDbmlGOHZta0FmdTA3dG1sdHU2d1QxQ0o0WDBDd21rREh6Ri9ROUVVR3RyZWlEZ3JzVHMyTkFnPT0K",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/495519910"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVhBL3BhNmtaZ3pCVHlKWGJONEhTQXNmZEtiSG85Q1NCUTNYd2VCVHhDZUgveG9HaE9QL1JYc3ZPZmlGNldNK1dONGpISTQvbkc2UFJRMjNYVk1zMWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MzYyMjM1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YS4xMF94NjQtc2V0dXAuZXhlCnJ6RmNGS2M0Tjc3VEF6Vm1USmF2Q3gyR1V1S1JYd0JLSVZubzYvV0JmTGJGREtVRGtyNzJCeWJaMldvSnZqU1FDMkxMSnRuTVlvMWVEa0hLMW4xTER3PT0K",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/494570030"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVCUWxkYnlLUjNjYUNPTXFJRUp6NURKckN5TDl1bG1tbVRaRkNCS21rd2FZank3WmlBTGs2KzN1TEhMK0NkS2E0aXV0REphLzJSQXZBZmt1NkhDeUFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1NDI0ODc3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YTAxMV94NjQtc2V0dXAuZXhlCmJ3c0lPbS9heDArR3ROdUVKZ3MxV3o4UHR3cnRLY3pDbmlGOHZta0FmdTA3dG1sdHU2d1QxQ0o0WDBDd21rREh6Ri9ROUVVR3RyZWlEZ3JzVHMyTkFnPT0K",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/495519910"
     }
   }
 }
