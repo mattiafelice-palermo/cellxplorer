@@ -42,8 +42,10 @@ Beta product through dedicated Rust commands and `BetaInstallCoordinator`; it ne
 installed Beta copy. Standard self-update state and Stable-owned first-Beta-install state are
 different Tauri managed types (`PendingAppUpdate` and the `PendingBetaInstall` newtype), so they
 cannot collide or clear one another. Rust validates exact channel SemVer before accepting a pending
-update: Stable is `MAJOR.MINOR.PATCH`; Beta is `MAJOR.MINOR.PATCH-beta.N`, with no other prerelease
-or build metadata.
+update: Stable is `MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
+`MAJOR.MINOR.PATCH-betaNNN`, with no other prerelease or build metadata. Once a Beta line publishes
+a compact version, keep that form for the rest of the same core version: SemVer orders `beta.12`
+below `beta011`, while `beta012` correctly follows `beta011`.
 
 NSIS pre-install/uninstall hooks kill only processes whose executable path is under the installation
 directory being changed — never by shared image name alone — so Stable and Beta can run side by side.

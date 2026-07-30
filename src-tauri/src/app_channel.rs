@@ -231,7 +231,13 @@ mod tests {
 
     #[test]
     fn beta_release_versions_are_exact() {
-        for version in ["0.18.0-beta.1", "1.0.0-beta.0", "12.34.56-beta.123", "0.17.0-beta011"] {
+        for version in [
+            "0.18.0-beta.1",
+            "1.0.0-beta.0",
+            "12.34.56-beta.123",
+            "0.17.0-beta011",
+            "0.17.0-beta012",
+        ] {
             assert!(validate_release_version(AppChannel::Beta, version).is_ok());
         }
         for version in [
@@ -249,5 +255,18 @@ mod tests {
                 "{version}"
             );
         }
+    }
+
+    #[test]
+    fn compact_beta_successors_keep_semver_order() {
+        let beta_11 = semver::Version::parse("0.17.0-beta011").unwrap();
+        let beta_12 = semver::Version::parse("0.17.0-beta012").unwrap();
+        let dotted_beta_12 = semver::Version::parse("0.17.0-beta.12").unwrap();
+
+        assert!(beta_12 > beta_11);
+        assert!(
+            dotted_beta_12 < beta_11,
+            "do not switch back to dotted prereleases within a compact Beta line"
+        );
     }
 }

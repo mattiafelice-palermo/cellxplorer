@@ -188,6 +188,8 @@ multi-spec release train), operate on `main` after the relevant features are mer
 1. Bump every maintained version declaration and add the exact-version section to `CHANGELOG.md`.
    Use `python scripts\bump_version.py --patch --notes "..."` for Stable, or an explicit version
    such as `python scripts\bump_version.py 0.16.2-beta.1 --notes "..."` for Beta prereleases.
+   Within a Beta core that has already used compact `betaNNN`, continue with compact successors;
+   a dotted `beta.N` candidate compares lower than the existing compact version under SemVer.
 2. Before any production tag, pre-provision and verify the orphan `release-channels` branch. Never
    derive it from `main`. For the first Beta it contains `README.md` plus the valid current
    `stable/latest.json`; the workflow creates the first verified Beta pointer safely. Thereafter it

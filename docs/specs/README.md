@@ -1,5 +1,9 @@
 # Feature specs
 
+- [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
+  locks compact Beta successor ordering and gives update-check failures understandable,
+  case-specific recovery messages.
+
 Implementation plans for requested features. One Markdown file per request (or per coherent
 batch of related requests). Each spec is written to be followed closely by an AI agent that
 did **not** see the originating conversation, so it must be self-contained:

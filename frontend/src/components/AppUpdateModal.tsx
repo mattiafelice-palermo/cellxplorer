@@ -17,6 +17,7 @@ import { APP_BRANDING } from "../appChannel";
 import {
   canDismissUpdateModal,
   computeDownloadProgress,
+  describeUpdateCheckFailure,
   explainUpdateCheckFailure,
   parseReleaseNoteLines,
   type AppUpdateRelease,
@@ -163,6 +164,8 @@ export function AppUpdateModal({
       : null;
 
   const checkFailed = state.status === "error" && state.phase === "check";
+  const checkFailure =
+    checkFailed ? describeUpdateCheckFailure(state.message) : null;
   const checkingManual = state.status === "checking" && state.source === "manual";
   const showStatusOnly = !release && (checkFailed || upToDate || (opened && checkingManual));
 
@@ -207,7 +210,7 @@ export function AppUpdateModal({
           {checkingManual ? (
             <Text size="sm">Looking for a newer CellXplorer release…</Text>
           ) : checkFailed ? (
-            <Alert color="orange" title="Update check failed">
+            <Alert color="orange" title={checkFailure!.title}>
               <Text size="sm">{explainUpdateCheckFailure(state.message)}</Text>
             </Alert>
           ) : (
@@ -224,7 +227,7 @@ export function AppUpdateModal({
                 Close
               </Button>
             ) : null}
-            {checkFailed && !checkingManual ? (
+            {checkFailed && !checkingManual && checkFailure!.canRetry ? (
               <Button color={APP_BRANDING.primaryColor} onClick={onRetryCheck}>
                 Try again
               </Button>

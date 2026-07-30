@@ -15,6 +15,7 @@ import {
   canDismissUpdateModal,
   compareSemver,
   computeDownloadProgress,
+  describeUpdateCheckFailure,
   firstAutomaticCheckDelayMs,
   getUpdateMenuLabel,
   isBetaUpdateVersion,
@@ -295,16 +296,48 @@ test("normalizeUpdaterError preserves strings and Error messages", () => {
   assert.equal(normalizeUpdaterError("   ", "fallback"), "fallback");
 });
 
-test("explainUpdateCheckFailure maps transport failures to plain language", () => {
-  assert.match(
-    explainUpdateCheckFailure("Could not fetch a valid release JSON from the remote"),
-    /could not find update information/i,
+test("update-check failures explain the cause and useful recovery", () => {
+  assert.deepEqual(
+    describeUpdateCheckFailure(
+      "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N update versions.",
+    ),
+    {
+      kind: "incompatible-release",
+      title: "Manual update required",
+      message:
+        "A newer release was found, but this installed version cannot read its version format. Download and run the latest official CellXplorer installer from GitHub Releases. Automatic updates will work again afterward.",
+      canRetry: false,
+    },
   );
-  assert.match(
+
+  const releaseInformation = describeUpdateCheckFailure(
+    "Could not fetch a valid release JSON from the remote",
+  );
+  assert.equal(releaseInformation.kind, "release-information");
+  assert.match(releaseInformation.message, /release information is missing or incomplete/i);
+
+  const network = describeUpdateCheckFailure("network offline");
+  assert.equal(network.kind, "network");
+  assert.match(network.message, /internet connection/i);
+
+  const secureConnection = describeUpdateCheckFailure(
+    "TLS certificate validation failed",
+  );
+  assert.equal(secureConnection.kind, "secure-connection");
+  assert.match(secureConnection.message, /correct date and time/i);
+
+  const serverBusy = describeUpdateCheckFailure("HTTP 429: too many requests");
+  assert.equal(serverBusy.kind, "server-busy");
+  assert.match(serverBusy.message, /wait a few minutes/i);
+
+  const unexpected = describeUpdateCheckFailure("unexpected");
+  assert.equal(unexpected.kind, "unexpected");
+  assert.match(unexpected.message, /restart cellxplorer/i);
+
+  assert.equal(
     explainUpdateCheckFailure("network offline"),
-    /could not reach the update server/i,
+    network.message,
   );
-  assert.match(explainUpdateCheckFailure("unexpected"), /could not check for updates/i);
 });
 
 test("dismiss_check_error clears manual check failures only", () => {

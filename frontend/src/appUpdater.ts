@@ -203,18 +203,95 @@ export function normalizeUpdaterError(error: unknown, fallback: string): string 
   return fallback;
 }
 
+export type UpdateCheckFailureExplanation = {
+  kind:
+    | "incompatible-release"
+    | "release-information"
+    | "network"
+    | "secure-connection"
+    | "server-busy"
+    | "unexpected";
+  title: string;
+  message: string;
+  canRetry: boolean;
+};
+
 /** User-facing explanation for failed update checks (404, offline, etc.). */
-export function explainUpdateCheckFailure(rawMessage: string): string {
+export function describeUpdateCheckFailure(
+  rawMessage: string,
+): UpdateCheckFailureExplanation {
   const text = rawMessage.toLowerCase();
+
+  if (
+    text.includes("accepts only major.minor.patch") ||
+    (text.includes("update version") &&
+      (text.includes("not exact semver") ||
+        text.includes("must not contain build metadata"))) ||
+    text.includes("unsupported cellxplorer application identifier")
+  ) {
+    return {
+      kind: "incompatible-release",
+      title: "Manual update required",
+      message:
+        "A newer release was found, but this installed version cannot read its version format. Download and run the latest official CellXplorer installer from GitHub Releases. Automatic updates will work again afterward.",
+      canRetry: false,
+    };
+  }
+
+  if (
+    text.includes("certificate") ||
+    text.includes("cert ") ||
+    text.includes("tls") ||
+    text.includes("ssl") ||
+    text.includes("secure connection")
+  ) {
+    return {
+      kind: "secure-connection",
+      title: "Secure connection failed",
+      message:
+        "CellXplorer could not establish a trusted connection to the update server. Check that Windows has the correct date and time, then try again. Nothing was downloaded.",
+      canRetry: true,
+    };
+  }
+
+  if (
+    text.includes("403") ||
+    text.includes("429") ||
+    text.includes("forbidden") ||
+    text.includes("rate limit") ||
+    text.includes("too many requests") ||
+    text.includes("service unavailable") ||
+    text.includes("503")
+  ) {
+    return {
+      kind: "server-busy",
+      title: "Update server is temporarily unavailable",
+      message:
+        "The update server is busy or temporarily refusing requests. Wait a few minutes and try again.",
+      canRetry: true,
+    };
+  }
+
   if (
     text.includes("404") ||
     text.includes("valid release json") ||
     text.includes("could not fetch") ||
+    text.includes("invalid json") ||
+    text.includes("release json") ||
+    text.includes("manifest") ||
+    text.includes("missing platform") ||
     text.includes("not found") ||
     text.includes("no release")
   ) {
-    return "CellXplorer could not find update information online. The update server may be unreachable, or no release has been published yet.";
+    return {
+      kind: "release-information",
+      title: "Update information is unavailable",
+      message:
+        "CellXplorer reached the update service, but its release information is missing or incomplete. The release may still be publishing; wait a few minutes and try again.",
+      canRetry: true,
+    };
   }
+
   if (
     text.includes("network") ||
     text.includes("offline") ||
@@ -224,9 +301,26 @@ export function explainUpdateCheckFailure(rawMessage: string): string {
     text.includes("connection") ||
     text.includes("unreachable")
   ) {
-    return "CellXplorer could not reach the update server. Check your internet connection and try again.";
+    return {
+      kind: "network",
+      title: "Could not reach the update server",
+      message:
+        "Check your internet connection, VPN, or proxy settings, then try again.",
+      canRetry: true,
+    };
   }
-  return "CellXplorer could not check for updates right now. Try again in a moment.";
+
+  return {
+    kind: "unexpected",
+    title: "Update check failed",
+    message:
+      "CellXplorer encountered an unexpected updater error. Restart CellXplorer and try again. If it continues, install the latest official release manually.",
+    canRetry: true,
+  };
+}
+
+export function explainUpdateCheckFailure(rawMessage: string): string {
+  return describeUpdateCheckFailure(rawMessage).message;
 }
 
 export function formatUpdateBytes(value: number): string {

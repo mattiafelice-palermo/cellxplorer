@@ -211,10 +211,12 @@ regardless of whether Windows successfully opens the installer, so there is no p
 UI.
 
 Runtime policy validates exact SemVer before pending state changes: Stable accepts only
-`MAJOR.MINOR.PATCH`; Beta accepts only `MAJOR.MINOR.PATCH-beta.N`. Stable-owned first Beta
-installation uses a distinct `PendingBetaInstall` newtype and the Beta endpoint. It finishes the
-Stable backend session before launching the verified installer. An installed Beta is then updated
-only by the Beta application's standard updater.
+`MAJOR.MINOR.PATCH`; Beta accepts legacy `MAJOR.MINOR.PATCH-beta.N` and compact
+`MAJOR.MINOR.PATCH-betaNNN`. Do not switch back to dotted prereleases within a core version after a
+compact release: SemVer orders `beta.12` below `beta011`, whereas `beta012` follows it correctly.
+Stable-owned first Beta installation uses a distinct `PendingBetaInstall` newtype and the Beta
+endpoint. It finishes the Stable backend session before launching the verified installer. An
+installed Beta is then updated only by the Beta application's standard updater.
 
 The branded NSIS template recognizes both Tauri's managed `/UPDATER` flag and the legacy `/UPDATE`
 alias. Both enter the existing update mode that skips ordinary reinstall-choice pages while
