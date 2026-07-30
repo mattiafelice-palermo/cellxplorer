@@ -151,6 +151,7 @@ export function AnalysisWorkspaceContent() {
         >
           <AnalysisPage
             analysisIdOverride={analysisId}
+            workspaceVisible={displayedId === analysisId}
           />
         </Box>
       ))}

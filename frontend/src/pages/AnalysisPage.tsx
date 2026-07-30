@@ -139,6 +139,7 @@ import {
   plotSessionBelongsToTab,
   resolveColdOpenWorkspace,
   savedPlotFromDraftSource,
+  shouldRunLivePlotCompute,
   stripDraftPlots,
   type DraftSaveSource,
   type NormalWorkspaceSnapshot,
@@ -8920,8 +8921,10 @@ function AnalysisSettingsPanel({
 
 function AnalysisPageView({
   analysisIdOverride,
+  workspaceVisible = true,
 }: {
   analysisIdOverride?: number;
+  workspaceVisible?: boolean;
 } = {}) {
   const { analysisId } = useParams();
   const aid = analysisIdOverride ?? Number(analysisId);
@@ -10609,6 +10612,21 @@ function AnalysisPageView({
       });
   };
 
+  const hasSamples = spec.selection.entries.length > 0;
+  const activeTabPlotSession = plotSessionBelongsToTab({
+    tab: activeTab,
+    activeTab,
+    plotSessionActive,
+    activeSavedPlotId,
+    activePlotTab: activePlot?.tab ?? null,
+    plotWorkspaceTouched,
+  });
+  const rateCapabilityRecognitionEnabled = shouldRunLivePlotCompute({
+    workspaceVisible,
+    plotSessionActive: activeTab === "crate" && activeTabPlotSession,
+    hasSamples,
+  });
+
   const sidebar = (
     <Stack w={330} gap="xs" style={{ flexShrink: 0 }}>
       <SamplePanel
@@ -10679,20 +10697,12 @@ function AnalysisPageView({
           analysisId={aid}
           spec={spec}
           update={update}
+          recognitionEnabled={rateCapabilityRecognitionEnabled}
         />
       )}
     </Stack>
   );
 
-  const hasSamples = spec.selection.entries.length > 0;
-  const activeTabPlotSession = plotSessionBelongsToTab({
-    tab: activeTab,
-    activeTab,
-    plotSessionActive,
-    activeSavedPlotId,
-    activePlotTab: activePlot?.tab ?? null,
-    plotWorkspaceTouched,
-  });
   const draftPlotSession = Boolean(isLiveDraft && activeTabPlotSession);
   const newPlotHeaderProps = {
     onNewPlot: startNewPlot,
@@ -11037,6 +11047,7 @@ function AnalysisPageView({
                   plotName={displayPlotName}
                   spec={spec}
                   update={update}
+                  recognitionEnabled={rateCapabilityRecognitionEnabled}
                   onReadyChange={setRateCapabilityReady}
                   edited={activePlotDirty && activePlot?.tab === "crate"}
                   {...newPlotHeaderProps}

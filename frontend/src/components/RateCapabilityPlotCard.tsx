@@ -340,6 +340,7 @@ function orderedXCategories(
 export function useRateCapabilityResult(
   analysisId: number,
   spec: AnalysisSpec,
+  enabled = true,
 ) {
   const computation = rateCapabilityComputationFor(spec);
   const signature = useMemo(
@@ -369,7 +370,7 @@ export function useRateCapabilityResult(
         }, 300);
       }
     },
-    enabled: spec.selection.entries.length > 0,
+    enabled: enabled && spec.selection.entries.length > 0,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
@@ -744,12 +745,14 @@ export function RateCapabilitySettings({
   analysisId,
   spec,
   update,
+  recognitionEnabled = true,
 }: {
   analysisId: number;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
+  recognitionEnabled?: boolean;
 }) {
-  const result = useRateCapabilityResult(analysisId, spec);
+  const result = useRateCapabilityResult(analysisId, spec, recognitionEnabled);
   const computation = rateCapabilityComputationFor(spec);
   const view = rateCapabilityViewFor(spec);
 
@@ -1179,6 +1182,7 @@ export function RateCapabilityPlotCard({
   plotName,
   spec,
   update,
+  recognitionEnabled = true,
   onReadyChange,
   edited = false,
   onNewPlot,
@@ -1192,6 +1196,7 @@ export function RateCapabilityPlotCard({
   plotName: string;
   spec: AnalysisSpec;
   update: (fn: (draft: AnalysisSpec) => void) => void;
+  recognitionEnabled?: boolean;
   onReadyChange?: (ready: boolean) => void;
   edited?: boolean;
   onNewPlot?: () => void;
@@ -1207,7 +1212,7 @@ export function RateCapabilityPlotCard({
   } | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
-  const result = useRateCapabilityResult(analysisId, spec);
+  const result = useRateCapabilityResult(analysisId, spec, recognitionEnabled);
   const view = rateCapabilityViewFor(spec);
   const style = currentPlotStyle(spec, "crate");
   const traces = useMemo(

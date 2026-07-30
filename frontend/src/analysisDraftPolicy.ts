@@ -279,3 +279,16 @@ export function plotSessionBelongsToTab(args: {
   // Draft session: only on the tab where New was clicked.
   return args.plotWorkspaceTouched && args.activeTab === args.tab;
 }
+
+/**
+ * Live scientific queries belong to the visible plot workspace. Hidden
+ * keep-mounted editors and empty family tabs must leave cache preparation to
+ * the saved-plot warmup coordinator instead of starting foreground work.
+ */
+export function shouldRunLivePlotCompute(args: {
+  workspaceVisible: boolean;
+  plotSessionActive: boolean;
+  hasSamples: boolean;
+}): boolean {
+  return args.workspaceVisible && args.plotSessionActive && args.hasSamples;
+}

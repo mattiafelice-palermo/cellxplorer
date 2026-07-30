@@ -13,6 +13,7 @@ import {
   plotSessionBelongsToTab,
   resolveColdOpenWorkspace,
   savedPlotFromDraftSource,
+  shouldRunLivePlotCompute,
   stripDraftPlots,
   type NormalWorkspaceSnapshot,
 } from "../src/analysisDraftPolicy.ts";
@@ -261,6 +262,41 @@ test("plot session belongs only to its own family tab", () => {
       activeSavedPlotId: null,
       activePlotTab: null,
       plotWorkspaceTouched: true,
+    }),
+    false,
+  );
+});
+
+test("live plot compute requires a visible sample-bearing plot session", () => {
+  assert.equal(
+    shouldRunLivePlotCompute({
+      workspaceVisible: true,
+      plotSessionActive: true,
+      hasSamples: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRunLivePlotCompute({
+      workspaceVisible: false,
+      plotSessionActive: true,
+      hasSamples: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRunLivePlotCompute({
+      workspaceVisible: true,
+      plotSessionActive: false,
+      hasSamples: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRunLivePlotCompute({
+      workspaceVisible: true,
+      plotSessionActive: true,
+      hasSamples: false,
     }),
     false,
   );
