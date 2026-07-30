@@ -49,10 +49,12 @@ Implement features **one at a time** on dedicated branches:
    feature-branch pushes for CI; preflight on GitHub runs for `main`, release tags, and manual
    workflow dispatch only.
 
-For a parent/subspec feature, the parent planning document does not create one long-lived
-implementation branch. Implement each child sequentially on its own branch: finish, review, merge,
-then start the next child from the updated `main`. The parent tracks dependencies and the final
-feature-level acceptance matrix.
+For a parent/subspec feature, create one feature branch for the parent and keep all child
+implementation on it. Implement children sequentially, with one focused implementation commit and
+pushed review checkpoint per child. Review follow-up fixes may use additional focused commits. Do
+not merge the branch to `main` between children; merge only after the parent-level acceptance and
+integration verification are complete. Preserve the child commit boundaries rather than
+squashing the entire parent feature into one commit unless the user explicitly asks.
 
 Example:
 
@@ -100,7 +102,9 @@ ordinary feature into artificial paperwork.
   excuse an underspecified child.
 - Implementers read the parent first, then exactly one child. A child can refine but cannot override
   a parent decision. Amend the parent explicitly when a locked decision genuinely changes.
-- Child branches are sequential. Do not open branches for every child at once.
+- All children share the parent feature branch. Do not create or switch to a branch per child.
+- Each child gets a focused implementation commit and pushed review checkpoint before the next
+  child begins. Review-fix commits remain associated with that child.
 - Reviews use `reviews/NNN.S-name-review.md`. The parent is complete only when every required child
   has a clean review and the final child has run the parent-level regression matrix.
 - Stable child numbers are never reused, even if a child is cancelled. Mark it superseded and link
@@ -120,7 +124,8 @@ docs/specs/README.md, the agent-knowledge files named by the child, and the visu
 any UI work.
 
 Rules:
-1. Work only on this child. Do not pre-implement later children or broaden the feature.
+1. Continue on the parent feature's shared branch. Do not create a child-specific branch. Work only
+   on this child; do not pre-implement later children or broaden the feature.
 2. Verify every current-code anchor before editing because the code may have changed since the
    spec was written. If an anchor moved, follow its current owner without changing the locked
    behavior.
@@ -135,8 +140,9 @@ Rules:
    checklist as not run when applicable.
 8. Add an implementation record to the child: files/behavior changed, decisions made, exact
    commands/results, anything not run, branch, commit, and review link.
-9. Run canonical preflight, commit, and push the child branch for review. Do not merge, version-tag,
-   release, or begin the next child unless the user/workflow explicitly directs it.
+9. Run the child's verification, create its focused implementation commit, and push the shared
+   parent feature branch for review. Do not merge the branch, version-tag, release, or begin the
+   next child until this child reaches its required review checkpoint.
 
 Ask only when the spec and current code leave a materially different product/scientific choice.
 ```

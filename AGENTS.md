@@ -58,10 +58,13 @@ See [`docs/specs/README.md`](docs/specs/README.md) for the full lifecycle.
 
 Large cross-cutting features may use a non-implementable parent
 `docs/specs/NNN-<name>.md` plus sequential implementable children
-`docs/specs/NNN.S-<name>.md`. Read the parent before the assigned child, implement only one child
-per feature branch, and finish/review/merge that child before branching the next one. A child may
-refine but must not contradict decisions locked by its parent. Child reviews preserve the full
-identifier: `docs/specs/reviews/NNN.S-<name>-review.md`.
+`docs/specs/NNN.S-<name>.md`. The parent and all of its children are one feature and therefore use
+one shared feature branch. Read the parent before the assigned child, implement children
+sequentially, and create a focused commit/pushed review checkpoint for each child before starting
+the next. Do not merge the shared branch to `main` until the parent feature and its final
+integration verification are complete. A child may refine but must not contradict decisions
+locked by its parent. Child reviews preserve the full identifier:
+`docs/specs/reviews/NNN.S-<name>-review.md`.
 
 When the user provides a spec or review (typically from `%USERPROFILE%\\Downloads` or as a chat
 attachment), **copy it into the repository immediately** — do not implement from the Downloads

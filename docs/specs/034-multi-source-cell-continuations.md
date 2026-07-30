@@ -189,8 +189,12 @@ that reproduce these properties.
 | [034.9](034.9-portable-roundtrip-and-regression.md) | Portable round-trip, synthetic regression corpus, final matrix | 034.1–034.8 |
 
 Implement these sequentially in numeric order unless a child explicitly says that a later child
-can be skipped. Each child gets its own feature branch and review file. Do not open all branches at
-once.
+can be skipped. The documentation commit and all children use the existing shared
+`feature/spec-034-multi-source-continuations` branch. Each child gets one focused implementation
+commit, a pushed review checkpoint, and its own review file before the next child starts. Review
+follow-ups may add focused commits for that child. Do not merge the shared branch to `main` until
+034.9 and the parent-level acceptance matrix are complete, and do not squash away the child commit
+boundaries unless the user explicitly requests it.
 
 ## Parent-level acceptance
 
@@ -219,8 +223,11 @@ This parent is complete only when every child has:
 1. an implementation record and linked review document;
 2. no open blocking review findings;
 3. its focused commands recorded exactly;
-4. a pushed feature branch merged sequentially to `main`;
+4. its focused commits pushed on the shared parent feature branch;
 5. no undocumented deviation from the locked decisions above.
+
+After all children satisfy these conditions, run the final parent verification and merge the
+shared branch to `main` once.
 
 Child 034.9 owns the final full command and disposable-data matrix. Browser interaction must not be
 run automatically unless the user explicitly asks; record the manual checklist as not run when
