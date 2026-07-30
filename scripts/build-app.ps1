@@ -14,8 +14,14 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $env:CARGO_TARGET_DIR = Join-Path $repoRoot "src-tauri\target"
 $frontendRoot = Join-Path $repoRoot "frontend"
-$backendExe = Join-Path $repoRoot "dist\cellxplorer-backend.exe"
-$sidecarExe = Join-Path $repoRoot "src-tauri\binaries\cellxplorer-backend-x86_64-pc-windows-msvc.exe"
+# PyInstaller --onedir output: a folder (launcher exe + _internal/), not one file.
+# onefile re-extracted 85 MB to %TEMP% on every launch; onedir loads from disk and
+# is scanned by Defender once at install (spec 030). Staged as a Tauri resource,
+# not an externalBin sidecar, because sidecars must be a single file.
+$backendDistDir = Join-Path $repoRoot "dist\cellxplorer-backend"
+$backendExe = Join-Path $backendDistDir "cellxplorer-backend.exe"
+$sidecarDir = Join-Path $repoRoot "src-tauri\binaries\backend"
+$sidecarExe = Join-Path $sidecarDir "cellxplorer-backend.exe"
 
 function Invoke-Checked {
     param(
@@ -117,7 +123,9 @@ else {
 }
 
 if (-not $SkipBackend) {
-    $stampFile = "$sidecarExe.stamp"
+    # Stamp sits beside the folder, not inside it, so the bundled resource is
+    # exactly PyInstaller's output with nothing extra.
+    $stampFile = Join-Path $repoRoot "src-tauri\binaries\backend.stamp"
     $fingerprint = Get-BackendFingerprint
     $current = if (Test-Path $stampFile) { (Get-Content $stampFile -Raw).Trim() } else { "" }
 
@@ -133,15 +141,18 @@ if (-not $SkipBackend) {
             throw "PyInstaller did not create $backendExe"
         }
 
-        New-Item -ItemType Directory -Force (Split-Path $sidecarExe) | Out-Null
-        Copy-Item $backendExe $sidecarExe -Force
+        # Replace the staged folder wholesale so a removed file in a rebuild cannot
+        # linger. The parent (binaries/) is gitignored.
+        if (Test-Path $sidecarDir) { Remove-Item $sidecarDir -Recurse -Force }
+        New-Item -ItemType Directory -Force $sidecarDir | Out-Null
+        Copy-Item (Join-Path $backendDistDir "*") $sidecarDir -Recurse -Force
         # Stamp only after the copy succeeds, so an interrupted build re-runs.
         Set-Content -Path $stampFile -Value $fingerprint -Encoding utf8
-        Write-Host "Copied backend sidecar to $sidecarExe" -ForegroundColor Green
+        Write-Host "Staged backend folder to $sidecarDir" -ForegroundColor Green
     }
 }
 elseif (-not (Test-Path $sidecarExe)) {
-    throw "The sidecar is missing. Run without -SkipBackend first: $sidecarExe"
+    throw "The backend folder is missing. Run without -SkipBackend first: $sidecarExe"
 }
 
 if (-not $SkipInstaller) {

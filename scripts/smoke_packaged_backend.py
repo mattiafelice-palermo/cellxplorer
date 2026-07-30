@@ -32,9 +32,9 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SIDECAR = (
-    ROOT / "src-tauri" / "binaries" / "cellxplorer-backend-x86_64-pc-windows-msvc.exe"
-)
+# onedir layout (spec 030): the launcher exe lives inside its bundle folder next to
+# _internal/, staged under binaries/backend/ and shipped as a Tauri resource.
+DEFAULT_SIDECAR = ROOT / "src-tauri" / "binaries" / "backend" / "cellxplorer-backend.exe"
 DEFAULT_TIMEOUT = 90.0
 
 

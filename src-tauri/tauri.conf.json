@@ -47,9 +47,9 @@
     "icon": [
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/cellxplorer-backend"
-    ],
+    "resources": {
+      "binaries/backend": "binaries/backend"
+    },
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,

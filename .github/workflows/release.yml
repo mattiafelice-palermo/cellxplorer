@@ -353,9 +353,15 @@ jobs:
             Write-Error "Missing frontend/dist/index.html after preflight."
             exit 1
           }
-          $sidecar = "src-tauri/binaries/cellxplorer-backend-x86_64-pc-windows-msvc.exe"
-          if (-not (Test-Path $sidecar)) {
-            Write-Error "Missing backend sidecar at $sidecar"
+          # onedir backend (spec 030): the launcher lives inside its resource folder
+          # next to _internal/, not as a single-file sidecar.
+          $backend = "src-tauri/binaries/backend/cellxplorer-backend.exe"
+          if (-not (Test-Path $backend)) {
+            Write-Error "Missing backend launcher at $backend"
+            exit 1
+          }
+          if (-not (Test-Path "src-tauri/binaries/backend/_internal")) {
+            Write-Error "Missing backend _internal folder; onedir bundle is incomplete."
             exit 1
           }
 

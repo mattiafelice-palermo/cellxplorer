@@ -392,6 +392,20 @@ fn app_data_dir_for_channel(channel: AppChannel) -> PathBuf {
     resolve_data_root(channel, &user_home_dir())
 }
 
+/// Absolute path to the bundled backend launcher.
+///
+/// The PyInstaller onedir folder is shipped under the resource dir (spec 030) at
+/// `binaries/backend/`, matching the `resources` glob in tauri.conf.json. The
+/// `_internal/` sibling PyInstaller needs is preserved inside that folder, so the
+/// launcher resolves its own dependencies once it is started from here.
+fn resolve_backend_exe(app: &AppHandle) -> tauri::Result<PathBuf> {
+    let resource_dir = app.path().resource_dir()?;
+    Ok(resource_dir
+        .join("binaries")
+        .join("backend")
+        .join("cellxplorer-backend.exe"))
+}
+
 #[allow(deprecated)]
 #[tauri::command]
 fn open_app_folder(app: AppHandle, kind: String) -> Result<(), String> {
@@ -564,9 +578,18 @@ fn main() {
             } else {
                 None
             };
-            let mut sidecar = app
+            // The backend ships as a PyInstaller onedir folder (spec 030), not a
+            // single-file externalBin sidecar: onefile re-extracted 85 MB to a temp
+            // dir on every launch, which cost ~5 s of cold start. A onedir folder
+            // can only be shipped as a bundled resource, so we resolve the launcher
+            // exe under the resource dir and run it with the shell Command API. This
+            // spawn is native Rust in setup(), not a webview IPC call, so it is not
+            // gated by the shell ACL scope — the env contract and child management
+            // below are exactly what `.sidecar(...)` did before.
+            let backend_exe = resolve_backend_exe(app.handle())?;
+            let mut command = app
                 .shell()
-                .sidecar("cellxplorer-backend")?
+                .command(backend_exe)
                 .env("CELLXPLORER_PORT", backend_port.to_string())
                 .env("CELLXPLORER_STARTUP_MODE", startup_label)
                 .env("CELLXPLORER_APP_VERSION", version)
@@ -576,10 +599,10 @@ fn main() {
                     app_data_dir_for_channel(app_channel).to_string_lossy().to_string(),
                 );
             if let Some(install_instance_id) = install_instance_id {
-                sidecar =
-                    sidecar.env("CELLXPLORER_INSTALL_INSTANCE_ID", install_instance_id);
+                command =
+                    command.env("CELLXPLORER_INSTALL_INSTANCE_ID", install_instance_id);
             }
-            let (_rx, child) = sidecar.spawn()?;
+            let (_rx, child) = command.spawn()?;
             app.manage(BackendChild(Mutex::new(Some(child))));
 
             let open_label = format!("Open {}", app_channel.product_name());
