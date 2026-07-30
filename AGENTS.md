@@ -56,23 +56,31 @@ This keeps overlapping edits out of the same files and reduces merge conflicts.
 Implementation plans live in `docs/specs/`; review follow-ups live in `docs/specs/reviews/`.
 See [`docs/specs/README.md`](docs/specs/README.md) for the full lifecycle.
 
+Large cross-cutting features may use a non-implementable parent
+`docs/specs/NNN-<name>.md` plus sequential implementable children
+`docs/specs/NNN.S-<name>.md`. Read the parent before the assigned child, implement only one child
+per feature branch, and finish/review/merge that child before branching the next one. A child may
+refine but must not contradict decisions locked by its parent. Child reviews preserve the full
+identifier: `docs/specs/reviews/NNN.S-<name>-review.md`.
+
 When the user provides a spec or review (typically from `%USERPROFILE%\\Downloads` or as a chat
 attachment), **copy it into the repository immediately** — do not implement from the Downloads
 path alone:
 
 | Kind | Copy to |
 |---|---|
-| New or updated spec | `docs/specs/NNN-<name>.md` |
-| Review / follow-up tasks | `docs/specs/reviews/NNN-<name>-review.md` |
+| New or updated standalone/parent spec | `docs/specs/NNN-<name>.md` |
+| New or updated child spec | `docs/specs/NNN.S-<name>.md` |
+| Review / follow-up tasks | `docs/specs/reviews/NNN[.S]-<name>-review.md` |
 
 Normalize Windows duplicate suffixes such as `(1)` to the canonical filename, update the spec index
 in `docs/specs/README.md`, and add `Review document:` cross-links in the related spec. The
 repository copy is the source of truth from then on.
 
-When implementation for a numbered spec (or a review follow-up tranche named in the review doc)
-is complete and preflight passes, **commit and push the feature branch to `origin` in the same
-session**. The remote branch is what reviewers read; do not leave finished spec work uncommitted
-or unpushed.
+When implementation for a numbered spec/child (or a review follow-up tranche named in the review
+doc) is complete and preflight passes, **commit and push the feature branch to `origin` in the
+same session**. The remote branch is what reviewers read; do not leave finished spec work
+uncommitted or unpushed.
 
 ## Core data rules
 

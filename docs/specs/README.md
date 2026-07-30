@@ -4,9 +4,10 @@
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.
 
-Implementation plans for requested features. One Markdown file per request (or per coherent
-batch of related requests). Each spec is written to be followed closely by an AI agent that
-did **not** see the originating conversation, so it must be self-contained:
+Implementation plans for requested features. Use one Markdown file per request (or per coherent
+batch of related requests). Exceptionally large cross-cutting features may use one parent spec plus
+numbered child specs, as described below. Each implementable spec is written to be followed closely
+by an AI agent that did **not** see the originating conversation, so it must be self-contained:
 
 - State what already exists (files, functions, endpoints) so nothing is rebuilt.
 - For each task: the exact file(s), current behaviour, target behaviour, and acceptance
@@ -48,6 +49,11 @@ Implement features **one at a time** on dedicated branches:
    feature-branch pushes for CI; preflight on GitHub runs for `main`, release tags, and manual
    workflow dispatch only.
 
+For a parent/subspec feature, the parent planning document does not create one long-lived
+implementation branch. Implement each child sequentially on its own branch: finish, review, merge,
+then start the next child from the updated `main`. The parent tracks dependencies and the final
+feature-level acceptance matrix.
+
 Example:
 
 ```powershell
@@ -79,7 +85,65 @@ The implementing agent then works the `R*` tasks from that review file while kee
 specification as the source of truth for intended behaviour. Do **not** append review findings or
 `R*` task lists into the specification file itself.
 
-### Handoff prompt
+### Parent and child specifications
+
+Use a parent plus child specs only when a feature has several independently reviewable ownership
+boundaries and one implementation would be too large or risky. This is not permission to split an
+ordinary feature into artificial paperwork.
+
+- The parent is `NNN-name.md`. It locks shared domain/scientific decisions, scope boundaries,
+  dependency order, and final acceptance. It is a planning document, not an implementable batch.
+- Children are `NNN.S-name.md`, where `S` starts at `1` and is local to the parent. Each child must
+  be bounded enough for one implementation branch and review.
+- Every child links to the parent, lists dependencies, repeats the exact current-code anchors needed
+  for that child, and has its own acceptance and verification sections. “Read the parent” does not
+  excuse an underspecified child.
+- Implementers read the parent first, then exactly one child. A child can refine but cannot override
+  a parent decision. Amend the parent explicitly when a locked decision genuinely changes.
+- Child branches are sequential. Do not open branches for every child at once.
+- Reviews use `reviews/NNN.S-name-review.md`. The parent is complete only when every required child
+  has a clean review and the final child has run the parent-level regression matrix.
+- Stable child numbers are never reused, even if a child is cancelled. Mark it superseded and link
+  its replacement.
+
+### Implementation handoff prompt
+
+For a standalone spec, replace `NNN-<name>`. For a child, replace both parent and child paths. Give
+the implementing agent only one child at a time.
+
+```text
+Implement docs/specs/NNN.S-<child-name>.md.
+
+First read docs/specs/NNN-<parent-name>.md in full, then read the child spec in full. The parent
+locks the shared decisions; the child is the complete scope for this branch. Also read AGENTS.md,
+docs/specs/README.md, the agent-knowledge files named by the child, and the visual style guide for
+any UI work.
+
+Rules:
+1. Work only on this child. Do not pre-implement later children or broaden the feature.
+2. Verify every current-code anchor before editing because the code may have changed since the
+   spec was written. If an anchor moved, follow its current owner without changing the locked
+   behavior.
+3. Do not contradict a locked parent decision. Stop and request a parent amendment if one is
+   impossible or scientifically unsafe.
+4. Preserve unrelated and uncommitted user work.
+5. Add the focused tests required by the child and run exactly the child verification. Do not
+   claim unrun checks passed.
+6. Do not use private example source files as committed fixtures. Use the synthetic contracts
+   required by the spec.
+7. Do not perform browser testing unless the user explicitly authorizes it. Record the manual
+   checklist as not run when applicable.
+8. Add an implementation record to the child: files/behavior changed, decisions made, exact
+   commands/results, anything not run, branch, commit, and review link.
+9. Run canonical preflight, commit, and push the child branch for review. Do not merge, version-tag,
+   release, or begin the next child unless the user/workflow explicitly directs it.
+
+Ask only when the spec and current code leave a materially different product/scientific choice.
+```
+
+For a standalone spec, omit the parent line and read only the named spec.
+
+### Review-follow-up handoff prompt
 
 Paste this to the implementing agent, filling in the spec number. Add a short "watch out for"
 line only when a task carries a hazard the spec cannot fully express (e.g. "R1 can only be
@@ -169,14 +233,16 @@ respond to the colour scheme.
 
 ## Naming
 
-`NNN-short-kebab-title.md`, where `NNN` is a zero-padded counter that increments per spec
-(`001-`, `002-`, …). The number is assigned when the spec is created and never reused, so it
-is a stable handle to reference a spec in conversation ("finish 002") regardless of title
-edits. Keep the index below in order.
+Standalone and parent specifications use `NNN-short-kebab-title.md`, where `NNN` is a zero-padded
+counter that increments per feature. Child specifications use `NNN.S-short-kebab-title.md`, where
+`S` is an unpadded positive integer local to the parent (`034.1-`, `034.2-`, ...). The number is
+assigned when the spec is created and never reused, so it is a stable handle in conversation
+regardless of title edits. Keep the index below in order and nest children under their parent.
 
 Review documents use the same number and title with a `-review` suffix, stored separately under
 [`reviews/`](reviews/): `reviews/NNN-short-kebab-title-review.md`. Multi-spec reviews may use a
-combined name (for example `reviews/013-014-build-performance-review.md`).
+combined name (for example `reviews/013-014-build-performance-review.md`). Child reviews preserve
+the child identifier: `reviews/NNN.S-short-kebab-title-review.md`.
 
 ## Ingesting specs and reviews from Downloads
 
@@ -186,8 +252,9 @@ Downloads path alone.
 
 | Kind | Copy to |
 |---|---|
-| New or updated spec | `docs/specs/NNN-<name>.md` |
-| Review / follow-up tasks | `docs/specs/reviews/NNN-<name>-review.md` |
+| New or updated standalone/parent spec | `docs/specs/NNN-<name>.md` |
+| New or updated child spec | `docs/specs/NNN.S-<name>.md` |
+| Review / follow-up tasks | `docs/specs/reviews/NNN[.S]-<name>-review.md` |
 
 Rules:
 
@@ -373,6 +440,29 @@ Rules:
   and render updater headings/bold text. **Implemented.**
   Branch `feature/adaptive-beta-scientific-preparation` (shared because requested before Spec 030
   was committed).
+- [034-multi-source-cell-continuations.md](034-multi-source-cell-continuations.md)
+  — parent plan for treating interrupted/restarted Neware files as one virtual Cell while
+  preserving ordered originals, global/local cycle provenance, a tracked live tail, analysis
+  safety, and portable round-trip. Implement only through these sequential children:
+  - [034.1-scientific-stitching-and-boundaries.md](034.1-scientific-stitching-and-boundaries.md)
+    — one dense observed-cycle mapping for per-cycle and raw data, with explicit source boundaries.
+  - [034.2-continuation-compatibility-and-ordering.md](034.2-continuation-compatibility-and-ordering.md)
+    — read-only compatibility findings, chronological suggestion, and acknowledgement policy.
+  - [034.3-atomic-multi-source-lifecycle-apis.md](034.3-atomic-multi-source-lifecycle-apis.md)
+    — validated atomic import, attach, reorder, detach, invalidation, and activity contracts.
+  - [034.4-initial-multi-source-import.md](034.4-initial-multi-source-import.md)
+    — Inbox workflow for importing separate Cells or one ordered continued Cell.
+  - [034.5-existing-cell-continuation-management.md](034.5-existing-cell-continuation-management.md)
+    — existing-Cell add/reorder/detach management and tracked-tail presentation.
+  - [034.6-tracked-tail-source-monitoring.md](034.6-tracked-tail-source-monitoring.md)
+    — scheduled checks for only the final source, with explicit all-source integrity operations.
+  - [034.7-cycles-time-capacity-and-exports.md](034.7-cycles-time-capacity-and-exports.md)
+    — complete Cycles and Time / capacity plotting, boundaries, thumbnails, and data exports.
+  - [034.8-protocol-derived-analysis-safety.md](034.8-protocol-derived-analysis-safety.md)
+    — fail-closed Steps/DCIR/Chargeability/C-rate behavior until semantic mappings exist.
+  - [034.9-portable-roundtrip-and-regression.md](034.9-portable-roundtrip-and-regression.md)
+    — exact portable hierarchy, synthetic regression corpus, documentation, and final matrix.
+  **Plan; no child implemented.**
 
 ## Assets
 
