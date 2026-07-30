@@ -886,6 +886,54 @@ class AnalysisEngineTests(unittest.TestCase):
         kinds = {b["kind"] for b in res2["badges"]}
         self.assertIn("newer_calc", kinds)
 
+    def test_multi_source_cycle_compute_uses_shared_dense_stitch(self):
+        hash_a = "d1" * 32
+        hash_b = "e2" * 32
+        for h, n_cycles in ((hash_a, 3), (hash_b, 2)):
+            self.FRAMES[h] = synth_raw(n_cycles, 2.0, 0.005)
+            if cache.raw_path(h).parent.exists():
+                import shutil
+
+                shutil.rmtree(cache.raw_path(h).parent)
+            cache.build(h, h)
+
+        cell = Cell(name="multi")
+        self.db.add(cell)
+        self.db.flush()
+        files = []
+        for position, (h, name) in enumerate(((hash_a, "a.ndax"), (hash_b, "b.ndax"))):
+            sf = SourceFile(
+                hash=h,
+                path=h,
+                filename=name,
+                size=1,
+                ext="ndax",
+                parse_status="parsed",
+                parser_version=parsing.PARSER_VERSION,
+                header_meta=analysis_protocol_header(),
+                nominal_capacity_mah=2.0,
+            )
+            self.db.add(sf)
+            files.append(sf)
+        test = Test(cell_id=cell.id, name="t")
+        self.db.add(test)
+        self.db.flush()
+        for position, sf in enumerate(files):
+            self.db.add(TestFile(test_id=test.id, file_id=sf.id, position=position))
+        self.db.commit()
+
+        result = engine.compute(
+            self.db,
+            self.spec_with([{"kind": "cell", "ref_id": cell.id}]),
+            None,
+        )
+        series = result["cell_series"][0]
+        self.assertEqual(series["x"], [1, 2, 3, 4, 5])
+        self.assertEqual(series["metrics"]["n_cycles"], 5)
+
+    def test_analysis_engine_uses_shared_raw_stitch_service(self):
+        self.assertFalse(hasattr(engine, "_stitch_raw"))
+
 
 if __name__ == "__main__":
     unittest.main()

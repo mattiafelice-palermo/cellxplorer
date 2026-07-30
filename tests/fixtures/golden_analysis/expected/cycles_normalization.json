@@ -1,7 +1,7 @@
 {
   "aggregates": [],
   "badges": [],
-  "calc_version": "1.6.0",
+  "calc_version": "1.6.1",
   "cell_series": [
     {
       "archived": false,
@@ -4336,7 +4336,11 @@
           "cycle_end": 193,
           "cycle_start": 1,
           "file_hash": "1b226f9fe01cea06c91c5a33746ddaf39547b3cd03e32f3310e5ba334d3fc513",
-          "segment": 0
+          "incomplete_boundary_unknown": true,
+          "segment": 0,
+          "source_cycle_count": 193,
+          "source_cycle_end": 193,
+          "source_cycle_start": 1
         }
       ],
       "x": [

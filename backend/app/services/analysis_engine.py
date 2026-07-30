@@ -1657,7 +1657,7 @@ def compute_steps(
         x_time: list[float | None] = []
         quantities: dict[str, list] = {c: [] for c in quantity_cols}
         block_meta: list[dict] = []
-        raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
+        raw, _raw_segments, _missing = stitch.stitch_raw(hashes, parser_version)
         block_frames: list[pd.DataFrame] = []
         if segment and not raw.empty:
             raw_timestamps = (
@@ -1861,7 +1861,7 @@ def compute_dcir(
             for target in ((segment or {}).get("targets") or [])
             if isinstance(target, dict) and target.get("protocol_signature")
         }
-        raw, _raw_segments, _missing = _stitch_raw(hashes, parser_version)
+        raw, _raw_segments, _missing = stitch.stitch_raw(hashes, parser_version)
         raw_timestamps = (
             pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
             if not raw.empty and "timestamp" in raw.columns
@@ -2012,39 +2012,6 @@ def compute_dcir(
     }
 
 
-def _stitch_raw(
-    ordered_hashes: list[str], parser_version: str
-) -> tuple[pd.DataFrame, list[dict], list[str]]:
-    frames: list[pd.DataFrame] = []
-    segments: list[dict] = []
-    missing: list[str] = []
-    offset = 0
-    for i, h in enumerate(ordered_hashes):
-        df = cache.load_raw(h, parser_version)
-        if df is None:
-            missing.append(h)
-            continue
-        df = df.copy()
-        if len(df) and "cycle" in df.columns:
-            first, last = int(df["cycle"].min()), int(df["cycle"].max())
-            df["cycle"] = df["cycle"] - first + 1 + offset
-            segments.append(
-                {
-                    "file_hash": h,
-                    "segment": i,
-                    "cycle_start": offset + 1,
-                    "cycle_end": offset + (last - first + 1),
-                }
-            )
-            offset += last - first + 1
-        df["segment"] = i
-        df["source_hash"] = h
-        frames.append(df)
-    if not frames:
-        return pd.DataFrame(), segments, missing
-    return pd.concat(frames, ignore_index=True), segments, missing
-
-
 def compute_time_capacity(
     db: Session,
     spec: dict,
@@ -2094,7 +2061,7 @@ def compute_time_capacity(
                     reparsed = True
 
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
-        raw, segments, missing = _stitch_raw(hashes, parser_version)
+        raw, segments, missing = stitch.stitch_raw(hashes, parser_version)
         for h in missing:
             badges.append(
                 {

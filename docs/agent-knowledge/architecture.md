@@ -200,6 +200,16 @@ ids and previously retry-stormed until the frontend died).
 references to cells rather than copies of scientific data. Analyses own one shared sample set;
 saved plots own configuration and per-view visibility.
 
+Multi-source continuation stitching lives in `backend/app/services/stitch.py` (Spec 034.1). One
+canonical helper maps each **observed** source-local cycle label to exactly one dense global cycle
+in stable numeric order; it never infers missing local labels from `max - min + 1`. Stitched cycle
+and raw frames retain `source_cycle`, `segment`, and `source_hash`. Segment metadata includes
+`source_cycle_start`, `source_cycle_end`, `source_cycle_count`, dense global `cycle_start` /
+`cycle_end`, and `incomplete_boundary_unknown: true` (no boundary splice inference). Missing ordered
+source caches fail closed: later sources are not remapped as a compact continuation after a gap.
+Completeness metadata is exposed through `stitch.stitch_metadata(frame)` and `frame.attrs`. Raw
+rows keep source record order; never sort globally by timestamp.
+
 Backend services own parsing and deterministic scientific calculations. React components own
 editing state and visualization state. Server-state copies in React Query are disposable views of
 backend records, never an alternative source of truth.

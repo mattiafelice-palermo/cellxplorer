@@ -50,6 +50,10 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 #        the golden corpus and on a full real library. The bump is precautionary:
 #        it costs one recompute and removes any chance of a cached value produced
 #        by an edge-case path we could not exercise.
-CALC_VERSION = "1.6.0"
+# 1.6.1: multi-source dense cycle stitching (Spec 034.1) — global cycle mapping uses
+#        observed local labels only; stitched frames add provenance columns. Per-file
+#        per-cycle parquet outputs are unchanged, but analysis provenance must not reuse
+#        pre-034.1 global cycle numbers for gapped or multi-source selections.
+CALC_VERSION = "1.6.1"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
