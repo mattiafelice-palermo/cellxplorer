@@ -5,10 +5,29 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services import cache_maintenance, scanner
 from ..services.activity_log import record_activity
+from ..services.lazy_module import LazyModule
 
 router = APIRouter(prefix="/api/cache", tags=["cache"])
+
+
+def _load_cache_maintenance():
+    from ..services import cache_maintenance
+
+    return cache_maintenance
+
+
+def _load_scanner():
+    from ..services import scanner
+
+    return scanner
+
+
+# Lazy so importing this router (which main.py does at startup) does not pull
+# parsing -> pandas/NewareNDA before uvicorn can bind (spec 031). Cache endpoints
+# live under Settings and are never on the startup path.
+cache_maintenance = LazyModule(_load_cache_maintenance)
+scanner = LazyModule(_load_scanner)
 
 
 class CacheSettings(BaseModel):

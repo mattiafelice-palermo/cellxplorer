@@ -58,15 +58,23 @@ class AppChannelConfigurationTests(unittest.TestCase):
             "icons-beta/icon.ico",
         )
 
-    def test_both_channels_share_nsis_template_and_sidecar(self):
+    def test_both_channels_share_nsis_template_and_backend_resource(self):
+        # Spec 030: the backend ships as a PyInstaller onedir folder bundled as a
+        # resource, not a single-file externalBin sidecar (onefile re-extracted
+        # 85 MB to temp on every launch).
         for config in (self.stable, self.beta):
             self.assertEqual(
                 config["bundle"]["windows"]["nsis"]["template"],
                 "cellxplorer-installer.nsi",
             )
+            self.assertNotIn(
+                "externalBin",
+                config["bundle"],
+                "externalBin is single-file; the onedir backend must be a resource.",
+            )
             self.assertEqual(
-                config["bundle"]["externalBin"],
-                ["binaries/cellxplorer-backend"],
+                config["bundle"]["resources"],
+                {"binaries/backend": "binaries/backend"},
             )
 
     def test_build_script_supports_explicit_channels(self):

@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 from ..db import get_db
 from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
 from ..responses import fast_json
-from ..services import analysis_usage, background_jobs
+from ..services import background_jobs
 from ..services.entity_ids import next_analysis_id
 from ..services.lazy_module import LazyModule
 
@@ -34,6 +34,14 @@ def _load_analysis_engine():
     from ..services import analysis_engine
 
     return analysis_engine
+
+
+def _load_analysis_usage():
+    # Kept lazy so importing this router does not pull analysis_engine -> pandas
+    # before uvicorn can bind (spec 031). Only endpoints that report usage need it.
+    from ..services import analysis_usage
+
+    return analysis_usage
 
 
 def _load_analysis_cache():
@@ -49,6 +57,7 @@ def _load_portable_analysis():
 
 
 engine = LazyModule(_load_analysis_engine)
+analysis_usage = LazyModule(_load_analysis_usage)
 analysis_cache = LazyModule(_load_analysis_cache)
 portable_analysis = LazyModule(_load_portable_analysis)
 

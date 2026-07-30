@@ -23,8 +23,28 @@ from ..models import (
     Test,
     TestFile,
 )
-from . import analysis_cache, background_jobs, cache
+from . import background_jobs
 from .activity_log import record_activity
+from .lazy_module import LazyModule
+
+
+def _load_analysis_cache():
+    from . import analysis_cache
+
+    return analysis_cache
+
+
+def _load_cache():
+    from . import cache
+
+    return cache
+
+
+# main.py imports this module at startup to spawn the maintenance thread, and the
+# thread only touches these caches later. Keeping them lazy stops that import from
+# pulling pandas/pyarrow before uvicorn can bind (spec 031).
+analysis_cache = LazyModule(_load_analysis_cache)
+cache = LazyModule(_load_cache)
 
 CACHE_SETTINGS_KEY = "cache_settings"
 

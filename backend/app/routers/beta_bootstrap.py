@@ -6,11 +6,22 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services import beta_bootstrap
-from ..services import scanner
 from ..services import scientific_preparation
 from ..services.app_channel import resolve_app_channel
+from ..services.lazy_module import LazyModule
 
 router = APIRouter(prefix="/api/beta-bootstrap", tags=["beta-bootstrap"])
+
+
+def _load_scanner():
+    # Lazy so importing this router does not pull parsing -> pandas/NewareNDA
+    # before uvicorn can bind (spec 031).
+    from ..services import scanner
+
+    return scanner
+
+
+scanner = LazyModule(_load_scanner)
 
 
 class DiscardStageRequest(BaseModel):
