@@ -44,15 +44,13 @@ pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), 
                 seq
             } else {
                 return Err(
-                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or "
-                    "MAJOR.MINOR.PATCH-betaNNN update versions."
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or MAJOR.MINOR.PATCH-betaNNN update versions."
                         .to_string(),
                 );
             };
             if sequence.is_empty() || !sequence.bytes().all(|byte| byte.is_ascii_digit()) {
                 return Err(
-                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or "
-                    "MAJOR.MINOR.PATCH-betaNNN update versions."
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or MAJOR.MINOR.PATCH-betaNNN update versions."
                         .to_string(),
                 );
             }
