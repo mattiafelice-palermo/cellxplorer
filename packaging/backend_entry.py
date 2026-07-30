@@ -74,6 +74,11 @@ def main() -> int:
             log_level="info",
             log_config=None,
             access_log=False,
+            # Never import the websocket/httptools machinery: unused, and their
+            # import cost ~0.5 s of cold start (spec 032). Explicit so the saving
+            # holds even in an environment where the extras happen to be installed.
+            ws="none",
+            http="h11",
         )
         return 0
     except Exception:

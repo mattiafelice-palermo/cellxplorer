@@ -19,4 +19,7 @@ if __name__ == "__main__":
         port = 8642
     if not 1 <= port <= 65535:
         port = 8642
-    uvicorn.run("app.main:app", host="127.0.0.1", port=port, log_level="info")
+    # Match the packaged entry point: no websocket/httptools machinery (spec 032).
+    uvicorn.run(
+        "app.main:app", host="127.0.0.1", port=port, log_level="info", ws="none", http="h11"
+    )

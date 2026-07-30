@@ -16,7 +16,10 @@
 NewareNDA==2026.6.11
 fastapi==0.115.6
 orjson==3.11.9
-uvicorn[standard]==0.32.1
+# Plain uvicorn, not [standard]: the extras (watchfiles, websockets, httptools)
+# added ~0.55 s to cold start and we use none of them — no reload, no websockets,
+# and h11 is fine for a loopback client (spec 032).
+uvicorn==0.32.1
 sqlalchemy==2.0.51
 alembic==1.14.0
 pandas==3.0.3
