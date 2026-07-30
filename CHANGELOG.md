@@ -4,6 +4,29 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0 - 2026-07-31
+
+### New features
+
+- CellXplorer opens much faster after install or an update. The backend runs from the installed app folder instead of unpacking a large bundle on every launch, and everyday screens such as your library and project folders appear sooner while heavy scientific libraries load in the background.
+- Redesigned Projects view with cycle count, specific capacity, and plot previews in aligned columns; collapsible Analyses and Samples sections; and richer multi-select (including Shift+Up/Down range selection).
+- Create a new analysis from selected samples in Projects, place multiple cells as a replicate group from the Cell Database, and start from an empty analysis when you only need a shell.
+- Import and compute cycling data faster (~2.6× on real libraries) with improved per-cycle processing.
+- Improved protocol segment editor with sticky controls, protocol-aware filters, and show-neighbours expansion.
+- Smarter source-file monitoring with weekly schedules, configurable retry delays, and a schedule preview in Settings.
+- Clearer in-app update experience: native notifications, readable release notes in the update dialog, and specific guidance when a check fails.
+- Optional CellXplorer Beta installs separately with its own library, for users who opt in under App updates.
+- After updating from 0.16.x, existing libraries may rebuild scientific caches once. This is expected and improves speed and correctness going forward.
+
+### Bug fixes
+
+- Stop C-rate (rate capability) recognition from starting when the plot is hidden or has no samples selected — this removes unexpected background jobs and Activity noise.
+- Fix analysis tab switching after saving a draft plot when you had unsaved work on another tab.
+- Fix destructive confirmations so the impact preview no longer flashes a second loading dialog.
+- Fix Cell Database row selection, name preview clicks, and dark-mode selected-row contrast.
+- Fix same-folder drag-and-drop accidentally removing cells and replicate groups.
+- Improve installer updates: wait for running app processes to close, repair uninstaller refresh, and clearer shutdown before NSIS applies an update.
+
 ## 0.17.0-beta013 - 2026-07-30
 
 - Prevent hidden or empty C-rate workspaces from starting rate-sweep recognition.
