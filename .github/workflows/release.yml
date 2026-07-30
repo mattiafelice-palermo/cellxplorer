@@ -122,7 +122,7 @@ jobs:
         run: |
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             python scripts/release_tag.py --tag "$env:GITHUB_REF_NAME"
-            if ($env:GITHUB_REF_NAME -match '-beta\.') {
+            if ($env:GITHUB_REF_NAME -match '-beta(\.\d+|\d+$)') {
               "channel=beta" >> $env:GITHUB_OUTPUT
               "product_name=CellXplorer Beta" >> $env:GITHUB_OUTPUT
               "config_args=--config src-tauri/tauri.beta.conf.json" >> $env:GITHUB_OUTPUT

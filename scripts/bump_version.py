@@ -25,7 +25,7 @@ from check_versions import (
 
 
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-PUBLISHABLE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
+PUBLISHABLE_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta(?:\.(\d+)|(\d+)))?$")
 CHANGELOG_HEADING_RE = re.compile(
     r"^##\s+(?:\[)?(?P<version>v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\])?"
 )
@@ -68,7 +68,8 @@ def parse_publishable_version(value: str) -> str:
     normalized = normalize_expected_version(value.strip())
     if not PUBLISHABLE_VERSION_RE.fullmatch(normalized):
         raise BumpVersionError(
-            f"Version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N, got {value!r}."
+            f"Version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N / "
+            f"MAJOR.MINOR.PATCH-betaNNN, got {value!r}."
         )
     return normalized
 

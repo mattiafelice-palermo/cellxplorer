@@ -8,7 +8,8 @@ import re
 import sys
 
 STABLE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
-BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
+# Accept legacy vX.Y.Z-beta.N and compact vX.Y.Z-betaNNN (sorts above beta.9 on GitHub).
+BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta(?:\.\d+|\d+)$")
 
 
 class ReleaseTagError(Exception):

@@ -38,15 +38,21 @@ pub fn validate_release_version(channel: AppChannel, value: &str) -> Result<(), 
         )),
         AppChannel::Beta => {
             let prerelease = version.pre.as_str();
-            let Some(sequence) = prerelease.strip_prefix("beta.") else {
+            let sequence = if let Some(seq) = prerelease.strip_prefix("beta.") {
+                seq
+            } else if let Some(seq) = prerelease.strip_prefix("beta") {
+                seq
+            } else {
                 return Err(
-                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N update versions."
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or "
+                    "MAJOR.MINOR.PATCH-betaNNN update versions."
                         .to_string(),
                 );
             };
             if sequence.is_empty() || !sequence.bytes().all(|byte| byte.is_ascii_digit()) {
                 return Err(
-                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N update versions."
+                    "CellXplorer Beta accepts only MAJOR.MINOR.PATCH-beta.N or "
+                    "MAJOR.MINOR.PATCH-betaNNN update versions."
                         .to_string(),
                 );
             }
@@ -227,7 +233,7 @@ mod tests {
 
     #[test]
     fn beta_release_versions_are_exact() {
-        for version in ["0.18.0-beta.1", "1.0.0-beta.0", "12.34.56-beta.123"] {
+        for version in ["0.18.0-beta.1", "1.0.0-beta.0", "12.34.56-beta.123", "0.17.0-beta011"] {
             assert!(validate_release_version(AppChannel::Beta, version).is_ok());
         }
         for version in [

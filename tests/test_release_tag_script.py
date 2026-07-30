@@ -24,9 +24,14 @@ class ReleaseTagScriptTests(unittest.TestCase):
     def test_accepts_exact_stable_and_beta_tags(self):
         self.assertTrue(release_tag.is_stable_release_tag("v0.17.0"))
         self.assertTrue(release_tag.is_beta_release_tag("v0.17.0-beta.1"))
+        self.assertTrue(release_tag.is_beta_release_tag("v0.17.0-beta011"))
         self.assertEqual(
             release_tag.require_publishable_release_tag("v0.17.0-beta.1"),
             "v0.17.0-beta.1",
+        )
+        self.assertEqual(
+            release_tag.require_publishable_release_tag("v0.17.0-beta011"),
+            "v0.17.0-beta011",
         )
 
     def test_rejects_crossed_or_loose_semver(self):

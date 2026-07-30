@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,7 +25,8 @@ def beta_core(tag: str) -> tuple[int, int, int]:
     tag = release_tag.require_publishable_release_tag(tag)
     if not release_tag.is_beta_release_tag(tag):
         raise ReleaseChannelPolicyError(f"Tag {tag!r} is not a Beta release tag.")
-    core = tag[1:].split("-beta.", 1)[0]
+    body = tag[1:]
+    core = re.sub(r"-beta(?:\.\d+|\d+)$", "", body)
     return tuple(int(part) for part in core.split("."))  # type: ignore[return-value]
 
 

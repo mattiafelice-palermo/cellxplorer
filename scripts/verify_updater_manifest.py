@@ -316,7 +316,7 @@ def infer_setup_exe_name_for_channel(version: str, channel: str) -> str:
 
 def assert_channel_version(version: str, channel: str) -> None:
     normalized = normalize_version(version)
-    is_beta = "-beta." in normalized
+    is_beta = bool(re.search(r"-beta(?:\.\d+|\d+)$", normalized))
     if channel == "stable" and is_beta:
         raise ManifestVerificationError(
             f"Stable channel manifest cannot contain a beta version ({normalized!r})."

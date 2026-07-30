@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta011 - 2026-07-30
+
+### New features
+
+- CellXplorer Beta opens noticeably faster, especially right after install or an update. The backend no longer unpacks a large temporary bundle on every launch — it runs directly from the installed app folder.
+- Everyday screens such as your library and project folders appear sooner. Heavy scientific libraries now load in the background and only when a feature actually needs them.
+
 ## 0.17.0-beta.10 - 2026-07-29
 
 ### New features
