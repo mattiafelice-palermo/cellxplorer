@@ -75,12 +75,19 @@ def _load_scanner():
     return module
 
 
+def _load_continuations():
+    from ..services import continuations as module
+
+    return module
+
+
 np = LazyModule(_load_numpy)
 pd = LazyModule(_load_pandas)
 cache = LazyModule(_load_cache)
 calc = LazyModule(_load_calc)
 parsing = LazyModule(_load_parsing)
 scanner = LazyModule(_load_scanner)
+continuations = LazyModule(_load_continuations)
 
 router = APIRouter(prefix="/api", tags=["files"])
 
@@ -630,6 +637,17 @@ class ImportPathInspectRequest(BaseModel):
     paths: list[str]
 
 
+class ContinuationInspectSourceRequest(BaseModel):
+    staged_name: str
+    source_path: str | None = None
+
+
+class ContinuationInspectRequest(BaseModel):
+    sources: list[ContinuationInspectSourceRequest]
+    existing_test_id: int | None = None
+    proposed_order: list[str] | None = None
+
+
 class ImportSourceListRequest(BaseModel):
     file_paths: list[str] = []
     folder_paths: list[str] = []
@@ -944,6 +962,185 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
     if not req.paths:
         return {"files": []}
     return {"files": [_inspect_import_path(Path(path), db) for path in req.paths]}
+
+
+def _continuation_existing_source(
+    link: TestFile,
+    *,
+    existing_test_id: int,
+) -> dict:
+    sf = link.file
+    header_meta = sf.header_meta or {}
+    nominal = sf.nominal_capacity_mah
+    source = {
+        "key": f"existing-{sf.id}",
+        "kind": "existing",
+        "source_file_id": sf.id,
+        "filename": sf.filename,
+        "hash": sf.hash,
+        "input_order": link.position,
+        "existing_test_id": existing_test_id,
+        "linked_test_id": link.test_id,
+        "path_refresh_candidate": False,
+        "unsupported_extension": False,
+        "missing": sf.location_status == "offline",
+        "unreadable": False,
+        "changing": sf.location_status == "changing",
+        "inspection_status": "pending",
+        "start_time": sf.start_time,
+        "device_info": sf.device_info,
+        "channel": sf.channel,
+        "barcode": sf.barcode,
+        "remarks": sf.remarks,
+        "nominal_capacity_mah": nominal,
+        "active_mass_mg": sf.active_mass_mg,
+        "protocol_signature": continuations.header_fields_from_metadata(
+            {"raw": header_meta, "nominal_capacity_mah": nominal}
+        ).get("protocol_signature"),
+        "local_cycle_start": None,
+        "local_cycle_end": None,
+        "local_cycle_count": sf.cycle_count,
+        "end_time": None,
+    }
+    return continuations.enrich_source_timing(source, source_path=Path(sf.path) if sf.path else None)
+
+
+def _continuation_staged_source(
+    draft: ContinuationInspectSourceRequest,
+    db: Session,
+    *,
+    existing_test_id: int | None,
+    input_order: int,
+) -> dict:
+    filename = _clean_filename(Path(draft.source_path or draft.staged_name).name)
+    unsupported = not import_filename_allowed(filename)
+    source = {
+        "key": draft.staged_name,
+        "kind": "staged",
+        "source_file_id": None,
+        "filename": filename,
+        "hash": None,
+        "input_order": input_order,
+        "existing_test_id": existing_test_id,
+        "linked_test_id": None,
+        "path_refresh_candidate": False,
+        "unsupported_extension": unsupported,
+        "missing": False,
+        "unreadable": False,
+        "changing": False,
+        "inspection_status": "pending",
+        "start_time": None,
+        "end_time": None,
+        "local_cycle_start": None,
+        "local_cycle_end": None,
+        "local_cycle_count": None,
+        "protocol_signature": None,
+        "device_info": None,
+        "channel": None,
+        "nominal_capacity_mah": None,
+        "active_mass_mg": None,
+    }
+    if unsupported:
+        source["inspection_status"] = "error"
+        return source
+
+    try:
+        source_path = resolve_import_source_path(draft.staged_name, draft.source_path)
+    except ValueError as exc:
+        source["inspection_status"] = "error"
+        source["inspection_error"] = str(exc)
+        source["unreadable"] = True
+        source["unreadable_message"] = str(exc)
+        return source
+
+    integrity = continuations.inspect_path_integrity(source_path)
+    source["missing"] = integrity["missing"]
+    source["unreadable"] = integrity["unreadable"]
+    source["changing"] = integrity["changing"]
+    if integrity["message"]:
+        source["unreadable_message"] = integrity["message"]
+    if integrity["missing"] or integrity["unreadable"] or integrity["changing"]:
+        source["inspection_status"] = "error" if integrity["unreadable"] else "pending"
+        if integrity.get("hash"):
+            source["hash"] = integrity["hash"]
+        return source
+
+    file_hash = integrity["hash"]
+    if not file_hash:
+        source["inspection_status"] = "error"
+        source["inspection_error"] = "Could not establish source identity"
+        source["unreadable"] = True
+        return source
+
+    meta = parsing.read_header_metadata(source_path)
+    header_fields = continuations.header_fields_from_metadata(meta)
+    source.update(header_fields)
+    source["hash"] = file_hash
+
+    existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
+    if existing is not None:
+        source["source_file_id"] = existing.id
+        link = existing.test_link
+        source["linked_test_id"] = link.test_id if link is not None else None
+        if link is None and existing.path != str(source_path):
+            source["path_refresh_candidate"] = True
+        if existing.location_status == "changing":
+            source["changing"] = True
+            source["inspection_status"] = "error"
+            return source
+
+    if meta.get("error"):
+        source["inspection_error"] = meta["error"]
+
+    return continuations.enrich_source_timing(source, source_path=source_path)
+
+
+def _ordered_continuation_sources(
+    req: ContinuationInspectRequest,
+    db: Session,
+) -> tuple[list[dict], list[str]]:
+    existing_sources: list[dict] = []
+    if req.existing_test_id is not None:
+        test = db.get(Test, req.existing_test_id)
+        if test is None:
+            raise HTTPException(404, "Existing test is missing")
+        existing_sources = [
+            _continuation_existing_source(link, existing_test_id=test.id)
+            for link in sorted(test.file_links, key=lambda item: item.position)
+        ]
+
+    staged_sources: list[dict] = []
+    staged_keys: list[str] = []
+    for index, draft in enumerate(req.sources):
+        staged_keys.append(draft.staged_name)
+        staged_sources.append(
+            _continuation_staged_source(
+                draft,
+                db,
+                existing_test_id=req.existing_test_id,
+                input_order=index,
+            )
+        )
+
+    staged_by_key = {source["key"]: source for source in staged_sources}
+    if req.proposed_order is not None and set(req.proposed_order) == set(staged_keys):
+        ordered_staged = [staged_by_key[key] for key in req.proposed_order]
+    else:
+        ordered_staged = staged_sources
+
+    return existing_sources + ordered_staged, staged_keys
+
+
+@router.post("/imports/continuations/inspect")
+def inspect_continuation_sources(req: ContinuationInspectRequest, db: Session = Depends(get_db)):
+    if not req.sources and req.existing_test_id is None:
+        raise HTTPException(400, "At least one source is required")
+    ordered_sources, staged_keys = _ordered_continuation_sources(req, db)
+    return continuations.analyze_continuation_chain(
+        ordered_sources,
+        staged_keys=staged_keys,
+        proposed_staged_order=req.proposed_order,
+    )
 
 
 @router.post("/imports/list-sources")

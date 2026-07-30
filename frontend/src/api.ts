@@ -1672,3 +1672,62 @@ export interface ImportRawDataResult {
   offset: number;
   limit: number;
 }
+
+export type ContinuationInspectionStatus = "ready" | "pending" | "error";
+export type ContinuationSourceKind = "existing" | "staged";
+export type ContinuationFindingSeverity =
+  | "info"
+  | "warning"
+  | "confirmation"
+  | "blocking";
+
+export interface ContinuationInspectSourceRequest {
+  staged_name: string;
+  source_path?: string | null;
+}
+
+export interface ContinuationInspectRequest {
+  sources: ContinuationInspectSourceRequest[];
+  existing_test_id?: number | null;
+  proposed_order?: string[] | null;
+}
+
+export interface ContinuationInspectSource {
+  key: string;
+  kind: ContinuationSourceKind;
+  source_file_id: number | null;
+  filename: string;
+  hash: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  local_cycle_start: number | null;
+  local_cycle_end: number | null;
+  local_cycle_count: number | null;
+  protocol_signature: string | null;
+  device_info: string | null;
+  channel: string | null;
+  nominal_capacity_mah: number | null;
+  active_mass_mg: number | null;
+  inspection_status: ContinuationInspectionStatus;
+}
+
+export interface ContinuationFinding {
+  id: string;
+  code: string;
+  severity: ContinuationFindingSeverity;
+  source_keys: string[];
+  title: string;
+  message: string;
+  details: Record<string, unknown>;
+}
+
+export interface ContinuationInspectResult {
+  sources: ContinuationInspectSource[];
+  suggested_order: string[];
+  findings: ContinuationFinding[];
+  can_submit: boolean;
+}
+
+export function inspectContinuationSources(body: ContinuationInspectRequest) {
+  return post<ContinuationInspectResult>("/api/imports/continuations/inspect", body);
+}

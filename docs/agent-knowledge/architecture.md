@@ -210,6 +210,13 @@ source caches fail closed: later sources are not remapped as a compact continuat
 Completeness metadata is exposed through `stitch.stitch_metadata(frame)` and `frame.attrs`. Raw
 rows keep source record order; never sort globally by timestamp.
 
+Read-only continuation compatibility inspection lives in
+`backend/app/services/continuations.py` (Spec 034.2). `POST /api/imports/continuations/inspect`
+reuses header/hash work from import preview, enriches timing and local cycle ranges from existing
+caches when available, and returns `pending` plus a background cache build when parse caches are
+not ready yet. Findings and suggested order are deterministic; blocking covers identity violations
+while protocol, channel, and local cycle differences remain visible but non-blocking.
+
 Backend services own parsing and deterministic scientific calculations. React components own
 editing state and visualization state. Server-state copies in React Query are disposable views of
 backend records, never an alternative source of truth.
