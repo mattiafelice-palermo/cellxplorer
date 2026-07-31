@@ -6,6 +6,23 @@ battery-cycling data. The current directory contains an existing Python
 library that reads Neware binary files. Your job is to build the application
 around it.
 
+## Current architecture correction — 2026-07-31
+
+This original build specification previously described a Cell as owning many user-facing Tests.
+That model is superseded.
+
+The product model is:
+
+```text
+Cell -> one ordered chain of SourceFiles
+```
+
+Interrupted runs, restarts, formation/cycling files, channel moves, and restarted protocols with
+removed or changed steps remain sources in that one Cell chain. The existing `tests` and
+`test_files` database tables remain only as compatibility storage: normal Cells use one internal
+Test row, and Test must not be exposed as a user-facing grouping, selector, analysis object, or
+monitoring scope. Do not create another Test because a source protocol differs.
+
 ## STEP 0 — Before writing any application code
 
 1. Explore the existing Python library in this directory. Read its source,
@@ -16,7 +33,7 @@ around it.
    - How to get derived per-cycle quantities (charge/discharge capacity,
      coulombic efficiency, etc.)
    - What metadata the files/headers expose (cycler, channel, dates, etc.)
-   - Whether files carry any stable cell/test identifier
+   - Whether files carry any stable cell identifier
 2. Then present me with: (a) that summary, (b) a concrete data schema, and
    (c) a phased build plan. WAIT for my confirmation before building beyond
    the scaffold. Do not scaffold the whole app in one shot.
@@ -37,16 +54,16 @@ is a view of references into it.
   path). The network path is a mutable *location attribute*. Store: hash
   (unique), current path, size, cycler/channel, dates, parse status.
 - **Cell** — the physical cell; the scientific object users think in.
-  Carries structured metadata. This is the primary unit of selection in
-  the UI.
-- **Test** — one cycling procedure on one cell, composed of an *ordered
-  list* of one or more SourceFiles (handles formation-in-one-file,
-  cycling-in-another, restarts, channel moves). Stitches its files into
-  one continuous cycle-numbered record with explicit segment boundaries.
+  Carries structured metadata and owns one ordered chain of one or more
+  SourceFiles. This is the primary unit of selection in the UI.
+- **Internal Test row** — compatibility-only storage between Cell and
+  TestFile links. Normal Cells use exactly one row. It has no user-facing
+  meaning and does not divide the Cell into separate procedures.
 
-Relationships: File → belongs to one Test; Test → belongs to one Cell;
-Cell → many Tests. A Cell may be referenced by many projects, groups, and
-analyses at zero cost.
+Relationships: each SourceFile belongs to one Cell source chain; each Cell
+has one ordered chain. The current schema stores that as File → TestFile →
+one internal Test → Cell. A Cell may be referenced by many projects,
+groups, and analyses at zero cost.
 
 Parsed time-series and derived per-cycle properties are NOT user-facing
 entities. They are **caches**, keyed by (file hash, parser version,
@@ -80,8 +97,8 @@ nested. Nothing else gets a hierarchy.
   per-analysis exclusions (cells masked in THIS analysis only, with
   optional reason), cycle ranges, derived quantities, normalization rules,
   filters, statistics/dispersion choice, plot config, labels, and
-  provenance (the file hashes + parser/calc versions used when last
-  computed).
+  provenance (the ordered source hashes + parser/calc versions used when
+  last computed).
 
 Analysis rules:
 - An analysis selects cells **by identity from anywhere in the library**.
@@ -168,12 +185,10 @@ exclusions. Requirements:
   JSON the API returns). All current UI work follows the canonical visual
   contract in `docs/agent-knowledge/visual-style-guide.md`; explicit locked
   decisions in a feature spec may override it narrowly.
-- Persistence shape: ~10 tables — files(hash unique), cells, tests,
-  test_files(ordered), metadata fields + cell_metadata (or JSONB),
-  tags + cell_tags + analysis_tags, folders(parent_id), projects(folder_id),
-  project_cells, groups(project_id) + group_cells, collections +
-  analysis_collections, analyses(spec JSON, provenance JSON, optional
-  folder_id/project_id — nullable, so analyses can be homeless).
+- Persistence shape: files(hash unique), cells, tests, test_files(ordered),
+  metadata fields + cell_metadata, tags, folders/projects/groups,
+  collections, and analyses. `tests`/`test_files` are compatibility storage
+  for one ordered source chain per Cell, not a user-facing many-Test model.
   Store the analysis spec as a versioned JSON document, not fully normalized.
 - Packaging: run locally (uvicorn + built frontend at localhost) for v1.
   Leave a clean seam for a Tauri wrapper later; don't build it now.
@@ -181,14 +196,14 @@ exclusions. Requirements:
 ## Target workflow (build toward this)
 
 Import (scan folders → hash → parse headers → inbox of unregistered files →
-register File→Test→Cell with minimal input, no forced classification before
-viewing) → Organize (project, metadata via table paste, groups) → Analyze
-(pick groups, choose quantity, mean±SD, normalize, exclude an outlier in-
-this-analysis-only with reason) → Save (spec + provenance) → Cross-project
-comparison (filter library by tag across projects, file it nowhere or at a
-common folder) → Reopen a year later (renders identically from versioned
-cache, shows "new data"/"newer parser" badges, duplicate-and-recompute to
-update while leaving the record intact).
+register one Cell with one ordered source chain and minimal input, no forced
+classification before viewing) → Organize (project, metadata via table paste,
+groups) → Analyze (pick groups, choose quantity, mean±SD, normalize, exclude
+an outlier in-this-analysis-only with reason) → Save (spec + provenance) →
+Cross-project comparison (filter library by tag across projects, file it
+nowhere or at a common folder) → Reopen a year later (renders identically
+from versioned cache, shows "new data"/"newer parser" badges,
+duplicate-and-recompute to update while leaving the record intact).
 
 ## Constraints
 
@@ -198,13 +213,14 @@ update while leaving the record intact).
   unexpectedly.
 - Never duplicate raw datasets. Reference by identity everywhere.
 - Keep it understandable for a non-database-specialist researcher.
+- Never expose the internal Test compatibility row as a user workflow.
 - Must scale from a few cells to thousands of files over years.
 
 ## Build phases (propose your own refinement in Step 0)
 
 1. Scaffold: FastAPI + SQLite + Vite/React, health check, DB migrations.
-2. Identity layer: file scan/hash/parse, File→Test→Cell registration,
-   Parquet cache with version keys.
+2. Identity layer: file scan/hash/parse, one Cell with one ordered source
+   chain, Parquet cache with version keys.
 3. Organization: data tree (folders/projects), cell references, metadata,
    tags, groups.
 4. Analysis engine: spec model, explicit selection, exclusions, per-cell
@@ -278,8 +294,8 @@ Start with Step 0. Show me the library summary, schema, and plan, then wait.
     "parser_version": "1.3.0",
     "calc_version": "1.1.0",
     "sources": [
-      { "cell_id": "cell_A_rep1", "test_id": "test_991", "file_hashes": ["a3f9...", "b1c2..."] },
-      { "cell_id": "cell_A_rep2", "test_id": "test_992", "file_hashes": ["c8d4..."] }
+      { "cell_id": "cell_A_rep1", "file_hashes": ["a3f9...", "b1c2..."] },
+      { "cell_id": "cell_A_rep2", "file_hashes": ["c8d4..."] }
     ]
   }
 }
