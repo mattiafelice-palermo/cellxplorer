@@ -90,15 +90,17 @@ uncommitted or unpushed.
 - The user-facing scientific hierarchy is `Cell -> ordered SourceFiles`. A Cell is the primary
   object users select and analyze, and interruptions/restarts remain successive sources in that
   single Cell chain.
-- The existing `Test` and `TestFile` tables are compatibility storage only. Normal Cells use exactly
+- The existing `Test` and `TestFile` tables are compatibility storage only. Every Cell uses exactly
   one internal Test row whose `TestFile.position` values store the source order. Do not expose Test
   names, selectors, cards, tails, or per-Test lifecycle behavior, and do not create another Test
   because a restart protocol differs.
+- Multiple Tests per Cell were never an implemented, approved, or existing legacy state. Prevent a
+  second Test row, treat any attempted creation as an invariant violation, and cover this with
+  focused backend tests. Do not add migration, normalization, flattening, or preservation logic for
+  a hypothetical multi-Test database.
 - Continuation import, attach, reorder, detach, provenance, and monitoring are Cell-level. The final
   source in the Cell chain is the only tracked tail. Existing Test-level routes may remain only as
   internal compatibility wrappers while callers migrate.
-- If legacy data unexpectedly contains multiple Tests for one Cell, preserve all sources and fail
-  mutations clearly rather than silently deleting or normalizing data without an approved plan.
 - Source files stay at their original paths. The database stores paths and checksums; parsed raw and
   per-cycle data live in regenerable Parquet caches.
 - Parser-derived metadata, source paths, checksums, and cycling data are read-only in the UI. Cell
