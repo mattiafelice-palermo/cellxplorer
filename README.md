@@ -77,24 +77,22 @@ See [`docs/portable-analysis-html.md`](docs/portable-analysis-html.md).
 
 ## Architecture in one paragraph
 
-There is ONE canonical library (SourceFile → Test → Cell, identity by
-content hash). Everything else is references into it: folders/projects form
-the single navigation tree (folders never feed data to anything), groups
-are thin ordered replicate sets, and analyses are persistent recipes with
-explicit frozen selections, per-analysis exclusions, and pinned provenance
-(parser/calc versions + file hashes). Aggregation (mean ± SD/SEM/min-max/
-percentile with n(cycle) tracking) is computed at render time, never
-stored. Nothing recomputes silently — moved files relink by hash, changed/
-offline sources and newer parser versions surface as badges with explicit
-recompute buttons.
+There is one canonical library whose scientific object is the physical **Cell**. A Cell owns one
+ordered chain of original `SourceFile` records, allowing interrupted and restarted Neware runs to
+be viewed continuously without modifying the original files. The existing `Test`/`TestFile` tables
+remain internal compatibility storage for that chain; normal Cells use one internal Test row, and
+Test is not a user-facing grouping or analysis concept. Everything else references Cells: folders
+and projects organize them, replicate groups are thin ordered sets, and analyses are persistent
+recipes with explicit frozen selections and pinned provenance. Aggregation is computed at render
+time. Nothing recomputes silently—moved, changed, offline, or version-stale sources surface as
+explicit status and recompute actions.
 
 ## Layout
 
-- `backend/app/models.py` — the ~15-table schema
+- `backend/app/models.py` — relational schema, including the internal source-chain compatibility rows
 - `backend/app/services/` — `parsing.py` (the only NewareNDA import),
   `cache.py` (versioned Parquet), `calc.py` (per-cycle derivations),
-  `stitch.py` (multi-file tests), `scanner.py` (background scans/relink),
-  `analysis.py` (the compute engine + badges)
+  `stitch.py` (multi-source Cell chains), `scanner.py` (background scans/relink),
+  `analysis_engine.py` (analysis compute engine)
 - `backend/app/routers/` — REST API (`/api/...`)
-- `frontend/src/pages/` — Inbox, Library, Project, Analysis editor,
-  Global analysis index, Tags & collections
+- `frontend/src/pages/` — Inbox, Library, Projects, Analysis editor, and settings
