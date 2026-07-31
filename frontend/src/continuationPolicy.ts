@@ -6,6 +6,34 @@ import type {
 
 export type ImportWorkflowMode = "separate" | "continued";
 
+export type ContinuedScientificDraft = {
+  active_material_selection: string;
+  active_mass_mg_override: number | null;
+  nominal_capacity_mah_override: number | null;
+  electrode_area_cm2_override: number | null;
+};
+
+function positiveFinite(value: number | null): boolean {
+  return value === null || (Number.isFinite(value) && value > 0);
+}
+
+export function scientificDraftIsValid(draft: ContinuedScientificDraft): boolean {
+  if (!positiveFinite(draft.active_mass_mg_override)) return false;
+  if (!positiveFinite(draft.nominal_capacity_mah_override)) return false;
+  if (!positiveFinite(draft.electrode_area_cm2_override)) return false;
+  if (draft.active_material_selection !== "custom") {
+    return Boolean(
+      draft.active_mass_mg_override !== null &&
+        Number.isFinite(draft.active_mass_mg_override) &&
+        draft.active_mass_mg_override > 0 &&
+        draft.nominal_capacity_mah_override !== null &&
+        Number.isFinite(draft.nominal_capacity_mah_override) &&
+        draft.nominal_capacity_mah_override > 0,
+    );
+  }
+  return true;
+}
+
 export function preserveAcknowledgements(
   previous: Iterable<string>,
   result: ContinuationInspectResult | null | undefined,

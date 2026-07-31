@@ -73,7 +73,7 @@ import {
   Tree,
 } from "../api";
 import Plot from "../components/Plot";
-import { ContinuedImportEditor } from "../components/ContinuedImportEditor";
+import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
 import { addDebugEvent } from "../debug";
 import { nominalCapacityFromMass } from "../scientificMetadata";
@@ -81,7 +81,6 @@ import { nominalCapacityFromMass } from "../scientificMetadata";
 export type ImportDraft = ImportPreview & {
   cell_name: string;
   description: string;
-  test_name: string;
   metadata: Record<string, string>;
   preview_loading: boolean;
   active_mass_mg_override: number | null;
@@ -965,7 +964,6 @@ function importDraft(file: ImportPreview): ImportDraft {
     ...file,
     cell_name: suggestedCellName(file),
     description: file.remarks || "",
-    test_name: "Imported file",
     metadata: file.metadata,
     preview_loading: true,
     active_mass_mg_override: null,
@@ -978,6 +976,25 @@ function importDraft(file: ImportPreview): ImportDraft {
     electrode_area_selection: "custom",
     electrode_area_preset_id: null,
     electrode_area_preset_name: null,
+  };
+}
+
+function continuedCellDraftFrom(draft: ImportDraft | undefined): ContinuedCellDraft {
+  return {
+    cell_name: draft?.cell_name ?? "",
+    description: draft?.description ?? "",
+    metadata: draft?.metadata ?? {},
+    active_mass_mg_override: draft?.active_mass_mg_override ?? null,
+    nominal_capacity_mah_override: draft?.nominal_capacity_mah_override ?? null,
+    electrode_area_cm2_override: draft?.electrode_area_cm2_override ?? null,
+    active_material_selection: draft?.active_material_selection ?? "custom",
+    active_material_preset_id: draft?.active_material_preset_id ?? null,
+    active_material_name: draft?.active_material_name ?? null,
+    active_material_specific_capacity_mah_g: draft?.active_material_specific_capacity_mah_g ?? null,
+    electrode_area_selection: draft?.electrode_area_selection ?? "custom",
+    electrode_area_preset_id: draft?.electrode_area_preset_id ?? null,
+    electrode_area_preset_name: draft?.electrode_area_preset_name ?? null,
+    source_metadata: draft ?? null,
   };
 }
 
@@ -1034,6 +1051,7 @@ function ImportModal({
   onChange,
   onClose,
   onAddMoreSources,
+  onRemoveSource,
   addingMore,
   onSaved,
   targetFolderId,
@@ -1045,6 +1063,7 @@ function ImportModal({
   onChange: (index: number, draft: ImportDraft) => void;
   onClose: () => void;
   onAddMoreSources: () => void;
+  onRemoveSource: (stagedName: string) => void;
   addingMore: boolean;
   onSaved: () => void;
   targetFolderId: number | null;
@@ -1063,6 +1082,7 @@ function ImportModal({
   const [replicateGroups, setReplicateGroups] = useState<ImportReplicateDraft[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
   const [continuedMode, setContinuedMode] = useState(false);
+  const [continuedCellDraft, setContinuedCellDraft] = useState<ContinuedCellDraft>(() => continuedCellDraftFrom(drafts[0]));
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
     queryKey: ["electrode-area-presets"],
@@ -1101,6 +1121,7 @@ function ImportModal({
       setReplicateGroups([]);
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
       setContinuedMode(false);
+      setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
     }
   }, [opened, targetFolderId]);
 
@@ -1239,10 +1260,8 @@ function ImportModal({
       mode: "separate" | "continued";
       order?: string[];
       acknowledgedFindingIds?: string[];
+      continuedCellDraft?: ContinuedCellDraft;
     }) => {
-      const orderedFirst = (variables.order ?? drafts.map((item) => item.staged_name))
-        .map((stagedName) => drafts.find((item) => item.staged_name === stagedName))
-        .find((item): item is ImportDraft => Boolean(item)) ?? drafts[0];
       return post<{
         created: { cell_id: number; cell_name: string }[];
         replicate_group?: { id: number; name: string; cell_ids: number[] } | null;
@@ -1266,19 +1285,18 @@ function ImportModal({
                   source_path: item.source_path,
                   filename: item.filename,
                 })),
-              cell_name: orderedFirst?.cell_name ?? "",
-              description: orderedFirst?.description || null,
-              test_name: orderedFirst?.test_name || null,
-              metadata: orderedFirst?.metadata,
-              active_mass_mg_override: orderedFirst?.active_mass_mg_override,
-              nominal_capacity_mah_override: orderedFirst?.nominal_capacity_mah_override,
-              electrode_area_cm2_override: orderedFirst?.electrode_area_cm2_override,
-              active_material_preset_id: orderedFirst?.active_material_preset_id,
-              active_material_name: orderedFirst?.active_material_name,
+              cell_name: variables.continuedCellDraft?.cell_name ?? "",
+              description: variables.continuedCellDraft?.description || null,
+              metadata: variables.continuedCellDraft?.metadata,
+              active_mass_mg_override: variables.continuedCellDraft?.active_mass_mg_override,
+              nominal_capacity_mah_override: variables.continuedCellDraft?.nominal_capacity_mah_override,
+              electrode_area_cm2_override: variables.continuedCellDraft?.electrode_area_cm2_override,
+              active_material_preset_id: variables.continuedCellDraft?.active_material_preset_id,
+              active_material_name: variables.continuedCellDraft?.active_material_name,
               active_material_specific_capacity_mah_g:
-                orderedFirst?.active_material_specific_capacity_mah_g,
-              electrode_area_preset_id: orderedFirst?.electrode_area_preset_id,
-              electrode_area_preset_name: orderedFirst?.electrode_area_preset_name,
+                variables.continuedCellDraft?.active_material_specific_capacity_mah_g,
+              electrode_area_preset_id: variables.continuedCellDraft?.electrode_area_preset_id,
+              electrode_area_preset_name: variables.continuedCellDraft?.electrode_area_preset_name,
               acknowledged_finding_ids: variables.acknowledgedFindingIds ?? [],
             }]
           : drafts.map((d) => ({
@@ -1287,7 +1305,6 @@ function ImportModal({
           filename: d.filename,
           cell_name: d.cell_name,
           description: d.description || null,
-          test_name: d.test_name || null,
           metadata: d.metadata,
           active_mass_mg_override: d.active_mass_mg_override,
           nominal_capacity_mah_override: d.nominal_capacity_mah_override,
@@ -1313,7 +1330,12 @@ function ImportModal({
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
       onSaved();
     },
-    onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
+    onError: (e: Error, variables) => {
+      if (variables?.mode === "continued") {
+        void qc.invalidateQueries({ queryKey: ["continued-import-inspection"] });
+      }
+      notifications.show({ message: e.message, color: "red" });
+    },
   });
 
   const hasExactDuplicate = drafts.some(
@@ -1368,9 +1390,11 @@ function ImportModal({
               <ContinuedImportEditor
                 opened={opened}
                 drafts={drafts}
-                draft={draft}
-                onChange={(next) => onChange(active, next as ImportDraft)}
+                cellDraft={continuedCellDraft}
+                onCellDraftChange={setContinuedCellDraft}
                 onAddMoreSources={onAddMoreSources}
+                onRemoveSource={onRemoveSource}
+                onSwitchToSeparate={() => setContinuedMode(false)}
                 addingMore={addingMore}
                 destinationFolders={destinationFolders}
                 onDestinationFoldersChange={setDestinationFolders}
@@ -1378,12 +1402,18 @@ function ImportModal({
                 materialPresets={materialPresetsQuery.data?.presets ?? []}
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
                 onImport={(order, acknowledgedFindingIds) =>
-                  save.mutate({ mode: "continued", order, acknowledgedFindingIds })
+                  save.mutate({
+                    mode: "continued",
+                    order,
+                    acknowledgedFindingIds,
+                    continuedCellDraft,
+                  })
                 }
-                onRawData={(index) => {
-                  const target = drafts[index];
+                onRawData={(stagedName) => {
+                  const targetIndex = drafts.findIndex((item) => item.staged_name === stagedName);
+                  const target = targetIndex >= 0 ? drafts[targetIndex] : undefined;
                   if (!target) return;
-                  onActive(index);
+                  onActive(targetIndex);
                   loadRawData(0, target);
                 }}
                 importing={save.isPending}
@@ -2225,6 +2255,15 @@ export function ImportCellsLauncher({
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
         onAddMoreSources={() => startSourceSelection(true)}
+        onRemoveSource={(stagedName) => {
+          const removedIndex = drafts.findIndex((item) => item.staged_name === stagedName);
+          setDrafts((current) => current.filter((item) => item.staged_name !== stagedName));
+          setActive((current) => {
+            if (removedIndex < 0) return current;
+            if (current > removedIndex) return current - 1;
+            return Math.min(current, Math.max(0, drafts.length - 2));
+          });
+        }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={() => setModalOpen(false)}
         onSaved={() => {
@@ -2448,6 +2487,15 @@ export function InboxPage() {
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
         onAddMoreSources={() => startSourceSelection(true)}
+        onRemoveSource={(stagedName) => {
+          const removedIndex = drafts.findIndex((item) => item.staged_name === stagedName);
+          setDrafts((current) => current.filter((item) => item.staged_name !== stagedName));
+          setActive((current) => {
+            if (removedIndex < 0) return current;
+            if (current > removedIndex) return current - 1;
+            return Math.min(current, Math.max(0, drafts.length - 2));
+          });
+        }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={() => setModalOpen(false)}
         onSaved={() => {

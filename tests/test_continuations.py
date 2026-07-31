@@ -328,10 +328,59 @@ class ContinuationPolicyTests(unittest.TestCase):
         codes = {item["code"] for item in result["findings"]}
         self.assertIn("protocol_changed", codes)
         self.assertIn("channel_changed", codes)
+
         with self.assertRaises(continuations.ContinuationValidationError) as ctx:
             continuations.ensure_submittable_chain(result, [])
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.payload["code"], "inspection_incomplete")
+
+    def test_finding_ids_change_when_semantic_values_change(self):
+        left = _source(
+            "staged-a",
+            end_timestamp=datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+            end_time="2026-01-01T12:00:00+00:00",
+        )
+        right = _source(
+            "staged-b",
+            hash="hash-b",
+            protocol_signature="protocol-b",
+            first_record_timestamp=datetime(2026, 1, 2, 12, tzinfo=timezone.utc),
+            start_time="2026-01-02T12:00:00+00:00",
+        )
+        same = continuations.analyze_continuation_chain(
+            [left, right], staged_keys=["staged-a", "staged-b"]
+        )
+        same_again = continuations.analyze_continuation_chain(
+            [left, right], staged_keys=["staged-a", "staged-b"]
+        )
+        gap_id = next(item["id"] for item in same["findings"] if item["code"] == "timestamp_gap")
+        self.assertEqual(
+            gap_id,
+            next(item["id"] for item in same_again["findings"] if item["code"] == "timestamp_gap"),
+        )
+
+        changed_right = {
+            **right,
+            "first_record_timestamp": datetime(2026, 1, 3, 12, tzinfo=timezone.utc),
+            "start_time": "2026-01-03T12:00:00+00:00",
+        }
+        changed = continuations.analyze_continuation_chain(
+            [left, changed_right], staged_keys=["staged-a", "staged-b"]
+        )
+        self.assertNotEqual(
+            gap_id,
+            next(item["id"] for item in changed["findings"] if item["code"] == "timestamp_gap"),
+        )
+
+        protocol_changed = continuations.analyze_continuation_chain(
+            [left, {**right, "protocol_signature": "protocol-c"}],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        protocol_id = next(item["id"] for item in same["findings"] if item["code"] == "protocol_changed")
+        self.assertNotEqual(
+            protocol_id,
+            next(item["id"] for item in protocol_changed["findings"] if item["code"] == "protocol_changed"),
+        )
 
     def test_enrichment_without_cache_remains_pending(self):
         source = _source(

@@ -3,9 +3,11 @@ import { addDebugEvent, describeRequestBody } from "./debug";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  detail: unknown;
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -89,7 +91,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       /* ignore */
     }
     addDebugEvent("api:error", { method, url: targetUrl, status: res.status, detail, body });
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, body);
   }
   addDebugEvent("api:response", { method, url: targetUrl, status: res.status });
   return res.json();
@@ -1754,7 +1756,6 @@ export interface ImportCellDraft {
   sources?: ImportSourceDraft[];
   cell_name: string;
   description?: string | null;
-  test_name?: string | null;
   metadata?: Record<string, string>;
   active_mass_mg_override?: number | null;
   nominal_capacity_mah_override?: number | null;

@@ -7,6 +7,7 @@ import {
   applySuggestedOrder,
   findingSummary,
   isSubmitBlocked,
+  scientificDraftIsValid,
   sourceRoleLabel,
 } from "../src/continuationPolicy.ts";
 
@@ -129,4 +130,25 @@ test("findingSummary combines title, message, and source keys", () => {
   });
   assert.match(summary, /Gap between source files/);
   assert.match(summary, /staged-a → staged-b/);
+});
+
+test("continued scientific overrides reject incomplete preset combinations", () => {
+  assert.equal(scientificDraftIsValid({
+    active_material_selection: "lfp",
+    active_mass_mg_override: null,
+    nominal_capacity_mah_override: 4,
+    electrode_area_cm2_override: null,
+  }), false);
+  assert.equal(scientificDraftIsValid({
+    active_material_selection: "lfp",
+    active_mass_mg_override: 10,
+    nominal_capacity_mah_override: 4,
+    electrode_area_cm2_override: null,
+  }), true);
+  assert.equal(scientificDraftIsValid({
+    active_material_selection: "custom",
+    active_mass_mg_override: Number.NaN,
+    nominal_capacity_mah_override: null,
+    electrode_area_cm2_override: null,
+  }), false);
 });

@@ -575,7 +575,6 @@ class ImportCellDraft(BaseModel):
     sources: list[ImportSourceDraft] = []
     cell_name: str
     description: str | None = None
-    test_name: str | None = None
     metadata: dict[str, str] = {}
     active_mass_mg_override: float | None = None
     nominal_capacity_mah_override: float | None = None
@@ -1638,7 +1637,10 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         db.add(cell)
         db.flush()
 
-        test = Test(cell_id=cell.id, name=(draft.test_name or "").strip() or "Imported file")
+        # Test is an internal compatibility container.  Continued import never
+        # accepts or derives a user-facing Test name and always creates exactly
+        # one row for the newly created Cell.
+        test = Test(cell_id=cell.id, name="Imported file")
         db.add(test)
         db.flush()
 
@@ -1726,8 +1728,6 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             {
                 "cell_id": cell.id,
                 "cell_name": cell.name,
-                "test_id": test.id,
-                "test_name": test.name,
                 "source_file_ids": created_source_ids,
                 "file_id": created_source_ids[0] if created_source_ids else None,
                 "filename": sources[0].filename,

@@ -6,6 +6,7 @@ Pure comparison logic lives here; routers collect source metadata and call
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -48,8 +49,23 @@ FindingCode = Literal[
 ]
 
 
-def finding_id(code: str, source_keys: list[str]) -> str:
-    payload = f"{code}:{','.join(sorted(source_keys))}"
+def _canonical_fingerprint(value: object) -> str:
+    """Serialize semantic finding inputs without presentation-only wording."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def finding_id(
+    code: str,
+    source_keys: list[str],
+    semantic_details: dict[str, Any] | None = None,
+) -> str:
+    payload = _canonical_fingerprint(
+        {
+            "code": code,
+            "source_keys": list(source_keys),
+            "details": semantic_details or {},
+        }
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -468,6 +484,10 @@ def _pair_findings(
                 "The continuation uses a different protocol signature. "
                 "This is common after removing completed steps."
             ),
+            details={
+                "left_protocol_signature": left_sig,
+                "right_protocol_signature": right_sig,
+            },
         )
 
     left_start_cycle = left.get("local_cycle_start")
@@ -609,7 +629,26 @@ def _continuation_chain_response(
 ) -> dict[str, Any]:
     deduped: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
+    sources_by_key = {source["key"]: source for source in ordered_sources}
     for finding in findings:
+        # Include the ordered source identity in the semantic fingerprint. This
+        # makes an acknowledgement expire when a registered source hash or the
+        # proposed order changes, while title/message edits remain presentation
+        # changes only.
+        finding["id"] = finding_id(
+            finding["code"],
+            list(finding.get("source_keys") or []),
+            {
+                "details": finding.get("details") or {},
+                "source_identity": [
+                    {
+                        "key": key,
+                        "hash": sources_by_key.get(key, {}).get("hash"),
+                    }
+                    for key in finding.get("source_keys") or []
+                ],
+            },
+        )
         if finding["id"] in seen_ids:
             continue
         seen_ids.add(finding["id"])
