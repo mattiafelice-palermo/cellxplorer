@@ -155,6 +155,36 @@ class StitchServiceTests(unittest.TestCase):
         self.assertEqual(segments[0]["source_cycle_count"], 3)
         self.assertEqual(segments[0]["cycle_end"], 3)
 
+    def test_incomplete_first_source_cycle_remains_explicit(self):
+        first = _hash("i")
+        second = _hash("j")
+        result, segments, missing = self._stitch_raw(
+            [first, second],
+            {
+                first: _raw_frame([1, 1, 2]),
+                second: _raw_frame([1, 1]),
+            },
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(result["source_hash"].tolist(), [first] * 3 + [second] * 2)
+        self.assertEqual(result["source_cycle"].tolist(), [1, 1, 2, 1, 1])
+        self.assertEqual([segment["cycle_start"] for segment in segments], [1, 3])
+
+    def test_incomplete_last_source_cycle_remains_explicit(self):
+        first = _hash("k")
+        second = _hash("l")
+        result, segments, missing = self._stitch_raw(
+            [first, second],
+            {
+                first: _raw_frame([1, 2, 3]),
+                second: _raw_frame([1, 1, 2]),
+            },
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(result["source_hash"].tolist(), [first] * 3 + [second] * 3)
+        self.assertEqual(result["source_cycle"].tolist(), [1, 2, 3, 1, 1, 2])
+        self.assertEqual(segments[-1]["cycle_start"], 4)
+
     def test_missing_middle_source_fails_closed(self):
         hash_a = _hash("a")
         hash_b = _hash("b")

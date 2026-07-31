@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import os
 import sys
 import unittest
@@ -26,6 +27,18 @@ class MultiSourceRegressionTests(unittest.TestCase):
         self.assertIn("portable_exact_order", ids)
         self.assertIn("portable_one_internal_test", ids)
         self.assertIn("second_test_creation", ids)
+
+    def test_every_corpus_case_points_to_named_executable_assertions(self):
+        corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
+        self.assertEqual(len(corpus["cases"]), 17)
+        for case in corpus["cases"]:
+            with self.subTest(case=case["id"]):
+                references = case.get("tests")
+                self.assertTrue(references, "each closure case needs executable evidence")
+                for reference in references:
+                    module_name, class_name, method_name = reference.rsplit(".", 2)
+                    test_class = getattr(importlib.import_module(module_name), class_name)
+                    self.assertTrue(callable(getattr(test_class, method_name)), reference)
 
     def test_source_order_is_authoritative_when_user_order_is_reversed(self):
         first = "a" * 64

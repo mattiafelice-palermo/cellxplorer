@@ -153,6 +153,24 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertIn("days", gap["message"].lower())
         self.assertIn("gap_label", gap["details"])
 
+    def test_timestamp_overlap_is_confirmation(self):
+        left_end = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        right_start = left_end - timedelta(hours=2)
+        result = continuations.analyze_continuation_chain(
+            [
+                _source("staged-a", end_timestamp=left_end, end_time=left_end.isoformat()),
+                _source(
+                    "staged-b",
+                    hash="hash-b",
+                    first_record_timestamp=right_start,
+                    start_time=right_start.isoformat(),
+                ),
+            ],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        overlap = next(item for item in result["findings"] if item["code"] == "timestamp_overlap")
+        self.assertEqual(overlap["severity"], "confirmation")
+
     def test_reversed_order_requires_confirmation(self):
         sources = [
             _source(
@@ -333,6 +351,39 @@ class ContinuationPolicyTests(unittest.TestCase):
             continuations.ensure_submittable_chain(result, [])
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(ctx.exception.payload["code"], "inspection_incomplete")
+
+    def test_device_and_channel_changes_are_informational(self):
+        result = continuations.analyze_continuation_chain(
+            [
+                _source("staged-a", device_info="NEWARE-A", channel="1-1"),
+                _source(
+                    "staged-b",
+                    hash="hash-b",
+                    device_info="NEWARE-B",
+                    channel="2-2",
+                    first_record_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+            ],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        codes = {item["code"] for item in result["findings"]}
+        self.assertIn("device_changed", codes)
+        self.assertIn("channel_changed", codes)
+
+    def test_protocol_signature_change_is_informational(self):
+        result = continuations.analyze_continuation_chain(
+            [
+                _source("staged-a", protocol_signature="protocol-a"),
+                _source(
+                    "staged-b",
+                    hash="hash-b",
+                    protocol_signature="protocol-b",
+                    first_record_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+            ],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        self.assertIn("protocol_changed", {item["code"] for item in result["findings"]})
 
     def test_finding_ids_change_when_semantic_values_change(self):
         left = _source(

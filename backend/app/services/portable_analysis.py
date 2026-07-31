@@ -1576,29 +1576,191 @@ def _cell_source_hashes(cell: Cell) -> list[str]:
     ]
 
 
-def _portable_source_ids(document: dict) -> list[str]:
-    """Read the Cell-level source chain, with compatibility for old packages."""
-    sources = document.get("sources")
-    if isinstance(sources, list):
-        ordered = sorted(
-            (
-                item
-                for item in sources
-                if isinstance(item, dict) and item.get("source_id")
-            ),
-            key=lambda item: int(item.get("position") or 0),
+def _portable_chain_error(
+    message: str,
+    *,
+    code: str = "malformed_portable_source_chain",
+    cell_name: object = None,
+) -> HTTPException:
+    detail = {"code": code, "message": message}
+    if cell_name:
+        detail["cell_name"] = str(cell_name)
+    return HTTPException(400, detail=detail)
+
+
+def _strict_source_id_list(
+    value: object,
+    *,
+    label: str,
+    known_source_ids: set[str] | None,
+    cell_name: object,
+) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise _portable_chain_error(
+            f'Portable Cell "{cell_name or "Unnamed"}" must contain a non-empty {label} list.',
+            cell_name=cell_name,
         )
-        return [str(item["source_id"]) for item in ordered]
-    if isinstance(document.get("source_ids"), list):
-        return [str(source_id) for source_id in document["source_ids"]]
-    # Version 1/early version-2 reports nested source references in Test
-    # envelopes. They remain readable, but new exports never emit that shape.
-    return [
-        str(source_id)
-        for test in document.get("tests", [])
-        if isinstance(test, dict)
-        for source_id in test.get("source_ids", [])
-    ]
+    source_ids: list[str] = []
+    for source_id in value:
+        if not isinstance(source_id, str) or not source_id:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" contains an invalid source reference.',
+                cell_name=cell_name,
+            )
+        if source_id in source_ids:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" repeats source "{source_id}".',
+                code="duplicate_portable_source_id",
+                cell_name=cell_name,
+            )
+        if known_source_ids is not None and source_id not in known_source_ids:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" references unknown source "{source_id}".',
+                code="unknown_portable_source_reference",
+                cell_name=cell_name,
+            )
+        source_ids.append(source_id)
+    return source_ids
+
+
+def _portable_source_ids(
+    document: dict,
+    *,
+    known_source_ids: set[str] | None = None,
+) -> list[str]:
+    """Decode one strict Cell source chain without silently normalizing it."""
+    if not isinstance(document, dict):
+        raise _portable_chain_error("Each portable Cell must be an object.")
+    cell_name = document.get("name")
+
+    if "sources" in document:
+        sources = document["sources"]
+        if not isinstance(sources, list) or not sources:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" must contain a non-empty sources list.',
+                cell_name=cell_name,
+            )
+        if "tests" in document or "source_ids" in document:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" contains ambiguous source-chain shapes.',
+                cell_name=cell_name,
+            )
+        positions: list[int] = []
+        source_ids: list[str] = []
+        tail_fields = 0
+        true_tail_positions: list[int] = []
+        for item in sources:
+            if not isinstance(item, dict):
+                raise _portable_chain_error(
+                    f'Portable Cell "{cell_name or "Unnamed"}" contains a non-object source entry.',
+                    cell_name=cell_name,
+                )
+            source_id = item.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise _portable_chain_error(
+                    f'Portable Cell "{cell_name or "Unnamed"}" contains an invalid source reference.',
+                    cell_name=cell_name,
+                )
+            if source_id in source_ids:
+                raise _portable_chain_error(
+                    f'Portable Cell "{cell_name or "Unnamed"}" repeats source "{source_id}".',
+                    code="duplicate_portable_source_id",
+                    cell_name=cell_name,
+                )
+            if known_source_ids is not None and source_id not in known_source_ids:
+                raise _portable_chain_error(
+                    f'Portable Cell "{cell_name or "Unnamed"}" references unknown source "{source_id}".',
+                    code="unknown_portable_source_reference",
+                    cell_name=cell_name,
+                )
+            position = item.get("position")
+            if type(position) is not int:
+                raise _portable_chain_error(
+                    f'Portable Cell "{cell_name or "Unnamed"}" has a non-integer source position.',
+                    cell_name=cell_name,
+                )
+            positions.append(position)
+            source_ids.append(source_id)
+            if "tracked_tail" in item:
+                tail_fields += 1
+                if type(item["tracked_tail"]) is not bool:
+                    raise _portable_chain_error(
+                        f'Portable Cell "{cell_name or "Unnamed"}" has an invalid tracked-tail flag.',
+                        cell_name=cell_name,
+                    )
+                if item["tracked_tail"]:
+                    true_tail_positions.append(position)
+        expected_positions = list(range(1, len(sources) + 1))
+        if sorted(positions) != expected_positions:
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" source positions must be exactly 1..N.',
+                cell_name=cell_name,
+            )
+        if tail_fields and (
+            tail_fields != len(sources)
+            or true_tail_positions != [len(sources)]
+        ):
+            raise _portable_chain_error(
+                f'Portable Cell "{cell_name or "Unnamed"}" must mark only its final source as tracked_tail.',
+                cell_name=cell_name,
+            )
+        ordered = sorted(zip(positions, source_ids), key=lambda item: item[0])
+        return [source_id for _, source_id in ordered]
+
+    if "source_ids" in document:
+        return _strict_source_id_list(
+            document["source_ids"],
+            label="source_ids",
+            known_source_ids=known_source_ids,
+            cell_name=cell_name,
+        )
+
+    if "tests" not in document:
+        raise _portable_chain_error(
+            f'Portable Cell "{cell_name or "Unnamed"}" has no supported source-chain shape.',
+            cell_name=cell_name,
+        )
+    tests = document["tests"]
+    if not isinstance(tests, list) or len(tests) != 1:
+        raise _portable_chain_error(
+            f'Portable Cell "{cell_name or "Unnamed"}" must contain exactly one legacy Test envelope.',
+            code="unsupported_legacy_source_chain",
+            cell_name=cell_name,
+        )
+    envelope = tests[0]
+    if not isinstance(envelope, dict):
+        raise _portable_chain_error(
+            f'Portable Cell "{cell_name or "Unnamed"}" has an invalid legacy Test envelope.',
+            cell_name=cell_name,
+        )
+    return _strict_source_id_list(
+        envelope.get("source_ids"),
+        label="legacy Test source_ids",
+        known_source_ids=known_source_ids,
+        cell_name=cell_name,
+    )
+
+
+def _validate_portable_source_chains(package: dict) -> None:
+    sources = package.get("sources")
+    if not isinstance(sources, list):
+        raise _portable_chain_error("The portable report must contain a source catalog.")
+    known_source_ids: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or not isinstance(source.get("portable_id"), str) or not source["portable_id"]:
+            raise _portable_chain_error("The portable source catalog contains an invalid source.")
+        portable_id = source["portable_id"]
+        if portable_id in known_source_ids:
+            raise _portable_chain_error(
+                f'Portable source catalog repeats "{portable_id}".',
+                code="duplicate_portable_source_id",
+            )
+        known_source_ids.add(portable_id)
+    cells = package.get("cells")
+    if not isinstance(cells, list):
+        raise _portable_chain_error("The portable report must contain a Cell list.")
+    for document in cells:
+        _portable_source_ids(document, known_source_ids=known_source_ids)
 
 
 def _remap_selection(selection: dict, cell_map: dict[int, int], group_map: dict[int, int]) -> dict:
@@ -1668,6 +1830,7 @@ def _load_package(html_path: Path) -> tuple[dict, dict, tuple[int, int]]:
             409,
             f"This analysis uses spec version {spec_version}; update CellXplorer to import it.",
         )
+    _validate_portable_source_chains(package)
     return manifest, package, bounds
 
 
@@ -1839,7 +2002,10 @@ def inspect_analysis_html(db: Session, html_path: Path) -> dict:
 
     cells: list[dict] = []
     for document in package.get("cells", []):
-        source_ids = _portable_source_ids(document)
+        source_ids = _portable_source_ids(
+            document,
+            known_source_ids=set(source_reviews),
+        )
         reviews = [source_reviews[source_id] for source_id in source_ids]
         if any(review["status"] == "possible_update" for review in reviews):
             status = "review"
@@ -2075,7 +2241,10 @@ def import_analysis_html(
         cell_map: dict[int, int] = {}
         portable_cell_map: dict[str, Cell] = {}
         for document in package.get("cells", []):
-            source_ids = _portable_source_ids(document)
+            source_ids = _portable_source_ids(
+                document,
+                known_source_ids=set(source_documents),
+            )
             if not source_ids:
                 raise HTTPException(
                     400,

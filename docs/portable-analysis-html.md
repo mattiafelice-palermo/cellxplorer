@@ -107,8 +107,11 @@ file size are used only to suggest which appears newer; they never silently esta
 For a multi-source Cell, reuse requires the complete ordered source-hash chain to match. The same
 hashes in a different order, or a partial overlap with another Cell, is a conflict and is rejected
 before the import transaction commits. A newly imported Cell receives exactly one internal Test
-row with its ordered source links; older packages with nested Test envelopes remain readable only
-as an input compatibility path.
+row with its ordered source links. The untrusted decoder validates non-empty source chains, exact
+dense positions, unique known source references, and the single final tracked tail before source
+resolution or database writes. Older packages with nested Test envelopes remain readable only when
+they contain exactly one envelope with a non-empty, unique ordered source list; ambiguous or
+malformed chains are rejected rather than flattened or normalized.
 
 On confirmation the user can rename the analysis, create or select its folder, and optionally add
 references to all imported/reused cells in that folder. The import then runs as one database

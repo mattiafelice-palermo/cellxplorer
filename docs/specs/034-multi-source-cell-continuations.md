@@ -1,7 +1,9 @@
 # 034 — Multi-source cell continuations
 
-**Status:** Implemented — final closure verified 2026-07-31
+**Status:** Review follow-up in progress — final closure superseded pending 034.9 integration
 **Implementation:** Implement only through the child specifications listed below.  
+**Review status:** Final closure superseded while 034.9 review follow-up and current-main integration
+remain pending.
 **Scope:** Treat an interrupted/restarted Neware run as one virtual Cell while preserving every
 original source, its order, and its provenance.
 
@@ -240,6 +242,11 @@ This parent is complete only when every child has:
 Child 034.9 owns the final full command and disposable-data matrix. Browser interaction must not be
 run automatically unless the user explicitly asks; record the manual checklist as not run when
 permission is absent.
+
+**Review follow-up status:** The historical closure record below is superseded by Review 034.9.
+Strict portable-chain validation and executable case mapping are now implemented, but current-main
+integration and the final no-cache closure matrix remain pending. The browser/disposable-data
+manual matrix remains not run without explicit browser-testing authorization.
 
 ## Final closure record — 2026-07-31
 

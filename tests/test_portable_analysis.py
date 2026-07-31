@@ -174,6 +174,31 @@ class PortableAnalysisTests(unittest.TestCase):
         portable_analysis._decode_payload(destination, descriptor, report_path, bounds)
         return json.loads(report_path.read_text(encoding="utf-8"))
 
+    def rewrite_report(self, source_html: Path, report: dict, destination: Path) -> None:
+        bounds = portable_analysis._index_script_bounds(source_html)
+        manifest = portable_analysis.read_manifest(source_html, bounds)
+        with tempfile.TemporaryDirectory(prefix="portable-rewrite-") as temporary:
+            temp_dir = Path(temporary)
+            payload_paths: dict[str, Path] = {}
+            payloads: list[dict] = []
+            for descriptor in manifest["payloads"]:
+                if descriptor["id"] == "report":
+                    rewritten, path = portable_analysis._prepare_payload(
+                        temp_dir,
+                        payload_id="report",
+                        kind="report",
+                        content_type="application/json",
+                        data=portable_analysis._json_bytes(report),
+                    )
+                    descriptor = rewritten
+                else:
+                    path = temp_dir / descriptor["id"]
+                    portable_analysis._decode_payload(source_html, descriptor, path, bounds)
+                payloads.append(descriptor)
+                payload_paths[descriptor["id"]] = path
+            manifest["payloads"] = payloads
+            portable_analysis._write_html(destination, manifest, payload_paths)
+
     def fake_cache_build(self, source_hash, source_path):
         raw = raw_frame()
         cycles = calc.per_cycle(raw)
@@ -484,6 +509,81 @@ class PortableAnalysisTests(unittest.TestCase):
             [link.file.hash for link in sorted(imported_test.file_links, key=lambda item: item.position)],
             [first_hash, second_hash],
         )
+
+    def test_strict_portable_chain_decoder_accepts_current_and_single_legacy_shape(self):
+        self.assertEqual(
+            portable_analysis._portable_source_ids(
+                {
+                    "name": "Current",
+                    "sources": [
+                        {"source_id": "s1", "position": 1, "tracked_tail": False},
+                        {"source_id": "s2", "position": 2, "tracked_tail": True},
+                    ],
+                },
+                known_source_ids={"s1", "s2"},
+            ),
+            ["s1", "s2"],
+        )
+        self.assertEqual(
+            portable_analysis._portable_source_ids(
+                {"name": "Legacy", "tests": [{"source_ids": ["s1", "s2"]}]},
+                known_source_ids={"s1", "s2"},
+            ),
+            ["s1", "s2"],
+        )
+
+    def test_malformed_portable_chains_fail_identically_before_import_writes(self):
+        mutations = {
+            "duplicate_position": lambda cell: cell["sources"][1].update(position=1),
+            "missing_position": lambda cell: cell["sources"][1].update(position=3),
+            "non_integer_position": lambda cell: cell["sources"][1].update(position="2"),
+            "duplicate_source_id": lambda cell: cell["sources"][1].update(
+                source_id=cell["sources"][0]["source_id"]
+            ),
+            "wrong_tail_flag": lambda cell: cell["sources"][0].update(tracked_tail=True),
+            "unknown_source_reference": lambda cell: cell["sources"][0].update(
+                source_id="source-does-not-exist"
+            ),
+            "multiple_legacy_envelopes": lambda cell: (
+                cell.pop("sources"),
+                cell.update(
+                    tests=[
+                        {"source_ids": ["source-one"]},
+                        {"source_ids": ["source-two"]},
+                    ]
+                ),
+            ),
+        }
+        for case, mutate in mutations.items():
+            with self.subTest(case=case):
+                source_html, _ = self.create_export()
+                report = self.read_report(source_html)
+                cell = report["cells"][0]
+                second_source = deepcopy(report["sources"][0])
+                second_source.update(
+                    portable_id="source-two",
+                    hash="b" * 64,
+                    filename="second.ndax",
+                )
+                report["sources"].append(second_source)
+                cell["sources"].append(
+                    {"source_id": "source-two", "position": 2, "tracked_tail": True}
+                )
+                mutate(cell)
+                malformed = self.root / f"malformed-{case}.html"
+                self.rewrite_report(source_html, report, malformed)
+
+                inspection_db = self.make_session()
+                with self.assertRaises(HTTPException) as inspected:
+                    portable_analysis.inspect_analysis_html(inspection_db, malformed)
+                imported_db = self.make_session()
+                with self.assertRaises(HTTPException) as imported:
+                    portable_analysis.import_analysis_html(imported_db, malformed)
+                self.assertEqual(imported.exception.status_code, inspected.exception.status_code)
+                self.assertEqual(imported.exception.detail, inspected.exception.detail)
+                self.assertEqual(imported_db.query(Cell).count(), 0)
+                self.assertEqual(imported_db.query(Test).count(), 0)
+                self.assertEqual(imported_db.query(TestFile).count(), 0)
 
     def test_draft_plot_is_not_exported(self):
         db, analysis, *_ = self.create_analysis(include_saved_plots=True)
