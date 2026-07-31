@@ -583,7 +583,6 @@ def compute(
         sources.append(
             {
                 "cell_id": cell.id,
-                "test_ids": [test.id for test in sorted(cell.tests, key=lambda item: item.id)],
                 "file_hashes": hashes,
             }
         )

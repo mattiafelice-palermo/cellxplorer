@@ -23,7 +23,7 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy import func, inspect as sa_inspect, select
 from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinload
 
 from ..config import CALC_VERSION
@@ -174,6 +174,34 @@ def default_spec(title: str) -> dict:
 # ------------------------------------------------------------- resolution
 
 
+class CellSourceChainInvariantError(ValueError):
+    """A Cell cannot participate in scientific work without one Test row."""
+
+    def __init__(self, cell: Cell, test_count: int):
+        self.detail = {
+            "code": "single_internal_test_required",
+            "message": "This Cell must have exactly one internal source-chain row.",
+            "cell_id": cell.id,
+            "cell_name": cell.name,
+            "test_count": test_count,
+        }
+        super().__init__(self.detail["message"])
+
+
+def require_single_internal_test(cell: Cell) -> Test:
+    """Resolve the compatibility row that owns the Cell's ordered sources."""
+    tests = sorted(cell.tests, key=lambda item: item.id)
+    if len(tests) != 1:
+        raise CellSourceChainInvariantError(cell, len(tests))
+    return tests[0]
+
+
+def ordered_cell_source_links(cell: Cell) -> list[TestFile]:
+    """Return the one Cell source chain in canonical position order."""
+    test = require_single_internal_test(cell)
+    return sorted(test.file_links, key=lambda item: (item.position, item.id))
+
+
 def preload_cell_sources(db: Session, cells: list[Cell]) -> None:
     """Load tests, file links and source files for many cells in one round trip.
 
@@ -216,12 +244,26 @@ def current_cell_hashes(db: Session) -> dict[int, list[str]]:
     are list endpoints: resolving this per analysis would reintroduce the
     per-cell query walk that ``preload_cell_sources`` exists to avoid.
     """
+    invalid = db.execute(
+        select(Test.cell_id, func.count(Test.id))
+        .group_by(Test.cell_id)
+        .having(func.count(Test.id) != 1)
+    ).all()
+    if invalid:
+        cells = {
+            cell.id: cell
+            for cell in db.query(Cell).filter(Cell.id.in_([row[0] for row in invalid])).all()
+        }
+        cell_id, count = invalid[0]
+        cell = cells.get(cell_id) or Cell(id=cell_id, name="Unknown")
+        raise CellSourceChainInvariantError(cell, int(count))
+
     rows = db.execute(
         select(Test.cell_id, SourceFile.hash)
         .select_from(Test)
         .join(TestFile, TestFile.test_id == Test.id)
         .join(SourceFile, SourceFile.id == TestFile.file_id)
-        .order_by(Test.cell_id, Test.id, TestFile.position)
+        .order_by(Test.cell_id, TestFile.position, TestFile.id)
     ).all()
     hashes: dict[int, list[str]] = {}
     for cell_id, file_hash in rows:
@@ -248,13 +290,12 @@ def sources_changed_since_compute(
 
 
 def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[SourceFile]]:
-    """All source files of a cell: tests in order, files in order."""
+    """All source files of a Cell's one ordered source chain."""
     hashes: list[str] = []
     files: list[SourceFile] = []
-    for test in sorted(cell.tests, key=lambda t: t.id):
-        for link in sorted(test.file_links, key=lambda l: l.position):
-            hashes.append(link.file.hash)
-            files.append(link.file)
+    for link in ordered_cell_source_links(cell):
+        hashes.append(link.file.hash)
+        files.append(link.file)
     return hashes, files
 
 
@@ -1588,8 +1629,8 @@ def compute(
              "segments": segments, "source_descriptors": descriptors,
              **source_values})
         sources.append(
-            {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
-             "file_hashes": hashes, "source_descriptors": descriptors})
+            {"cell_id": cell.id, "file_hashes": hashes, "source_descriptors": descriptors}
+        )
         if progress:
             progress(
                 unit_index,
@@ -1899,7 +1940,6 @@ def compute_steps(
             cell.id,
             {
                 "cell_id": cell.id,
-                "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
                 "file_hashes": hashes,
             },
         )
@@ -2126,7 +2166,6 @@ def compute_dcir(
             cell.id,
             {
                 "cell_id": cell.id,
-                "test_ids": [test.id for test in sorted(cell.tests, key=lambda t: t.id)],
                 "file_hashes": hashes,
             },
         )

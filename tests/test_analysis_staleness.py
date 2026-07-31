@@ -78,7 +78,7 @@ class SourceStalenessTests(unittest.TestCase):
             engine.sources_changed_since_compute(self.provenance(["b" * 64, "a" * 64]), current)
         )
 
-    def test_hashes_follow_test_then_position_order(self):
+    def test_hashes_reject_multiple_internal_rows(self):
         second = Test(cell_id=self.cell.id, name="t2")
         self.db.add(second)
         self.db.flush()
@@ -88,14 +88,10 @@ class SourceStalenessTests(unittest.TestCase):
         self.db.add(TestFile(test_id=second.id, file_id=source.id, position=0))
         self.db.commit()
 
-        # Same ordering contract as cell_ordered_hashes, which the comparison
-        # relies on: a mismatch here would report false staleness forever.
-        self.assertEqual(
-            engine.current_cell_hashes(self.db)[self.cell.id],
-            ["a" * 64, "b" * 64, "c" * 64],
-        )
-        expected, _files = engine.cell_ordered_hashes(self.db, self.cell)
-        self.assertEqual(engine.current_cell_hashes(self.db)[self.cell.id], expected)
+        with self.assertRaises(engine.CellSourceChainInvariantError):
+            engine.current_cell_hashes(self.db)
+        with self.assertRaises(engine.CellSourceChainInvariantError):
+            engine.cell_ordered_hashes(self.db, self.cell)
 
     def test_an_uncomputed_analysis_is_not_stale(self):
         current = engine.current_cell_hashes(self.db)
@@ -108,7 +104,7 @@ class SourceStalenessTests(unittest.TestCase):
             engine.sources_changed_since_compute(self.provenance(["a" * 64, "b" * 64]), {})
         )
 
-    def test_tracked_source_is_final_file_in_final_test(self):
+    def test_tracked_source_rejects_multiple_internal_rows(self):
         from app.services import analysis_usage
 
         second_test = Test(cell_id=self.cell.id, name="tail-test")
@@ -119,7 +115,8 @@ class SourceStalenessTests(unittest.TestCase):
         self.db.flush()
         self.db.add(TestFile(test_id=second_test.id, file_id=tail.id, position=0))
         self.db.commit()
-        self.assertEqual(analysis_usage.tracked_source_file_id(self.cell), tail.id)
+        with self.assertRaises(engine.CellSourceChainInvariantError):
+            analysis_usage.tracked_source_file_id(self.cell)
 
 
 if __name__ == "__main__":

@@ -877,6 +877,28 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("header_meta", inspect(files[0]).unloaded)
         self.assertEqual(files[0].header_meta, analysis_protocol_header())
 
+    def test_cell_source_chain_rejects_multiple_internal_rows(self):
+        cell = self.cells["c1"]
+        self.db.add(Test(cell_id=cell.id, name="Unexpected second row"))
+        self.db.commit()
+
+        with self.assertRaises(engine.CellSourceChainInvariantError) as ctx:
+            engine.cell_ordered_hashes(self.db, cell)
+        self.assertEqual(ctx.exception.detail["code"], "single_internal_test_required")
+        self.assertEqual(ctx.exception.detail["test_count"], 2)
+
+        with self.assertRaises(engine.CellSourceChainInvariantError):
+            engine.compute(self.db, self.spec_with([{"kind": "cell", "ref_id": cell.id}]), None)
+
+    def test_new_analysis_provenance_has_only_cell_source_chain_fields(self):
+        result = engine.compute(
+            self.db,
+            self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}]),
+            None,
+        )
+        self.assertTrue(result["sources"])
+        self.assertTrue(all("test_ids" not in source for source in result["sources"]))
+
     def test_provenance_roundtrip_and_version_badge(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         res = engine.compute(self.db, spec, None)

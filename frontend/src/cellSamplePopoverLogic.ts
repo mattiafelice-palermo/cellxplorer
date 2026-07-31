@@ -57,7 +57,7 @@ export function cellFacts(
     push("Active mass", format(mass, 2, "mg"), false);
     push(
       "Files",
-      cell.n_files != null ? `${cell.n_files} in ${cell.n_tests ?? 0} test(s)` : null,
+      cell.n_files != null ? String(cell.n_files) : null,
       false
     );
   }

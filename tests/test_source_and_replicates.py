@@ -687,7 +687,7 @@ class SourceAndReplicateTests(unittest.TestCase):
 
         payload = {row["id"]: row for row in library.list_cells(db=db)}
 
-        self.assertEqual(payload[ready.id]["n_tests"], 1)
+        self.assertNotIn("n_tests", payload[ready.id])
         self.assertEqual(payload[ready.id]["n_files"], 2)
         self.assertEqual(payload[ready.id]["total_cycles"], 22)
         self.assertEqual(payload[ready.id]["total_charge_capacity_mah"], 7.75)
@@ -711,7 +711,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertIsNone(payload[pending.id]["max_specific_discharge_capacity_mah_g"])
         self.assertTrue(payload[pending.id]["has_offline"])
         self.assertTrue(payload[pending.id]["has_summary_pending"])
-        self.assertEqual(payload[empty.id]["n_tests"], 0)
+        self.assertNotIn("n_tests", payload[empty.id])
         self.assertEqual(payload[empty.id]["n_files"], 0)
         self.assertIsNone(payload[empty.id]["total_discharge_capacity_mah"])
 
@@ -1680,7 +1680,7 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         self.assertEqual(impact["new_tracked_filename"], "continue.ndax")
         self.assertIsNone(impact["new_tracked_source_id"])
 
-    def test_impact_preview_uses_later_test_as_cell_tracked_tail(self):
+    def test_impact_preview_rejects_later_internal_test(self):
         db = self.make_session()
         cell, first_test, _sources = self._seed_test_with_sources(db)
         later_source = SourceFile(
@@ -1698,20 +1698,21 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         db.commit()
         db.expire(cell, ["tests"])
 
-        impact = files.preview_test_source_change(
-            first_test.id,
-            files.SourceChangeImpactRequest(
-                operation="attach",
-                sources=[
-                    files.ContinuationInspectSourceRequest(staged_name="earlier.ndax"),
-                ],
-            ),
-            db=db,
-        )
-        self.assertEqual(impact["new_tracked_source_id"], later_source.id)
-        self.assertFalse(impact["tracked_tail_changes"])
+        with self.assertRaises(HTTPException) as ctx:
+            files.preview_test_source_change(
+                first_test.id,
+                files.SourceChangeImpactRequest(
+                    operation="attach",
+                    sources=[
+                        files.ContinuationInspectSourceRequest(staged_name="earlier.ndax"),
+                    ],
+                ),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "single_internal_test_required")
 
-    def test_final_test_detach_moves_tail_within_complete_cell_chain(self):
+    def test_final_test_detach_rejects_multiple_internal_rows(self):
         db = self.make_session()
         cell, _first_test, _first_sources = self._seed_test_with_sources(db)
         later_source_a = SourceFile(
@@ -1741,16 +1742,17 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         db.commit()
         db.expire(cell, ["tests"])
 
-        impact = files.preview_test_source_change(
-            later_test.id,
-            files.SourceChangeImpactRequest(
-                operation="detach",
-                detach_file_id=later_source_b.id,
-            ),
-            db=db,
-        )
-        self.assertEqual(impact["new_tracked_source_id"], later_source_a.id)
-        self.assertTrue(impact["tracked_tail_changes"])
+        with self.assertRaises(HTTPException) as ctx:
+            files.preview_test_source_change(
+                later_test.id,
+                files.SourceChangeImpactRequest(
+                    operation="detach",
+                    detach_file_id=later_source_b.id,
+                ),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "single_internal_test_required")
 
     def test_register_rejects_appending_to_existing_test_lifecycle(self):
         db = self.make_session()

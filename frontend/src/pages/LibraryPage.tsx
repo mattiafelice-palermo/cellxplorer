@@ -779,7 +779,7 @@ export function LibraryPage() {
   };
 
   const updateSource = useMutation({
-    mutationFn: (file: SourceFile) =>
+    mutationFn: (file: Pick<SourceFile, "id" | "filename">) =>
       post<SourceFile>(`/api/files/${file.id}/update-from-source`, {}),
     onSuccess: (_, file) => {
       notifications.show({ message: `Updated ${file.filename} from source`, color: "teal" });

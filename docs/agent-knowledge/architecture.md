@@ -218,6 +218,11 @@ names, Target Test selectors, per-Test cards, per-Test tails, or per-Test orderi
 second Test merely because a continuation protocol differs. A protocol difference is a source
 boundary finding only.
 
+Analysis provenance follows the same Cell-level contract: new scientific results carry the Cell ID,
+ordered source hashes, positions, and descriptors, never Test IDs or Test counts. The canonical
+resolver rejects zero or multiple internal rows before cache-key, compute, staleness, Library, or
+tracked-tail work can flatten an invalid hierarchy.
+
 ## Protocol-derived analysis safety (Spec 034.8)
 
 Steps, DCIR, Chargeability, and Rate capability use source-local protocol steps and are fail-closed

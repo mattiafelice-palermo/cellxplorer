@@ -402,13 +402,9 @@ def ordered_test_file_ids(test: Test) -> list[int]:
 
 
 def tracked_source_file_id(cell: Cell) -> int | None:
-    """Final file in the final non-empty test for a cell."""
-    tests = sorted(cell.tests, key=lambda item: item.id)
-    for test in reversed(tests):
-        links = sorted(test.file_links, key=lambda item: item.position)
-        if links:
-            return int(links[-1].file_id)
-    return None
+    """Final file in the Cell's one ordered source chain."""
+    links = analysis_engine.ordered_cell_source_links(cell)
+    return int(links[-1].file_id) if links else None
 
 
 def proposed_cell_source_chain(
@@ -420,40 +416,37 @@ def proposed_cell_source_chain(
     staged_filenames: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the complete ordered Cell source state for one proposed mutation."""
+    analysis_engine.require_single_internal_test(cell)
     staged_names = list(staged_names or [])
     staged_filenames = list(staged_filenames or [])
     chain: list[dict[str, Any]] = []
-    for test in sorted(cell.tests, key=lambda item: item.id):
-        file_ids = (
-            list(proposed_file_ids)
-            if test.id == target_test.id
-            else ordered_test_file_ids(test)
+    if target_test.id not in {test.id for test in cell.tests}:
+        raise ValueError("Target Test does not belong to the Cell")
+    file_ids = list(proposed_file_ids)
+    for position, file_id in enumerate(file_ids):
+        chain.append(
+            {
+                "test_id": target_test.id,
+                "file_id": int(file_id),
+                "position": position,
+                "staged_name": None,
+                "filename": None,
+            }
         )
-        for position, file_id in enumerate(file_ids):
-            chain.append(
-                {
-                    "test_id": test.id,
-                    "file_id": int(file_id),
-                    "position": position,
-                    "staged_name": None,
-                    "filename": None,
-                }
-            )
-        if test.id == target_test.id:
-            for offset, staged_name in enumerate(staged_names, start=len(file_ids)):
-                chain.append(
-                    {
-                        "test_id": test.id,
-                        "file_id": None,
-                        "position": offset,
-                        "staged_name": staged_name,
-                        "filename": (
-                            staged_filenames[offset - len(file_ids)]
-                            if offset - len(file_ids) < len(staged_filenames)
-                            else staged_name
-                        ),
-                    }
-                )
+    for offset, staged_name in enumerate(staged_names, start=len(file_ids)):
+        chain.append(
+            {
+                "test_id": target_test.id,
+                "file_id": None,
+                "position": offset,
+                "staged_name": staged_name,
+                "filename": (
+                    staged_filenames[offset - len(file_ids)]
+                    if offset - len(file_ids) < len(staged_filenames)
+                    else staged_name
+                ),
+            }
+        )
     return chain
 
 

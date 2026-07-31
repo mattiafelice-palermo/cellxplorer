@@ -50,7 +50,6 @@ function makeCell(overrides: Partial<CellSummary> = {}): CellSummary {
       electrode_area_preset_id: null,
       electrode_area_preset_name: null,
     },
-    n_tests: 1,
     n_files: 1,
     total_cycles: 10,
     total_charge_capacity_mah: 100,

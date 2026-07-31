@@ -490,7 +490,6 @@ export interface CellSummary {
     electrode_area_preset_id: string | null;
     electrode_area_preset_name: string | null;
   };
-  n_tests: number;
   n_files: number;
   total_cycles: number;
   total_charge_capacity_mah: number | null;
@@ -505,9 +504,14 @@ export interface CellSummary {
   created_at: string;
 }
 
+export type CellSource = Omit<SourceFile, "test_id" | "test_name"> & {
+  position: number;
+  tracked_tail: boolean;
+};
+
 export interface CellDetail extends CellSummary {
   metadata: Record<string, string>;
-  tests: { id: number; name: string; description: string | null; files: SourceFile[] }[];
+  sources: CellSource[];
 }
 
 export interface ProtocolStep {
@@ -1336,7 +1340,6 @@ export interface Provenance {
   calc_version: string;
   sources: {
     cell_id: number;
-    test_ids: number[];
     file_hashes: string[];
     source_descriptors?: SourceDescriptor[];
   }[];

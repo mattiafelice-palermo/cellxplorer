@@ -34,7 +34,7 @@ import {
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
-import { CellDetail, CellProtocol, get, ProtocolStep, SourceFile } from "../api";
+import { CellDetail, CellProtocol, CellSource, get, ProtocolStep } from "../api";
 import { CellQuickPlot } from "./CellQuickPlot";
 import { ContinuationManagementPanel } from "./ContinuationManagementPanel";
 import styles from "./CellDetailTabs.module.css";
@@ -346,8 +346,7 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
     if (key === "voltage_lower_v") return "protection_voltage_lower_v (legacy key)";
     return key;
   };
-  const sourceMetadata = cell.tests.flatMap((test) =>
-    test.files.flatMap((file, index) =>
+  const sourceMetadata = cell.sources.flatMap((file, index) =>
       [
         ["file", file.filename], ["path", file.path], ["channel", file.channel],
         ["device_info", file.device_info], ["start_time", file.start_time],
@@ -356,8 +355,7 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         ["parser_version", file.parser_version],
       ]
         .filter(([, value]) => value !== null && value !== undefined && value !== "")
-        .map(([key, value]) => [`${test.name} / file ${index + 1} / ${key}`, String(value)] as const)
-    )
+        .map(([key, value]) => [`source ${index + 1} / ${key}`, String(value)] as const)
   );
   const scientificRows = [
     ["Active material preset", cell.scientific_presets.active_material.name, ""],
@@ -406,25 +404,23 @@ function LegacyFilesPanel({
   onContinuationChanged,
 }: {
   cell: CellDetail;
-  onUpdateFile?: (file: SourceFile) => void;
+  onUpdateFile?: (file: CellSource) => void;
   updating?: boolean;
   onContinuationChanged?: () => void;
 }) {
-  const finalTestId = [...cell.tests].reverse().find((test) => test.files.length > 0)?.id ?? null;
   return (
     <Stack gap="xs">
       <ContinuationManagementPanel cell={cell} onChanged={onContinuationChanged ?? (() => undefined)} />
-      {cell.tests.map((test) => (
-        <Paper key={test.id} withBorder p="sm">
-          <Text fw={700} mb="xs">{test.name}</Text>
+      <Paper withBorder p="sm">
+          <Text fw={700} mb="xs">Ordered source chain</Text>
           <ScrollArea type="auto">
             <Table miw={900}>
               <Table.Thead><Table.Tr><Table.Th>File</Table.Th><Table.Th>Role</Table.Th><Table.Th>Rows</Table.Th><Table.Th>Cycles</Table.Th><Table.Th>Time</Table.Th><Table.Th>Source</Table.Th><Table.Th>Parse</Table.Th><Table.Th>Hash</Table.Th>{onUpdateFile && <Table.Th />}</Table.Tr></Table.Thead>
               <Table.Tbody>
-                {test.files.map((file, fileIndex) => (
+                {cell.sources.map((file) => (
                   <Table.Tr key={file.id}>
                     <Table.Td><Text size="sm" fw={600}>{file.filename}</Text><Text size="xs" c="dimmed" lineClamp={1}>{file.path}</Text></Table.Td>
-                    <Table.Td><Badge size="xs" color={test.id === finalTestId && fileIndex === test.files.length - 1 ? "teal" : "gray"} variant="light">{test.id === finalTestId && fileIndex === test.files.length - 1 ? "Tracked tail" : "Historical source"}</Badge></Table.Td>
+                    <Table.Td><Badge size="xs" color={file.tracked_tail ? "teal" : "gray"} variant="light">{file.tracked_tail ? "Tracked tail" : "Historical source"}</Badge></Table.Td>
                     <Table.Td>{file.row_count ?? "-"}</Table.Td><Table.Td>{file.cycle_count ?? "-"}</Table.Td>
                     <Table.Td><Text size="xs" c="dimmed">{file.start_time ?? "—"}</Text></Table.Td>
                     <Table.Td><Badge color={statusColor(file.location_status)} variant="light">{file.location_status}</Badge></Table.Td>
@@ -437,7 +433,6 @@ function LegacyFilesPanel({
             </Table>
           </ScrollArea>
         </Paper>
-      ))}
     </Stack>
   );
 }
@@ -449,7 +444,7 @@ function FilesPanel({
   onContinuationChanged,
 }: {
   cell: CellDetail;
-  onUpdateFile?: (file: SourceFile) => void;
+  onUpdateFile?: (file: CellSource) => void;
   updating?: boolean;
   onContinuationChanged?: () => void;
 }) {
@@ -463,7 +458,7 @@ function FilesPanel({
   );
 }
 
-export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged }: { cell: CellDetail; onUpdateFile?: (file: SourceFile) => void; updating?: boolean; onContinuationChanged?: () => void }) {
+export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged }: { cell: CellDetail; onUpdateFile?: (file: CellSource) => void; updating?: boolean; onContinuationChanged?: () => void }) {
   return (
     <Tabs defaultValue="overview" keepMounted={false}>
       <Tabs.List>

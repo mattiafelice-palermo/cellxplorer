@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   ApiError,
+  CellSource,
   CellDetail,
   ContinuationInspectResult,
   ContinuationInspectSource,
@@ -22,7 +23,6 @@ import {
   ImportInspectResult,
   ImportPreview,
   SourceChangeImpactPreview,
-  SourceFile,
   attachCellContinuations,
   detachCellSource,
   inspectCellContinuationSources,
@@ -34,7 +34,9 @@ import { acknowledgementFindingIds, findingSummary, moveSource, preserveAcknowle
 import { ImportFilesystemPickerModal, ImportSourceSelection } from "./ImportFilesystemPickerModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 
-function sourceFromFile(file: SourceFile): ContinuationInspectSource {
+type SourceChainFile = Omit<CellSource, "position" | "tracked_tail">;
+
+function sourceFromFile(file: SourceChainFile): ContinuationInspectSource {
   return {
     key: `existing-${file.id}`,
     kind: "existing",
@@ -64,11 +66,8 @@ function stagedSource(source: ImportPreview) {
   return { staged_name: source.staged_name, source_path: source.source_path };
 }
 
-function flattenFiles(cell: CellDetail): SourceFile[] {
-  return cell.tests
-    .slice()
-    .sort((left, right) => left.id - right.id)
-    .flatMap((test) => test.files);
+function flattenFiles(cell: CellDetail): CellSource[] {
+  return cell.sources.slice().sort((left, right) => left.position - right.position);
 }
 
 function reorderStaged(items: ImportPreview[], index: number, direction: -1 | 1): ImportPreview[] {
@@ -97,7 +96,7 @@ export function ContinuationManagementPanel({
 }: {
   cell: CellDetail;
   onChanged: () => void;
-  onUpdateFile?: (file: SourceFile) => void;
+  onUpdateFile?: (file: CellSource) => void;
   updating?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -183,8 +182,6 @@ export function ContinuationManagementPanel({
           row_count: null,
           cycle_count: null,
           registered: false,
-          test_id: null,
-          test_name: null,
           cell_id: null,
           cell_name: null,
           created_at: "",

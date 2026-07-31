@@ -13,6 +13,7 @@ export function sourceBoundaryPointIndices(
 ): number[] {
   if (!sourcePositions) return [];
   const indices: number[] = [];
+  const markedPositions = new Set<number>();
   for (let index = 1; index < sourcePositions.length; index += 1) {
     const position = sourcePositions[index];
     const previous = sourcePositions[index - 1];
@@ -20,12 +21,24 @@ export function sourceBoundaryPointIndices(
       position !== null &&
       previous !== null &&
       position > previous &&
-      x[index] !== null &&
-      y[index] !== null &&
-      Number.isFinite(x[index] as number) &&
-      Number.isFinite(y[index] as number)
+      !markedPositions.has(position)
     ) {
-      indices.push(index);
+      markedPositions.add(position);
+      for (
+        let candidate = index;
+        candidate < sourcePositions.length && sourcePositions[candidate] === position;
+        candidate += 1
+      ) {
+        if (
+          x[candidate] !== null &&
+          y[candidate] !== null &&
+          Number.isFinite(x[candidate] as number) &&
+          Number.isFinite(y[candidate] as number)
+        ) {
+          indices.push(candidate);
+          break;
+        }
+      }
     }
   }
   return indices;

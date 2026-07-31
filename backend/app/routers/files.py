@@ -2034,6 +2034,17 @@ def _load_test_or_404(db: Session, test_id: int) -> Test:
     test = db.get(Test, test_id)
     if test is None:
         raise HTTPException(404, "No such test")
+    tests = db.query(Test.id).filter(Test.cell_id == test.cell_id).all()
+    if len(tests) != 1:
+        raise HTTPException(
+            409,
+            {
+                "code": "single_internal_test_required",
+                "message": "This Cell must have exactly one internal source-chain row.",
+                "cell_id": test.cell_id,
+                "test_count": len(tests),
+            },
+        )
     return test
 
 

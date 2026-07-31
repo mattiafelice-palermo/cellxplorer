@@ -331,23 +331,12 @@ def _source_document(source: SourceFile) -> dict:
 
 
 def _single_internal_test(cell: Cell) -> Test:
-    tests = sorted(cell.tests, key=lambda item: item.id)
-    if len(tests) != 1:
-        raise HTTPException(
-            409,
-            {
-                "code": "single_internal_test_required",
-                "message": "This Cell must have exactly one internal source-chain row.",
-                "cell_id": cell.id,
-                "test_count": len(tests),
-            },
-        )
-    return tests[0]
+    return analysis_engine.require_single_internal_test(cell)
 
 
 def _ordered_cell_links(cell: Cell) -> list[TestFile]:
     test = _single_internal_test(cell)
-    return sorted(test.file_links, key=lambda item: item.position)
+    return sorted(test.file_links, key=lambda item: (item.position, item.id))
 
 
 def _cell_document(cell: Cell) -> dict:

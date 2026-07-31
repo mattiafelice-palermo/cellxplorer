@@ -113,14 +113,22 @@ def source_file_needs_cache(sf: SourceFile) -> bool:
     return not cache.has_cycles(sf.hash, sf.parser_version, CALC_VERSION)
 
 
+def _ordered_cell_source_files(cell: Cell) -> list[SourceFile]:
+    """Return one Cell's ordered sources and reject multiple internal rows."""
+    tests = sorted(cell.tests, key=lambda item: item.id)
+    if len(tests) > 1:
+        raise analysis_svc.CellSourceChainInvariantError(cell, len(tests))
+    if not tests:
+        return []
+    return [link.file for link in sorted(tests[0].file_links, key=lambda item: (item.position, item.id))]
+
+
 def ensure_cell_caches(db: Session, cell: Cell) -> None:
-    for test in cell.tests:
-        for link in test.file_links:
-            sf = link.file
-            if sf.parse_status == "parsing":
-                continue
-            if source_file_needs_cache(sf) and Path(sf.path).exists():
-                scanner.parse_file(db, sf)
+    for sf in _ordered_cell_source_files(cell):
+        if sf.parse_status == "parsing":
+            continue
+        if source_file_needs_cache(sf) and Path(sf.path).exists():
+            scanner.parse_file(db, sf)
 
 
 def delete_empty_replicate_groups(db: Session) -> list[int]:
@@ -248,10 +256,7 @@ def max_specific_discharge_capacity(
 
 
 def cell_capacity_totals(cell: Cell) -> dict:
-    source_files = []
-    for test in cell.tests:
-        for link in test.file_links:
-            source_files.append(link.file)
+    source_files = _ordered_cell_source_files(cell)
     if any(sf.capacity_summary_status != "ready" for sf in source_files):
         return {
             "total_charge_capacity_mah": None,
@@ -308,22 +313,13 @@ def cell_scientific_metadata(
 ) -> dict:
     if metadata is None:
         metadata = {entry.key: entry.value for entry in cell.metadata_entries}
+    source_files = _ordered_cell_source_files(cell)
     source_mass = next(
-        (
-            value
-            for test in cell.tests
-            for link in test.file_links
-            if (value := _positive_float(link.file.active_mass_mg)) is not None
-        ),
+        (value for file in source_files if (value := _positive_float(file.active_mass_mg)) is not None),
         None,
     )
     source_nominal = next(
-        (
-            value
-            for test in cell.tests
-            for link in test.file_links
-            if (value := _positive_float(link.file.nominal_capacity_mah)) is not None
-        ),
+        (value for file in source_files if (value := _positive_float(file.nominal_capacity_mah)) is not None),
         None,
     )
     return _scientific_metadata_values(metadata, source_mass, source_nominal)
@@ -407,7 +403,6 @@ def _max_specific_from_summary(
 
 def _empty_cell_file_summary() -> dict:
     return {
-        "n_tests": 0,
         "n_files": 0,
         "total_cycles": 0,
         "total_charge_capacity_mah": None,
@@ -425,10 +420,20 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
     """Build library-row file summaries without materializing ORM graphs."""
     if not cell_ids:
         return {}
+    invalid = (
+        db.query(Test.cell_id, func.count(Test.id))
+        .filter(Test.cell_id.in_(cell_ids))
+        .group_by(Test.cell_id)
+        .having(func.count(Test.id) != 1)
+        .all()
+    )
+    if invalid:
+        cell_id, count = invalid[0]
+        cell = db.get(Cell, int(cell_id)) or Cell(id=int(cell_id), name="Unknown")
+        raise analysis_svc.CellSourceChainInvariantError(cell, int(count))
     rows = (
         db.query(
             Test.cell_id.label("cell_id"),
-            func.count(func.distinct(Test.id)).label("n_tests"),
             func.count(SourceFile.id).label("n_files"),
             func.coalesce(
                 func.sum(
@@ -498,7 +503,6 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
     for row in rows:
         all_ready = int(row.n_files or 0) > 0 and int(row.not_ready or 0) == 0
         summaries[int(row.cell_id)] = {
-            "n_tests": int(row.n_tests or 0),
             "n_files": int(row.n_files or 0),
             "total_cycles": int(row.total_cycles or 0),
             "total_charge_capacity_mah": (
@@ -531,6 +535,17 @@ def _cell_source_scientific_values(
 ) -> dict[int, tuple[float | None, float | None]]:
     if not cell_ids:
         return {}
+    invalid = (
+        db.query(Test.cell_id, func.count(Test.id))
+        .filter(Test.cell_id.in_(cell_ids))
+        .group_by(Test.cell_id)
+        .having(func.count(Test.id) != 1)
+        .all()
+    )
+    if invalid:
+        cell_id, count = invalid[0]
+        cell = db.get(Cell, int(cell_id)) or Cell(id=int(cell_id), name="Unknown")
+        raise analysis_svc.CellSourceChainInvariantError(cell, int(count))
     rows = (
         db.query(
             Test.cell_id,
@@ -593,30 +608,28 @@ def cell_dict(
         if metadata_values is not None
         else {m.key: m.value for m in cell.metadata_entries}
     )
-    n_files = sum(len(t.file_links) for t in cell.tests)
+    source_files = _ordered_cell_source_files(cell)
+    n_files = len(source_files)
     cycles = 0
     statuses = set()
-    for t in cell.tests:
-        for l in t.file_links:
-            if l.file.capacity_summary_status == "ready":
-                cycles += l.file.cycle_count or 0
-            statuses.add(l.file.location_status)
-            statuses.add(l.file.parse_status)
+    for source_file in source_files:
+        if source_file.capacity_summary_status == "ready":
+            cycles += source_file.cycle_count or 0
+        statuses.add(source_file.location_status)
+        statuses.add(source_file.parse_status)
     totals = cell_capacity_totals(cell)
     cell.total_charge_capacity_mah = totals["total_charge_capacity_mah"]
     cell.total_discharge_capacity_mah = totals["total_discharge_capacity_mah"]
     scientific_metadata = cell_scientific_metadata(cell, meta)
     has_summary_pending = any(
-        link.file.parse_status == "parsed"
-        and link.file.capacity_summary_status == "pending"
-        for test in cell.tests
-        for link in test.file_links
+        source_file.parse_status == "parsed"
+        and source_file.capacity_summary_status == "pending"
+        for source_file in source_files
     )
     has_summary_error = any(
-        link.file.parse_status == "parsed"
-        and link.file.capacity_summary_status == "error"
-        for test in cell.tests
-        for link in test.file_links
+        source_file.parse_status == "parsed"
+        and source_file.capacity_summary_status == "error"
+        for source_file in source_files
     )
     result = {
         "id": cell.id,
@@ -627,7 +640,6 @@ def cell_dict(
         "tags": sorted(tag_names),
         "scientific_metadata": scientific_metadata,
         "scientific_presets": cell_scientific_presets(cell, meta),
-        "n_tests": len(cell.tests),
         "n_files": n_files,
         "total_cycles": cycles,
         "total_charge_capacity_mah": totals["total_charge_capacity_mah"],
@@ -757,15 +769,15 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
     if cell is None:
         raise HTTPException(404, "No such cell")
     d = cell_dict(db, cell)
-    d["tests"] = [
-        {
-            "id": t.id,
-            "name": t.name,
-            "description": t.description,
-            "files": [file_dict(l.file) for l in sorted(t.file_links, key=lambda l: l.position)],
-        }
-        for t in sorted(cell.tests, key=lambda t: t.id)
-    ]
+    links = _ordered_cell_file_links(cell)
+    d["sources"] = []
+    for position, link in enumerate(links, start=1):
+        source = file_dict(link.file)
+        source.pop("test_id", None)
+        source.pop("test_name", None)
+        source["position"] = position
+        source["tracked_tail"] = position == len(links)
+        d["sources"].append(source)
     return d
 
 
@@ -1025,12 +1037,13 @@ class CellDeleteRequest(BaseModel):
 
 
 def _ordered_cell_file_links(cell: Cell) -> list[TestFile]:
-    """Return the compatibility rows as one ordered Cell source chain."""
-    return [
-        link
-        for test in sorted(cell.tests, key=lambda item: item.id)
-        for link in sorted(test.file_links, key=lambda item: (item.position, item.id))
-    ]
+    """Return one ordered Cell source chain for monitoring."""
+    tests = sorted(cell.tests, key=lambda item: item.id)
+    if len(tests) > 1:
+        raise analysis_svc.CellSourceChainInvariantError(cell, len(tests))
+    if not tests:
+        return []
+    return sorted(tests[0].file_links, key=lambda item: (item.position, item.id))
 
 
 def _cell_source_files(

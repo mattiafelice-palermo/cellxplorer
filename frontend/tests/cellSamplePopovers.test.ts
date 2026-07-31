@@ -108,7 +108,6 @@ test("cell facts fall back to import-time totals when nothing is computed", () =
     total_cycles: 700,
     total_discharge_capacity_mah: 12.5,
     n_files: 3,
-    n_tests: 1,
   };
   const facts = cellFacts(cell, undefined);
   const byLabel = new Map(facts.map((f) => [f.label, f.value]));

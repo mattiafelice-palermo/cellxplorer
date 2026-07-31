@@ -13,6 +13,24 @@ test("source boundaries select the first finite plotted point of later sources",
   );
 });
 
+test("source boundaries scan past invalid transition rows", () => {
+  assert.deepEqual(
+    sourceBoundaryPointIndices(
+      [1, 1, 2, 2, 2, 3, 3],
+      [0, 1, 2, 3, 4, null, 6],
+      [10, 11, null, Number.NaN, 14, 15, 16],
+    ),
+    [4, 6],
+  );
+});
+
+test("source boundaries omit wholly unplottable source segments", () => {
+  assert.deepEqual(
+    sourceBoundaryPointIndices([1, 1, 2, 2, 3], [0, 1, null, 3, null], [10, 11, 12, null, null]),
+    [],
+  );
+});
+
 test("source export columns carry global and local provenance without paths", () => {
   const columns = sourceExportColumns(
     "Cell A",
