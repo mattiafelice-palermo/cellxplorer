@@ -36,7 +36,7 @@ import { ContinuationSourceList } from "./ContinuationSourceList";
 
 function sourceFromFile(file: SourceFile): ContinuationInspectSource {
   return {
-    key: `existing:${file.id}`,
+    key: `existing-${file.id}`,
     kind: "existing",
     source_file_id: file.id,
     filename: file.filename,
@@ -92,6 +92,7 @@ export function ContinuationManagementPanel({
   }, [cell]);
 
   const currentTest = addTestId === null ? null : cell.tests.find((test) => test.id === addTestId) ?? null;
+  const finalNonEmptyTest = [...cell.tests].reverse().find((test) => test.files.length > 0) ?? cell.tests[cell.tests.length - 1] ?? null;
   const attachSources = useMemo(() => stagedSources.map(stagedSource), [stagedSources]);
   const attachInspection = useQuery({
     queryKey: ["continuation-attach-inspection", addTestId, attachSources],
@@ -99,8 +100,8 @@ export function ContinuationManagementPanel({
     enabled: attachOpen && addTestId !== null && attachSources.length > 0,
   });
   const reorderInspection = useQuery({
-    queryKey: ["continuation-reorder-inspection", reorderTestId],
-    queryFn: () => inspectContinuationSources({ existing_test_id: reorderTestId, sources: [] }),
+    queryKey: ["continuation-reorder-inspection", reorderTestId, reorderTestId === null ? [] : orders[reorderTestId] ?? []],
+    queryFn: () => inspectContinuationSources({ existing_test_id: reorderTestId, sources: [], proposed_order: (orders[reorderTestId ?? -1] ?? []).map((fileId) => `existing-${fileId}`) }),
     enabled: reorderTestId !== null,
   });
 
@@ -182,7 +183,7 @@ export function ContinuationManagementPanel({
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between"><Text fw={700}>Continuation sources</Text><Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => { setAddTestId(cell.tests[cell.tests.length - 1]?.id ?? null); setPickerOpen(true); }}>Add continuation</Button></Group>
+      <Group justify="space-between"><Text fw={700}>Continuation sources</Text><Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => { setAddTestId(finalNonEmptyTest?.id ?? null); setPickerOpen(true); }}>Add continuation</Button></Group>
       <Text size="xs" c="dimmed">Sources stay as original files. Reordering changes the logical chain and tracked tail; detaching never deletes the disk file.</Text>
       {cell.tests.map((test, testIndex) => {
         const order = orders[test.id] ?? test.files.map((file) => file.id);
@@ -196,7 +197,7 @@ export function ContinuationManagementPanel({
       <ImportFilesystemPickerModal opened={pickerOpen} loading={pickerLoading} onClose={() => setPickerOpen(false)} onConfirm={loadStagedSources} />
       <Modal opened={attachOpen} onClose={() => setAttachOpen(false)} title="Add continuation sources" size="60rem">
         <Stack gap="sm"><Select label="Target Test" data={cell.tests.map((test) => ({ value: String(test.id), label: test.name }))} value={addTestId === null ? null : String(addTestId)} onChange={(value) => { setAddTestId(value ? Number(value) : null); setAcknowledged(new Set()); }} />
-          {currentTest && currentTest.id !== cell.tests[cell.tests.length - 1]?.id && <Alert color="blue">These sources will be appended to {currentTest.name}. Its final source remains that Test’s tracked tail; the Cell’s overall tracked tail is still the final source of the final non-empty Test.</Alert>}
+          {currentTest && currentTest.id !== finalNonEmptyTest?.id && <Alert color="blue">These sources will be appended to {currentTest.name}. Its final source remains that Test’s tracked tail; the Cell’s overall tracked tail is still the final source of the final non-empty Test.</Alert>}
           {attachInspection.isPending && <Alert color="blue">Inspecting the proposed continuation…</Alert>}
           {attachInspection.isError && <Alert color="red">{attachInspection.error instanceof Error ? attachInspection.error.message : "Inspection failed."}</Alert>}
           {attachInspection.data && <ContinuationSourceList sources={attachInspection.data.sources} findings={attachInspection.data.findings} onMove={() => undefined} disabled />}

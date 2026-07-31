@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { IconArrowDown, IconArrowUp, IconGripVertical } from "@tabler/icons-react";
 
 import type { ContinuationFinding, ContinuationInspectSource } from "../api";
@@ -26,6 +26,7 @@ export function ContinuationSourceList({
   onMove,
   onDragStart,
   onDrop,
+  onOpenRawData,
   disabled = false,
   emptyMessage = "No continuation sources selected.",
 }: {
@@ -34,6 +35,7 @@ export function ContinuationSourceList({
   onMove: (index: number, direction: -1 | 1) => void;
   onDragStart?: (index: number) => void;
   onDrop?: (index: number) => void;
+  onOpenRawData?: (sourceKey: string) => void;
   disabled?: boolean;
   emptyMessage?: string;
 }) {
@@ -71,6 +73,7 @@ export function ContinuationSourceList({
                 <Text size="xs" c="dimmed">Time: {source.start_time ?? "—"} → {source.end_time ?? "—"}</Text>
                 <Text size="xs" c="dimmed">Protocol: {source.protocol_signature ?? "—"}</Text>
                 {source.hash && <Text size="xs" c="dimmed">Hash: {source.hash.slice(0, 12)}…</Text>}
+                {onOpenRawData && <Button size="compact-xs" variant="subtle" onClick={() => onOpenRawData(source.key)}>Raw data</Button>}
               </Group>
               {source.inspection_error && <Text size="xs" c="red" pl={26}>{source.inspection_error}</Text>}
               {sourceFindings.map((finding) => <Text key={finding.id} size="xs" c={sourceFindingColor(finding)} pl={26}>{findingSummary(finding)}</Text>)}

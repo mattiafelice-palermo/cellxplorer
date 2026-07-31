@@ -7,6 +7,7 @@ import {
   Group,
   MultiSelect,
   NumberInput,
+  Paper,
   Select,
   Stack,
   Text,
@@ -35,6 +36,7 @@ import {
   preserveAcknowledgements,
 } from "../continuationPolicy";
 import { ContinuationSourceList } from "./ContinuationSourceList";
+import Plot from "./Plot";
 
 type DraftLike = ImportPreview & {
   cell_name: string;
@@ -93,6 +95,7 @@ export function ContinuedImportEditor({
   materialPresets,
   areaPresets,
   onImport,
+  onRawData,
   importing,
 }: {
   opened: boolean;
@@ -107,6 +110,7 @@ export function ContinuedImportEditor({
   materialPresets: ActiveMaterialPresetSettings["presets"];
   areaPresets: ElectrodeAreaPresetSettings["presets"];
   onImport: (order: string[], acknowledgedFindingIds: string[]) => void;
+  onRawData?: (index: number) => void;
   importing: boolean;
 }) {
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
@@ -179,7 +183,7 @@ export function ContinuedImportEditor({
         <Stack gap="xs" style={{ flex: 1.1 }}>
           <Group justify="space-between"><Text fw={700}>Ordered source chain</Text><Group gap={4}><Button size="compact-xs" variant="default" leftSection={<IconArrowUp size={13} />} disabled={!result?.suggested_order.length} onClick={useSuggestedOrder}>Use suggested order</Button></Group></Group>
           <Text size="xs" c="dimmed">Move sources with the arrow controls or drag them. The final visible source is the tracked tail.</Text>
-          <ContinuationSourceList sources={orderedSources} findings={result?.findings ?? []} onMove={move} onDragStart={setDragIndex} onDrop={(index) => { if (dragIndex === null) return; setOrder((current) => { const next = [...current]; const [item] = next.splice(dragIndex, 1); next.splice(index, 0, item); return next; }); setDragIndex(null); }} disabled={inspectionQuery.isPending || importing} />
+          <ContinuationSourceList sources={orderedSources} findings={result?.findings ?? []} onMove={move} onDragStart={setDragIndex} onDrop={(index) => { if (dragIndex === null) return; setOrder((current) => { const next = [...current]; const [item] = next.splice(dragIndex, 1); next.splice(index, 0, item); return next; }); setDragIndex(null); }} onOpenRawData={(sourceKey) => { const index = order.indexOf(sourceKey); if (index >= 0) onRawData?.(index); }} disabled={inspectionQuery.isPending || importing} />
           {result && confirmationFindings.length > 0 && <Stack gap={4}><Divider label="Acknowledgements" labelPosition="left" />{result.findings.filter((finding) => finding.severity === "confirmation").map((finding) => <Checkbox key={finding.id} size="xs" checked={acknowledged.has(finding.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); if (event.currentTarget.checked) next.add(finding.id); else next.delete(finding.id); return next; })} label={findingSummary(finding)} />)}</Stack>}
         </Stack>
         <Stack gap="sm" style={{ flex: 0.9 }}>
@@ -192,6 +196,7 @@ export function ContinuedImportEditor({
           <NumberInput label="Nominal capacity (mAh)" min={0.000001} decimalScale={6} value={draft.nominal_capacity_mah_override ?? ""} placeholder={draft.nominal_capacity_mah?.toString() ?? "Source value"} disabled={draft.active_material_selection !== "custom"} onChange={(value) => updateDraft({ nominal_capacity_mah_override: value === "" ? null : Number(value) })} />
           <Group grow align="end"><Select label="Electrode-area preset" data={areaOptions} value={draft.electrode_area_selection} searchable onChange={(value) => { const preset = areaPresets.find((item) => item.id === value); updateDraft({ electrode_area_selection: value ?? "custom", electrode_area_preset_id: preset?.id ?? null, electrode_area_preset_name: preset?.name ?? null, electrode_area_cm2_override: preset?.area_cm2 ?? draft.electrode_area_cm2_override }); }} /><NumberInput label="Electrode area (cm²)" min={0.000001} decimalScale={6} value={draft.electrode_area_cm2_override ?? ""} disabled={draft.electrode_area_selection !== "custom"} onChange={(value) => updateDraft({ electrode_area_cm2_override: value === "" ? null : Number(value) })} /></Group>
           <Alert color="gray"><Text size="xs">Cell metadata defaults to the first source in the current order. Reordering changes source order only; it does not silently rewrite these editable fields.</Text></Alert>
+          {draft.capacity_preview && draft.capacity_preview.x.length > 0 && <Paper withBorder p="xs"><Text size="xs" fw={700} mb={4}>Quick preview from the selected first source</Text><Plot data={[{ x: draft.capacity_preview.x, y: draft.capacity_preview.y, type: "scatter", mode: "markers", marker: { size: 5, color: "#12b886" }, name: draft.capacity_preview.label }]} layout={{ height: 220, margin: { l: 54, r: 16, t: 12, b: 42 }, xaxis: { title: { text: "Cycle" } }, yaxis: { title: { text: draft.capacity_preview.label } }, showlegend: false, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" }} config={{ displayModeBar: false, responsive: true }} style={{ width: "100%" }} /></Paper>}
         </Stack>
       </Group>
     </Stack>

@@ -1172,6 +1172,11 @@ def _ordered_continuation_sources(
             )
         )
 
+    if req.proposed_order is not None:
+        existing_by_key = {source["key"]: source for source in existing_sources}
+        if existing_by_key and set(req.proposed_order) == set(existing_by_key):
+            existing_sources = [existing_by_key[key] for key in req.proposed_order]
+
     staged_by_key = {source["key"]: source for source in staged_sources}
     if req.proposed_order is not None and set(req.proposed_order) == set(staged_keys):
         ordered_staged = [staged_by_key[key] for key in req.proposed_order]

@@ -1104,26 +1104,26 @@ function ImportModal({
     }
   }, [opened, targetFolderId]);
 
-  const loadRawData = (offset = 0) => {
-    if (!draft) return;
+  const loadRawData = (offset = 0, targetDraft = draft) => {
+    if (!targetDraft) return;
     setRawOpen(true);
     setRawLoading(true);
     setRawError(null);
     addDebugEvent("import:rawDataRequested", {
-      staged_name: draft.staged_name,
-      filename: draft.filename,
+      staged_name: targetDraft.staged_name,
+      filename: targetDraft.filename,
       offset,
       limit: RAW_PAGE_SIZE,
     });
     post<ImportRawDataResult>("/api/imports/raw-data", {
-      staged_name: draft.staged_name,
-      source_path: draft.source_path,
+      staged_name: targetDraft.staged_name,
+      source_path: targetDraft.source_path,
       offset,
       limit: RAW_PAGE_SIZE,
     })
       .then((result) => {
         addDebugEvent("import:rawDataReady", {
-          staged_name: draft.staged_name,
+          staged_name: targetDraft.staged_name,
           columns: result.columns.length,
           rows: result.rows.length,
           total_rows: result.total_rows,
@@ -1133,7 +1133,7 @@ function ImportModal({
       })
       .catch((error: Error) => {
         addDebugEvent("import:rawDataFailed", {
-          staged_name: draft.staged_name,
+          staged_name: targetDraft.staged_name,
           error: error.message,
         });
         setRawError(error.message);
@@ -1380,6 +1380,12 @@ function ImportModal({
                 onImport={(order, acknowledgedFindingIds) =>
                   save.mutate({ mode: "continued", order, acknowledgedFindingIds })
                 }
+                onRawData={(index) => {
+                  const target = drafts[index];
+                  if (!target) return;
+                  onActive(index);
+                  loadRawData(0, target);
+                }}
                 importing={save.isPending}
               />
             ) : (
