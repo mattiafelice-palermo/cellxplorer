@@ -412,6 +412,11 @@ export interface SourceCheckJob {
   source_scope?: SourceCheckScope;
   source_cell_ids?: number[];
   skipped_detached_source_ids?: number[];
+  skipped_adoption_sources?: {
+    file_id: number;
+    reason: "detached" | "became_historical" | "registered_identity_changed" | "source_changed_again";
+    message: string;
+  }[];
   retry_count?: number;
   retry_delay_seconds?: number;
   retry_attempt?: number;

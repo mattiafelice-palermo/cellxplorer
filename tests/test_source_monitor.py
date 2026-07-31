@@ -448,14 +448,14 @@ class SourceMonitorScheduleTests(unittest.TestCase):
         self.assertEqual((second.date() - first.date()).days, 14)
         self.assertEqual((first.hour, first.minute), (2, 0))
 
-    def test_tracked_tail_scope_captures_only_final_source_of_final_test(self):
+    def test_tracked_tail_scope_captures_one_final_source_per_cell(self):
         db = self.make_session()
         cell = Cell(name="Continued", cycling_status="active")
         first = SourceFile(hash="tail-old", path="C:/data/old.ndax", filename="old.ndax", size=1, ext="ndax")
         tail = SourceFile(hash="tail-new", path="C:/data/new.ndax", filename="new.ndax", size=1, ext="ndax")
         db.add_all([cell, first, tail])
         db.flush()
-        test = Test(cell_id=cell.id, name="Test")
+        test = Test(cell_id=cell.id, name="Imported file")
         db.add(test)
         db.flush()
         db.add_all([
@@ -496,6 +496,55 @@ class SourceMonitorScheduleTests(unittest.TestCase):
         self.assertEqual(job["source_cell_ids"], [cell.id])
         self.assertEqual(job["total"], 1)
         self.assertEqual(job["files"][0]["file_id"], tail.id)
+
+    def test_tracked_tail_scope_stays_one_item_with_legacy_internal_rows(self):
+        db = self.make_session()
+        cell = Cell(name="Legacy chain", cycling_status="active")
+        first = SourceFile(hash="legacy-old", path="C:/data/legacy-old.ndax", filename="legacy-old.ndax", size=1, ext="ndax")
+        final = SourceFile(hash="legacy-final", path="C:/data/legacy-final.ndax", filename="legacy-final.ndax", size=1, ext="ndax")
+        db.add_all([cell, first, final])
+        db.flush()
+        internal_a = Test(cell_id=cell.id, name="Imported file")
+        internal_b = Test(cell_id=cell.id, name="Compatibility row")
+        db.add_all([internal_a, internal_b])
+        db.flush()
+        db.add_all([
+            TestFile(test_id=internal_a.id, file_id=first.id, position=0),
+            TestFile(test_id=internal_b.id, file_id=final.id, position=0),
+        ])
+        db.commit()
+
+        class DeferredThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        original_thread = library._JobThread
+        background_jobs.clear_jobs()
+        with library._source_check_job_lock:
+            library._source_check_jobs.clear()
+            library._latest_source_check_job_id = None
+            library._next_source_check_job_id = 1
+        try:
+            library._JobThread = DeferredThread
+            job = library.start_source_check_job(
+                db,
+                source_scope="tracked_tails",
+                trigger="scheduled",
+            )
+        finally:
+            library._JobThread = original_thread
+            background_jobs.clear_jobs()
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+                library._next_source_check_job_id = 1
+
+        self.assertEqual(job["total"], 1)
+        self.assertEqual(job["source_cell_ids"], [cell.id])
+        self.assertEqual(job["files"][0]["file_id"], final.id)
 
     def test_daily_schedules_are_unchanged_by_the_unit(self):
         config = {

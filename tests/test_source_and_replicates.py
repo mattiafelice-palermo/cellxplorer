@@ -820,6 +820,11 @@ class SourceAndReplicateTests(unittest.TestCase):
                 cell_ids=[cell.id],
                 update_after_check=True,
             )
+            coalesced = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                update_after_check=True,
+            )
             live_jobs = background_jobs.list_jobs()
         finally:
             library._JobThread = original_thread
@@ -834,11 +839,106 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(job["requested_cell_ids"], [cell.id])
         self.assertEqual(job["files"][0]["filename"], "active.ndax")
         self.assertEqual(job["files"][0]["status"], "queued")
-        self.assertEqual(upgraded["id"], job["id"])
+        self.assertNotEqual(upgraded["id"], job["id"])
+        self.assertEqual(coalesced["id"], upgraded["id"])
+        self.assertFalse(job["update_after_check"])
         self.assertTrue(upgraded["update_after_check"])
-        self.assertEqual(live_jobs[0]["kind"], "source_check_update")
-        self.assertEqual(live_jobs[0]["title"], "Checking and updating sources")
-        self.assertEqual(live_jobs[0]["items"][0]["label"], "active.ndax")
+        jobs_by_id = {item["id"]: item for item in live_jobs}
+        self.assertEqual(jobs_by_id[job["background_job_id"]]["kind"], "source_check")
+        self.assertEqual(jobs_by_id[upgraded["background_job_id"]]["kind"], "source_check_update")
+        self.assertEqual(jobs_by_id[upgraded["background_job_id"]]["title"], "Checking and updating sources")
+        self.assertEqual(jobs_by_id[upgraded["background_job_id"]]["items"][0]["label"], "active.ndax")
+
+    def test_incompatible_manual_and_scheduled_scopes_start_separate_immutable_jobs(self):
+        db = self.make_session()
+        cell, _ = self._add_cell_with_source(db, name="scope-contract")
+        db.commit()
+
+        class DeferredThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        original_thread = library._JobThread
+        try:
+            background_jobs.clear_jobs()
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+                library._next_source_check_job_id = 1
+            library._JobThread = DeferredThread
+            manual = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="all_ordered_sources",
+                trigger="manual",
+            )
+            scheduled = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="tracked_tails",
+                trigger="scheduled",
+            )
+            scheduled_again = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="tracked_tails",
+                trigger="scheduled",
+            )
+            metadata_a = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="all_ordered_sources",
+                scan_mode="metadata",
+                stability_seconds=1,
+                retry_count=1,
+                retry_delay_seconds=10,
+            )
+            metadata_b = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="all_ordered_sources",
+                scan_mode="metadata",
+                stability_seconds=2,
+                retry_count=1,
+                retry_delay_seconds=10,
+            )
+            scheduled_first = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="tracked_tails",
+                scan_mode="metadata",
+                stability_seconds=2,
+                retry_count=1,
+                retry_delay_seconds=10,
+                trigger="scheduled",
+            )
+            manual_after_scheduled = library.start_source_check_job(
+                db,
+                cell_ids=[cell.id],
+                source_scope="all_ordered_sources",
+                scan_mode="metadata",
+                stability_seconds=2,
+                retry_count=1,
+                retry_delay_seconds=10,
+                trigger="manual",
+            )
+        finally:
+            library._JobThread = original_thread
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+            background_jobs.clear_jobs()
+
+        self.assertNotEqual(manual["id"], scheduled["id"])
+        self.assertEqual(scheduled_again["id"], scheduled["id"])
+        self.assertEqual(manual["source_scope"], "all_ordered_sources")
+        self.assertEqual(scheduled["source_scope"], "tracked_tails")
+        self.assertFalse(manual["update_after_check"])
+        self.assertNotEqual(metadata_a["id"], metadata_b["id"])
+        self.assertNotEqual(scheduled_first["id"], manual_after_scheduled["id"])
 
     def _start_deferred_source_job(self, db, starter):
         class DeferredThread:
@@ -1036,6 +1136,136 @@ class SourceAndReplicateTests(unittest.TestCase):
                     library._source_check_jobs.clear()
                     library._latest_source_check_job_id = None
                 background_jobs.clear_jobs()
+
+    def test_tracked_tail_adoption_revalidates_current_chain_and_identity(self):
+        def run_case(case):
+            db = self.make_session()
+            factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+            with tempfile.TemporaryDirectory() as tmp:
+                first_path = Path(tmp) / "first.ndax"
+                tail_path = Path(tmp) / "tail.ndax"
+                first_path.write_bytes(b"first")
+                tail_path.write_bytes(b"tail changed")
+                first_stat = first_path.stat()
+                tail_stat = tail_path.stat()
+                cell = Cell(name=f"Adoption {case}", cycling_status="active")
+                first = SourceFile(
+                    hash="first-hash",
+                    path=str(first_path),
+                    filename=first_path.name,
+                    size=first_stat.st_size,
+                    ext="ndax",
+                    observed_size=first_stat.st_size,
+                    observed_mtime_ns=first_stat.st_mtime_ns,
+                    location_status="online",
+                    parse_status="parsed",
+                )
+                tail = SourceFile(
+                    hash="tail-hash",
+                    path=str(tail_path),
+                    filename=tail_path.name,
+                    size=1,
+                    ext="ndax",
+                    observed_size=1,
+                    observed_mtime_ns=1,
+                    location_status="online",
+                    parse_status="parsed",
+                )
+                db.add_all([cell, first, tail])
+                db.flush()
+                internal = Test(cell_id=cell.id, name="Imported file")
+                db.add(internal)
+                db.flush()
+                first_link = TestFile(test_id=internal.id, file_id=first.id, position=0)
+                tail_link = TestFile(test_id=internal.id, file_id=tail.id, position=1)
+                db.add_all([first_link, tail_link] if case == "historical" else [tail_link])
+                db.commit()
+
+                captured = {}
+                update_calls = []
+
+                class CapturingThread:
+                    def __init__(self, *, target, args=(), kwargs=None, **_):
+                        captured["target"] = target
+                        captured["args"] = args
+
+                    def start(self):
+                        pass
+
+                originals = (
+                    library._JobThread,
+                    library.SessionLocal,
+                    library.parsing.compute_hash,
+                    library.scanner.update_source_from_path,
+                )
+                try:
+                    background_jobs.clear_jobs()
+                    with library._source_check_job_lock:
+                        library._source_check_jobs.clear()
+                        library._latest_source_check_job_id = None
+                        library._next_source_check_job_id = 1
+                    library._JobThread = CapturingThread
+                    library.SessionLocal = factory
+                    library.parsing.compute_hash = lambda _: "monitored-tail-hash"
+                    library.scanner.update_source_from_path = (
+                        lambda update_db, source: update_calls.append(source.id) or source
+                    )
+                    job = library.start_source_check_job(
+                        db,
+                        source_scope="tracked_tails",
+                        scan_mode="metadata",
+                        batch_size=1,
+                        stability_seconds=0,
+                        update_after_check=True,
+                        trigger="scheduled",
+                    )
+                    if case == "historical":
+                        first_link.position = 1
+                        tail_link.position = 0
+                        db.commit()
+                    elif case == "detached":
+                        db.delete(tail_link)
+                        db.commit()
+                    elif case == "registered":
+                        tail.hash = "manual-update-hash"
+                        tail.location_status = "online"
+                        db.commit()
+                    captured["target"](*captured["args"])
+                    snapshot = library._source_check_job_snapshot(job["id"])
+                    event = db.query(ActivityEvent).filter(ActivityEvent.action == "check_update_sources").one()
+                    return snapshot, update_calls, event.details, tail.id
+                finally:
+                    (
+                        library._JobThread,
+                        library.SessionLocal,
+                        library.parsing.compute_hash,
+                        library.scanner.update_source_from_path,
+                    ) = originals
+                    with library._source_check_job_lock:
+                        library._source_check_jobs.clear()
+                        library._latest_source_check_job_id = None
+                    background_jobs.clear_jobs()
+                    db.close()
+
+        historical, calls, details, tail_id = run_case("historical")
+        self.assertEqual(calls, [])
+        self.assertEqual(historical["updated"], 0)
+        self.assertEqual(historical["skipped_adoption_sources"][0]["file_id"], tail_id)
+        self.assertEqual(historical["skipped_adoption_sources"][0]["reason"], "became_historical")
+        self.assertEqual(details["skipped_adoption_sources"][0]["reason"], "became_historical")
+
+        detached, calls, details, tail_id = run_case("detached")
+        self.assertEqual(calls, [])
+        self.assertEqual(detached["skipped_detached_source_ids"], [tail_id])
+        self.assertEqual(detached["skipped_adoption_sources"][0]["reason"], "detached")
+        self.assertEqual(details["skipped_adoption_sources"][0]["reason"], "detached")
+
+        registered, calls, details, tail_id = run_case("registered")
+        self.assertEqual(calls, [])
+        self.assertEqual(registered["updated"], 0)
+        self.assertEqual(registered["skipped_adoption_sources"][0]["file_id"], tail_id)
+        self.assertEqual(registered["skipped_adoption_sources"][0]["reason"], "registered_identity_changed")
+        self.assertEqual(details["skipped_adoption_sources"][0]["reason"], "registered_identity_changed")
 
     def test_update_changed_sources_returns_cells_that_are_ready(self):
         db = self.make_session()

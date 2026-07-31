@@ -218,10 +218,10 @@ names, Target Test selectors, per-Test cards, per-Test tails, or per-Test orderi
 second Test merely because a continuation protocol differs. A protocol difference is a source
 boundary finding only.
 
-Multiple Tests per Cell were never an implemented or approved database state. Do not add legacy
-migration, normalization, flattening, or preservation behavior for them. Prevent creation of a
-second Test row and cover the invariant in focused backend tests. Encountering more than one Test
-for a Cell is an invariant failure, not a supported application mode.
+Normal writes prevent a second Test row and focused backend tests cover that invariant. Lifecycle
+mutations reject a Cell that already violates it. Read-only source monitoring may defensively
+flatten malformed legacy rows by their stored compatibility order so a damaged Cell still yields
+at most one monitored tail; that fallback is never exposed as a second chain or product mode.
 
 Replicate groups and folders hold references to Cells rather than copies of scientific data.
 Analyses own one shared sample set; saved plots own configuration and per-view visibility.
@@ -254,8 +254,11 @@ mutation validation. Staged registration rechecks the inspected hash before writ
 must be non-empty and unique before inspection or cache work.
 
 Scheduled source monitoring checks only the final source in each active Cell chain. Manual integrity
-operations may inspect every ordered source. Internal Test IDs may remain in diagnostics but never
-define or expose a separate tail.
+operations may inspect every ordered source. Each running check captures an immutable scope and
+execution contract; incompatible requests start separately instead of changing an existing job.
+Before scheduled adoption, the source must still be attached to the Cell, still be final, retain its
+captured registered hash, and match the checked stable physical signature. Internal Test IDs may
+remain in diagnostics but never define or expose a separate tail.
 
 Backend services own parsing and deterministic scientific calculations. React components own
 editing state and visualization state. Server-state copies in React Query are disposable views of

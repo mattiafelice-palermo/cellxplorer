@@ -1,4 +1,4 @@
-"""The canonical Library: cells, tests, metadata, cell tags."""
+"""The canonical Library: Cells, source-chain compatibility rows, metadata, and tags."""
 from __future__ import annotations
 
 import math
@@ -1012,6 +1012,15 @@ class CellDeleteRequest(BaseModel):
     cell_ids: list[int]
 
 
+def _ordered_cell_file_links(cell: Cell) -> list[TestFile]:
+    """Return the compatibility rows as one ordered Cell source chain."""
+    return [
+        link
+        for test in sorted(cell.tests, key=lambda item: item.id)
+        for link in sorted(test.file_links, key=lambda item: (item.position, item.id))
+    ]
+
+
 def _cell_source_files(
     db: Session,
     cell_ids: list[int] | None = None,
@@ -1040,12 +1049,11 @@ def _cell_source_files(
         )
     files_by_id: dict[int, SourceFile] = {}
     for cell in cells:
-        tests = sorted(cell.tests, key=lambda test: test.id)
+        links_in_cell = _ordered_cell_file_links(cell)
         if source_scope == "tracked_tails":
-            non_empty_tests = [test for test in tests if test.file_links]
-            links = [max(non_empty_tests, key=lambda test: test.id).file_links[-1]] if non_empty_tests else []
+            links = links_in_cell[-1:] if links_in_cell else []
         else:
-            links = [link for test in tests for link in test.file_links]
+            links = links_in_cell
         for link in links:
             sf = link.file
             if changed_only and sf.location_status != "changed":
@@ -1118,10 +1126,41 @@ def _source_check_job_snapshot(job_id: int) -> dict | None:
 
 def source_check_running() -> bool:
     with _source_check_job_lock:
-        if _latest_source_check_job_id is None:
-            return False
-        job = _source_check_jobs.get(_latest_source_check_job_id)
-        return bool(job and job.get("status") == "running")
+        return any(job.get("status") == "running" for job in _source_check_jobs.values())
+
+
+def _normalised_source_check_cell_ids(cell_ids: list[int] | None) -> list[int]:
+    return sorted({int(cell_id) for cell_id in (cell_ids or [])})
+
+
+def _source_check_contract(
+    *,
+    cell_ids: list[int] | None,
+    source_scope: SourceScope,
+    include_complete: bool,
+    update_after_check: bool,
+    scan_mode: str,
+    batch_size: int,
+    stability_seconds: float,
+    low_impact: bool,
+    retry_count: int,
+    retry_delay_seconds: int,
+    retry_deadline_at: str | None,
+) -> dict:
+    metadata_scan = scan_mode == "metadata"
+    return {
+        "source_scope": source_scope,
+        "requested_cell_ids": _normalised_source_check_cell_ids(cell_ids),
+        "include_complete": bool(include_complete),
+        "update_after_check": bool(update_after_check),
+        "scan_mode": scan_mode,
+        "batch_size": max(1, min(int(batch_size), 5000)) if metadata_scan else None,
+        "stability_seconds": float(stability_seconds) if metadata_scan else None,
+        "low_impact": bool(low_impact),
+        "retry_count": int(retry_count) if metadata_scan else 0,
+        "retry_delay_seconds": int(retry_delay_seconds) if metadata_scan else 0,
+        "retry_deadline_at": retry_deadline_at if metadata_scan else None,
+    }
 
 
 def _update_source_check_job(job_id: int, **values) -> None:
@@ -1683,29 +1722,28 @@ def _run_source_check_job(
             for file_id in changed_ids:
                 sf = db.get(SourceFile, file_id)
                 source_job = next((item for item in jobs if item["id"] == file_id), None)
-                if sf is None or source_job is None or not _source_still_attached(db, source_job, sf):
-                    reason = "Source was detached before update adoption"
-                    _update_source_check_file(job_id, file_id, status="skipped", error=reason)
-                    with _source_check_job_lock:
-                        live = _source_check_jobs.get(job_id)
-                        if live is not None:
-                            live["update_completed"] += 1
-                            if file_id not in live["skipped_detached_source_ids"]:
-                                live["skipped_detached_source_ids"].append(file_id)
-                    if background_job_id is not None:
-                        background_jobs.record_result(
-                            background_job_id,
-                            file_id,
-                            status="deferred",
-                            detail=reason,
-                            error=reason,
-                            counter="skipped_detached",
-                        )
+                signature = snapshot.get("changed_source_signatures", {}).get(file_id)
+                if sf is None or source_job is None:
+                    _record_source_adoption_skip(
+                        job_id,
+                        file_id,
+                        reason_code="detached",
+                        message="Source was detached from the Cell before update adoption",
+                    )
+                    continue
+                adoption_skip = _source_adoption_skip_reason(db, source_job, sf, signature)
+                if adoption_skip is not None:
+                    reason_code, reason = adoption_skip
+                    _record_source_adoption_skip(
+                        job_id,
+                        file_id,
+                        reason_code=reason_code,
+                        message=reason,
+                    )
                     continue
                 _update_source_check_file(job_id, file_id, status="updating")
                 error = None
                 try:
-                    signature = snapshot.get("changed_source_signatures", {}).get(file_id)
                     if scan_mode == "metadata" and signature:
                         updated_sf = scanner.update_source_from_path_if_stable(
                             db,
@@ -1719,8 +1757,8 @@ def _run_source_check_job(
                         error = updated_sf.parse_error or "Cache rebuild failed"
                     else:
                         updated_file_ids.append(updated_sf.id)
-                        if updated_sf.test_link and updated_sf.test_link.test:
-                            ready_cell_ids.add(updated_sf.test_link.test.cell_id)
+                        if source_job.get("cell_id") is not None:
+                            ready_cell_ids.add(source_job["cell_id"])
                 except scanner.SourceChangedDuringRead as exc:
                     error = None
                     sf.location_status = "changing"
@@ -1850,6 +1888,7 @@ def _run_source_check_job(
                     "source_scope": snapshot.get("source_scope", "all_ordered_sources"),
                     "source_cell_ids": snapshot.get("source_cell_ids", []),
                     "skipped_detached_source_ids": snapshot.get("skipped_detached_source_ids", []),
+                    "skipped_adoption_sources": snapshot.get("skipped_adoption_sources", []),
                 },
                 started_at=datetime.fromisoformat(snapshot["started_at"]),
                 finished_at=datetime.fromisoformat(
@@ -1882,12 +1921,77 @@ def _source_scope_subject(snapshot: dict) -> str:
     return f"all {snapshot.get('total', 0)} source file{'s' if snapshot.get('total', 0) != 1 else ''}"
 
 
-def _source_still_attached(db: Session, source_job: dict, source_file: SourceFile) -> bool:
-    link = source_file.test_link
-    if link is None:
-        return False
-    expected_test_id = source_job.get("test_id")
-    return expected_test_id is None or link.test_id == expected_test_id
+def _current_cell_source_chain(db: Session, cell_id: int) -> list[TestFile]:
+    cell = (
+        db.query(Cell)
+        .options(selectinload(Cell.tests).selectinload(Test.file_links))
+        .filter(Cell.id == cell_id)
+        .one_or_none()
+    )
+    return _ordered_cell_file_links(cell) if cell is not None else []
+
+
+def _source_adoption_skip_reason(
+    db: Session,
+    source_job: dict,
+    source_file: SourceFile,
+    checked_signature: dict | None,
+) -> tuple[str, str] | None:
+    """Validate a monitored source before allowing a background update to adopt it."""
+    cell_id = source_job.get("cell_id")
+    chain = _current_cell_source_chain(db, cell_id) if cell_id is not None else []
+    chain_file_ids = [link.file_id for link in chain]
+    if source_file.id not in chain_file_ids:
+        return "detached", "Source was detached from the Cell before update adoption"
+    if not chain_file_ids or chain_file_ids[-1] != source_file.id:
+        return "became_historical", "Source became historical before update adoption"
+    if source_file.hash != source_job.get("captured_registered_hash", source_job.get("hash")):
+        return "registered_identity_changed", "Registered source identity changed before update adoption"
+    if source_file.path != source_job.get("path"):
+        return "source_changed_again", "Source path changed after the monitored source state"
+    if checked_signature is None:
+        return "source_changed_again", "The monitored source has no stable physical signature"
+    try:
+        current_stat = Path(source_file.path).stat()
+    except OSError:
+        return "source_changed_again", "Source changed again or is no longer readable"
+    if (current_stat.st_size, current_stat.st_mtime_ns) != (
+        checked_signature.get("size"),
+        checked_signature.get("mtime_ns"),
+    ):
+        return "source_changed_again", "Source changed again after the monitored stable state"
+    return None
+
+
+def _record_source_adoption_skip(
+    job_id: int,
+    file_id: int,
+    *,
+    reason_code: str,
+    message: str,
+) -> None:
+    _update_source_check_file(job_id, file_id, status="skipped", error=message)
+    background_job_id = None
+    with _source_check_job_lock:
+        live = _source_check_jobs.get(job_id)
+        if live is None:
+            return
+        background_job_id = live.get("background_job_id")
+        live["update_completed"] += 1
+        if reason_code == "detached" and file_id not in live["skipped_detached_source_ids"]:
+            live["skipped_detached_source_ids"].append(file_id)
+        live["skipped_adoption_sources"].append(
+            {"file_id": file_id, "reason": reason_code, "message": message}
+        )
+    if background_job_id is not None:
+        background_jobs.record_result(
+            background_job_id,
+            file_id,
+            status="deferred",
+            detail=message,
+            error=message,
+            counter=f"skipped_{reason_code}",
+        )
 
 
 def start_source_check_job(
@@ -1907,22 +2011,25 @@ def start_source_check_job(
     retry_deadline_at: str | None = None,
 ) -> dict:
     global _latest_source_check_job_id, _next_source_check_job_id
+    contract = _source_check_contract(
+        cell_ids=cell_ids,
+        source_scope=source_scope,
+        include_complete=include_complete,
+        update_after_check=update_after_check,
+        scan_mode=scan_mode,
+        batch_size=batch_size,
+        stability_seconds=stability_seconds,
+        low_impact=low_impact,
+        retry_count=retry_count,
+        retry_delay_seconds=retry_delay_seconds,
+        retry_deadline_at=retry_deadline_at,
+    )
     with _source_check_job_lock:
         if _latest_source_check_job_id is not None:
             current = _source_check_jobs.get(_latest_source_check_job_id)
             if current and current["status"] == "running":
-                if trigger == "scheduled":
+                if current.get("contract") == contract:
                     return deepcopy(current)
-                if update_after_check and not current.get("update_after_check"):
-                    current["update_after_check"] = True
-                    background_job_id = current.get("background_job_id")
-                    if background_job_id is not None:
-                        background_jobs.update_job(
-                            background_job_id,
-                            kind="source_check_update",
-                            title="Checking and updating sources",
-                        )
-                return deepcopy(current)
 
     source_files, skipped_complete = _cell_source_files(
         db,
@@ -1942,13 +2049,12 @@ def start_source_check_job(
             "id": sf.id,
             "path": sf.path,
             "hash": sf.hash,
+            "captured_registered_hash": sf.hash,
             "filename": sf.filename,
             "observed_size": sf.observed_size,
             "observed_mtime_ns": sf.observed_mtime_ns,
             "location_status": sf.location_status,
             "cell_id": sf.test_link.test.cell_id if sf.test_link is not None else None,
-            "test_id": sf.test_link.test_id if sf.test_link is not None else None,
-            "position": sf.test_link.position if sf.test_link is not None else None,
         }
         for sf in source_files
     ]
@@ -1991,10 +2097,11 @@ def start_source_check_job(
             "skipped_complete": skipped_complete,
             "changed_file_ids": [],
             "changed_source_signatures": {},
-            "requested_cell_ids": list(dict.fromkeys(cell_ids or [])),
+            "requested_cell_ids": _normalised_source_check_cell_ids(cell_ids),
             "source_scope": source_scope,
             "source_cell_ids": source_cell_ids,
             "skipped_detached_source_ids": [],
+            "skipped_adoption_sources": [],
             "workers": worker_count,
             "files": [
                 {
@@ -2026,6 +2133,7 @@ def start_source_check_job(
             "retry_count": retry_count,
             "retry_delay_seconds": retry_delay_seconds,
             "retry_deadline_at": retry_deadline_at,
+            "contract": contract,
             "retry_attempt": 0,
             "retry_total": 0,
             "retry_completed": 0,
