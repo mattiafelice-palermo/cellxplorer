@@ -209,19 +209,19 @@ or changed steps remain successive sources in that same chain.
 The relational schema still contains `Test` and `TestFile` for compatibility:
 
 ```text
-Cell -> one internal Test row -> ordered TestFile links -> SourceFiles
+Cell -> exactly one internal Test row -> ordered TestFile links -> SourceFiles
 ```
 
-For normal Cells, exactly one internal Test row stores the chain. `Test` is not a user-facing
+Every Cell has exactly one internal Test row storing the chain. `Test` is not a user-facing
 procedure, grouping, selection, analysis, lifecycle, or monitoring concept. Do not expose Test
 names, Target Test selectors, per-Test cards, per-Test tails, or per-Test ordering. Do not create a
 second Test merely because a continuation protocol differs. A protocol difference is a source
 boundary finding only.
 
-Do not remove or rename the existing tables without a forward migration. If legacy data contains
-multiple Tests for one Cell, preserve all sources and fail mutations clearly rather than silently
-normalizing or deleting data; reads may flatten the historical rows in stable order until a
-separately approved normalization exists.
+Multiple Tests per Cell were never an implemented or approved database state. Do not add legacy
+migration, normalization, flattening, or preservation behavior for them. Prevent creation of a
+second Test row and cover the invariant in focused backend tests. Encountering more than one Test
+for a Cell is an invariant failure, not a supported application mode.
 
 Replicate groups and folders hold references to Cells rather than copies of scientific data.
 Analyses own one shared sample set; saved plots own configuration and per-view visibility.
@@ -247,8 +247,8 @@ and suggested order are deterministic; blocking covers identity violations while
 channel, and local cycle differences remain visible but non-blocking.
 
 Spec 034.3 lifecycle mutations inspect the complete proposed Cell source chain. Canonical
-frontend/API operations are Cell-level and the backend resolves the one internal Test row. Existing
-Test-level routes may remain only as compatibility wrappers; they must not enable multiple-Test
+frontend/API operations are Cell-level and the backend resolves the single internal Test row.
+Existing Test-level routes may remain only as internal wrappers; they must not enable multiple-Test
 product behavior. The same complete-chain proposal drives findings, tracked-tail impact, and final
 mutation validation. Staged registration rechecks the inspected hash before writes, and request keys
 must be non-empty and unique before inspection or cache work.
