@@ -264,6 +264,7 @@ def _run_scheduler() -> None:
                         include_complete=False,
                         update_after_check=bool(config["auto_update"]),
                         scan_mode="metadata",
+                        source_scope="tracked_tails",
                         batch_size=int(config["scan_batch_size"]),
                         stability_seconds=stability_seconds(config),
                         trigger="scheduled",

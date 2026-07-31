@@ -441,13 +441,61 @@ class SourceMonitorScheduleTests(unittest.TestCase):
             "daily_time": "02:00",
         }
         self.assertEqual(source_monitor.scheduled_step_days(config), 14)
-
         # Compare local calendar dates: `daily_time` is a local wall-clock time, so
         # anchoring the test to a UTC instant would be off by the UTC offset.
         first = source_monitor.calculate_next_run(config).astimezone()
         second = source_monitor.following_scheduled_run(config, first).astimezone()
         self.assertEqual((second.date() - first.date()).days, 14)
         self.assertEqual((first.hour, first.minute), (2, 0))
+
+    def test_tracked_tail_scope_captures_only_final_source_of_final_test(self):
+        db = self.make_session()
+        cell = Cell(name="Continued", cycling_status="active")
+        first = SourceFile(hash="tail-old", path="C:/data/old.ndax", filename="old.ndax", size=1, ext="ndax")
+        tail = SourceFile(hash="tail-new", path="C:/data/new.ndax", filename="new.ndax", size=1, ext="ndax")
+        db.add_all([cell, first, tail])
+        db.flush()
+        test = Test(cell_id=cell.id, name="Test")
+        db.add(test)
+        db.flush()
+        db.add_all([
+            TestFile(test_id=test.id, file_id=first.id, position=0),
+            TestFile(test_id=test.id, file_id=tail.id, position=1),
+        ])
+        db.commit()
+
+        class DeferredThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                pass
+
+        original_thread = library._JobThread
+        background_jobs.clear_jobs()
+        with library._source_check_job_lock:
+            library._source_check_jobs.clear()
+            library._latest_source_check_job_id = None
+            library._next_source_check_job_id = 1
+        try:
+            library._JobThread = DeferredThread
+            job = library.start_source_check_job(
+                db,
+                source_scope="tracked_tails",
+                trigger="scheduled",
+            )
+        finally:
+            library._JobThread = original_thread
+            background_jobs.clear_jobs()
+            with library._source_check_job_lock:
+                library._source_check_jobs.clear()
+                library._latest_source_check_job_id = None
+                library._next_source_check_job_id = 1
+
+        self.assertEqual(job["source_scope"], "tracked_tails")
+        self.assertEqual(job["source_cell_ids"], [cell.id])
+        self.assertEqual(job["total"], 1)
+        self.assertEqual(job["files"][0]["file_id"], tail.id)
 
     def test_daily_schedules_are_unchanged_by_the_unit(self):
         config = {

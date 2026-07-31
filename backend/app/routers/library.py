@@ -1003,6 +1003,9 @@ class CellSourceUpdateRequest(BaseModel):
     include_complete: bool = False
 
 
+SourceScope = Literal["all_ordered_sources", "tracked_tails"]
+
+
 class CellDeleteRequest(BaseModel):
     cell_ids: list[int]
 
@@ -1012,8 +1015,12 @@ def _cell_source_files(
     cell_ids: list[int] | None = None,
     include_complete: bool = False,
     changed_only: bool = False,
+    source_scope: SourceScope = "all_ordered_sources",
 ) -> tuple[list[SourceFile], int]:
+    if source_scope not in {"all_ordered_sources", "tracked_tails"}:
+        raise ValueError(f"Unsupported source scope: {source_scope}")
     q = db.query(Cell).filter(Cell.archived == False)  # noqa: E712
+    q = q.options(selectinload(Cell.tests).selectinload(Test.file_links).selectinload(TestFile.file))
     if cell_ids is not None:
         unique_ids = list(dict.fromkeys(cell_ids))
         if not unique_ids:
@@ -1031,12 +1038,17 @@ def _cell_source_files(
         )
     files_by_id: dict[int, SourceFile] = {}
     for cell in cells:
-        for test in cell.tests:
-            for link in test.file_links:
-                sf = link.file
-                if changed_only and sf.location_status != "changed":
-                    continue
-                files_by_id[sf.id] = sf
+        tests = sorted(cell.tests, key=lambda test: test.id)
+        if source_scope == "tracked_tails":
+            non_empty_tests = [test for test in tests if test.file_links]
+            links = [max(non_empty_tests, key=lambda test: test.id).file_links[-1]] if non_empty_tests else []
+        else:
+            links = [link for test in tests for link in test.file_links]
+        for link in links:
+            sf = link.file
+            if changed_only and sf.location_status != "changed":
+                continue
+            files_by_id[sf.id] = sf
     return list(files_by_id.values()), skipped_complete
 
 
@@ -1668,7 +1680,25 @@ def _run_source_check_job(
             update_errors: list[dict] = []
             for file_id in changed_ids:
                 sf = db.get(SourceFile, file_id)
-                if sf is None:
+                source_job = next((item for item in jobs if item["id"] == file_id), None)
+                if sf is None or source_job is None or not _source_still_attached(db, source_job, sf):
+                    reason = "Source was detached before update adoption"
+                    _update_source_check_file(job_id, file_id, status="skipped", error=reason)
+                    with _source_check_job_lock:
+                        live = _source_check_jobs.get(job_id)
+                        if live is not None:
+                            live["update_completed"] += 1
+                            if file_id not in live["skipped_detached_source_ids"]:
+                                live["skipped_detached_source_ids"].append(file_id)
+                    if background_job_id is not None:
+                        background_jobs.record_result(
+                            background_job_id,
+                            file_id,
+                            status="deferred",
+                            detail=reason,
+                            error=reason,
+                            counter="skipped_detached",
+                        )
                     continue
                 _update_source_check_file(job_id, file_id, status="updating")
                 error = None
@@ -1762,11 +1792,11 @@ def _run_source_check_job(
                 snapshot["background_job_id"],
                 status="completed",
                 description=(
-                    f"Checked {snapshot['completed']} source files and updated "
-                    f"{snapshot.get('updated', 0)}"
+                    f"Checked {_source_scope_subject(snapshot)} and updated "
+                    f"{snapshot.get('updated', 0)} source files"
                     if snapshot.get("update_after_check")
                     else (
-                        f"Checked {snapshot['completed']} source files: "
+                        f"Checked {_source_scope_subject(snapshot)}: "
                         f"{snapshot['changed']} changed, {snapshot['offline']} offline"
                     )
                 ),
@@ -1782,11 +1812,11 @@ def _run_source_check_job(
                 category="source",
                 action="check_update_sources" if snapshot.get("update_after_check") else "check_sources",
                 message=(
-                    f"Checked {snapshot['completed']} source files and updated "
+                    f"Checked {_source_scope_subject(snapshot)} and updated "
                     f"{snapshot.get('updated', 0)} changed sources"
                     if snapshot.get("update_after_check")
                     else (
-                        f"Checked {snapshot['completed']} source files: "
+                        f"Checked {_source_scope_subject(snapshot)}: "
                         f"{snapshot['changed']} changed, {snapshot['offline']} offline"
                     )
                 ),
@@ -1815,6 +1845,9 @@ def _run_source_check_job(
                     "updated_file_ids": snapshot.get("updated_file_ids", []),
                     "ready_cell_ids": snapshot.get("ready_cell_ids", []),
                     "update_errors": snapshot.get("update_errors", []),
+                    "source_scope": snapshot.get("source_scope", "all_ordered_sources"),
+                    "source_cell_ids": snapshot.get("source_cell_ids", []),
+                    "skipped_detached_source_ids": snapshot.get("skipped_detached_source_ids", []),
                 },
                 started_at=datetime.fromisoformat(snapshot["started_at"]),
                 finished_at=datetime.fromisoformat(
@@ -1840,6 +1873,21 @@ def _run_source_check_job(
         db.close()
 
 
+def _source_scope_subject(snapshot: dict) -> str:
+    if snapshot.get("source_scope") == "tracked_tails":
+        count = len(snapshot.get("source_cell_ids") or [])
+        return f"current source for {count} cell{'s' if count != 1 else ''}"
+    return f"all {snapshot.get('total', 0)} source file{'s' if snapshot.get('total', 0) != 1 else ''}"
+
+
+def _source_still_attached(db: Session, source_job: dict, source_file: SourceFile) -> bool:
+    link = source_file.test_link
+    if link is None:
+        return False
+    expected_test_id = source_job.get("test_id")
+    return expected_test_id is None or link.test_id == expected_test_id
+
+
 def start_source_check_job(
     db: Session,
     cell_ids: list[int] | None = None,
@@ -1850,6 +1898,7 @@ def start_source_check_job(
     batch_size: int = 100,
     stability_seconds: float = 5.0,
     trigger: Literal["manual", "tray", "scheduled"] = "manual",
+    source_scope: SourceScope = "all_ordered_sources",
     low_impact: bool = True,
     retry_count: int = 0,
     retry_delay_seconds: int = 300,
@@ -1877,6 +1926,14 @@ def start_source_check_job(
         db,
         cell_ids=cell_ids,
         include_complete=include_complete,
+        source_scope=source_scope,
+    )
+    source_cell_ids = sorted(
+        {
+            source_file.test_link.test.cell_id
+            for source_file in source_files
+            if source_file.test_link is not None and source_file.test_link.test is not None
+        }
     )
     jobs = [
         {
@@ -1887,6 +1944,9 @@ def start_source_check_job(
             "observed_size": sf.observed_size,
             "observed_mtime_ns": sf.observed_mtime_ns,
             "location_status": sf.location_status,
+            "cell_id": sf.test_link.test.cell_id if sf.test_link is not None else None,
+            "test_id": sf.test_link.test_id if sf.test_link is not None else None,
+            "position": sf.test_link.position if sf.test_link is not None else None,
         }
         for sf in source_files
     ]
@@ -1896,13 +1956,18 @@ def start_source_check_job(
     else:
         worker_count = cell_source_check_worker_count(len(jobs))
     now = datetime.now(timezone.utc).isoformat()
+    scope_subject = (
+        f"current source for {len(source_cell_ids)} cell{'s' if len(source_cell_ids) != 1 else ''}"
+        if source_scope == "tracked_tails"
+        else f"all {len(jobs)} source file{'s' if len(jobs) != 1 else ''}"
+    )
     background_job_id = background_jobs.create_job(
         kind="source_check_update" if update_after_check else "source_check",
         title="Checking and updating sources" if update_after_check else "Checking sources",
         description=(
-            f"Scanning metadata for {len(jobs)} source files"
+            f"Checking {scope_subject}"
             if scan_mode == "metadata"
-            else f"Checking checksums for {len(jobs)} source files"
+            else f"Checking {scope_subject}"
         ),
         total=len(jobs),
         items=[{"id": source_job["id"], "label": source_job["filename"]} for source_job in jobs],
@@ -1925,6 +1990,9 @@ def start_source_check_job(
             "changed_file_ids": [],
             "changed_source_signatures": {},
             "requested_cell_ids": list(dict.fromkeys(cell_ids or [])),
+            "source_scope": source_scope,
+            "source_cell_ids": source_cell_ids,
+            "skipped_detached_source_ids": [],
             "workers": worker_count,
             "files": [
                 {
