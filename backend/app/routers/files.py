@@ -1011,6 +1011,7 @@ def _continuation_existing_source(
     link: TestFile,
     *,
     existing_test_id: int,
+    input_order: int | None = None,
 ) -> dict:
     sf = link.file
     header_meta = sf.header_meta or {}
@@ -1021,7 +1022,7 @@ def _continuation_existing_source(
         "source_file_id": sf.id,
         "filename": sf.filename,
         "hash": sf.hash,
-        "input_order": link.position,
+        "input_order": link.position if input_order is None else input_order,
         "existing_test_id": existing_test_id,
         "linked_test_id": link.test_id,
         "path_refresh_candidate": False,
@@ -1156,6 +1157,12 @@ def _ordered_continuation_sources(
     staged_keys: list[str] = []
     for index, draft in enumerate(req.sources):
         staged_keys.append(draft.staged_name)
+    try:
+        continuations.validate_staged_keys(staged_keys)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
+    for index, draft in enumerate(req.sources):
         staged_sources.append(
             _continuation_staged_source(
                 draft,
@@ -1236,16 +1243,87 @@ def _lifecycle_mutation_response(
     }
 
 
+def _source_identity_snapshot_or_error(
+    source_path: Path,
+    *,
+    expected_hash: str | None,
+    previous_hash: str | None = None,
+) -> str:
+    integrity = continuations.inspect_path_integrity(source_path)
+    if integrity.get("missing") or integrity.get("unreadable") or integrity.get("changing"):
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_unstable",
+                "message": "The source changed or became unavailable during submission; inspect again.",
+                "filename": source_path.name,
+            },
+        )
+    current_hash = integrity.get("hash")
+    if not current_hash or (expected_hash and current_hash != expected_hash):
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_changed",
+                "message": "The source bytes differ from the inspected source; inspect again.",
+                "filename": source_path.name,
+                "expected_hash_prefix": continuations.hash_prefix(expected_hash),
+                "actual_hash_prefix": continuations.hash_prefix(current_hash),
+            },
+        )
+    if previous_hash and current_hash != previous_hash:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_changed",
+                "message": "The source changed during final registration; inspect again.",
+                "filename": source_path.name,
+                "expected_hash_prefix": continuations.hash_prefix(previous_hash),
+                "actual_hash_prefix": continuations.hash_prefix(current_hash),
+            },
+        )
+    return current_hash
+
+
+def _validate_staged_source_snapshots(
+    source_drafts: list[ImportSourceDraft | ContinuationInspectSourceRequest],
+    inspected_hashes_by_staged_name: dict[str, str],
+) -> None:
+    for source_draft in source_drafts:
+        try:
+            source_path = resolve_import_source_path(
+                source_draft.staged_name,
+                source_draft.source_path,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        expected_hash = inspected_hashes_by_staged_name.get(source_draft.staged_name)
+        if not expected_hash:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_unavailable",
+                    "message": "The source has no stable inspected identity; inspect again.",
+                    "filename": source_path.name,
+                },
+            )
+        _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
+
+
 def _register_or_refresh_source_file(
     db: Session,
     *,
     source_path: Path,
     filename: str,
+    expected_hash: str | None = None,
 ) -> SourceFile:
     if not source_path.exists():
         raise HTTPException(404, f"Source file is missing: {filename}")
 
-    file_hash = parsing.compute_hash(source_path)
+    file_hash = _source_identity_snapshot_or_error(
+        source_path,
+        expected_hash=expected_hash,
+    )
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing is not None:
         remove_archived_cell_blocking_source(db, existing)
@@ -1255,7 +1333,15 @@ def _register_or_refresh_source_file(
         raise HTTPException(409, f"{filename} is already registered")
 
     meta = parsing.read_header_metadata(source_path)
-    source_stat = source_path.stat()
+    try:
+        source_stat = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(409, f"Source became unavailable: {filename}") from exc
+    file_hash = _source_identity_snapshot_or_error(
+        source_path,
+        expected_hash=expected_hash,
+        previous_hash=file_hash,
+    )
     if existing is None:
         sf = SourceFile(
             hash=file_hash,
@@ -1470,6 +1556,15 @@ def raw_import_file_data(req: ImportRawDataRequest):
 def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)):
     if not req.cells:
         raise HTTPException(400, "No files selected")
+    all_staged_keys = [
+        source.staged_name
+        for draft in req.cells
+        for source in normalize_import_cell_sources(draft)
+    ]
+    try:
+        continuations.validate_staged_keys(all_staged_keys)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
     target_folder_ids = list(dict.fromkeys(
         ([req.folder_id] if req.folder_id is not None else []) + req.folder_ids
     ))
@@ -1500,6 +1595,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
     cell_ids_by_staged_name: dict[str, int] = {}
     source_file_ids_by_staged_name: dict[str, int] = {}
     cache_jobs: list[dict] = []
+    inspected_hashes_by_staged_name: dict[str, str] = {}
 
     for draft in req.cells:
         name = draft.cell_name.strip()
@@ -1509,6 +1605,9 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             raise HTTPException(409, f"Cell already exists: {name}")
         normalize_import_cell_sources(draft)
         analysis = _inspect_cell_draft_chain(draft, db)
+        for source in analysis.get("sources") or []:
+            if source.get("kind") == "staged" and source.get("hash"):
+                inspected_hashes_by_staged_name[source["key"]] = source["hash"]
         try:
             continuations.ensure_submittable_chain(
                 analysis,
@@ -1516,6 +1615,15 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
             )
         except continuations.ContinuationValidationError as exc:
             _raise_continuation_validation(exc)
+
+    _validate_staged_source_snapshots(
+        [
+            source
+            for draft in req.cells
+            for source in normalize_import_cell_sources(draft)
+        ],
+        inspected_hashes_by_staged_name,
+    )
 
     for draft in req.cells:
         sources = normalize_import_cell_sources(draft)
@@ -1543,6 +1651,7 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
                 db,
                 source_path=source_path,
                 filename=source_draft.filename,
+                expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
             )
             if position == 0:
                 header_meta = parsing.read_header_metadata(source_path)
@@ -1809,8 +1918,21 @@ def register_files(req: RegisterRequest, db: Session = Depends(get_db)):
         if f.test_link is not None:
             raise HTTPException(409, f"{f.filename} is already registered")
 
+    existing_cell = db.get(Cell, req.cell_id) if req.cell_id is not None else None
+    if req.test_id is not None or (existing_cell is not None and existing_cell.tests):
+        raise HTTPException(
+            409,
+            {
+                "code": "continuation_lifecycle_required",
+                "message": (
+                    "Adding a source to an existing Cell/Test must use the continuation "
+                    "inspection and lifecycle API."
+                ),
+            },
+        )
+
     if req.cell_id is not None:
-        cell = db.get(Cell, req.cell_id)
+        cell = existing_cell
         if cell is None:
             raise HTTPException(404, "No such cell")
     else:
@@ -1819,6 +1941,17 @@ def register_files(req: RegisterRequest, db: Session = Depends(get_db)):
             # sensible default from file metadata — but never forced
             name = files[0].barcode or files[0].remarks or Path(files[0].filename).stem
         cell = db.query(Cell).filter(Cell.name == name).first()
+        if cell is not None and cell.tests:
+            raise HTTPException(
+                409,
+                {
+                    "code": "continuation_lifecycle_required",
+                    "message": (
+                        "Adding a source to an existing Cell/Test must use the continuation "
+                        "inspection and lifecycle API."
+                    ),
+                },
+            )
         if cell is None:
             cell = Cell(name=name)
             db.add(cell)
@@ -1855,6 +1988,7 @@ class SourceChangeImpactRequest(BaseModel):
 class DetachSourceRequest(BaseModel):
     confirm: bool = False
     confirmation_token: str | None = None
+    acknowledged_finding_ids: list[str] = []
 
 
 class ReorderRequest(BaseModel):
@@ -1874,19 +2008,81 @@ def _inspect_test_chain(
     test: Test,
     staged_sources: list[ContinuationInspectSourceRequest],
     *,
-    proposed_order: list[str] | None = None,
+    proposed_file_ids: list[int] | None = None,
 ) -> dict:
-    inspect_req = ContinuationInspectRequest(
-        sources=staged_sources,
-        existing_test_id=test.id,
-        proposed_order=proposed_order,
+    proposed_ids = (
+        analysis_usage.ordered_test_file_ids(test)
+        if proposed_file_ids is None
+        else list(proposed_file_ids)
     )
-    ordered_sources, staged_keys = _ordered_continuation_sources(inspect_req, db)
-    return continuations.analyze_continuation_chain(
-        ordered_sources,
-        staged_keys=staged_keys,
-        proposed_staged_order=proposed_order,
+    ordered_sources, staged_keys = _proposed_cell_continuation_sources(
+        db,
+        test,
+        proposed_file_ids=proposed_ids,
+        staged_sources=staged_sources,
     )
+    if staged_keys:
+        return continuations.analyze_continuation_chain(
+            ordered_sources,
+            staged_keys=staged_keys,
+            proposed_staged_order=staged_keys,
+        )
+    return continuations.analyze_existing_order_chain(ordered_sources)
+
+
+def _proposed_cell_continuation_sources(
+    db: Session,
+    test: Test,
+    *,
+    proposed_file_ids: list[int],
+    staged_sources: list[ContinuationInspectSourceRequest],
+) -> tuple[list[dict], list[str]]:
+    staged_keys = [source.staged_name for source in staged_sources]
+    try:
+        continuations.validate_staged_keys(staged_keys)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
+    staged_by_key = {source.staged_name: source for source in staged_sources}
+    proposed_chain = analysis_usage.proposed_cell_source_chain(
+        test.cell,
+        test,
+        proposed_file_ids=proposed_file_ids,
+        staged_names=staged_keys,
+        staged_filenames=[
+            _clean_filename(Path(source.source_path or source.staged_name).name)
+            for source in staged_sources
+        ],
+    )
+    links_by_key = {
+        (candidate_test.id, link.file_id): link
+        for candidate_test in test.cell.tests
+        for link in candidate_test.file_links
+    }
+    ordered_sources: list[dict] = []
+    for input_order, entry in enumerate(proposed_chain):
+        staged_name = entry.get("staged_name")
+        if staged_name is not None:
+            ordered_sources.append(
+                _continuation_staged_source(
+                    staged_by_key[staged_name],
+                    db,
+                    existing_test_id=test.id,
+                    input_order=input_order,
+                )
+            )
+            continue
+        link = links_by_key.get((entry["test_id"], entry["file_id"]))
+        if link is None:
+            raise HTTPException(409, "Proposed continuation order references an unknown source")
+        ordered_sources.append(
+            _continuation_existing_source(
+                link,
+                existing_test_id=entry["test_id"],
+                input_order=input_order,
+            )
+        )
+    return ordered_sources, staged_keys
 
 
 def _inspect_existing_order(
@@ -1894,12 +2090,12 @@ def _inspect_existing_order(
     test: Test,
     proposed_file_ids: list[int],
 ) -> dict:
-    links_by_id = {link.file_id: link for link in test.file_links}
-    ordered_sources = [
-        _continuation_existing_source(links_by_id[file_id], existing_test_id=test.id)
-        for file_id in proposed_file_ids
-    ]
-    return continuations.analyze_existing_order_chain(ordered_sources)
+    return _inspect_test_chain(
+        db,
+        test,
+        [],
+        proposed_file_ids=proposed_file_ids,
+    )
 
 
 @router.post("/tests/{test_id}/source-change/impact")
@@ -1917,6 +2113,10 @@ def preview_test_source_change(
     if operation == "attach":
         if not req.sources:
             raise HTTPException(400, "Attach impact preview requires staged sources")
+        try:
+            continuations.validate_staged_keys([source.staged_name for source in req.sources])
+        except continuations.ContinuationValidationError as exc:
+            _raise_continuation_validation(exc)
         staged_filenames = [
             _clean_filename(Path(source.source_path or source.staged_name).name)
             for source in req.sources
@@ -1972,10 +2172,16 @@ def attach_continuations(
     old_tracked = analysis_usage.tracked_source_file_id(cell)
 
     analysis = _inspect_test_chain(db, test, req.sources)
+    inspected_hashes_by_staged_name = {
+        source["key"]: source["hash"]
+        for source in analysis.get("sources") or []
+        if source.get("kind") == "staged" and source.get("hash")
+    }
     try:
         continuations.ensure_submittable_chain(analysis, req.acknowledged_finding_ids)
     except continuations.ContinuationValidationError as exc:
         _raise_continuation_validation(exc)
+    _validate_staged_source_snapshots(req.sources, inspected_hashes_by_staged_name)
 
     base_position = max((link.position for link in test.file_links), default=-1) + 1
     attached_ids: list[int] = []
@@ -1995,6 +2201,7 @@ def attach_continuations(
                 db,
                 source_path=source_path,
                 filename=filename,
+                expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
             )
             db.add(TestFile(test_id=test.id, file_id=sf.id, position=base_position + offset))
             sf.parse_status = "parsing"
@@ -2072,6 +2279,21 @@ def detach_file(
         raise HTTPException(409, "Cannot detach the last source from a test")
 
     proposed = [current_id for current_id in current_file_ids if current_id != file_id]
+    body = req or DetachSourceRequest()
+    analysis = _inspect_test_chain(
+        db,
+        test,
+        [],
+        proposed_file_ids=proposed,
+    )
+    try:
+        continuations.ensure_submittable_chain(
+            analysis,
+            body.acknowledged_finding_ids,
+        )
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+
     impact = analysis_usage.preview_source_change_impact(
         db,
         test=test,
@@ -2079,7 +2301,6 @@ def detach_file(
         proposed_file_ids=proposed,
         detach_file_id=file_id,
     )
-    body = req or DetachSourceRequest()
     if not body.confirm or body.confirmation_token != impact["confirmation_token"]:
         raise HTTPException(
             422,

@@ -1709,6 +1709,8 @@ export interface ContinuationInspectSource {
   nominal_capacity_mah: number | null;
   active_mass_mg: number | null;
   inspection_status: ContinuationInspectionStatus;
+  inspection_error?: string | null;
+  cache_build_status?: "ready" | "started" | "building" | "failed";
 }
 
 export interface ContinuationFinding {
@@ -1725,6 +1727,7 @@ export interface ContinuationInspectResult {
   sources: ContinuationInspectSource[];
   suggested_order: string[];
   findings: ContinuationFinding[];
+  inspection_complete: boolean;
   can_submit: boolean;
 }
 
@@ -1796,6 +1799,7 @@ export interface ReorderSourcesRequest {
 export interface DetachSourceRequest {
   confirm?: boolean;
   confirmation_token?: string | null;
+  acknowledged_finding_ids?: string[];
 }
 
 export interface SourceChangeImpactAnalysis {

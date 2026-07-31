@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,6 +33,14 @@ logger = logging.getLogger(__name__)
 _pending_lock = threading.Lock()
 _pending: dict[str, threading.Thread] = {}
 _protected_hashes: set[str] = set()
+
+# Continuation inspection can be repeated while a source cache is preparing. Keep
+# those builds on one process-local, content/version keyed path so repeated reads
+# do not parse and write the same source concurrently.
+BACKGROUND_BUILD_RETRY_DELAY_SECONDS = 5.0
+_background_build_lock = threading.Lock()
+_background_builds: dict[tuple[str, str, str], threading.Thread] = {}
+_background_build_failures: dict[tuple[str, str, str], tuple[float, str]] = {}
 
 
 def _wait_for_pending(file_hash: str) -> None:
@@ -52,6 +61,59 @@ def pending_hashes() -> set[str]:
     """Return hashes whose Parquet files are currently being written."""
     with _pending_lock:
         return set(_pending) | set(_protected_hashes)
+
+
+def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | None]:
+    """Start at most one current-version cache build for ``file_hash``.
+
+    The result status is ``ready``, ``building``, ``started``, or ``failed``.
+    Failed builds are retryable after a short cooldown so a repeated inspection
+    cannot create a tight retry loop.
+    """
+    key = (file_hash, parsing.PARSER_VERSION, CALC_VERSION)
+    if raw_path(file_hash, parsing.PARSER_VERSION).is_file() and cycles_path(
+        file_hash, parsing.PARSER_VERSION, CALC_VERSION
+    ).is_file():
+        return {"status": "ready", "error": None}
+
+    now = time.monotonic()
+    with _background_build_lock:
+        existing = _background_builds.get(key)
+        if existing is not None:
+            if existing.is_alive():
+                return {"status": "building", "error": None}
+            _background_builds.pop(key, None)
+
+        failure = _background_build_failures.get(key)
+        if failure is not None:
+            failed_at, error = failure
+            if now - failed_at < BACKGROUND_BUILD_RETRY_DELAY_SECONDS:
+                return {"status": "failed", "error": error}
+            _background_build_failures.pop(key, None)
+
+        def _worker() -> None:
+            try:
+                build(file_hash, source_path)
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+                with _background_build_lock:
+                    _background_build_failures[key] = (time.monotonic(), error)
+                logger.exception("background cache build failed for %s", file_hash[:8])
+            else:
+                with _background_build_lock:
+                    _background_build_failures.pop(key, None)
+            finally:
+                with _background_build_lock:
+                    _background_builds.pop(key, None)
+
+        thread = threading.Thread(
+            target=_worker,
+            daemon=True,
+            name=f"cache-build-{file_hash[:8]}",
+        )
+        _background_builds[key] = thread
+        thread.start()
+    return {"status": "started", "error": None}
 
 
 @contextmanager

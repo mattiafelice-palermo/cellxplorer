@@ -433,7 +433,17 @@ class ImportFlowTests(unittest.TestCase):
             files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
             files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
                 "can_submit": True,
+                "inspection_complete": True,
                 "findings": [],
+                "sources": [
+                    {
+                        "key": source.staged_name,
+                        "kind": "staged",
+                        "hash": "import-test-hash",
+                        "inspection_status": "ready",
+                    }
+                    for source in files.normalize_import_cell_sources(draft)
+                ],
             }
             parsing.compute_hash = lambda _path: "import-test-hash"
             parsing.read_header_metadata = lambda _path: {"builder": "test"}

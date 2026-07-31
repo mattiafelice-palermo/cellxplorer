@@ -43,8 +43,13 @@ def observed_local_cycles(cycle_series: pd.Series) -> tuple[list[int], list[str]
         errors.append(f"non-numeric cycle values: {sample}")
         return [], errors
 
+    numeric_values = numeric.to_numpy(dtype="float64")
+    if not np.isfinite(numeric_values).all():
+        errors.append("non-finite cycle values")
+        return [], errors
+
     rounded = numeric.round()
-    if not np.allclose(numeric.to_numpy(dtype="float64"), rounded.to_numpy(dtype="float64")):
+    if not np.allclose(numeric_values, rounded.to_numpy(dtype="float64")):
         errors.append("non-integer cycle values")
         return [], errors
 

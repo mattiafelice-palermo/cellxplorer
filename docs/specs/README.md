@@ -283,6 +283,9 @@ Rules:
 - [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
 - [017-019-updater-cumulative-review.md](reviews/017-019-updater-cumulative-review.md)
 - [020-windows-update-notification-and-manual-modal-review.md](reviews/020-windows-update-notification-and-manual-modal-review.md)
+- [034.1-scientific-stitching-and-boundaries-review.md](reviews/034.1-scientific-stitching-and-boundaries-review.md)
+- [034.2-continuation-inspection-and-acknowledgements-review.md](reviews/034.2-continuation-inspection-and-acknowledgements-review.md)
+- [034.3-atomic-multi-source-lifecycle-review.md](reviews/034.3-atomic-multi-source-lifecycle-review.md)
 
 ## Index
 

@@ -214,8 +214,18 @@ Read-only continuation compatibility inspection lives in
 `backend/app/services/continuations.py` (Spec 034.2). `POST /api/imports/continuations/inspect`
 reuses header/hash work from import preview, enriches timing and local cycle ranges from existing
 caches when available, and returns `pending` plus a background cache build when parse caches are
-not ready yet. Findings and suggested order are deterministic; blocking covers identity violations
-while protocol, channel, and local cycle differences remain visible but non-blocking.
+not ready yet. A source is not complete until both raw timing and current cycle evidence are
+available; partial, building, or failed enrichment cannot be submitted. Cache preparation is
+deduplicated per source hash/parser/calc version, with a retry cooldown after failures. Findings
+and suggested order are deterministic; blocking covers identity violations while protocol,
+channel, and local cycle differences remain visible but non-blocking.
+
+Spec 034.3 lifecycle mutations inspect the complete proposed Cell chain, not only the selected
+Test. `backend/app/services/analysis_usage.py::proposed_cell_source_chain` orders Tests by ID,
+files by position, and inserts staged sources at the target Test. The same complete-chain result
+drives the tracked-tail impact token; staged registration also rechecks the inspected hash
+immediately before database writes. Legacy registration cannot append to an existing continuation
+boundary, and staged request keys must be non-empty and unique before inspection or cache work.
 
 Backend services own parsing and deterministic scientific calculations. React components own
 editing state and visualization state. Server-state copies in React Query are disposable views of

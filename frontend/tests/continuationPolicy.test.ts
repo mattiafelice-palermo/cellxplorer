@@ -17,6 +17,7 @@ function makeResult(
     sources: [],
     suggested_order: [],
     findings: [],
+    inspection_complete: true,
     can_submit: true,
     ...overrides,
   };
@@ -25,6 +26,7 @@ function makeResult(
 test("isSubmitBlocked follows can_submit from the server", () => {
   assert.equal(isSubmitBlocked(makeResult({ can_submit: true })), false);
   assert.equal(isSubmitBlocked(makeResult({ can_submit: false })), true);
+  assert.equal(isSubmitBlocked(makeResult({ inspection_complete: false })), true);
 });
 
 test("acknowledgementFindingIds collects confirmation severities only", () => {

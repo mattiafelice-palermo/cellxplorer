@@ -6,16 +6,12 @@ Pure comparison logic lives here; routers collect source metadata and call
 from __future__ import annotations
 
 import hashlib
-import logging
-import threading
 from datetime import datetime, timezone
 from typing import Any, Literal
 
 from ..config import CALC_VERSION
 from . import cache, parsing, protocol
 from .stitch import observed_local_cycles
-
-logger = logging.getLogger(__name__)
 
 InspectionStatus = Literal["ready", "pending", "error"]
 FindingSeverity = Literal["info", "warning", "confirmation", "blocking"]
@@ -32,6 +28,7 @@ FindingCode = Literal[
     "unsupported_extension",
     "invalid_proposed_order",
     "inspection_failed",
+    "cache_build_failed",
     "timestamp_overlap",
     "order_reversed",
     "nominal_capacity_mismatch",
@@ -231,6 +228,30 @@ def validate_proposed_order(
     return []
 
 
+def validate_staged_keys(staged_keys: list[str]) -> None:
+    """Reject ambiguous request-local identities before source inspection begins."""
+    empty = [key for key in staged_keys if not str(key or "").strip()]
+    duplicates = sorted(
+        {key for key in staged_keys if key and staged_keys.count(key) > 1}
+    )
+    if not empty and not duplicates:
+        return
+    conflicting = empty or duplicates
+    raise ContinuationValidationError(
+        409,
+        {
+            "code": "duplicate_staged_source_key" if duplicates else "invalid_staged_source_key",
+            "message": (
+                "Every staged source needs a non-empty unique request key."
+                if not duplicates
+                else "Each staged source request key must be unique."
+            ),
+            "conflicting_keys": conflicting,
+            "findings": [],
+        },
+    )
+
+
 def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     key = source["key"]
@@ -280,6 +301,19 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             title="Inspection failed",
             message=source.get("inspection_error")
             or "The source identity could not be established.",
+        )
+    if source.get("cache_build_error"):
+        _append_finding(
+            findings,
+            code="cache_build_failed",
+            severity="blocking",
+            source_keys=[key],
+            title="Source cache preparation failed",
+            message=(
+                "The source could not be prepared for complete continuation inspection. "
+                "Inspect again after the problem is resolved."
+            ),
+            details={"error": source["cache_build_error"]},
         )
     linked_test_id = source.get("linked_test_id")
     existing_test_id = source.get("existing_test_id")
@@ -375,7 +409,6 @@ def _pair_findings(
                     "Re-inspect after parsing finishes for final gap/overlap findings."
                 ),
             )
-        return findings
 
     reference = baseline
     ref_capacity = reference.get("nominal_capacity_mah")
@@ -582,7 +615,12 @@ def _continuation_chain_response(
         seen_ids.add(finding["id"])
         deduped.append(finding)
 
-    can_submit = not any(item["severity"] == "blocking" for item in deduped)
+    inspection_complete = all(
+        source.get("inspection_status") == "ready" for source in ordered_sources
+    )
+    can_submit = inspection_complete and not any(
+        item["severity"] == "blocking" for item in deduped
+    )
     response_sources = []
     for source in ordered_sources:
         response_sources.append(
@@ -603,6 +641,8 @@ def _continuation_chain_response(
                 "nominal_capacity_mah": source.get("nominal_capacity_mah"),
                 "active_mass_mg": source.get("active_mass_mg"),
                 "inspection_status": source.get("inspection_status", "pending"),
+                "inspection_error": source.get("inspection_error"),
+                "cache_build_status": source.get("cache_build_status"),
             }
         )
 
@@ -610,6 +650,7 @@ def _continuation_chain_response(
         "sources": response_sources,
         "suggested_order": suggested_order,
         "findings": deduped,
+        "inspection_complete": inspection_complete,
         "can_submit": can_submit,
     }
 
@@ -669,24 +710,10 @@ def analyze_continuation_chain(
     )
 
 
-def _maybe_schedule_cache_build(file_hash: str, source_path) -> None:
-    if cache.has_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION):
-        return
-
-    def _worker() -> None:
-        from .process_priority import apply_background_thread_priority
-
-        apply_background_thread_priority()
-        try:
-            cache.build(file_hash, source_path)
-        except Exception:
-            logger.exception("background continuation cache build failed for %s", file_hash[:8])
-
-    threading.Thread(
-        target=_worker,
-        daemon=True,
-        name=f"continuation-cache-{file_hash[:8]}",
-    ).start()
+def _maybe_schedule_cache_build(file_hash: str, source_path) -> dict[str, str | None]:
+    if source_path is None:
+        return {"status": "failed", "error": "Source path is unavailable for cache preparation."}
+    return cache.schedule_build(file_hash, source_path)
 
 
 def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[str, Any]:
@@ -699,14 +726,20 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
 
     cycles_ready = cache.has_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
     raw_ready = cache.raw_path(file_hash, parsing.PARSER_VERSION).is_file()
-    if not cycles_ready and not raw_ready:
-        source["inspection_status"] = "pending"
-        if source_path is not None:
-            _maybe_schedule_cache_build(file_hash, source_path)
-        return source
+    cycles_frame = None
+    raw_frame = None
+
+    if raw_ready:
+        raw_frame = cache.load_raw(file_hash, parsing.PARSER_VERSION)
+        raw_ready = raw_frame is not None
+
+    # A raw-only cache can derive the current cycle cache without rereading the
+    # source. The result is still incomplete if that derivation is unavailable.
+    if cycles_ready or raw_ready:
+        cycles_frame = cache.load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
+        cycles_ready = cycles_frame is not None
 
     if cycles_ready:
-        cycles_frame = cache.load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
         start, end, count, errors = cycle_range_from_frame(cycles_frame)
         if errors:
             source["inspection_status"] = "error"
@@ -717,13 +750,31 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
         source["local_cycle_count"] = count
 
     if raw_ready:
-        raw_frame = cache.load_raw(file_hash, parsing.PARSER_VERSION)
         first_ts, last_ts = timestamp_range_from_raw(raw_frame)
         source["first_record_timestamp"] = first_ts
         if last_ts is not None:
             source["end_time"] = _iso_timestamp(last_ts)
             source["end_timestamp"] = last_ts
 
+    missing_cache = []
+    if not cycles_ready:
+        missing_cache.append("cycle")
+    if not raw_ready:
+        missing_cache.append("raw")
+    if missing_cache:
+        build_result = _maybe_schedule_cache_build(file_hash, source_path)
+        source["cache_build_status"] = build_result["status"]
+        if build_result["status"] == "failed":
+            source["inspection_status"] = "error"
+            source["cache_build_error"] = build_result.get("error") or (
+                "Cache preparation failed."
+            )
+            source["inspection_error"] = source["cache_build_error"]
+        else:
+            source["inspection_status"] = "pending"
+        return source
+
+    source["cache_build_status"] = "ready"
     source["inspection_status"] = "ready"
     return source
 
@@ -775,6 +826,29 @@ def ensure_submittable_chain(
     analysis: dict[str, Any],
     acknowledged_finding_ids: list[str] | None,
 ) -> None:
+    sources = analysis.get("sources") or []
+    incomplete_sources = [
+        source
+        for source in sources
+        if source.get("inspection_status", "pending") != "ready"
+    ]
+    if analysis.get("inspection_complete") is False or incomplete_sources:
+        raise ContinuationValidationError(
+            409,
+            {
+                "code": "inspection_incomplete",
+                "message": "Complete source inspection is required before submission.",
+                "sources": [
+                    {
+                        "key": source.get("key"),
+                        "inspection_status": source.get("inspection_status"),
+                        "inspection_error": source.get("inspection_error"),
+                    }
+                    for source in incomplete_sources
+                ],
+                "findings": analysis.get("findings") or [],
+            },
+        )
     if not analysis.get("can_submit"):
         blocking = [
             finding for finding in analysis.get("findings") or [] if finding.get("severity") == "blocking"

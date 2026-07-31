@@ -411,6 +411,52 @@ def tracked_source_file_id(cell: Cell) -> int | None:
     return None
 
 
+def proposed_cell_source_chain(
+    cell: Cell,
+    target_test: Test,
+    *,
+    proposed_file_ids: list[int],
+    staged_names: list[str] | None = None,
+    staged_filenames: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the complete ordered Cell source state for one proposed mutation."""
+    staged_names = list(staged_names or [])
+    staged_filenames = list(staged_filenames or [])
+    chain: list[dict[str, Any]] = []
+    for test in sorted(cell.tests, key=lambda item: item.id):
+        file_ids = (
+            list(proposed_file_ids)
+            if test.id == target_test.id
+            else ordered_test_file_ids(test)
+        )
+        for position, file_id in enumerate(file_ids):
+            chain.append(
+                {
+                    "test_id": test.id,
+                    "file_id": int(file_id),
+                    "position": position,
+                    "staged_name": None,
+                    "filename": None,
+                }
+            )
+        if test.id == target_test.id:
+            for offset, staged_name in enumerate(staged_names, start=len(file_ids)):
+                chain.append(
+                    {
+                        "test_id": test.id,
+                        "file_id": None,
+                        "position": offset,
+                        "staged_name": staged_name,
+                        "filename": (
+                            staged_filenames[offset - len(file_ids)]
+                            if offset - len(file_ids) < len(staged_filenames)
+                            else staged_name
+                        ),
+                    }
+                )
+    return chain
+
+
 def _analysis_plot_summaries(db: Session, analysis_ids: list[int]) -> list[dict[str, Any]]:
     if not analysis_ids:
         return []
@@ -451,6 +497,7 @@ def source_change_impact_token(
     proposed_file_ids: list[int],
     detach_file_id: int | None = None,
     staged_names: list[str] | None = None,
+    proposed_chain: list[dict[str, Any]] | None = None,
 ) -> str:
     payload = json.dumps(
         {
@@ -459,6 +506,7 @@ def source_change_impact_token(
             "proposed_file_ids": proposed_file_ids,
             "detach_file_id": detach_file_id,
             "staged_names": staged_names or [],
+            "proposed_chain": proposed_chain or [],
         },
         sort_keys=True,
     )
@@ -477,30 +525,40 @@ def preview_source_change_impact(
 ) -> dict[str, Any]:
     cell = test.cell
     current_file_ids = ordered_test_file_ids(test)
-    old_tracked = tracked_source_file_id(cell)
+    current_chain = proposed_cell_source_chain(
+        cell,
+        test,
+        proposed_file_ids=current_file_ids,
+    )
+    proposed_chain = proposed_cell_source_chain(
+        cell,
+        test,
+        proposed_file_ids=proposed_file_ids,
+        staged_names=staged_names,
+        staged_filenames=staged_filenames,
+    )
+    old_tail = current_chain[-1] if current_chain else None
+    new_tail = proposed_chain[-1] if proposed_chain else None
+    old_tracked = old_tail.get("file_id") if old_tail else None
+    new_tracked = new_tail.get("file_id") if new_tail else None
+    new_tracked_staged_name = new_tail.get("staged_name") if new_tail else None
+    new_tracked_filename = new_tail.get("filename") if new_tail else None
     if operation == "attach":
         global_cycles_change = bool(staged_filenames)
         destructive = False
         reversible = True
-        new_tracked = None
-        new_tracked_staged_name = (staged_names or [])[-1] if staged_names else None
-        new_tracked_filename = (staged_filenames or [])[-1] if staged_filenames else None
-        tracked_tail_changes = bool(staged_filenames or staged_names)
+        tracked_tail_changes = (
+            old_tracked != new_tracked or bool(new_tracked_staged_name)
+        )
     elif operation == "reorder":
         global_cycles_change = proposed_file_ids != current_file_ids
         destructive = False
         reversible = True
-        new_tracked = proposed_file_ids[-1] if proposed_file_ids else old_tracked
-        new_tracked_staged_name = None
-        new_tracked_filename = None
         tracked_tail_changes = old_tracked != new_tracked
     else:
         global_cycles_change = True
         destructive = True
         reversible = False
-        new_tracked = proposed_file_ids[-1] if proposed_file_ids else None
-        new_tracked_staged_name = None
-        new_tracked_filename = None
         tracked_tail_changes = old_tracked != new_tracked
 
     analysis_ids = cache_maintenance.dependent_analysis_ids(db, [cell.id])
@@ -532,5 +590,6 @@ def preview_source_change_impact(
             proposed_file_ids=proposed_file_ids,
             detach_file_id=detach_file_id,
             staged_names=staged_names,
+            proposed_chain=proposed_chain,
         ),
     }

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -12,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services import continuations
+from app.services import cache, continuations
 
 
 def _source(
@@ -57,6 +60,18 @@ def _source(
 
 
 class ContinuationPolicyTests(unittest.TestCase):
+    def test_staged_source_keys_must_be_nonempty_and_unique(self):
+        with self.assertRaises(continuations.ContinuationValidationError) as empty_ctx:
+            continuations.validate_staged_keys([""])
+        self.assertEqual(empty_ctx.exception.status_code, 409)
+        self.assertEqual(empty_ctx.exception.payload["code"], "invalid_staged_source_key")
+
+        with self.assertRaises(continuations.ContinuationValidationError) as ctx:
+            continuations.validate_staged_keys(["same.ndax", "same.ndax"])
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.payload["code"], "duplicate_staged_source_key")
+        self.assertEqual(ctx.exception.payload["conflicting_keys"], ["same.ndax"])
+
     def test_suggest_staged_order_uses_first_record_timestamp(self):
         sources = [
             _source(
@@ -291,6 +306,144 @@ class ContinuationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(any(item["code"] == "local_cycles_restart" for item in result["findings"]))
 
+    def test_pending_inspection_blocks_and_keeps_header_findings(self):
+        first = _source("staged-a", inspection_status="pending", protocol_signature="sig-a")
+        second = _source(
+            "staged-b",
+            hash="hash-b",
+            inspection_status="pending",
+            protocol_signature="sig-b",
+            channel="2-2",
+            first_record_timestamp=None,
+            local_cycle_start=None,
+            local_cycle_end=None,
+        )
+        result = continuations.analyze_continuation_chain(
+            [first, second],
+            staged_keys=["staged-a", "staged-b"],
+        )
+
+        self.assertFalse(result["inspection_complete"])
+        self.assertFalse(result["can_submit"])
+        codes = {item["code"] for item in result["findings"]}
+        self.assertIn("protocol_changed", codes)
+        self.assertIn("channel_changed", codes)
+        with self.assertRaises(continuations.ContinuationValidationError) as ctx:
+            continuations.ensure_submittable_chain(result, [])
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.payload["code"], "inspection_incomplete")
+
+    def test_enrichment_without_cache_remains_pending(self):
+        source = _source(
+            "staged-a",
+            hash="a" * 64,
+            inspection_status="pending",
+            local_cycle_start=None,
+            local_cycle_end=None,
+            local_cycle_count=None,
+        )
+        with (
+            patch.object(continuations.cache, "has_cycles", return_value=False),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: False),
+            ),
+            patch.object(
+                continuations,
+                "_maybe_schedule_cache_build",
+                return_value={"status": "started", "error": None},
+            ) as schedule,
+        ):
+            enriched = continuations.enrich_source_timing(source, source_path=Path("a.ndax"))
+
+        self.assertEqual(enriched["inspection_status"], "pending")
+        self.assertEqual(enriched["cache_build_status"], "started")
+        schedule.assert_called_once()
+
+    def test_raw_only_cache_remains_pending_until_cycles_are_available(self):
+        source = _source(
+            "staged-a",
+            hash="a" * 64,
+            inspection_status="pending",
+            local_cycle_start=None,
+            local_cycle_end=None,
+            local_cycle_count=None,
+        )
+        raw = pd.DataFrame(
+            {"timestamp": pd.to_datetime(["2026-01-01 00:00:00"], utc=True)}
+        )
+        with (
+            patch.object(continuations.cache, "has_cycles", return_value=False),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: True),
+            ),
+            patch.object(continuations.cache, "load_raw", return_value=raw),
+            patch.object(continuations.cache, "load_cycles", return_value=None),
+            patch.object(
+                continuations,
+                "_maybe_schedule_cache_build",
+                return_value={"status": "building", "error": None},
+            ),
+        ):
+            enriched = continuations.enrich_source_timing(source, source_path=Path("a.ndax"))
+
+        self.assertEqual(enriched["inspection_status"], "pending")
+        self.assertEqual(enriched["cache_build_status"], "building")
+        self.assertIsNotNone(enriched["first_record_timestamp"])
+        self.assertIsNone(enriched["local_cycle_count"])
+
+    def test_cycle_only_cache_remains_pending_until_raw_is_available(self):
+        source = _source("staged-a", hash="a" * 64, inspection_status="pending")
+        cycles = pd.DataFrame({"cycle": [1, 2, 4]})
+        with (
+            patch.object(continuations.cache, "has_cycles", return_value=True),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: False),
+            ),
+            patch.object(continuations.cache, "load_cycles", return_value=cycles),
+            patch.object(
+                continuations,
+                "_maybe_schedule_cache_build",
+                return_value={"status": "building", "error": None},
+            ),
+        ):
+            enriched = continuations.enrich_source_timing(source, source_path=Path("a.ndax"))
+
+        self.assertEqual(enriched["inspection_status"], "pending")
+        self.assertEqual(enriched["cache_build_status"], "building")
+        self.assertEqual(enriched["local_cycle_start"], 1)
+        self.assertEqual(enriched["local_cycle_count"], 3)
+
+    def test_failed_cache_build_is_blocking_and_does_not_look_ready(self):
+        source = _source("staged-a", hash="a" * 64, inspection_status="pending")
+        with (
+            patch.object(continuations.cache, "has_cycles", return_value=False),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: False),
+            ),
+            patch.object(
+                continuations,
+                "_maybe_schedule_cache_build",
+                return_value={"status": "failed", "error": "parse failed"},
+            ),
+        ):
+            enriched = continuations.enrich_source_timing(source, source_path=Path("a.ndax"))
+        result = continuations.analyze_continuation_chain(
+            [enriched], staged_keys=["staged-a"]
+        )
+
+        self.assertEqual(enriched["inspection_status"], "error")
+        self.assertFalse(result["inspection_complete"])
+        self.assertFalse(result["can_submit"])
+        self.assertIn("cache_build_failed", {item["code"] for item in result["findings"]})
+
 
 class ContinuationLifecycleValidationTests(unittest.TestCase):
     def test_unacknowledged_confirmation_blocks_submit(self):
@@ -344,6 +497,66 @@ class ContinuationLifecycleValidationTests(unittest.TestCase):
         )
         result = continuations.analyze_existing_order_chain([later, earlier])
         self.assertTrue(any(item["code"] == "order_reversed" for item in result["findings"]))
+
+
+class CacheBuildCoordinationTests(unittest.TestCase):
+    def test_schedule_build_deduplicates_inflight_and_retries_after_failure_cooldown(self):
+        file_hash = "a" * 64
+        source_path = Path("source.ndax")
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def blocked_build(*_args, **_kwargs):
+            calls.append("build")
+            started.set()
+            release.wait(timeout=2)
+
+        with (
+            patch.object(cache, "raw_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "cycles_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "build", side_effect=blocked_build),
+        ):
+            self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
+            self.assertTrue(started.wait(timeout=2))
+            self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "building")
+            with cache._background_build_lock:
+                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+            release.set()
+            thread.join(timeout=2)
+
+        self.assertEqual(calls, ["build"])
+
+        failing_calls = []
+
+        def failing_build(*_args, **_kwargs):
+            failing_calls.append("build")
+            raise RuntimeError("broken source")
+
+        with (
+            patch.object(cache, "raw_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "cycles_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "build", side_effect=failing_build),
+            patch.object(cache.time, "monotonic", return_value=0.0),
+        ):
+            self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
+            with cache._background_build_lock:
+                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+            thread.join(timeout=2)
+            self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "failed")
+
+        with (
+            patch.object(cache, "raw_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "cycles_path", return_value=SimpleNamespace(is_file=lambda: False)),
+            patch.object(cache, "build", side_effect=failing_build),
+            patch.object(cache.time, "monotonic", return_value=cache.BACKGROUND_BUILD_RETRY_DELAY_SECONDS + 1),
+        ):
+            self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
+            with cache._background_build_lock:
+                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+            thread.join(timeout=2)
+
+        self.assertEqual(failing_calls, ["build", "build"])
 
 
 if __name__ == "__main__":

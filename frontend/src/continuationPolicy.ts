@@ -5,7 +5,7 @@ import type {
 } from "./api";
 
 export function isSubmitBlocked(result: ContinuationInspectResult): boolean {
-  return !result.can_submit;
+  return !result.inspection_complete || !result.can_submit;
 }
 
 export function acknowledgementFindingIds(result: ContinuationInspectResult): string[] {

@@ -227,6 +227,51 @@ class StitchServiceTests(unittest.TestCase):
         self.assertTrue(result.empty)
         self.assertEqual(segments, [])
 
+    def test_non_finite_cycles_fail_closed_for_cycle_and_raw_stitching(self):
+        for invalid_value in (float("inf"), float("-inf")):
+            with self.subTest(invalid_value=invalid_value):
+                labels, errors = stitch.observed_local_cycles(
+                    pd.Series([1, invalid_value])
+                )
+                self.assertEqual(labels, [])
+                self.assertEqual(errors, ["non-finite cycle values"])
+
+                hash_a = _hash("a")
+                hash_b = _hash("b")
+                invalid_cycle_frame = _cycle_frame([1, invalid_value])
+                cycle_result, cycle_segments, cycle_missing = self._stitch_cycles(
+                    [hash_a, hash_b],
+                    {
+                        hash_a: invalid_cycle_frame,
+                        hash_b: _cycle_frame([1, 2]),
+                    },
+                )
+                self.assertTrue(cycle_result.empty)
+                self.assertEqual(cycle_missing, [hash_a])
+                self.assertEqual(cycle_result.attrs["missing_positions"], [0])
+                self.assertEqual(cycle_result.attrs["skipped_segments"], [1])
+                self.assertEqual(cycle_segments, [])
+
+                invalid_raw_frame = pd.DataFrame(
+                    {
+                        "record_index": [1, 2],
+                        "cycle": [1, invalid_value],
+                        "status": ["CC_DChg", "CC_DChg"],
+                    }
+                )
+                raw_result, raw_segments, raw_missing = self._stitch_raw(
+                    [hash_a, hash_b],
+                    {
+                        hash_a: invalid_raw_frame,
+                        hash_b: _raw_frame([1, 2]),
+                    },
+                )
+                self.assertTrue(raw_result.empty)
+                self.assertEqual(raw_missing, [hash_a])
+                self.assertEqual(raw_result.attrs["missing_positions"], [0])
+                self.assertEqual(raw_result.attrs["skipped_segments"], [1])
+                self.assertEqual(raw_segments, [])
+
     def test_single_source_contiguous_cycles_unchanged(self):
         hash_a = _hash("s")
         labels = list(range(1, 51))

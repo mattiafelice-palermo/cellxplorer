@@ -1261,6 +1261,27 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         db.commit()
         return cell, test, [link.file for link in links]
 
+    def _ready_analysis(self, analysis):
+        sources = [
+            {**source, "inspection_status": "ready"}
+            for source in analysis.get("sources") or []
+        ]
+        findings = [
+            finding
+            for finding in analysis.get("findings") or []
+            if finding.get("code") != "cache_build_failed"
+        ]
+        return {
+            **analysis,
+            "sources": sources,
+            "findings": findings,
+            "inspection_complete": True,
+            "can_submit": not any(
+                finding.get("severity") == "blocking"
+                for finding in findings
+            ),
+        }
+
     def test_reorder_requires_exact_permutation(self):
         db = self.make_session()
         _cell, test, sources = self._seed_test_with_sources(db)
@@ -1286,7 +1307,12 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         finding_id = next(
             item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
         )
-        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+        ready_analysis = self._ready_analysis(analysis)
+        with patch.object(files, "_inspect_test_chain", return_value=ready_analysis), patch.object(
+            files.cache_maintenance,
+            "invalidate_cell_dependents",
+            return_value={"analysis_ids": [], "queued_plots": 0},
+        ):
             result = files.reorder_files(
                 test.id,
                 files.ReorderRequest(
@@ -1308,11 +1334,22 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         sources[1].start_time = "2026-01-03 00:00:00"
         db.commit()
         with self.assertRaises(HTTPException) as ctx:
-            files.reorder_files(
-                test.id,
-                files.ReorderRequest(file_ids=[sources[1].id, sources[0].id]),
-                db=db,
-            )
+            with patch.object(
+                files,
+                "_inspect_test_chain",
+                return_value=self._ready_analysis(
+                    files._inspect_existing_order(
+                        db,
+                        test,
+                        [sources[1].id, sources[0].id],
+                    )
+                ),
+            ):
+                files.reorder_files(
+                    test.id,
+                    files.ReorderRequest(file_ids=[sources[1].id, sources[0].id]),
+                    db=db,
+                )
         self.assertEqual(ctx.exception.status_code, 422)
         self.assertTrue(
             any(item["code"] == "order_reversed" for item in ctx.exception.detail["findings"])
@@ -1325,7 +1362,12 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         finding_id = next(
             item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
         )
-        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+        ready_analysis = self._ready_analysis(analysis)
+        with patch.object(files, "_inspect_test_chain", return_value=ready_analysis), patch.object(
+            files.cache_maintenance,
+            "invalidate_cell_dependents",
+            return_value={"analysis_ids": [], "queued_plots": 0},
+        ):
             result = files.reorder_files(
                 test.id,
                 files.ReorderRequest(
@@ -1354,6 +1396,141 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         self.assertEqual(impact["new_tracked_filename"], "continue.ndax")
         self.assertIsNone(impact["new_tracked_source_id"])
 
+    def test_impact_preview_uses_later_test_as_cell_tracked_tail(self):
+        db = self.make_session()
+        cell, first_test, _sources = self._seed_test_with_sources(db)
+        later_source = SourceFile(
+            hash="later-hash" + "a" * 55,
+            path="C:/data/later.ndax",
+            filename="later.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        later_test = Test(cell_id=cell.id, name="Later test")
+        later_test.file_links = [TestFile(position=0, file=later_source)]
+        db.add(later_test)
+        db.commit()
+        db.expire(cell, ["tests"])
+
+        impact = files.preview_test_source_change(
+            first_test.id,
+            files.SourceChangeImpactRequest(
+                operation="attach",
+                sources=[
+                    files.ContinuationInspectSourceRequest(staged_name="earlier.ndax"),
+                ],
+            ),
+            db=db,
+        )
+        self.assertEqual(impact["new_tracked_source_id"], later_source.id)
+        self.assertFalse(impact["tracked_tail_changes"])
+
+    def test_final_test_detach_moves_tail_within_complete_cell_chain(self):
+        db = self.make_session()
+        cell, _first_test, _first_sources = self._seed_test_with_sources(db)
+        later_source_a = SourceFile(
+            hash="later-a" + "a" * 58,
+            path="C:/data/later-a.ndax",
+            filename="later-a.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        later_source_b = SourceFile(
+            hash="later-b" + "b" * 58,
+            path="C:/data/later-b.ndax",
+            filename="later-b.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        later_test = Test(cell_id=cell.id, name="Later test")
+        later_test.file_links = [
+            TestFile(position=0, file=later_source_a),
+            TestFile(position=1, file=later_source_b),
+        ]
+        db.add(later_test)
+        db.commit()
+        db.expire(cell, ["tests"])
+
+        impact = files.preview_test_source_change(
+            later_test.id,
+            files.SourceChangeImpactRequest(
+                operation="detach",
+                detach_file_id=later_source_b.id,
+            ),
+            db=db,
+        )
+        self.assertEqual(impact["new_tracked_source_id"], later_source_a.id)
+        self.assertTrue(impact["tracked_tail_changes"])
+
+    def test_register_rejects_appending_to_existing_test_lifecycle(self):
+        db = self.make_session()
+        cell, test, _sources = self._seed_test_with_sources(db)
+        unregistered = SourceFile(
+            hash="unregistered-hash" + "a" * 47,
+            path="C:/data/unregistered.ndax",
+            filename="unregistered.ndax",
+            size=10,
+            ext="ndax",
+            location_status="online",
+            parse_status="parsed",
+        )
+        db.add(unregistered)
+        db.commit()
+
+        with self.assertRaises(HTTPException) as ctx:
+            files.register_files(
+                files.RegisterRequest(file_ids=[unregistered.id], test_id=test.id),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "continuation_lifecycle_required")
+
+    def test_duplicate_staged_keys_are_rejected_before_source_inspection(self):
+        db = self.make_session()
+        with patch.object(files, "_continuation_staged_source") as staged_source:
+            with self.assertRaises(HTTPException) as ctx:
+                files.inspect_continuation_sources(
+                    files.ContinuationInspectRequest(
+                        sources=[
+                            files.ContinuationInspectSourceRequest(staged_name="same.ndax"),
+                            files.ContinuationInspectSourceRequest(staged_name="same.ndax"),
+                        ]
+                    ),
+                    db=db,
+                )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "duplicate_staged_source_key")
+        staged_source.assert_not_called()
+
+    def test_final_source_identity_read_rejects_changed_source_before_write(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "changing.ndax"
+            path.write_bytes(b"source")
+            first_hash = "1" * 64
+            second_hash = "2" * 64
+            with patch.object(parsing, "compute_hash", side_effect=[first_hash, second_hash]), patch.object(
+                parsing,
+                "read_header_metadata",
+                return_value={},
+            ):
+                with self.assertRaises(HTTPException) as ctx:
+                    files._register_or_refresh_source_file(
+                        db,
+                        source_path=path,
+                        filename=path.name,
+                        expected_hash=first_hash,
+                    )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "source_identity_changed")
+        self.assertEqual(db.query(SourceFile).count(), 0)
+
     def test_detach_last_source_is_rejected(self):
         db = self.make_session()
         _cell, test, sources = self._seed_test_with_sources(db, count=1)
@@ -1368,8 +1545,12 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
     def test_detach_requires_confirmation_token(self):
         db = self.make_session()
         cell, test, sources = self._seed_test_with_sources(db)
+        ready_analysis = self._ready_analysis(
+            files._inspect_existing_order(db, test, [sources[1].id])
+        )
         with self.assertRaises(HTTPException) as ctx:
-            files.detach_file(test.id, sources[0].id, db=db)
+            with patch.object(files, "_inspect_test_chain", return_value=ready_analysis):
+                files.detach_file(test.id, sources[0].id, db=db)
         self.assertEqual(ctx.exception.status_code, 422)
 
     def test_detach_keeps_source_file_row(self):
@@ -1380,7 +1561,13 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
             files.SourceChangeImpactRequest(operation="detach", detach_file_id=sources[0].id),
             db=db,
         )
-        with patch.object(files.cache_maintenance, "invalidate_cell_dependents", return_value={"analysis_ids": [], "queued_plots": 0}):
+        analysis = files._inspect_existing_order(db, test, [sources[1].id])
+        ready_analysis = self._ready_analysis(analysis)
+        with patch.object(files, "_inspect_test_chain", return_value=ready_analysis), patch.object(
+            files.cache_maintenance,
+            "invalidate_cell_dependents",
+            return_value={"analysis_ids": [], "queued_plots": 0},
+        ):
             files.detach_file(
                 test.id,
                 sources[0].id,
@@ -1409,7 +1596,17 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
             original_inspect = files._inspect_cell_draft_chain
             files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
                 "can_submit": True,
+                "inspection_complete": True,
                 "findings": [],
+                "sources": [
+                    {
+                        "key": source.staged_name,
+                        "kind": "staged",
+                        "hash": hash_by_name[source.staged_name],
+                        "inspection_status": "ready",
+                    }
+                    for source in files.normalize_import_cell_sources(draft)
+                ],
             }
             hash_by_name = {
                 "a.ndax": "hash-a" + "0" * 58,
