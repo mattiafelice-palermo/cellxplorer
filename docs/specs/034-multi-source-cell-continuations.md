@@ -1,8 +1,8 @@
 # 034 — Multi-source cell continuations
 
-**Status:** Plan — parent specification
-**Implementation:** Implement only through the child specifications listed below.
-**Scope:** Treat an interrupted/restarted Neware test as one virtual Cell while preserving every
+**Status:** Plan — parent specification  
+**Implementation:** Implement only through the child specifications listed below.  
+**Scope:** Treat an interrupted/restarted Neware run as one virtual Cell while preserving every
 original source, its order, and its provenance.
 
 All UI work inherits
@@ -22,74 +22,98 @@ must change, amend this parent explicitly before continuing.
 
 ## User problem
 
-Cycling can stop before the intended protocol finishes. A scientist then starts a second Neware
-file, often after removing formation or other already-completed steps from the protocol. The
-second file is a continuation of the same physical cell, but its local cycle numbers and numeric
-step IDs usually restart. Today CellXplorer imports each source as a different Cell or can attach
-files only through incomplete low-level APIs. That prevents a scientifically honest continuous
-cycle/time view and makes source update behavior ambiguous.
+Cycling can stop before the intended protocol finishes. A scientist then starts another Neware
+file, often after removing formation or other already-completed steps from the protocol. This may
+happen several times because of power loss, cycler interruption, channel moves, network problems,
+or a deliberate restart with a shortened or modified protocol.
 
-The desired object is one Cell containing one ordered continuation chain:
+These files are not separate scientific tests in CellXplorer. They are successive source segments
+of the same physical Cell history. The app must simply preserve and virtually chain them in the
+scientist-approved order.
+
+The required product object is:
 
 ```text
 Cell
-└── Test
-    ├── position 0: original source       historical/frozen
-    ├── position 1: first continuation   historical/frozen
-    └── position 2: current continuation tracked live tail
+├── position 0: original source       historical/frozen
+├── position 1: first continuation   historical/frozen
+└── position 2: current continuation tracked live tail
 ```
 
-The sources are not physically merged. CellXplorer creates a virtual scientific view over their
+The sources are not physically merged. CellXplorer creates one virtual scientific view over their
 ordered caches.
+
+## Locked architecture correction: one Cell-level source chain
+
+The original database schema contains `Test` and `TestFile` tables. That historical schema detail
+must **not** become a user-facing product concept.
+
+The locked model for this feature is:
+
+```text
+User-facing model:       Cell -> ordered SourceFiles
+Compatibility storage:  Cell -> one internal Test row -> ordered TestFile links
+```
+
+The following decisions are mandatory:
+
+- A Cell has one scientific source chain.
+- Normal imports create exactly one internal `Test` row for the Cell.
+- Every source belonging to that Cell is linked to that same internal row.
+- `Test` exists only as a compatibility container so this feature does not require a schema
+  redesign or released-migration rewrite.
+- The UI must not expose Test names, Test cards, a Target Test selector, per-Test ordering, or
+  per-Test tails.
+- Protocol changes between adjacent files do not create a new Test. They are expected restart
+  evidence and may produce an informational or acknowledgement finding only.
+- Continuation lifecycle APIs and frontend contracts are Cell-level. Existing `/tests/{test_id}`
+  routes may remain temporarily as compatibility wrappers, but new UI must not depend on or expose
+  them, and they must not allow creating a second Test for a Cell.
+- Do not add a production schema migration merely to rename or remove the existing tables.
+- If an existing database unexpectedly contains more than one Test for a Cell, preserve every
+  source and fail lifecycle mutation with a clear legacy-data diagnostic. Do not silently delete,
+  merge, reorder, or discard legacy records in this feature. Reads may flatten them in stable
+  historical order while a separately approved normalization plan is prepared.
+
+This correction supersedes every earlier sentence in Specs 034.1–034.6, their implementation
+records, or repository documentation that describes multiple Tests per Cell as supported product
+behavior.
 
 ## Existing architecture to preserve
 
 - `backend/app/models.py`
   - `SourceFile` owns immutable content identity (`hash`) and a mutable original `path`.
-  - `Test` already describes an ordered set of files stitched into one continuous record.
-  - `TestFile.position` already stores order, and `UniqueConstraint("file_id")` permits one source
-    to belong to only one Test.
+  - `Test`/`TestFile` remain compatibility storage for one ordered Cell source chain.
+  - `TestFile.position` stores source order, and `UniqueConstraint("file_id")` prevents one source
+    from belonging to multiple chains.
 - `backend/app/services/stitch.py::stitch_cycles` and
-  `backend/app/services/analysis_engine.py::_stitch_raw` already concatenate ordered hashes, but
-  duplicate offset logic and infer length from `max(cycle) - min(cycle) + 1`.
+  `backend/app/services/analysis_engine.py::_stitch_raw` concatenate ordered hashes.
 - `backend/app/services/analysis_engine.py::cell_ordered_hashes`,
-  `current_cell_hashes`, and `sources_changed_since_compute` already make the ordered hash list
-  part of analysis provenance. Reorder, attach, and detach can therefore make analyses stale
-  without adding a new database flag.
-- `backend/app/routers/files.py`
-  - `/api/imports/cells` creates one Cell/Test/TestFile for each selected file.
-  - `/api/register`, `/api/tests/{test_id}/detach/{file_id}`, and
-    `/api/tests/{test_id}/reorder` expose incomplete lifecycle operations. Reorder accepts partial
-    lists, and these routes do not consistently validate, invalidate, or log their effects.
-- `frontend/src/pages/InboxPage.tsx::ImportModal` explicitly says one file becomes one cell and
-  currently states that concatenation is not supported.
-- `frontend/src/components/CellDetailTabs.tsx::FilesPanel` shows attached sources but cannot add,
-  reorder, or detach continuations.
-- `backend/app/routers/library.py::_cell_source_files` gives scheduled and manual source checks
-  every source of every selected active Cell.
-- `backend/app/services/portable_analysis.py::_cell_document` serializes `TestFile.position`
-  order, but `_analysis_sources` sorts sources by database ID rather than scientific order.
+  `current_cell_hashes`, and `sources_changed_since_compute` make the ordered hash list part of
+  analysis provenance.
+- `frontend/src/pages/InboxPage.tsx::ImportModal` owns import selection and metadata editing.
+- `frontend/src/components/CellDetailTabs.tsx::FilesPanel` owns Cell source-chain presentation.
+- `backend/app/routers/library.py` and `backend/app/services/source_monitor.py` own source checks.
+- `backend/app/services/portable_analysis.py` owns portable source hierarchy and provenance.
 
 ## Locked scientific and product decisions
 
 ### 1. Virtual merge only
 
 - Never rewrite, concatenate, or generate a combined `.nda`/`.ndax`.
-- Keep one `SourceFile` per original file and store only ordered `TestFile` links.
+- Keep one `SourceFile` per original file and store only ordered links.
 - The ordered source hashes remain part of analysis provenance.
-- No production schema migration is expected for the core feature. If a child discovers a genuine
-  persistence need, it must amend this parent and add a forward-only migration.
+- No production schema migration is expected for the core feature.
 
 ### 2. User order is authoritative
 
 - CellXplorer suggests chronological order from source metadata/raw timestamp ranges.
 - The scientist can reorder sources manually after reviewing warnings.
-- The final source in scientific Cell order is the tracked live tail. No independent persisted
-  `tracked` flag is added because it could drift from `TestFile.position`.
-- For the existing multi-Test model, scientific Cell order is Tests by `Test.id`, then files by
-  `TestFile.position`. The tracked source is the final file in the final non-empty Test.
-- Adding a continuation defaults to the final Test and makes the new final file the tracked tail.
-  A user may choose another Test, but the UI must explain whether that changes the Cell-wide tail.
+- The final source in the Cell chain is the only tracked live tail.
+- No independent persisted `tracked` flag is added because it could drift from order.
+- Adding a continuation appends to the Cell chain by default and makes the new final source the
+  tracked tail.
+- There is no Target Test selection and no cross-Test concept.
 
 ### 3. Append cycles; do not splice a boundary cycle
 
@@ -98,21 +122,17 @@ ordered caches.
   `max - min + 1`.
 - Example: source A local cycles `1…73` map to global `1…73`; source B local cycles `1…5` map to
   global `74…78`.
-- Do not automatically merge the last cycle of A with the first cycle of B, even if either is
-  incomplete. A restart may resume a physical action, restart the whole cycle, or use a changed
-  protocol; the files alone do not prove which interpretation is correct.
-- Preserve incomplete cycles and expose the source/local/global provenance needed for a scientist
-  to interpret them.
+- Do not automatically merge the last cycle of A with the first cycle of B.
+- Preserve incomplete cycles and expose source/local/global provenance.
 
 ### 4. Compatibility findings inform; identity violations block
 
-- Exact duplicate content in the same proposed Cell, a source already linked to another Test, a
-  missing file, an unstable file, or an unsupported extension blocks submission.
+- Exact duplicate content in the same proposed Cell, a source already linked to another Cell,
+  a missing file, an unstable file, or an unsupported extension blocks submission.
 - Reversed chronology, timestamp overlap, time gaps, changed channel/device, metadata mismatch,
-  and protocol mismatch are visible findings. Potentially dangerous findings require explicit
-  acknowledgement but do not silently reorder or discard data.
-- Different numeric step IDs and different protocol signatures are expected for many valid
-  continuations; they are not automatic rejection criteria.
+  and protocol mismatch are visible findings.
+- Different numeric step IDs and different protocol signatures are expected for valid restarts.
+  They are not automatic rejection criteria and never imply a new Test.
 - Static Cell metadata and scientific overrides come from the Cell/import form. Adding a
   continuation never silently replaces Cell metadata with the new file header.
 
@@ -120,8 +140,7 @@ ordered caches.
 
 - The default time/capacity x-axis remains cycling elapsed time: active recorded durations are
   continuous across source boundaries and shutdown downtime is excluded.
-- Wall-clock elapsed time including the interruption is useful but is outside the initial scope.
-  Preserve source timestamps/provenance so it can be added later without re-importing.
+- Wall-clock elapsed time including interruption is outside the initial scope.
 
 ### 6. Supported analysis families
 
@@ -134,45 +153,43 @@ ordered caches.
   - Chargeability
   - Rate capability
 - Numeric step IDs are source-local. Their durable identity is at least
-  `(source protocol signature, local step index)`, not the displayed integer alone.
-- Until a later spec implements an explicit cross-source semantic mapping, guarded families must
-  fail closed with a clear explanation. They must never compute only some selected Cells/files,
-  silently reuse the first protocol, or display stale cached output.
+  `(source protocol signature, local step index)`.
+- Guarded families must fail closed until explicit cross-source semantic mapping exists.
 
 ### 7. Source monitoring
 
-- Scheduled low-impact monitoring checks only the tracked tail of each active Cell.
-- Historical sources are treated as frozen during scheduled monitoring.
-- Manual “check sources”, manual update, and portable-export preflight may inspect every ordered
+- Scheduled low-impact monitoring checks only the final source of each active Cell chain.
+- Historical sources are frozen during scheduled monitoring.
+- Manual Check sources, manual update, and portable-export preflight may inspect every ordered
   source because the user explicitly requested a full integrity operation.
 - Reordering immediately changes which source is the tracked tail.
 
-### 8. Lifecycle mutations are atomic and consequential
+### 8. Lifecycle mutations are Cell-level, atomic, and consequential
 
-- Initial multi-source import, attach, reorder, and detach validate the complete proposed chain
-  before changing membership/order.
-- A reorder request must be an exact permutation of the Test’s current source IDs.
-- A Test cannot be left with zero sources through the detach operation.
+- Initial multi-source import, attach, reorder, and detach validate the complete proposed Cell
+  chain before changing membership/order.
+- Reorder requires an exact permutation of all current Cell source IDs.
+- A Cell cannot be left with zero sources.
 - Attach/reorder/detach invalidate dependent analysis results, artifacts, and thumbnails, make
   provenance visibly stale, and create a privacy-safe activity entry.
 - No frontend sequence may leave a partially attached chain if a later request fails.
+- The response returns the complete updated Cell source chain and tracked source ID.
 
 ### 9. Portable reports and exports preserve provenance
 
-- Portable export/import preserves Cell → Test → ordered source hierarchy exactly.
+- Portable export/import preserves Cell -> ordered source hierarchy exactly.
+- The internal Test row is an implementation detail and must not create multiple user-visible
+  groups in portable reports.
 - Embedded source downloads retain one folder per Cell and distinct original files.
 - CSV/Excel data for supported stitched plots identify source order, source hash/filename, local
   cycle, and global cycle wherever those concepts apply.
-- Image exports and thumbnails use the same final Plotly figure, including any source-boundary
-  presentation.
 
 ### 10. Real supplied files are evidence, not fixtures
 
 The user supplied `marge1.ndax` and `marge2.ndax` as a private example. Read-only inspection found
-the behaviors this spec must cover: local cycle numbers restart, protocol step numbers differ, the
-channels differ, and there is a multi-day gap. The files must not be committed or copied into the
-repository without separate explicit privacy approval. Tests must use synthetic data/cache frames
-that reproduce these properties.
+local cycle restarts, changed step numbers, changed channel, and a multi-day gap. These are normal
+continuation characteristics, not evidence of separate Tests. The files must not be committed or
+copied into the repository without explicit privacy approval.
 
 ## Child specifications and dependency graph
 
@@ -180,41 +197,34 @@ that reproduce these properties.
 |---|---|---|
 | [034.1](034.1-scientific-stitching-and-boundaries.md) | Canonical dense cycle/raw stitching and provenance | Parent |
 | [034.2](034.2-continuation-compatibility-and-ordering.md) | Inspection, findings, suggested order | 034.1 contracts |
-| [034.3](034.3-atomic-multi-source-lifecycle-apis.md) | Atomic import/attach/reorder/detach APIs and invalidation | 034.1, 034.2 |
+| [034.3](034.3-atomic-multi-source-lifecycle-apis.md) | Atomic Cell-level import/attach/reorder/detach APIs | 034.1, 034.2 |
 | [034.4](034.4-initial-multi-source-import.md) | Import-modal workflow for creating one multi-source Cell | 034.2, 034.3 |
-| [034.5](034.5-existing-cell-continuation-management.md) | Add/reorder/detach continuations in Cell details | 034.3, 034.4 shared UI |
+| [034.5](034.5-existing-cell-continuation-management.md) | Add/reorder/detach sources in one Cell chain | 034.3, 034.4 shared UI |
 | [034.6](034.6-tracked-tail-source-monitoring.md) | Scheduled tail-only monitoring, manual all-source integrity | 034.3 |
 | [034.7](034.7-cycles-time-capacity-and-exports.md) | Supported analysis families, boundaries, data exports | 034.1, 034.3 |
 | [034.8](034.8-protocol-derived-analysis-safety.md) | Fail-closed protection for protocol-derived families | 034.3 |
 | [034.9](034.9-portable-roundtrip-and-regression.md) | Portable round-trip, synthetic regression corpus, final matrix | 034.1–034.8 |
 
-Implement these sequentially in numeric order unless a child explicitly says that a later child
-can be skipped. The documentation commit and all children use the existing shared
-`feature/spec-034-multi-source-continuations` branch. Each child gets one focused implementation
-commit, a pushed review checkpoint, and its own review file before the next child starts. Review
-follow-ups may add focused commits for that child. Do not merge the shared branch to `main` until
-034.9 and the parent-level acceptance matrix are complete, and do not squash away the child commit
-boundaries unless the user explicitly requests it.
+Implement sequentially in numeric order. Do not continue to 034.7 until the revised 034.4–034.6
+reviews have no blocking findings.
 
 ## Parent-level acceptance
 
 - One Cell can be created from two or more ordered Neware files and can receive later
   continuations without duplicating scientific data.
-- Reordering is user-controlled and changes both global cycle mapping and the tracked tail.
-- Exact duplicates and invalid membership are rejected before mutation; chronology/protocol
-  concerns are explained and acknowledged.
-- Global cycles are dense across observed local cycles, source boundary provenance is retained,
-  incomplete cycles remain present, and downtime is excluded from default cycling elapsed time.
-- Cycles and time/capacity work through interactive plots, saved plots, thumbnails, image export,
-  and CSV/Excel export.
-- Steps, DCIR, chargeability, and rate capability never display scientifically misleading partial
-  data for a multi-source selection.
+- The application exposes one Cell-level source chain, never multiple Tests.
+- Normal Cells have exactly one internal compatibility Test row and all sources link to it.
+- No Test name, Target Test selector, per-Test card, per-Test tail, or per-Test lifecycle action is
+  visible to the user.
+- Reordering is user-controlled and changes both global cycle mapping and the one tracked tail.
+- Protocol changes remain non-blocking continuation findings and never create a separate Test.
+- Exact duplicates and invalid membership are rejected before mutation.
+- Global cycles are dense across observed local cycles and source-boundary provenance is retained.
 - Scheduled checks inspect only each Cell’s final source; explicit integrity operations inspect all.
 - Attach/reorder/detach invalidate every dependent artifact and leave an activity record.
 - Portable export/import retains exact source order and separate originals.
 - Synthetic tests cover normal, reversed, overlapping, gapped, missing-cycle, incomplete-cycle,
   duplicate, protocol-changed, and source-update cases.
-- No private supplied source is committed.
 
 ## Parent verification and closure
 
@@ -226,9 +236,6 @@ This parent is complete only when every child has:
 4. its focused commits pushed on the shared parent feature branch;
 5. no undocumented deviation from the locked decisions above.
 
-After all children satisfy these conditions, run the final parent verification and merge the
-shared branch to `main` once.
-
 Child 034.9 owns the final full command and disposable-data matrix. Browser interaction must not be
 run automatically unless the user explicitly asks; record the manual checklist as not run when
-that permission is absent.
+permission is absent.
