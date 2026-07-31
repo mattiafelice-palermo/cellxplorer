@@ -45,8 +45,8 @@ ordered caches.
 
 ## Locked architecture correction: one Cell-level source chain
 
-The original database schema contains `Test` and `TestFile` tables. That historical schema detail
-must **not** become a user-facing product concept.
+The original database schema contains `Test` and `TestFile` tables. That schema detail must **not**
+become a user-facing product concept.
 
 The locked model for this feature is:
 
@@ -58,22 +58,22 @@ Compatibility storage:  Cell -> one internal Test row -> ordered TestFile links
 The following decisions are mandatory:
 
 - A Cell has one scientific source chain.
-- Normal imports create exactly one internal `Test` row for the Cell.
+- Every Cell has exactly one internal `Test` row.
 - Every source belonging to that Cell is linked to that same internal row.
 - `Test` exists only as a compatibility container so this feature does not require a schema
   redesign or released-migration rewrite.
+- Multiple Tests per Cell were never an implemented or approved workflow. They are not a legacy
+  state to support, migrate, flatten, normalize, or preserve.
+- Code and tests must enforce the one-Test-row-per-Cell invariant. Any attempt to create a second
+  Test for the same Cell is an invariant violation and must fail closed.
 - The UI must not expose Test names, Test cards, a Target Test selector, per-Test ordering, or
   per-Test tails.
 - Protocol changes between adjacent files do not create a new Test. They are expected restart
   evidence and may produce an informational or acknowledgement finding only.
 - Continuation lifecycle APIs and frontend contracts are Cell-level. Existing `/tests/{test_id}`
-  routes may remain temporarily as compatibility wrappers, but new UI must not depend on or expose
-  them, and they must not allow creating a second Test for a Cell.
+  routes may remain temporarily as internal wrappers while callers are migrated, but they must not
+  enable or imply multiple Tests.
 - Do not add a production schema migration merely to rename or remove the existing tables.
-- If an existing database unexpectedly contains more than one Test for a Cell, preserve every
-  source and fail lifecycle mutation with a clear legacy-data diagnostic. Do not silently delete,
-  merge, reorder, or discard legacy records in this feature. Reads may flatten them in stable
-  historical order while a separately approved normalization plan is prepared.
 
 This correction supersedes every earlier sentence in Specs 034.1–034.6, their implementation
 records, or repository documentation that describes multiple Tests per Cell as supported product
@@ -213,7 +213,8 @@ reviews have no blocking findings.
 - One Cell can be created from two or more ordered Neware files and can receive later
   continuations without duplicating scientific data.
 - The application exposes one Cell-level source chain, never multiple Tests.
-- Normal Cells have exactly one internal compatibility Test row and all sources link to it.
+- Every Cell has exactly one internal compatibility Test row and all sources link to it.
+- No code path can create a second Test for a Cell.
 - No Test name, Target Test selector, per-Test card, per-Test tail, or per-Test lifecycle action is
   visible to the user.
 - Reordering is user-controlled and changes both global cycle mapping and the one tracked tail.
@@ -224,7 +225,7 @@ reviews have no blocking findings.
 - Attach/reorder/detach invalidate every dependent artifact and leave an activity record.
 - Portable export/import retains exact source order and separate originals.
 - Synthetic tests cover normal, reversed, overlapping, gapped, missing-cycle, incomplete-cycle,
-  duplicate, protocol-changed, and source-update cases.
+  duplicate, protocol-changed, source-update, and second-Test-rejection cases.
 
 ## Parent verification and closure
 
