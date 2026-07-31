@@ -626,6 +626,10 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["analyses"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+      qc.invalidateQueries({ queryKey: ["background-jobs"] });
       void invalidateAnalysisQueries(qc);
       qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["files"] });
@@ -784,6 +788,10 @@ export function LibraryPage() {
       if (selectedId !== null) qc.invalidateQueries({ queryKey: ["cell-cycles", selectedId] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["analyses"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+      qc.invalidateQueries({ queryKey: ["background-jobs"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
@@ -2511,6 +2519,15 @@ export function LibraryPage() {
               cell={detail.data}
               onUpdateFile={(file) => updateSource.mutate(file)}
               updating={updateSource.isPending}
+              onContinuationChanged={() => {
+                qc.invalidateQueries({ queryKey: ["cell", selectedId] });
+                qc.invalidateQueries({ queryKey: ["cells"] });
+                qc.invalidateQueries({ queryKey: ["tree"] });
+                qc.invalidateQueries({ queryKey: ["files"] });
+                qc.invalidateQueries({ queryKey: ["analyses"] });
+                qc.invalidateQueries({ queryKey: ["activity"] });
+                qc.invalidateQueries({ queryKey: ["background-jobs"] });
+              }}
             />
           </Stack>
         ) : null}

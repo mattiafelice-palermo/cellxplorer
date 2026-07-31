@@ -36,6 +36,7 @@ import { useMemo, useState } from "react";
 
 import { CellDetail, CellProtocol, get, ProtocolStep, SourceFile } from "../api";
 import { CellQuickPlot } from "./CellQuickPlot";
+import { ContinuationManagementPanel } from "./ContinuationManagementPanel";
 import styles from "./CellDetailTabs.module.css";
 
 function statusColor(status: string) {
@@ -402,24 +403,30 @@ function FilesPanel({
   cell,
   onUpdateFile,
   updating,
+  onContinuationChanged,
 }: {
   cell: CellDetail;
   onUpdateFile?: (file: SourceFile) => void;
   updating?: boolean;
+  onContinuationChanged?: () => void;
 }) {
+  const finalTestId = [...cell.tests].reverse().find((test) => test.files.length > 0)?.id ?? null;
   return (
     <Stack gap="xs">
+      <ContinuationManagementPanel cell={cell} onChanged={onContinuationChanged ?? (() => undefined)} />
       {cell.tests.map((test) => (
         <Paper key={test.id} withBorder p="sm">
           <Text fw={700} mb="xs">{test.name}</Text>
           <ScrollArea type="auto">
-            <Table miw={780}>
-              <Table.Thead><Table.Tr><Table.Th>File</Table.Th><Table.Th>Rows</Table.Th><Table.Th>Cycles</Table.Th><Table.Th>Source</Table.Th><Table.Th>Parse</Table.Th><Table.Th>Hash</Table.Th>{onUpdateFile && <Table.Th />}</Table.Tr></Table.Thead>
+            <Table miw={900}>
+              <Table.Thead><Table.Tr><Table.Th>File</Table.Th><Table.Th>Role</Table.Th><Table.Th>Rows</Table.Th><Table.Th>Cycles</Table.Th><Table.Th>Time</Table.Th><Table.Th>Source</Table.Th><Table.Th>Parse</Table.Th><Table.Th>Hash</Table.Th>{onUpdateFile && <Table.Th />}</Table.Tr></Table.Thead>
               <Table.Tbody>
-                {test.files.map((file) => (
+                {test.files.map((file, fileIndex) => (
                   <Table.Tr key={file.id}>
                     <Table.Td><Text size="sm" fw={600}>{file.filename}</Text><Text size="xs" c="dimmed" lineClamp={1}>{file.path}</Text></Table.Td>
+                    <Table.Td><Badge size="xs" color={test.id === finalTestId && fileIndex === test.files.length - 1 ? "teal" : "gray"} variant="light">{test.id === finalTestId && fileIndex === test.files.length - 1 ? "Tracked tail" : "Historical source"}</Badge></Table.Td>
                     <Table.Td>{file.row_count ?? "-"}</Table.Td><Table.Td>{file.cycle_count ?? "-"}</Table.Td>
+                    <Table.Td><Text size="xs" c="dimmed">{file.start_time ?? "—"}</Text></Table.Td>
                     <Table.Td><Badge color={statusColor(file.location_status)} variant="light">{file.location_status}</Badge></Table.Td>
                     <Table.Td><Badge color={statusColor(file.parse_status)} variant="light">{file.parse_status}</Badge></Table.Td>
                     <Table.Td><Code fz={10}>{file.hash.slice(0, 12)}...</Code></Table.Td>
@@ -435,7 +442,7 @@ function FilesPanel({
   );
 }
 
-export function CellDetailTabs({ cell, onUpdateFile, updating }: { cell: CellDetail; onUpdateFile?: (file: SourceFile) => void; updating?: boolean }) {
+export function CellDetailTabs({ cell, onUpdateFile, updating, onContinuationChanged }: { cell: CellDetail; onUpdateFile?: (file: SourceFile) => void; updating?: boolean; onContinuationChanged?: () => void }) {
   return (
     <Tabs defaultValue="overview" keepMounted={false}>
       <Tabs.List>
@@ -447,7 +454,7 @@ export function CellDetailTabs({ cell, onUpdateFile, updating }: { cell: CellDet
       <Tabs.Panel value="overview" pt="sm"><Paper withBorder p="sm"><CellQuickPlot cellId={cell.id} cellName={cell.name} /></Paper></Tabs.Panel>
       <Tabs.Panel value="protocol" pt="sm"><ProtocolPanel cellId={cell.id} /></Tabs.Panel>
       <Tabs.Panel value="metadata" pt="sm"><MetadataPanel cell={cell} /></Tabs.Panel>
-      <Tabs.Panel value="files" pt="sm"><FilesPanel cell={cell} onUpdateFile={onUpdateFile} updating={updating} /></Tabs.Panel>
+      <Tabs.Panel value="files" pt="sm"><FilesPanel cell={cell} onUpdateFile={onUpdateFile} updating={updating} onContinuationChanged={onContinuationChanged} /></Tabs.Panel>
     </Tabs>
   );
 }
