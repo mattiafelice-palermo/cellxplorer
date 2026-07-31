@@ -87,8 +87,18 @@ uncommitted or unpushed.
 
 ## Core data rules
 
-- `SourceFile -> Test -> Cell` is the canonical scientific hierarchy. A cell is the primary object
-  users select and analyze.
+- The user-facing scientific hierarchy is `Cell -> ordered SourceFiles`. A Cell is the primary
+  object users select and analyze, and interruptions/restarts remain successive sources in that
+  single Cell chain.
+- The existing `Test` and `TestFile` tables are compatibility storage only. Normal Cells use exactly
+  one internal Test row whose `TestFile.position` values store the source order. Do not expose Test
+  names, selectors, cards, tails, or per-Test lifecycle behavior, and do not create another Test
+  because a restart protocol differs.
+- Continuation import, attach, reorder, detach, provenance, and monitoring are Cell-level. The final
+  source in the Cell chain is the only tracked tail. Existing Test-level routes may remain only as
+  internal compatibility wrappers while callers migrate.
+- If legacy data unexpectedly contains multiple Tests for one Cell, preserve all sources and fail
+  mutations clearly rather than silently deleting or normalizing data without an approved plan.
 - Source files stay at their original paths. The database stores paths and checksums; parsed raw and
   per-cycle data live in regenerable Parquet caches.
 - Parser-derived metadata, source paths, checksums, and cycling data are read-only in the UI. Cell
@@ -123,7 +133,7 @@ production migrations. See `docs/database-migrations.md`.
 
 ## Important locations
 
-- `backend/app/models.py`: SQLAlchemy schema
+- `backend/app/models.py`: SQLAlchemy schema, including internal Test/TestFile compatibility storage
 - `backend/app/routers/`: `/api` endpoints
 - `backend/app/services/parsing.py`: the only direct NewareNDA integration
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
