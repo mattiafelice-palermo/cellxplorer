@@ -392,6 +392,99 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(time_view["result"]["cell_traces"][0]["label"], "Portable cell")
         self.assertGreater(len(time_view["result"]["cell_traces"][0]["time_s"]), 0)
 
+    def test_multi_source_portable_round_trip_preserves_cell_order_and_one_test(self):
+        db = self.make_session()
+        first_path = self.root / "first.ndax"
+        second_path = self.root / "second.ndax"
+        first_path.write_bytes(b"first-source")
+        second_path.write_bytes(b"second-source")
+        first_hash = portable_analysis._sha256_file(first_path)
+        second_hash = portable_analysis._sha256_file(second_path)
+        for source_hash in (first_hash, second_hash):
+            cache.raw_path(source_hash).parent.mkdir(parents=True, exist_ok=True)
+            cache._write_atomic(raw_frame(), cache.raw_path(source_hash))
+            cache._write_atomic(calc.per_cycle(raw_frame()), cache.cycles_path(source_hash))
+
+        cell = Cell(name="Continued portable cell")
+        db.add(cell)
+        db.flush()
+        # Insert the later source first so database-ID order differs from the
+        # scientific TestFile.position order.
+        second = SourceFile(
+            hash=second_hash,
+            path=str(second_path),
+            filename=second_path.name,
+            size=second_path.stat().st_size,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            row_count=len(raw_frame()),
+            cycle_count=1,
+            capacity_summary_status="ready",
+        )
+        first = SourceFile(
+            hash=first_hash,
+            path=str(first_path),
+            filename=first_path.name,
+            size=first_path.stat().st_size,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            row_count=len(raw_frame()),
+            cycle_count=1,
+            capacity_summary_status="ready",
+        )
+        test = Test(cell_id=cell.id, name="Internal name must not be portable")
+        db.add_all([second, first, test])
+        db.flush()
+        db.add_all(
+            [
+                TestFile(test_id=test.id, file_id=first.id, position=0),
+                TestFile(test_id=test.id, file_id=second.id, position=1),
+            ]
+        )
+        spec = analysis_engine.default_spec("Continued portable study")
+        spec["selection"]["entries"] = [{"kind": "cell", "ref_id": cell.id}]
+        analysis = Analysis(title="Continued portable study", spec=spec)
+        db.add(analysis)
+        db.commit()
+
+        destination = self.root / "continued-portable.html"
+        portable_analysis.export_analysis_html(
+            db,
+            analysis,
+            destination,
+            include_original_files=True,
+        )
+        report = self.read_report(destination)
+        portable_cell = report["cells"][0]
+        expected_source_ids = [f"source-{first_hash}", f"source-{second_hash}"]
+        self.assertNotIn("tests", portable_cell)
+        self.assertEqual(
+            [item["source_id"] for item in portable_cell["sources"]],
+            expected_source_ids,
+        )
+        self.assertEqual([item["position"] for item in portable_cell["sources"]], [1, 2])
+        self.assertEqual(
+            [item["tracked_tail"] for item in portable_cell["sources"]],
+            [False, True],
+        )
+        self.assertEqual(
+            [source["portable_id"] for source in report["sources"]],
+            expected_source_ids,
+        )
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
+            portable_analysis.import_analysis_html(imported_db, destination)
+        imported_cell = imported_db.query(Cell).one()
+        self.assertEqual(imported_db.query(Test).filter(Test.cell_id == imported_cell.id).count(), 1)
+        imported_test = imported_db.query(Test).filter(Test.cell_id == imported_cell.id).one()
+        self.assertEqual(
+            [link.file.hash for link in sorted(imported_test.file_links, key=lambda item: item.position)],
+            [first_hash, second_hash],
+        )
+
     def test_draft_plot_is_not_exported(self):
         db, analysis, *_ = self.create_analysis(include_saved_plots=True)
         spec = deepcopy(analysis.spec)

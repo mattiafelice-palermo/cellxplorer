@@ -18,6 +18,12 @@ exports. Version 1 packages containing caches remain importable.
 The export dialog lets the user include any subset of the analysis's saved plots. Metadata,
 analysis settings and source references remain part of the package so it can still be imported.
 
+The scientific package shape is `Cell -> ordered sources`. Each Cell records its sources in the
+canonical `TestFile.position` order, with an explicit position and tracked-tail marker; Test names,
+groups, and per-Test lifecycle state are not portable product data. Cell order, the global source
+document list, and embedded payload order are all derived from the same deterministic selection
+order.
+
 ## Original-source preflight
 
 When original files are requested, export hashes every selected `.nda`/`.ndax` source before it
@@ -75,6 +81,9 @@ download files individually or download one ZIP. Every cell gets its own folder 
 source files belonging to that cell are placed inside it, which also supports future multi-file
 cells without flattening their provenance.
 
+Files inside each Cell folder retain the recorded source order. A source is never flattened into a
+combined file and a continued Cell is never split into multiple portable Cells.
+
 ## Import
 
 CellXplorer treats the HTML as an untrusted container:
@@ -94,6 +103,12 @@ cell and classifies its sources as:
 Possible versions with different checksums always require an explicit choice between using a
 matching library cell or keeping the package version as a separate cell. Cycle count, row count and
 file size are used only to suggest which appears newer; they never silently establish identity.
+
+For a multi-source Cell, reuse requires the complete ordered source-hash chain to match. The same
+hashes in a different order, or a partial overlap with another Cell, is a conflict and is rejected
+before the import transaction commits. A newly imported Cell receives exactly one internal Test
+row with its ordered source links; older packages with nested Test envelopes remain readable only
+as an input compatibility path.
 
 On confirmation the user can rename the analysis, create or select its folder, and optionally add
 references to all imported/reused cells in that folder. The import then runs as one database

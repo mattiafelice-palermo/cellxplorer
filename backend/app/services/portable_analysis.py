@@ -202,7 +202,9 @@ def _selected_entities(db: Session, analysis: Analysis) -> tuple[list[Cell], lis
     if missing:
         refs = ", ".join(f"{item['kind']} #{item['ref_id']}" for item in missing)
         raise HTTPException(409, f"The analysis contains missing references: {refs}")
-    cells_by_id = {unit["cell"].id: unit["cell"] for unit in units}
+    cells_by_id: dict[int, Cell] = {}
+    for unit in units:
+        cells_by_id.setdefault(unit["cell"].id, unit["cell"])
     group_ids = {
         int(entry["ref_id"])
         for entry in analysis.spec.get("selection", {}).get("entries", [])
@@ -214,7 +216,7 @@ def _selected_entities(db: Session, analysis: Analysis) -> tuple[list[Cell], lis
         if (group := db.get(ReplicateGroup, group_id)) is not None
     ]
     return (
-        [cells_by_id[cell_id] for cell_id in sorted(cells_by_id)],
+        list(cells_by_id.values()),
         groups,
     )
 
@@ -236,11 +238,23 @@ def _portable_saved_plot_spec(base: dict, plot: dict) -> dict:
     return spec
 
 
+def _guard_portable_protocol_family(
+    db: Session,
+    analysis: Analysis,
+    tab: str,
+) -> None:
+    family = "rate_capability" if tab == "crate" else tab
+    detail = analysis_engine.protocol_analysis_guard(db, analysis.spec, family)
+    if detail is not None:
+        raise HTTPException(status_code=422, detail=detail)
+
+
 def _report_views(db: Session, analysis: Analysis) -> list[dict]:
     views: list[dict] = []
     saved_plots = analysis.spec.get("saved_plots") or []
     for plot in saved_plots:
         tab = plot.get("tab") or "cycles"
+        _guard_portable_protocol_family(db, analysis, tab)
         spec = _portable_saved_plot_spec(analysis.spec, plot)
         result = (
             analysis_engine.compute_time_capacity(db, spec, analysis.provenance)
@@ -274,6 +288,7 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
             }
         )
     if not views:
+        _guard_portable_protocol_family(db, analysis, "cycles")
         views.append(
             {
                 "id": "current",
@@ -315,7 +330,28 @@ def _source_document(source: SourceFile) -> dict:
     }
 
 
+def _single_internal_test(cell: Cell) -> Test:
+    tests = sorted(cell.tests, key=lambda item: item.id)
+    if len(tests) != 1:
+        raise HTTPException(
+            409,
+            {
+                "code": "single_internal_test_required",
+                "message": "This Cell must have exactly one internal source-chain row.",
+                "cell_id": cell.id,
+                "test_count": len(tests),
+            },
+        )
+    return tests[0]
+
+
+def _ordered_cell_links(cell: Cell) -> list[TestFile]:
+    test = _single_internal_test(cell)
+    return sorted(test.file_links, key=lambda item: item.position)
+
+
 def _cell_document(cell: Cell) -> dict:
+    links = _ordered_cell_links(cell)
     return {
         "portable_id": f"cell-{cell.id}",
         "original_id": cell.id,
@@ -325,18 +361,13 @@ def _cell_document(cell: Cell) -> dict:
         "cycling_status": cell.cycling_status,
         "created_at": cell.created_at.isoformat(),
         "metadata": {entry.key: entry.value for entry in cell.metadata_entries},
-        "tests": [
+        "sources": [
             {
-                "portable_id": f"test-{test.id}",
-                "name": test.name,
-                "description": test.description,
-                "created_at": test.created_at.isoformat(),
-                "source_ids": [
-                    f"source-{link.file.hash}"
-                    for link in sorted(test.file_links, key=lambda item: item.position)
-                ],
+                "source_id": f"source-{link.file.hash}",
+                "position": position,
+                "tracked_tail": position == len(links),
             }
-            for test in sorted(cell.tests, key=lambda item: item.id)
+            for position, link in enumerate(links, start=1)
         ],
     }
 
@@ -357,15 +388,10 @@ def _group_document(group: ReplicateGroup) -> dict:
 
 def estimate_export(db: Session, analysis: Analysis) -> dict:
     cells, _ = _selected_entities(db, analysis)
-    sources = {
-        link.file.hash: link.file
-        for cell in cells
-        for test in cell.tests
-        for link in test.file_links
-    }
+    source_rows = _analysis_sources(analysis, db)
     original_bytes = 0
     missing_originals = 0
-    for source in sources.values():
+    for source, _cell in source_rows:
         source_path = Path(source.path)
         if source_path.is_file():
             original_bytes += source_path.stat().st_size
@@ -391,7 +417,7 @@ def estimate_export(db: Session, analysis: Analysis) -> dict:
     )
     return {
         "cells": len(cells),
-        "sources": len(sources),
+        "sources": len(source_rows),
         "cache_bytes": 0,
         "runtime_bytes": runtime_bytes,
         "runtime_embedded_bytes": runtime_embedded_bytes,
@@ -409,10 +435,9 @@ def _analysis_sources(analysis: Analysis, db: Session) -> list[tuple[SourceFile,
     cells, _ = _selected_entities(db, analysis)
     sources: dict[int, tuple[SourceFile, Cell]] = {}
     for cell in cells:
-        for test in cell.tests:
-            for link in test.file_links:
-                sources[link.file.id] = (link.file, cell)
-    return [sources[source_id] for source_id in sorted(sources)]
+        for link in _ordered_cell_links(cell):
+            sources.setdefault(link.file.id, (link.file, cell))
+    return list(sources.values())
 
 
 def preflight_original_sources(db: Session, analysis: Analysis) -> dict:
@@ -581,12 +606,10 @@ def export_analysis_html(
     views: list[dict] | None = None,
 ) -> dict:
     cells, groups = _selected_entities(db, analysis)
-    sources = {
-        link.file.hash: link.file
-        for cell in cells
-        for test in cell.tests
-        for link in test.file_links
-    }
+    source_rows = _analysis_sources(analysis, db)
+    sources = [source for source, _cell in source_rows]
+    for view in views or []:
+        _guard_portable_protocol_family(db, analysis, str(view.get("tab") or "cycles"))
     export_id = str(uuid.uuid4())
     warnings: list[str] = []
 
@@ -595,7 +618,7 @@ def export_analysis_html(
         payloads: list[dict] = []
         payload_paths: dict[str, Path] = {}
 
-        source_documents = [_source_document(source) for source in sources.values()]
+        source_documents = [_source_document(source) for source in sources]
         # Draft plots are local workspace state — never ship them in a portable report.
         export_spec = deepcopy(analysis.spec or {})
         export_spec.pop("draft_plot", None)
@@ -638,7 +661,7 @@ def export_analysis_html(
         payloads.append(descriptor)
         payload_paths[descriptor["id"]] = path
 
-        for source in sources.values():
+        for source in sources:
             if include_original_files:
                 source_path = Path(source.path)
                 if not source_path.is_file():
@@ -1122,6 +1145,21 @@ def _html_tail() -> str:
       if (button) { button.disabled = false; text(button,originalLabel); }
     }
   }
+  function cellSourceIds(cell) {
+    if (Array.isArray(cell.sources)) {
+      return cell.sources
+        .filter((item) => item && item.source_id)
+        .slice()
+        .sort((left, right) => Number(left.position || 0) - Number(right.position || 0))
+        .map((item) => item.source_id);
+    }
+    if (Array.isArray(cell.source_ids)) return cell.source_ids.slice();
+    const sourceIds = [];
+    for (const test of cell.tests || []) {
+      for (const sourceId of test.source_ids || []) sourceIds.push(sourceId);
+    }
+    return sourceIds;
+  }
   function renderSourceDownloads() {
     const target = byId("source-download-list"); target.replaceChildren();
     const originals = new Map(
@@ -1131,10 +1169,8 @@ def _html_tail() -> str:
     for (const cell of report.cells || []) {
       const sourceIds = [];
       const seen = new Set();
-      for (const test of cell.tests || []) {
-        for (const sourceId of test.source_ids || []) {
-          if (originals.has(sourceId) && !seen.has(sourceId)) { seen.add(sourceId); sourceIds.push(sourceId); }
-        }
+      for (const sourceId of cellSourceIds(cell)) {
+        if (originals.has(sourceId) && !seen.has(sourceId)) { seen.add(sourceId); sourceIds.push(sourceId); }
       }
       if (!sourceIds.length) continue;
       const group = document.createElement("section"); group.className = "source-group";
@@ -1203,17 +1239,15 @@ def _html_tail() -> str:
     button.disabled = true; text(button,"Preparing files...");
     try {
       for (const cell of report.cells || []) {
-        for (const test of cell.tests || []) {
-          for (const sourceId of test.source_ids || []) {
-            const descriptor = originals.get(sourceId);
-            if (!descriptor || seen.has(sourceId)) continue;
-            seen.add(sourceId);
-            const source = sources.get(sourceId) || {};
-            entries.push({
-              name: `${safeZipName(cell.name)}/${safeZipName(descriptor.filename || source.filename)}`,
-              bytes: await decodePayload(descriptor.id)
-            });
-          }
+        for (const sourceId of cellSourceIds(cell)) {
+          const descriptor = originals.get(sourceId);
+          if (!descriptor || seen.has(sourceId)) continue;
+          seen.add(sourceId);
+          const source = sources.get(sourceId) || {};
+          entries.push({
+            name: `${safeZipName(cell.name)}/${safeZipName(descriptor.filename || source.filename)}`,
+            bytes: await decodePayload(descriptor.id)
+          });
         }
       }
       if (!entries.length) throw new Error("No embedded source files are available.");
@@ -1549,8 +1583,32 @@ def _unique_analysis_title(db: Session, title: str, folder_id: int | None) -> st
 def _cell_source_hashes(cell: Cell) -> list[str]:
     return [
         link.file.hash
-        for test in sorted(cell.tests, key=lambda item: item.id)
-        for link in sorted(test.file_links, key=lambda item: item.position)
+        for link in _ordered_cell_links(cell)
+    ]
+
+
+def _portable_source_ids(document: dict) -> list[str]:
+    """Read the Cell-level source chain, with compatibility for old packages."""
+    sources = document.get("sources")
+    if isinstance(sources, list):
+        ordered = sorted(
+            (
+                item
+                for item in sources
+                if isinstance(item, dict) and item.get("source_id")
+            ),
+            key=lambda item: int(item.get("position") or 0),
+        )
+        return [str(item["source_id"]) for item in ordered]
+    if isinstance(document.get("source_ids"), list):
+        return [str(source_id) for source_id in document["source_ids"]]
+    # Version 1/early version-2 reports nested source references in Test
+    # envelopes. They remain readable, but new exports never emit that shape.
+    return [
+        str(source_id)
+        for test in document.get("tests", [])
+        if isinstance(test, dict)
+        for source_id in test.get("source_ids", [])
     ]
 
 
@@ -1792,11 +1850,7 @@ def inspect_analysis_html(db: Session, html_path: Path) -> dict:
 
     cells: list[dict] = []
     for document in package.get("cells", []):
-        source_ids = [
-            source_id
-            for test in document.get("tests", [])
-            for source_id in test.get("source_ids", [])
-        ]
+        source_ids = _portable_source_ids(document)
         reviews = [source_reviews[source_id] for source_id in source_ids]
         if any(review["status"] == "possible_update" for review in reviews):
             status = "review"
@@ -2032,11 +2086,12 @@ def import_analysis_html(
         cell_map: dict[int, int] = {}
         portable_cell_map: dict[str, Cell] = {}
         for document in package.get("cells", []):
-            source_ids = [
-                source_id
-                for test in document.get("tests", [])
-                for source_id in test.get("source_ids", [])
-            ]
+            source_ids = _portable_source_ids(document)
+            if not source_ids:
+                raise HTTPException(
+                    400,
+                    f'Portable Cell "{document.get("name") or "Unnamed"}" has no sources.',
+                )
             exported_hashes = [source_documents[source_id]["hash"] for source_id in source_ids]
             linked_cells = {
                 source_rows[source_id].test_link.test.cell
@@ -2069,17 +2124,15 @@ def import_analysis_html(
                 db.flush()
                 for key, value in (document.get("metadata") or {}).items():
                     db.add(CellMetadata(cell_id=cell.id, key=str(key), value=str(value)))
-                for test_document in document.get("tests", []):
-                    test = Test(
-                        cell_id=cell.id,
-                        name=test_document.get("name") or "Imported test",
-                        description=test_document.get("description"),
-                    )
-                    db.add(test)
-                    db.flush()
-                    for position, source_id in enumerate(test_document.get("source_ids", [])):
-                        source = source_rows[source_id]
-                        db.add(TestFile(test_id=test.id, file_id=source.id, position=position))
+                test = Test(
+                    cell_id=cell.id,
+                    name="Imported source chain",
+                )
+                db.add(test)
+                db.flush()
+                for position, source_id in enumerate(source_ids):
+                    source = source_rows[source_id]
+                    db.add(TestFile(test_id=test.id, file_id=source.id, position=position))
             original_id = int(document["original_id"])
             cell_map[original_id] = cell.id
             portable_cell_map[document["portable_id"]] = cell

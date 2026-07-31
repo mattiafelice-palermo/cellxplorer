@@ -1,6 +1,6 @@
 # 034 — Multi-source cell continuations
 
-**Status:** Plan — parent specification  
+**Status:** Implemented — final closure verified 2026-07-31
 **Implementation:** Implement only through the child specifications listed below.  
 **Scope:** Treat an interrupted/restarted Neware run as one virtual Cell while preserving every
 original source, its order, and its provenance.
@@ -240,3 +240,11 @@ This parent is complete only when every child has:
 Child 034.9 owns the final full command and disposable-data matrix. Browser interaction must not be
 run automatically unless the user explicitly asks; record the manual checklist as not run when
 permission is absent.
+
+## Final closure record — 2026-07-31
+
+The shared feature branch contains the sequentially pushed 034.1–034.9 checkpoints. The final
+closure passed `python -m unittest discover tests` (687 tests),
+`node --test frontend\\tests\\*.test.ts` (268 tests), TypeScript, Vite, version consistency, and
+the canonical `python scripts\\preflight.py --no-cache` (5/5 stages). The browser/disposable-data
+manual matrix was not run because browser testing was not authorized. No merge to `main` was made.

@@ -27,6 +27,19 @@ boundary markers, saved figures, thumbnails, and data exports on the same final 
 path. CSV and Excel exports may add stable provenance columns, but must not emit absolute source
 paths.
 
+### Portable Cell source chains
+
+1. Resolve selected Cells in analysis selection order, then resolve each Cell's sources through its
+   one internal Test row and canonical `TestFile.position` order.
+2. Serialize a Cell-level ordered source list with positions, checksums, metadata, and tracked-tail
+   state. Never serialize Test names or database-ID order as scientific structure.
+3. Use that same order for global source documents, embedded payloads, preflight rows, downloads,
+   and ZIP entries; keep one separate original file per source inside the Cell folder.
+4. Permit reuse only for an exact complete ordered source-hash chain. Reordered hashes and partial
+   overlap conflicts must fail before commit.
+5. Create exactly one internal Test row for a newly imported Cell. Reading older nested-Test
+   packages is compatibility handling, not support for multiple Test product objects.
+
 ## Frontend server-state change
 
 1. Use React Query for backend-owned state.
