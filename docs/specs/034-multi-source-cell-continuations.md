@@ -1,9 +1,9 @@
 # 034 — Multi-source cell continuations
 
-**Status:** Review follow-up in progress — final closure superseded pending 034.9 integration
+**Status:** Implemented — final integrated closure verified 2026-07-31
 **Implementation:** Implement only through the child specifications listed below.  
-**Review status:** Final closure superseded while 034.9 review follow-up and current-main integration
-remain pending.
+**Review status:** 034.7, 034.8, and 034.9 review findings are implemented. Current `main` is
+integrated into the shared feature branch and the final no-cache closure matrix passes.
 **Scope:** Treat an interrupted/restarted Neware run as one virtual Cell while preserving every
 original source, its order, and its provenance.
 
@@ -244,14 +244,16 @@ run automatically unless the user explicitly asks; record the manual checklist a
 permission is absent.
 
 **Review follow-up status:** The historical closure record below is superseded by Review 034.9.
-Strict portable-chain validation and executable case mapping are now implemented, but current-main
-integration and the final no-cache closure matrix remain pending. The browser/disposable-data
-manual matrix remains not run without explicit browser-testing authorization.
+Strict portable-chain validation, executable case mapping, current-main integration, and the final
+no-cache closure matrix are complete. The browser/disposable-data manual matrix remains not run
+without explicit browser-testing authorization.
 
 ## Final closure record — 2026-07-31
 
-The shared feature branch contains the sequentially pushed 034.1–034.9 checkpoints. The final
-closure passed `python -m unittest discover tests` (687 tests),
-`node --test frontend\\tests\\*.test.ts` (268 tests), TypeScript, Vite, version consistency, and
-the canonical `python scripts\\preflight.py --no-cache` (5/5 stages). The browser/disposable-data
-manual matrix was not run because browser testing was not authorized. No merge to `main` was made.
+The shared feature branch contains the sequentially pushed 034.1–034.9 checkpoints and merge
+commit `3abfb2f`, which integrates `origin/main` at `4bc4feee35444615714e424e963d8531fdcebc21`
+from merge base `f767ccdb4ff137f21bc420cfc23e7a9e5d973387`. The integrated closure passed
+`python -m unittest discover tests` (697 tests), `node --test frontend\\tests\\*.test.ts`
+(271 tests), `npx.cmd tsc --noEmit`, `npx.cmd vite build`, `python scripts\\check_versions.py`,
+and `python scripts\\preflight.py --no-cache` (5/5 stages). The browser/disposable-data manual
+matrix was not run because browser testing was not authorized. No merge to `main` was made.
