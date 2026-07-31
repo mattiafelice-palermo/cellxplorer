@@ -1207,13 +1207,17 @@ export interface AnalysisUsageResponse {
 export interface AnalysisFull extends AnalysisSummary {
   spec: AnalysisSpec;
   provenance: Provenance | null;
-  selection_cells: Pick<CellSummary, "id" | "name" | "description" | "archived">[];
+  selection_cells: (Pick<CellSummary, "id" | "name" | "description" | "archived"> & {
+    source_count: number;
+  })[];
   selection_groups: {
     id: number;
     name: string;
     description: string | null;
     cell_ids: number[];
-    cells: Pick<CellSummary, "id" | "name" | "description" | "archived">[];
+    cells: (Pick<CellSummary, "id" | "name" | "description" | "archived"> & {
+      source_count: number;
+    })[];
   }[];
 }
 

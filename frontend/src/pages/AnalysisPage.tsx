@@ -212,6 +212,11 @@ import {
   type SourceExportColumn,
   type SourceExportValue,
 } from "../sourceChainPlot";
+import {
+  multiSourceAnalysisPolicy,
+  type MultiSourceAnalysisPolicy,
+  type SourceCountCell,
+} from "../multiSourceAnalysisPolicy";
 
 const PALETTE = [
   "#12b886",
@@ -2021,6 +2026,67 @@ function findMatchingSavedPlot(spec: AnalysisSpec, tab: AnalysisTabKey): SavedAn
       (plot) => plot.tab === tab && snapshotSignature(specForSavedPlot(spec, plot)) === current
     ) ?? null
   );
+}
+
+function selectedSourceCountCells(
+  analysis: AnalysisFull,
+  spec: AnalysisSpec,
+): SourceCountCell[] {
+  const direct = new Map(analysis.selection_cells.map((cell) => [cell.id, cell]));
+  const groups = new Map(analysis.selection_groups.map((group) => [group.id, group]));
+  const selected = new Map<number, SourceCountCell>();
+  for (const entry of spec.selection.entries ?? []) {
+    if (entry.kind === "cell") {
+      const cell = direct.get(entry.ref_id);
+      if (cell) selected.set(cell.id, cell);
+      continue;
+    }
+    if (entry.kind === "replicate_group") {
+      const group = groups.get(entry.ref_id);
+      for (const cell of group?.cells ?? []) selected.set(cell.id, cell);
+    }
+  }
+  return [...selected.values()].sort((left, right) => left.id - right.id);
+}
+
+function ProtocolMappingRequiredState({
+  policy,
+  compact = false,
+}: {
+  policy: MultiSourceAnalysisPolicy;
+  compact?: boolean;
+}) {
+  const names = policy.unsupportedCells.map((cell) => cell.name);
+  const affected = names.length <= 4
+    ? names.join(", ")
+    : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+  return (
+    <Paper p={compact ? "sm" : "xl"} withBorder>
+      <Alert color="yellow" variant="light" icon={<IconInfoCircle size={18} />}>
+        <Stack gap="xs">
+          <Text fw={700}>Protocol mapping required</Text>
+          <Text size="sm">
+            This plot uses source-local protocol steps. Restarted files can renumber steps,
+            and CellXplorer refuses to guess how the continuation chain maps across files.
+          </Text>
+          <Text size="sm">
+            <Text span fw={600}>Affected Cells:</Text> {affected}
+          </Text>
+          <Text size="sm" c="dimmed">
+            Use Cycles or Time / capacity for this selection. Save and scientific export are
+            unavailable until semantic source-step mapping is reviewed.
+          </Text>
+        </Stack>
+      </Alert>
+    </Paper>
+  );
+}
+
+function BlockedWarmupNotice({ onComplete }: { onComplete: (error?: string, detail?: string) => void }) {
+  useEffect(() => {
+    onComplete(undefined, "Skipped: protocol mapping is required for multi-source Cells");
+  }, [onComplete]);
+  return null;
 }
 
 function computeSignature(spec: AnalysisSpec | null): string {
@@ -4235,6 +4301,13 @@ export function AnalysisCacheWarmupRenderer({
   task: CacheWarmupTask;
   onComplete: (error?: string, detail?: string) => void;
 }) {
+  const policy = multiSourceAnalysisPolicy(
+    plot.tab,
+    selectedSourceCountCells(analysis, analysis.spec),
+  );
+  if (policy.family && !policy.supported) {
+    return <BlockedWarmupNotice onComplete={onComplete} />;
+  }
   return plot.tab === "time_capacity" ? (
     <SavedTimeCapacityPreview
       analysisId={analysis.id}
@@ -9204,6 +9277,13 @@ function AnalysisPageView({
     [spec, title]
   );
   const autosaveSignatureRef = useRef(autosaveSignature);
+  const protocolSelectionCells = useMemo(
+    () => (analysis.data && spec ? selectedSourceCountCells(analysis.data, spec) : []),
+    [analysis.data, spec],
+  );
+  const protocolPolicyForTab = (tab: AnalysisTabKey) =>
+    multiSourceAnalysisPolicy(tab, protocolSelectionCells);
+  const activeProtocolPolicy = protocolPolicyForTab(activeTab);
   const protocolCellIds = useMemo(() => {
     if (!spec) return [];
     const availableGroups = groupsQuery.data ?? analysis.data?.selection_groups ?? [];
@@ -9674,8 +9754,11 @@ function AnalysisPageView({
   }, [aid, autosaveSignature, buildPersistPayload, dirty, qc, spec, title]);
 
   const displayResult = rendered?.result ?? compute.data;
-  const portablePlotOptions = spec?.saved_plots?.length
-    ? spec.saved_plots
+  const portableSavedPlots = (spec?.saved_plots ?? []).filter(
+    (plot) => multiSourceAnalysisPolicy(plot.tab, protocolSelectionCells).supported,
+  );
+  const portablePlotOptions = portableSavedPlots.length
+    ? portableSavedPlots
     : [
         {
           id: "current",
@@ -9685,6 +9768,7 @@ function AnalysisPageView({
         },
       ];
   const openPortableExport = (action: "download" | "share" = "download") => {
+    if (!activeProtocolPolicy.supported) return;
     setPortableExportAction(action);
     setPreparedPortableShare(null);
     setPreparedShareBusy(false);
@@ -10795,7 +10879,8 @@ function AnalysisPageView({
         onToggleReplicate={toggleReplicateVisibility}
         onImportEntries={importAnalysisEntries}
       />
-      {(["cycles", "steps", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) && (
+      {(["cycles", "steps", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) &&
+        (activeTab !== "steps" || activeProtocolPolicy.supported) && (
         <ProtocolSegmentsPanel
           cellIds={protocolCellIds}
           segments={spec.protocol_segments ?? []}
@@ -10823,7 +10908,7 @@ function AnalysisPageView({
       )}
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
       {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}
-      {activeTab === "steps" && (
+      {activeTab === "steps" && activeProtocolPolicy.supported && (
         <StepsSettings
           analysisId={aid}
           spec={spec}
@@ -10831,7 +10916,7 @@ function AnalysisPageView({
           update={update}
         />
       )}
-      {activeTab === "dcir" && (
+      {activeTab === "dcir" && activeProtocolPolicy.supported && (
         <DcirSettings
           analysisId={aid}
           spec={spec}
@@ -10839,14 +10924,14 @@ function AnalysisPageView({
           update={update}
         />
       )}
-      {activeTab === "chargeability" && (
+      {activeTab === "chargeability" && activeProtocolPolicy.supported && (
         <ChargeabilitySettings
           analysisId={aid}
           spec={spec}
           update={update}
         />
       )}
-      {activeTab === "crate" && (
+      {activeTab === "crate" && activeProtocolPolicy.supported && (
         <RateCapabilitySettings
           analysisId={aid}
           spec={spec}
@@ -10860,7 +10945,7 @@ function AnalysisPageView({
   const draftPlotSession = Boolean(isLiveDraft && activeTabPlotSession);
   const newPlotHeaderProps = {
     onNewPlot: startNewPlot,
-    newPlotEnabled: hasSamples,
+    newPlotEnabled: hasSamples && activeProtocolPolicy.supported,
     onUpdatePlot: draftPlotSession
       ? () =>
           setSaveDraft({
@@ -10869,13 +10954,17 @@ function AnalysisPageView({
             source: "live",
           })
       : updateActivePlot,
-    updatePlotEnabled: draftPlotSession
+    updatePlotEnabled: activeProtocolPolicy.supported && (draftPlotSession
       ? true
-      : Boolean(activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab),
+      : Boolean(activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab)),
     updatePlotLabel: draftPlotSession ? "Save as" : "Update",
   };
 
   const plotSurfaceFor = (tab: AnalysisTabKey, card: ReactNode) => {
+    const policy = protocolPolicyForTab(tab);
+    if (policy.family && !policy.supported) {
+      return <ProtocolMappingRequiredState policy={policy} />;
+    }
     const sessionOnTab = plotSessionBelongsToTab({
       tab,
       activeTab,
@@ -10895,7 +10984,12 @@ function AnalysisPageView({
     );
   };
 
-  const savedPlotsPanelFor = (tab: AnalysisTabKey) => (
+  const savedPlotsPanelFor = (tab: AnalysisTabKey) => {
+    const policy = protocolPolicyForTab(tab);
+    if (policy.family && !policy.supported) {
+      return <ProtocolMappingRequiredState policy={policy} compact />;
+    }
+    return (
     <>
       <TabDraftPlotCard
         analysisId={aid}
@@ -10965,7 +11059,8 @@ function AnalysisPageView({
       }
       />
     </>
-  );
+    );
+  };
 
   return (
     <Stack gap="sm" data-analysis-editor={aid}>
@@ -10997,6 +11092,7 @@ function AnalysisPageView({
               <Button
                 variant="default"
                 leftSection={<IconFileExport size={16} />}
+                disabled={!activeProtocolPolicy.supported}
                 onClick={() => openPortableExport("download")}
               >
                 Portable report
@@ -11008,6 +11104,7 @@ function AnalysisPageView({
                   variant="default"
                   size={36}
                   aria-label="Portable report actions"
+                  disabled={!activeProtocolPolicy.supported}
                   style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
                 >
                   <IconChevronDown size={15} />

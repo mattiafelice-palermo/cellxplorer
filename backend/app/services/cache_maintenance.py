@@ -40,11 +40,18 @@ def _load_cache():
     return cache
 
 
+def _load_analysis_engine():
+    from . import analysis_engine
+
+    return analysis_engine
+
+
 # main.py imports this module at startup to spawn the maintenance thread, and the
 # thread only touches these caches later. Keeping them lazy stops that import from
 # pulling pandas/pyarrow before uvicorn can bind (spec 031).
 analysis_cache = LazyModule(_load_analysis_cache)
 cache = LazyModule(_load_cache)
+analysis_engine = LazyModule(_load_analysis_engine)
 
 CACHE_SETTINGS_KEY = "cache_settings"
 
@@ -394,6 +401,13 @@ class WarmupCoordinator:
             for plot in ((analysis.spec or {}).get("saved_plots") or []):
                 if not plot.get("id"):
                     continue
+                tab = str(plot.get("tab") or "cycles")
+                plot_family = "rate_capability" if tab == "crate" else tab
+                if (
+                    plot_family in analysis_engine.PROTOCOL_DERIVED_FAMILIES
+                    and analysis_engine.multi_source_cells_for_spec(db, analysis.spec or {})
+                ):
+                    continue
                 expected_signature = analysis_cache.saved_plot_data_signature(db, analysis, plot)
                 # A plot whose prepared marker still matches its current data
                 # signature and revision needs no work: keep it out of the
@@ -428,7 +442,7 @@ class WarmupCoordinator:
                         "plot_id": str(plot.get("id")),
                         "plot_title": str(plot.get("name") or "Saved plot"),
                         "plot_modified_at": plot.get("modified_at"),
-                        "tab": str(plot.get("tab") or "cycles"),
+                        "tab": tab,
                     }
                 )
         return tasks
@@ -658,6 +672,13 @@ class WarmupCoordinator:
                 None,
             )
             if plot is None:
+                return False
+            tab = str(plot.get("tab") or "cycles")
+            plot_family = "rate_capability" if tab == "crate" else tab
+            if (
+                plot_family in analysis_engine.PROTOCOL_DERIVED_FAMILIES
+                and analysis_engine.multi_source_cells_for_spec(session, analysis.spec or {})
+            ):
                 return False
             return (
                 analysis_cache.saved_plot_data_signature(session, analysis, plot)

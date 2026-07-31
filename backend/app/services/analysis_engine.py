@@ -258,6 +258,61 @@ def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[Source
     return hashes, files
 
 
+PROTOCOL_DERIVED_FAMILIES = frozenset(
+    {"steps", "dcir", "chargeability", "rate_capability"}
+)
+
+
+def multi_source_cells_for_spec(db: Session, spec: dict) -> list[dict]:
+    """Return selected Cells whose ordered source chain has more than one file.
+
+    Protocol-derived analysis must not infer semantic step mappings across a
+    continuation boundary. Keep this selection expansion in one helper so
+    every guarded endpoint and background path applies the same rule.
+    """
+    units, _missing = resolve_selection(db, spec)
+    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+    if not cells:
+        return []
+    preload_cell_sources(db, cells)
+    unsupported: list[dict] = []
+    for cell in sorted(cells, key=lambda item: (item.name.casefold(), item.id)):
+        _hashes, files = cell_ordered_hashes(db, cell)
+        if len(files) > 1:
+            unsupported.append(
+                {
+                    "id": cell.id,
+                    "name": cell.name,
+                    "source_count": len(files),
+                }
+            )
+    return unsupported
+
+
+def protocol_analysis_guard(
+    db: Session,
+    spec: dict,
+    plot_family: str,
+) -> dict | None:
+    """Build the structured fail-closed response for protocol plot families."""
+    if plot_family not in PROTOCOL_DERIVED_FAMILIES:
+        return None
+    unsupported = multi_source_cells_for_spec(db, spec)
+    if not unsupported:
+        return None
+    return {
+        "code": "multi_source_protocol_mapping_required",
+        "plot_family": plot_family,
+        "unsupported_cells": unsupported,
+        "supported_alternatives": ["cycles", "time_capacity"],
+        "message": (
+            "This plot uses source-local protocol steps. Restarted source files can "
+            "renumber steps, so CellXplorer refuses to guess how a continuation chain "
+            "maps across files. Use Cycles or Time / capacity instead."
+        ),
+    }
+
+
 def source_descriptors(
     files: list[SourceFile],
     segments: list[dict],

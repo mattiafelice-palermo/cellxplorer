@@ -218,6 +218,22 @@ names, Target Test selectors, per-Test cards, per-Test tails, or per-Test orderi
 second Test merely because a continuation protocol differs. A protocol difference is a source
 boundary finding only.
 
+## Protocol-derived analysis safety (Spec 034.8)
+
+Steps, DCIR, Chargeability, and Rate capability use source-local protocol steps and are fail-closed
+when any selected Cell has more than one ordered source. The single backend decision lives in
+`analysis_engine.protocol_analysis_guard`; it must run before cache reads, recognition, computation,
+or background-job creation. Mixed selections fail as a whole with the structured
+`multi_source_protocol_mapping_required` 422 response. Cycles and Time / capacity remain the
+supported alternatives.
+
+Saved plot artifact and thumbnail routes use the same guard, so an old pre-guard scientific result
+cannot be relabeled as a current preview. The idle warmup coordinator skips guarded protocol plots,
+and the frontend mirrors the decision from typed `source_count` values in
+`multiSourceAnalysisPolicy.ts`. A future reviewed mapping may use
+`(source protocol signature, source-local step index) -> semantic operation`; numeric step IDs,
+step types, and C-rate alone are not valid mappings.
+
 Normal writes prevent a second Test row and focused backend tests cover that invariant. Lifecycle
 mutations reject a Cell that already violates it. Read-only source monitoring may defensively
 flatten malformed legacy rows by their stored compatibility order so a damaged Cell still yields

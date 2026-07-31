@@ -68,3 +68,11 @@ and trace/layout builders as the live card.
 
 Focused scientific coverage is in `tests/test_chargeability.py`; Neware global-user reconstruction
 coverage is in `tests/test_protocol.py`.
+
+## Multi-source continuation safety
+
+Chargeability is currently unsupported for a Cell with multiple ordered source files. The endpoint,
+saved-preview artifact routes, and warmup path fail closed through the shared
+`analysis_engine.protocol_analysis_guard`; this prevents source-local step renumbering from being
+presented as a valid semantic match. Use Cycles or Time / capacity for those selections until a
+reviewed `(source protocol signature, source-local step index) -> semantic operation` mapping exists.

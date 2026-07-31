@@ -122,6 +122,14 @@ and portable figures use the same dedicated endpoint and trace/layout builders a
 Focused scientific regression coverage is in `tests/test_rate_capability.py`.
 Context-aware visibility coverage is in `frontend/tests/analysisVisibility.test.ts`.
 
+## Multi-source continuation safety
+
+Rate capability is currently unsupported for a Cell with multiple ordered source files. The UI's
+`crate` tab maps to the backend `rate_capability` family, and endpoint, saved-preview artifact, and
+warmup paths all use the shared `analysis_engine.protocol_analysis_guard`. This avoids guessing
+semantic rate steps across restarted files; Cycles or Time / capacity remain available until a
+reviewed source-signature/local-step mapping is introduced.
+
 ## Synthetic validation corpus
 
 `tests/fixtures/rate_capability_corpus.json` is a declarative set of synthetic protocol families.

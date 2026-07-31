@@ -203,6 +203,7 @@ def analysis_dict(
                 "name": cell.name,
                 "description": cell.description,
                 "archived": cell.archived,
+                "source_count": len(current_hashes.get(cell.id, [])),
             }
             for cell in cells
         ]
@@ -218,6 +219,7 @@ def analysis_dict(
                         "name": membership.cell.name,
                         "description": membership.cell.description,
                         "archived": membership.cell.archived,
+                        "source_count": len(current_hashes.get(membership.cell.id, [])),
                     }
                     for membership in group.cell_links
                 ],
@@ -561,6 +563,12 @@ class AnalysisComputeJobCreate(BaseModel):
     spec: dict | None = None
 
 
+def _guard_protocol_analysis(db: Session, spec: dict, plot_family: str) -> None:
+    detail = engine.protocol_analysis_guard(db, spec, plot_family)
+    if detail is not None:
+        raise HTTPException(status_code=422, detail=detail)
+
+
 def _open_compute_job(
     db: Session,
     analysis: Analysis,
@@ -605,6 +613,8 @@ def create_analysis_compute_job(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    if req.kind in engine.PROTOCOL_DERIVED_FAMILIES:
+        _guard_protocol_analysis(db, spec, req.kind)
     job_id = _open_compute_job(db, analysis, spec, req.kind, None)
     return background_jobs.get_job(job_id)
 
@@ -679,6 +689,7 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
+    _guard_protocol_analysis(db, spec, "steps")
     key = analysis_cache.result_key(
         db, "steps", spec, a.provenance, use_current_versions=req.recompute
     )
@@ -718,13 +729,14 @@ def get_dcir_protocols(
     db: Session = Depends(get_db),
 ):
     """Return selected protocol families and assisted DCIR candidates."""
-    from ..services import dcir
-    from ..services import protocol as protocol_service
-
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_protocol_analysis(db, spec, "dcir")
+    from ..services import dcir
+    from ..services import protocol as protocol_service
+
     units, _missing = engine.resolve_selection(db, spec)
     cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
     engine.preload_cell_sources(db, cells)
@@ -795,6 +807,7 @@ def compute_dcir_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_protocol_analysis(db, spec, "dcir")
     key = analysis_cache.result_key(
         db, "dcir", spec, analysis.provenance, use_current_versions=req.recompute
     )
@@ -835,12 +848,12 @@ def compute_chargeability_analysis(
     req: ComputeRequest,
     db: Session = Depends(get_db),
 ):
-    from ..services import chargeability
-
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_protocol_analysis(db, spec, "chargeability")
+    from ..services import chargeability
     key = analysis_cache.result_key(
         db,
         "chargeability",
@@ -889,12 +902,12 @@ def compute_rate_capability_analysis(
     req: ComputeRequest,
     db: Session = Depends(get_db),
 ):
-    from ..services import rate_capability
-
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_protocol_analysis(db, spec, "rate_capability")
+    from ..services import rate_capability
     key = analysis_cache.result_key(
         db,
         "rate_capability",
@@ -1018,12 +1031,11 @@ class PlotArtifactLookup(BaseModel):
     signature: str = Field(min_length=1, max_length=20_000)
 
 
-def _plot_artifact_signature(
+def _guard_saved_plot_protocol_analysis(
     db: Session,
     analysis: Analysis,
     plot_id: str,
-    client_signature: str,
-) -> str:
+) -> dict:
     saved_plot = next(
         (
             plot
@@ -1034,6 +1046,20 @@ def _plot_artifact_signature(
     )
     if saved_plot is None:
         raise HTTPException(404, "No such saved plot")
+    plot_family = "rate_capability" if saved_plot.get("tab") == "crate" else str(
+        saved_plot.get("tab") or "cycles"
+    )
+    _guard_protocol_analysis(db, analysis.spec, plot_family)
+    return saved_plot
+
+
+def _plot_artifact_signature(
+    db: Session,
+    analysis: Analysis,
+    plot_id: str,
+    client_signature: str,
+) -> str:
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
     data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
     return f"{client_signature}:{data_signature}"
 
@@ -1083,6 +1109,7 @@ def lookup_plot_thumbnail(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
+    _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
     thumbnail = analysis_cache.load_indexed_thumbnail(
         analysis_id,
         plot_id,
@@ -1164,6 +1191,7 @@ def latest_plot_thumbnail(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
+    _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
     thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id, variant)
     if thumbnail is None:
         raise HTTPException(404, "No cached plot thumbnail")
@@ -1193,16 +1221,7 @@ def store_plot_artifact(
         ("data:image/webp;base64,", "data:image/png;base64,")
     ):
         raise HTTPException(422, "Only WebP or PNG plot previews are accepted")
-    saved_plot = next(
-        (
-            plot
-            for plot in analysis.spec.get("saved_plots", [])
-            if str(plot.get("id")) == plot_id
-        ),
-        None,
-    )
-    if saved_plot is None:
-        raise HTTPException(404, "No such saved plot")
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
     current_data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
     if (
         req.expected_data_signature is not None
