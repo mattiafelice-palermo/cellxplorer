@@ -4,6 +4,35 @@ import type {
   ContinuationInspectSource,
 } from "./api";
 
+export type ImportWorkflowMode = "separate" | "continued";
+
+export function preserveAcknowledgements(
+  previous: Iterable<string>,
+  result: ContinuationInspectResult | null | undefined,
+): string[] {
+  if (!result) return [];
+  const valid = new Set(acknowledgementFindingIds(result));
+  return Array.from(previous).filter((id) => valid.has(id));
+}
+
+export function continuedImportCanSubmit(
+  result: ContinuationInspectResult | null | undefined,
+  cellName: string,
+  acknowledged: Iterable<string>,
+): boolean {
+  if (!result || isSubmitBlocked(result) || !cellName.trim()) return false;
+  const acknowledgedSet = new Set(acknowledged);
+  return acknowledgementFindingIds(result).every((id) => acknowledgedSet.has(id));
+}
+
+export function moveSource<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= items.length) return [...items];
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
 export function isSubmitBlocked(result: ContinuationInspectResult): boolean {
   return !result.inspection_complete || !result.can_submit;
 }

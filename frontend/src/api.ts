@@ -374,10 +374,13 @@ export type SourceCheckFileStatus =
   | "updating"
   | "ready"
   | "deferred"
+  | "skipped"
   | "waiting_retry"
   | "offline"
   | "error"
   | "failed";
+
+export type SourceCheckScope = "all_ordered_sources" | "tracked_tails";
 
 export interface SourceCheckJob {
   id: number;
@@ -404,6 +407,9 @@ export interface SourceCheckJob {
   workers: number;
   scan_mode?: "checksum" | "metadata";
   trigger?: "manual" | "tray" | "scheduled";
+  source_scope?: SourceCheckScope;
+  source_cell_ids?: number[];
+  skipped_detached_source_ids?: number[];
   retry_count?: number;
   retry_delay_seconds?: number;
   retry_attempt?: number;

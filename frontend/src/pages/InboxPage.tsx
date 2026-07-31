@@ -15,6 +15,7 @@ import {
   Paper,
   ScrollArea,
   Select,
+  SegmentedControl,
   Stack,
   Table,
   Text,
@@ -72,10 +73,12 @@ import {
   Tree,
 } from "../api";
 import Plot from "../components/Plot";
+import { ContinuedImportEditor } from "../components/ContinuedImportEditor";
+import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
 import { addDebugEvent } from "../debug";
 import { nominalCapacityFromMass } from "../scientificMetadata";
 
-type ImportDraft = ImportPreview & {
+export type ImportDraft = ImportPreview & {
   cell_name: string;
   description: string;
   test_name: string;
@@ -1059,6 +1062,7 @@ function ImportModal({
   const [selectedStagedNames, setSelectedStagedNames] = useState<Set<string>>(new Set());
   const [replicateGroups, setReplicateGroups] = useState<ImportReplicateDraft[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
+  const [continuedMode, setContinuedMode] = useState(false);
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
     queryKey: ["electrode-area-presets"],
@@ -1096,6 +1100,7 @@ function ImportModal({
       setSelectedStagedNames(new Set());
       setReplicateGroups([]);
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
+      setContinuedMode(false);
     }
   }, [opened, targetFolderId]);
 
@@ -1230,21 +1235,53 @@ function ImportModal({
   };
 
   const save = useMutation({
-    mutationFn: () =>
-      post<{
+    mutationFn: (variables: {
+      mode: "separate" | "continued";
+      order?: string[];
+      acknowledgedFindingIds?: string[];
+    }) => {
+      const orderedFirst = (variables.order ?? drafts.map((item) => item.staged_name))
+        .map((stagedName) => drafts.find((item) => item.staged_name === stagedName))
+        .find((item): item is ImportDraft => Boolean(item)) ?? drafts[0];
+      return post<{
         created: { cell_id: number; cell_name: string }[];
         replicate_group?: { id: number; name: string; cell_ids: number[] } | null;
         replicate_groups?: { id: number; name: string; cell_ids: number[] }[];
       }>("/api/imports/cells", {
         folder_ids: destinationFolders.map(Number),
-        replicate_groups: replicateGroups
+        replicate_groups: variables.mode === "continued" ? [] : replicateGroups
           .filter((group) => group.name.trim() && group.staged_names.length > 0)
           .map((group) => ({
             name: group.name.trim(),
             description: group.description.trim() || null,
             staged_names: group.staged_names,
           })),
-        cells: drafts.map((d) => ({
+        cells: variables.mode === "continued"
+          ? [{
+              sources: (variables.order ?? drafts.map((item) => item.staged_name))
+                .map((stagedName) => drafts.find((item) => item.staged_name === stagedName))
+                .filter((item): item is ImportDraft => Boolean(item))
+                .map((item) => ({
+                  staged_name: item.staged_name,
+                  source_path: item.source_path,
+                  filename: item.filename,
+                })),
+              cell_name: orderedFirst?.cell_name ?? "",
+              description: orderedFirst?.description || null,
+              test_name: orderedFirst?.test_name || null,
+              metadata: orderedFirst?.metadata,
+              active_mass_mg_override: orderedFirst?.active_mass_mg_override,
+              nominal_capacity_mah_override: orderedFirst?.nominal_capacity_mah_override,
+              electrode_area_cm2_override: orderedFirst?.electrode_area_cm2_override,
+              active_material_preset_id: orderedFirst?.active_material_preset_id,
+              active_material_name: orderedFirst?.active_material_name,
+              active_material_specific_capacity_mah_g:
+                orderedFirst?.active_material_specific_capacity_mah_g,
+              electrode_area_preset_id: orderedFirst?.electrode_area_preset_id,
+              electrode_area_preset_name: orderedFirst?.electrode_area_preset_name,
+              acknowledged_finding_ids: variables.acknowledgedFindingIds ?? [],
+            }]
+          : drafts.map((d) => ({
           staged_name: d.staged_name,
           source_path: d.source_path,
           filename: d.filename,
@@ -1262,7 +1299,8 @@ function ImportModal({
           electrode_area_preset_id: d.electrode_area_preset_id,
           electrode_area_preset_name: d.electrode_area_preset_name,
         })),
-      }),
+      });
+    },
     onSuccess: (result) => {
       notifications.show({
         message: `Imported ${result.created.length} cell${result.created.length === 1 ? "" : "s"}`,
@@ -1311,6 +1349,41 @@ function ImportModal({
       <Modal opened={opened} onClose={handleClose} title="Import cells" size="95rem">
         {draft && (
           <Stack gap="md">
+            {drafts.length >= 2 && (
+              <SegmentedControl
+                fullWidth
+                value={continuedMode ? "continued" : "separate"}
+                onChange={(value) => {
+                  const nextMode = value === "continued";
+                  setContinuedMode(nextMode);
+                  if (nextMode) onActive(0);
+                }}
+                data={[
+                  { value: "separate", label: "Separate cells" },
+                  { value: "continued", label: "One continued cell" },
+                ]}
+              />
+            )}
+            {continuedMode ? (
+              <ContinuedImportEditor
+                opened={opened}
+                drafts={drafts}
+                draft={draft}
+                onChange={(next) => onChange(active, next as ImportDraft)}
+                onAddMoreSources={onAddMoreSources}
+                addingMore={addingMore}
+                destinationFolders={destinationFolders}
+                onDestinationFoldersChange={setDestinationFolders}
+                folderSelectData={folderSelectData}
+                materialPresets={materialPresetsQuery.data?.presets ?? []}
+                areaPresets={areaPresetsQuery.data?.presets ?? []}
+                onImport={(order, acknowledgedFindingIds) =>
+                  save.mutate({ mode: "continued", order, acknowledgedFindingIds })
+                }
+                importing={save.isPending}
+              />
+            ) : (
+            <Stack gap="md">
             <Group justify="space-between" align="center">
               <Text size="sm" c="dimmed">
                 Review {drafts.length} selected file{drafts.length === 1 ? "" : "s"} before saving.
@@ -1341,7 +1414,7 @@ function ImportModal({
                   leftSection={<IconDeviceFloppy size={16} />}
                   disabled={!canSave}
                   loading={save.isPending}
-                  onClick={() => save.mutate()}
+                  onClick={() => save.mutate({ mode: "separate" })}
                 >
                   Import {drafts.length} cell{drafts.length === 1 ? "" : "s"}
                 </Button>
@@ -1883,6 +1956,8 @@ function ImportModal({
               </Collapse>
             </Stack>
             </Group>
+            </Stack>
+            )}
           </Stack>
         )}
       </Modal>
@@ -2120,7 +2195,7 @@ export function ImportCellsLauncher({
         loading: inspectPaths.isPending || listSources.isPending,
         selectedCount: drafts.length,
       })}
-      <ImportFilesystemPickerModal
+      <SharedImportFilesystemPickerModal
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
         onClose={() => setSourcePickerOpen(false)}
@@ -2304,7 +2379,7 @@ export function InboxPage() {
         <div>
           <Title order={3}>Import</Title>
           <Text size="sm" c="dimmed">
-            Load Neware files and define one cell per file.
+            Load Neware files and choose separate or continued-cell import.
           </Text>
         </div>
         <Button
@@ -2316,7 +2391,7 @@ export function InboxPage() {
         </Button>
       </Group>
 
-      <ImportFilesystemPickerModal
+      <SharedImportFilesystemPickerModal
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
         onClose={() => setSourcePickerOpen(false)}
@@ -2344,8 +2419,8 @@ export function InboxPage() {
           <Stack gap={6}>
             <Text fw={700}>Start from Neware files</Text>
             <Text size="sm" c="dimmed" maw={720}>
-              Select a single file or a batch. The next step opens a modal where each file is named
-              as a cell and its detected metadata can be reviewed before saving.
+              Select a single file or a batch. The next step lets you review detected metadata and
+              choose whether the sources become separate cells or one ordered continued cell.
             </Text>
             {selectedCount > 0 && (
               <Text size="xs" c="dimmed">
@@ -2356,10 +2431,6 @@ export function InboxPage() {
           </Stack>
         </Group>
       </Paper>
-
-      <Alert color="gray">
-        Concatenating multiple files into one cell is intentionally left out for this first pass.
-      </Alert>
 
       <ImportModal
         drafts={drafts}
