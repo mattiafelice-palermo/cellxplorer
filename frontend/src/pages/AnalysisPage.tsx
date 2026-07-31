@@ -2031,19 +2031,57 @@ function findMatchingSavedPlot(spec: AnalysisSpec, tab: AnalysisTabKey): SavedAn
 function selectedSourceCountCells(
   analysis: AnalysisFull,
   spec: AnalysisSpec,
+  availableCells: Pick<CellSummary, "id" | "name" | "n_files">[] | undefined = [],
+  availableGroups: ReplicateGroupSummary[] | undefined = [],
 ): SourceCountCell[] {
-  const direct = new Map(analysis.selection_cells.map((cell) => [cell.id, cell]));
-  const groups = new Map(analysis.selection_groups.map((group) => [group.id, group]));
+  const direct = new Map<number, SourceCountCell>(
+    analysis.selection_cells.map((cell) => [cell.id, cell]),
+  );
+  for (const cell of availableCells ?? []) {
+    if (!direct.has(cell.id)) {
+      direct.set(cell.id, { id: cell.id, name: cell.name, source_count: cell.n_files });
+    }
+  }
+  const groups = new Map<number, { cells: SourceCountCell[] }>();
+  for (const group of analysis.selection_groups) {
+    for (const cell of group.cells) {
+      if (!direct.has(cell.id)) direct.set(cell.id, cell);
+    }
+    groups.set(group.id, { cells: group.cells });
+  }
+  for (const group of availableGroups ?? []) {
+    groups.set(group.id, {
+      cells: group.cells.map((cell) => {
+        const resolved = direct.get(cell.id);
+        return resolved ?? { id: cell.id, name: cell.name, source_count: null };
+      }),
+    });
+  }
   const selected = new Map<number, SourceCountCell>();
   for (const entry of spec.selection.entries ?? []) {
     if (entry.kind === "cell") {
-      const cell = direct.get(entry.ref_id);
-      if (cell) selected.set(cell.id, cell);
+      const cell = direct.get(entry.ref_id) ?? {
+        id: entry.ref_id,
+        name: `Cell #${entry.ref_id}`,
+        source_count: null,
+      };
+      selected.set(cell.id, cell);
       continue;
     }
     if (entry.kind === "replicate_group") {
       const group = groups.get(entry.ref_id);
-      for (const cell of group?.cells ?? []) selected.set(cell.id, cell);
+      if (!group) {
+        selected.set(-entry.ref_id, {
+          id: -entry.ref_id,
+          name: `Replicate group #${entry.ref_id}`,
+          source_count: null,
+        });
+        continue;
+      }
+      for (const cell of group.cells) {
+        const resolved = direct.get(cell.id) ?? cell;
+        selected.set(resolved.id, resolved);
+      }
     }
   }
   return [...selected.values()].sort((left, right) => left.id - right.id);
@@ -2062,19 +2100,33 @@ function ProtocolMappingRequiredState({
     : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
   return (
     <Paper p={compact ? "sm" : "xl"} withBorder>
-      <Alert color="yellow" variant="light" icon={<IconInfoCircle size={18} />}>
+      <Alert
+        color={policy.pending ? "blue" : "yellow"}
+        variant="light"
+        icon={<IconInfoCircle size={18} />}
+      >
         <Stack gap="xs">
-          <Text fw={700}>Protocol mapping required</Text>
-          <Text size="sm">
-            This plot uses source-local protocol steps. Restarted files can renumber steps,
-            and CellXplorer refuses to guess how the continuation chain maps across files.
+          <Text fw={700}>
+            {policy.pending ? "Checking source compatibility" : "Protocol mapping required"}
           </Text>
           <Text size="sm">
-            <Text span fw={600}>Affected Cells:</Text> {affected}
+            {policy.pending
+              ? policy.message
+              : "This plot uses source-local protocol steps. Restarted files can renumber steps, and CellXplorer refuses to guess how the continuation chain maps across files."}
           </Text>
+          {policy.pending ? (
+            <Text size="sm" c="dimmed">
+              Source counts are not available yet for: {policy.unresolvedCells.map((cell) => cell.name).join(", ")}.
+            </Text>
+          ) : (
+            <Text size="sm">
+              <Text span fw={600}>Affected Cells:</Text> {affected}
+            </Text>
+          )}
           <Text size="sm" c="dimmed">
-            Use Cycles or Time / capacity for this selection. Save and scientific export are
-            unavailable until semantic source-step mapping is reviewed.
+            {policy.pending
+              ? "Wait for source compatibility to resolve. No scientific request will be sent while this check is pending."
+              : "Use Cycles or Time / capacity for this selection. Save and scientific export are unavailable until semantic source-step mapping is reviewed."}
           </Text>
         </Stack>
       </Alert>
@@ -9170,6 +9222,10 @@ function AnalysisPageView({
     queryKey: ["replicate-groups"],
     queryFn: () => get<ReplicateGroupSummary[]>("/api/replicate-groups"),
   });
+  const cellsQuery = useQuery({
+    queryKey: ["cells", "analysis-picker"],
+    queryFn: () => get<CellSummary[]>("/api/cells"),
+  });
   const treeQuery = useQuery({
     queryKey: ["tree"],
     queryFn: () => get<Tree>("/api/tree"),
@@ -9278,8 +9334,11 @@ function AnalysisPageView({
   );
   const autosaveSignatureRef = useRef(autosaveSignature);
   const protocolSelectionCells = useMemo(
-    () => (analysis.data && spec ? selectedSourceCountCells(analysis.data, spec) : []),
-    [analysis.data, spec],
+    () =>
+      analysis.data && spec
+        ? selectedSourceCountCells(analysis.data, spec, cellsQuery.data, groupsQuery.data)
+        : [],
+    [analysis.data, cellsQuery.data, groupsQuery.data, spec],
   );
   const protocolPolicyForTab = (tab: AnalysisTabKey) =>
     multiSourceAnalysisPolicy(tab, protocolSelectionCells);
@@ -9754,9 +9813,7 @@ function AnalysisPageView({
   }, [aid, autosaveSignature, buildPersistPayload, dirty, qc, spec, title]);
 
   const displayResult = rendered?.result ?? compute.data;
-  const portableSavedPlots = (spec?.saved_plots ?? []).filter(
-    (plot) => multiSourceAnalysisPolicy(plot.tab, protocolSelectionCells).supported,
-  );
+  const portableSavedPlots = spec?.saved_plots ?? [];
   const portablePlotOptions = portableSavedPlots.length
     ? portableSavedPlots
     : [
@@ -9767,14 +9824,40 @@ function AnalysisPageView({
           tab: "cycles" as AnalysisTabKey,
         },
       ];
+  const portablePlotPolicy = (plot: (typeof portablePlotOptions)[number]) => {
+    if (!analysis.data || !spec) {
+      return multiSourceAnalysisPolicy(plot.tab, []);
+    }
+    const plotSpec = "selection" in plot ? specForSavedPlot(spec, plot) : spec;
+    return multiSourceAnalysisPolicy(
+      plot.tab,
+      selectedSourceCountCells(analysis.data, plotSpec, cellsQuery.data, groupsQuery.data),
+    );
+  };
+  const portablePlotPolicies = portablePlotOptions.map((plot) => ({
+    plot,
+    policy: portablePlotPolicy(plot),
+  }));
+  const guardedPortablePlots = portablePlotPolicies.filter(
+    ({ policy }) => policy.family && !policy.supported,
+  );
+  const exportablePortablePlotIds = portablePlotPolicies
+    .filter(({ policy }) => !policy.family || policy.supported)
+    .map(({ plot }) => plot.id);
   const openPortableExport = (action: "download" | "share" = "download") => {
-    if (!activeProtocolPolicy.supported) return;
+    if (activeProtocolPolicy.pending) {
+      notifications.show({
+        message: "Checking source compatibility. Portable export will be available when the selection is resolved.",
+        color: "blue",
+      });
+      return;
+    }
     setPortableExportAction(action);
     setPreparedPortableShare(null);
     setPreparedShareBusy(false);
     setPortableSourceDecision(null);
     setPendingPortableExport(null);
-    setPortablePlotIds(portablePlotOptions.map((plot) => plot.id));
+    setPortablePlotIds(exportablePortablePlotIds);
     setPortableExportOpen(true);
   };
   useEffect(() => {
@@ -9817,6 +9900,19 @@ function AnalysisPageView({
   };
   const beginPortableExport = async (action: "download" | "share") => {
     if (!spec || portablePlotIds.length === 0) return;
+    const blockedSelected = portablePlotPolicies.filter(
+      ({ plot, policy }) => portablePlotIds.includes(plot.id) && policy.family && !policy.supported,
+    );
+    if (blockedSelected.length > 0) {
+      setPortablePlotIds((current) =>
+        current.filter((id) => !blockedSelected.some(({ plot }) => plot.id === id)),
+      );
+      notifications.show({
+        message: "The selected portable plots are not source-compatible yet. Choose only the enabled plots.",
+        color: "yellow",
+      });
+      return;
+    }
     try {
       const persistSpec = buildPersistPayload();
       if (!persistSpec) return;
@@ -11092,7 +11188,7 @@ function AnalysisPageView({
               <Button
                 variant="default"
                 leftSection={<IconFileExport size={16} />}
-                disabled={!activeProtocolPolicy.supported}
+                disabled={activeProtocolPolicy.pending}
                 onClick={() => openPortableExport("download")}
               >
                 Portable report
@@ -11104,7 +11200,7 @@ function AnalysisPageView({
                   variant="default"
                   size={36}
                   aria-label="Portable report actions"
-                  disabled={!activeProtocolPolicy.supported}
+                  disabled={activeProtocolPolicy.pending}
                   style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
                 >
                   <IconChevronDown size={15} />
@@ -11409,9 +11505,9 @@ function AnalysisPageView({
                 <Button
                   size="compact-xs"
                   variant="subtle"
-                  onClick={() => setPortablePlotIds(portablePlotOptions.map((plot) => plot.id))}
+                  onClick={() => setPortablePlotIds(exportablePortablePlotIds)}
                 >
-                  Select all
+                  Select all supported
                 </Button>
                 <Button
                   size="compact-xs"
@@ -11427,8 +11523,10 @@ function AnalysisPageView({
               <Stack gap="xs">
                 {portablePlotOptions.map((plot) => {
                   const selected = portablePlotIds.includes(plot.id);
+                  const policy = portablePlotPolicies.find(({ plot: candidate }) => candidate.id === plot.id)?.policy;
+                  const blocked = Boolean(policy?.family && !policy.supported);
                   const toggle = () =>
-                    setPortablePlotIds((current) =>
+                    !blocked && setPortablePlotIds((current) =>
                       selected
                         ? current.filter((id) => id !== plot.id)
                         : [...current, plot.id]
@@ -11447,13 +11545,14 @@ function AnalysisPageView({
                         borderColor: selected
                           ? "var(--mantine-primary-color-3)"
                           : "var(--mantine-color-gray-2)",
-                        cursor: "pointer",
+                        cursor: blocked ? "not-allowed" : "pointer",
                       }}
-                      onClick={toggle}
+                      onClick={blocked ? undefined : toggle}
                     >
                       <Group wrap="nowrap" align="center">
                         <Checkbox
                           checked={selected}
+                          disabled={blocked}
                           onChange={toggle}
                           onClick={(event) => event.stopPropagation()}
                           aria-label={`Include ${plot.name}`}
@@ -11500,6 +11599,13 @@ function AnalysisPageView({
                           <Text size="xs" c="dimmed" lineClamp={2}>
                             {plot.subtitle || tabLabel(plot.tab)}
                           </Text>
+                          {blocked && (
+                            <Text size="xs" c="orange" lineClamp={2}>
+                              {policy?.pending
+                                ? `Checking source compatibility: ${policy.unresolvedCells.map((cell) => cell.name).join(", ")}`
+                                : `Protocol mapping required: ${policy?.unsupportedCells.map((cell) => cell.name).join(", ")}`}
+                            </Text>
+                          )}
                         </Stack>
                       </Group>
                     </Paper>
@@ -11508,6 +11614,23 @@ function AnalysisPageView({
               </Stack>
             </ScrollArea.Autosize>
           </Paper>
+          {guardedPortablePlots.length > 0 && (
+            <Alert color="yellow" title="Some saved plots cannot be included">
+              <Stack gap={4}>
+                <Text size="sm">
+                  These plots remain visible so the omission is explicit. They are disabled until
+                  their source compatibility is resolved.
+                </Text>
+                {guardedPortablePlots.map(({ plot, policy }) => (
+                  <Text key={plot.id} size="sm">
+                    <Text span fw={700}>{plot.name}</Text>: {policy.pending
+                      ? `checking ${policy.unresolvedCells.map((cell) => cell.name).join(", ")}`
+                      : `protocol mapping required for ${policy.unsupportedCells.map((cell) => cell.name).join(", ")}`}
+                  </Text>
+                ))}
+              </Stack>
+            </Alert>
+          )}
           {portableEstimate.isError ? (
             <Alert color="red">Could not estimate the export size.</Alert>
           ) : (

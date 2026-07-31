@@ -19,7 +19,7 @@ from app.db import Base
 from app.models import AppSetting, Cell, SourceFile, Test, TestFile
 from app.routers import library
 from app.routers import settings as settings_router
-from app.services import background_jobs, parsing, scanner, source_monitor
+from app.services import analysis_engine, background_jobs, parsing, scanner, source_monitor
 
 
 class ImmediateThread:
@@ -497,7 +497,7 @@ class SourceMonitorScheduleTests(unittest.TestCase):
         self.assertEqual(job["total"], 1)
         self.assertEqual(job["files"][0]["file_id"], tail.id)
 
-    def test_tracked_tail_scope_stays_one_item_with_legacy_internal_rows(self):
+    def test_tracked_tail_scope_rejects_multiple_internal_rows(self):
         db = self.make_session()
         cell = Cell(name="Legacy chain", cycling_status="active")
         first = SourceFile(hash="legacy-old", path="C:/data/legacy-old.ndax", filename="legacy-old.ndax", size=1, ext="ndax")
@@ -514,37 +514,27 @@ class SourceMonitorScheduleTests(unittest.TestCase):
         ])
         db.commit()
 
-        class DeferredThread:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def start(self):
-                pass
-
-        original_thread = library._JobThread
         background_jobs.clear_jobs()
         with library._source_check_job_lock:
             library._source_check_jobs.clear()
             library._latest_source_check_job_id = None
             library._next_source_check_job_id = 1
         try:
-            library._JobThread = DeferredThread
-            job = library.start_source_check_job(
-                db,
-                source_scope="tracked_tails",
-                trigger="scheduled",
-            )
+            with self.assertRaises(analysis_engine.CellSourceChainInvariantError) as context:
+                library.start_source_check_job(
+                    db,
+                    source_scope="tracked_tails",
+                    trigger="scheduled",
+                )
         finally:
-            library._JobThread = original_thread
             background_jobs.clear_jobs()
             with library._source_check_job_lock:
                 library._source_check_jobs.clear()
                 library._latest_source_check_job_id = None
                 library._next_source_check_job_id = 1
 
-        self.assertEqual(job["total"], 1)
-        self.assertEqual(job["source_cell_ids"], [cell.id])
-        self.assertEqual(job["files"][0]["file_id"], final.id)
+        self.assertEqual(context.exception.detail["code"], "single_internal_test_required")
+        self.assertEqual(context.exception.detail["cell_id"], cell.id)
 
     def test_daily_schedules_are_unchanged_by_the_unit(self):
         config = {

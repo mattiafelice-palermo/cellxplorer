@@ -33,3 +33,14 @@ test("keeps single-source and non-protocol tabs supported", () => {
     true,
   );
 });
+
+test("keeps protocol analysis fail-closed while a selected source count is unresolved", () => {
+  const policy = multiSourceAnalysisPolicy("dcir", [
+    { id: 1, name: "Cell A", source_count: null },
+  ]);
+  assert.equal(policy.pending, true);
+  assert.equal(policy.supported, false);
+  assert.deepEqual(policy.unresolvedCells, [
+    { id: 1, name: "Cell A", source_count: null },
+  ]);
+});
