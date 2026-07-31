@@ -5,30 +5,30 @@ import {
   Checkbox,
   Group,
   Modal,
-  Paper,
-  Select,
   Stack,
   Text,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { IconPlus, IconRefresh, IconTrash, IconDeviceFloppy } from "@tabler/icons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { IconAlertTriangle, IconArrowUp, IconDeviceFloppy, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  ApiError,
   CellDetail,
+  ContinuationInspectResult,
   ContinuationInspectSource,
   ImportFolderSelectionResult,
   ImportInspectResult,
   ImportPreview,
   SourceChangeImpactPreview,
   SourceFile,
-  attachContinuations,
-  detachTestSource,
-  inspectContinuationSources,
-  previewTestSourceChange,
-  reorderTestSources,
+  attachCellContinuations,
+  detachCellSource,
+  inspectCellContinuationSources,
   post,
+  previewCellSourceChange,
+  reorderCellSources,
 } from "../api";
 import { acknowledgementFindingIds, findingSummary, moveSource, preserveAcknowledgements } from "../continuationPolicy";
 import { ImportFilesystemPickerModal, ImportSourceSelection } from "./ImportFilesystemPickerModal";
@@ -40,19 +40,23 @@ function sourceFromFile(file: SourceFile): ContinuationInspectSource {
     kind: "existing",
     source_file_id: file.id,
     filename: file.filename,
+    source_path: file.path,
     hash: file.hash,
     start_time: file.start_time,
     end_time: null,
-    local_cycle_start: file.cycle_count ? 1 : null,
-    local_cycle_end: file.cycle_count,
+    local_cycle_start: null,
+    local_cycle_end: null,
     local_cycle_count: file.cycle_count,
     protocol_signature: null,
     device_info: file.device_info,
     channel: file.channel,
     nominal_capacity_mah: file.nominal_capacity_mah,
     active_mass_mg: file.active_mass_mg,
-    inspection_status: file.parse_status === "error" ? "error" : "ready",
+    inspection_status: file.parse_status === "error" ? "error" : file.parse_status === "parsed" ? "ready" : "pending",
     inspection_error: file.parse_error,
+    location_status: file.location_status,
+    parse_status: file.parse_status,
+    row_count: file.row_count,
   };
 }
 
@@ -60,66 +64,184 @@ function stagedSource(source: ImportPreview) {
   return { staged_name: source.staged_name, source_path: source.source_path };
 }
 
-function impactText(impact: SourceChangeImpactPreview) {
-  return `${impact.analysis_count} analyses and ${impact.saved_plot_count} saved plots will be invalidated.`;
+function flattenFiles(cell: CellDetail): SourceFile[] {
+  return cell.tests
+    .slice()
+    .sort((left, right) => left.id - right.id)
+    .flatMap((test) => test.files);
 }
+
+function reorderStaged(items: ImportPreview[], index: number, direction: -1 | 1): ImportPreview[] {
+  const next = [...items];
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= next.length) return next;
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
+function impactSummary(impact: SourceChangeImpactPreview, sourceName: (id: number | null) => string) {
+  const oldTail = sourceName(impact.old_tracked_source_id);
+  const newTail = impact.new_tracked_source_id === null
+    ? impact.new_tracked_filename ?? impact.new_tracked_staged_name ?? "Unknown"
+    : sourceName(impact.new_tracked_source_id);
+  return `${oldTail} → ${newTail}. ${impact.analysis_count} analyses and ${impact.saved_plot_count} saved plots will be invalidated.`;
+}
+
+type Mode = "attach" | "reorder" | "detach" | null;
 
 export function ContinuationManagementPanel({
   cell,
   onChanged,
+  onUpdateFile,
+  updating = false,
 }: {
   cell: CellDetail;
   onChanged: () => void;
+  onUpdateFile?: (file: SourceFile) => void;
+  updating?: boolean;
 }) {
-  const [orders, setOrders] = useState<Record<number, number[]>>({});
-  const [reorderTestId, setReorderTestId] = useState<number | null>(null);
+  const queryClient = useQueryClient();
+  const files = useMemo(() => flattenFiles(cell), [cell]);
+  const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
+  const currentFileIds = useMemo(() => files.map((file) => file.id), [files]);
+  const [order, setOrder] = useState<number[]>(currentFileIds);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
-  const [addTestId, setAddTestId] = useState<number | null>(null);
-  const [draggedSource, setDraggedSource] = useState<{ testId: number; index: number } | null>(null);
   const [stagedSources, setStagedSources] = useState<ImportPreview[]>([]);
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [mode, setMode] = useState<Mode>(null);
+  const [detachFileId, setDetachFileId] = useState<number | null>(null);
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
-  const [pendingAction, setPendingAction] = useState<{
-    title: string;
-    message: string;
-    impact: SourceChangeImpactPreview;
-    run: () => void;
-  } | null>(null);
 
   useEffect(() => {
-    setOrders(Object.fromEntries(cell.tests.map((test) => [test.id, test.files.map((file) => file.id)])));
-  }, [cell]);
+    setOrder(currentFileIds);
+  }, [cell.id, currentFileIds.join(",")]);
 
-  const currentTest = addTestId === null ? null : cell.tests.find((test) => test.id === addTestId) ?? null;
-  const finalNonEmptyTest = [...cell.tests].reverse().find((test) => test.files.length > 0) ?? cell.tests[cell.tests.length - 1] ?? null;
-  const attachSources = useMemo(() => stagedSources.map(stagedSource), [stagedSources]);
-  const attachInspection = useQuery({
-    queryKey: ["continuation-attach-inspection", addTestId, attachSources],
-    queryFn: () => inspectContinuationSources({ existing_test_id: addTestId, sources: attachSources }),
-    enabled: attachOpen && addTestId !== null && attachSources.length > 0,
+  const currentInspection = useQuery<ContinuationInspectResult>({
+    queryKey: ["cell-continuation-details", cell.id, currentFileIds],
+    queryFn: () => inspectCellContinuationSources(cell.id, {
+      sources: [],
+      proposed_order: currentFileIds.map((fileId) => `existing-${fileId}`),
+    }),
+    enabled: currentFileIds.length > 0,
+    refetchInterval: (query) => query.state.status === "success" && !query.state.data?.inspection_complete ? 1000 : false,
   });
-  const reorderInspection = useQuery({
-    queryKey: ["continuation-reorder-inspection", reorderTestId, reorderTestId === null ? [] : orders[reorderTestId] ?? []],
-    queryFn: () => inspectContinuationSources({ existing_test_id: reorderTestId, sources: [], proposed_order: (orders[reorderTestId ?? -1] ?? []).map((fileId) => `existing-${fileId}`) }),
-    enabled: reorderTestId !== null,
+
+  const proposalQuery = useQuery<SourceChangeImpactPreview>({
+    queryKey: [
+      "cell-source-change-proposal",
+      cell.id,
+      mode,
+      order,
+      stagedSources.map((source) => `${source.staged_name}:${source.source_path ?? ""}`).join("|"),
+      detachFileId,
+    ],
+    queryFn: () => {
+      if (mode === "attach") {
+        return previewCellSourceChange(cell.id, {
+          operation: "attach",
+          sources: stagedSources.map(stagedSource),
+        });
+      }
+      if (mode === "reorder") {
+        return previewCellSourceChange(cell.id, { operation: "reorder", file_ids: order });
+      }
+      return previewCellSourceChange(cell.id, { operation: "detach", detach_file_id: detachFileId });
+    },
+    enabled: mode === "attach"
+      ? stagedSources.length > 0
+      : mode === "reorder"
+        ? order.length > 0
+        : mode === "detach" && detachFileId !== null,
+    refetchInterval: (query) => query.state.status === "success" && !query.state.data?.inspection?.inspection_complete ? 1000 : false,
   });
+
+  const proposal = proposalQuery.data;
+  const proposalInspection = proposal?.inspection;
+  const displayedSources = useMemo(() => {
+    if (mode === "attach") {
+      return proposalInspection?.sources ?? stagedSources.map((source) => ({
+        ...sourceFromFile({
+          id: 0,
+          hash: source.hash,
+          path: source.source_path ?? source.staged_name,
+          filename: source.filename,
+          size: source.size,
+          ext: source.ext,
+          nda_version: source.nda_version,
+          device_info: source.device_info,
+          channel: source.channel,
+          barcode: source.barcode,
+          remarks: source.remarks,
+          start_time: source.start_time,
+          active_mass_mg: source.active_mass_mg,
+          nominal_capacity_mah: source.nominal_capacity_mah,
+          location_status: "online",
+          parse_status: "parsing",
+          parse_error: null,
+          parser_version: null,
+          row_count: null,
+          cycle_count: null,
+          registered: false,
+          test_id: null,
+          test_name: null,
+          cell_id: null,
+          cell_name: null,
+          created_at: "",
+        }),
+        key: source.staged_name,
+        kind: "staged" as const,
+        source_file_id: null,
+      })) as ContinuationInspectSource[];
+    }
+    const sourceMap = new Map((currentInspection.data?.sources ?? []).map((source) => [source.key, source]));
+    return order.map((fileId) => sourceMap.get(`existing-${fileId}`) ?? sourceFromFile(fileById.get(fileId)!)).filter(Boolean);
+  }, [currentInspection.data?.sources, fileById, mode, order, proposalInspection?.sources, stagedSources]);
+
+  useEffect(() => {
+    if (proposalInspection) {
+      setAcknowledged((current) => new Set(preserveAcknowledgements(current, proposalInspection)));
+    }
+  }, [proposalInspection]);
+
+  const sourceName = (id: number | null) => id === null ? "Unknown" : fileById.get(id)?.filename ?? `Source ${id}`;
+  const proposalConfirmationIds = proposalInspection ? acknowledgementFindingIds(proposalInspection) : [];
+  const proposalReady = Boolean(
+    proposalInspection?.inspection_complete &&
+      proposalInspection.can_submit &&
+      proposalConfirmationIds.every((id) => acknowledged.has(id)),
+  );
+
+  const closeProposal = () => {
+    setMode(null);
+    setDetachFileId(null);
+    setStagedSources([]);
+    setAcknowledged(new Set());
+  };
 
   const lifecycleMutation = useMutation({
-    mutationFn: (action: { kind: "attach" | "reorder" | "detach"; testId: number; fileIds?: number[]; fileId?: number; sources?: ReturnType<typeof stagedSource>[]; acknowledgedFindingIds?: string[] }) => {
-      if (action.kind === "attach") return attachContinuations(action.testId, { sources: action.sources ?? [], acknowledged_finding_ids: action.acknowledgedFindingIds });
-      if (action.kind === "reorder") return reorderTestSources(action.testId, { file_ids: action.fileIds ?? [], acknowledged_finding_ids: action.acknowledgedFindingIds });
-      return detachTestSource(action.testId, action.fileId ?? 0, { confirm: true, confirmation_token: pendingAction?.impact.confirmation_token });
+    mutationFn: (action: { mode: Exclude<Mode, null>; order?: number[]; sources?: ReturnType<typeof stagedSource>[]; fileId?: number; confirmationToken?: string }) => {
+      if (action.mode === "attach") return attachCellContinuations(cell.id, { sources: action.sources ?? [], acknowledged_finding_ids: Array.from(acknowledged) });
+      if (action.mode === "reorder") return reorderCellSources(cell.id, { file_ids: action.order ?? [], acknowledged_finding_ids: Array.from(acknowledged) });
+      return detachCellSource(cell.id, action.fileId ?? 0, { confirm: true, confirmation_token: action.confirmationToken, acknowledged_finding_ids: Array.from(acknowledged) });
     },
     onSuccess: (result, action) => {
-      notifications.show({ message: action.kind === "attach" ? `Added sources to ${result.cell.name}` : action.kind === "reorder" ? `Saved source order for ${result.cell.name}` : `Detached source from ${result.cell.name}`, color: "teal" });
-      setPendingAction(null);
-      setAttachOpen(false);
-      setStagedSources([]);
-      setAcknowledged(new Set());
+      notifications.show({
+        message: action.mode === "attach" ? `Added ${result.sources.length} source${result.sources.length === 1 ? "" : "s"} to ${result.cell.name}` : action.mode === "reorder" ? `Saved source order for ${result.cell.name}` : `Detached source from ${result.cell.name}`,
+        color: "teal",
+      });
+      for (const key of ["cell", "cells", "files", "tree", "analyses", "activity", "background-jobs", "source-check-job"]) {
+        void queryClient.invalidateQueries({ queryKey: key === "cell" ? [key, cell.id] : [key] });
+      }
+      closeProposal();
       onChanged();
     },
-    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+    onError: (error: Error) => {
+      if (error instanceof ApiError && (error.status === 409 || error.status === 422)) {
+        void queryClient.invalidateQueries({ queryKey: ["cell-source-change-proposal"] });
+      }
+      notifications.show({ message: error.message, color: "red" });
+    },
   });
 
   const loadStagedSources = async ({ filePaths, folderPaths }: ImportSourceSelection) => {
@@ -133,7 +255,7 @@ export function ContinuationManagementPanel({
       const inspected = await post<ImportInspectResult>("/api/imports/inspect-paths", { paths });
       setStagedSources(inspected.files);
       setPickerOpen(false);
-      setAttachOpen(true);
+      setMode("attach");
     } catch (error) {
       notifications.show({ message: error instanceof Error ? error.message : "Sources could not be inspected.", color: "red" });
     } finally {
@@ -141,72 +263,100 @@ export function ContinuationManagementPanel({
     }
   };
 
-  const saveReorder = (testId: number) => {
-    const fileIds = orders[testId] ?? [];
-    const test = cell.tests.find((item) => item.id === testId);
-    if (!test) return;
-    previewTestSourceChange(testId, { operation: "reorder", file_ids: fileIds })
-      .then((impact) => setPendingAction({
-        title: "Confirm source reorder",
-        message: `Tracked tail: ${test.files.find((file) => file.id === test.files[test.files.length - 1]?.id)?.filename ?? "—"} → ${test.files.find((file) => file.id === fileIds[fileIds.length - 1])?.filename ?? "—"}. ${impactText(impact)}`,
-        impact,
-        run: () => lifecycleMutation.mutate({ kind: "reorder", testId, fileIds, acknowledgedFindingIds: Array.from(acknowledged) }),
-      }))
-      .catch((error: Error) => notifications.show({ message: error.message, color: "red" }));
-  };
-
-  const detach = (testId: number, file: SourceFile) => {
-    previewTestSourceChange(testId, { operation: "detach", detach_file_id: file.id })
-      .then((impact) => setPendingAction({
-        title: `Detach ${file.filename}`,
-        message: `The source file stays on disk. ${impactText(impact)} Global cycle numbering and saved-analysis data may change.`,
-        impact,
-        run: () => lifecycleMutation.mutate({ kind: "detach", testId, fileId: file.id }),
-      }))
-      .catch((error: Error) => notifications.show({ message: error.message, color: "red" }));
-  };
-
-  const attach = () => {
-    if (addTestId === null || !attachSources.length || !attachInspection.data) return;
-    const findings = attachInspection.data.findings;
-    const nextAcknowledged = preserveAcknowledgements(acknowledged, attachInspection.data);
-    setAcknowledged(new Set(nextAcknowledged));
-    previewTestSourceChange(addTestId, { operation: "attach", sources: attachSources })
-      .then((impact) => setPendingAction({
-        title: `Add sources to ${currentTest?.name ?? "Test"}`,
-        message: `${attachSources.length} source${attachSources.length === 1 ? "" : "s"} will be appended. ${impactText(impact)} ${findings.length ? "Review the findings shown in the source list." : "No continuation findings were reported."}`,
-        impact,
-        run: () => lifecycleMutation.mutate({ kind: "attach", testId: addTestId, sources: attachSources, acknowledgedFindingIds: nextAcknowledged }),
-      }))
-      .catch((error: Error) => notifications.show({ message: error.message, color: "red" }));
-  };
+  const mainSources = useMemo(() => {
+    const details = new Map((currentInspection.data?.sources ?? []).map((source) => [source.key, source]));
+    return order.map((fileId) => details.get(`existing-${fileId}`) ?? sourceFromFile(fileById.get(fileId)!)).filter(Boolean);
+  }, [currentInspection.data?.sources, fileById, order]);
+  const dirty = order.join(",") !== currentFileIds.join(",");
+  const actionInProgress = lifecycleMutation.isPending || proposalQuery.isFetching;
 
   return (
     <Stack gap="sm">
-      <Group justify="space-between"><Text fw={700}>Continuation sources</Text><Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => { setAddTestId(finalNonEmptyTest?.id ?? null); setPickerOpen(true); }}>Add continuation</Button></Group>
-      <Text size="xs" c="dimmed">Sources stay as original files. Reordering changes the logical chain and tracked tail; detaching never deletes the disk file.</Text>
-      {cell.tests.map((test, testIndex) => {
-        const order = orders[test.id] ?? test.files.map((file) => file.id);
-        const filesById = new Map(test.files.map((file) => [file.id, file]));
-        const orderedFiles = order.map((id) => filesById.get(id)).filter((file): file is SourceFile => Boolean(file));
-        const dirty = order.join(",") !== test.files.map((file) => file.id).join(",");
-        const listSources = orderedFiles.map(sourceFromFile);
-        return <Paper key={test.id} withBorder p="sm"><Group justify="space-between" mb="xs"><Text fw={700}>{test.name}</Text><Badge size="xs" variant="light">{orderedFiles.length} source{orderedFiles.length === 1 ? "" : "s"}</Badge></Group><ContinuationSourceList sources={listSources} findings={reorderTestId === test.id ? reorderInspection.data?.findings ?? [] : []} onMove={(index, direction) => { setOrders((current) => ({ ...current, [test.id]: moveSource(current[test.id] ?? order, index, direction) })); setReorderTestId(test.id); }} onDragStart={(index) => setDraggedSource({ testId: test.id, index })} onDrop={(index) => { if (!draggedSource || draggedSource.testId !== test.id) return; setOrders((current) => { const next = [...(current[test.id] ?? order)]; const [item] = next.splice(draggedSource.index, 1); next.splice(index, 0, item); return { ...current, [test.id]: next }; }); setReorderTestId(test.id); setDraggedSource(null); }} disabled={lifecycleMutation.isPending} /><Group justify="space-between" mt="xs"><Text size="xs" c="dimmed">{testIndex === cell.tests.length - 1 ? "Final Test in Cell" : "Earlier Test; this Test has its own tail"}</Text><Group gap="xs">{dirty && <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={lifecycleMutation.isPending} onClick={() => saveReorder(test.id)}>Save order</Button>}</Group></Group><Stack gap={3} mt="xs">{orderedFiles.map((file) => <Group key={file.id} justify="space-between" gap="xs"><Text size="xs" truncate style={{ flex: 1, minWidth: 0 }}>{file.filename}</Text><Button size="compact-xs" variant="subtle" color="red" disabled={orderedFiles.length <= 1} leftSection={<IconTrash size={13} />} onClick={() => detach(test.id, file)}>Detach</Button></Group>)}</Stack></Paper>;
-      })}
+      <Group justify="space-between">
+        <div>
+          <Text fw={700}>Cell source chain</Text>
+          <Text size="xs" c="dimmed">Original files stay separate. The final source is the tracked tail; earlier sources are historical.</Text>
+        </div>
+        <Group gap="xs">
+          {dirty && <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={proposalQuery.isFetching} onClick={() => { setAcknowledged(new Set()); setMode("reorder"); }}>Review order</Button>}
+          <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setPickerOpen(true)}>Add continuation</Button>
+        </Group>
+      </Group>
+      {currentInspection.isError && <Alert color="red">{currentInspection.error instanceof Error ? currentInspection.error.message : "Source details could not be prepared."}</Alert>}
+      {currentInspection.data && !currentInspection.data.inspection_complete && <Alert color="blue">Preparing source details from the current Cell caches…</Alert>}
+      <ContinuationSourceList
+        sources={mainSources}
+        findings={[]}
+        onMove={(index, direction) => setOrder((current) => moveSource(current, index, direction))}
+        onDragStart={setDraggedIndex}
+        onDrop={(index) => {
+          if (draggedIndex === null) return;
+          setOrder((current) => {
+            const next = [...current];
+            const [item] = next.splice(draggedIndex, 1);
+            next.splice(index, 0, item);
+            return next;
+          });
+          setDraggedIndex(null);
+        }}
+        onUpdateSource={(sourceKey) => {
+          const fileId = Number(sourceKey.replace("existing-", ""));
+          const file = fileById.get(fileId);
+          if (file && onUpdateFile) onUpdateFile(file);
+        }}
+        updateDisabled={updating}
+        onRemove={(sourceKey) => {
+          const fileId = Number(sourceKey.replace("existing-", ""));
+          setMode("detach");
+          setDetachFileId(fileId);
+          setAcknowledged(new Set());
+        }}
+        disabled={lifecycleMutation.isPending}
+      />
 
       <ImportFilesystemPickerModal opened={pickerOpen} loading={pickerLoading} onClose={() => setPickerOpen(false)} onConfirm={loadStagedSources} />
-      <Modal opened={attachOpen} onClose={() => setAttachOpen(false)} title="Add continuation sources" size="60rem">
-        <Stack gap="sm"><Select label="Target Test" data={cell.tests.map((test) => ({ value: String(test.id), label: test.name }))} value={addTestId === null ? null : String(addTestId)} onChange={(value) => { setAddTestId(value ? Number(value) : null); setAcknowledged(new Set()); }} />
-          {currentTest && currentTest.id !== finalNonEmptyTest?.id && <Alert color="blue">These sources will be appended to {currentTest.name}. Its final source remains that Test’s tracked tail; the Cell’s overall tracked tail is still the final source of the final non-empty Test.</Alert>}
-          {attachInspection.isPending && <Alert color="blue">Inspecting the proposed continuation…</Alert>}
-          {attachInspection.isError && <Alert color="red">{attachInspection.error instanceof Error ? attachInspection.error.message : "Inspection failed."}</Alert>}
-          {attachInspection.data && <ContinuationSourceList sources={attachInspection.data.sources} findings={attachInspection.data.findings} onMove={() => undefined} disabled />}
-          {attachInspection.data && acknowledgementFindingIds(attachInspection.data).length > 0 && <Stack gap={4}><Text size="xs" fw={700}>Acknowledgements</Text>{attachInspection.data.findings.filter((finding) => finding.severity === "confirmation").map((finding) => <Checkbox key={finding.id} size="xs" checked={acknowledged.has(finding.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); if (event.currentTarget.checked) next.add(finding.id); else next.delete(finding.id); return next; })} label={findingSummary(finding)} />)}</Stack>}
-          <Group justify="flex-end"><Button variant="default" onClick={() => setAttachOpen(false)}>Cancel</Button><Button leftSection={<IconPlus size={14} />} disabled={!attachInspection.data?.can_submit || attachInspection.data?.inspection_complete !== true || (attachInspection.data ? !acknowledgementFindingIds(attachInspection.data).every((id) => acknowledged.has(id)) : true)} loading={lifecycleMutation.isPending} onClick={attach}>Review impact and add</Button></Group>
+      <Modal opened={mode !== null} onClose={closeProposal} title={mode === "attach" ? "Review added sources" : mode === "reorder" ? "Review source order" : "Review source detachment"} size="70rem">
+        <Stack gap="sm">
+          {proposalQuery.isPending && <Alert color="blue">Preparing the complete Cell proposal…</Alert>}
+          {proposalQuery.isError && <Alert color="red">{proposalQuery.error instanceof Error ? proposalQuery.error.message : "The Cell proposal could not be prepared."}</Alert>}
+          {proposalInspection && !proposalInspection.inspection_complete && <Alert color="blue">Preparation is still pending. This review will update automatically.</Alert>}
+          {proposalInspection?.findings.filter((finding) => finding.severity === "blocking").map((finding) => <Alert key={finding.id} color="red" icon={<IconAlertTriangle size={16} />}>{findingSummary(finding)}</Alert>)}
+          {proposal && <Text size="sm" c="dimmed">{impactSummary(proposal, sourceName)} {proposal.global_cycle_numbering_changes ? "Global cycle numbering will change." : "Global cycle numbering is unchanged."} {proposal.destructive ? "The source row will be detached, but the original disk file will remain." : "This change is reversible by changing the order."}</Text>}
+          {mode === "attach" && proposalInspection && proposalInspection.suggested_order.length > 0 && <Group justify="flex-end"><Button size="compact-xs" variant="default" leftSection={<IconArrowUp size={13} />} disabled={actionInProgress} onClick={() => setStagedSources((current) => { const byKey = new Map(current.map((source) => [source.staged_name, source])); return proposalInspection.suggested_order.map((key) => byKey.get(key)).filter((source): source is ImportPreview => Boolean(source)); })}>Use suggested order</Button></Group>}
+          <ContinuationSourceList
+            sources={displayedSources}
+            findings={proposalInspection?.findings ?? []}
+            onMove={(index, direction) => {
+              if (mode !== "attach") return;
+              const existingCount = (proposalInspection?.sources.length ?? stagedSources.length) - stagedSources.length;
+              setStagedSources((current) => reorderStaged(current, index - existingCount, direction));
+            }}
+            onRemove={mode === "attach" ? (sourceKey) => setStagedSources((current) => current.filter((source) => source.staged_name !== sourceKey)) : undefined}
+            canRemoveSource={mode === "attach" ? (sourceKey) => stagedSources.some((source) => source.staged_name === sourceKey) : undefined}
+            disabled={actionInProgress || mode !== "attach"}
+            emptyMessage="No sources remain in this proposal."
+          />
+          {proposalInspection && proposalConfirmationIds.length > 0 && <Stack gap={4}><Text size="xs" fw={700}>Acknowledgements</Text>{proposalInspection.findings.filter((finding) => finding.severity === "confirmation").map((finding) => <Checkbox key={finding.id} size="xs" disabled={actionInProgress} checked={acknowledged.has(finding.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); if (event.currentTarget.checked) next.add(finding.id); else next.delete(finding.id); return next; })} label={findingSummary(finding)} />)}</Stack>}
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={closeProposal}>Cancel</Button>
+            <Button
+              leftSection={mode === "attach" ? <IconPlus size={14} /> : mode === "reorder" ? <IconArrowUp size={14} /> : <IconTrash size={14} />}
+              color={mode === "detach" ? "red" : undefined}
+              disabled={!proposalReady || actionInProgress || (mode === "attach" && stagedSources.length === 0)}
+              loading={lifecycleMutation.isPending}
+              onClick={() => {
+                if (!mode || !proposal) return;
+                lifecycleMutation.mutate(mode === "attach"
+                  ? { mode, sources: stagedSources.map(stagedSource) }
+                  : mode === "reorder"
+                    ? { mode, order }
+                    : { mode, fileId: detachFileId ?? 0, confirmationToken: proposal.confirmation_token });
+              }}
+            >
+              {mode === "attach" ? "Add sources" : mode === "reorder" ? "Save order" : "Detach source"}
+            </Button>
+          </Group>
         </Stack>
-      </Modal>
-      <Modal opened={pendingAction !== null} onClose={() => setPendingAction(null)} title={pendingAction?.title ?? "Confirm source change"}>
-        <Stack gap="sm"><Text size="sm">{pendingAction?.message}</Text>{pendingAction?.impact.analyses.length ? <Alert color="orange"><Stack gap={2}>{pendingAction.impact.analyses.map((analysis) => <Text key={analysis.id} size="xs">{analysis.title}: {analysis.plot_count} saved plots</Text>)}</Stack></Alert> : null}<Group justify="flex-end"><Button variant="default" onClick={() => setPendingAction(null)}>Cancel</Button><Button color="red" loading={lifecycleMutation.isPending} onClick={() => pendingAction?.run()}>Confirm change</Button></Group></Stack>
       </Modal>
     </Stack>
   );

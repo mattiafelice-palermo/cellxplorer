@@ -399,7 +399,7 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
   );
 }
 
-function FilesPanel({
+function LegacyFilesPanel({
   cell,
   onUpdateFile,
   updating,
@@ -439,6 +439,27 @@ function FilesPanel({
         </Paper>
       ))}
     </Stack>
+  );
+}
+
+function FilesPanel({
+  cell,
+  onUpdateFile,
+  updating,
+  onContinuationChanged,
+}: {
+  cell: CellDetail;
+  onUpdateFile?: (file: SourceFile) => void;
+  updating?: boolean;
+  onContinuationChanged?: () => void;
+}) {
+  return (
+    <ContinuationManagementPanel
+      cell={cell}
+      onChanged={onContinuationChanged ?? (() => undefined)}
+      onUpdateFile={onUpdateFile}
+      updating={updating}
+    />
   );
 }
 

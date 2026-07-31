@@ -1697,6 +1697,7 @@ export interface ContinuationInspectSourceRequest {
 export interface ContinuationInspectRequest {
   sources: ContinuationInspectSourceRequest[];
   existing_test_id?: number | null;
+  existing_cell_id?: number | null;
   proposed_order?: string[] | null;
 }
 
@@ -1705,6 +1706,7 @@ export interface ContinuationInspectSource {
   kind: ContinuationSourceKind;
   source_file_id: number | null;
   filename: string;
+  source_path?: string | null;
   hash: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -1719,6 +1721,9 @@ export interface ContinuationInspectSource {
   inspection_status: ContinuationInspectionStatus;
   inspection_error?: string | null;
   cache_build_status?: "ready" | "started" | "building" | "failed";
+  location_status?: "online" | "offline" | "changed" | "changing" | null;
+  parse_status?: "unparsed" | "parsing" | "parsed" | "error" | null;
+  row_count?: number | null;
 }
 
 export interface ContinuationFinding {
@@ -1785,7 +1790,8 @@ export interface TestSourceSummary {
 
 export interface SourceLifecycleMutationResult {
   cell: { id: number; name: string };
-  test: { id: number; name: string; sources: TestSourceSummary[] };
+  sources: TestSourceSummary[];
+  test?: { id: number; name: string; sources: TestSourceSummary[] };
   tracked_source_id: number | null;
   invalidated_analysis_ids: number[];
   queued_warmup_plots: number;
@@ -1819,8 +1825,8 @@ export interface SourceChangeImpactAnalysis {
 export interface SourceChangeImpactPreview {
   cell_id: number;
   cell_name: string;
-  test_id: number;
-  test_name: string;
+  test_id?: number;
+  test_name?: string;
   operation: "attach" | "reorder" | "detach";
   current_file_ids: number[];
   proposed_file_ids: number[];
@@ -1837,6 +1843,7 @@ export interface SourceChangeImpactPreview {
   saved_plot_count: number;
   analyses: SourceChangeImpactAnalysis[];
   confirmation_token: string;
+  inspection: ContinuationInspectResult;
 }
 
 export interface SourceChangeImpactRequest {
@@ -1861,6 +1868,32 @@ export function reorderTestSources(testId: number, body: ReorderSourcesRequest) 
 export function detachTestSource(testId: number, fileId: number, body?: DetachSourceRequest) {
   return post<SourceLifecycleMutationResult>(
     `/api/tests/${testId}/detach/${fileId}`,
+    body ?? {},
+  );
+}
+
+export function inspectCellContinuationSources(
+  cellId: number,
+  body: Omit<ContinuationInspectRequest, "existing_test_id" | "existing_cell_id">,
+) {
+  return post<ContinuationInspectResult>(`/api/cells/${cellId}/continuations/inspect`, body);
+}
+
+export function previewCellSourceChange(cellId: number, body: SourceChangeImpactRequest) {
+  return post<SourceChangeImpactPreview>(`/api/cells/${cellId}/source-change/impact`, body);
+}
+
+export function attachCellContinuations(cellId: number, body: AttachContinuationsRequest) {
+  return post<SourceLifecycleMutationResult>(`/api/cells/${cellId}/continuations`, body);
+}
+
+export function reorderCellSources(cellId: number, body: ReorderSourcesRequest) {
+  return post<SourceLifecycleMutationResult>(`/api/cells/${cellId}/reorder`, body);
+}
+
+export function detachCellSource(cellId: number, fileId: number, body?: DetachSourceRequest) {
+  return post<SourceLifecycleMutationResult>(
+    `/api/cells/${cellId}/detach/${fileId}`,
     body ?? {},
   );
 }

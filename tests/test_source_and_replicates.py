@@ -1327,6 +1327,60 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
         )
         self.assertEqual(result["tracked_source_id"], sources[0].id)
 
+    def test_cell_level_lifecycle_returns_one_flat_source_chain(self):
+        db = self.make_session()
+        cell, test, sources = self._seed_test_with_sources(db)
+        sources[0].start_time = "2026-01-01 00:00:00"
+        sources[1].start_time = "2026-01-03 00:00:00"
+        db.commit()
+        analysis = self._ready_analysis(
+            files._inspect_existing_order(db, test, [sources[1].id, sources[0].id])
+        )
+        finding_id = next(
+            item["id"] for item in analysis["findings"] if item["code"] == "order_reversed"
+        )
+        with patch.object(files, "_inspect_test_chain", return_value=analysis), patch.object(
+            files.cache_maintenance,
+            "invalidate_cell_dependents",
+            return_value={"analysis_ids": [], "queued_plots": 0},
+        ):
+            result = files.reorder_cell_sources(
+                cell.id,
+                files.ReorderRequest(
+                    file_ids=[sources[1].id, sources[0].id],
+                    acknowledged_finding_ids=[finding_id],
+                ),
+                db=db,
+            )
+        self.assertNotIn("test", result)
+        self.assertEqual(
+            [item["file_id"] for item in result["sources"]],
+            [sources[1].id, sources[0].id],
+        )
+
+    def test_cell_level_lifecycle_rejects_multiple_internal_rows(self):
+        db = self.make_session()
+        cell, _test, _sources = self._seed_test_with_sources(db)
+        db.add(Test(cell_id=cell.id, name="Unexpected second row"))
+        db.commit()
+        with self.assertRaises(HTTPException) as ctx:
+            files.preview_cell_source_change(
+                cell.id,
+                files.SourceChangeImpactRequest(
+                    operation="reorder",
+                    file_ids=[1, 2],
+                ),
+                db=db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "single_internal_test_required")
+
+    def test_new_library_cell_gets_one_internal_source_row(self):
+        db = self.make_session()
+        library.create_cell(library.CellCreate(name="New cell"), db=db)
+        cell = db.query(Cell).filter(Cell.name == "New cell").one()
+        self.assertEqual(len(cell.tests), 1)
+
     def test_reorder_reverse_requires_acknowledgement(self):
         db = self.make_session()
         _cell, test, sources = self._seed_test_with_sources(db)

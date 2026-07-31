@@ -28,7 +28,9 @@ test("existing-cell source lists mark only the final source as the tracked tail"
   assert.equal(sourceRoleLabel(sources[2], 2, sources.length), "Tracked tail");
 });
 
-test("management reorder cannot move beyond a Test boundary", () => {
+test("management reorder moves only within the Cell source chain", () => {
   assert.deepEqual(moveSource([1, 2, 3], 0, -1), [1, 2, 3]);
   assert.deepEqual(moveSource([1, 2, 3], 2, 1), [1, 2, 3]);
+  assert.deepEqual(moveSource([1, 2, 3], 0, 1), [2, 1, 3]);
+  assert.deepEqual(moveSource([1, 2, 3], 2, -1), [1, 3, 2]);
 });

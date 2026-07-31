@@ -733,6 +733,8 @@ def create_cell(req: CellCreate, db: Session = Depends(get_db)):
         raise HTTPException(409, "A cell with that name already exists")
     cell = Cell(name=req.name.strip(), description=req.description)
     db.add(cell)
+    db.flush()
+    db.add(Test(cell_id=cell.id, name="Imported file"))
     db.commit()
     return cell_dict(db, cell)
 

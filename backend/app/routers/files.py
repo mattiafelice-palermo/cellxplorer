@@ -687,6 +687,7 @@ class ContinuationInspectSourceRequest(BaseModel):
 class ContinuationInspectRequest(BaseModel):
     sources: list[ContinuationInspectSourceRequest]
     existing_test_id: int | None = None
+    existing_cell_id: int | None = None
     proposed_order: list[str] | None = None
 
 
@@ -1020,6 +1021,7 @@ def _continuation_existing_source(
         "kind": "existing",
         "source_file_id": sf.id,
         "filename": sf.filename,
+        "source_path": sf.path,
         "hash": sf.hash,
         "input_order": link.position if input_order is None else input_order,
         "existing_test_id": existing_test_id,
@@ -1044,6 +1046,9 @@ def _continuation_existing_source(
         "local_cycle_end": None,
         "local_cycle_count": sf.cycle_count,
         "end_time": None,
+        "location_status": sf.location_status,
+        "parse_status": sf.parse_status,
+        "row_count": sf.row_count,
     }
     return continuations.enrich_source_timing(source, source_path=Path(sf.path) if sf.path else None)
 
@@ -1447,6 +1452,30 @@ def inspect_continuation_sources(req: ContinuationInspectRequest, db: Session = 
         staged_keys=staged_keys,
         proposed_staged_order=req.proposed_order,
     )
+
+
+@router.post("/cells/{cell_id}/continuations/inspect")
+def inspect_cell_continuation_sources(
+    cell_id: int,
+    req: ContinuationInspectRequest,
+    db: Session = Depends(get_db),
+):
+    """Inspect the one Cell-level source chain used by lifecycle mutations."""
+    _cell, test = _load_cell_single_test_or_404(db, cell_id)
+    current_file_ids = analysis_usage.ordered_test_file_ids(test)
+    if req.sources:
+        return _inspect_test_chain(db, test, req.sources, proposed_file_ids=current_file_ids)
+
+    proposed_file_ids = current_file_ids
+    if req.proposed_order is not None:
+        expected_keys = {f"existing-{file_id}" for file_id in current_file_ids}
+        if set(req.proposed_order) != expected_keys or len(req.proposed_order) != len(expected_keys):
+            raise HTTPException(409, "The Cell source order must contain every source exactly once.")
+        try:
+            proposed_file_ids = [int(key.removeprefix("existing-")) for key in req.proposed_order]
+        except ValueError as exc:
+            raise HTTPException(409, "The Cell source order contains an invalid source key.") from exc
+    return _inspect_existing_order(db, test, proposed_file_ids)
 
 
 @router.post("/imports/list-sources")
@@ -2008,6 +2037,24 @@ def _load_test_or_404(db: Session, test_id: int) -> Test:
     return test
 
 
+def _load_cell_single_test_or_404(db: Session, cell_id: int) -> tuple[Cell, Test]:
+    cell = db.get(Cell, cell_id)
+    if cell is None:
+        raise HTTPException(404, "No such cell")
+    tests = db.query(Test).filter(Test.cell_id == cell.id).order_by(Test.id).all()
+    if len(tests) != 1:
+        raise HTTPException(
+            409,
+            {
+                "code": "single_internal_test_required",
+                "message": "This Cell must have exactly one internal source-chain row.",
+                "cell_id": cell.id,
+                "test_count": len(tests),
+            },
+        )
+    return cell, tests[0]
+
+
 def _inspect_test_chain(
     db: Session,
     test: Test,
@@ -2404,3 +2451,80 @@ def reorder_files(test_id: int, req: ReorderRequest, db: Session = Depends(get_d
     )
     db.refresh(test)
     return _lifecycle_mutation_response(test, cell, invalidated=invalidated)
+
+
+def _cell_level_mutation_response(result: dict) -> dict:
+    """Remove the internal Test envelope from the Cell-level API contract."""
+    internal = result.pop("test", None) or {}
+    result["sources"] = internal.get("sources", [])
+    return result
+
+
+def _cell_proposal_analysis(
+    db: Session,
+    test: Test,
+    req: SourceChangeImpactRequest,
+) -> dict:
+    operation = req.operation.strip().lower()
+    current_file_ids = analysis_usage.ordered_test_file_ids(test)
+    if operation == "attach":
+        if not req.sources:
+            raise HTTPException(400, "Attach impact preview requires staged sources")
+        return _inspect_test_chain(db, test, req.sources, proposed_file_ids=current_file_ids)
+    if operation == "reorder":
+        try:
+            continuations.validate_exact_file_id_permutation(current_file_ids, req.file_ids)
+        except continuations.ContinuationValidationError as exc:
+            _raise_continuation_validation(exc)
+        return _inspect_existing_order(db, test, req.file_ids)
+    if req.detach_file_id is None or req.detach_file_id not in current_file_ids:
+        raise HTTPException(404, "File is not attached to this Cell")
+    if len(current_file_ids) <= 1:
+        raise HTTPException(409, "Cannot detach the last source from a Cell")
+    proposed = [file_id for file_id in current_file_ids if file_id != req.detach_file_id]
+    return _inspect_existing_order(db, test, proposed)
+
+
+@router.post("/cells/{cell_id}/source-change/impact")
+def preview_cell_source_change(
+    cell_id: int,
+    req: SourceChangeImpactRequest,
+    db: Session = Depends(get_db),
+):
+    _cell, test = _load_cell_single_test_or_404(db, cell_id)
+    impact = preview_test_source_change(test.id, req, db)
+    impact["inspection"] = _cell_proposal_analysis(db, test, req)
+    impact.pop("test_id", None)
+    impact.pop("test_name", None)
+    return impact
+
+
+@router.post("/cells/{cell_id}/continuations")
+def attach_cell_continuations(
+    cell_id: int,
+    req: AttachContinuationsRequest,
+    db: Session = Depends(get_db),
+):
+    _cell, test = _load_cell_single_test_or_404(db, cell_id)
+    return _cell_level_mutation_response(attach_continuations(test.id, req, db))
+
+
+@router.post("/cells/{cell_id}/reorder")
+def reorder_cell_sources(
+    cell_id: int,
+    req: ReorderRequest,
+    db: Session = Depends(get_db),
+):
+    _cell, test = _load_cell_single_test_or_404(db, cell_id)
+    return _cell_level_mutation_response(reorder_files(test.id, req, db))
+
+
+@router.post("/cells/{cell_id}/detach/{file_id}")
+def detach_cell_source(
+    cell_id: int,
+    file_id: int,
+    req: DetachSourceRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    _cell, test = _load_cell_single_test_or_404(db, cell_id)
+    return _cell_level_mutation_response(detach_file(test.id, file_id, req, db))

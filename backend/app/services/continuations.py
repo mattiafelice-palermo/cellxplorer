@@ -668,6 +668,7 @@ def _continuation_chain_response(
                 "kind": source["kind"],
                 "source_file_id": source.get("source_file_id"),
                 "filename": source.get("filename"),
+                "source_path": source.get("source_path"),
                 "hash": source.get("hash"),
                 "start_time": source.get("start_time"),
                 "end_time": source.get("end_time"),
@@ -682,6 +683,9 @@ def _continuation_chain_response(
                 "inspection_status": source.get("inspection_status", "pending"),
                 "inspection_error": source.get("inspection_error"),
                 "cache_build_status": source.get("cache_build_status"),
+                "location_status": source.get("location_status"),
+                "parse_status": source.get("parse_status"),
+                "row_count": source.get("row_count"),
             }
         )
 
