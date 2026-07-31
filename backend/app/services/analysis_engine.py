@@ -258,6 +258,78 @@ def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[Source
     return hashes, files
 
 
+def source_descriptors(
+    files: list[SourceFile],
+    segments: list[dict],
+    missing: list[str],
+    frame: pd.DataFrame | None = None,
+) -> list[dict]:
+    """Describe the one ordered Cell source chain without exposing paths.
+
+    ``segments`` only contains sources that were successfully stitched.  The
+    descriptor list deliberately covers every ordered source so a missing or
+    invalid cache is visible to callers instead of silently disappearing.
+    """
+    by_segment = {int(segment.get("segment", -1)): segment for segment in segments}
+    missing_hashes = set(missing)
+    timestamp_column = None
+    if frame is not None:
+        timestamp_column = next(
+            (column for column in ("start_timestamp", "timestamp") if column in frame.columns),
+            None,
+        )
+    descriptors: list[dict] = []
+    for position, source_file in enumerate(files, start=1):
+        segment = by_segment.get(position - 1) or {}
+        start_timestamp = None
+        end_timestamp = None
+        if timestamp_column and not frame.empty and "segment" in frame.columns:
+            values = pd.to_datetime(
+                frame.loc[frame["segment"] == position - 1, timestamp_column],
+                errors="coerce",
+            ).dropna()
+            if not values.empty:
+                start_timestamp = values.min().isoformat()
+                end_timestamp = values.max().isoformat()
+        descriptor = {
+            "source_file_id": source_file.id,
+            "source_position": position,
+            "filename": source_file.filename,
+            "source_hash": source_file.hash,
+            "status": "missing" if source_file.hash in missing_hashes else "ready",
+            "tracked_tail": position == len(files),
+            "local_cycle_start": segment.get("source_cycle_start"),
+            "local_cycle_end": segment.get("source_cycle_end"),
+            "local_cycle_count": segment.get("source_cycle_count", 0),
+            "global_cycle_start": segment.get("cycle_start"),
+            "global_cycle_end": segment.get("cycle_end"),
+            "start_timestamp": start_timestamp,
+            "end_timestamp": end_timestamp,
+        }
+        descriptors.append(descriptor)
+    return descriptors
+
+
+def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, list]:
+    """Return source provenance columns aligned to a stitched frame."""
+    by_hash = {source_file.hash: source_file for source_file in files}
+    hashes = frame.get("source_hash", pd.Series(dtype=object)).tolist()
+    positions = {source_file.hash: index for index, source_file in enumerate(files, start=1)}
+    source_cycles = frame.get("source_cycle", pd.Series(dtype=object)).tolist()
+
+    def safe_int(value):
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+
+    return {
+        "source_cycle": [safe_int(value) for value in source_cycles],
+        "source_position": [positions.get(value) for value in hashes],
+        "source_filename": [by_hash.get(value).filename if value in by_hash else None for value in hashes],
+        "source_hash": [value if value in by_hash else None for value in hashes],
+    }
+
+
 PROTOCOL_SEGMENT_MODES = ("excluded", "only", "hidden")
 
 
@@ -1360,16 +1432,36 @@ def compute(
                     reparsed = True
 
         stitched, segments, missing = stitch.stitch_cycles(hashes, parser_version, calc_version)
-        step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
-        protocol_cycles = _protocol_cycle_sets(
-            files,
-            segments,
-            parser_version,
-            step_targets,
-            protocol_context,
-            badges,
-            cell,
-        )
+        descriptors = source_descriptors(files, segments, missing, stitched)
+        complete = stitch.stitch_metadata(stitched)["complete"]
+        if complete:
+            step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
+            protocol_cycles = _protocol_cycle_sets(
+                files,
+                segments,
+                parser_version,
+                step_targets,
+                protocol_context,
+                badges,
+                cell,
+            )
+        else:
+            protocol_cycles = {"only": set(), "excluded": set(), "hidden": set()}
+            badges.append(
+                {
+                    "kind": "continuation_source_missing",
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "missing_source_hashes": missing,
+                    "missing_source_positions": stitch.stitch_metadata(stitched)[
+                        "missing_positions"
+                    ],
+                    "detail": (
+                        "The ordered Cell source chain is incomplete; the scientific series "
+                        "was withheld until every source cache is available."
+                    ),
+                }
+            )
 
         for f in files:
             if not Path(f.path).exists():
@@ -1401,11 +1493,12 @@ def compute(
         group_hidden = unit["group_id"] in hidden_group_ids
         excluded = exclusion is not None or group_hidden
         active_mass_mg = cell_active_mass_mg(cell)
-        if stitched.empty:
+        if stitched.empty or not complete:
             x: list[int] = []
             quantities = {c: [] for c in quantity_cols}
             metrics = {"n_cycles": 0}
             ref = None
+            source_values = {key: [] for key in ("source_cycle", "source_position", "source_filename", "source_hash")}
         else:
             metric_frame = stitched
             if protocol_context["only_active"]:
@@ -1427,6 +1520,7 @@ def compute(
             }
             metrics = cell_metrics(derived, metric_filtered, computation, ref_val)
             ref = None if np.isnan(ref_val) else float(ref_val)
+            source_values = source_columns(plot_filtered, files)
 
         cell_series.append(
             {"cell_id": cell.id, "cell_name": cell.name, "label": unit["label"],
@@ -1436,10 +1530,11 @@ def compute(
              "archived": cell.archived, "x": x, "quantities": quantities,
              "metrics": metrics, "retention_reference_mah": ref,
              "active_mass_mg": active_mass_mg,
-             "segments": segments})
+             "segments": segments, "source_descriptors": descriptors,
+             **source_values})
         sources.append(
             {"cell_id": cell.id, "test_ids": [t.id for t in sorted(cell.tests, key=lambda t: t.id)],
-             "file_hashes": hashes})
+             "file_hashes": hashes, "source_descriptors": descriptors})
         if progress:
             progress(
                 unit_index,
@@ -2062,6 +2157,7 @@ def compute_time_capacity(
 
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
         raw, segments, missing = stitch.stitch_raw(hashes, parser_version)
+        descriptors = source_descriptors(files, segments, missing, raw)
         for h in missing:
             badges.append(
                 {
@@ -2071,7 +2167,57 @@ def compute_time_capacity(
                     "detail": f"No raw cache at parser {parser_version} for file {h[:12]}...",
                 }
             )
-        if raw.empty or "cycle" not in raw.columns:
+        complete = stitch.stitch_metadata(raw)["complete"]
+        if not complete:
+            badges.append(
+                {
+                    "kind": "continuation_source_missing",
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "missing_source_hashes": missing,
+                    "missing_source_positions": stitch.stitch_metadata(raw)[
+                        "missing_positions"
+                    ],
+                    "detail": (
+                        "The ordered Cell source chain is incomplete; the scientific "
+                        "time/capacity trace was withheld until every source cache is available."
+                    ),
+                }
+            )
+        if raw.empty or "cycle" not in raw.columns or not complete:
+            traces.append(
+                {
+                    "cell_id": cell.id,
+                    "cell_name": cell.name,
+                    "label": unit["label"],
+                    "group_id": unit["group_id"],
+                    "group_name": unit["group_name"],
+                    "excluded": exclusion_for_unit(exclusions, unit) is not None
+                    or unit["group_id"] in hidden_group_ids,
+                    "active_mass_mg": cell_active_mass_mg(cell),
+                    "nominal_capacity_mah": cell_nominal_capacity_mah(cell),
+                    "electrode_area_cm2": cell_electrode_area_cm2(cell),
+                    "cycle": [],
+                    "display_x": [],
+                    "time_s": [],
+                    "capacity_mah": [],
+                    "capacity_mah_g": [],
+                    "capacity_mah_cm2": [],
+                    "voltage_v": [],
+                    "current_ma": [],
+                    "phase": [],
+                    "status": [],
+                    "derivative_x": [],
+                    "derivative_y": [],
+                    "segments": segments,
+                    "source_descriptors": descriptors,
+                    "source_cycle": [],
+                    "source_position": [],
+                    "source_filename": [],
+                    "source_hash": [],
+                    "source_boundary_indices": [],
+                }
+            )
             continue
 
         if settings["cycles"]:
@@ -2084,6 +2230,12 @@ def compute_time_capacity(
 
         raw = raw.sort_values(["cycle", "segment", "record_index"] if "record_index" in raw.columns else ["cycle", "segment"])
         raw = _continuous_time(raw)
+        source_values = source_columns(raw, files)
+        source_boundary_indices = (
+            np.flatnonzero(raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]) + 1
+            if "segment" in raw.columns and len(raw) > 1
+            else np.array([], dtype="int64")
+        )
         phases = _phase_from_raw(raw)
         capacity = _phase_capacity(raw, phases)
         active_mass_mg = cell_active_mass_mg(cell)
@@ -2156,6 +2308,7 @@ def compute_time_capacity(
             take = _downsample_indices(
                 len(raw), configured_max, visible_values, envelope_series
             )
+            take = np.unique(np.concatenate((take, source_boundary_indices)))
             raw = raw.iloc[take]
             display_x = display_x[take]
             phases = np.asarray(phases)[take].tolist()
@@ -2166,6 +2319,17 @@ def compute_time_capacity(
             capacity_area = capacity_area[take]
             derivative_x = derivative_x[take]
             derivative_y = derivative_y[take]
+            source_values = {
+                key: [values[int(index)] for index in take]
+                for key, values in source_values.items()
+            }
+            source_boundary_indices = np.flatnonzero(
+                raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+            ) + 1
+        else:
+            source_boundary_indices = np.flatnonzero(
+                raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+            ) + 1 if "segment" in raw.columns and len(raw) > 1 else np.array([], dtype="int64")
 
         full_precision = precision == "full" or not compact
         is_derivative = settings["view"] != "voltage_current"
@@ -2214,6 +2378,9 @@ def compute_time_capacity(
                 "derivative_x": _jsonsafe_plot(derivative_x, None if full_precision else 7) if not compact or is_derivative else [],
                 "derivative_y": _jsonsafe_plot(derivative_y, None if full_precision else 7) if not compact or is_derivative else [],
                 "segments": segments,
+                "source_descriptors": descriptors,
+                **source_values,
+                "source_boundary_indices": [int(index) for index in source_boundary_indices],
             }
         )
         if progress:

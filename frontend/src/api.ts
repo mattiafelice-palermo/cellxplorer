@@ -1330,7 +1330,28 @@ export interface Provenance {
   computed_at: string;
   parser_version: string;
   calc_version: string;
-  sources: { cell_id: number; test_ids: number[]; file_hashes: string[] }[];
+  sources: {
+    cell_id: number;
+    test_ids: number[];
+    file_hashes: string[];
+    source_descriptors?: SourceDescriptor[];
+  }[];
+}
+
+export interface SourceDescriptor {
+  source_file_id?: number | null;
+  source_position: number;
+  filename: string;
+  source_hash: string;
+  status?: "ready" | "missing";
+  tracked_tail: boolean;
+  local_cycle_start: number | null;
+  local_cycle_end: number | null;
+  local_cycle_count: number;
+  global_cycle_start: number | null;
+  global_cycle_end: number | null;
+  start_timestamp?: string | null;
+  end_timestamp?: string | null;
 }
 
 export interface Badge {
@@ -1385,7 +1406,12 @@ export interface CellSeries {
   metrics: CellMetrics;
   retention_reference_mah: number | null;
   active_mass_mg: number | null;
-  segments: { file_hash: string; segment: number; cycle_start: number; cycle_end: number }[];
+  segments: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
+  source_descriptors?: SourceDescriptor[];
+  source_cycle?: (number | null)[];
+  source_position?: (number | null)[];
+  source_filename?: (string | null)[];
+  source_hash?: (string | null)[];
 }
 
 export interface AggregateSeries {
@@ -1452,6 +1478,13 @@ export interface TimeCapacityTrace {
   status: (string | null)[];
   derivative_x: (number | null)[];
   derivative_y: (number | null)[];
+  segments?: { file_hash: string; segment: number; cycle_start: number | null; cycle_end: number | null }[];
+  source_descriptors?: SourceDescriptor[];
+  source_cycle?: (number | null)[];
+  source_position?: (number | null)[];
+  source_filename?: (string | null)[];
+  source_hash?: (string | null)[];
+  source_boundary_indices?: number[];
 }
 
 export interface TimeCapacityResult {

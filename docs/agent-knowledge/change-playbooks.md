@@ -16,6 +16,17 @@
 4. Add numerical tests covering units, missing metadata, and boundary cycles.
 5. Check that UI explainers and exported labels describe the implemented formula.
 
+### Multi-source analysis output
+
+For a Cell with an ordered continuation chain, keep global cycle numbers and source-local cycle
+labels together in every cycle/time result. Source descriptors must be path-free and cover every
+ordered source, including missing caches, with the tracked-tail flag and known timestamps. Missing
+middle sources fail closed for that Cell rather than returning a scientifically partial prefix.
+When adding provenance arrays to persisted analysis results, bump the result/cache format and keep
+boundary markers, saved figures, thumbnails, and data exports on the same final figure/result
+path. CSV and Excel exports may add stable provenance columns, but must not emit absolute source
+paths.
+
 ## Frontend server-state change
 
 1. Use React Query for backend-owned state.

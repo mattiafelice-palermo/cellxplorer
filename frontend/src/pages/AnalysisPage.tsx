@@ -206,6 +206,12 @@ import {
 } from "../plotExplainers";
 import { applyPlotStylePreset } from "../plotStylePresets";
 import { axisLayout, numericTraceExtent } from "../plotAxisLayout";
+import {
+  sourceBoundaryPointIndices,
+  sourceExportColumns,
+  type SourceExportColumn,
+  type SourceExportValue,
+} from "../sourceChainPlot";
 
 const PALETTE = [
   "#12b886",
@@ -1430,7 +1436,7 @@ function textFromDataUrl(dataUrl: string): string {
 
 // ------------------------------------------------------ data export (CSV/XLSX)
 
-type DataColumn = { header: string; values: (number | null)[] };
+type DataColumn = SourceExportColumn;
 
 function exportDecimalPlaces(header: string): number {
   const value = header.toLowerCase();
@@ -1457,6 +1463,8 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
     const xs = exportXs ?? ((t.x as (number | null)[]) ?? []);
     const ys = (t.y as (number | null)[]) ?? [];
     if (!ys.length) continue;
+    const exportColumns = t.cellxplorer_export_columns as DataColumn[] | undefined;
+    if (Array.isArray(exportColumns)) columns.push(...exportColumns);
     const name = String(t.name ?? "series");
     const layoutRec = layout as Record<string, unknown>;
     const yKey = t.yaxis === "y3" ? "yaxis3" : t.yaxis === "y2" ? "yaxis2" : "yaxis";
@@ -1476,8 +1484,9 @@ function buildDelimitedText(
   delimiter: PlotStyle["data_delimiter"]
 ): string {
   const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
-  const formatNumber = (v: number | null | undefined, header: string) => {
+  const formatNumber = (v: SourceExportValue | undefined, header: string) => {
     if (v === null || v === undefined || Number.isNaN(v)) return "";
+    if (typeof v === "string") return v;
     const rounded =
       precision === "full"
         ? v
@@ -1506,7 +1515,8 @@ export async function downloadDataExport(columns: DataColumn[], style: PlotStyle
       aoa.push(
         columns.map((c) => {
           const v = c.values[i];
-          if (v === null || v === undefined || Number.isNaN(v)) return null;
+          if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) return null;
+          if (typeof v === "string") return v;
           if (style.data_precision === "full") return v;
           return Number(v.toFixed(exportDecimalPlaces(c.header)));
         })
@@ -2708,6 +2718,10 @@ function withoutDiagnosticCycles(
         quantities: Object.fromEntries(
           Object.entries(series.quantities).map(([key, values]) => [key, take(values, indices)])
         ),
+        source_cycle: take(series.source_cycle, indices),
+        source_position: take(series.source_position, indices),
+        source_filename: take(series.source_filename, indices),
+        source_hash: take(series.source_hash, indices),
       };
     }),
   };
@@ -2851,6 +2865,24 @@ function tracesForResult(
     if (s.excluded || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const color = grouped ? pick(`g${s.group_id}`) : pick(`c${s.cell_id}`);
+    const sourceCycle = s.source_cycle ?? s.x.map(() => null);
+    const sourcePosition = s.source_position ?? s.x.map(() => null);
+    const sourceFilename = s.source_filename ?? s.x.map(() => null);
+    const sourceHash = s.source_hash ?? s.x.map(() => null);
+    const sourceColumns = sourceExportColumns(
+      s.label,
+      s.x,
+      sourceCycle,
+      sourcePosition,
+      sourceFilename,
+      sourceHash,
+    );
+    const customdata = s.x.map((cycle, index) => [
+      cycle,
+      sourceCycle[index] ?? "",
+      sourcePosition[index] ?? "",
+      sourceFilename[index] ?? "",
+    ]);
     out.push({
       x: s.x,
       y: s.quantities[column] ?? [],
@@ -2865,7 +2897,39 @@ function tracesForResult(
       type: "scatter",
       mode,
       showlegend: !compact && !grouped,
+      customdata,
+      cellxplorer_export_columns: sourceColumns,
+      hovertemplate:
+        `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
+        `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
     } as Plotly.Data);
+    const values = s.quantities[column] ?? [];
+    const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
+    if (boundaryIndices.length) {
+      out.push({
+        x: boundaryIndices.map((index) => s.x[index]),
+        y: boundaryIndices.map((index) => values[index]),
+        name: "Source boundary",
+        type: "scatter",
+        mode: "markers",
+        marker: {
+          color,
+          size: Math.max(style.marker_size + 2, 7),
+          symbol: "diamond-open",
+          line: { color: style.paper_bgcolor, width: 1.2 },
+        },
+        showlegend: false,
+        customdata: boundaryIndices.map((index) => [
+          s.x[index],
+          sourceCycle[index] ?? "",
+          sourcePosition[index] ?? "",
+          sourceFilename[index] ?? "",
+        ]),
+        hovertemplate:
+          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
+          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+      } as Plotly.Data);
+    }
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
       const ceColor = pickCe(`c${s.cell_id}`);
       out.push({
@@ -2961,6 +3025,10 @@ type TimeCapacitySegment = {
   phase: string;
   x: number[];
   cycle: (number | null)[];
+  sourceCycle: (number | null)[];
+  sourcePosition: (number | null)[];
+  sourceFilename: (string | null)[];
+  sourceHash: (string | null)[];
   voltage: (number | null)[];
   current: (number | null)[];
 };
@@ -2989,10 +3057,25 @@ function timeCapacitySegments(trace: TimeCapacityTrace, spec: AnalysisSpec): Tim
         : `${trace.cycle[index] ?? "unknown"}:${phase}`;
     if (!current || current.key !== key) {
       flush();
-      current = { key, phase, x: [], cycle: [], voltage: [], current: [] };
+      current = {
+        key,
+        phase,
+        x: [],
+        cycle: [],
+        sourceCycle: [],
+        sourcePosition: [],
+        sourceFilename: [],
+        sourceHash: [],
+        voltage: [],
+        current: [],
+      };
     }
     current.x.push(x[index]);
     current.cycle.push(trace.cycle[index] ?? null);
+    current.sourceCycle.push(trace.source_cycle?.[index] ?? null);
+    current.sourcePosition.push(trace.source_position?.[index] ?? null);
+    current.sourceFilename.push(trace.source_filename?.[index] ?? null);
+    current.sourceHash.push(trace.source_hash?.[index] ?? null);
     current.voltage.push(trace.voltage_v[index] ?? null);
     current.current.push(trace.current_ma[index] ?? null);
   }
@@ -3073,6 +3156,11 @@ function tracesForTimeCapacity(
         const x = trace.derivative_x.slice(start, end);
         const y = trace.derivative_y.slice(start, end);
         if (hasFinitePoint(x) && hasFinitePoint(y)) {
+          const cycles = trace.cycle.slice(start, end);
+          const sourceCycle = trace.source_cycle?.slice(start, end);
+          const sourcePosition = trace.source_position?.slice(start, end);
+          const sourceFilename = trace.source_filename?.slice(start, end);
+          const sourceHash = trace.source_hash?.slice(start, end);
           const showlegend = !legendShown.has(seriesKey);
           legendShown.add(seriesKey);
           out.push({
@@ -3087,6 +3175,14 @@ function tracesForTimeCapacity(
             type: traceType,
             connectgaps: false,
             meta: `${phase}, cycle ${cycle ?? "?"}`,
+            cellxplorer_export_columns: sourceExportColumns(
+              baseName,
+              cycles,
+              sourceCycle,
+              sourcePosition,
+              sourceFilename,
+              sourceHash,
+            ),
             hovertemplate: "%{y:.5g}<br>%{x:.5g}<br>%{meta}<extra>%{fullData.name}</extra>",
           } as Plotly.Data);
         }
@@ -3101,9 +3197,16 @@ function tracesForTimeCapacity(
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const color = pick(seriesKey);
     const name = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+    const fullX = timeCapacityX(trace, spec).x;
     for (const segment of timeCapacitySegments(trace, spec)) {
       if (!hasFinitePoint(segment.voltage)) continue;
       const showlegend = !legendShown.has(seriesKey);
+      const segmentCustomdata = segment.x.map((_, index) => [
+        segment.cycle[index] ?? "",
+        segment.sourceCycle[index] ?? "",
+        segment.sourcePosition[index] ?? "",
+        segment.sourceFilename[index] ?? "",
+      ]);
       legendShown.add(seriesKey);
       out.push({
         x: segment.x,
@@ -3116,8 +3219,19 @@ function tracesForTimeCapacity(
         mode: plotMode(style),
         type: traceType,
         connectgaps: false,
-        meta: `cycle ${segment.cycle.find((cycle) => cycle !== null) ?? "?"}`,
-        hovertemplate: `%{y:.4f} V<br>%{x:.4f}<br>%{meta}<extra>${name}</extra>`,
+        customdata: segmentCustomdata,
+        cellxplorer_export_columns: sourceExportColumns(
+          name,
+          segment.cycle,
+          segment.sourceCycle,
+          segment.sourcePosition,
+          segment.sourceFilename,
+          segment.sourceHash,
+        ),
+        hovertemplate:
+          "%{y:.4f} V<br>%{x:.4f}<br>global cycle %{customdata[0]}<br>" +
+          "local cycle %{customdata[1]}<br>%{customdata[3]} (source %{customdata[2]})" +
+          `<extra>${name}</extra>`,
       } as Plotly.Data);
       if (cfg.stacked) {
         const left = cfg.current_left ?? "current_ma";
@@ -3162,6 +3276,46 @@ function tracesForTimeCapacity(
           }
         }
       }
+    }
+    const boundaryPoints = (trace.source_descriptors ?? [])
+      .filter((descriptor) => descriptor.source_position > 1 && descriptor.status !== "missing")
+      .map((descriptor) => {
+        const index = fullX.findIndex(
+          (value, candidate) =>
+            trace.source_position?.[candidate] === descriptor.source_position &&
+            Number.isFinite(value) &&
+            Number.isFinite(trace.voltage_v[candidate] ?? NaN) &&
+            (cfg.display_mode === "consecutive" ||
+              trace.phase[candidate] === "charge" ||
+              trace.phase[candidate] === "discharge")
+        );
+        return index >= 0 ? { index, descriptor } : null;
+      })
+      .filter((value): value is { index: number; descriptor: NonNullable<TimeCapacityTrace["source_descriptors"]>[number] } => value !== null);
+    if (boundaryPoints.length) {
+      out.push({
+        x: boundaryPoints.map(({ index }) => fullX[index]),
+        y: boundaryPoints.map(({ index }) => trace.voltage_v[index]),
+        name: "Source boundary",
+        type: traceType,
+        mode: "markers",
+        marker: {
+          color,
+          size: Math.max(style.marker_size + 2, 7),
+          symbol: "diamond-open",
+          line: { color: style.paper_bgcolor, width: 1.2 },
+        },
+        showlegend: false,
+        customdata: boundaryPoints.map(({ index, descriptor }) => [
+          trace.cycle[index] ?? "",
+          trace.source_cycle?.[index] ?? "",
+          descriptor.source_position,
+          descriptor.filename,
+        ]),
+        hovertemplate:
+          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
+          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
+      } as Plotly.Data);
     }
   }
   return out;

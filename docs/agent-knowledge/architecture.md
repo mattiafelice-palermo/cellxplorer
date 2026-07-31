@@ -236,6 +236,14 @@ source caches fail closed: later sources are not remapped as a compact continuat
 Completeness metadata is exposed through `stitch.stitch_metadata(frame)` and `frame.attrs`. Raw
 rows keep source record order; never sort globally by timestamp.
 
+Cycles and Time/Capacity consumers enrich those stitched frames with a path-free ordered source
+descriptor list: source file ID, filename, 1-based position, local/global ranges, known start/end
+timestamps, and whether the source is the tracked tail. A missing source yields an explicit
+`continuation_source_missing` badge and no partial scientific series for that Cell. The analysis
+cache version covers the additive provenance arrays, and Plotly boundary markers, hover metadata,
+thumbnails, image exports, CSV, and Excel all derive from the same source-aware result. Data exports
+use source filenames and hashes only; absolute source paths never leave the backend result contract.
+
 Read-only continuation compatibility inspection lives in
 `backend/app/services/continuations.py` (Spec 034.2). `POST /api/imports/continuations/inspect`
 reuses header/hash work from import preview, enriches timing and local cycle ranges from existing

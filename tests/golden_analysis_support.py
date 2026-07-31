@@ -732,6 +732,17 @@ def project_result(
                 for trace in traces:
                     if isinstance(trace, dict):
                         trace.pop("label", None)
+                        # Source-chain provenance is a presentation/export
+                        # contract, not part of the scientific golden values.
+                        for key in (
+                            "source_descriptors",
+                            "source_cycle",
+                            "source_position",
+                            "source_filename",
+                            "source_hash",
+                            "source_boundary_indices",
+                        ):
+                            trace.pop(key, None)
         if projection:
             projected = _apply_cycles_projection(projected, projection)
     return projected

@@ -3,6 +3,7 @@ import shutil
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -930,6 +931,67 @@ class AnalysisEngineTests(unittest.TestCase):
         series = result["cell_series"][0]
         self.assertEqual(series["x"], [1, 2, 3, 4, 5])
         self.assertEqual(series["metrics"]["n_cycles"], 5)
+        self.assertEqual(series["source_cycle"], [1, 2, 3, 1, 2])
+        self.assertEqual(series["source_position"], [1, 1, 1, 2, 2])
+        self.assertEqual(
+            [source["filename"] for source in series["source_descriptors"]],
+            ["a.ndax", "b.ndax"],
+        )
+        self.assertEqual(series["source_descriptors"][1]["global_cycle_start"], 4)
+        self.assertTrue(series["source_descriptors"][1]["tracked_tail"])
+
+    def test_incomplete_multi_source_cycle_result_fails_closed(self):
+        hash_a = "f1" * 32
+        hash_b = "f2" * 32
+        cell = Cell(name="incomplete-multi")
+        self.db.add(cell)
+        self.db.flush()
+        first = SourceFile(
+            hash=hash_a,
+            path=hash_a,
+            filename="first.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            header_meta=analysis_protocol_header(),
+        )
+        second = SourceFile(
+            hash=hash_b,
+            path=hash_b,
+            filename="second.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            header_meta=analysis_protocol_header(),
+        )
+        test = Test(cell=cell, name="one internal test")
+        test.file_links = [TestFile(file=first, position=0), TestFile(file=second, position=1)]
+        self.db.add(test)
+        self.db.commit()
+
+        with patch(
+            "app.services.stitch.cache.load_cycles",
+            side_effect=lambda file_hash, *_: {
+                hash_a: synth_raw(2, 2.0, 0.01),
+                hash_b: None,
+            }.get(file_hash),
+        ):
+            result = engine.compute(
+                self.db,
+                self.spec_with([{"kind": "cell", "ref_id": cell.id}]),
+                None,
+            )
+
+        series = result["cell_series"][0]
+        self.assertEqual(series["x"], [])
+        self.assertEqual(series["quantities"]["discharge_capacity_mah"], [])
+        self.assertEqual(
+            [badge["kind"] for badge in result["badges"]].count("continuation_source_missing"),
+            1,
+        )
+        self.assertEqual(series["source_descriptors"][1]["status"], "missing")
 
     def test_analysis_engine_uses_shared_raw_stitch_service(self):
         self.assertFalse(hasattr(engine, "_stitch_raw"))

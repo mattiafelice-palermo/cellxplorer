@@ -430,7 +430,18 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
             Test.cell_id.label("cell_id"),
             func.count(func.distinct(Test.id)).label("n_tests"),
             func.count(SourceFile.id).label("n_files"),
-            func.coalesce(func.sum(SourceFile.cycle_count), 0).label("total_cycles"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            SourceFile.capacity_summary_status == "ready",
+                            func.coalesce(SourceFile.cycle_count, 0),
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("total_cycles"),
             func.sum(SourceFile.total_charge_capacity_mah).label("total_charge"),
             func.sum(SourceFile.total_discharge_capacity_mah).label("total_discharge"),
             func.max(SourceFile.max_discharge_capacity_mah).label("max_discharge"),
@@ -587,7 +598,8 @@ def cell_dict(
     statuses = set()
     for t in cell.tests:
         for l in t.file_links:
-            cycles += l.file.cycle_count or 0
+            if l.file.capacity_summary_status == "ready":
+                cycles += l.file.cycle_count or 0
             statuses.add(l.file.location_status)
             statuses.add(l.file.parse_status)
     totals = cell_capacity_totals(cell)

@@ -21,8 +21,10 @@ from sqlalchemy.orm import Session
 from ..config import CACHE_DIR, CALC_VERSION
 from . import parsing
 
-ANALYSIS_CACHE_VERSION = 3
+ANALYSIS_CACHE_VERSION = 4
 RESULT_SCHEMA_VERSIONS = {
+    "cycles": 2,
+    "time_capacity": 2,
     "steps": 2,
     "dcir": 1,
     "chargeability": 1,
