@@ -196,9 +196,35 @@ ids and previously retry-stormed until the frontend died).
 
 ## Domain ownership
 
-`SourceFile -> Test -> Cell` is the scientific hierarchy. Replicate groups and folders hold
-references to cells rather than copies of scientific data. Analyses own one shared sample set;
-saved plots own configuration and per-view visibility.
+The user-facing scientific hierarchy is:
+
+```text
+Cell -> ordered SourceFiles
+```
+
+A Cell is the physical scientific object users select and analyse. It owns one ordered chain of
+original Neware files. Interruptions, restarts, channel moves, and restarted protocols with removed
+or changed steps remain successive sources in that same chain.
+
+The relational schema still contains `Test` and `TestFile` for compatibility:
+
+```text
+Cell -> one internal Test row -> ordered TestFile links -> SourceFiles
+```
+
+For normal Cells, exactly one internal Test row stores the chain. `Test` is not a user-facing
+procedure, grouping, selection, analysis, lifecycle, or monitoring concept. Do not expose Test
+names, Target Test selectors, per-Test cards, per-Test tails, or per-Test ordering. Do not create a
+second Test merely because a continuation protocol differs. A protocol difference is a source
+boundary finding only.
+
+Do not remove or rename the existing tables without a forward migration. If legacy data contains
+multiple Tests for one Cell, preserve all sources and fail mutations clearly rather than silently
+normalizing or deleting data; reads may flatten the historical rows in stable order until a
+separately approved normalization exists.
+
+Replicate groups and folders hold references to Cells rather than copies of scientific data.
+Analyses own one shared sample set; saved plots own configuration and per-view visibility.
 
 Multi-source continuation stitching lives in `backend/app/services/stitch.py` (Spec 034.1). One
 canonical helper maps each **observed** source-local cycle label to exactly one dense global cycle
@@ -220,12 +246,16 @@ deduplicated per source hash/parser/calc version, with a retry cooldown after fa
 and suggested order are deterministic; blocking covers identity violations while protocol,
 channel, and local cycle differences remain visible but non-blocking.
 
-Spec 034.3 lifecycle mutations inspect the complete proposed Cell chain, not only the selected
-Test. `backend/app/services/analysis_usage.py::proposed_cell_source_chain` orders Tests by ID,
-files by position, and inserts staged sources at the target Test. The same complete-chain result
-drives the tracked-tail impact token; staged registration also rechecks the inspected hash
-immediately before database writes. Legacy registration cannot append to an existing continuation
-boundary, and staged request keys must be non-empty and unique before inspection or cache work.
+Spec 034.3 lifecycle mutations inspect the complete proposed Cell source chain. Canonical
+frontend/API operations are Cell-level and the backend resolves the one internal Test row. Existing
+Test-level routes may remain only as compatibility wrappers; they must not enable multiple-Test
+product behavior. The same complete-chain proposal drives findings, tracked-tail impact, and final
+mutation validation. Staged registration rechecks the inspected hash before writes, and request keys
+must be non-empty and unique before inspection or cache work.
+
+Scheduled source monitoring checks only the final source in each active Cell chain. Manual integrity
+operations may inspect every ordered source. Internal Test IDs may remain in diagnostics but never
+define or expose a separate tail.
 
 Backend services own parsing and deterministic scientific calculations. React components own
 editing state and visualization state. Server-state copies in React Query are disposable views of
