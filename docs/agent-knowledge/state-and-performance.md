@@ -24,6 +24,14 @@ Missing legacy capacity summaries may be backfilled after startup. Until ready, 
 those values as pending rather than block the whole list. Benchmark cold and warm list requests
 when changing summary fields, and test semantic parity between list and detail responses.
 
+Import source discovery is a separate synchronous request boundary: `POST /api/imports/list-sources`
+must enumerate selected folders and return the candidate paths before the file-selection modal can
+open. `backend/app/routers/files.py` uses one recursive `os.scandir` traversal and `DirEntry.stat`
+metadata for this path; it must not parse Neware files, hash them, or rebuild scientific caches.
+The first import modal and the folder-selection modal both use fixed-row viewport windows, so large
+imports do not mount every file row during selection. When measuring this workflow, separate the
+backend scan time from the second-modal render time and test both flat and nested local folders.
+
 The backfill must not assume that a per-cycle Parquet cache already exists. If a summary is
 incomplete and the current cache is missing, it verifies the source against the stored checksum,
 rebuilds the scientific cache at current parser/calculation versions, and then persists the

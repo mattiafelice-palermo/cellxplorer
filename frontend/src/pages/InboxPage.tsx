@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Center,
   Checkbox,
@@ -133,6 +134,13 @@ type FolderImportNode = {
   children: FolderImportNode[];
 };
 
+type FolderImportTreeRow =
+  | { kind: "folder"; node: FolderImportNode; depth: number }
+  | { kind: "file"; candidate: FolderImportCandidate; depth: number };
+
+const FOLDER_IMPORT_ROW_HEIGHT = 34;
+const FOLDER_IMPORT_ROW_OVERSCAN = 8;
+
 function folderCandidateKey(candidate: FolderImportCandidate) {
   return candidate.path ?? candidate.relative_path;
 }
@@ -181,13 +189,6 @@ function buildImportFolderTree(rootName: string, candidates: FolderImportCandida
   return root;
 }
 
-function folderDescendantKeys(node: FolderImportNode): string[] {
-  return [
-    ...node.files.map(folderCandidateKey),
-    ...node.children.flatMap(folderDescendantKeys),
-  ];
-}
-
 function flattenImportFolderTree(node: FolderImportNode): FolderImportCandidate[] {
   return [
     ...node.children.flatMap(flattenImportFolderTree),
@@ -201,6 +202,7 @@ function FolderImportSelectionModal({
   candidates,
   loading,
   progress,
+  onBack,
   onClose,
   onConfirm,
 }: {
@@ -209,6 +211,7 @@ function FolderImportSelectionModal({
   candidates: FolderImportCandidate[];
   loading: boolean;
   progress?: ReactNode;
+  onBack: () => void;
   onClose: () => void;
   onConfirm: (selected: FolderImportCandidate[]) => void;
 }) {
@@ -217,7 +220,36 @@ function FolderImportSelectionModal({
   const [lastSelected, setLastSelected] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [rootsExpanded, setRootsExpanded] = useState(false);
+  const [treeScrollTop, setTreeScrollTop] = useState(0);
   const tree = useMemo(() => buildImportFolderTree(rootName, candidates), [rootName, candidates]);
+  const descendantKeysByNode = useMemo(() => {
+    const result = new Map<string, string[]>();
+    const visit = (node: FolderImportNode): string[] => {
+      const keys = [
+        ...node.files.map(folderCandidateKey),
+        ...node.children.flatMap(visit),
+      ];
+      result.set(node.key, keys);
+      return keys;
+    };
+    visit(tree);
+    return result;
+  }, [tree]);
+  const selectedCountsByNode = useMemo(() => {
+    const result = new Map<string, number>();
+    const visit = (node: FolderImportNode): number => {
+      const selectedFiles = node.files.reduce(
+        (count, candidate) => count + (selected.has(folderCandidateKey(candidate)) ? 1 : 0),
+        0,
+      );
+      const selectedChildren = node.children.reduce((count, child) => count + visit(child), 0);
+      const count = selectedFiles + selectedChildren;
+      result.set(node.key, count);
+      return count;
+    };
+    visit(tree);
+    return result;
+  }, [selected, tree]);
   const focusedCandidate =
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
   const previewQuery = useQuery({
@@ -238,15 +270,29 @@ function FolderImportSelectionModal({
       setLastSelected(null);
       setFocusedKey(candidates[0] ? folderCandidateKey(candidates[0]) : null);
       setRootsExpanded(false);
+      setTreeScrollTop(0);
     }
   }, [opened, candidates]);
+
+  useEffect(() => {
+    setTreeScrollTop(0);
+  }, [search]);
 
   const visibleCandidates = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     const ordered = flattenImportFolderTree(tree);
-    return query
-      ? ordered.filter((candidate) => candidate.relative_path.toLocaleLowerCase().includes(query))
-      : ordered;
+    if (!query) return ordered;
+    const collect = (node: FolderImportNode, parentMatched: boolean): FolderImportCandidate[] => {
+      const folderMatched = parentMatched || node.name.toLocaleLowerCase().includes(query);
+      const files = folderMatched
+        ? node.files
+        : node.files.filter((candidate) => candidate.relative_path.toLocaleLowerCase().includes(query));
+      return [
+        ...node.children.flatMap((child) => collect(child, folderMatched)),
+        ...files,
+      ];
+    };
+    return collect(tree, false);
   }, [tree, search]);
   const visibleKeys = useMemo(() => visibleCandidates.map(folderCandidateKey), [visibleCandidates]);
 
@@ -279,7 +325,7 @@ function FolderImportSelectionModal({
   };
 
   const toggleFolder = (node: FolderImportNode) => {
-    const keys = folderDescendantKeys(node);
+    const keys = descendantKeysByNode.get(node.key) ?? [];
     setSelected((current) => {
       const next = new Set(current);
       const select = keys.some((key) => !next.has(key));
@@ -288,95 +334,38 @@ function FolderImportSelectionModal({
     });
   };
 
-  const renderNode = (node: FolderImportNode, depth = 0): ReactNode => {
-    const nodeKeys = folderDescendantKeys(node);
-    const selectedCount = nodeKeys.filter((key) => selected.has(key)).length;
-    const filteredFiles = node.files.filter((file) => visibleKeys.includes(folderCandidateKey(file)));
-    const filteredChildren = node.children.filter(
-      (child) => !search.trim() || folderDescendantKeys(child).some((key) => visibleKeys.includes(key))
-    );
-    if (search.trim() && filteredFiles.length === 0 && filteredChildren.length === 0) return null;
-    return (
-      <Stack key={node.key || "root"} gap={2}>
-        <Group
-          gap="xs"
-          wrap="nowrap"
-          py={4}
-          px="xs"
-          ml={depth * 18}
-          style={{ cursor: "pointer" }}
-          onClick={() => toggleFolder(node)}
-        >
-          <Checkbox
-            checked={nodeKeys.length > 0 && selectedCount === nodeKeys.length}
-            indeterminate={selectedCount > 0 && selectedCount < nodeKeys.length}
-            readOnly
-            styles={{ input: { cursor: "pointer" } }}
-          />
-          <IconFolder size={17} color="var(--mantine-primary-color-6)" />
-          <Text size="sm" fw={600} truncate>
-            {node.name}
-          </Text>
-          <Badge size="xs" variant="light" color="gray">
-            {selectedCount}/{nodeKeys.length}
-          </Badge>
-        </Group>
-        {filteredChildren.map((child) => renderNode(child, depth + 1))}
-        {filteredFiles.map((candidate) => {
-          const key = folderCandidateKey(candidate);
-          return (
-            <Group
-              key={key}
-              gap="xs"
-              wrap="nowrap"
-              py={4}
-              px="xs"
-              ml={(depth + 1) * 18}
-              bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
-              style={{
-                cursor: "pointer",
-                borderRadius: 4,
-                outline:
-                  focusedKey === key ? "1px solid var(--mantine-primary-color-4)" : undefined,
-              }}
-              onClick={(event) =>
-                toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey)
-              }
-            >
-              <Checkbox
-                checked={selected.has(key)}
-                readOnly
-                styles={{ input: { cursor: "pointer" } }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
-                }}
-              />
-              <IconFile size={16} color="var(--mantine-color-gray-6)" />
-              <Text size="sm" truncate style={{ flex: 1 }}>
-                {candidate.filename}
-              </Text>
-              <Text size="xs" c="dimmed">
-                {formatBytes(candidate.size)}
-              </Text>
-              <Button
-                variant={focusedKey === key ? "light" : "default"}
-                size="compact-sm"
-                w={118}
-                leftSection={<IconEye size={15} />}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setFocusedKey(key);
-                }}
-              >
-                {focusedKey === key ? "Previewing" : "Preview"}
-              </Button>
-            </Group>
-          );
-        })}
-      </Stack>
-    );
-  };
+  const visibleRows = useMemo<FolderImportTreeRow[]>(() => {
+    const query = search.trim();
+    const visibleKeySet = query ? new Set(visibleKeys) : null;
+    const rows: FolderImportTreeRow[] = [];
+    const append = (node: FolderImportNode, depth: number) => {
+      const filteredFiles = visibleKeySet
+        ? node.files.filter((file) => visibleKeySet.has(folderCandidateKey(file)))
+        : node.files;
+      const filteredChildren = visibleKeySet
+        ? node.children.filter((child) =>
+            (descendantKeysByNode.get(child.key) ?? []).some((key) => visibleKeySet.has(key)),
+          )
+        : node.children;
+      if (visibleKeySet && filteredFiles.length === 0 && filteredChildren.length === 0) return;
+      rows.push({ kind: "folder", node, depth });
+      filteredChildren.forEach((child) => append(child, depth + 1));
+      filteredFiles.forEach((candidate) => rows.push({ kind: "file", candidate, depth: depth + 1 }));
+    };
+    append(tree, 0);
+    return rows;
+  }, [descendantKeysByNode, search, tree, visibleKeys]);
+  const firstRenderedRow = Math.max(
+    0,
+    Math.floor(treeScrollTop / FOLDER_IMPORT_ROW_HEIGHT) - FOLDER_IMPORT_ROW_OVERSCAN,
+  );
+  const lastRenderedRow = Math.min(
+    visibleRows.length,
+    firstRenderedRow + Math.ceil(500 / FOLDER_IMPORT_ROW_HEIGHT) + FOLDER_IMPORT_ROW_OVERSCAN * 2,
+  );
+  const renderedRows = visibleRows.slice(firstRenderedRow, lastRenderedRow);
+  const leadingSpacerHeight = firstRenderedRow * FOLDER_IMPORT_ROW_HEIGHT;
+  const trailingSpacerHeight = (visibleRows.length - lastRenderedRow) * FOLDER_IMPORT_ROW_HEIGHT;
 
   const selectedCandidates = candidates.filter((candidate) => selected.has(folderCandidateKey(candidate)));
   const selectionSummary = useMemo(
@@ -392,8 +381,33 @@ function FolderImportSelectionModal({
     [selectionSummary.fileCount, selectionSummary.totalBytes],
   );
   const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : selectionSummary.roots.slice(0, 5);
+  const modalTitle = (
+    <Group gap="md" wrap="nowrap" style={{ width: "100%", minWidth: 0 }}>
+      <Text size="lg" fw={500} truncate style={{ minWidth: 0, flex: 1 }}>
+        Choose files to import
+      </Text>
+      <Group gap="xs" wrap="nowrap" ml="auto">
+        <Button
+          variant="default"
+          leftSection={<IconArrowLeft size={15} />}
+          disabled={loading}
+          onClick={onBack}
+        >
+          Back
+        </Button>
+        <Button
+          loading={loading}
+          disabled={selectedCandidates.length === 0}
+          onClick={() => onConfirm(selectedCandidates)}
+        >
+          Continue with {selectedCandidates.length} file
+          {selectedCandidates.length === 1 ? "" : "s"}
+        </Button>
+      </Group>
+    </Group>
+  );
   return (
-    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title="Choose files to import" size="78rem">
+    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title={modalTitle} size="78rem">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Selected folders are expanded recursively. Use checkboxes to choose files and Preview to
@@ -482,8 +496,96 @@ function FolderImportSelectionModal({
         )}
         <Group align="stretch" gap="sm" wrap="nowrap">
           <Paper withBorder p="xs" style={{ flex: 1, minWidth: 0 }}>
-            <ScrollArea h={500} type="auto">
-              {renderNode(tree)}
+            <ScrollArea h={500} type="auto" onScrollPositionChange={({ y }) => setTreeScrollTop(y)}>
+              <Stack gap={0}>
+                <Box h={leadingSpacerHeight} aria-hidden="true" />
+                {renderedRows.map((row) => {
+                  if (row.kind === "folder") {
+                    const nodeKeys = descendantKeysByNode.get(row.node.key) ?? [];
+                    const selectedCount = selectedCountsByNode.get(row.node.key) ?? 0;
+                    return (
+                      <Group
+                        key={`folder-${row.node.key || "root"}`}
+                        gap="xs"
+                        wrap="nowrap"
+                        py={4}
+                        px="xs"
+                        ml={row.depth * 18}
+                        style={{ cursor: "pointer", height: FOLDER_IMPORT_ROW_HEIGHT, boxSizing: "border-box" }}
+                        onClick={() => toggleFolder(row.node)}
+                      >
+                        <Checkbox
+                          checked={nodeKeys.length > 0 && selectedCount === nodeKeys.length}
+                          indeterminate={selectedCount > 0 && selectedCount < nodeKeys.length}
+                          readOnly
+                          styles={{ input: { cursor: "pointer" } }}
+                        />
+                        <IconFolder size={17} color="var(--mantine-primary-color-6)" />
+                        <Text size="sm" fw={600} truncate>
+                          {row.node.name}
+                        </Text>
+                        <Badge size="xs" variant="light" color="gray">
+                          {selectedCount}/{nodeKeys.length}
+                        </Badge>
+                      </Group>
+                    );
+                  }
+                  const candidate = row.candidate;
+                  const key = folderCandidateKey(candidate);
+                  return (
+                    <Group
+                      key={key}
+                      gap="xs"
+                      wrap="nowrap"
+                      py={4}
+                      px="xs"
+                      ml={row.depth * 18}
+                      bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
+                      style={{
+                        cursor: "pointer",
+                        borderRadius: 4,
+                        height: FOLDER_IMPORT_ROW_HEIGHT,
+                        boxSizing: "border-box",
+                        outline:
+                          focusedKey === key ? "1px solid var(--mantine-primary-color-4)" : undefined,
+                      }}
+                      onClick={(event) =>
+                        toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey)
+                      }
+                    >
+                      <Checkbox
+                        checked={selected.has(key)}
+                        readOnly
+                        styles={{ input: { cursor: "pointer" } }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
+                        }}
+                      />
+                      <IconFile size={16} color="var(--mantine-color-gray-6)" />
+                      <Text size="sm" truncate style={{ flex: 1 }}>
+                        {candidate.filename}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {formatBytes(candidate.size)}
+                      </Text>
+                      <Button
+                        variant={focusedKey === key ? "light" : "default"}
+                        size="compact-sm"
+                        w={118}
+                        leftSection={<IconEye size={15} />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setFocusedKey(key);
+                        }}
+                      >
+                        {focusedKey === key ? "Previewing" : "Preview"}
+                      </Button>
+                    </Group>
+                  );
+                })}
+                <Box h={trailingSpacerHeight} aria-hidden="true" />
+              </Stack>
             </ScrollArea>
           </Paper>
           <Paper withBorder p="sm" w={360}>
@@ -560,24 +662,6 @@ function FolderImportSelectionModal({
               </Stack>
             )}
           </Paper>
-        </Group>
-        <Group justify="space-between">
-          <Text size="sm" c="dimmed">
-            {selectedCandidates.length} of {candidates.length} files selected
-          </Text>
-          <Group gap="xs">
-            <Button variant="default" disabled={loading} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              loading={loading}
-              disabled={selectedCandidates.length === 0}
-              onClick={() => onConfirm(selectedCandidates)}
-            >
-              Continue with {selectedCandidates.length} file
-              {selectedCandidates.length === 1 ? "" : "s"}
-            </Button>
-          </Group>
         </Group>
       </Stack>
     </Modal>
@@ -2487,6 +2571,10 @@ export function ImportCellsLauncher({
             error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
+        onBack={() => {
+          setFolderModalOpen(false);
+          setSourcePickerOpen(true);
+        }}
         onClose={() => setFolderModalOpen(false)}
         onConfirm={confirmFolderSelection}
       />
@@ -2743,6 +2831,10 @@ export function InboxPage() {
             error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
+        onBack={() => {
+          setFolderModalOpen(false);
+          setSourcePickerOpen(true);
+        }}
         onClose={() => setFolderModalOpen(false)}
         onConfirm={confirmFolderSelection}
       />

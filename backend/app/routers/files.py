@@ -907,40 +907,51 @@ def list_import_folder_files(root: Path) -> dict:
         raise HTTPException(400, f"Not a directory: {root}")
     files: list[dict] = []
 
-    def on_walk_error(_error: OSError) -> None:
-        return None
+    root_path = str(root)
+    root_name = root.name or str(root)
 
-    for current, directories, filenames in os.walk(
-        root,
-        topdown=True,
-        onerror=on_walk_error,
-        followlinks=False,
-    ):
-        directories.sort(key=str.casefold)
-        for filename in sorted(filenames, key=str.casefold):
-            path = Path(current) / filename
-            if not import_filename_allowed(filename):
-                continue
+    def visit(directory: str, relative_directory: Path) -> None:
+        directories: list[os.DirEntry[str]] = []
+        filenames: list[os.DirEntry[str]] = []
+        try:
+            with os.scandir(directory) as scan:
+                for entry in scan:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            directories.append(entry)
+                        elif entry.is_file(follow_symlinks=False) and import_filename_allowed(entry.name):
+                            filenames.append(entry)
+                    except OSError:
+                        continue
+        except OSError:
+            return
+
+        for entry in sorted(filenames, key=lambda item: item.name.casefold()):
             try:
-                stat = path.stat()
+                stat = entry.stat(follow_symlinks=False)
             except OSError:
                 continue
             files.append(
                 {
-                    "path": str(path.resolve()),
-                    "relative_path": path.relative_to(root).as_posix(),
-                    "filename": path.name,
+                    "path": entry.path,
+                    "relative_path": (relative_directory / entry.name).as_posix(),
+                    "filename": entry.name,
                     "size": stat.st_size,
                     "selection_root": {
                         "kind": "folder",
-                        "path": str(root),
-                        "label": root.name or str(root),
+                        "path": root_path,
+                        "label": root_name,
                     },
                 }
             )
+
+        for entry in sorted(directories, key=lambda item: item.name.casefold()):
+            visit(entry.path, relative_directory / entry.name)
+
+    visit(root_path, Path())
     return {
-        "root_path": str(root),
-        "root_name": root.name or str(root),
+        "root_path": root_path,
+        "root_name": root_name,
         "files": files,
     }
 
@@ -1038,7 +1049,7 @@ def list_import_sources(
         root_discovered = 0
         root_bytes = 0
         for item in listing["files"]:
-            path = Path(item["path"]).resolve()
+            path = Path(item["path"])
             key = os.path.normcase(str(path))
             if key in seen:
                 continue
