@@ -17,10 +17,10 @@
   timing estimates before inspection. **Implemented**; review pending.
 - [`035.5-staged-file-removal-and-duplicate-handling.md`](035.5-staged-file-removal-and-duplicate-handling.md)
   makes staged files removable and excludes registered exact duplicates from separate-cell import.
-  **In progress**.
+  **Implemented**; review pending.
 - [`035.6-import-progress-ui.md`](035.6-import-progress-ui.md)
   adds truthful scan, inspect, and registration progress states backed by tokenized jobs.
-  **Plan**.
+  **In progress**.
 - [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.
