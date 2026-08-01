@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta016 - 2026-08-01
+
+### Bug fixes
+
+- Speed up large import inspection with bounded concurrency and batch identity matching.
+
 ## 0.17.0-beta015 - 2026-08-01
 
 ### Bug fixes

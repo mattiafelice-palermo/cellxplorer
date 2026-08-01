@@ -32,6 +32,17 @@ The first import modal and the folder-selection modal both use fixed-row viewpor
 imports do not mount every file row during selection. When measuring this workflow, separate the
 backend scan time from the second-modal render time and test both flat and nested local folders.
 
+The second-to-third import-modal transition is a separate identity-inspection boundary. Its
+`inspect-paths` endpoint uses at most four filesystem worker threads for independent hash/header
+reads, restores the caller's path order before building the response, and never shares a
+SQLAlchemy session with workers. Existing `SourceFile` identity rows are loaded once into an
+eager, immutable match snapshot; matching then runs in memory rather than performing a full-table
+query for every candidate. Each worker captures size and `mtime_ns` before and after inspection
+and rejects a moving source. The inspection response carries the verified fingerprint and header
+metadata so final registration can reuse the header only when the same fingerprint still matches;
+final checksum and transactional duplicate checks remain mandatory. Folder layout should not
+materially affect this boundary because it receives file paths after discovery.
+
 The backfill must not assume that a per-cycle Parquet cache already exists. If a summary is
 incomplete and the current cache is missing, it verifies the source against the stored checksum,
 rebuilds the scientific cache at current parser/calculation versions, and then persists the

@@ -21,6 +21,9 @@
 - [`035.6-import-progress-ui.md`](035.6-import-progress-ui.md)
   adds truthful scan, inspect, and registration progress states backed by tokenized jobs.
   **Implemented**; review pending.
+- [`035.7-import-inspection-concurrency-and-deduplication.md`](035.7-import-inspection-concurrency-and-deduplication.md)
+  adds bounded concurrent file inspection, one batch identity snapshot, and fingerprint-safe
+  metadata reuse during registration. **Implemented**; review pending.
 - [`035.12-import-browser-select-shown-and-resizable-panes.md`](035.12-import-browser-select-shown-and-resizable-panes.md)
   corrects the import-browser aggregate selection so shown folders are included, and adds a
   bounded accessible resize divider between the quick-access and file-browser panes. **Implemented**;

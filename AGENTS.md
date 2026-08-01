@@ -142,6 +142,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
 - `backend/app/services/analysis_engine.py`: analysis computation
 - `backend/app/services/continuations.py`: continuation compatibility inspection (Spec 034.2) and lifecycle submit validation helpers (Spec 034.3)
+- `backend/app/services/import_inspection.py`: bounded file inspection workers and immutable batch identity matching (Spec 035.7)
 - `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
@@ -172,6 +173,7 @@ Cellxplorer/
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+│           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           └── scientific_preparation.py
 │                                  Durable post-copy cache-preparation state

@@ -6,11 +6,12 @@ import re
 import threading
 import uuid
 import json
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
+from ..services import import_inspection
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -135,22 +136,25 @@ def _inspect_import_path(
     db: Session,
     staged_name: str | None = None,
     expose_source_path: bool = True,
+    match_rows: list[SourceFile] | None = None,
+    inspected: import_inspection.FileInspection | None = None,
+    match_snapshot: import_inspection.ImportIdentitySnapshot | None = None,
 ) -> dict:
-    if not path.exists() or not path.is_file():
-        raise HTTPException(404, f"File is missing: {path}")
-    original = _clean_filename(path.name)
-    if not import_filename_allowed(original):
-        raise HTTPException(400, f"Only .nda and .ndax files can be imported: {original}")
-
-    file_hash = parsing.compute_hash(path)
-    meta = parsing.read_header_metadata(path)
+    if inspected is None:
+        try:
+            inspected = import_inspection.inspect_file(str(path))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    original = _clean_filename(inspected.filename)
+    file_hash = inspected.hash
+    meta = inspected.metadata
     preview_meta = _metadata_preview(meta)
     return {
         "staged_name": staged_name or f"path:{uuid.uuid4().hex}",
         "source_path": str(path) if expose_source_path else None,
         "filename": original,
-        "size": path.stat().st_size,
-        "ext": path.suffix.lower().lstrip("."),
+        "size": inspected.size,
+        "ext": inspected.ext,
         "hash": file_hash,
         "barcode": meta.get("barcode"),
         "remarks": meta.get("remarks"),
@@ -163,7 +167,17 @@ def _inspect_import_path(
         "metadata": preview_meta,
         "raw_metadata": _raw_metadata_preview(meta.get("raw") or {}),
         "metadata_error": meta.get("error"),
-        "import_match": import_match_info(db, file_hash, original, meta),
+        "import_match": (
+            import_inspection.match_import(match_snapshot, file_hash, original, meta)
+            if match_snapshot is not None
+            else import_match_info(db, file_hash, original, meta, rows=match_rows)
+        ),
+        "inspection": {
+            "hash": file_hash,
+            "size": inspected.size,
+            "mtime_ns": inspected.mtime_ns,
+            "header_metadata": meta,
+        },
         "capacity_preview": None,
         "preview_error": None,
     }
@@ -235,14 +249,21 @@ def _norm(value) -> str:
     return str(value or "").strip().lower()
 
 
-def import_match_info(db: Session, file_hash: str, filename: str, meta: dict) -> dict | None:
+def import_match_info(
+    db: Session,
+    file_hash: str,
+    filename: str,
+    meta: dict,
+    rows: list[SourceFile] | None = None,
+) -> dict | None:
     """Detect exact duplicate imports and likely updated/extended files.
 
     Exact identity is the SHA-256 content hash. Soft identity intentionally
     requires multiple weak signals so a shared channel or generic filename does
     not create a noisy warning on its own.
     """
-    rows = db.query(SourceFile).all()
+    if rows is None:
+        rows = db.query(SourceFile).all()
     for sf in rows:
         if sf.hash == file_hash:
             if sf.test_link is not None and sf.test_link.test.cell.archived:
@@ -567,12 +588,14 @@ class ImportSourceDraft(BaseModel):
     staged_name: str
     source_path: str | None = None
     filename: str
+    inspection: dict | None = None
 
 
 class ImportCellDraft(BaseModel):
     staged_name: str | None = None
     source_path: str | None = None
     filename: str | None = None
+    inspection: dict | None = None
     sources: list[ImportSourceDraft] = []
     cell_name: str
     description: str | None = None
@@ -613,6 +636,7 @@ def normalize_import_cell_sources(draft: ImportCellDraft) -> list[ImportSourceDr
                 staged_name=draft.staged_name,
                 source_path=draft.source_path,
                 filename=draft.filename,
+                inspection=draft.inspection,
             )
         ]
     raise HTTPException(400, "Each cell draft needs at least one source")
@@ -685,6 +709,7 @@ class ImportPathInspectRequest(BaseModel):
 class ContinuationInspectSourceRequest(BaseModel):
     staged_name: str
     source_path: str | None = None
+    inspection: dict | None = None
 
 
 class ContinuationInspectRequest(BaseModel):
@@ -1035,17 +1060,31 @@ def list_import_sources(
         )
         background_jobs.update_job(job_id, discovered_files=discovered_files, total_bytes=total_bytes)
 
-    for raw_folder in folder_paths:
-        folder = Path(raw_folder).expanduser().resolve()
+    folder_results: list[tuple[Path, dict] | None] = [None] * len(folder_paths)
+    folder_futures = {}
+    with ThreadPoolExecutor(max_workers=min(2, max(1, len(folder_paths)))) as executor:
+        for index, raw_folder in enumerate(folder_paths):
+            folder = Path(raw_folder).expanduser().resolve()
+            folder_futures[executor.submit(list_import_folder_files, folder)] = index
+        for future in as_completed(folder_futures):
+            index = folder_futures[future]
+            folder = Path(folder_paths[index]).expanduser().resolve()
+            listing = future.result()
+            folder_results[index] = (folder, listing)
+            if job_id is not None:
+                root_count = len(listing["files"])
+                background_jobs.record_result(
+                    job_id,
+                    str(folder),
+                    status="ready",
+                    detail=f"Discovered {root_count} file{'s' if root_count != 1 else ''}",
+                )
+
+    for result in folder_results:
+        if result is None:
+            continue
+        folder, listing = result
         root_id = str(folder)
-        if job_id is not None:
-            background_jobs.update_job(
-                job_id,
-                stage="scan",
-                current_item_id=root_id,
-                current_item_label=folder.name or str(folder),
-            )
-        listing = list_import_folder_files(folder)
         root_discovered = 0
         root_bytes = 0
         for item in listing["files"]:
@@ -1064,12 +1103,6 @@ def list_import_sources(
         discovered_files += root_discovered
         total_bytes += root_bytes
         if job_id is not None:
-            background_jobs.record_result(
-                job_id,
-                root_id,
-                status="ready",
-                detail=f"Discovered {root_discovered} file{'s' if root_discovered != 1 else ''}",
-            )
             background_jobs.update_job(
                 job_id,
                 discovered_files=discovered_files,
@@ -1138,17 +1171,35 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
         return {"files": []}
     previews = []
     completed_bytes = 0
+    completion_lock = threading.Lock()
+    completed_inspections = 0
     try:
-        for path_string in req.paths:
-            path = Path(path_string)
+        match_snapshot = import_inspection.build_identity_snapshot(db)
+
+        def report_completed(path_string: str) -> None:
+            nonlocal completed_inspections
             if job_id is not None:
+                with completion_lock:
+                    completed_inspections += 1
+                    completed = completed_inspections
                 background_jobs.update_job(
                     job_id,
                     stage="inspect",
                     current_item_id=path_string,
-                    current_item_label=path.name or path_string,
+                    current_item_label=Path(path_string).name or path_string,
+                    completed=completed,
                 )
-            preview = _inspect_import_path(path, db)
+
+        inspections = import_inspection.inspect_files(req.paths, on_completed=report_completed)
+        for inspected in inspections:
+            path_string = inspected.path
+            path = Path(path_string)
+            preview = _inspect_import_path(
+                path,
+                db,
+                inspected=inspected,
+                match_snapshot=match_snapshot,
+            )
             previews.append(preview)
             completed_bytes += max(0, int(preview.get("size") or 0))
             if job_id is not None:
@@ -1281,7 +1332,20 @@ def _continuation_staged_source(
         source["unreadable"] = True
         return source
 
-    meta = parsing.read_header_metadata(source_path)
+    try:
+        source_stat = source_path.stat()
+    except OSError:
+        source_stat = None
+    hint = draft.inspection
+    hint_is_valid = (
+        isinstance(hint, dict)
+        and hint.get("hash") == file_hash
+        and source_stat is not None
+        and hint.get("size") == source_stat.st_size
+        and hint.get("mtime_ns") == source_stat.st_mtime_ns
+        and isinstance(hint.get("header_metadata"), dict)
+    )
+    meta = hint["header_metadata"] if hint_is_valid else parsing.read_header_metadata(source_path)
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
     source["hash"] = file_hash
@@ -1367,6 +1431,7 @@ def _inspect_cell_draft_chain(
             ContinuationInspectSourceRequest(
                 staged_name=source.staged_name,
                 source_path=source.source_path,
+                inspection=source.inspection,
             )
             for source in sources
         ],
@@ -1486,6 +1551,7 @@ def _register_or_refresh_source_file(
     source_path: Path,
     filename: str,
     expected_hash: str | None = None,
+    inspection: dict | None = None,
 ) -> SourceFile:
     if not source_path.exists():
         raise HTTPException(404, f"Source file is missing: {filename}")
@@ -1502,16 +1568,19 @@ def _register_or_refresh_source_file(
     if existing is not None and existing.test_link is not None:
         raise HTTPException(409, f"{filename} is already registered")
 
-    meta = parsing.read_header_metadata(source_path)
     try:
         source_stat = source_path.stat()
     except OSError as exc:
         raise HTTPException(409, f"Source became unavailable: {filename}") from exc
-    file_hash = _source_identity_snapshot_or_error(
-        source_path,
-        expected_hash=expected_hash,
-        previous_hash=file_hash,
+    hint_is_valid = (
+        isinstance(inspection, dict)
+        and inspection.get("hash") == file_hash
+        and inspection.get("size") == source_stat.st_size
+        and inspection.get("mtime_ns") == source_stat.st_mtime_ns
+        and isinstance(inspection.get("header_metadata"), dict)
     )
+    meta = inspection["header_metadata"] if hint_is_valid else parsing.read_header_metadata(source_path)
+    file_hash = _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash, previous_hash=file_hash)
     if existing is None:
         sf = SourceFile(
             hash=file_hash,
@@ -1882,9 +1951,16 @@ def _create_imported_cells_impl(
                 source_path=source_path,
                 filename=source_draft.filename,
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
+                inspection=source_draft.inspection,
             )
             if position == 0:
-                header_meta = parsing.read_header_metadata(source_path)
+                header_meta = source_draft.inspection.get("header_metadata") if (
+                    isinstance(source_draft.inspection, dict)
+                    and source_draft.inspection.get("hash") == sf.hash
+                    and source_draft.inspection.get("size") == sf.size
+                    and source_draft.inspection.get("mtime_ns") == sf.observed_mtime_ns
+                    and isinstance(source_draft.inspection.get("header_metadata"), dict)
+                ) else parsing.read_header_metadata(source_path)
                 imported_metadata = full_cell_metadata_from_header(header_meta, draft.metadata)
                 override_values = {
                     "override.active_mass_mg": draft.active_mass_mg_override,
@@ -2509,6 +2585,7 @@ def attach_continuations(
                 source_path=source_path,
                 filename=filename,
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
+                inspection=source_draft.inspection,
             )
             db.add(TestFile(test_id=test.id, file_id=sf.id, position=base_position + offset))
             sf.parse_status = "parsing"

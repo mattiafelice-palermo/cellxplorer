@@ -1677,6 +1677,12 @@ export interface ImportPreview {
     label: string;
   } | null;
   preview_error: string | null;
+  inspection: {
+    hash: string;
+    size: number;
+    mtime_ns: number;
+    header_metadata: Record<string, unknown>;
+  };
 }
 
 export interface ImportInspectResult {
@@ -1749,6 +1755,7 @@ export type ContinuationFindingSeverity =
 export interface ContinuationInspectSourceRequest {
   staged_name: string;
   source_path?: string | null;
+  inspection?: ImportPreview["inspection"] | null;
 }
 
 export interface ContinuationInspectRequest {
@@ -1820,12 +1827,14 @@ export interface ImportSourceDraft {
   staged_name: string;
   source_path?: string | null;
   filename: string;
+  inspection?: ImportPreview["inspection"] | null;
 }
 
 export interface ImportCellDraft {
   staged_name?: string | null;
   source_path?: string | null;
   filename?: string | null;
+  inspection?: ImportPreview["inspection"] | null;
   sources?: ImportSourceDraft[];
   cell_name: string;
   description?: string | null;

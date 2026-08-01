@@ -20,6 +20,7 @@ from app.routers import files
 from app.routers import library
 from app.services import parsing
 from app.services import background_jobs
+from app.services import import_inspection
 
 
 class ImportFlowTests(unittest.TestCase):
@@ -109,7 +110,18 @@ class ImportFlowTests(unittest.TestCase):
     def test_inspection_job_reports_file_and_byte_progress(self):
         background_jobs.clear_jobs()
         preview = {"staged_name": "x", "size": 12, "filename": "x.ndax"}
-        with patch.object(files, "_inspect_import_path", return_value=preview):
+        inspected = import_inspection.FileInspection(
+            path="C:/data/x.ndax",
+            filename="x.ndax",
+            size=12,
+            mtime_ns=1,
+            ext="ndax",
+            hash="hash",
+            metadata={},
+        )
+        with patch.object(files.import_inspection, "build_identity_snapshot", return_value=Mock()), \
+            patch.object(files.import_inspection, "inspect_files", return_value=[inspected]), \
+            patch.object(files, "_inspect_import_path", return_value=preview):
             result = files.inspect_import_paths(
                 files.ImportPathInspectRequest(
                     paths=["C:/data/x.ndax"],
