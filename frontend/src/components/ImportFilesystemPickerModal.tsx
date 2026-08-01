@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Box,
   Button,
   Center,
   Checkbox,
@@ -12,6 +13,8 @@ import {
   Stack,
   Text,
   TextInput,
+  Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -20,6 +23,7 @@ import {
   IconArrowUp,
   IconClock,
   IconDeviceDesktop,
+  IconEdit,
   IconFile,
   IconFolder,
   IconHome,
@@ -29,7 +33,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   ImportBrowseEntry,
@@ -48,6 +52,12 @@ import {
   toggleImportFileSelection,
   toggleImportFolderSelection,
 } from "../importBrowserSelection";
+import {
+  importPathEditAction,
+  importPathsEqual,
+  parseImportPathBreadcrumbs,
+  shouldEnterImportPathEdit,
+} from "../importPathBreadcrumbs";
 
 export type ImportSourceSelection = {
   filePaths: string[];
@@ -74,6 +84,9 @@ export function ImportFilesystemPickerModal({
 }) {
   const [requestedPath, setRequestedPath] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState("");
+  const [pathEditing, setPathEditing] = useState(false);
+  const [pendingPathEditTarget, setPendingPathEditTarget] = useState<string | null>(null);
+  const pathInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(new Map());
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
@@ -101,6 +114,8 @@ export function ImportFilesystemPickerModal({
     if (!opened) return;
     setRequestedPath(null);
     setPathInput("");
+    setPathEditing(false);
+    setPendingPathEditTarget(null);
     setSearch("");
     setSelected(new Map());
     setLastSelectedPath(null);
@@ -124,11 +139,69 @@ export function ImportFilesystemPickerModal({
     });
   }, [browseQuery.data]);
 
-  const navigate = (path: string | null) => {
+  useEffect(() => {
+    if (!pathEditing) return;
+    const input = pathInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [pathEditing]);
+
+  useEffect(() => {
+    const data = browseQuery.data;
+    if (!pendingPathEditTarget || browseQuery.isError || !data?.current_path) return;
+    if (!importPathsEqual(data.current_path, pendingPathEditTarget)) return;
+    setPathEditing(false);
+    setPendingPathEditTarget(null);
+  }, [browseQuery.data, browseQuery.isError, pendingPathEditTarget]);
+
+  useEffect(() => {
+    if (!opened) return;
+    const handleShortcut = (event: globalThis.KeyboardEvent) => {
+      const target = event.target;
+      const focusedInTextInput =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (!shouldEnterImportPathEdit(event.key, event.ctrlKey, focusedInTextInput)) return;
+      event.preventDefault();
+      setPathEditing(true);
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [opened]);
+
+  const navigate = (path: string | null, options: { keepPathEditor?: boolean } = {}) => {
     setRequestedPath(path);
     const reset = resetImportBrowserNavigation();
     setSearch(reset.search);
     setLastSelectedPath(reset.lastSelectedPath);
+    if (options.keepPathEditor) {
+      setPathEditing(true);
+      setPendingPathEditTarget(path);
+    } else {
+      setPathEditing(false);
+      setPendingPathEditTarget(null);
+    }
+  };
+
+  const enterPathEdit = () => {
+    setPendingPathEditTarget(null);
+    setPathEditing(true);
+  };
+
+  const cancelPathEdit = () => {
+    setPendingPathEditTarget(null);
+    setPathEditing(false);
+    if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
+  };
+
+  const handlePathEditKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    const action = importPathEditAction(event.key, pathInput);
+    if (!action) return;
+    event.preventDefault();
+    if (action === "cancel") cancelPathEdit();
+    else navigate(pathInput.trim(), { keepPathEditor: true });
   };
 
   const toggleFile = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
@@ -170,6 +243,9 @@ export function ImportFilesystemPickerModal({
     visibleFiles.length > 0 && visibleFiles.every((entry) => selected.has(entry.path));
   const someVisibleSelected = visibleFiles.some((entry) => selected.has(entry.path));
   const quickAccess = browseQuery.data?.quick_access ?? [];
+  const breadcrumbs = parseImportPathBreadcrumbs(
+    browseQuery.data?.current_path ?? pathInput,
+  );
   const pinnedPaths = quickAccess.filter((item) => item.pinned).map((item) => item.path);
   const shortcutIcon = (item: ImportQuickAccessItem) => {
     if (item.label === "Home") return <IconHome size={16} />;
@@ -239,7 +315,19 @@ export function ImportFilesystemPickerModal({
           <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
             <Group gap="xs" wrap="nowrap">
               <ActionIcon variant="default" size="lg" aria-label="Go to parent folder" disabled={!browseQuery.data?.parent_path} onClick={() => navigate(browseQuery.data?.parent_path ?? null)}><IconArrowUp size={18} /></ActionIcon>
-              <TextInput value={pathInput} onChange={(event) => setPathInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && pathInput.trim()) navigate(pathInput.trim()); }} aria-label="Current folder path" style={{ flex: 1 }} />
+              {pathEditing ? <TextInput ref={pathInputRef} value={pathInput} onChange={(event) => setPathInput(event.currentTarget.value)} onKeyDown={handlePathEditKeyDown} onBlur={() => { if (!pendingPathEditTarget) cancelPathEdit(); }} aria-label="Current folder path" style={{ flex: 1 }} /> : <>
+                <Box component="nav" aria-label="Current folder path" style={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap" }}>
+                  <Group gap={3} wrap="nowrap" style={{ minWidth: "max-content", minHeight: 36 }}>
+                    {breadcrumbs.map((breadcrumb, index) => <Group key={breadcrumb.targetPath} gap={3} wrap="nowrap">
+                      {index > 0 && <Text size="sm" c="dimmed" aria-hidden="true">›</Text>}
+                      <Tooltip label={breadcrumb.targetPath} withArrow>
+                        <UnstyledButton type="button" onClick={() => navigate(breadcrumb.targetPath)} aria-current={index === breadcrumbs.length - 1 ? "location" : undefined} style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRadius: 4, padding: "5px 6px", color: index === breadcrumbs.length - 1 ? "var(--mantine-color-text)" : "var(--mantine-primary-color-7)" }}>{breadcrumb.label}</UnstyledButton>
+                      </Tooltip>
+                    </Group>)}
+                  </Group>
+                </Box>
+                <Button variant="subtle" color="gray" size="compact-sm" leftSection={<IconEdit size={15} />} aria-label="Edit path" onClick={enterPathEdit}>Edit path</Button>
+              </>}
               <ActionIcon variant="default" size="lg" aria-label="Refresh folder" onClick={() => void browseQuery.refetch()}><IconRefresh size={17} /></ActionIcon>
             </Group>
             <Group gap="xs">
