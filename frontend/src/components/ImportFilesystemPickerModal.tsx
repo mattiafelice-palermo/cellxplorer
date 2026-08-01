@@ -18,7 +18,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   IconArrowDown,
   IconArrowUp,
-  IconChevronRight,
   IconClock,
   IconDeviceDesktop,
   IconFile,
@@ -30,7 +29,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import {
   ImportBrowseEntry,
@@ -40,6 +39,15 @@ import {
   post,
   put,
 } from "../api";
+import {
+  folderSelectionState,
+  importKeyboardAction,
+  importRowAction,
+  isImportFolderCheckboxDisabled,
+  resetImportBrowserNavigation,
+  toggleImportFileSelection,
+  toggleImportFolderSelection,
+} from "../importBrowserSelection";
 
 export type ImportSourceSelection = {
   filePaths: string[];
@@ -69,10 +77,12 @@ export function ImportFilesystemPickerModal({
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(new Map());
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
+  const [knownFolderImportability, setKnownFolderImportability] = useState<Map<string, boolean>>(new Map());
   const browseQuery = useQuery({
     queryKey: ["import-filesystem", requestedPath],
     queryFn: () => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }),
     enabled: opened,
+    placeholderData: (previous) => previous,
   });
   const pinnedMutation = useMutation({
     mutationFn: (paths: string[]) =>
@@ -94,47 +104,71 @@ export function ImportFilesystemPickerModal({
     setSearch("");
     setSelected(new Map());
     setLastSelectedPath(null);
+    setKnownFolderImportability(new Map());
   }, [opened]);
 
   useEffect(() => {
     if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
   }, [browseQuery.data?.current_path]);
 
+  useEffect(() => {
+    const data = browseQuery.data;
+    if (!data?.current_path) return;
+    const hasVisibleFile = data.entries.some((entry) => entry.kind === "file");
+    const hasSubfolder = data.entries.some((entry) => entry.kind === "folder");
+    setKnownFolderImportability((current) => {
+      const next = new Map(current);
+      if (hasVisibleFile || hasSubfolder) next.delete(data.current_path);
+      else next.set(data.current_path, false);
+      return next;
+    });
+  }, [browseQuery.data]);
+
   const navigate = (path: string | null) => {
     setRequestedPath(path);
-    setSearch("");
+    const reset = resetImportBrowserNavigation();
+    setSearch(reset.search);
+    setLastSelectedPath(reset.lastSelectedPath);
+  };
+
+  const toggleFile = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
+    const update = toggleImportFileSelection(entry, visibleEntries, selected, lastSelectedPath, {
+      shiftKey,
+      ctrlKey,
+      metaKey,
+    });
+    setSelected(update.selected);
+    setLastSelectedPath(update.lastSelectedPath);
+  };
+
+  const activateRow = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
+    if (importRowAction(entry) === "navigate") {
+      navigate(entry.path);
+      return;
+    }
+    toggleFile(entry, shiftKey, ctrlKey, metaKey);
+  };
+
+  const activateFolderCheckbox = (entry: ImportBrowseEntry) => {
+    setSelected((current) => toggleImportFolderSelection(current, entry));
     setLastSelectedPath(null);
   };
 
-  const toggleEntry = (entry: ImportBrowseEntry, shiftKey: boolean, ctrlKey: boolean) => {
-    setSelected((current) => {
-      const next = new Map(current);
-      if (shiftKey && lastSelectedPath) {
-        const from = visibleEntries.findIndex((item) => item.path === lastSelectedPath);
-        const to = visibleEntries.findIndex((item) => item.path === entry.path);
-        if (from >= 0 && to >= 0) {
-          const [start, end] = from < to ? [from, to] : [to, from];
-          const shouldSelect = !next.has(entry.path);
-          visibleEntries.slice(start, end + 1).forEach((item) =>
-            shouldSelect ? next.set(item.path, item) : next.delete(item.path),
-          );
-          return next;
-        }
-      }
-      if (!ctrlKey && !shiftKey && next.has(entry.path)) next.delete(entry.path);
-      else if (!next.has(entry.path)) next.set(entry.path, entry);
-      else next.delete(entry.path);
-      return next;
-    });
-    setLastSelectedPath(entry.path);
+  const handleRowKeyDown = (entry: ImportBrowseEntry, event: KeyboardEvent<HTMLDivElement>) => {
+    const action = importKeyboardAction(entry, event.key);
+    if (!action) return;
+    event.preventDefault();
+    if (action === "navigate") navigate(entry.path);
+    else toggleFile(entry);
   };
 
   const selectedEntries = [...selected.values()];
   const fileCount = selectedEntries.filter((entry) => entry.kind === "file").length;
   const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
+  const visibleFiles = visibleEntries.filter((entry) => entry.kind === "file");
   const allVisibleSelected =
-    visibleEntries.length > 0 && visibleEntries.every((entry) => selected.has(entry.path));
-  const someVisibleSelected = visibleEntries.some((entry) => selected.has(entry.path));
+    visibleFiles.length > 0 && visibleFiles.every((entry) => selected.has(entry.path));
+  const someVisibleSelected = visibleFiles.some((entry) => selected.has(entry.path));
   const quickAccess = browseQuery.data?.quick_access ?? [];
   const pinnedPaths = quickAccess.filter((item) => item.pinned).map((item) => item.path);
   const shortcutIcon = (item: ImportQuickAccessItem) => {
@@ -161,8 +195,8 @@ export function ImportFilesystemPickerModal({
     <Modal opened={opened} onClose={onClose} title="Load cell files" size="68rem">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
-          Select any combination of Neware files and folders. Double-click a folder to open it;
-          checked folders are expanded recursively in the next step.
+          Select any combination of Neware files and folders. Click a folder row to open it;
+          use its checkbox to select the folder recursively.
         </Text>
         <Group align="stretch" gap="md" wrap="nowrap">
           <Paper p="xs" w={235} withBorder>
@@ -210,18 +244,26 @@ export function ImportFilesystemPickerModal({
             </Group>
             <Group gap="xs">
               <TextInput placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1 }} />
-              <Button variant="default" onClick={() => setSelected((current) => { const next = new Map(current); visibleEntries.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
+              <Button variant="default" disabled={visibleFiles.length === 0} onClick={() => setSelected((current) => { const next = new Map(current); visibleFiles.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
             <Paper withBorder p={0}>
-              {browseQuery.isPending ? <Center h={390}><Loader /></Center> : browseQuery.isError ? <Center h={390} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={390} type="auto"><Stack gap={0}>
-                <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} readOnly onClick={() => setSelected((current) => { const next = new Map(current); visibleEntries.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
-                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : visibleEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) ? "var(--mantine-primary-color-light)" : undefined} style={{ cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => toggleEntry(entry, event.shiftKey, event.ctrlKey || event.metaKey)} onDoubleClick={() => { if (entry.kind === "folder") navigate(entry.path); }}><Checkbox checked={selected.has(entry.path)} readOnly />{entry.kind === "folder" ? <IconFolder size={17} color="var(--mantine-primary-color-6)" /> : <IconFile size={17} color="var(--mantine-color-gray-6)" />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c="dimmed" w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c="dimmed" w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>{entry.kind === "folder" && <ActionIcon variant="subtle" color="gray" aria-label={`Open ${entry.name}`} onClick={(event) => { event.stopPropagation(); navigate(entry.path); }}><IconChevronRight size={16} /></ActionIcon>}</Group>)}
+              {browseQuery.isPending && !browseQuery.data ? <Center h={390}><Loader /></Center> : browseQuery.isError ? <Center h={390} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={390} type="auto"><Stack gap={0}>
+                <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={visibleFiles.length === 0} onChange={() => setSelected((current) => { const next = new Map(current); visibleFiles.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
+                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : visibleEntries.map((entry) => {
+                  const isFolder = entry.kind === "folder";
+                  const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
+                  const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
+                  return <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) || folderState === "some" ? "var(--mantine-primary-color-light)" : undefined} role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                    <Checkbox aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`} checked={isFolder ? folderState === "all" : selected.has(entry.path)} indeterminate={isFolder && folderState === "some"} disabled={isFolder ? folderCheckboxDisabled : false} onClick={(event) => event.stopPropagation()} onChange={() => isFolder ? activateFolderCheckbox(entry) : toggleFile(entry)} />
+                    {isFolder ? <IconFolder size={17} color="var(--mantine-primary-color-6)" /> : <IconFile size={17} color="var(--mantine-color-gray-6)" />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c="dimmed" w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c="dimmed" w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
+                  </Group>;
+                })}
               </Stack></ScrollArea>}
             </Paper>
             {selectedEntries.length > 0 && <Paper withBorder p="xs"><Group justify="space-between" mb={4}><Text size="xs" fw={700}>Selected sources</Text><Button size="compact-xs" variant="subtle" color="gray" onClick={() => setSelected(new Map())}>Clear all</Button></Group><ScrollArea h={Math.min(96, selectedEntries.length * 28)} type="auto"><Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack></ScrollArea></Paper>}
           </Stack>
         </Group>
-        <Group justify="space-between"><Text size="sm" c="dimmed">{folderCount} folder{folderCount === 1 ? "" : "s"}{fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}</Text><Group gap="xs"><Button variant="default" onClick={onClose}>Cancel</Button><Button loading={loading} disabled={selectedEntries.length === 0} onClick={() => onConfirm({ filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path), folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path) })}>Continue</Button></Group></Group>
+            <Group justify="space-between"><Text size="sm" c="dimmed">{folderCount} folder{folderCount === 1 ? "" : "s"}{fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}</Text><Group gap="xs"><Button variant="default" onClick={onClose}>Cancel</Button><Button loading={loading} disabled={selectedEntries.length === 0} onClick={() => onConfirm({ filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path), folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path) })}>Continue</Button></Group></Group>
       </Stack>
     </Modal>
   );
