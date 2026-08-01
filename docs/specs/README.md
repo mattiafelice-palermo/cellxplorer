@@ -1,5 +1,17 @@
 # Feature specs
 
+- [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
+  locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
+  plot presets. Children 035.1–035.3 are implemented sequentially on
+  `feature/spec-035-user-experience-optimization`.
+- [`035.1-import-browser-folder-interaction.md`](035.1-import-browser-folder-interaction.md)
+  separates folder navigation from recursive selection in the import browser. **Implemented**;
+  review pending.
+- [`035.2-import-browser-clickable-breadcrumbs.md`](035.2-import-browser-clickable-breadcrumbs.md)
+  adds Windows-style clickable path segments while retaining manual path entry. **In progress**.
+- [`035.3-windows-known-folder-resolution.md`](035.3-windows-known-folder-resolution.md)
+  resolves redirected Desktop/Documents/Downloads folders through the Windows Known Folder API.
+  **Planned for this branch.**
 - [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.
