@@ -43,6 +43,7 @@ import {
   IconEye,
   IconHome,
   IconGripVertical,
+  IconInfoCircle,
   IconPlus,
   IconPin,
   IconPinnedOff,
@@ -77,6 +78,12 @@ import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/Co
 import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
 import { addDebugEvent } from "../debug";
 import { nominalCapacityFromMass } from "../scientificMetadata";
+import {
+  LARGE_IMPORT_WARNING_THRESHOLD,
+  formatImportBytes,
+  summarizeImportSelection,
+} from "../importSelectionSummary";
+import { estimateImportTiming, readImportTimingHistory } from "../importTiming";
 
 export type ImportDraft = ImportPreview & {
   cell_name: string;
@@ -119,9 +126,25 @@ function buildImportFolderTree(rootName: string, candidates: FolderImportCandida
   const root: FolderImportNode = { key: "", name: rootName, files: [], children: [] };
   const nodes = new Map<string, FolderImportNode>([["", root]]);
   for (const candidate of candidates) {
+    const selectionRoot = candidate.selection_root;
+    const rootKey = selectionRoot
+      ? selectionRoot.kind === "folder"
+        ? `root:${selectionRoot.path.toLocaleLowerCase()}`
+        : "root:loose-files"
+      : "root:legacy";
+    let parent = nodes.get(rootKey);
+    if (!parent) {
+      parent = {
+        key: rootKey,
+        name: selectionRoot?.label || "Selected files",
+        files: [],
+        children: [],
+      };
+      nodes.set(rootKey, parent);
+      root.children.push(parent);
+    }
     const parts = candidate.relative_path.replaceAll("\\", "/").split("/").filter(Boolean);
-    let parent = root;
-    let key = "";
+    let key = rootKey;
     for (const part of parts.slice(0, -1)) {
       key = key ? `${key}/${part}` : part;
       let node = nodes.get(key);
@@ -176,6 +199,7 @@ function FolderImportSelectionModal({
   const [search, setSearch] = useState("");
   const [lastSelected, setLastSelected] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const [rootsExpanded, setRootsExpanded] = useState(false);
   const tree = useMemo(() => buildImportFolderTree(rootName, candidates), [rootName, candidates]);
   const focusedCandidate =
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
@@ -196,6 +220,7 @@ function FolderImportSelectionModal({
       setSearch("");
       setLastSelected(null);
       setFocusedKey(candidates[0] ? folderCandidateKey(candidates[0]) : null);
+      setRootsExpanded(false);
     }
   }, [opened, candidates]);
 
@@ -337,6 +362,19 @@ function FolderImportSelectionModal({
   };
 
   const selectedCandidates = candidates.filter((candidate) => selected.has(folderCandidateKey(candidate)));
+  const selectionSummary = useMemo(
+    () => summarizeImportSelection(candidates, selected),
+    [candidates, selected],
+  );
+  const timingEstimate = useMemo(
+    () => estimateImportTiming(
+      selectionSummary.fileCount,
+      selectionSummary.totalBytes,
+      readImportTimingHistory(),
+    ),
+    [selectionSummary.fileCount, selectionSummary.totalBytes],
+  );
+  const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : selectionSummary.roots.slice(0, 5);
   return (
     <Modal opened={opened} onClose={onClose} title="Choose files to import" size="78rem">
       <Stack gap="sm">
@@ -372,6 +410,58 @@ function FolderImportSelectionModal({
             Clear
           </Button>
         </Group>
+        {selectionSummary.fileCount > 0 && (
+          <Stack gap={"xs"}>
+            {selectionSummary.isLarge ? (
+              <Alert
+                color="orange"
+                icon={<IconAlertTriangle size={17} />}
+                title={`Large import: ${selectionSummary.fileCount} files`}
+              >
+                <Text size="sm">
+                  You are selecting {selectionSummary.fileCount} files ({formatImportBytes(selectionSummary.totalBytes)}) from {selectionSummary.roots.length} location{selectionSummary.roots.length === 1 ? "" : "s"}.
+                  Make sure this is intentional before continuing.
+                </Text>
+              </Alert>
+            ) : (
+              <Text size="sm" c="dimmed">
+                Selecting {selectionSummary.fileCount} file{selectionSummary.fileCount === 1 ? "" : "s"} ({formatImportBytes(selectionSummary.totalBytes)}) from {selectionSummary.roots.length} location{selectionSummary.roots.length === 1 ? "" : "s"}.
+              </Text>
+            )}
+            <Group gap="xs" align="center">
+              <IconInfoCircle size={15} aria-hidden="true" />
+              <Text size="xs" c="dimmed">
+                {timingEstimate
+                  ? `Estimated time to register the cells: approximately ${timingEstimate.minimumLabel}–${timingEstimate.maximumLabel}. Scientific data preparation continues in the background afterward.`
+                  : "The estimate appears after at least two successful local import samples."}
+              </Text>
+            </Group>
+            <Stack gap={2} pl="sm">
+              {visibleRootSummaries.map((root) => (
+                <Group key={root.key} justify="space-between" gap="xs" wrap="nowrap">
+                  <Tooltip label={root.path ?? root.label} disabled={!root.path}>
+                    <Text size="xs" truncate style={{ flex: 1 }}>
+                      {root.label}
+                    </Text>
+                  </Tooltip>
+                  <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+                    {root.fileCount} file{root.fileCount === 1 ? "" : "s"} · {formatImportBytes(root.totalBytes)}
+                  </Text>
+                </Group>
+              ))}
+              {selectionSummary.roots.length > 5 && (
+                <Button
+                  variant="subtle"
+                  size="compact-xs"
+                  onClick={() => setRootsExpanded((current) => !current)}
+                  aria-expanded={rootsExpanded}
+                >
+                  {rootsExpanded ? "Show fewer locations" : `Show all ${selectionSummary.roots.length} locations`}
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+        )}
         <Group align="stretch" gap="sm" wrap="nowrap">
           <Paper withBorder p="xs" style={{ flex: 1, minWidth: 0 }}>
             <ScrollArea h={500} type="auto">

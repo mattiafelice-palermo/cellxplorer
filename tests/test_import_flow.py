@@ -51,6 +51,8 @@ class ImportFlowTests(unittest.TestCase):
             [item["relative_path"] for item in result["files"]],
             ["root.nda", "batch/nested/cell.ndax"],
         )
+        self.assertTrue(all(item["selection_root"]["kind"] == "folder" for item in result["files"]))
+        self.assertEqual(result["files"][0]["selection_root"]["path"], str(root.resolve()))
 
     def test_source_listing_combines_multiple_folders_and_loose_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,8 +73,27 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [item["relative_path"] for item in result["files"]],
-            ["Loose files/loose.nda", "first/one.ndax", "second/two.nda"],
+            ["loose.nda", "one.ndax", "two.nda"],
         )
+        self.assertEqual(result["files"][0]["selection_root"]["label"], "Loose files")
+        self.assertEqual(result["files"][1]["selection_root"]["path"], str(first.resolve()))
+        self.assertEqual(result["files"][2]["selection_root"]["path"], str(second.resolve()))
+
+    def test_source_listing_keeps_same_named_roots_distinguishable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp)
+            first = outer / "one" / "batch"
+            second = outer / "two" / "batch"
+            first.mkdir(parents=True)
+            second.mkdir(parents=True)
+            (first / "a.ndax").write_bytes(b"a")
+            (second / "b.ndax").write_bytes(b"b")
+
+            result = files.list_import_sources([], [str(first), str(second)])
+
+        roots = [item["selection_root"] for item in result["files"]]
+        self.assertEqual([root["label"] for root in roots], ["batch", "batch"])
+        self.assertNotEqual(roots[0]["path"], roots[1]["path"])
 
     def test_import_directory_browser_lists_folders_and_neware_files_only(self):
         with tempfile.TemporaryDirectory() as tmp:

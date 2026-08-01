@@ -928,6 +928,11 @@ def list_import_folder_files(root: Path) -> dict:
                     "relative_path": path.relative_to(root).as_posix(),
                     "filename": path.name,
                     "size": stat.st_size,
+                    "selection_root": {
+                        "kind": "folder",
+                        "path": str(root),
+                        "label": root.name or str(root),
+                    },
                 }
             )
     return {
@@ -953,20 +958,20 @@ def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
         files.append(
             {
                 "path": str(path),
-                "relative_path": f"Loose files/{path.name}",
+                "relative_path": path.name,
                 "filename": path.name,
                 "size": path.stat().st_size,
+                "selection_root": {
+                    "kind": "file",
+                    "path": str(path),
+                    "label": "Loose files",
+                },
             }
         )
 
-    folder_labels: dict[str, int] = {}
     for raw_folder in folder_paths:
         folder = Path(raw_folder).expanduser().resolve()
         listing = list_import_folder_files(folder)
-        base_label = listing["root_name"]
-        occurrence = folder_labels.get(base_label.casefold(), 0) + 1
-        folder_labels[base_label.casefold()] = occurrence
-        label = base_label if occurrence == 1 else f"{base_label} ({occurrence})"
         for item in listing["files"]:
             path = Path(item["path"]).resolve()
             key = os.path.normcase(str(path))
@@ -976,7 +981,6 @@ def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
             files.append(
                 {
                     **item,
-                    "relative_path": f"{label}/{item['relative_path']}",
                 }
             )
     return {

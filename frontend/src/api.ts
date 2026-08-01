@@ -1567,6 +1567,13 @@ export interface BackgroundJob {
   resource_mode?: "foreground" | "background";
   workers?: number;
   transition_pending?: boolean;
+  token?: string | null;
+  stage?: "scan" | "inspect" | "register" | string;
+  current_item_id?: string | null;
+  current_item_label?: string | null;
+  total_bytes?: number;
+  completed_bytes?: number;
+  discovered_files?: number;
 }
 
 export interface AppSession {
@@ -1681,6 +1688,11 @@ export interface ImportFolderFile {
   relative_path: string;
   filename: string;
   size: number;
+  selection_root: {
+    kind: "folder" | "file";
+    path: string;
+    label: string;
+  };
 }
 
 export interface ImportFolderSelectionResult {
@@ -1744,6 +1756,17 @@ export interface ContinuationInspectRequest {
   existing_test_id?: number | null;
   existing_cell_id?: number | null;
   proposed_order?: string[] | null;
+}
+
+export interface ImportSourceListRequest {
+  file_paths: string[];
+  folder_paths: string[];
+  job_token?: string;
+}
+
+export interface ImportPathInspectRequest {
+  paths: string[];
+  job_token?: string;
 }
 
 export interface ContinuationInspectSource {
