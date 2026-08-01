@@ -53,7 +53,7 @@ import {
   IconUpload,
   IconX,
 } from "@tabler/icons-react";
-import { DragEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { DragEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -76,6 +76,7 @@ import {
 import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
+import { ImportProgressPanel } from "../components/ImportProgressPanel";
 import { addDebugEvent } from "../debug";
 import { nominalCapacityFromMass } from "../scientificMetadata";
 import {
@@ -92,6 +93,12 @@ import {
   removeAllRegisteredDuplicates,
   removeStagedDraft,
 } from "../importDraftPolicy";
+import {
+  newImportJobToken,
+  type ImportProgressStage,
+} from "../importProgress";
+import { recordImportTimingSample } from "../importTiming";
+import { useImportJobProgress } from "../useImportJobProgress";
 
 export type ImportDraft = ImportPreview & {
   cell_name: string;
@@ -193,6 +200,7 @@ function FolderImportSelectionModal({
   rootName,
   candidates,
   loading,
+  progress,
   onClose,
   onConfirm,
 }: {
@@ -200,6 +208,7 @@ function FolderImportSelectionModal({
   rootName: string;
   candidates: FolderImportCandidate[];
   loading: boolean;
+  progress?: ReactNode;
   onClose: () => void;
   onConfirm: (selected: FolderImportCandidate[]) => void;
 }) {
@@ -384,12 +393,13 @@ function FolderImportSelectionModal({
   );
   const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : selectionSummary.roots.slice(0, 5);
   return (
-    <Modal opened={opened} onClose={onClose} title="Choose files to import" size="78rem">
+    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title="Choose files to import" size="78rem">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Selected folders are expanded recursively. Use checkboxes to choose files and Preview to
           inspect them.
         </Text>
+        {progress && <Paper withBorder p="xs">{progress}</Paper>}
         <Group justify="space-between">
           <TextInput
             placeholder="Search paths"
@@ -556,7 +566,7 @@ function FolderImportSelectionModal({
             {selectedCandidates.length} of {candidates.length} files selected
           </Text>
           <Group gap="xs">
-            <Button variant="default" onClick={onClose}>
+            <Button variant="default" disabled={loading} onClick={onClose}>
               Cancel
             </Button>
             <Button
@@ -1154,6 +1164,7 @@ function ImportModal({
   addingMore,
   onSaved,
   targetFolderId,
+  blockingInspectionSeconds,
 }: {
   drafts: ImportDraft[];
   active: number;
@@ -1167,6 +1178,7 @@ function ImportModal({
   addingMore: boolean;
   onSaved: () => void;
   targetFolderId: number | null;
+  blockingInspectionSeconds: number;
 }) {
   const qc = useQueryClient();
   const draft = drafts[active];
@@ -1182,6 +1194,8 @@ function ImportModal({
   const [replicateGroups, setReplicateGroups] = useState<ImportReplicateDraft[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
   const [continuedMode, setContinuedMode] = useState(false);
+  const [registerToken, setRegisterToken] = useState<string | null>(null);
+  const registerStartedAt = useRef<number | null>(null);
   const [continuedCellDraft, setContinuedCellDraft] = useState<ContinuedCellDraft>(() => continuedCellDraftFrom(drafts[0]));
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
@@ -1375,12 +1389,14 @@ function ImportModal({
       order?: string[];
       acknowledgedFindingIds?: string[];
       continuedCellDraft?: ContinuedCellDraft;
+      jobToken: string;
     }) => {
       return post<{
         created: { cell_id: number; cell_name: string }[];
         replicate_group?: { id: number; name: string; cell_ids: number[] } | null;
         replicate_groups?: { id: number; name: string; cell_ids: number[] }[];
       }>("/api/imports/cells", {
+        job_token: variables.jobToken,
         folder_ids: destinationFolders.map(Number),
         replicate_groups: variables.mode === "continued" ? [] : outgoingGroups
           .filter((group) => group.name.trim() && group.staged_names.length > 0)
@@ -1432,7 +1448,17 @@ function ImportModal({
         })),
       });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
+      recordImportTimingSample({
+        recordedAt: new Date().toISOString(),
+        fileCount: variables.mode === "continued" ? drafts.length : includedDrafts.length,
+        totalBytes: drafts.reduce((total, item) => total + Math.max(0, item.size), 0),
+        blockingSeconds: blockingInspectionSeconds + Math.max(
+          0,
+          (Date.now() - (registerStartedAt.current ?? Date.now())) / 1000,
+        ),
+      });
+      setRegisterToken(null);
       notifications.show({
         message: `Imported ${result.created.length} cell${result.created.length === 1 ? "" : "s"}`,
         color: "teal",
@@ -1451,6 +1477,7 @@ function ImportModal({
       notifications.show({ message: e.message, color: "red" });
     },
   });
+  const registerProgress = useImportJobProgress(registerToken, Boolean(registerToken));
 
   const groupNames = replicateGroups.map((group) => group.name.trim()).filter(Boolean);
   const duplicateGroupName = new Set(groupNames).size !== groupNames.length;
@@ -1482,7 +1509,16 @@ function ImportModal({
 
   return (
     <>
-      <Modal opened={opened} onClose={handleClose} title="Import cells" size="95rem">
+      <Modal opened={opened} onClose={save.isPending ? () => undefined : handleClose} title="Import cells" size="95rem">
+        {registerToken && (
+          <Paper withBorder mb="sm" p="xs">
+            <ImportProgressPanel
+              stage="register"
+              job={registerProgress.data}
+              error={save.isError && save.error instanceof Error ? save.error.message : null}
+            />
+          </Paper>
+        )}
         {draft && (
           <Stack gap="md">
             {drafts.length >= 2 && (
@@ -1509,20 +1545,24 @@ function ImportModal({
                 onAddMoreSources={onAddMoreSources}
                 onRemoveSource={removeSource}
                 onSwitchToSeparate={() => setContinuedMode(false)}
-                addingMore={addingMore}
+                addingMore={addingMore || save.isPending}
                 destinationFolders={destinationFolders}
                 onDestinationFoldersChange={setDestinationFolders}
                 folderSelectData={folderSelectData}
                 materialPresets={materialPresetsQuery.data?.presets ?? []}
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
-                onImport={(order, acknowledgedFindingIds) =>
+                onImport={(order, acknowledgedFindingIds) => {
+                  const jobToken = newImportJobToken();
+                  registerStartedAt.current = Date.now();
+                  setRegisterToken(jobToken);
                   save.mutate({
                     mode: "continued",
                     order,
                     acknowledgedFindingIds,
                     continuedCellDraft,
-                  })
-                }
+                    jobToken,
+                  });
+                }}
                 onRawData={(stagedName) => {
                   const targetIndex = drafts.findIndex((item) => item.staged_name === stagedName);
                   const target = targetIndex >= 0 ? drafts[targetIndex] : undefined;
@@ -1550,7 +1590,8 @@ function ImportModal({
                 <Button
                   variant="default"
                   leftSection={<IconPlus size={16} />}
-                  loading={addingMore}
+                  loading={addingMore || save.isPending}
+                  disabled={save.isPending}
                   onClick={onAddMoreSources}
                 >
                   Add more sources
@@ -1565,14 +1606,19 @@ function ImportModal({
                   clearable
                   searchable
                 />
-                <Button variant="default" onClick={handleClose}>
+                <Button variant="default" disabled={save.isPending} onClick={handleClose}>
                   Cancel
                 </Button>
                 <Button
                   leftSection={<IconDeviceFloppy size={16} />}
                   disabled={!canSave}
                   loading={save.isPending}
-                  onClick={() => save.mutate({ mode: "separate" })}
+                  onClick={() => {
+                    const jobToken = newImportJobToken();
+                    registerStartedAt.current = Date.now();
+                    setRegisterToken(jobToken);
+                    save.mutate({ mode: "separate", jobToken });
+                  }}
                 >
                   Import {includedDrafts.length} cell{includedDrafts.length === 1 ? "" : "s"}
                 </Button>
@@ -2266,6 +2312,11 @@ export function ImportCellsLauncher({
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
+  const [progressToken, setProgressToken] = useState<string | null>(null);
+  const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
+  const inspectionStartedAt = useRef<number | null>(null);
+  const progressQuery = useImportJobProgress(progressToken, Boolean(progressStage));
 
   const loadPreview = (draft: ImportDraft) => {
     addDebugEvent("import:previewRequested", {
@@ -2323,12 +2374,18 @@ export function ImportCellsLauncher({
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append }: { paths: string[]; append: boolean }) =>
-      post<ImportInspectResult>("/api/imports/inspect-paths", { paths }).then((result) => ({
+    mutationFn: ({ paths, append, jobToken }: { paths: string[]; append: boolean; jobToken: string }) =>
+      post<ImportInspectResult>("/api/imports/inspect-paths", { paths, job_token: jobToken }).then((result) => ({
         result,
         append,
       })),
     onSuccess: ({ result, append }) => {
+      setBlockingInspectionSeconds((current) => current + Math.max(
+        0,
+        (Date.now() - (inspectionStartedAt.current ?? Date.now())) / 1000,
+      ));
+      setProgressStage(null);
+      setProgressToken(null);
       setFolderModalOpen(false);
       hydrateInspection(result, append);
     },
@@ -2340,16 +2397,21 @@ export function ImportCellsLauncher({
       filePaths,
       folderPaths,
       append,
+      jobToken,
     }: {
       filePaths: string[];
       folderPaths: string[];
       append: boolean;
+      jobToken: string;
     }) =>
       post<ImportFolderSelectionResult>("/api/imports/list-sources", {
         file_paths: filePaths,
         folder_paths: folderPaths,
+        job_token: jobToken,
       }).then((result) => ({ result, append })),
     onSuccess: ({ result, append }) => {
+      setProgressStage(null);
+      setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
         notifications.show({ message: "No .nda or .ndax files were found.", color: "gray" });
@@ -2366,22 +2428,30 @@ export function ImportCellsLauncher({
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setProgressStage(null);
+    setProgressToken(null);
+    if (!append) {
+      setBlockingInspectionSeconds(0);
+    }
     setSourcePickerOpen(true);
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
-    if (folderPaths.length > 0) {
-      listSources.mutate({ filePaths, folderPaths, append: sourceAppend });
-      return;
-    }
-    setSourcePickerOpen(false);
-    inspectPaths.mutate({ paths: filePaths, append: sourceAppend });
+    const jobToken = newImportJobToken();
+    setProgressStage("scan");
+    setProgressToken(jobToken);
+    listSources.mutate({ filePaths, folderPaths, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    const jobToken = newImportJobToken();
+    inspectionStartedAt.current = Date.now();
+    setProgressStage("inspect");
+    setProgressToken(jobToken);
     inspectPaths.mutate({
       paths: selected.map((candidate) => candidate.path).filter(Boolean) as string[],
       append: sourceAppend,
+      jobToken,
     });
   };
 
@@ -2395,6 +2465,13 @@ export function ImportCellsLauncher({
       <SharedImportFilesystemPickerModal
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
+        progress={progressStage === "scan" ? (
+          <ImportProgressPanel
+            stage="scan"
+            job={progressQuery.data}
+            error={listSources.isError && listSources.error instanceof Error ? listSources.error.message : null}
+          />
+        ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
         onConfirm={continueSourceSelection}
       />
@@ -2403,6 +2480,13 @@ export function ImportCellsLauncher({
         rootName={folderRootName}
         candidates={folderCandidates}
         loading={inspectPaths.isPending}
+        progress={progressStage === "inspect" ? (
+          <ImportProgressPanel
+            stage="inspect"
+            job={progressQuery.data}
+            error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
+          />
+        ) : undefined}
         onClose={() => setFolderModalOpen(false)}
         onConfirm={confirmFolderSelection}
       />
@@ -2411,6 +2495,7 @@ export function ImportCellsLauncher({
         active={active}
         opened={modalOpen}
         targetFolderId={targetFolderId}
+        blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
@@ -2459,6 +2544,11 @@ export function InboxPage() {
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
+  const [progressToken, setProgressToken] = useState<string | null>(null);
+  const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
+  const inspectionStartedAt = useRef<number | null>(null);
+  const progressQuery = useImportJobProgress(progressToken, Boolean(progressStage));
   const targetFolderId = searchParams.get("folder_id") ? Number(searchParams.get("folder_id")) : null;
   const treeQuery = useQuery({
     queryKey: ["tree"],
@@ -2529,12 +2619,18 @@ export function InboxPage() {
   };
 
   const inspectPaths = useMutation({
-    mutationFn: ({ paths, append }: { paths: string[]; append: boolean }) =>
-      post<ImportInspectResult>("/api/imports/inspect-paths", { paths }).then((result) => ({
+    mutationFn: ({ paths, append, jobToken }: { paths: string[]; append: boolean; jobToken: string }) =>
+      post<ImportInspectResult>("/api/imports/inspect-paths", { paths, job_token: jobToken }).then((result) => ({
         result,
         append,
       })),
     onSuccess: ({ result, append }) => {
+      setBlockingInspectionSeconds((current) => current + Math.max(
+        0,
+        (Date.now() - (inspectionStartedAt.current ?? Date.now())) / 1000,
+      ));
+      setProgressStage(null);
+      setProgressToken(null);
       setFolderModalOpen(false);
       hydrateInspection(result, append);
     },
@@ -2546,16 +2642,21 @@ export function InboxPage() {
       filePaths,
       folderPaths,
       append,
+      jobToken,
     }: {
       filePaths: string[];
       folderPaths: string[];
       append: boolean;
+      jobToken: string;
     }) =>
       post<ImportFolderSelectionResult>("/api/imports/list-sources", {
         file_paths: filePaths,
         folder_paths: folderPaths,
+        job_token: jobToken,
       }).then((result) => ({ result, append })),
     onSuccess: ({ result, append }) => {
+      setProgressStage(null);
+      setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
         notifications.show({ message: "No .nda or .ndax files were found.", color: "gray" });
@@ -2572,22 +2673,30 @@ export function InboxPage() {
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setProgressStage(null);
+    setProgressToken(null);
+    if (!append) {
+      setBlockingInspectionSeconds(0);
+    }
     setSourcePickerOpen(true);
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
-    if (folderPaths.length > 0) {
-      listSources.mutate({ filePaths, folderPaths, append: sourceAppend });
-      return;
-    }
-    setSourcePickerOpen(false);
-    inspectPaths.mutate({ paths: filePaths, append: sourceAppend });
+    const jobToken = newImportJobToken();
+    setProgressStage("scan");
+    setProgressToken(jobToken);
+    listSources.mutate({ filePaths, folderPaths, append: sourceAppend, jobToken });
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    const jobToken = newImportJobToken();
+    inspectionStartedAt.current = Date.now();
+    setProgressStage("inspect");
+    setProgressToken(jobToken);
     inspectPaths.mutate({
       paths: selected.map((candidate) => candidate.path).filter(Boolean) as string[],
       append: sourceAppend,
+      jobToken,
     });
   };
 
@@ -2612,6 +2721,13 @@ export function InboxPage() {
       <SharedImportFilesystemPickerModal
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
+        progress={progressStage === "scan" ? (
+          <ImportProgressPanel
+            stage="scan"
+            job={progressQuery.data}
+            error={listSources.isError && listSources.error instanceof Error ? listSources.error.message : null}
+          />
+        ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
         onConfirm={continueSourceSelection}
       />
@@ -2620,6 +2736,13 @@ export function InboxPage() {
         rootName={folderRootName}
         candidates={folderCandidates}
         loading={inspectPaths.isPending}
+        progress={progressStage === "inspect" ? (
+          <ImportProgressPanel
+            stage="inspect"
+            job={progressQuery.data}
+            error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
+          />
+        ) : undefined}
         onClose={() => setFolderModalOpen(false)}
         onConfirm={confirmFolderSelection}
       />
@@ -2655,6 +2778,7 @@ export function InboxPage() {
         active={active}
         opened={modalOpen}
         targetFolderId={targetFolderId}
+        blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))

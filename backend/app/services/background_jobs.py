@@ -80,6 +80,9 @@ def update_job(job_id: int, **values) -> None:
         job.update(values)
         if values.get("status") in {"completed", "failed"} and not job.get("completed_at"):
             job["completed_at"] = _now()
+        if values.get("status") in {"completed", "failed"}:
+            job["current_item_id"] = None
+            job["current_item_label"] = None
 
 
 def update_item(job_id: int, item_id: str | int, **values) -> None:

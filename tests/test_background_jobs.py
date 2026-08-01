@@ -66,6 +66,25 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertEqual(job["completed"], 1)
         self.assertEqual([item["id"] for item in job["items"]], ["first", "second"])
 
+    def test_terminal_job_clears_current_item(self):
+        job_id = background_jobs.create_job(
+            kind="import_inspect",
+            title="Inspecting",
+            description="Working",
+            total=1,
+            items=[{"id": "a", "label": "a.ndax"}],
+        )
+        background_jobs.update_job(
+            job_id,
+            stage="inspect",
+            current_item_id="a",
+            current_item_label="a.ndax",
+        )
+        background_jobs.update_job(job_id, status="completed")
+        job = background_jobs.get_job(job_id)
+        self.assertIsNone(job["current_item_id"])
+        self.assertIsNone(job["current_item_label"])
+
 
     def test_jobs_are_findable_by_client_token(self):
         """Compute endpoints open a job only when the cache misses.

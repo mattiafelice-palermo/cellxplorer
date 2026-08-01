@@ -1843,6 +1843,7 @@ export interface ImportCellDraft {
 
 export interface ImportCellsRequest {
   cells: ImportCellDraft[];
+  job_token?: string;
   folder_id?: number | null;
   folder_ids?: number[];
   replicate_group_name?: string | null;

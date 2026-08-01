@@ -33,7 +33,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import {
   ImportBrowseEntry,
@@ -74,11 +74,13 @@ function formatBytes(n: number) {
 export function ImportFilesystemPickerModal({
   opened,
   loading,
+  progress,
   onClose,
   onConfirm,
 }: {
   opened: boolean;
   loading: boolean;
+  progress?: ReactNode;
   onClose: () => void;
   onConfirm: (selection: ImportSourceSelection) => void;
 }) {
@@ -268,12 +270,13 @@ export function ImportFilesystemPickerModal({
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Load cell files" size="68rem">
+    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title="Load cell files" size="68rem">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Select any combination of Neware files and folders. Click a folder row to open it;
           use its checkbox to select the folder recursively.
         </Text>
+        {progress && <Paper withBorder p="xs">{progress}</Paper>}
         <Group align="stretch" gap="md" wrap="nowrap">
           <Paper p="xs" w={235} withBorder>
             <ScrollArea h={590} type="auto">
@@ -351,7 +354,7 @@ export function ImportFilesystemPickerModal({
             {selectedEntries.length > 0 && <Paper withBorder p="xs"><Group justify="space-between" mb={4}><Text size="xs" fw={700}>Selected sources</Text><Button size="compact-xs" variant="subtle" color="gray" onClick={() => setSelected(new Map())}>Clear all</Button></Group><ScrollArea h={Math.min(96, selectedEntries.length * 28)} type="auto"><Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack></ScrollArea></Paper>}
           </Stack>
         </Group>
-            <Group justify="space-between"><Text size="sm" c="dimmed">{folderCount} folder{folderCount === 1 ? "" : "s"}{fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}</Text><Group gap="xs"><Button variant="default" onClick={onClose}>Cancel</Button><Button loading={loading} disabled={selectedEntries.length === 0} onClick={() => onConfirm({ filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path), folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path) })}>Continue</Button></Group></Group>
+            <Group justify="space-between"><Text size="sm" c="dimmed">{folderCount} folder{folderCount === 1 ? "" : "s"}{fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}</Text><Group gap="xs"><Button variant="default" disabled={loading} onClick={onClose}>Cancel</Button><Button loading={loading} disabled={selectedEntries.length === 0} onClick={() => onConfirm({ filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path), folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path) })}>Continue</Button></Group></Group>
       </Stack>
     </Modal>
   );

@@ -13,7 +13,7 @@ from pathlib import Path
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION, IMPORT_DIR
@@ -596,6 +596,7 @@ class ImportReplicateGroupDraft(BaseModel):
 
 class ImportCellsRequest(BaseModel):
     cells: list[ImportCellDraft]
+    job_token: str | None = Field(default=None, max_length=100)
     folder_id: int | None = None
     folder_ids: list[int] = []
     replicate_group_name: str | None = None
@@ -678,6 +679,7 @@ class ImportRawDataRequest(BaseModel):
 
 class ImportPathInspectRequest(BaseModel):
     paths: list[str]
+    job_token: str | None = Field(default=None, max_length=100)
 
 
 class ContinuationInspectSourceRequest(BaseModel):
@@ -695,6 +697,7 @@ class ContinuationInspectRequest(BaseModel):
 class ImportSourceListRequest(BaseModel):
     file_paths: list[str] = []
     folder_paths: list[str] = []
+    job_token: str | None = Field(default=None, max_length=100)
 
 
 class ImportBrowseRequest(BaseModel):
@@ -942,11 +945,52 @@ def list_import_folder_files(root: Path) -> dict:
     }
 
 
-def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
+def _import_job_error(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, str) and detail.strip():
+        return detail
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        return detail["message"]
+    return str(exc) or "Import operation failed"
+
+
+def _create_import_scan_job(file_paths: list[str], folder_paths: list[str], token: str) -> int:
+    root_items = []
+    if file_paths:
+        root_items.append({"id": "loose-files", "label": "Loose files"})
+    root_items.extend(
+        {"id": str(Path(path).expanduser()), "label": Path(path).name or str(path)}
+        for path in folder_paths
+    )
+    return background_jobs.create_job(
+        kind="import_scan",
+        title="Discovering import sources",
+        description="Scanning selected locations",
+        total=len(root_items),
+        token=token,
+        items=root_items,
+    )
+
+
+def list_import_sources(
+    file_paths: list[str],
+    folder_paths: list[str],
+    *,
+    job_id: int | None = None,
+) -> dict:
     files: list[dict] = []
     seen: set[str] = set()
     loose_paths = [Path(path).expanduser().resolve() for path in file_paths]
+    discovered_files = 0
+    total_bytes = 0
     for path in loose_paths:
+        if job_id is not None:
+            background_jobs.update_job(
+                job_id,
+                stage="scan",
+                current_item_id="loose-files",
+                current_item_label="Loose files",
+            )
         if not path.is_file():
             raise HTTPException(404, f"File is missing: {path}")
         if not import_filename_allowed(path.name):
@@ -955,12 +999,15 @@ def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
         if key in seen:
             continue
         seen.add(key)
+        size = path.stat().st_size
+        discovered_files += 1
+        total_bytes += size
         files.append(
             {
                 "path": str(path),
                 "relative_path": path.name,
                 "filename": path.name,
-                "size": path.stat().st_size,
+                "size": size,
                 "selection_root": {
                     "kind": "file",
                     "path": str(path),
@@ -968,20 +1015,54 @@ def list_import_sources(file_paths: list[str], folder_paths: list[str]) -> dict:
                 },
             }
         )
+    if job_id is not None and loose_paths:
+        background_jobs.record_result(
+            job_id,
+            "loose-files",
+            status="ready",
+            detail=f"Discovered {discovered_files} file{'s' if discovered_files != 1 else ''}",
+        )
+        background_jobs.update_job(job_id, discovered_files=discovered_files, total_bytes=total_bytes)
 
     for raw_folder in folder_paths:
         folder = Path(raw_folder).expanduser().resolve()
+        root_id = str(folder)
+        if job_id is not None:
+            background_jobs.update_job(
+                job_id,
+                stage="scan",
+                current_item_id=root_id,
+                current_item_label=folder.name or str(folder),
+            )
         listing = list_import_folder_files(folder)
+        root_discovered = 0
+        root_bytes = 0
         for item in listing["files"]:
             path = Path(item["path"]).resolve()
             key = os.path.normcase(str(path))
             if key in seen:
                 continue
             seen.add(key)
+            root_discovered += 1
+            root_bytes += int(item["size"] or 0)
             files.append(
                 {
                     **item,
                 }
+            )
+        discovered_files += root_discovered
+        total_bytes += root_bytes
+        if job_id is not None:
+            background_jobs.record_result(
+                job_id,
+                root_id,
+                status="ready",
+                detail=f"Discovered {root_discovered} file{'s' if root_discovered != 1 else ''}",
+            )
+            background_jobs.update_job(
+                job_id,
+                discovered_files=discovered_files,
+                total_bytes=total_bytes,
             )
     return {
         "root_path": None,
@@ -1014,9 +1095,66 @@ async def inspect_import_files(files: list[UploadFile] = File(...), db: Session 
 
 @router.post("/imports/inspect-paths")
 def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(get_db)):
+    job_id = None
+    if req.job_token:
+        items = [
+            {"id": path, "label": Path(path).name or path}
+            for path in req.paths
+        ]
+        total_bytes = 0
+        for path in req.paths:
+            try:
+                total_bytes += max(0, Path(path).stat().st_size)
+            except OSError:
+                pass
+        job_id = background_jobs.create_job(
+            kind="import_inspect",
+            title="Inspecting import files",
+            description="Checking identity and reading Neware metadata",
+            total=len(req.paths),
+            items=items,
+            token=req.job_token,
+        )
+        background_jobs.update_job(
+            job_id,
+            stage="inspect",
+            total_bytes=total_bytes,
+            completed_bytes=0,
+        )
     if not req.paths:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="completed", completed=0)
         return {"files": []}
-    return {"files": [_inspect_import_path(Path(path), db) for path in req.paths]}
+    previews = []
+    completed_bytes = 0
+    try:
+        for path_string in req.paths:
+            path = Path(path_string)
+            if job_id is not None:
+                background_jobs.update_job(
+                    job_id,
+                    stage="inspect",
+                    current_item_id=path_string,
+                    current_item_label=path.name or path_string,
+                )
+            preview = _inspect_import_path(path, db)
+            previews.append(preview)
+            completed_bytes += max(0, int(preview.get("size") or 0))
+            if job_id is not None:
+                background_jobs.record_result(
+                    job_id,
+                    path_string,
+                    status="ready",
+                    detail="Identity and Neware metadata ready",
+                )
+                background_jobs.update_job(job_id, completed_bytes=completed_bytes)
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="completed")
+        return {"files": previews}
+    except Exception as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
+        raise
 
 
 def _continuation_existing_source(
@@ -1492,7 +1630,20 @@ def inspect_cell_continuation_sources(
 
 @router.post("/imports/list-sources")
 def list_import_source_paths(req: ImportSourceListRequest):
-    return list_import_sources(req.file_paths, req.folder_paths)
+    job_id = (
+        _create_import_scan_job(req.file_paths, req.folder_paths, req.job_token)
+        if req.job_token
+        else None
+    )
+    try:
+        result = list_import_sources(req.file_paths, req.folder_paths, job_id=job_id)
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="completed", completed=background_jobs.get_job(job_id)["total"])
+        return result
+    except Exception as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
+        raise
 
 
 @router.post("/imports/browse")
@@ -1597,8 +1748,12 @@ def raw_import_file_data(req: ImportRawDataRequest):
     return raw_table_from_frame(raw, offset=req.offset, limit=req.limit)
 
 
-@router.post("/imports/cells")
-def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)):
+def _create_imported_cells_impl(
+    req: ImportCellsRequest,
+    db: Session,
+    *,
+    job_id: int | None = None,
+):
     if not req.cells:
         raise HTTPException(400, "No files selected")
     all_staged_keys = [
@@ -1642,7 +1797,15 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
     cache_jobs: list[dict] = []
     inspected_hashes_by_staged_name: dict[str, str] = {}
 
-    for draft in req.cells:
+    for draft_index, draft in enumerate(req.cells):
+        if job_id is not None:
+            sources = normalize_import_cell_sources(draft)
+            background_jobs.update_job(
+                job_id,
+                stage="register",
+                current_item_id=str(draft_index),
+                current_item_label=draft.cell_name.strip() or sources[0].filename,
+            )
         name = draft.cell_name.strip()
         if not name:
             raise HTTPException(400, "Every imported cell needs a name")
@@ -1670,7 +1833,15 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         inspected_hashes_by_staged_name,
     )
 
-    for draft in req.cells:
+    for draft_index, draft in enumerate(req.cells):
+        if job_id is not None:
+            sources = normalize_import_cell_sources(draft)
+            background_jobs.update_job(
+                job_id,
+                stage="register",
+                current_item_id=str(draft_index),
+                current_item_label=draft.cell_name.strip() or sources[0].filename,
+            )
         sources = normalize_import_cell_sources(draft)
         replicate_key = import_cell_replicate_key(draft)
 
@@ -1777,6 +1948,13 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         )
         created_cell_ids.append(cell.id)
         cell_ids_by_staged_name[replicate_key] = cell.id
+        if job_id is not None:
+            background_jobs.record_result(
+                job_id,
+                str(draft_index),
+                status="ready",
+                detail="Cell staged for commit",
+            )
 
     replicate_groups = []
     for planned_group in replicate_plan["groups"]:
@@ -1821,6 +1999,13 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         },
     )
     db.commit()
+    if job_id is not None:
+        background_jobs.update_job(
+            job_id,
+            stage="register",
+            status="completed",
+            description="Cell registration committed",
+        )
     start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
     return {
         "created": created,
@@ -1828,6 +2013,42 @@ def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)
         "replicate_groups": replicate_groups,
         "parsing_started": bool(cache_jobs),
     }
+
+
+@router.post("/imports/cells")
+def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)):
+    job_id = None
+    if req.job_token:
+        items = []
+        for index, draft in enumerate(req.cells):
+            first_filename = (
+                draft.sources[0].filename
+                if draft.sources
+                else draft.filename
+                or "source file"
+            )
+            items.append(
+                {
+                    "id": str(index),
+                    "label": draft.cell_name.strip() or first_filename,
+                }
+            )
+        job_id = background_jobs.create_job(
+            kind="import_register",
+            title="Registering imported cells",
+            description="Validating and registering Cells",
+            total=len(req.cells),
+            items=items,
+            token=req.job_token,
+        )
+        background_jobs.update_job(job_id, stage="register", total_bytes=0)
+    try:
+        return _create_imported_cells_impl(req, db, job_id=job_id)
+    except Exception as exc:
+        db.rollback()
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
+        raise
 
 
 @router.post("/scan")

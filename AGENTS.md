@@ -193,19 +193,22 @@ Cellxplorer/
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── AppUpdateModal.tsx
-│   │   │   └── RecognitionProgress.tsx
+│   │   │   ├── RecognitionProgress.tsx
+│   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
 │   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
 │   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
+│   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
+│   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
-│   └── tests/                      Lightweight TypeScript policy tests
+│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts
 ├── tests/                          Python backend and domain tests
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
 │   ├── test_golden_approval_checkpoints.py  Fail-closed scientific/privacy approval checks

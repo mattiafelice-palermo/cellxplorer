@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import os
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -18,6 +19,7 @@ from app.models import Cell, CellMetadata, SourceFile, Test, TestFile
 from app.routers import files
 from app.routers import library
 from app.services import parsing
+from app.services import background_jobs
 
 
 class ImportFlowTests(unittest.TestCase):
@@ -78,6 +80,69 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(result["files"][0]["selection_root"]["label"], "Loose files")
         self.assertEqual(result["files"][1]["selection_root"]["path"], str(first.resolve()))
         self.assertEqual(result["files"][2]["selection_root"]["path"], str(second.resolve()))
+
+    def test_source_listing_job_reports_roots_without_inspection(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "batch"
+            root.mkdir()
+            loose = Path(tmp) / "loose.ndax"
+            loose.write_bytes(b"loose")
+            (root / "one.nda").write_bytes(b"one")
+            with patch.object(parsing, "compute_hash", side_effect=AssertionError("hash called")):
+                result = files.list_import_source_paths(
+                    files.ImportSourceListRequest(
+                        file_paths=[str(loose)],
+                        folder_paths=[str(root)],
+                        job_token="scan-test",
+                    )
+                )
+        job = background_jobs.find_by_token("scan-test")
+        self.assertEqual(len(result["files"]), 2)
+        self.assertEqual(job["kind"], "import_scan")
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["completed"], 2)
+        self.assertEqual(job["discovered_files"], 2)
+        self.assertIsNone(job["current_item_id"])
+        background_jobs.clear_jobs()
+
+    def test_inspection_job_reports_file_and_byte_progress(self):
+        background_jobs.clear_jobs()
+        preview = {"staged_name": "x", "size": 12, "filename": "x.ndax"}
+        with patch.object(files, "_inspect_import_path", return_value=preview):
+            result = files.inspect_import_paths(
+                files.ImportPathInspectRequest(
+                    paths=["C:/data/x.ndax"],
+                    job_token="inspect-test",
+                ),
+                db=Mock(),
+            )
+        job = background_jobs.find_by_token("inspect-test")
+        self.assertEqual(result["files"], [preview])
+        self.assertEqual(job["kind"], "import_inspect")
+        self.assertEqual(job["completed"], 1)
+        self.assertEqual(job["completed_bytes"], 12)
+        self.assertIsNone(job["current_item_label"])
+        background_jobs.clear_jobs()
+
+    def test_registration_job_failure_is_failed_and_rolls_back(self):
+        background_jobs.clear_jobs()
+        db = Mock()
+        with patch.object(files, "_create_imported_cells_impl", side_effect=RuntimeError("injected failure")):
+            with self.assertRaises(RuntimeError):
+                files.create_imported_cells(
+                    files.ImportCellsRequest(
+                        cells=[],
+                        job_token="register-test",
+                    ),
+                    db=db,
+                )
+        job = background_jobs.find_by_token("register-test")
+        self.assertEqual(job["kind"], "import_register")
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("injected failure", job["error"])
+        db.rollback.assert_called_once()
+        background_jobs.clear_jobs()
 
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
         with tempfile.TemporaryDirectory() as tmp:
