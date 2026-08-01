@@ -84,6 +84,14 @@ import {
   summarizeImportSelection,
 } from "../importSelectionSummary";
 import { estimateImportTiming, readImportTimingHistory } from "../importTiming";
+import {
+  cleanupStagedReplicateGroups,
+  exactDuplicateCount,
+  includedSeparateCellDrafts,
+  isRegisteredExactDuplicate,
+  removeAllRegisteredDuplicates,
+  removeStagedDraft,
+} from "../importDraftPolicy";
 
 export type ImportDraft = ImportPreview & {
   cell_name: string;
@@ -1142,6 +1150,7 @@ function ImportModal({
   onClose,
   onAddMoreSources,
   onRemoveSource,
+  onRemoveSources,
   addingMore,
   onSaved,
   targetFolderId,
@@ -1154,6 +1163,7 @@ function ImportModal({
   onClose: () => void;
   onAddMoreSources: () => void;
   onRemoveSource: (stagedName: string) => void;
+  onRemoveSources: (stagedNames: string[]) => void;
   addingMore: boolean;
   onSaved: () => void;
   targetFolderId: number | null;
@@ -1257,6 +1267,12 @@ function ImportModal({
     onClose();
   };
 
+  const removeSource = (stagedName: string) => {
+    const next = removeStagedDraft(drafts, replicateGroups, active, stagedName);
+    setReplicateGroups(next.groups);
+    onRemoveSource(stagedName);
+  };
+
   const selectedNames = useMemo(() => Array.from(selectedStagedNames), [selectedStagedNames]);
   const stagedNameToDraft = useMemo(
     () => new Map(drafts.map((item) => [item.staged_name, item])),
@@ -1273,6 +1289,14 @@ function ImportModal({
     });
     return map;
   }, [replicateGroups]);
+
+  const includedDrafts = useMemo(() => includedSeparateCellDrafts(drafts), [drafts]);
+  const duplicateCount = exactDuplicateCount(drafts);
+  const removeAllDuplicates = () => {
+    const next = removeAllRegisteredDuplicates(drafts, replicateGroups, active);
+    setReplicateGroups(next.groups);
+    onRemoveSources(drafts.filter(isRegisteredExactDuplicate).map((item) => item.staged_name));
+  };
 
   const createGroup = () => {
     const name = newGroupName.trim();
@@ -1358,7 +1382,7 @@ function ImportModal({
         replicate_groups?: { id: number; name: string; cell_ids: number[] }[];
       }>("/api/imports/cells", {
         folder_ids: destinationFolders.map(Number),
-        replicate_groups: variables.mode === "continued" ? [] : replicateGroups
+        replicate_groups: variables.mode === "continued" ? [] : outgoingGroups
           .filter((group) => group.name.trim() && group.staged_names.length > 0)
           .map((group) => ({
             name: group.name.trim(),
@@ -1389,7 +1413,7 @@ function ImportModal({
               electrode_area_preset_name: variables.continuedCellDraft?.electrode_area_preset_name,
               acknowledged_finding_ids: variables.acknowledgedFindingIds ?? [],
             }]
-          : drafts.map((d) => ({
+          : includedDrafts.map((d) => ({
           staged_name: d.staged_name,
           source_path: d.source_path,
           filename: d.filename,
@@ -1428,18 +1452,19 @@ function ImportModal({
     },
   });
 
-  const hasExactDuplicate = drafts.some(
-    (d) => d.import_match?.kind === "exact_duplicate" && d.import_match.registered
-  );
   const groupNames = replicateGroups.map((group) => group.name.trim()).filter(Boolean);
   const duplicateGroupName = new Set(groupNames).size !== groupNames.length;
-  const invalidGroups = replicateGroups.filter(
+  const outgoingGroups = cleanupStagedReplicateGroups(
+    replicateGroups,
+    new Set(includedDrafts.map((item) => item.staged_name)),
+  );
+  const invalidGroups = outgoingGroups.filter(
     (group) => group.name.trim() && group.staged_names.length > 0 && group.staged_names.length < 2
   );
   const canSave =
-    drafts.length > 0 &&
-    drafts.every((d) => d.cell_name.trim()) &&
-    drafts.every(
+    includedDrafts.length > 0 &&
+    includedDrafts.every((d) => d.cell_name.trim()) &&
+    includedDrafts.every(
       (d) =>
         d.active_material_selection === "custom" ||
         Boolean(
@@ -1447,7 +1472,6 @@ function ImportModal({
             d.nominal_capacity_mah_override
         )
     ) &&
-    !hasExactDuplicate &&
     !duplicateGroupName &&
     invalidGroups.length === 0;
   const rawRangeStart = rawData && rawData.total_rows > 0 ? rawData.offset + 1 : 0;
@@ -1483,7 +1507,7 @@ function ImportModal({
                 cellDraft={continuedCellDraft}
                 onCellDraftChange={setContinuedCellDraft}
                 onAddMoreSources={onAddMoreSources}
-                onRemoveSource={onRemoveSource}
+                onRemoveSource={removeSource}
                 onSwitchToSeparate={() => setContinuedMode(false)}
                 addingMore={addingMore}
                 destinationFolders={destinationFolders}
@@ -1516,6 +1540,14 @@ function ImportModal({
               </Text>
               <Group gap="xs">
                 <Button
+                  variant="subtle"
+                  color="red"
+                  disabled={duplicateCount === 0 || save.isPending}
+                  onClick={removeAllDuplicates}
+                >
+                  Remove all already imported
+                </Button>
+                <Button
                   variant="default"
                   leftSection={<IconPlus size={16} />}
                   loading={addingMore}
@@ -1542,10 +1574,20 @@ function ImportModal({
                   loading={save.isPending}
                   onClick={() => save.mutate({ mode: "separate" })}
                 >
-                  Import {drafts.length} cell{drafts.length === 1 ? "" : "s"}
+                  Import {includedDrafts.length} cell{includedDrafts.length === 1 ? "" : "s"}
                 </Button>
               </Group>
             </Group>
+            {duplicateCount > 0 && (
+              <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
+                {duplicateCount} already imported — will be skipped. They remain visible until removed.
+                {includedDrafts.length === 0 && (
+                  <Text size="sm" fw={600} mt={4}>
+                    All selected files are already in the Cell Database.
+                  </Text>
+                )}
+              </Alert>
+            )}
             <Group align="stretch" gap="md" wrap="nowrap">
               <Paper withBorder p="xs" w={285}>
                 <Stack gap="xs" h="100%">
@@ -1679,9 +1721,17 @@ function ImportModal({
                   </Group>
                   <ScrollArea h={520} type="auto">
                     <Stack gap={6}>
-                      {drafts.map((item, index) => {
-                        const groups = stagedNameToGroups.get(item.staged_name) ?? [];
-                        const checked = selectedStagedNames.has(item.staged_name);
+                        {drafts.map((item, index) => {
+                          const groups = stagedNameToGroups.get(item.staged_name) ?? [];
+                          const checked = selectedStagedNames.has(item.staged_name);
+                          const duplicate = isRegisteredExactDuplicate(item);
+                          const stateLabel = item.preview_error
+                            ? "Inspection failed"
+                            : duplicate
+                              ? "Already imported"
+                              : item.import_match?.kind === "possible_update"
+                                ? "Possible update"
+                                : "Ready";
                         return (
                           <Paper
                             key={item.staged_name}
@@ -1714,6 +1764,14 @@ function ImportModal({
                                 <Text size="xs" c="dimmed">
                                   {formatBytes(item.size)}
                                 </Text>
+                                <Group gap={4} wrap="nowrap">
+                                  {item.preview_error || duplicate || item.import_match?.kind === "possible_update" ? (
+                                    <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" />
+                                  ) : null}
+                                  <Text size="xs" c={duplicate ? "red" : item.preview_error ? "orange" : "dimmed"}>
+                                    {stateLabel}
+                                  </Text>
+                                </Group>
                                 {groups.length > 0 && (
                                   <Group gap={4}>
                                     {groups.map((group) => (
@@ -1724,6 +1782,19 @@ function ImportModal({
                                   </Group>
                                 )}
                               </Stack>
+                              <Button
+                                variant="subtle"
+                                color="red"
+                                size="compact-xs"
+                                aria-label={`Remove ${item.filename} from import`}
+                                disabled={save.isPending}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeSource(item.staged_name);
+                                }}
+                              >
+                                <IconX size={14} />
+                              </Button>
                             </Group>
                           </Paper>
                         );
@@ -2346,12 +2417,24 @@ export function ImportCellsLauncher({
         }
         onAddMoreSources={() => startSourceSelection(true)}
         onRemoveSource={(stagedName) => {
-          const removedIndex = drafts.findIndex((item) => item.staged_name === stagedName);
-          setDrafts((current) => current.filter((item) => item.staged_name !== stagedName));
-          setActive((current) => {
-            if (removedIndex < 0) return current;
-            if (current > removedIndex) return current - 1;
-            return Math.min(current, Math.max(0, drafts.length - 2));
+          const next = removeStagedDraft(drafts, [], active, stagedName);
+          setDrafts(next.drafts);
+          setActive(next.activeIndex ?? 0);
+        }}
+        onRemoveSources={(stagedNames) => {
+          const names = new Set(stagedNames);
+          setDrafts((current) => {
+            const activeName = current[active]?.staged_name;
+            const next = current.filter((item) => !names.has(item.staged_name));
+            setActive((currentActive) => {
+              if (!next.length) return 0;
+              if (activeName) {
+                const preservedIndex = next.findIndex((item) => item.staged_name === activeName);
+                if (preservedIndex >= 0) return preservedIndex;
+              }
+              return Math.min(currentActive, next.length - 1);
+            });
+            return next;
           });
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
@@ -2578,12 +2661,24 @@ export function InboxPage() {
         }
         onAddMoreSources={() => startSourceSelection(true)}
         onRemoveSource={(stagedName) => {
-          const removedIndex = drafts.findIndex((item) => item.staged_name === stagedName);
-          setDrafts((current) => current.filter((item) => item.staged_name !== stagedName));
-          setActive((current) => {
-            if (removedIndex < 0) return current;
-            if (current > removedIndex) return current - 1;
-            return Math.min(current, Math.max(0, drafts.length - 2));
+          const next = removeStagedDraft(drafts, [], active, stagedName);
+          setDrafts(next.drafts);
+          setActive(next.activeIndex ?? 0);
+        }}
+        onRemoveSources={(stagedNames) => {
+          const names = new Set(stagedNames);
+          setDrafts((current) => {
+            const activeName = current[active]?.staged_name;
+            const next = current.filter((item) => !names.has(item.staged_name));
+            setActive((currentActive) => {
+              if (!next.length) return 0;
+              if (activeName) {
+                const preservedIndex = next.findIndex((item) => item.staged_name === activeName);
+                if (preservedIndex >= 0) return preservedIndex;
+              }
+              return Math.min(currentActive, next.length - 1);
+            });
+            return next;
           });
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
