@@ -30,6 +30,7 @@ class LibraryCellEditTests(unittest.TestCase):
     def test_update_cell_edits_user_fields_and_records_activity(self):
         db = self.make_session()
         cell = Cell(name="Cell A", description="Original notes")
+        cell.tests = [Test(name="Cell A")]
         db.add(cell)
         db.commit()
 
@@ -50,6 +51,8 @@ class LibraryCellEditTests(unittest.TestCase):
         db = self.make_session()
         first = Cell(name="Cell A")
         second = Cell(name="Cell B")
+        first.tests = [Test(name="Cell A")]
+        second.tests = [Test(name="Cell B")]
         db.add_all([first, second])
         db.commit()
 

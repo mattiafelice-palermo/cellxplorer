@@ -245,8 +245,9 @@ def current_cell_hashes(db: Session) -> dict[int, list[str]]:
     per-cell query walk that ``preload_cell_sources`` exists to avoid.
     """
     invalid = db.execute(
-        select(Test.cell_id, func.count(Test.id))
-        .group_by(Test.cell_id)
+        select(Cell.id, func.count(Test.id))
+        .outerjoin(Test, Test.cell_id == Cell.id)
+        .group_by(Cell.id)
         .having(func.count(Test.id) != 1)
     ).all()
     if invalid:

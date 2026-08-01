@@ -13,7 +13,7 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, Folder, ReplicateGroup, ReplicateGroupCell
+from app.models import Cell, Folder, ReplicateGroup, ReplicateGroupCell, Test
 from app.routers import analyses, tree
 
 
@@ -80,6 +80,8 @@ class AnalysisLifecycleTests(unittest.TestCase):
         db = self.make_session()
         standalone = Cell(name="Standalone")
         grouped = Cell(name="Grouped")
+        standalone.tests = [Test(name="Standalone")]
+        grouped.tests = [Test(name="Grouped")]
         group = ReplicateGroup(name="Replicate A")
         group.cell_links = [ReplicateGroupCell(cell=grouped)]
         db.add_all([standalone, group])
@@ -101,6 +103,7 @@ class AnalysisLifecycleTests(unittest.TestCase):
     def test_analysis_can_be_created_with_validated_initial_entries(self):
         db = self.make_session()
         cell = Cell(name="Selected cell")
+        cell.tests = [Test(name="Selected cell")]
         group = ReplicateGroup(name="Selected replicate")
         db.add_all([cell, group])
         db.commit()
@@ -158,6 +161,9 @@ class AnalysisLifecycleTests(unittest.TestCase):
         standalone = Cell(name="Standalone")
         shared = Cell(name="Shared")
         grouped = Cell(name="Grouped")
+        standalone.tests = [Test(name="Standalone")]
+        shared.tests = [Test(name="Shared")]
+        grouped.tests = [Test(name="Grouped")]
         group = ReplicateGroup(name="Replicate A")
         group.cell_links = [
             ReplicateGroupCell(cell=shared),

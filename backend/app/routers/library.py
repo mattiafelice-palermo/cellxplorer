@@ -114,13 +114,8 @@ def source_file_needs_cache(sf: SourceFile) -> bool:
 
 
 def _ordered_cell_source_files(cell: Cell) -> list[SourceFile]:
-    """Return one Cell's ordered sources and reject multiple internal rows."""
-    tests = sorted(cell.tests, key=lambda item: item.id)
-    if len(tests) > 1:
-        raise analysis_svc.CellSourceChainInvariantError(cell, len(tests))
-    if not tests:
-        return []
-    return [link.file for link in sorted(tests[0].file_links, key=lambda item: (item.position, item.id))]
+    """Return one Cell's ordered sources through the canonical invariant."""
+    return [link.file for link in analysis_svc.ordered_cell_source_links(cell)]
 
 
 def ensure_cell_caches(db: Session, cell: Cell) -> None:
@@ -416,14 +411,13 @@ def _empty_cell_file_summary() -> dict:
     }
 
 
-def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
-    """Build library-row file summaries without materializing ORM graphs."""
-    if not cell_ids:
-        return {}
+def _require_valid_cell_test_rows(db: Session, cell_ids: list[int]) -> None:
+    """Reject every selected Cell that does not have exactly one Test row."""
     invalid = (
-        db.query(Test.cell_id, func.count(Test.id))
-        .filter(Test.cell_id.in_(cell_ids))
-        .group_by(Test.cell_id)
+        db.query(Cell.id, func.count(Test.id))
+        .outerjoin(Test, Test.cell_id == Cell.id)
+        .filter(Cell.id.in_(cell_ids))
+        .group_by(Cell.id)
         .having(func.count(Test.id) != 1)
         .all()
     )
@@ -431,6 +425,13 @@ def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
         cell_id, count = invalid[0]
         cell = db.get(Cell, int(cell_id)) or Cell(id=int(cell_id), name="Unknown")
         raise analysis_svc.CellSourceChainInvariantError(cell, int(count))
+
+
+def _cell_file_summaries(db: Session, cell_ids: list[int]) -> dict[int, dict]:
+    """Build library-row file summaries without materializing ORM graphs."""
+    if not cell_ids:
+        return {}
+    _require_valid_cell_test_rows(db, cell_ids)
     rows = (
         db.query(
             Test.cell_id.label("cell_id"),
@@ -535,17 +536,7 @@ def _cell_source_scientific_values(
 ) -> dict[int, tuple[float | None, float | None]]:
     if not cell_ids:
         return {}
-    invalid = (
-        db.query(Test.cell_id, func.count(Test.id))
-        .filter(Test.cell_id.in_(cell_ids))
-        .group_by(Test.cell_id)
-        .having(func.count(Test.id) != 1)
-        .all()
-    )
-    if invalid:
-        cell_id, count = invalid[0]
-        cell = db.get(Cell, int(cell_id)) or Cell(id=int(cell_id), name="Unknown")
-        raise analysis_svc.CellSourceChainInvariantError(cell, int(count))
+    _require_valid_cell_test_rows(db, cell_ids)
     rows = (
         db.query(
             Test.cell_id,
@@ -1038,12 +1029,7 @@ class CellDeleteRequest(BaseModel):
 
 def _ordered_cell_file_links(cell: Cell) -> list[TestFile]:
     """Return one ordered Cell source chain for monitoring."""
-    tests = sorted(cell.tests, key=lambda item: item.id)
-    if len(tests) > 1:
-        raise analysis_svc.CellSourceChainInvariantError(cell, len(tests))
-    if not tests:
-        return []
-    return sorted(tests[0].file_links, key=lambda item: (item.position, item.id))
+    return analysis_svc.ordered_cell_source_links(cell)
 
 
 def _cell_source_files(

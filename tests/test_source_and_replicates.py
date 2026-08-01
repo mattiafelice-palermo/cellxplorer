@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.db import Base
 from app.models import ActivityEvent, Cell, CellMetadata, Folder, FolderCell, FolderReplicateGroup, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
 from app.services import background_jobs, cache, parsing, scanner, analysis_usage
+from app.services.analysis_engine import CellSourceChainInvariantError
 from app.routers import files, library, replicates
 
 
@@ -148,6 +149,8 @@ class SourceAndReplicateTests(unittest.TestCase):
         db = self.make_session()
         cell_a = Cell(name="NMC pouch A")
         cell_b = Cell(name="NMC pouch B")
+        cell_a.tests = [Test(name="A")]
+        cell_b.tests = [Test(name="B")]
         group = ReplicateGroup(name="Formulation Alpha", description="High salt control")
         db.add_all([cell_a, cell_b, group])
         db.flush()
@@ -169,6 +172,8 @@ class SourceAndReplicateTests(unittest.TestCase):
         db = self.make_session()
         cell_a = Cell(name="A")
         cell_b = Cell(name="B")
+        cell_a.tests = [Test(name="A")]
+        cell_b.tests = [Test(name="B")]
         group = ReplicateGroup(name="Replicate")
         db.add_all([cell_a, cell_b, group])
         db.flush()
@@ -205,6 +210,8 @@ class SourceAndReplicateTests(unittest.TestCase):
         folder = Folder(name="Batch A")
         cell_a = Cell(name="A")
         cell_b = Cell(name="B")
+        cell_a.tests = [Test(name="A")]
+        cell_b.tests = [Test(name="B")]
         db.add_all([folder, cell_a, cell_b])
         db.flush()
         db.add_all(
@@ -497,6 +504,8 @@ class SourceAndReplicateTests(unittest.TestCase):
     def test_replicate_group_dict_averages_cell_capacity_totals(self):
         cell_a = Cell(id=1, name="A")
         cell_b = Cell(id=2, name="B")
+        cell_a.tests = [Test(name="A")]
+        cell_b.tests = [Test(name="B")]
         cell_a.total_charge_capacity_mah = 10.0
         cell_a.total_discharge_capacity_mah = 8.0
         cell_b.total_charge_capacity_mah = 14.0
@@ -517,6 +526,9 @@ class SourceAndReplicateTests(unittest.TestCase):
         cell_a = Cell(name="A")
         cell_b = Cell(name="B")
         cell_c = Cell(name="C")
+        cell_a.tests = [Test(name="A")]
+        cell_b.tests = [Test(name="B")]
+        cell_c.tests = [Test(name="C")]
         group = ReplicateGroup(name="Rep")
         db.add_all([cell_a, cell_b, cell_c, group])
         db.flush()
@@ -613,6 +625,26 @@ class SourceAndReplicateTests(unittest.TestCase):
         detail = library.get_cell(cell.id, db=db)
         self.assertEqual(detail["metadata"]["raw.large.header"], "x" * 20_000)
 
+    def test_library_rejects_zero_internal_test_rows_in_list_and_detail(self):
+        db = self.make_session()
+        cell = Cell(name="Invalid zero-row Cell")
+        db.add(cell)
+        db.commit()
+
+        with self.assertRaises(CellSourceChainInvariantError) as listing:
+            library.list_cells(db=db)
+        self.assertEqual(listing.exception.detail["code"], "single_internal_test_required")
+        self.assertEqual(listing.exception.detail["cell_id"], cell.id)
+        self.assertEqual(listing.exception.detail["cell_name"], cell.name)
+        self.assertEqual(listing.exception.detail["test_count"], 0)
+
+        with self.assertRaises(CellSourceChainInvariantError) as detail:
+            library.get_cell(cell.id, db=db)
+        self.assertEqual(detail.exception.detail["code"], "single_internal_test_required")
+        self.assertEqual(detail.exception.detail["cell_id"], cell.id)
+        self.assertEqual(detail.exception.detail["cell_name"], cell.name)
+        self.assertEqual(detail.exception.detail["test_count"], 0)
+
     def test_optimized_cell_listing_matches_detail_summary_semantics(self):
         db = self.make_session()
         ready = Cell(name="Ready summary", cycling_status="active")
@@ -682,6 +714,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             )
         ]
         empty = Cell(name="No files", cycling_status="active")
+        empty.tests = [Test(name="Empty cell")]
         db.add_all([ready, pending, empty])
         db.commit()
 

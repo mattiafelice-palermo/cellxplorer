@@ -93,6 +93,23 @@ class SourceStalenessTests(unittest.TestCase):
         with self.assertRaises(engine.CellSourceChainInvariantError):
             engine.cell_ordered_hashes(self.db, self.cell)
 
+    def test_hashes_reject_zero_internal_rows(self):
+        test = self.db.query(Test).filter(Test.cell_id == self.cell.id).one()
+        self.db.delete(test)
+        self.db.commit()
+        self.db.expire(self.cell, ["tests"])
+
+        with self.assertRaises(engine.CellSourceChainInvariantError) as current:
+            engine.current_cell_hashes(self.db)
+        self.assertEqual(current.exception.detail["code"], "single_internal_test_required")
+        self.assertEqual(current.exception.detail["cell_id"], self.cell.id)
+        self.assertEqual(current.exception.detail["cell_name"], "c1")
+        self.assertEqual(current.exception.detail["test_count"], 0)
+
+        with self.assertRaises(engine.CellSourceChainInvariantError) as direct:
+            engine.cell_ordered_hashes(self.db, self.cell)
+        self.assertEqual(direct.exception.detail["test_count"], 0)
+
     def test_an_uncomputed_analysis_is_not_stale(self):
         current = engine.current_cell_hashes(self.db)
         self.assertFalse(engine.sources_changed_since_compute(None, current))
