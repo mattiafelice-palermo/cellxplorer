@@ -165,8 +165,14 @@ the child’s locked behavior and scope.
 | [035.9](035.9-create-analysis-from-selected-cells.md) | Start a populated Analysis from Cell Database selection | Parent |
 | [035.10](035.10-create-replicate-group-from-analysis.md) | Create and place a persistent replicate group from an Analysis | 035.9 |
 | [035.11](035.11-plot-type-scoped-style-presets.md) | Scope preset storage, editing, and application by plot family | Parent |
+| [035.12](035.12-import-browser-select-shown-and-resizable-panes.md) | Select all shown files/folders and resize import-browser panes | 035.1, 035.2 |
 
-Implement sequentially in numeric order on one shared branch. Each child receives:
+Implement children on the one shared branch. Children 035.1–035.11 follow the original numeric
+sequence. Child 035.12 is a corrective follow-up discovered after 035.1 implementation and may be
+implemented at the next clean checkpoint without waiting for unrelated later children; finish the
+currently active child checkpoint first and do not mix both implementations in one commit.
+
+Each child receives:
 
 1. one focused implementation commit;
 2. a pushed review checkpoint;
@@ -180,7 +186,11 @@ Do not merge the shared branch between children.
 ### Import browser
 
 - Single-clicking a folder opens it and never recursively selects it.
-- Only the folder checkbox changes recursive selection.
+- Only explicit selection controls change recursive folder selection.
+- The header checkbox and **Select shown** include every currently shown selectable file and folder.
+- Clearing shown entries preserves selections hidden by filtering or navigation.
+- The quick-access and file-browser panes are horizontally resizable with accessible separator
+  behavior, bounded widths, and adequate scrollbar clearance.
 - Breadcrumb segments, parent navigation, manual path entry, and keyboard paths work.
 - Desktop/Documents/Downloads resolve correctly on redirected Windows installations.
 
@@ -218,7 +228,7 @@ Do not merge the shared branch between children.
 
 ## Final verification and closure
 
-After 035.11 and all child reviews are clean:
+After every required child, including 035.12, and all child reviews are clean:
 
 ```powershell
 python -m unittest discover tests
@@ -238,6 +248,6 @@ The parent closes only when:
 
 - all child implementation records name their exact branch, commit, commands, and results;
 - every required child review has no open blocking finding;
-- the final matrix is recorded in 035.11’s implementation record;
+- the final matrix is recorded after the last implemented child;
 - `docs/specs/README.md`, `AGENTS.md`, and durable knowledge documents are updated where the final
   code makes them misleading.
