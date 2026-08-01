@@ -6,13 +6,16 @@ user-facing impact.
 
 ## 0.17.0-beta014 - 2026-08-01
 
-- ### New features
+### New features
+
 - Import interrupted or restarted Neware files as one Cell with an ordered source chain, instead of treating each file as a separate Cell.
 - Add, reorder, and detach continuations from Cell details, with compatibility warnings and explicit confirmation for risky changes.
 - Cycles and Time/capacity analyses, exports, and thumbnails work across multi-source Cells with source-boundary provenance.
 - Scheduled source monitoring checks only each Cell's tracked final source; manual integrity operations still inspect the full chain.
 - Portable analysis export/import preserves the Cell source order and separate original files.
-- ### Bug fixes
+
+### Bug fixes
+
 - Steps, DCIR, chargeability, and rate capability fail closed for multi-source selections until cross-source protocol mapping exists, preventing misleading partial results.
 
 ## 0.17.0 - 2026-07-31
