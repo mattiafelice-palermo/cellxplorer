@@ -240,51 +240,59 @@ class ImportFlowTests(unittest.TestCase):
         )
 
     def test_header_metadata_prefers_neware_head_remark(self):
-        original = parsing.NewareNDA.read_metadata
-        parsing.NewareNDA.read_metadata = lambda _: {
-            "Step": {
-                "Head_Info": {"Remark": {"Value": "actual-cell-remark"}},
-                "User_Info": {"VAR1": {"User_Remark": "Voltage"}},
-            }
-        }
-        try:
+        with patch.object(
+            parsing,
+            "_read_ndax_metadata_flat",
+            side_effect=parsing._NdaxXmlFallback,
+        ), patch.object(
+            parsing.NewareNDA,
+            "read_metadata",
+            return_value={
+                "Step": {
+                    "Head_Info": {"Remark": {"Value": "actual-cell-remark"}},
+                    "User_Info": {"VAR1": {"User_Remark": "Voltage"}},
+                }
+            },
+        ):
             meta = parsing.read_header_metadata("fake.ndax")
-        finally:
-            parsing.NewareNDA.read_metadata = original
 
         self.assertEqual(meta["remarks"], "actual-cell-remark")
 
     def test_header_metadata_extracts_neware_test_information_units(self):
-        original = parsing.NewareNDA.read_metadata
-        parsing.NewareNDA.read_metadata = lambda _: {
-            "Step": {
-                "Head_Info": {
-                    "Start_Step": {"Value": "1"},
-                    "PN": {"Value": "2026-03-17 14-04-28"},
-                    "Creator": {"Value": "CY"},
-                    "Remark": {"Value": "NG_20260317_LFP_LP_MoL_530_FM+CY"},
-                    "SCQ": {"Value": "333770"},
-                    "MultCap": {"Value": "185040"},
-                },
-                "Step_Info": {
-                    "Step1": {
-                        "Record": {"Main": {"Time": {"Value": "1000"}}},
-                        "Protect": {
-                            "Main": {
-                                "Volt": {
-                                    "Upper": {"Value": "38500"},
-                                    "Lower": {"Value": "27500"},
+        with patch.object(
+            parsing,
+            "_read_ndax_metadata_flat",
+            side_effect=parsing._NdaxXmlFallback,
+        ), patch.object(
+            parsing.NewareNDA,
+            "read_metadata",
+            return_value={
+                "Step": {
+                    "Head_Info": {
+                        "Start_Step": {"Value": "1"},
+                        "PN": {"Value": "2026-03-17 14-04-28"},
+                        "Creator": {"Value": "CY"},
+                        "Remark": {"Value": "NG_20260317_LFP_LP_MoL_530_FM+CY"},
+                        "SCQ": {"Value": "333770"},
+                        "MultCap": {"Value": "185040"},
+                    },
+                    "Step_Info": {
+                        "Step1": {
+                            "Record": {"Main": {"Time": {"Value": "1000"}}},
+                            "Protect": {
+                                "Main": {
+                                    "Volt": {
+                                        "Upper": {"Value": "38500"},
+                                        "Lower": {"Value": "27500"},
+                                    }
                                 }
-                            }
-                        },
-                    }
-                },
-            }
-        }
-        try:
+                            },
+                        }
+                    },
+                }
+            },
+        ):
             meta = parsing.read_header_metadata("fake.ndax")
-        finally:
-            parsing.NewareNDA.read_metadata = original
 
         self.assertEqual(meta["start_step_id"], "1")
         self.assertEqual(meta["part_number"], "2026-03-17 14-04-28")

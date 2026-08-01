@@ -9,6 +9,9 @@ import hashlib
 import logging
 import os
 import re
+import zipfile
+import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +84,67 @@ def _flatten(d: Any, prefix: str = "") -> dict[str, str]:
     return out
 
 
+class _NdaxXmlFallback(Exception):
+    """The direct XML reader cannot preserve a feature of the library parser."""
+
+
+def _read_ndax_metadata_flat(path: str | Path) -> dict[str, str]:
+    """Read NDAX header XML directly into the flattened metadata map.
+
+    NewareNDA currently parses each XML member with ElementTree, serializes
+    the result back to XML, and parses that XML a second time with xmltodict.
+    Header consumers only need the flattened leaf map, so this walks the
+    ElementTree once and reproduces the keys emitted by ``_flatten``.  XML
+    namespaces are deliberately delegated to NewareNDA because ElementTree
+    represents namespaced tags differently from xmltodict's default output.
+    """
+    flat: dict[str, str] = {}
+
+    def add_value(key: str, value: object) -> None:
+        text = str(value)
+        if text.strip():
+            # _flatten preserves the value returned by xmltodict; only the
+            # emptiness check is whitespace-aware.
+            flat[key] = text
+
+    def visit(element: ET.Element, prefix: str) -> None:
+        if "{" in element.tag:
+            raise _NdaxXmlFallback
+
+        children = list(element)
+        has_attributes = bool(element.attrib)
+        for key, value in element.attrib.items():
+            add_value(f"{prefix}{key}", value)
+
+        text = element.text or ""
+        if text.strip():
+            text_key = f"{prefix}#text" if has_attributes or children else prefix.rstrip(".")
+            add_value(text_key, text)
+
+        counts = Counter(child.tag for child in children)
+        seen: Counter[str] = Counter()
+        for child in children:
+            suffix = ""
+            if counts[child.tag] > 1:
+                suffix = f".{seen[child.tag]}"
+                seen[child.tag] += 1
+            visit(child, f"{prefix}{child.tag}{suffix}.")
+
+    with zipfile.ZipFile(str(path)) as archive:
+        for xml_file in archive.namelist():
+            if not xml_file.endswith(".xml"):
+                continue
+            document_root = ET.fromstring(archive.read(xml_file).decode(errors="ignore"))
+            if "{" in document_root.tag:
+                raise _NdaxXmlFallback
+            root = document_root.find("config")
+            if root is None:
+                raise ValueError(f"missing config element in {xml_file}")
+            name = xml_file.split("/")[-1].split(".")[0]
+            visit(root, f"{name}.")
+    return flat
+
+
 def read_header_metadata(path: str | Path) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
@@ -89,12 +153,19 @@ def read_header_metadata(path: str | Path) -> dict:
     """
     path = Path(path)
     try:
-        meta = NewareNDA.read_metadata(str(path))
+        if path.suffix.lower() == ".ndax":
+            try:
+                flat = _read_ndax_metadata_flat(path)
+            except _NdaxXmlFallback:
+                meta = NewareNDA.read_metadata(str(path))
+                flat = _flatten(meta)
+        else:
+            meta = NewareNDA.read_metadata(str(path))
+            flat = _flatten(meta)
     except Exception as exc:  # corrupt/unsupported file: still importable
         logger.warning("metadata read failed for %s: %s", path, exc)
         return {"raw": {}, "error": str(exc)}
 
-    flat = _flatten(meta)
     result: dict[str, Any] = {"raw": flat}
 
     def find(*needles: str) -> str | None:

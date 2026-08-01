@@ -3,6 +3,7 @@ import time
 import unittest
 import sys
 import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -29,7 +30,11 @@ class ImportInspectionTests(unittest.TestCase):
 
         completed = []
         with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
-            result = import_inspection.inspect_files(paths, on_completed=completed.append)
+            result = import_inspection.inspect_files(
+                paths,
+                on_completed=completed.append,
+                executor_cls=ThreadPoolExecutor,
+            )
 
         self.assertEqual([item.path for item in result], paths)
         self.assertCountEqual(completed, paths)

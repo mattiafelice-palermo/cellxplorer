@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..models import SourceFile, Test, TestFile
 from .lazy_module import LazyModule
+from .process_priority import process_pool_executor
 
 
 def _load_parsing():
@@ -216,19 +217,39 @@ def inspect_files(
     paths: list[str],
     *,
     on_completed: Callable[[str], None] | None = None,
+    executor_cls: type | None = None,
 ) -> list[FileInspection]:
     """Inspect paths concurrently, restoring input order before returning."""
     if not paths:
         return []
     results: list[FileInspection | None] = [None] * len(paths)
-    with ThreadPoolExecutor(max_workers=inspection_worker_count(len(paths))) as executor:
+    worker_count = inspection_worker_count(len(paths))
+    if executor_cls is not None:
+        executor = executor_cls(max_workers=worker_count)
+    elif worker_count == 1:
+        # Avoid process startup overhead for a single-file import. The parser
+        # is still isolated in a process for every genuinely concurrent batch.
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+    else:
+        executor = process_pool_executor(worker_count)
+    with executor:
         futures: dict[Future[FileInspection], int] = {
             executor.submit(inspect_file, path): index for index, path in enumerate(paths)
         }
         try:
             for future in as_completed(futures):
                 index = futures[future]
-                results[index] = future.result()
+                inspected = future.result()
+                # Process workers have independent in-memory caches. Keep the
+                # parent cache authoritative for the registration step and
+                # for subsequent requests in this backend process.
+                remember_header_metadata(
+                    inspected.hash,
+                    inspected.size,
+                    inspected.mtime_ns,
+                    inspected.metadata,
+                )
+                results[index] = inspected
                 if on_completed is not None:
                     on_completed(paths[index])
         except Exception:
