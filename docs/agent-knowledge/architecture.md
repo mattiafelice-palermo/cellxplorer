@@ -140,6 +140,12 @@ Original Neware files normally remain at their source paths. The database stores
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not
 delete the data directory. Destructive removal is an explicit, separately confirmed choice.
 
+The import filesystem picker keeps navigation and recursive selection separate. Its quick-access
+standard locations come from `backend/app/services/windows_known_folders.py`, which calls the
+Unicode Windows Known Folder API for redirected Desktop/Documents/Downloads and falls back to
+home-relative names independently when the API is unavailable or one lookup fails. The response
+shape and pinned/recent path persistence remain owned by `routers/files.py`.
+
 The database has a stable instance UUID stored in `AppSetting`. Frontend startup snapshots are
 accepted only when both this UUID and the schema revision match, preventing cached summaries from
 one database being shown for another.

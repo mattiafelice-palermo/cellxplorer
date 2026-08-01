@@ -37,6 +37,7 @@ from ..models import (
 from ..services import background_jobs
 from ..services.activity_log import record_activity
 from ..services.lazy_module import LazyModule
+from ..services.windows_known_folders import known_user_folders
 
 
 def _load_numpy():
@@ -762,33 +763,40 @@ def _quick_access_entry(
     }
 
 
+def _quick_access_path_key(path: Path) -> str:
+    value = os.path.normcase(os.path.normpath(str(path)))
+    return value.casefold() if os.name == "nt" else value
+
+
 def import_quick_access(db: Session) -> list[dict]:
-    home = Path.home()
+    folders = known_user_folders()
     entries: list[dict] = []
     standard = [
-        (home, "Home"),
-        (home / "Desktop", "Desktop"),
-        (home / "Documents", "Documents"),
-        (home / "Downloads", "Downloads"),
+        (folders["home"], "Home"),
+        (folders["desktop"], "Desktop"),
+        (folders["documents"], "Documents"),
+        (folders["downloads"], "Downloads"),
     ]
     seen: set[str] = set()
     for path, label in standard:
-        key = os.path.normcase(str(path))
+        key = _quick_access_path_key(path)
+        if key in seen:
+            continue
         seen.add(key)
         entries.append(_quick_access_entry(path, label, "quick"))
     for raw in _path_setting(db, IMPORT_PINNED_FOLDERS_KEY):
         path = Path(raw)
-        key = os.path.normcase(str(path))
+        key = _quick_access_path_key(path)
         if key in seen:
             for entry in entries:
-                if os.path.normcase(entry["path"]) == key:
+                if _quick_access_path_key(Path(entry["path"])) == key:
                     entry["pinned"] = True
             continue
         seen.add(key)
         entries.append(_quick_access_entry(path, path.name or str(path), "pinned", pinned=True))
     for raw in _path_setting(db, IMPORT_RECENT_FOLDERS_KEY):
         path = Path(raw)
-        key = os.path.normcase(str(path))
+        key = _quick_access_path_key(path)
         if key in seen:
             continue
         seen.add(key)

@@ -172,6 +172,7 @@ Cellxplorer/
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+│           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           └── scientific_preparation.py
 │                                  Durable post-copy cache-preparation state
 ├── frontend/
@@ -218,6 +219,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
+│   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
 │   ├── test_continuations.py       Continuation inspect, ordering, and lifecycle validation (Specs 034.2/034.3)
 │   ├── test_app_channels.py        Stable/Beta identity and build contract tests (Spec 021)
