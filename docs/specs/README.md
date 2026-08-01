@@ -11,7 +11,7 @@
   adds Windows-style clickable path segments while retaining manual path entry. **In progress**.
 - [`035.3-windows-known-folder-resolution.md`](035.3-windows-known-folder-resolution.md)
   resolves redirected Desktop/Documents/Downloads folders through the Windows Known Folder API.
-  **Planned for this branch.**
+  **Implemented**; review pending.
 - [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.
