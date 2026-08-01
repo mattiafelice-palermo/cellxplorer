@@ -33,7 +33,15 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 
 import {
   ImportBrowseEntry,
@@ -45,12 +53,18 @@ import {
 } from "../api";
 import {
   folderSelectionState,
+  clampImportBrowserLeftPaneWidth,
+  importShownSelectionState,
   importKeyboardAction,
   importRowAction,
   isImportFolderCheckboxDisabled,
   resetImportBrowserNavigation,
+  toggleImportShownSelection,
   toggleImportFileSelection,
   toggleImportFolderSelection,
+  IMPORT_BROWSER_LEFT_PANE_MAX,
+  IMPORT_BROWSER_LEFT_PANE_MIN,
+  IMPORT_BROWSER_RIGHT_PANE_MIN,
 } from "../importBrowserSelection";
 import {
   importPathEditAction,
@@ -71,6 +85,10 @@ function formatBytes(n: number) {
   return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
+const IMPORT_BROWSER_HEADER_HEIGHT = 38;
+const IMPORT_BROWSER_ENTRY_ROW_HEIGHT = 38;
+const IMPORT_BROWSER_ROW_OVERSCAN = 8;
+
 export function ImportFilesystemPickerModal({
   opened,
   loading,
@@ -90,9 +108,16 @@ export function ImportFilesystemPickerModal({
   const [pendingPathEditTarget, setPendingPathEditTarget] = useState<string | null>(null);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
+  const [entryScrollTop, setEntryScrollTop] = useState(0);
   const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(new Map());
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
   const [knownFolderImportability, setKnownFolderImportability] = useState<Map<string, boolean>>(new Map());
+  const [leftPaneWidth, setLeftPaneWidth] = useState(235);
+  const [resizeActive, setResizeActive] = useState(false);
+  const [dividerHovered, setDividerHovered] = useState(false);
+  const [dividerFocused, setDividerFocused] = useState(false);
+  const resizeContainerRef = useRef<HTMLDivElement>(null);
+  const resizeCleanup = useRef<(() => void) | null>(null);
   const browseQuery = useQuery({
     queryKey: ["import-filesystem", requestedPath],
     queryFn: () => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }),
@@ -119,10 +144,13 @@ export function ImportFilesystemPickerModal({
     setPathEditing(false);
     setPendingPathEditTarget(null);
     setSearch("");
+    setEntryScrollTop(0);
     setSelected(new Map());
     setLastSelectedPath(null);
     setKnownFolderImportability(new Map());
   }, [opened]);
+
+  useEffect(() => () => resizeCleanup.current?.(), []);
 
   useEffect(() => {
     if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
@@ -177,6 +205,7 @@ export function ImportFilesystemPickerModal({
     setRequestedPath(path);
     const reset = resetImportBrowserNavigation();
     setSearch(reset.search);
+    setEntryScrollTop(0);
     setLastSelectedPath(reset.lastSelectedPath);
     if (options.keepPathEditor) {
       setPathEditing(true);
@@ -204,6 +233,39 @@ export function ImportFilesystemPickerModal({
     event.preventDefault();
     if (action === "cancel") cancelPathEdit();
     else navigate(pathInput.trim(), { keepPathEditor: true });
+  };
+
+  const constrainPaneWidth = (width: number) =>
+    clampImportBrowserLeftPaneWidth(width, resizeContainerRef.current?.clientWidth);
+
+  const beginPaneResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeCleanup.current?.();
+    const startX = event.clientX;
+    const startWidth = leftPaneWidth;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    setResizeActive(true);
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      setLeftPaneWidth(constrainPaneWidth(startWidth + moveEvent.clientX - startX));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      document.body.style.userSelect = previousUserSelect;
+      setResizeActive(false);
+      if (resizeCleanup.current === stop) resizeCleanup.current = null;
+    };
+    resizeCleanup.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  };
+
+  const adjustPaneWidth = (delta: number) => {
+    setLeftPaneWidth((current) => constrainPaneWidth(current + delta));
   };
 
   const toggleFile = (entry: ImportBrowseEntry, shiftKey = false, ctrlKey = false, metaKey = false) => {
@@ -240,10 +302,25 @@ export function ImportFilesystemPickerModal({
   const selectedEntries = [...selected.values()];
   const fileCount = selectedEntries.filter((entry) => entry.kind === "file").length;
   const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
-  const visibleFiles = visibleEntries.filter((entry) => entry.kind === "file");
-  const allVisibleSelected =
-    visibleFiles.length > 0 && visibleFiles.every((entry) => selected.has(entry.path));
-  const someVisibleSelected = visibleFiles.some((entry) => selected.has(entry.path));
+  const isFolderSelectable = (entry: ImportBrowseEntry) =>
+    !isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
+  const shownSelection = importShownSelectionState(visibleEntries, selected, isFolderSelectable);
+  const allVisibleSelected = shownSelection.allSelected;
+  const someVisibleSelected = shownSelection.someSelected;
+  const firstRenderedEntry = Math.max(
+    0,
+    Math.floor(Math.max(0, entryScrollTop - IMPORT_BROWSER_HEADER_HEIGHT) / IMPORT_BROWSER_ENTRY_ROW_HEIGHT) -
+      IMPORT_BROWSER_ROW_OVERSCAN,
+  );
+  const lastRenderedEntry = Math.min(
+    visibleEntries.length,
+    firstRenderedEntry +
+      Math.ceil(390 / IMPORT_BROWSER_ENTRY_ROW_HEIGHT) + IMPORT_BROWSER_ROW_OVERSCAN * 2,
+  );
+  const renderedEntries = visibleEntries.slice(firstRenderedEntry, lastRenderedEntry);
+  const leadingSpacerHeight = firstRenderedEntry * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
+  const trailingSpacerHeight =
+    (visibleEntries.length - lastRenderedEntry) * IMPORT_BROWSER_ENTRY_ROW_HEIGHT;
   const quickAccess = browseQuery.data?.quick_access ?? [];
   const breadcrumbs = parseImportPathBreadcrumbs(
     browseQuery.data?.current_path ?? pathInput,
@@ -268,6 +345,10 @@ export function ImportFilesystemPickerModal({
     [next[index], next[target]] = [next[target], next[index]];
     pinnedMutation.mutate(next);
   };
+  const toggleShownSelection = () => {
+    setSelected((current) => toggleImportShownSelection(current, visibleEntries, isFolderSelectable));
+    setLastSelectedPath(null);
+  };
 
   return (
     <Modal opened={opened} onClose={loading ? () => undefined : onClose} title="Load cell files" size="68rem">
@@ -277,10 +358,20 @@ export function ImportFilesystemPickerModal({
           use its checkbox to select the folder recursively.
         </Text>
         {progress && <Paper withBorder p="xs">{progress}</Paper>}
-        <Group align="stretch" gap="md" wrap="nowrap">
-          <Paper p="xs" w={235} withBorder>
+        <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap">
+          <Paper
+            p="xs"
+            withBorder
+            style={{
+              width: leftPaneWidth,
+              minWidth: IMPORT_BROWSER_LEFT_PANE_MIN,
+              maxWidth: IMPORT_BROWSER_LEFT_PANE_MAX,
+              flexShrink: 0,
+            }}
+          >
             <ScrollArea h={590} type="auto">
-              <Stack gap="md">
+              <Box pr={8}>
+                <Stack gap="md">
                 {(["quick", "pinned", "recent"] as const).map((section) => {
                   const items = quickAccess.filter((item) => item.section === section);
                   if (!items.length) return null;
@@ -312,10 +403,56 @@ export function ImportFilesystemPickerModal({
                   <Text size="xs" fw={700} c="dimmed">This PC</Text>
                   {(browseQuery.data?.roots ?? []).map((root) => <Button key={root.path} variant="subtle" color={browseQuery.data?.current_path === root.path ? "var(--mantine-primary-color-6)" : undefined} size="compact-sm" leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />} justify="flex-start" onClick={() => navigate(root.path)} title={root.name}>{root.name}</Button>)}
                 </Stack>
-              </Stack>
+                </Stack>
+              </Box>
             </ScrollArea>
           </Paper>
-          <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
+          <Box
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize quick-access panel"
+            aria-valuemin={IMPORT_BROWSER_LEFT_PANE_MIN}
+            aria-valuemax={IMPORT_BROWSER_LEFT_PANE_MAX}
+            aria-valuenow={leftPaneWidth}
+            tabIndex={0}
+            onPointerDown={beginPaneResize}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              adjustPaneWidth(event.key === "ArrowLeft" ? -16 : 16);
+            }}
+            onMouseEnter={() => setDividerHovered(true)}
+            onMouseLeave={() => setDividerHovered(false)}
+            onFocus={() => setDividerFocused(true)}
+            onBlur={() => setDividerFocused(false)}
+            style={{
+              width: 12,
+              minWidth: 12,
+              flexShrink: 0,
+              cursor: "col-resize",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              userSelect: "none",
+              outline: dividerFocused ? "2px solid var(--mantine-primary-color-6)" : undefined,
+              outlineOffset: -1,
+            }}
+          >
+            <Group gap={2} wrap="nowrap" aria-hidden="true">
+              {[0, 1, 2].map((line) => (
+                <Box
+                  key={line}
+                  w={2}
+                  h={32}
+                  bg={resizeActive || dividerHovered || dividerFocused
+                    ? "var(--mantine-primary-color-6)"
+                    : "var(--mantine-color-default-border)"}
+                  style={{ borderRadius: 2 }}
+                />
+              ))}
+            </Group>
+          </Box>
+          <Stack gap="sm" style={{ flex: "1 1 0", minWidth: IMPORT_BROWSER_RIGHT_PANE_MIN, overflow: "hidden" }}>
             <Group gap="xs" wrap="nowrap">
               <ActionIcon variant="default" size="lg" aria-label="Go to parent folder" disabled={!browseQuery.data?.parent_path} onClick={() => navigate(browseQuery.data?.parent_path ?? null)}><IconArrowUp size={18} /></ActionIcon>
               {pathEditing ? <TextInput ref={pathInputRef} value={pathInput} onChange={(event) => setPathInput(event.currentTarget.value)} onKeyDown={handlePathEditKeyDown} onBlur={() => { if (!pendingPathEditTarget) cancelPathEdit(); }} aria-label="Current folder path" style={{ flex: 1 }} /> : <>
@@ -335,20 +472,24 @@ export function ImportFilesystemPickerModal({
             </Group>
             <Group gap="xs">
               <TextInput placeholder="Search this folder" leftSection={<IconSearch size={15} />} value={search} onChange={(event) => setSearch(event.currentTarget.value)} style={{ flex: 1 }} />
-              <Button variant="default" disabled={visibleFiles.length === 0} onClick={() => setSelected((current) => { const next = new Map(current); visibleFiles.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
+              <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
             <Paper withBorder p={0}>
-              {browseQuery.isPending && !browseQuery.data ? <Center h={390}><Loader /></Center> : browseQuery.isError ? <Center h={390} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={390} type="auto"><Stack gap={0}>
-                <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={visibleFiles.length === 0} onChange={() => setSelected((current) => { const next = new Map(current); visibleFiles.forEach((entry) => allVisibleSelected ? next.delete(entry.path) : next.set(entry.path, entry)); return next; })} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
-                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : visibleEntries.map((entry) => {
+              {browseQuery.isPending && !browseQuery.data ? <Center h={390}><Loader /></Center> : browseQuery.isError ? <Center h={390} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={390} type="auto" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Stack gap={0}>
+                <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
+                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : <>
+                  <Box h={leadingSpacerHeight} aria-hidden="true" />
+                  {renderedEntries.map((entry) => {
                   const isFolder = entry.kind === "folder";
                   const folderState = isFolder ? folderSelectionState(entry, selected) : "none";
                   const folderCheckboxDisabled = isFolder && isImportFolderCheckboxDisabled(entry, knownFolderImportability.get(entry.path));
-                  return <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) || folderState === "some" ? "var(--mantine-primary-color-light)" : undefined} role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
+                  return <Group key={entry.path} gap="xs" wrap="nowrap" px="sm" py={7} bg={selected.has(entry.path) || folderState === "some" ? "var(--mantine-primary-color-light)" : undefined} role={isFolder ? "button" : "option"} aria-label={isFolder ? `Open ${entry.name}` : entry.name} aria-selected={!isFolder ? selected.has(entry.path) : undefined} tabIndex={0} style={{ height: IMPORT_BROWSER_ENTRY_ROW_HEIGHT, boxSizing: "border-box", cursor: isFolder ? "pointer" : "default", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={(event) => activateRow(entry, event.shiftKey, event.ctrlKey, event.metaKey)} onKeyDown={(event) => handleRowKeyDown(entry, event)}>
                     <Checkbox aria-label={isFolder ? `Select all importable files in ${entry.name}` : `Select ${entry.name}`} checked={isFolder ? folderState === "all" : selected.has(entry.path)} indeterminate={isFolder && folderState === "some"} disabled={isFolder ? folderCheckboxDisabled : false} onClick={(event) => event.stopPropagation()} onChange={() => isFolder ? activateFolderCheckbox(entry) : toggleFile(entry)} />
                     {isFolder ? <IconFolder size={17} color="var(--mantine-primary-color-6)" /> : <IconFile size={17} color="var(--mantine-color-gray-6)" />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c="dimmed" w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c="dimmed" w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>
                   </Group>;
-                })}
+                  })}
+                  <Box h={trailingSpacerHeight} aria-hidden="true" />
+                </>}
               </Stack></ScrollArea>}
             </Paper>
             {selectedEntries.length > 0 && <Paper withBorder p="xs"><Group justify="space-between" mb={4}><Text size="xs" fw={700}>Selected sources</Text><Button size="compact-xs" variant="subtle" color="gray" onClick={() => setSelected(new Map())}>Clear all</Button></Group><ScrollArea h={Math.min(96, selectedEntries.length * 28)} type="auto"><Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack></ScrollArea></Paper>}

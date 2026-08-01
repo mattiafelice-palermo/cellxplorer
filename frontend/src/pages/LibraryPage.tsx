@@ -95,6 +95,11 @@ import {
   type CellLibraryStatus,
   type SortDirection,
 } from "../libraryTableLogic";
+import {
+  getLibrarySelectionScope,
+  hasActiveCellLibraryFilters,
+  selectAllMatchingCellIds,
+} from "../librarySelectionScope";
 import { adjacentListItem } from "../projectSelection";
 
 type LibraryImpactRequest = {
@@ -1201,8 +1206,20 @@ export function LibraryPage() {
     });
   }, [filteredSortedRows]);
 
-  const allVisibleSelected =
-    pageCells.length > 0 && pageCells.every((cell) => selectedCellIds.has(cell.id));
+  const selectionScope = getLibrarySelectionScope(
+    pageCells.map((cell) => cell.id),
+    filteredSortedRows.map((row) => row.cell.id),
+    selectedCellIds,
+  );
+  const allVisibleSelected = selectionScope.allPageSelected;
+  const hasActiveSearchOrFilter = hasActiveCellLibraryFilters(searchQuery, cellFilters);
+  const selectAllMatchingLabel = hasActiveSearchOrFilter
+    ? `Select all ${filteredResultCount} matching cells`
+    : `Select all ${filteredResultCount} cells`;
+  const selectAllMatching = () => {
+    setSelectedCellIds(selectAllMatchingCellIds(filteredSortedRows.map((row) => row.cell.id)));
+    setLastSelectedCellId(null);
+  };
 
   const setCellSort = (column: CellLibrarySort["column"], direction: SortDirection) => {
     setCellSortState({ column, direction });
@@ -1837,6 +1854,28 @@ export function LibraryPage() {
             </Table>
           </ScrollArea>
         </Paper>
+        {selectionScope.showSelectAllMatchingPrompt && (
+          <Alert
+            color="orange"
+            variant="light"
+            radius="md"
+            p="xs"
+            icon={<IconInfoCircle size={16} />}
+            style={{ border: "1px solid var(--mantine-color-orange-6)" }}
+          >
+            <Group justify="space-between" gap="sm" wrap="wrap">
+              <Text size="sm">All {pageCells.length} cells on this page are selected.</Text>
+              <Button
+                size="compact-sm"
+                variant="light"
+                color="orange"
+                onClick={selectAllMatching}
+              >
+                {selectAllMatchingLabel}
+              </Button>
+            </Group>
+          </Alert>
+        )}
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text size="sm" c="dimmed">
             {pageCells.length === 0

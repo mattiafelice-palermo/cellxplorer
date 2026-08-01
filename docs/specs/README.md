@@ -23,7 +23,8 @@
   **Implemented**; review pending.
 - [`035.12-import-browser-select-shown-and-resizable-panes.md`](035.12-import-browser-select-shown-and-resizable-panes.md)
   corrects the import-browser aggregate selection so shown folders are included, and adds a
-  bounded accessible resize divider between the quick-access and file-browser panes. **Plan**.
+  bounded accessible resize divider between the quick-access and file-browser panes. **Implemented**;
+  review pending.
 - [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.

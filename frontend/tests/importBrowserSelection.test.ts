@@ -3,11 +3,15 @@ import test from "node:test";
 
 import type { ImportBrowseEntry } from "../src/api.ts";
 import {
+  clampImportBrowserLeftPaneWidth,
   folderSelectionState,
+  importShownSelectionState,
   importKeyboardAction,
   importRowAction,
+  maxImportBrowserLeftPaneWidth,
   isImportFolderCheckboxDisabled,
   resetImportBrowserNavigation,
+  toggleImportShownSelection,
   toggleImportFileSelection,
   toggleImportFolderSelection,
 } from "../src/importBrowserSelection.ts";
@@ -65,4 +69,57 @@ test("Shift range uses visible files only and excludes folders", () => {
 
 test("navigation resets the search and file range anchor", () => {
   assert.deepEqual(resetImportBrowserNavigation(), { search: "", lastSelectedPath: null });
+});
+
+test("shown selection includes selectable folders in folder-only views", () => {
+  const entries = [folder("C:/data/one"), folder("C:/data/two")];
+  const state = importShownSelectionState(entries, new Map());
+  assert.equal(state.disabled, false);
+  assert.equal(state.allSelected, false);
+  assert.deepEqual([...toggleImportShownSelection(new Map(), entries).keys()], entries.map((entry) => entry.path));
+});
+
+test("shown selection handles mixed files and folders with an indeterminate state", () => {
+  const entries = [folder("C:/data/folder"), file("C:/data/cell.ndax")];
+  const selected = new Map([[entries[1].path, entries[1]]]);
+  const state = importShownSelectionState(entries, selected);
+  assert.equal(state.allSelected, false);
+  assert.equal(state.someSelected, true);
+  assert.deepEqual(
+    [...toggleImportShownSelection(selected, entries).keys()],
+    [entries[1].path, entries[0].path],
+  );
+});
+
+test("shown selection is scoped to filtered entries and preserves hidden selections", () => {
+  const hidden = file("C:/data/hidden.ndax");
+  const shown = file("C:/data/shown.ndax");
+  const selected = new Map([[hidden.path, hidden]]);
+  const next = toggleImportShownSelection(selected, [shown]);
+  assert.deepEqual([...next.keys()], [hidden.path, shown.path]);
+  assert.deepEqual([...toggleImportShownSelection(next, [shown]).keys()], [hidden.path]);
+});
+
+test("clearing a shown folder preserves independently selected hidden descendants", () => {
+  const shownFolder = folder("C:/data");
+  const hidden = file("C:/data/hidden.ndax");
+  const selected = new Map([
+    [shownFolder.path, shownFolder],
+    [hidden.path, hidden],
+  ]);
+  assert.deepEqual([...toggleImportShownSelection(selected, [shownFolder]).keys()], [hidden.path]);
+});
+
+test("disabled empty folders do not make shown selection available", () => {
+  const empty = folder("C:/data/empty");
+  const state = importShownSelectionState([empty], new Map(), () => false);
+  assert.equal(state.disabled, true);
+  assert.deepEqual([...toggleImportShownSelection(new Map(), [empty], () => false).keys()], []);
+});
+
+test("import browser pane width stays within the layout limits", () => {
+  assert.equal(clampImportBrowserLeftPaneWidth(100), 200);
+  assert.equal(clampImportBrowserLeftPaneWidth(999), 400);
+  assert.equal(maxImportBrowserLeftPaneWidth(850), 278);
+  assert.equal(clampImportBrowserLeftPaneWidth(400, 850), 278);
 });
