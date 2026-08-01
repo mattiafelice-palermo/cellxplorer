@@ -2,8 +2,8 @@
 
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
-  plot presets. Children 035.1–035.3 are implemented sequentially on
-  `feature/spec-035-user-experience-optimization`.
+  plot presets. Children 035.1–035.12 use the shared
+  `feature/spec-035-user-experience-optimization` branch.
 - [`035.1-import-browser-folder-interaction.md`](035.1-import-browser-folder-interaction.md)
   separates folder navigation from recursive selection in the import browser. **Implemented**;
   review pending.
@@ -21,6 +21,9 @@
 - [`035.6-import-progress-ui.md`](035.6-import-progress-ui.md)
   adds truthful scan, inspect, and registration progress states backed by tokenized jobs.
   **In progress**.
+- [`035.12-import-browser-select-shown-and-resizable-panes.md`](035.12-import-browser-select-shown-and-resizable-panes.md)
+  corrects the import-browser aggregate selection so shown folders are included, and adds a
+  bounded accessible resize divider between the quick-access and file-browser panes. **Plan**.
 - [`033-updater-version-compatibility-and-errors.md`](033-updater-version-compatibility-and-errors.md)
   locks compact Beta successor ordering and gives update-check failures understandable,
   case-specific recovery messages.
@@ -319,8 +322,8 @@ Rules:
   redesign of the "Place in folders" dialog: collapsible folder tree with search, read-only
   impact pane, and a strictly **additive** model (removal stays in the Projects view).
   Frontend-only. **Implemented; reviewed — follow-ups R1–R4 done.**
-- [003-per-cycle-capacity-step-reset-fix.md](003-per-cycle-capacity-step-reset-fix.md) —
-  scientific-correctness fix: `per_cycle` took a per-cycle **maximum** of Neware capacity and
+- [003-per-cycle-capacity-step-reset-fix.md](003-per-cycle-capacity-step-reset-fix.md)
+  — scientific-correctness fix: `per_cycle` took a per-cycle **maximum** of Neware capacity and
   energy counters that **reset at every step**, so a CC+CV charge lost its CV portion and
   coulombic efficiency read above 100 %. Now summed per step. Backend + `CALC_VERSION` bump.
   **Implemented and verified against real data.**
