@@ -21,6 +21,7 @@ A first-use review exposed several independent sources of friction:
 - three import stages show generic spinners without saying what is happening;
 - one exact duplicate can block a very large otherwise-valid batch;
 - the import pipeline repeats avoidable work and processes previews too eagerly;
+- Cell Database page-scoped select-all does not explain that additional matching cells exist;
 - Cell Database selections cannot directly start an analysis;
 - replicate groups cannot be created from an analysis workflow;
 - plot presets are not consistently scoped to the plot type that can use them.
@@ -150,6 +151,17 @@ the child’s locked behavior and scope.
   presentation fields.
 - Existing presets remain loadable through documented compatibility normalization.
 
+### 11. Page selection and full-result selection are distinct
+
+- The Cell Database header checkbox remains page-scoped and must not silently select cells on other
+  pages.
+- When the full current page is selected and additional matching cells exist, the UI explicitly
+  offers selection of the complete current search/filter result set.
+- The escalation action selects only cells matching the current search and column filters, never
+  hidden filtered-out cells.
+- Counts and wording distinguish the current page from the complete matching result set.
+- Existing bulk actions continue to consume the one explicit selected-id set.
+
 ## Child specifications and dependency graph
 
 | Child | Purpose | Depends on |
@@ -165,7 +177,7 @@ the child’s locked behavior and scope.
 | [035.9](035.9-create-analysis-from-selected-cells.md) | Start a populated Analysis from Cell Database selection | Parent |
 | [035.10](035.10-create-replicate-group-from-analysis.md) | Create and place a persistent replicate group from an Analysis | 035.9 |
 | [035.11](035.11-plot-type-scoped-style-presets.md) | Scope preset storage, editing, and application by plot family | Parent |
-| [035.12](035.12-import-browser-select-shown-and-resizable-panes.md) | Select all shown files/folders and resize import-browser panes | 035.1, 035.2 |
+| [035.12](035.12-import-browser-select-shown-and-resizable-panes.md) | Clarify import and Cell Database selection scope; resize import-browser panes | 035.1, 035.2 |
 
 Implement children on the one shared branch. Children 035.1–035.11 follow the original numeric
 sequence. Child 035.12 is a corrective follow-up discovered after 035.1 implementation and may be
@@ -193,6 +205,16 @@ Do not merge the shared branch between children.
   behavior, bounded widths, and adequate scrollbar clearance.
 - Breadcrumb segments, parent navigation, manual path entry, and keyboard paths work.
 - Desktop/Documents/Downloads resolve correctly on redirected Windows installations.
+
+### Cell Database selection
+
+- The table header checkbox remains page-scoped.
+- Selecting every cell on a page while additional matching cells exist shows a compact orange scope
+  prompt between the table and pagination.
+- The prompt reports the current-page count and complete matching-result count.
+- The escalation action selects exactly the current search/filter result set and no filtered-out
+  cells.
+- Existing pagination, sorting, range selection, selection pruning, and bulk actions remain correct.
 
 ### Import safety
 
