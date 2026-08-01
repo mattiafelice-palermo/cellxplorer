@@ -176,7 +176,6 @@ def _inspect_import_path(
             "hash": file_hash,
             "size": inspected.size,
             "mtime_ns": inspected.mtime_ns,
-            "header_metadata": meta,
         },
         "capacity_preview": None,
         "preview_error": None,
@@ -1343,9 +1342,16 @@ def _continuation_staged_source(
         and source_stat is not None
         and hint.get("size") == source_stat.st_size
         and hint.get("mtime_ns") == source_stat.st_mtime_ns
-        and isinstance(hint.get("header_metadata"), dict)
     )
-    meta = hint["header_metadata"] if hint_is_valid else parsing.read_header_metadata(source_path)
+    meta = (
+        import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
+        if hint_is_valid and source_stat is not None
+        else None
+    )
+    if meta is None:
+        meta = hint.get("header_metadata") if (
+            hint_is_valid and isinstance(hint, dict) and isinstance(hint.get("header_metadata"), dict)
+        ) else parsing.read_header_metadata(source_path)
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
     source["hash"] = file_hash
@@ -1572,14 +1578,23 @@ def _register_or_refresh_source_file(
         source_stat = source_path.stat()
     except OSError as exc:
         raise HTTPException(409, f"Source became unavailable: {filename}") from exc
-    hint_is_valid = (
+    hint_fingerprint_matches = (
         isinstance(inspection, dict)
         and inspection.get("hash") == file_hash
         and inspection.get("size") == source_stat.st_size
         and inspection.get("mtime_ns") == source_stat.st_mtime_ns
-        and isinstance(inspection.get("header_metadata"), dict)
     )
-    meta = inspection["header_metadata"] if hint_is_valid else parsing.read_header_metadata(source_path)
+    meta = (
+        import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
+        if hint_fingerprint_matches
+        else None
+    )
+    if meta is None:
+        meta = inspection.get("header_metadata") if (
+            hint_fingerprint_matches
+            and isinstance(inspection, dict)
+            and isinstance(inspection.get("header_metadata"), dict)
+        ) else parsing.read_header_metadata(source_path)
     file_hash = _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash, previous_hash=file_hash)
     if existing is None:
         sf = SourceFile(
@@ -1960,7 +1975,11 @@ def _create_imported_cells_impl(
                     and source_draft.inspection.get("size") == sf.size
                     and source_draft.inspection.get("mtime_ns") == sf.observed_mtime_ns
                     and isinstance(source_draft.inspection.get("header_metadata"), dict)
-                ) else parsing.read_header_metadata(source_path)
+                ) else import_inspection.cached_header_metadata(
+                    sf.hash,
+                    sf.size,
+                    sf.observed_mtime_ns or 0,
+                ) or parsing.read_header_metadata(source_path)
                 imported_metadata = full_cell_metadata_from_header(header_meta, draft.metadata)
                 override_values = {
                     "override.active_mass_mg": draft.active_mass_mg_override,

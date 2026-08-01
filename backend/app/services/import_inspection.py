@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
+import threading
 from typing import Callable
 
 from sqlalchemy.orm import Session, joinedload
@@ -20,6 +22,28 @@ def _load_parsing():
 
 
 parsing = LazyModule(_load_parsing)
+
+_HEADER_CACHE_LIMIT = 1024
+_header_cache: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
+_header_cache_lock = threading.Lock()
+
+
+def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
+    key = (file_hash, size, mtime_ns)
+    with _header_cache_lock:
+        _header_cache[key] = metadata
+        _header_cache.move_to_end(key)
+        while len(_header_cache) > _HEADER_CACHE_LIMIT:
+            _header_cache.popitem(last=False)
+
+
+def cached_header_metadata(file_hash: str, size: int, mtime_ns: int) -> dict | None:
+    key = (file_hash, size, mtime_ns)
+    with _header_cache_lock:
+        metadata = _header_cache.get(key)
+        if metadata is not None:
+            _header_cache.move_to_end(key)
+        return metadata
 
 
 def inspection_worker_count(path_count: int) -> int:
@@ -176,6 +200,7 @@ def inspect_file(path_string: str) -> FileInspection:
         raise ValueError(f"Source became unavailable during inspection: {filename}") from exc
     if initial.st_size != final.st_size or initial.st_mtime_ns != final.st_mtime_ns:
         raise ValueError(f"Source changed during inspection: {filename}")
+    remember_header_metadata(file_hash, final.st_size, final.st_mtime_ns, metadata)
     return FileInspection(
         path=str(path),
         filename=filename,

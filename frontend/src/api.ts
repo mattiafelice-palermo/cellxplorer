@@ -1681,7 +1681,7 @@ export interface ImportPreview {
     hash: string;
     size: number;
     mtime_ns: number;
-    header_metadata: Record<string, unknown>;
+    header_metadata?: Record<string, unknown>;
   };
 }
 
