@@ -62,7 +62,7 @@ export function ImportProgressPanel({
           )}
           {estimate && (
             <Text size="xs" c="dimmed">
-              Estimated remaining: approximately {estimate.minimumLabel}–{estimate.maximumLabel}
+              {estimate.scope === "total" ? "Estimated inspection time" : "Estimated remaining"}: approximately {estimate.minimumLabel}–{estimate.maximumLabel}
             </Text>
           )}
         </>

@@ -2,6 +2,12 @@ import type { BackgroundJob } from "./api";
 
 export type ImportProgressStage = "scan" | "inspect" | "register";
 export type ImportProgressMode = "determinate" | "indeterminate";
+export type ImportProgressPhase =
+  | "sampling"
+  | "starting_workers"
+  | "reading"
+  | "finalizing"
+  | "completed";
 
 export function newImportJobToken(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -21,7 +27,7 @@ export function importStageTitle(stage: ImportProgressStage): string {
 export function importStageExplanation(stage: ImportProgressStage): string {
   return {
     scan: "Finding supported Neware files and reading their sizes. File identity is not opened yet.",
-    inspect: "Checking file identity and reading Neware metadata before the review step.",
+    inspect: "Reading one file first to choose serial or multiprocessing, then checking file identity and Neware metadata.",
     register: "Validating the reviewed drafts and committing the Cell registration as one transaction.",
   }[stage];
 }
@@ -37,6 +43,9 @@ export function importProgressMode(
 export function importProgressPercent(job: BackgroundJob | null | undefined): number | null {
   if (!job) return null;
   if (job.status === "completed") return 100;
+  if (Number.isFinite(job.progress_percent)) {
+    return Math.max(0, Math.min(99, job.progress_percent ?? 0));
+  }
   if (job.total <= 0) return null;
   return Math.max(0, Math.min(99, (job.completed / job.total) * 100));
 }
@@ -50,6 +59,19 @@ export function importProgressCountLabel(
     const current = job.status === "completed" ? job.total : Math.min(job.total, job.completed + 1);
     return `Scanning ${current} of ${job.total} selected location${job.total === 1 ? "" : "s"}`;
   }
+  if (stage === "inspect") {
+    if (job.phase === "sampling") {
+      return job.phase_current === 1
+        ? "First file read; choosing the fastest safe strategy"
+        : "Reading the first file to estimate the inspection time";
+    }
+    if (job.phase === "starting_workers") {
+      return `Starting processing core ${job.phase_current ?? 0} of ${job.phase_total ?? job.worker_count ?? 0}`;
+    }
+    if (job.phase === "finalizing") {
+      return `Finalizing import review ${job.phase_current ?? 0} of ${job.phase_total ?? job.total}`;
+    }
+  }
   const unit = stage === "register" ? "cell" : "file";
   return `${job.completed} of ${job.total} ${unit}${job.total === 1 ? "" : "s"}`;
 }
@@ -58,6 +80,9 @@ export function importProgressCurrentLabel(
   stage: ImportProgressStage,
   job: BackgroundJob | null | undefined,
 ): string | null {
+  if (job?.phase === "starting_workers" || job?.phase === "finalizing") {
+    return job.phase_detail ?? null;
+  }
   if (job?.current_item_label) return job.current_item_label;
   if (stage === "scan" && job?.status === "completed") return null;
   return null;
@@ -74,13 +99,31 @@ export type ImportRemainingEstimate = {
   maximumSeconds: number;
   minimumLabel: string;
   maximumLabel: string;
+  scope: "total" | "remaining";
 };
 
 export function importRemainingEstimate(
   job: BackgroundJob | null | undefined,
   nowMs = Date.now(),
 ): ImportRemainingEstimate | null {
-  if (!job || job.status !== "running" || job.completed < 3) return null;
+  if (!job || job.status !== "running") return null;
+  if (
+    Number.isFinite(job.estimated_total_seconds)
+    && (job.estimated_total_seconds ?? 0) > 0
+    && job.estimate_scope === "total"
+  ) {
+    const total = job.estimated_total_seconds ?? 0;
+    const minimum = Math.max(1, total * 0.75);
+    const maximum = Math.max(minimum + 1, total * 1.35);
+    return {
+      minimumSeconds: minimum,
+      maximumSeconds: maximum,
+      minimumLabel: friendlyDuration(minimum),
+      maximumLabel: friendlyDuration(maximum),
+      scope: "total",
+    };
+  }
+  if (job.completed < 3) return null;
   const started = Date.parse(job.started_at);
   if (!Number.isFinite(started) || nowMs - started < 2000) return null;
   const elapsedSeconds = (nowMs - started) / 1000;
@@ -105,5 +148,6 @@ export function importRemainingEstimate(
     maximumSeconds: maximum,
     minimumLabel: friendlyDuration(minimum),
     maximumLabel: friendlyDuration(maximum),
+    scope: "remaining",
   };
 }

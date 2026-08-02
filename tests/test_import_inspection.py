@@ -20,6 +20,70 @@ class ImportInspectionTests(unittest.TestCase):
         self.assertEqual(import_inspection.inspection_worker_count(3), 3)
         self.assertEqual(import_inspection.inspection_worker_count(1000), 4)
 
+    def test_strategy_keeps_small_batches_serial(self):
+        self.assertEqual(import_inspection.inspection_strategy(25), "serial")
+        self.assertEqual(import_inspection.inspection_strategy(26), "multiprocessing")
+
+    def test_sampled_estimate_uses_selected_worker_count(self):
+        self.assertAlmostEqual(
+            import_inspection.inspection_estimate_seconds(1.0, 10, "serial", 1),
+            10.0,
+        )
+        self.assertAlmostEqual(
+            import_inspection.inspection_estimate_seconds(1.0, 100, "multiprocessing", 4),
+            25.75,
+        )
+
+    def test_small_batch_reuses_first_sample_and_reports_reading_phases(self):
+        paths = [f"file-{index}.ndax" for index in range(3)]
+        calls = []
+        phases = []
+
+        def fake_inspect(path: str):
+            calls.append(path)
+            index = int(Path(path).stem.split("-")[1])
+            return import_inspection.FileInspection(path, Path(path).name, index, index, "ndax", str(index), {})
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
+            result = import_inspection.inspect_files(paths, on_phase=phases.append)
+
+        self.assertEqual([item.path for item in result], paths)
+        self.assertEqual(calls, paths)
+        self.assertEqual([event["phase"] for event in phases], ["sampling", "sampling", "reading", "reading", "reading"])
+        self.assertFalse(any(event["phase"] == "starting_workers" for event in phases))
+        self.assertEqual(
+            [event["progress_percent"] for event in phases],
+            sorted(event["progress_percent"] for event in phases),
+        )
+
+    def test_large_batch_reports_worker_startup_before_reads(self):
+        paths = [f"file-{index}.ndax" for index in range(26)]
+        phases = []
+
+        def fake_inspect(path: str):
+            index = int(Path(path).stem.split("-")[1])
+            return import_inspection.FileInspection(path, Path(path).name, index, index, "ndax", str(index), {})
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect), \
+            patch.object(import_inspection.time, "sleep") as sleep:
+            result = import_inspection.inspect_files(
+                paths,
+                on_phase=phases.append,
+                executor_cls=ThreadPoolExecutor,
+            )
+
+        self.assertEqual(len(result), len(paths))
+        startup = [event for event in phases if event["phase"] == "starting_workers"]
+        self.assertEqual([event["phase_current"] for event in startup], [1, 2, 3, 4])
+        self.assertEqual(startup[-1]["strategy"], "multiprocessing")
+        self.assertEqual(startup[-1]["worker_count"], 4)
+        self.assertTrue(any(event["phase"] == "reading" for event in phases))
+        self.assertEqual(sleep.call_count, 4)
+        self.assertEqual(
+            [event["progress_percent"] for event in phases],
+            sorted(event["progress_percent"] for event in phases),
+        )
+
     def test_parallel_results_restore_input_order(self):
         paths = [f"file-{index}.ndax" for index in range(8)]
 

@@ -52,6 +52,14 @@ reopening identical content does not parse it again. Registration commits Cells 
 separate background cache-job handoff; missing scientific caches remain `parsing` until the existing
 cache worker marks them ready or reports a post-registration source error.
 
+Inspection strategy is adaptive at the second-to-third modal boundary: batches of 25 or fewer files
+stay serial to avoid Windows process-pool startup overhead; larger batches inspect one first file as
+a reusable timing sample, then use the bounded process pool for the remaining files. The inspection
+job exposes `sampling`, `starting_workers`, `reading`, and `finalizing` phases. Raw file completion
+stops at 90% so in-memory identity matching and response construction remain visible instead of
+appearing stuck after all file reads finish. The estimate is approximate and uses the sample rate
+and selected worker count; it is not a second benchmark pass.
+
 The backfill must not assume that a per-cycle Parquet cache already exists. If a summary is
 incomplete and the current cache is missing, it verifies the source against the stored checksum,
 rebuilds the scientific cache at current parser/calculation versions, and then persists the

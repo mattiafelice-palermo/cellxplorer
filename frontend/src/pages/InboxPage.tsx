@@ -648,7 +648,7 @@ function FolderImportSelectionModal({
                       py={4}
                       px="xs"
                       ml={row.depth * 18}
-                      bg={selected.has(key) ? "var(--mantine-primary-color-0)" : undefined}
+                      bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                       style={{
                         cursor: "pointer",
                         borderRadius: 4,
@@ -670,8 +670,15 @@ function FolderImportSelectionModal({
                           toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
                         }}
                       />
-                      <IconFile size={16} color="var(--mantine-color-gray-6)" />
-                      <Text size="sm" truncate style={{ flex: 1 }}>
+                      <IconFile size={16} color="var(--mantine-color-dimmed)" />
+                      <Text
+                        size="sm"
+                        truncate
+                        style={{
+                          flex: 1,
+                          color: selected.has(key) ? "var(--mantine-color-text)" : undefined,
+                        }}
+                      >
                         {candidate.filename}
                       </Text>
                       <Text size="xs" c="dimmed">
@@ -910,7 +917,7 @@ function ImportFilesystemPickerModal({
           <Paper
             p="xs"
             w={235}
-            style={{ borderRight: "1px solid var(--mantine-color-gray-3)" }}
+            style={{ borderRight: "1px solid var(--mantine-color-default-border)" }}
           >
             <ScrollArea h={590} type="auto">
               <Stack gap="md">
@@ -936,12 +943,12 @@ function ImportFilesystemPickerModal({
                             wrap="nowrap"
                             px="xs"
                             py={6}
-                            bg={active ? "var(--mantine-primary-color-0)" : undefined}
+                            bg={active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                             style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}
                           >
                             <Button
                               variant="subtle"
-                              color={active ? "var(--mantine-primary-color-6)" : "dark"}
+                              color={active ? "var(--mantine-primary-color-6)" : undefined}
                               size="compact-sm"
                               leftSection={shortcutIcon(item)}
                               disabled={!item.available}
@@ -1085,7 +1092,7 @@ function ImportFilesystemPickerModal({
                   px="sm"
                   py={8}
                   bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
-                  style={{ borderBottom: "1px solid var(--mantine-color-gray-3)" }}
+                  style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
                 >
                   <Checkbox
                     checked={allVisibleSelected}
@@ -1126,10 +1133,10 @@ function ImportFilesystemPickerModal({
                       wrap="nowrap"
                       px="sm"
                       py={7}
-                      bg={selected.has(entry.path) ? "var(--mantine-primary-color-0)" : undefined}
+                      bg={selected.has(entry.path) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                       style={{
                         cursor: "pointer",
-                        borderBottom: "1px solid var(--mantine-color-gray-2)",
+                        borderBottom: "1px solid var(--mantine-color-default-border)",
                       }}
                       onClick={(event) =>
                         toggleEntry(entry, event.shiftKey, event.ctrlKey || event.metaKey)
@@ -1142,7 +1149,7 @@ function ImportFilesystemPickerModal({
                       {entry.kind === "folder" ? (
                         <IconFolder size={17} color="var(--mantine-primary-color-6)" />
                       ) : (
-                        <IconFile size={17} color="var(--mantine-color-gray-6)" />
+                        <IconFile size={17} color="var(--mantine-color-dimmed)" />
                       )}
                       <Text size="sm" truncate style={{ flex: 1 }}>
                         {entry.name}

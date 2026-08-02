@@ -317,6 +317,7 @@ Rules:
 - [034.1-scientific-stitching-and-boundaries-review.md](reviews/034.1-scientific-stitching-and-boundaries-review.md)
 - [034.2-continuation-inspection-and-acknowledgements-review.md](reviews/034.2-continuation-inspection-and-acknowledgements-review.md)
 - [034.3-atomic-multi-source-lifecycle-review.md](reviews/034.3-atomic-multi-source-lifecycle-review.md)
+- [035.8-adaptive-inspection-progress-and-dark-theme-review.md](reviews/035.8-adaptive-inspection-progress-and-dark-theme-review.md)
 
 ## Index
 

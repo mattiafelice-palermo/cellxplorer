@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta019 - 2026-08-02
+
+- Adaptive import inspection progress and dark-theme contrast.
+
 ## 0.17.0-beta018 - 2026-08-02
 
 - Lazy import previews and background cache handoff.

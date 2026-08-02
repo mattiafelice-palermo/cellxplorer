@@ -1,12 +1,14 @@
 """Thread-safe filesystem inspection and immutable import identity matching."""
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
 import threading
+import time
+from time import perf_counter
 from typing import Callable
 
 from sqlalchemy.orm import Session, joinedload
@@ -25,6 +27,9 @@ def _load_parsing():
 parsing = LazyModule(_load_parsing)
 
 _HEADER_CACHE_LIMIT = 1024
+INSPECTION_PROCESS_THRESHOLD = 25
+INSPECTION_READING_START_PERCENT = 10.0
+INSPECTION_READING_END_PERCENT = 90.0
 _header_cache: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
 _header_cache_lock = threading.Lock()
 
@@ -50,6 +55,27 @@ def cached_header_metadata(file_hash: str, size: int, mtime_ns: int) -> dict | N
 def inspection_worker_count(path_count: int) -> int:
     """Return the deliberately small, deterministic filesystem worker bound."""
     return min(4, max(1, path_count))
+
+
+def inspection_strategy(path_count: int) -> str:
+    """Choose the low-overhead inspection strategy for one import batch."""
+    return "multiprocessing" if path_count > INSPECTION_PROCESS_THRESHOLD else "serial"
+
+
+def inspection_estimate_seconds(
+    sample_seconds: float,
+    path_count: int,
+    strategy: str,
+    worker_count: int,
+) -> float:
+    """Estimate the complete raw-read interval from the first inspected source."""
+    if path_count <= 0:
+        return 0.0
+    sample = max(0.05, float(sample_seconds))
+    if strategy == "multiprocessing":
+        remaining = max(0, path_count - 1)
+        return sample + (remaining * sample / max(1, worker_count))
+    return sample * path_count
 
 
 @dataclass(frozen=True)
@@ -217,43 +243,174 @@ def inspect_files(
     paths: list[str],
     *,
     on_completed: Callable[[str], None] | None = None,
+    on_phase: Callable[[dict], None] | None = None,
     executor_cls: type | None = None,
 ) -> list[FileInspection]:
-    """Inspect paths concurrently, restoring input order before returning."""
+    """Inspect paths with an adaptive strategy, restoring input order before returning.
+
+    One source is inspected in the caller's worker first. Its result is retained, so the sample
+    both calibrates the user-facing estimate and becomes the first batch result. Small batches then
+    continue serially; larger batches pay the process-pool startup cost only when there is enough
+    remaining work to amortize it.
+    """
     if not paths:
         return []
+
+    total = len(paths)
     results: list[FileInspection | None] = [None] * len(paths)
-    worker_count = inspection_worker_count(len(paths))
-    if executor_cls is not None:
-        executor = executor_cls(max_workers=worker_count)
-    elif worker_count == 1:
-        # Avoid process startup overhead for a single-file import. The parser
-        # is still isolated in a process for every genuinely concurrent batch.
-        executor = ThreadPoolExecutor(max_workers=worker_count)
+    strategy = inspection_strategy(total)
+    worker_count = inspection_worker_count(total) if strategy == "multiprocessing" else 1
+
+    def emit_phase(**values: object) -> None:
+        if on_phase is not None:
+            on_phase(values)
+
+    def reading_percent(completed: int) -> float:
+        return min(
+            INSPECTION_READING_END_PERCENT,
+            INSPECTION_READING_START_PERCENT
+            + (INSPECTION_READING_END_PERCENT - INSPECTION_READING_START_PERCENT)
+            * completed / max(1, total),
+        )
+
+    emit_phase(
+        phase="sampling",
+        phase_current=0,
+        phase_total=1,
+        completed_count=0,
+        current_item_id=paths[0],
+        current_item_label=Path(paths[0]).name or paths[0],
+        progress_percent=0.0,
+    )
+    sample_started = perf_counter()
+    sampled = inspect_file(paths[0])
+    sample_seconds = perf_counter() - sample_started
+    results[0] = sampled
+    if on_completed is not None:
+        on_completed(paths[0])
+    estimate_seconds = inspection_estimate_seconds(
+        sample_seconds,
+        total,
+        strategy,
+        worker_count,
+    )
+    emit_phase(
+        phase="sampling",
+        phase_current=1,
+        phase_total=1,
+        completed_count=1,
+        current_item_id=paths[0],
+        current_item_label=Path(paths[0]).name or paths[0],
+        progress_percent=5.0,
+        strategy=strategy,
+        worker_count=worker_count,
+        sample_duration_seconds=sample_seconds,
+        estimated_total_seconds=estimate_seconds,
+        estimate_scope="total",
+    )
+
+    remaining = paths[1:]
+    if not remaining:
+        emit_phase(
+            phase="reading",
+            phase_current=1,
+            phase_total=total,
+            completed_count=1,
+            current_item_id=paths[0],
+            current_item_label=Path(paths[0]).name or paths[0],
+            progress_percent=INSPECTION_READING_END_PERCENT,
+            strategy=strategy,
+            worker_count=worker_count,
+            sample_duration_seconds=sample_seconds,
+            estimated_total_seconds=estimate_seconds,
+            estimate_scope="total",
+        )
+        return [result for result in results if result is not None]
+
+    if strategy == "multiprocessing":
+        # This short, truthful phase gives the client a visible state while Windows starts the
+        # bounded worker pool. It is deliberately skipped for serial batches.
+        for core in range(1, worker_count + 1):
+            emit_phase(
+                phase="starting_workers",
+                phase_current=core,
+                phase_total=worker_count,
+                completed_count=1,
+                current_item_id=None,
+                current_item_label=None,
+                phase_detail=f"Preparing multiprocessing worker {core} of {worker_count}",
+                progress_percent=5.0 + (5.0 * core / max(1, worker_count)),
+                strategy=strategy,
+                worker_count=worker_count,
+                sample_duration_seconds=sample_seconds,
+                estimated_total_seconds=estimate_seconds,
+                estimate_scope="total",
+            )
+            if on_phase is not None:
+                time.sleep(0.12)
+
+    emit_phase(
+        phase="reading",
+        phase_current=1,
+        phase_total=total,
+        completed_count=1,
+        current_item_id=paths[0],
+        current_item_label=Path(paths[0]).name or paths[0],
+        progress_percent=reading_percent(1),
+        strategy=strategy,
+        worker_count=worker_count,
+        sample_duration_seconds=sample_seconds,
+        estimated_total_seconds=estimate_seconds,
+        estimate_scope="total",
+    )
+
+    def store_result(index: int, inspected: FileInspection) -> None:
+        # Process workers have independent in-memory caches. Keep the parent cache authoritative
+        # for the registration step and for subsequent requests in this backend process.
+        remember_header_metadata(
+            inspected.hash,
+            inspected.size,
+            inspected.mtime_ns,
+            inspected.metadata,
+        )
+        results[index] = inspected
+        if on_completed is not None:
+            on_completed(paths[index])
+        completed = sum(result is not None for result in results)
+        emit_phase(
+            phase="reading",
+            phase_current=completed,
+            phase_total=total,
+            completed_count=completed,
+            current_item_id=paths[index],
+            current_item_label=Path(paths[index]).name or paths[index],
+            progress_percent=reading_percent(completed),
+            strategy=strategy,
+            worker_count=worker_count,
+            sample_duration_seconds=sample_seconds,
+            estimated_total_seconds=estimate_seconds,
+            estimate_scope="total",
+        )
+
+    if strategy == "serial" and executor_cls is None:
+        for index, path in enumerate(remaining, start=1):
+            store_result(index, inspect_file(path))
     else:
-        executor = process_pool_executor(worker_count)
-    with executor:
-        futures: dict[Future[FileInspection], int] = {
-            executor.submit(inspect_file, path): index for index, path in enumerate(paths)
-        }
-        try:
-            for future in as_completed(futures):
-                index = futures[future]
-                inspected = future.result()
-                # Process workers have independent in-memory caches. Keep the
-                # parent cache authoritative for the registration step and
-                # for subsequent requests in this backend process.
-                remember_header_metadata(
-                    inspected.hash,
-                    inspected.size,
-                    inspected.mtime_ns,
-                    inspected.metadata,
-                )
-                results[index] = inspected
-                if on_completed is not None:
-                    on_completed(paths[index])
-        except Exception:
-            for future in futures:
-                future.cancel()
-            raise
+        executor = (
+            process_pool_executor(worker_count)
+            if executor_cls is None or executor_cls is ProcessPoolExecutor
+            else executor_cls(max_workers=worker_count)
+        )
+        with executor:
+            futures: dict[Future[FileInspection], int] = {
+                executor.submit(inspect_file, path): index
+                for index, path in enumerate(remaining, start=1)
+            }
+            try:
+                for future in as_completed(futures):
+                    store_result(futures[future], future.result())
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
     return [result for result in results if result is not None]

@@ -1212,10 +1212,21 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             stage="inspect",
             total_bytes=total_bytes,
             completed_bytes=0,
+            phase="sampling",
+            phase_current=0,
+            phase_total=1,
+            progress_percent=0.0,
+            estimate_scope="total",
         )
     if not req.paths:
         if job_id is not None:
-            background_jobs.update_job(job_id, status="completed", completed=0)
+            background_jobs.update_job(
+                job_id,
+                status="completed",
+                completed=0,
+                phase="completed",
+                progress_percent=100.0,
+            )
         return {"files": []}
     previews = []
     completed_bytes = 0
@@ -1238,8 +1249,50 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                     completed=completed,
                 )
 
-        inspections = import_inspection.inspect_files(req.paths, on_completed=report_completed)
-        for inspected in inspections:
+        def report_phase(event: dict) -> None:
+            if job_id is None:
+                return
+            values = {
+                key: value
+                for key, value in event.items()
+                if key in {
+                    "phase",
+                    "phase_current",
+                    "phase_total",
+                    "completed_count",
+                    "current_item_id",
+                    "current_item_label",
+                    "phase_detail",
+                    "progress_percent",
+                    "strategy",
+                    "worker_count",
+                    "sample_duration_seconds",
+                    "estimated_total_seconds",
+                    "estimate_scope",
+                }
+            }
+            if "completed_count" in values:
+                values["completed"] = values.pop("completed_count")
+            background_jobs.update_job(job_id, **values)
+
+        inspections = import_inspection.inspect_files(
+            req.paths,
+            on_completed=report_completed,
+            on_phase=report_phase,
+        )
+        if job_id is not None:
+            background_jobs.update_job(
+                job_id,
+                phase="finalizing",
+                phase_current=0,
+                phase_total=len(inspections),
+                phase_detail="Matching inspected identity and building the import review",
+                current_item_id=None,
+                current_item_label="Combining inspected identity and metadata",
+                completed=len(inspections),
+                progress_percent=90.0,
+            )
+        for index, inspected in enumerate(inspections):
             path_string = inspected.path
             path = Path(path_string)
             preview = _inspect_import_path(
@@ -1251,15 +1304,33 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
             previews.append(preview)
             completed_bytes += max(0, int(preview.get("size") or 0))
             if job_id is not None:
-                background_jobs.record_result(
+                background_jobs.update_item(
                     job_id,
                     path_string,
                     status="ready",
                     detail="Identity and Neware metadata ready",
                 )
-                background_jobs.update_job(job_id, completed_bytes=completed_bytes)
+                background_jobs.update_job(
+                    job_id,
+                    completed_bytes=completed_bytes,
+                    phase="finalizing",
+                    phase_current=index + 1,
+                    phase_total=len(inspections),
+                    phase_detail="Matching inspected identity and building the import review",
+                    current_item_id=path_string,
+                    current_item_label=path.name or path_string,
+                    progress_percent=90.0 + (9.0 * (index + 1) / max(1, len(inspections))),
+                )
         if job_id is not None:
-            background_jobs.update_job(job_id, status="completed")
+            background_jobs.update_job(
+                job_id,
+                status="completed",
+                phase="completed",
+                phase_current=len(inspections),
+                phase_total=len(inspections),
+                phase_detail="Import review ready",
+                progress_percent=100.0,
+            )
         return {"files": previews}
     except Exception as exc:
         if job_id is not None:

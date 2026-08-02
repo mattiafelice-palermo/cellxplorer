@@ -134,6 +134,8 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(job["kind"], "import_inspect")
         self.assertEqual(job["completed"], 1)
         self.assertEqual(job["completed_bytes"], 12)
+        self.assertEqual(job["phase"], "completed")
+        self.assertEqual(job["progress_percent"], 100.0)
         self.assertIsNone(job["current_item_label"])
         background_jobs.clear_jobs()
 

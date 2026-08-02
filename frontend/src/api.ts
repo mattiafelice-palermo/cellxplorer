@@ -1569,6 +1569,16 @@ export interface BackgroundJob {
   transition_pending?: boolean;
   token?: string | null;
   stage?: "scan" | "inspect" | "register" | string;
+  phase?: "sampling" | "starting_workers" | "reading" | "finalizing" | "completed" | string;
+  phase_current?: number;
+  phase_total?: number;
+  phase_detail?: string | null;
+  progress_percent?: number;
+  strategy?: "serial" | "multiprocessing" | string;
+  sample_duration_seconds?: number;
+  estimated_total_seconds?: number;
+  estimate_scope?: "total" | "remaining" | string;
+  worker_count?: number;
   current_item_id?: string | null;
   current_item_label?: string | null;
   total_bytes?: number;
