@@ -737,6 +737,120 @@ def normalize_import_cell_sources(draft: ImportCellDraft) -> list[ImportSourceDr
     raise HTTPException(400, "Each cell draft needs at least one source")
 
 
+def _import_name_conflict_detail(
+    code: str,
+    message: str,
+    conflicts: list[dict],
+) -> dict:
+    return {
+        "code": code,
+        "message": message,
+        "conflicts": conflicts,
+    }
+
+
+def _import_name_sources(draft: ImportCellDraft) -> list[dict]:
+    return [
+        {
+            "filename": source.filename,
+            "staged_name": source.staged_name,
+        }
+        for source in normalize_import_cell_sources(draft)
+    ]
+
+
+def _validate_import_cell_names(req: ImportCellsRequest, db: Session) -> None:
+    """Validate Cell names before any source identity or scientific work starts."""
+    grouped: dict[str, list[dict]] = {}
+    for draft in req.cells:
+        name = draft.cell_name.strip()
+        sources = _import_name_sources(draft)
+        if not name:
+            raise HTTPException(
+                400,
+                _import_name_conflict_detail(
+                    "invalid_cell_name",
+                    "Every imported Cell needs a name.",
+                    [{"name": "", "filenames": [item["filename"] for item in sources],
+                      "staged_names": [item["staged_name"] for item in sources]}],
+                ),
+            )
+        grouped.setdefault(name, []).append({
+            "name": name,
+            "filenames": [item["filename"] for item in sources],
+            "staged_names": [item["staged_name"] for item in sources],
+        })
+
+    duplicate_conflicts = [
+        {
+            "name": name,
+            "cell_name": name,
+            "filenames": [filename for item in entries for filename in item["filenames"]],
+            "staged_names": [staged for item in entries for staged in item["staged_names"]],
+        }
+        for name, entries in grouped.items()
+        if len(entries) > 1
+    ]
+    if duplicate_conflicts:
+        raise HTTPException(
+            409,
+            _import_name_conflict_detail(
+                "duplicate_submitted_cell_names",
+                "Multiple submitted files use the same Cell name. Rename the conflicting Cells before importing.",
+                duplicate_conflicts,
+            ),
+        )
+
+    # Keep this as one query, limited to names in this request. Besides being
+    # cheaper than one lookup per draft, this makes the validation boundary
+    # obvious: no parsing, hashing, or continuation checks precede it.
+    submitted_names = list(grouped)
+    existing_names = {
+        name
+        for (name,) in db.query(Cell.name).filter(Cell.name.in_(submitted_names)).all()
+    }
+    existing_conflicts = [
+        {
+            "name": name,
+            "cell_name": name,
+            "filenames": grouped[name][0]["filenames"],
+            "staged_names": grouped[name][0]["staged_names"],
+        }
+        for name in submitted_names
+        if name in existing_names
+    ]
+    if existing_conflicts:
+        raise HTTPException(
+            409,
+            _import_name_conflict_detail(
+                "cell_name_already_exists",
+                "A Cell with this name already exists. Rename the conflicting Cell before importing.",
+                existing_conflicts,
+            ),
+        )
+
+
+def _translate_import_integrity_error(
+    req: ImportCellsRequest,
+    db: Session,
+    exc: IntegrityError,
+) -> HTTPException:
+    """Hide raw SQLite text and recover a structured name conflict when possible."""
+    db.rollback()
+    try:
+        _validate_import_cell_names(req, db)
+    except HTTPException as conflict:
+        return conflict
+    return HTTPException(
+        409,
+        {
+            "code": "import_integrity_error",
+            "message": "The import could not be committed because another change created a conflict.",
+            "conflicts": [],
+        },
+    )
+
+
 def import_cell_replicate_key(draft: ImportCellDraft) -> str:
     if draft.staged_name:
         return draft.staged_name
@@ -2055,8 +2169,21 @@ def _create_imported_cells_impl(
     *,
     job_id: int | None = None,
 ):
+    try:
+        return _create_imported_cells_impl_raw(req, db, job_id=job_id)
+    except IntegrityError as exc:
+        raise _translate_import_integrity_error(req, db, exc) from exc
+
+
+def _create_imported_cells_impl_raw(
+    req: ImportCellsRequest,
+    db: Session,
+    *,
+    job_id: int | None = None,
+):
     if not req.cells:
         raise HTTPException(400, "No files selected")
+    _validate_import_cell_names(req, db)
     all_staged_keys = [
         source.staged_name
         for draft in req.cells
@@ -2104,16 +2231,8 @@ def _create_imported_cells_impl(
         or bool(draft.acknowledged_finding_ids)
     ]
     continuation_draft_ids = {id(draft) for draft in continuation_drafts}
-    existing_cell_names = {name for (name,) in db.query(Cell.name).all()}
-    submitted_cell_names: set[str] = set()
 
     for draft_index, draft in enumerate(req.cells):
-        name = draft.cell_name.strip()
-        if not name:
-            raise HTTPException(400, "Every imported cell needs a name")
-        if name in existing_cell_names or name in submitted_cell_names:
-            raise HTTPException(409, f"Cell already exists: {name}")
-        submitted_cell_names.add(name)
         if job_id is not None:
             sources = normalize_import_cell_sources(draft)
             background_jobs.update_job(
@@ -2451,14 +2570,19 @@ def run_import_registration_job(
             ),
         )
     except Exception as exc:
-        if db is not None:
+        if isinstance(exc, IntegrityError) and db is not None:
+            failure = _translate_import_integrity_error(req, db, exc)
+        else:
+            failure = exc
+        failure_detail = getattr(failure, "detail", None)
+        if db is not None and failure is exc:
             db.rollback()
         try:
             if submission_id is not None and db is not None:
                 submission = db.get(ImportSubmission, submission_id)
                 if submission is not None:
                     submission.status = "failed"
-                    submission.error = _import_job_error(exc)
+                    submission.error = _import_job_error(failure)
                     submission.finished_at = datetime.now(timezone.utc)
             if db is not None:
                 record_activity(
@@ -2469,7 +2593,13 @@ def run_import_registration_job(
                     severity="error",
                     details={
                         "background_job_id": background_job_id,
-                        "error": _import_job_error(exc),
+                        "error": _import_job_error(failure),
+                        "error_code": failure_detail.get("code")
+                        if isinstance(failure_detail, dict)
+                        else None,
+                        "conflicts": failure_detail.get("conflicts", [])
+                        if isinstance(failure_detail, dict)
+                        else [],
                     },
                 )
                 db.commit()
@@ -2479,7 +2609,9 @@ def run_import_registration_job(
         background_jobs.update_job(
             background_job_id,
             status="failed",
-            error=_import_job_error(exc),
+            error=_import_job_error(failure),
+            error_code=failure_detail.get("code") if isinstance(failure_detail, dict) else None,
+            error_details=failure_detail if isinstance(failure_detail, dict) else None,
             description="Cell registration failed",
         )
     finally:
@@ -2531,6 +2663,14 @@ def _accept_imported_cells(req: ImportCellsRequest, *, db: Session | None = None
             if created:
                 background_jobs.discard_job(job_id)
             return _import_submission_response(submission)
+        if created:
+            try:
+                # Reject name conflicts before claiming the durable
+                # submission or starting the registration worker.
+                _validate_import_cell_names(frozen_request, db)
+            except HTTPException:
+                background_jobs.discard_job(job_id)
+                raise
         submission = ImportSubmission(
             token=frozen_request.job_token,
             fingerprint=submission_fingerprint,
@@ -2551,12 +2691,27 @@ def _accept_imported_cells(req: ImportCellsRequest, *, db: Session | None = None
                 ImportSubmission.token == frozen_request.job_token
             ).first()
             if submission is None:
-                raise
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "import_submission_conflict",
+                        "message": "This import submission could not be claimed safely. Please retry the import.",
+                        "conflicts": [],
+                    },
+                )
             if submission.fingerprint != submission_fingerprint:
                 if created:
                     background_jobs.discard_job(job_id)
                 raise HTTPException(409, "This import submission token was already used for another payload")
             return _import_submission_response(submission)
+    if created and db is not None and submission is None:
+        try:
+            # Reject name conflicts synchronously, before claiming a durable
+            # submission or starting the registration worker.
+            _validate_import_cell_names(frozen_request, db)
+        except HTTPException:
+            background_jobs.discard_job(job_id)
+            raise
     existing = background_jobs.get_job(job_id)
     if not created:
         if existing and existing.get("payload_fingerprint") != submission_fingerprint:

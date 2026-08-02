@@ -1566,6 +1566,8 @@ export interface BackgroundJob {
   counters: Record<string, number>;
   items: BackgroundJobItem[];
   error: string | null;
+  error_code?: string | null;
+  error_details?: Record<string, unknown> | null;
   started_at: string;
   completed_at: string | null;
   resource_mode?: "foreground" | "background";

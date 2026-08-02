@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta023 - 2026-08-02
+
+- Fix duplicate import names and retryable failed imports.
+
 ## 0.17.0-beta022 - 2026-08-02
 
 - Make Spec 035.8 import registration restart-safe and incrementally observable.

@@ -105,10 +105,12 @@ import {
   removeStagedDraft,
 } from "../importDraftPolicy";
 import {
+  importRegistrationUiState,
   newImportJobToken,
   type ImportProgressStage,
 } from "../importProgress";
 import { recordImportTimingSample } from "../importTiming";
+import { defaultImportCellName, importNameConflicts } from "../importNamePolicy";
 import { useImportJobProgress } from "../useImportJobProgress";
 import {
   importPreviewQueryKey,
@@ -1290,7 +1292,7 @@ function formatBytes(n: number) {
 }
 
 function suggestedCellName(file: ImportPreview) {
-  return file.barcode || file.remarks || file.filename.replace(/\.(nda|ndax)$/i, "");
+  return defaultImportCellName(file);
 }
 
 function importDraft(file: ImportPreview): ImportDraft {
@@ -1581,6 +1583,15 @@ function ImportModal({
   }, [replicateGroups]);
 
   const includedDrafts = useMemo(() => includedSeparateCellDrafts(drafts), [drafts]);
+  const cellNameConflicts = useMemo(
+    () => importNameConflicts(includedDrafts),
+    [includedDrafts],
+  );
+  const conflictingCellNames = useMemo(
+    () => new Set(cellNameConflicts.map((conflict) => conflict.name)),
+    [cellNameConflicts],
+  );
+  const hasCellNameConflicts = cellNameConflicts.length > 0;
   const duplicateCount = exactDuplicateCount(drafts);
   const removeAllDuplicates = () => {
     const next = removeAllRegisteredDuplicates(drafts, replicateGroups, active);
@@ -1795,8 +1806,15 @@ function ImportModal({
             d.nominal_capacity_mah_override
         )
     ) &&
+    !hasCellNameConflicts &&
     !duplicateGroupName &&
     invalidGroups.length === 0;
+  const registrationStatus = registerProgress.data?.status;
+  const registrationUi = importRegistrationUiState(
+    registrationAccepted,
+    registrationStatus,
+    save.isPending,
+  );
   const rawRangeStart = rawData && rawData.total_rows > 0 ? rawData.offset + 1 : 0;
   const rawRangeEnd = rawData
     ? Math.min(rawData.offset + rawData.rows.length, rawData.total_rows)
@@ -1834,7 +1852,7 @@ function ImportModal({
               job={registerProgress.data}
               error={save.isError && save.error instanceof Error ? save.error.message : null}
             />
-            {registrationAccepted && (
+            {registrationUi.showContinue && (
               <Group justify="space-between" align="center" px="sm" pb="sm">
                 <Text size="sm" c="dimmed">
                   Registration is running in the background. You can keep watching here or continue working.
@@ -1848,7 +1866,7 @@ function ImportModal({
         )}
         {draft && (
           <fieldset
-            disabled={registrationAccepted || save.isPending}
+            disabled={registrationUi.editingLocked}
             style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
           >
           <Stack gap="md">
@@ -1966,6 +1984,21 @@ function ImportModal({
                     All selected files are already in the Cell Database.
                   </Text>
                 )}
+              </Alert>
+            )}
+            {hasCellNameConflicts && (
+              <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+                <Text size="sm" fw={600}>
+                  Rename the conflicting Cell names before importing.
+                </Text>
+                <Text size="sm" mt={4}>
+                  {cellNameConflicts.map((conflict) => (
+                    <span key={conflict.name}>
+                      {conflict.name}: {conflict.drafts.map((item) => item.filename).join(", ")}
+                      <br />
+                    </span>
+                  ))}
+                </Text>
               </Alert>
             )}
             <Group align="stretch" gap="md" wrap="nowrap">
@@ -2142,7 +2175,14 @@ function ImportModal({
                                  style={{
                                    cursor: "pointer",
                                    borderColor: index === active ? "var(--mantine-primary-color-5)" : undefined,
-                                   background: checked ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
+                                   background: conflictingCellNames.has(item.cell_name.trim())
+                                     ? "light-dark(var(--mantine-color-red-0), var(--mantine-color-dark-8))"
+                                     : checked
+                                       ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
+                                       : undefined,
+                                   boxShadow: conflictingCellNames.has(item.cell_name.trim())
+                                     ? "inset 3px 0 0 var(--mantine-color-red-6)"
+                                     : undefined,
                                  }}
                                  tabIndex={0}
                                  onClick={() => activateDraft(index)}

@@ -30,6 +30,17 @@ export function newImportJobToken(): string {
   return `import-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export function importRegistrationUiState(
+  accepted: boolean,
+  status: BackgroundJob["status"] | undefined,
+  savePending = false,
+): { showContinue: boolean; editingLocked: boolean } {
+  return {
+    showContinue: accepted && status === "running",
+    editingLocked: savePending || (accepted && status !== "failed"),
+  };
+}
+
 export function importStageTitle(stage: ImportProgressStage): string {
   return {
     scan: "Discovering selected sources",

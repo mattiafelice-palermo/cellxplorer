@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -166,6 +167,103 @@ class ImportFlowTests(unittest.TestCase):
         self.assertIn("injected failure", job["error"])
         db.rollback.assert_called_once()
         background_jobs.clear_jobs()
+
+    def test_duplicate_cell_names_are_rejected_before_parsing_or_continuation_checks(self):
+        db = self.make_session()
+        request = files.ImportCellsRequest(
+            cells=[
+                files.ImportCellDraft(
+                    cell_name=" Same Cell ", staged_name="first.ndax", filename="first.ndax"
+                ),
+                files.ImportCellDraft(
+                    cell_name="Same Cell", staged_name="second.ndax", filename="second.ndax"
+                ),
+            ]
+        )
+        with patch.object(
+            files.continuations,
+            "validate_staged_keys",
+            side_effect=AssertionError("continuation validation must not run"),
+        ), patch.object(
+            parsing,
+            "compute_hash",
+            side_effect=AssertionError("hashing must not run"),
+        ):
+            with self.assertRaises(files.HTTPException) as raised:
+                files._create_imported_cells_impl(request, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        detail = raised.exception.detail
+        self.assertEqual(detail["code"], "duplicate_submitted_cell_names")
+        self.assertEqual(detail["conflicts"][0]["name"], "Same Cell")
+        self.assertEqual(
+            detail["conflicts"][0]["filenames"], ["first.ndax", "second.ndax"]
+        )
+        self.assertEqual(
+            detail["conflicts"][0]["staged_names"], ["first.ndax", "second.ndax"]
+        )
+
+    def test_existing_cell_name_conflict_is_structured_and_precedes_parsing(self):
+        db = self.make_session()
+        db.add(Cell(name="Already there"))
+        db.commit()
+        request = files.ImportCellsRequest(
+            cells=[
+                files.ImportCellDraft(
+                    cell_name=" Already there ", staged_name="candidate.ndax", filename="candidate.ndax"
+                )
+            ]
+        )
+        with patch.object(
+            files.continuations,
+            "validate_staged_keys",
+            side_effect=AssertionError("continuation validation must not run"),
+        ):
+            with self.assertRaises(files.HTTPException) as raised:
+                files._create_imported_cells_impl(request, db)
+
+        self.assertEqual(raised.exception.detail["code"], "cell_name_already_exists")
+        conflict = raised.exception.detail["conflicts"][0]
+        self.assertEqual(conflict["cell_name"], "Already there")
+        self.assertEqual(conflict["filenames"], ["candidate.ndax"])
+        self.assertEqual(conflict["staged_names"], ["candidate.ndax"])
+
+    def test_endpoint_rejects_duplicate_names_before_queueing_registration(self):
+        db = self.make_session()
+        background_jobs.clear_jobs()
+        request = files.ImportCellsRequest(
+            job_token="duplicate-before-queue",
+            cells=[
+                files.ImportCellDraft(cell_name="A", staged_name="a.ndax", filename="a.ndax"),
+                files.ImportCellDraft(cell_name=" A ", staged_name="b.ndax", filename="b.ndax"),
+            ],
+        )
+        with self.assertRaises(files.HTTPException) as raised:
+            files._accept_imported_cells(request, db=db)
+
+        self.assertEqual(raised.exception.detail["code"], "duplicate_submitted_cell_names")
+        self.assertIsNone(background_jobs.find_by_token(request.job_token))
+        self.assertEqual(db.query(ImportSubmission).count(), 0)
+        background_jobs.clear_jobs()
+
+    def test_integrity_error_is_translated_to_existing_name_conflict(self):
+        db = self.make_session()
+        db.add(Cell(name="Raced name"))
+        db.commit()
+        request = files.ImportCellsRequest(
+            cells=[
+                files.ImportCellDraft(
+                    cell_name="Raced name", staged_name="raced.ndax", filename="raced.ndax"
+                )
+            ]
+        )
+        integrity_error = IntegrityError("INSERT", {}, RuntimeError("UNIQUE constraint failed"))
+        with patch.object(files, "_create_imported_cells_impl_raw", side_effect=integrity_error):
+            with self.assertRaises(files.HTTPException) as raised:
+                files._create_imported_cells_impl(request, db)
+
+        self.assertEqual(raised.exception.detail["code"], "cell_name_already_exists")
+        self.assertNotIn("UNIQUE constraint", raised.exception.detail["message"])
 
     def test_registration_worker_setup_failure_marks_job_failed(self):
         background_jobs.clear_jobs()

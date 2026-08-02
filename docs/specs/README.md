@@ -318,6 +318,7 @@ Rules:
 - [034.2-continuation-inspection-and-acknowledgements-review.md](reviews/034.2-continuation-inspection-and-acknowledgements-review.md)
 - [034.3-atomic-multi-source-lifecycle-review.md](reviews/034.3-atomic-multi-source-lifecycle-review.md)
 - [035.8-adaptive-inspection-progress-and-dark-theme-review.md](reviews/035.8-adaptive-inspection-progress-and-dark-theme-review.md)
+- [035.8-duplicate-cell-names-and-failed-import-review.md](reviews/035.8-duplicate-cell-names-and-failed-import-review.md)
 
 ## Index
 
