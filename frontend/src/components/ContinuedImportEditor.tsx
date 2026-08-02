@@ -42,6 +42,7 @@ import {
   preserveAcknowledgements,
   scientificDraftIsValid,
 } from "../continuationPolicy";
+import type { ImportPreviewDraftState } from "../importPreviewPolicy";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 import Plot from "./Plot";
 
@@ -62,7 +63,7 @@ export type ContinuedCellDraft = {
   source_metadata: ImportPreview | null;
 };
 
-type DraftSource = ImportPreview;
+type DraftSource = ImportPreviewDraftState;
 
 function draftSource(draft: DraftSource) {
   return {
@@ -108,6 +109,7 @@ export function ContinuedImportEditor({
   areaPresets,
   onImport,
   onRawData,
+  onPreviewRequested,
   importing,
 }: {
   opened: boolean;
@@ -125,6 +127,7 @@ export function ContinuedImportEditor({
   areaPresets: ElectrodeAreaPresetSettings["presets"];
   onImport: (order: string[], acknowledgedFindingIds: string[]) => void;
   onRawData?: (stagedName: string) => void;
+  onPreviewRequested?: (draft: DraftSource, retry?: boolean) => void;
   importing: boolean;
 }) {
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
@@ -197,6 +200,16 @@ export function ContinuedImportEditor({
     continuedImportCanSubmit(result, cellDraft.cell_name, acknowledged);
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
+
+  useEffect(() => {
+    if (
+      opened
+      && previewDraft
+      && previewDraft.preview_state.status === "idle"
+    ) {
+      onPreviewRequested?.(previewDraft);
+    }
+  }, [opened, previewDraft?.staged_name, previewDraft?.preview_state.status, onPreviewRequested]);
   const submit = () => {
     const frozen = [...order];
     setSubmittedOrder(frozen);
@@ -293,8 +306,8 @@ export function ContinuedImportEditor({
         </Alert>
       )}
 
-      {previewDraft?.capacity_preview && previewDraft.capacity_preview.x.length > 0 && (
-        <Paper withBorder p="xs">
+      {previewDraft && (
+        <>
           <Group justify="space-between" align="end" gap="xs">
             <Text size="xs" fw={700}>Quick preview</Text>
             <Select
@@ -310,8 +323,35 @@ export function ContinuedImportEditor({
           <Text size="xs" c="dimmed" mt={4} title={previewDraft.filename}>
             Previewing {previewDraft.filename}
           </Text>
-          <Plot data={[{ x: previewDraft.capacity_preview.x, y: previewDraft.capacity_preview.y, type: "scatter", mode: "markers", marker: { size: 5, color: "#12b886" }, name: previewDraft.capacity_preview.label }]} layout={{ height: 220, margin: { l: 54, r: 16, t: 12, b: 42 }, xaxis: { title: { text: "Cycle" } }, yaxis: { title: { text: previewDraft.capacity_preview.label } }, showlegend: false, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" }} config={{ displayModeBar: false, responsive: true }} style={{ width: "100%" }} />
-        </Paper>
+          {previewDraft.preview_state.status === "loading" ? (
+            <Alert color="gray">Generating capacity preview…</Alert>
+          ) : previewDraft.preview_state.status === "error" ? (
+            <Alert color="orange" title="Preview could not be generated">
+              <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+                <Text size="sm">{previewDraft.preview_state.message}</Text>
+                <Button
+                  size="compact-sm"
+                  variant="default"
+                  onClick={() => onPreviewRequested?.(previewDraft, true)}
+                >
+                  Retry
+                </Button>
+              </Group>
+            </Alert>
+          ) : previewDraft.preview_state.status === "ready"
+            && previewDraft.capacity_preview
+            && previewDraft.capacity_preview.x.length > 0 ? (
+            <Paper withBorder p="xs">
+              <Plot data={[{ x: previewDraft.capacity_preview.x, y: previewDraft.capacity_preview.y, type: "scatter", mode: "markers", marker: { size: 5, color: "#12b886" }, name: previewDraft.capacity_preview.label }]} layout={{ height: 220, margin: { l: 54, r: 16, t: 12, b: 42 }, xaxis: { title: { text: "Cycle" } }, yaxis: { title: { text: previewDraft.capacity_preview.label } }, showlegend: false, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" }} config={{ displayModeBar: false, responsive: true }} style={{ width: "100%" }} />
+            </Paper>
+          ) : (
+            <Alert color="gray">
+              {previewDraft.preview_state.status === "idle"
+                ? "Preview is available when this source is active."
+                : "No capacity preview points were found in this file."}
+            </Alert>
+          )}
+        </>
       )}
 
       <Group align="start" grow>

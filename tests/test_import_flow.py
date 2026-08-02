@@ -239,6 +239,153 @@ class ImportFlowTests(unittest.TestCase):
             },
         )
 
+    def test_preview_matching_fingerprint_reuses_inspected_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "preview.ndax"
+            path.write_bytes(b"preview")
+            stat = path.stat()
+            with patch.object(files.parsing, "compute_hash") as compute_hash, patch.object(
+                files,
+                "build_capacity_preview",
+                return_value=({"x": [1], "y": [2.0]}, None),
+            ) as build_preview:
+                response = files.preview_import_file(
+                    files.ImportPreviewRequest(
+                        staged_name=path.name,
+                        source_path=str(path),
+                        expected_hash="a" * 64,
+                        expected_size=stat.st_size,
+                        expected_mtime_ns=stat.st_mtime_ns,
+                    )
+                )
+
+        compute_hash.assert_not_called()
+        build_preview.assert_called_once_with(path.resolve(), file_hash="a" * 64)
+        self.assertEqual(response["verified_hash"], "a" * 64)
+
+    def test_preview_fingerprint_mismatch_rehashes_and_rejects_changed_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "changed.ndax"
+            path.write_bytes(b"changed")
+            stat = path.stat()
+            with patch.object(files.parsing, "compute_hash", return_value="b" * 64) as compute_hash:
+                with self.assertRaises(Exception) as raised:
+                    files.preview_import_file(
+                        files.ImportPreviewRequest(
+                            staged_name=path.name,
+                            source_path=str(path),
+                            expected_hash="a" * 64,
+                            expected_size=stat.st_size + 1,
+                            expected_mtime_ns=stat.st_mtime_ns,
+                        )
+                    )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "source_changed")
+        compute_hash.assert_called_once_with(path.resolve())
+
+    def test_preview_rehashed_matching_source_uses_fresh_verified_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "touched.ndax"
+            path.write_bytes(b"touched")
+            stat = path.stat()
+            with patch.object(files.parsing, "compute_hash", return_value="a" * 64) as compute_hash, patch.object(
+                files,
+                "build_capacity_preview",
+                return_value=(None, None),
+            ) as build_preview:
+                response = files.preview_import_file(
+                    files.ImportPreviewRequest(
+                        staged_name=path.name,
+                        source_path=str(path),
+                        expected_hash="a" * 64,
+                        expected_size=stat.st_size + 1,
+                        expected_mtime_ns=stat.st_mtime_ns,
+                    )
+                )
+
+        compute_hash.assert_called_once_with(path.resolve())
+        build_preview.assert_called_once_with(path.resolve(), file_hash="a" * 64)
+        self.assertEqual(response["verified_hash"], "a" * 64)
+
+    def test_capacity_preview_uses_verified_hash_without_recomputing(self):
+        cycles = pd.DataFrame(
+            {"cycle": [1], "discharge_capacity_mah": [1.5]},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cached.ndax"
+            path.write_bytes(b"cached")
+            with patch.object(files.parsing, "compute_hash") as compute_hash, patch.object(
+                files.cache,
+                "build_write_behind",
+                return_value=cycles,
+            ) as build_write_behind:
+                preview, error = files.build_capacity_preview(path, file_hash="c" * 64)
+
+        compute_hash.assert_not_called()
+        build_write_behind.assert_called_once_with("c" * 64, path)
+        self.assertIsNone(error)
+        self.assertEqual(preview["x"], [1])
+
+    def test_start_import_cache_jobs_reports_background_handoff(self):
+        with patch.object(files.background_jobs, "create_job", return_value=41), patch.object(
+            files.threading,
+            "Thread",
+        ) as thread_cls:
+            info = files.start_import_cache_jobs(
+                {"a.ndax": 7},
+                [{"staged_name": "a.ndax", "hash": "a" * 64, "path": "C:/a.ndax"}],
+            )
+
+        self.assertEqual(info, {"queued": True, "count": 1, "job_id": 41, "status": "running"})
+        thread_cls.return_value.start.assert_called_once_with()
+        self.assertEqual(
+            files.start_import_cache_jobs({}, []),
+            {"queued": False, "count": 0, "job_id": None, "status": "ready"},
+        )
+
+    def test_cache_worker_failure_marks_registered_source_error(self):
+        db = self.make_session()
+        source = SourceFile(
+            hash="d" * 64,
+            path="C:/data/failing.ndax",
+            filename="failing.ndax",
+            size=1,
+            ext="ndax",
+            parse_status="parsing",
+            capacity_summary_status="pending",
+        )
+        db.add(source)
+        db.commit()
+        background_jobs.clear_jobs()
+        job_id = background_jobs.create_job(
+            kind="import_cache",
+            title="Preparing imported cells",
+            description="Building cycling caches",
+            total=1,
+            items=[{"id": "failing.ndax", "label": "failing.ndax"}],
+        )
+        try:
+            db_worker = Mock(wraps=db)
+            db_worker.close = Mock()
+            with patch.object(files, "SessionLocal", return_value=db_worker), patch.object(
+                files,
+                "build_import_caches_parallel",
+                side_effect=RuntimeError("worker unavailable"),
+            ):
+                files.run_import_cache_jobs(
+                    {"failing.ndax": source.id},
+                    [{"staged_name": "failing.ndax", "hash": source.hash, "path": source.path}],
+                    job_id,
+                )
+        finally:
+            background_jobs.clear_jobs()
+
+        db.refresh(source)
+        self.assertEqual(source.parse_status, "error")
+        self.assertEqual(source.capacity_summary_status, "error")
+        self.assertIn("registration succeeded", source.parse_error)
+
     def test_header_metadata_prefers_neware_head_remark(self):
         with patch.object(
             parsing,
@@ -536,7 +683,11 @@ class ImportFlowTests(unittest.TestCase):
             original_hash = parsing.compute_hash
             original_meta = parsing.read_header_metadata
             original_inspect = files._inspect_cell_draft_chain
-            files.start_import_cache_jobs = lambda file_ids, jobs: started.append((file_ids, jobs))
+            def capture_cache_jobs(file_ids, jobs):
+                started.append((file_ids, jobs))
+                return {"queued": True, "count": len(jobs), "job_id": 99, "status": "running"}
+
+            files.start_import_cache_jobs = capture_cache_jobs
             files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
                 "can_submit": True,
                 "inspection_complete": True,
@@ -584,6 +735,10 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(result["created"][0]["cell_name"], "Async import cell")
         self.assertTrue(result["parsing_started"])
+        self.assertEqual(
+            result["cache_jobs"],
+            {"queued": True, "count": 1, "job_id": 99, "status": "running"},
+        )
         self.assertEqual(len(started), 1)
         imported_cell = db.get(Cell, result["created"][0]["cell_id"])
         self.assertIsNotNone(imported_cell)

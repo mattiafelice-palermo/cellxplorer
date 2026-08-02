@@ -175,7 +175,9 @@ def _inspect_import_path(
         "inspection": {
             "hash": file_hash,
             "size": inspected.size,
-            "mtime_ns": inspected.mtime_ns,
+            # JSON numbers cannot represent Windows nanosecond timestamps
+            # exactly in JavaScript; keep this fingerprint lossless.
+            "mtime_ns": str(inspected.mtime_ns),
         },
         "capacity_preview": None,
         "preview_error": None,
@@ -356,14 +358,17 @@ def capacity_preview_from_cycles(cycles) -> dict:
     }
 
 
-def build_capacity_preview(path: Path) -> tuple[dict | None, str | None]:
+def build_capacity_preview(
+    path: Path,
+    file_hash: str | None = None,
+) -> tuple[dict | None, str | None]:
     """Preview via the versioned cache: one parse per file content, ever.
     The preview responds as soon as the parse finishes; the Parquet caches
     are written behind it on a background thread, so the import confirm
     (and any later work on this file) reuses them instead of re-parsing."""
     try:
-        file_hash = parsing.compute_hash(path)
-        cycles = cache.build_write_behind(file_hash, path)
+        verified_hash = file_hash or parsing.compute_hash(path)
+        cycles = cache.build_write_behind(verified_hash, path)
         if cycles is None:
             raise RuntimeError("cycle cache could not be built")
         return capacity_preview_from_cycles(cycles), None
@@ -485,7 +490,28 @@ def run_import_cache_jobs(
             ),
         )
     except Exception as exc:
-        background_jobs.update_job(background_job_id, status="failed", error=str(exc))
+        error = f"Cell registration succeeded; cycling cache preparation failed: {exc}"
+        for source_file_id in set(source_file_ids_by_staged_name.values()):
+            sf = db.get(SourceFile, source_file_id)
+            if sf is None:
+                continue
+            sf.parse_status = "error"
+            sf.parse_error = error
+            sf.capacity_summary_status = "error"
+        db.commit()
+        for cache_job in cache_jobs:
+            background_jobs.update_item(
+                background_job_id,
+                cache_job["staged_name"],
+                status="failed",
+                error=error,
+            )
+        background_jobs.update_job(
+            background_job_id,
+            status="failed",
+            description="Cell registration succeeded; cycling cache preparation failed",
+            error=error,
+        )
     finally:
         db.close()
 
@@ -493,9 +519,14 @@ def run_import_cache_jobs(
 def start_import_cache_jobs(
     source_file_ids_by_staged_name: dict[str, int],
     cache_jobs: list[dict],
-) -> None:
+) -> dict:
     if not cache_jobs:
-        return
+        return {
+            "queued": False,
+            "count": 0,
+            "job_id": None,
+            "status": "ready",
+        }
     background_job_id = background_jobs.create_job(
         kind="import_cache",
         title="Preparing imported cells",
@@ -512,6 +543,21 @@ def start_import_cache_jobs(
         daemon=True,
     )
     thread.start()
+    return {
+        "queued": True,
+        "count": len(cache_jobs),
+        "job_id": background_job_id,
+        "status": "running",
+    }
+
+
+def _mtime_fingerprint_matches(value: object, actual: int | None) -> bool:
+    if actual is None or value is None:
+        return False
+    try:
+        return int(value) == actual
+    except (TypeError, ValueError):
+        return False
 
 
 def _json_safe_scalar(value):
@@ -691,6 +737,9 @@ def import_replicate_plan(
 class ImportPreviewRequest(BaseModel):
     staged_name: str
     source_path: str | None = None
+    expected_hash: str | None = None
+    expected_size: int | None = None
+    expected_mtime_ns: int | str | None = None
 
 
 class ImportRawDataRequest(BaseModel):
@@ -1341,7 +1390,7 @@ def _continuation_staged_source(
         and hint.get("hash") == file_hash
         and source_stat is not None
         and hint.get("size") == source_stat.st_size
-        and hint.get("mtime_ns") == source_stat.st_mtime_ns
+        and _mtime_fingerprint_matches(hint.get("mtime_ns"), source_stat.st_mtime_ns)
     )
     meta = (
         import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
@@ -1551,6 +1600,25 @@ def _validate_staged_source_snapshots(
         _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
 
 
+def _mark_existing_import_cache_ready(sf: SourceFile, source_path: Path) -> bool:
+    """Adopt a complete current-version cache without queuing duplicate work."""
+    try:
+        if not cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file():
+            return False
+        if not cache.has_cycles(sf.hash, parsing.PARSER_VERSION, CALC_VERSION):
+            return False
+        info = cache.build(sf.hash, source_path)
+    except Exception:
+        return False
+    sf.parse_status = "parsed"
+    sf.parse_error = None
+    sf.parser_version = info["parser_version"]
+    sf.row_count = info["rows"]
+    sf.cycle_count = info["cycles"]
+    scanner.apply_capacity_summary(sf, info)
+    return True
+
+
 def _register_or_refresh_source_file(
     db: Session,
     *,
@@ -1582,7 +1650,7 @@ def _register_or_refresh_source_file(
         isinstance(inspection, dict)
         and inspection.get("hash") == file_hash
         and inspection.get("size") == source_stat.st_size
-        and inspection.get("mtime_ns") == source_stat.st_mtime_ns
+        and _mtime_fingerprint_matches(inspection.get("mtime_ns"), source_stat.st_mtime_ns)
     )
     meta = (
         import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
@@ -1814,10 +1882,46 @@ def preview_import_file(req: ImportPreviewRequest):
         source_path = resolve_import_source_path(req.staged_name, req.source_path)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if not source_path.exists():
+    if not source_path.exists() or not source_path.is_file():
         raise HTTPException(404, "Source file is missing")
-    capacity_preview, preview_error = build_capacity_preview(source_path)
-    return {"capacity_preview": capacity_preview, "preview_error": preview_error}
+    try:
+        source_stat = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+
+    expected_hash = (req.expected_hash or "").strip().lower() or None
+    fingerprint_matches = (
+        expected_hash is not None
+        and req.expected_size is not None
+        and req.expected_mtime_ns is not None
+        and req.expected_size == source_stat.st_size
+        and _mtime_fingerprint_matches(req.expected_mtime_ns, source_stat.st_mtime_ns)
+    )
+    if fingerprint_matches:
+        verified_hash = expected_hash
+    else:
+        verified_hash = parsing.compute_hash(source_path).lower()
+        if expected_hash is not None and verified_hash != expected_hash:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_changed",
+                    "message": "The source changed after inspection; inspect it again before previewing.",
+                    "filename": source_path.name,
+                    "expected_hash_prefix": expected_hash[:12],
+                    "actual_hash_prefix": verified_hash[:12],
+                },
+            )
+
+    capacity_preview, preview_error = build_capacity_preview(
+        source_path,
+        file_hash=verified_hash,
+    )
+    return {
+        "capacity_preview": capacity_preview,
+        "preview_error": preview_error,
+        "verified_hash": verified_hash,
+    }
 
 
 @router.post("/imports/raw-data")
@@ -1973,7 +2077,10 @@ def _create_imported_cells_impl(
                     isinstance(source_draft.inspection, dict)
                     and source_draft.inspection.get("hash") == sf.hash
                     and source_draft.inspection.get("size") == sf.size
-                    and source_draft.inspection.get("mtime_ns") == sf.observed_mtime_ns
+                    and _mtime_fingerprint_matches(
+                        source_draft.inspection.get("mtime_ns"),
+                        sf.observed_mtime_ns,
+                    )
                     and isinstance(source_draft.inspection.get("header_metadata"), dict)
                 ) else import_inspection.cached_header_metadata(
                     sf.hash,
@@ -2014,13 +2121,14 @@ def _create_imported_cells_impl(
             sf.capacity_summary_status = "pending"
             db.flush()
             source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
-            cache_jobs.append(
-                {
-                    "staged_name": source_draft.staged_name,
-                    "hash": sf.hash,
-                    "path": str(source_path),
-                }
-            )
+            if not _mark_existing_import_cache_ready(sf, source_path):
+                cache_jobs.append(
+                    {
+                        "staged_name": source_draft.staged_name,
+                        "hash": sf.hash,
+                        "path": str(source_path),
+                    }
+                )
             created_source_ids.append(sf.id)
 
         if replicate_key not in grouped_staged_names:
@@ -2112,12 +2220,13 @@ def _create_imported_cells_impl(
             status="completed",
             description="Cell registration committed",
         )
-    start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
+    cache_handoff = start_import_cache_jobs(source_file_ids_by_staged_name, cache_jobs)
     return {
         "created": created,
         "replicate_group": replicate_groups[0] if len(replicate_groups) == 1 else None,
         "replicate_groups": replicate_groups,
         "parsing_started": bool(cache_jobs),
+        "cache_jobs": cache_handoff,
     }
 
 

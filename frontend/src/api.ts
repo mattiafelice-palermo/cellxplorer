@@ -1553,7 +1553,7 @@ export interface BackgroundJobItem {
 
 export interface BackgroundJob {
   id: number;
-  kind: "capacity_summary" | "source_check" | "import_cache" | string;
+  kind: "capacity_summary" | "source_check" | "import_cache" | "import_register" | string;
   title: string;
   description: string;
   status: "running" | "paused" | "completed" | "failed";
@@ -1680,7 +1680,7 @@ export interface ImportPreview {
   inspection: {
     hash: string;
     size: number;
-    mtime_ns: number;
+    mtime_ns: number | string;
     header_metadata?: Record<string, unknown>;
   };
 }
@@ -1734,6 +1734,15 @@ export interface ImportQuickAccessItem {
 export interface ImportPreviewResult {
   capacity_preview: ImportPreview["capacity_preview"];
   preview_error: string | null;
+  verified_hash?: string | null;
+}
+
+export interface ImportPreviewRequest {
+  staged_name: string;
+  source_path?: string | null;
+  expected_hash: string;
+  expected_size: number;
+  expected_mtime_ns: number | string | null;
 }
 
 export interface ImportRawDataResult {

@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta018 - 2026-08-02
+
+- Lazy import previews and background cache handoff.
+
 ## 0.17.0-beta017 - 2026-08-02
 
 - Speed up large Neware imports with direct header parsing and process-based inspection.

@@ -43,6 +43,15 @@ metadata so final registration can reuse the header only when the same fingerpri
 final checksum and transactional duplicate checks remain mandatory. Folder layout should not
 materially affect this boundary because it receives file paths after discovery.
 
+The final import editor keeps preview work lazy: each staged draft owns an explicit idle/loading/
+ready/error state, and only the active source may request a capacity preview. Preview requests carry
+the inspection hash plus size/`mtime_ns`; matching fingerprints reuse that verified hash, while a
+changed fingerprint is rehashed and rejected with a structured source-changed response when the
+content differs. The frontend cache key is the content hash, so switching back to a ready source or
+reopening identical content does not parse it again. Registration commits Cells first and returns a
+separate background cache-job handoff; missing scientific caches remain `parsing` until the existing
+cache worker marks them ready or reports a post-registration source error.
+
 The backfill must not assume that a per-cycle Parquet cache already exists. If a summary is
 incomplete and the current cache is missing, it verifies the source against the stored checksum,
 rebuilds the scientific cache at current parser/calculation versions, and then persists the

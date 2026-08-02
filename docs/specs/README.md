@@ -24,6 +24,9 @@
 - [`035.7-import-inspection-concurrency-and-deduplication.md`](035.7-import-inspection-concurrency-and-deduplication.md)
   adds bounded concurrent file inspection, one batch identity snapshot, and fingerprint-safe
   metadata reuse during registration. **Implemented**; review pending.
+- [`035.8-lazy-import-preview-and-cache-handoff.md`](035.8-lazy-import-preview-and-cache-handoff.md)
+  loads previews only for the active staged source and reports post-registration cache preparation.
+  **Implemented**; review checkpoint complete.
 - [`035.12-import-browser-select-shown-and-resizable-panes.md`](035.12-import-browser-select-shown-and-resizable-panes.md)
   corrects the import-browser aggregate selection so shown folders are included, and adds a
   bounded accessible resize divider between the quick-access and file-browser panes. **Implemented**;

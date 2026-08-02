@@ -54,7 +54,17 @@ import {
   IconUpload,
   IconX,
 } from "@tabler/icons-react";
-import { DragEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  DragEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -100,11 +110,19 @@ import {
 } from "../importProgress";
 import { recordImportTimingSample } from "../importTiming";
 import { useImportJobProgress } from "../useImportJobProgress";
+import {
+  importPreviewQueryKey,
+  importPreviewRequest,
+  importPreviewStateFromResult,
+  type ImportPreviewDraftState,
+  type ImportPreviewState,
+} from "../importPreviewPolicy";
 
 export type ImportDraft = ImportPreview & {
   cell_name: string;
   description: string;
   metadata: Record<string, string>;
+  preview_state: ImportPreviewState;
   preview_loading: boolean;
   active_mass_mg_override: number | null;
   nominal_capacity_mah_override: number | null;
@@ -117,6 +135,96 @@ export type ImportDraft = ImportPreview & {
   electrode_area_preset_id: string | null;
   electrode_area_preset_name: string | null;
 };
+
+function useImportPreviewLoader(
+  setDrafts: Dispatch<SetStateAction<ImportDraft[]>>,
+) {
+  const inFlight = useRef(new Map<string, Promise<ImportPreviewResult>>());
+  const ready = useRef(new Map<string, ImportPreviewResult>());
+  const requestVersions = useRef(new Map<string, number>());
+
+  return useCallback((draft: ImportPreviewDraftState, retry = false) => {
+    const previewKey = importPreviewQueryKey(draft.hash)[1];
+    const version = (requestVersions.current.get(draft.staged_name) ?? 0) + 1;
+    requestVersions.current.set(draft.staged_name, version);
+
+    const apply = (state: ImportPreviewState) => {
+      setDrafts((current) => current.map((item) => {
+        if (
+          item.staged_name !== draft.staged_name
+          || item.hash.toLowerCase() !== draft.hash.toLowerCase()
+          || requestVersions.current.get(draft.staged_name) !== version
+        ) {
+          return item;
+        }
+        return {
+          ...item,
+          preview_state: state,
+          preview_loading: state.status === "loading",
+          capacity_preview: state.status === "ready"
+            ? state.preview.capacity_preview
+            : state.status === "loading"
+              ? null
+              : item.capacity_preview,
+          preview_error: state.status === "error"
+            ? state.message
+            : state.status === "ready"
+              ? state.preview.preview_error
+              : null,
+        };
+      }));
+    };
+
+    if (!retry) {
+      const cached = ready.current.get(previewKey);
+      if (cached) {
+        apply(importPreviewStateFromResult(cached));
+        return;
+      }
+    } else {
+      ready.current.delete(previewKey);
+    }
+
+    apply({ status: "loading" });
+    let request = inFlight.current.get(previewKey);
+    if (!request) {
+      addDebugEvent("import:previewRequested", {
+        staged_name: draft.staged_name,
+        filename: draft.filename,
+        preview_key: previewKey,
+      });
+      request = post<ImportPreviewResult>(
+        "/api/imports/preview",
+        importPreviewRequest(draft),
+      );
+      inFlight.current.set(previewKey, request);
+    }
+    request
+      .then((result) => {
+        ready.current.set(previewKey, result);
+        addDebugEvent("import:previewReady", {
+          staged_name: draft.staged_name,
+          points: result.capacity_preview?.x.length ?? 0,
+          error: result.preview_error,
+          preview_key: previewKey,
+        });
+        apply(importPreviewStateFromResult(result));
+      })
+      .catch((error: Error) => {
+        addDebugEvent("import:previewFailed", {
+          staged_name: draft.staged_name,
+          error: error.message,
+          preview_key: previewKey,
+        });
+        apply({ status: "error", message: error.message });
+      })
+      .finally(() => {
+        if (inFlight.current.get(previewKey) === request) {
+          inFlight.current.delete(previewKey);
+        }
+      });
+  }, [setDrafts]);
+}
 
 type ImportReplicateDraft = {
   id: string;
@@ -1157,7 +1265,8 @@ function importDraft(file: ImportPreview): ImportDraft {
     cell_name: suggestedCellName(file),
     description: file.remarks || "",
     metadata: file.metadata,
-    preview_loading: true,
+    preview_state: { status: "idle" },
+    preview_loading: false,
     active_mass_mg_override: null,
     nominal_capacity_mah_override: null,
     electrode_area_cm2_override: null,
@@ -1245,6 +1354,7 @@ function ImportModal({
   onAddMoreSources,
   onRemoveSource,
   onRemoveSources,
+  onPreviewRequested,
   addingMore,
   onSaved,
   targetFolderId,
@@ -1259,6 +1369,7 @@ function ImportModal({
   onAddMoreSources: () => void;
   onRemoveSource: (stagedName: string) => void;
   onRemoveSources: (stagedNames: string[]) => void;
+  onPreviewRequested: (draft: ImportPreviewDraftState, retry?: boolean) => void;
   addingMore: boolean;
   onSaved: () => void;
   targetFolderId: number | null;
@@ -1322,6 +1433,19 @@ function ImportModal({
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
     }
   }, [opened, targetFolderId]);
+
+  useEffect(() => {
+    if (
+      !opened
+      || continuedMode
+      || !draft
+      || isRegisteredExactDuplicate(draft)
+      || draft.preview_state.status !== "idle"
+    ) {
+      return;
+    }
+    onPreviewRequested(draft);
+  }, [opened, continuedMode, draft?.staged_name, draft?.preview_state.status, onPreviewRequested]);
 
   const loadRawData = (offset = 0, targetDraft = draft) => {
     if (!targetDraft) return;
@@ -1479,6 +1603,13 @@ function ImportModal({
         created: { cell_id: number; cell_name: string }[];
         replicate_group?: { id: number; name: string; cell_ids: number[] } | null;
         replicate_groups?: { id: number; name: string; cell_ids: number[] }[];
+        parsing_started?: boolean;
+        cache_jobs?: {
+          queued: boolean;
+          count: number;
+          job_id: number | null;
+          status: "ready" | "running" | "completed" | "failed" | string;
+        } | null;
       }>("/api/imports/cells", {
         job_token: variables.jobToken,
         folder_ids: destinationFolders.map(Number),
@@ -1545,8 +1676,12 @@ function ImportModal({
         ),
       });
       setRegisterToken(null);
+      const importedCount = result.created.length;
+      const importedLabel = `${importedCount} cell${importedCount === 1 ? "" : "s"} imported`;
       notifications.show({
-        message: `Imported ${result.created.length} cell${result.created.length === 1 ? "" : "s"}`,
+        message: result.cache_jobs?.queued
+          ? `${importedLabel}. Cycling data are being prepared in the background.`
+          : `${importedLabel} and ready.`,
         color: "teal",
       });
       qc.invalidateQueries({ queryKey: ["cells"] });
@@ -1656,6 +1791,7 @@ function ImportModal({
                   onActive(targetIndex);
                   loadRawData(0, target);
                 }}
+                onPreviewRequested={onPreviewRequested}
                 importing={save.isPending}
               />
             ) : (
@@ -1857,13 +1993,20 @@ function ImportModal({
                           const groups = stagedNameToGroups.get(item.staged_name) ?? [];
                           const checked = selectedStagedNames.has(item.staged_name);
                           const duplicate = isRegisteredExactDuplicate(item);
-                          const stateLabel = item.preview_error
-                            ? "Inspection failed"
+                          const previewError = item.preview_state.status === "error"
+                            ? item.preview_state.message
+                            : null;
+                          const stateLabel = previewError
+                            ? "Preview failed"
                             : duplicate
                               ? "Already imported"
                               : item.import_match?.kind === "possible_update"
                                 ? "Possible update"
-                                : "Ready";
+                                : item.preview_state.status === "loading"
+                                  ? "Loading preview"
+                                  : item.preview_state.status === "idle"
+                                    ? "Preview not loaded"
+                                    : "Ready";
                         return (
                           <Paper
                             key={item.staged_name}
@@ -1897,10 +2040,10 @@ function ImportModal({
                                   {formatBytes(item.size)}
                                 </Text>
                                 <Group gap={4} wrap="nowrap">
-                                  {item.preview_error || duplicate || item.import_match?.kind === "possible_update" ? (
+                                  {previewError || duplicate || item.import_match?.kind === "possible_update" ? (
                                     <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" />
                                   ) : null}
-                                  <Text size="xs" c={duplicate ? "red" : item.preview_error ? "orange" : "dimmed"}>
+                                  <Text size="xs" c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
                                     {stateLabel}
                                   </Text>
                                 </Group>
@@ -2194,7 +2337,7 @@ function ImportModal({
               )}
 
               <Divider label="Quick preview" labelPosition="left" />
-              {draft.preview_loading ? (
+              {draft.preview_state.status === "loading" ? (
                 <Paper withBorder p="xs" h={250}>
                   <Center h="100%">
                     <Stack align="center" gap="xs">
@@ -2205,7 +2348,21 @@ function ImportModal({
                     </Stack>
                   </Center>
                 </Paper>
-              ) : draft.capacity_preview && draft.capacity_preview.x.length > 0 ? (
+              ) : draft.preview_state.status === "error" ? (
+                <Alert color="orange" title="Preview could not be generated">
+                  <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+                    <Text size="sm">{draft.preview_state.message}</Text>
+                    <Button
+                      size="compact-sm"
+                      variant="default"
+                      leftSection={<IconRefresh size={14} />}
+                      onClick={() => onPreviewRequested(draft, true)}
+                    >
+                      Retry
+                    </Button>
+                  </Group>
+                </Alert>
+              ) : draft.preview_state.status === "ready" && draft.capacity_preview && draft.capacity_preview.x.length > 0 ? (
                 <Paper withBorder p="xs">
                   <Plot
                     data={[
@@ -2232,9 +2389,9 @@ function ImportModal({
                   />
                 </Paper>
               ) : (
-                <Alert color={draft.preview_error ? "orange" : "gray"}>
-                  {draft.preview_error
-                    ? `Preview could not be generated: ${draft.preview_error}`
+                <Alert color="gray">
+                  {draft.preview_state.status === "idle"
+                    ? "Preview is available when this source is active."
                     : "No capacity preview points were found in this file."}
                 </Alert>
               )}
@@ -2403,49 +2560,7 @@ export function ImportCellsLauncher({
   const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
   const inspectionStartedAt = useRef<number | null>(null);
   const progressQuery = useImportJobProgress(progressToken, Boolean(progressStage));
-
-  const loadPreview = (draft: ImportDraft) => {
-    addDebugEvent("import:previewRequested", {
-      staged_name: draft.staged_name,
-      filename: draft.filename,
-    });
-    post<ImportPreviewResult>("/api/imports/preview", {
-      staged_name: draft.staged_name,
-      source_path: draft.source_path,
-    })
-      .then((result) => {
-        addDebugEvent("import:previewReady", {
-          staged_name: draft.staged_name,
-          points: result.capacity_preview?.x.length ?? 0,
-          error: result.preview_error,
-        });
-        setDrafts((current) =>
-          current.map((item) =>
-            item.staged_name === draft.staged_name
-              ? {
-                  ...item,
-                  capacity_preview: result.capacity_preview,
-                  preview_error: result.preview_error,
-                  preview_loading: false,
-                }
-              : item
-          )
-        );
-      })
-      .catch((error: Error) => {
-        addDebugEvent("import:previewFailed", {
-          staged_name: draft.staged_name,
-          error: error.message,
-        });
-        setDrafts((current) =>
-          current.map((item) =>
-            item.staged_name === draft.staged_name
-              ? { ...item, preview_error: error.message, preview_loading: false }
-              : item
-          )
-        );
-      });
-  };
+  const loadPreview = useImportPreviewLoader(setDrafts);
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
     const added = appendUniqueDrafts(append ? drafts : [], result.files);
@@ -2456,7 +2571,6 @@ export function ImportCellsLauncher({
     setDrafts((current) => (append ? [...current, ...added] : added));
     if (!append) setActive(0);
     setModalOpen(added.length > 0 || (append && drafts.length > 0));
-    added.forEach(loadPreview);
   };
 
   const inspectPaths = useMutation({
@@ -2587,6 +2701,7 @@ export function ImportCellsLauncher({
         targetFolderId={targetFolderId}
         blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
+        onPreviewRequested={loadPreview}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
@@ -2652,49 +2767,7 @@ export function InboxPage() {
     [drafts]
   );
   const targetFolderName = findFolderName(treeQuery.data?.folders ?? [], targetFolderId);
-
-  const loadPreview = (draft: ImportDraft) => {
-    addDebugEvent("import:previewRequested", {
-      staged_name: draft.staged_name,
-      filename: draft.filename,
-    });
-    post<ImportPreviewResult>("/api/imports/preview", {
-      staged_name: draft.staged_name,
-      source_path: draft.source_path,
-    })
-      .then((result) => {
-        addDebugEvent("import:previewReady", {
-          staged_name: draft.staged_name,
-          points: result.capacity_preview?.x.length ?? 0,
-          error: result.preview_error,
-        });
-        setDrafts((current) =>
-          current.map((item) =>
-            item.staged_name === draft.staged_name
-              ? {
-                  ...item,
-                  capacity_preview: result.capacity_preview,
-                  preview_error: result.preview_error,
-                  preview_loading: false,
-                }
-              : item
-          )
-        );
-      })
-      .catch((error: Error) => {
-        addDebugEvent("import:previewFailed", {
-          staged_name: draft.staged_name,
-          error: error.message,
-        });
-        setDrafts((current) =>
-          current.map((item) =>
-            item.staged_name === draft.staged_name
-              ? { ...item, preview_error: error.message, preview_loading: false }
-              : item
-          )
-        );
-      });
-  };
+  const loadPreview = useImportPreviewLoader(setDrafts);
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
     const added = appendUniqueDrafts(append ? drafts : [], result.files);
@@ -2705,7 +2778,6 @@ export function InboxPage() {
     setDrafts((current) => (append ? [...current, ...added] : added));
     if (!append) setActive(0);
     setModalOpen(added.length > 0 || (append && drafts.length > 0));
-    added.forEach(loadPreview);
   };
 
   const inspectPaths = useMutation({
@@ -2874,6 +2946,7 @@ export function InboxPage() {
         targetFolderId={targetFolderId}
         blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
+        onPreviewRequested={loadPreview}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
