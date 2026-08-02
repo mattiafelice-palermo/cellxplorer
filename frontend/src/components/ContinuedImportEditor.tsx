@@ -42,7 +42,10 @@ import {
   preserveAcknowledgements,
   scientificDraftIsValid,
 } from "../continuationPolicy";
-import type { ImportPreviewDraftState } from "../importPreviewPolicy";
+import {
+  shouldRequestImportPreview,
+  type ImportPreviewDraftState,
+} from "../importPreviewPolicy";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 import Plot from "./Plot";
 
@@ -201,15 +204,14 @@ export function ContinuedImportEditor({
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
 
-  useEffect(() => {
-    if (
-      opened
-      && previewDraft
-      && previewDraft.preview_state.status === "idle"
-    ) {
-      onPreviewRequested?.(previewDraft);
+  const selectPreview = (value: string | null) => {
+    const nextKey = value ?? orderedDrafts[0]?.staged_name ?? "";
+    setPreviewKey(nextKey);
+    const nextDraft = byKey.get(nextKey);
+    if (shouldRequestImportPreview(nextDraft, true)) {
+      onPreviewRequested?.(nextDraft);
     }
-  }, [opened, previewDraft?.staged_name, previewDraft?.preview_state.status, onPreviewRequested]);
+  };
   const submit = () => {
     const frozen = [...order];
     setSubmittedOrder(frozen);
@@ -315,7 +317,7 @@ export function ContinuedImportEditor({
               label="Source"
               value={previewKey || previewDraft.staged_name}
               data={orderedDrafts.map((source) => ({ value: source.staged_name, label: source.filename }))}
-              onChange={(value) => setPreviewKey(value ?? orderedDrafts[0]?.staged_name ?? "")}
+              onChange={selectPreview}
               searchable
               styles={{ root: { minWidth: 260 } }}
             />

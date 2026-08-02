@@ -13,6 +13,49 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _create_job_locked(
+    *,
+    kind: str,
+    title: str,
+    description: str,
+    total: int,
+    items: list[dict] | None = None,
+    token: str | None = None,
+    fingerprint: str | None = None,
+) -> int:
+    global _next_id
+    job_id = _next_id
+    _next_id += 1
+    _jobs[job_id] = {
+        "id": job_id,
+        "kind": kind,
+        "token": token,
+        "payload_fingerprint": fingerprint,
+        "title": title,
+        "description": description,
+        "status": "running",
+        "total": max(0, int(total)),
+        "completed": 0,
+        "counters": {},
+        "items": [
+            {
+                "id": str(item["id"]),
+                "label": str(item["label"]),
+                "status": item.get("status", "queued"),
+                "detail": item.get("detail"),
+                "error": item.get("error"),
+            }
+            for item in (items or [])
+        ],
+        "error": None,
+        "started_at": _now(),
+        "completed_at": None,
+    }
+    for old_id in sorted(_jobs)[:-30]:
+        _jobs.pop(old_id, None)
+    return job_id
+
+
 def create_job(
     *,
     kind: str,
@@ -21,38 +64,44 @@ def create_job(
     total: int,
     items: list[dict] | None = None,
     token: str | None = None,
+    fingerprint: str | None = None,
 ) -> int:
-    global _next_id
+    return create_or_get_job(
+        kind=kind,
+        title=title,
+        description=description,
+        total=total,
+        items=items,
+        token=token,
+        fingerprint=fingerprint,
+    )[0]
+
+
+def create_or_get_job(
+    *,
+    kind: str,
+    title: str,
+    description: str,
+    total: int,
+    items: list[dict] | None = None,
+    token: str | None = None,
+    fingerprint: str | None = None,
+) -> tuple[int, bool]:
+    """Atomically claim a client token, returning ``(job_id, created)``."""
     with _lock:
-        job_id = _next_id
-        _next_id += 1
-        _jobs[job_id] = {
-            "id": job_id,
-            "kind": kind,
-            "token": token,
-            "title": title,
-            "description": description,
-            "status": "running",
-            "total": max(0, int(total)),
-            "completed": 0,
-            "counters": {},
-            "items": [
-                {
-                    "id": str(item["id"]),
-                    "label": str(item["label"]),
-                    "status": item.get("status", "queued"),
-                    "detail": item.get("detail"),
-                    "error": item.get("error"),
-                }
-                for item in (items or [])
-            ],
-            "error": None,
-            "started_at": _now(),
-            "completed_at": None,
-        }
-        for old_id in sorted(_jobs)[:-30]:
-            _jobs.pop(old_id, None)
-        return job_id
+        if token:
+            for existing in reversed(_jobs.values()):
+                if existing.get("token") == token:
+                    return int(existing["id"]), False
+        return _create_job_locked(
+            kind=kind,
+            title=title,
+            description=description,
+            total=total,
+            items=items,
+            token=token,
+            fingerprint=fingerprint,
+        ), True
 
 
 def find_by_token(token: str) -> dict | None:

@@ -133,8 +133,12 @@ async function requestBlob(url: string, options?: RequestInit): Promise<Blob> {
 }
 
 export const get = <T>(url: string) => request<T>(url);
-export const post = <T>(url: string, body?: unknown) =>
-  request<T>(url, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+export const post = <T>(url: string, body?: unknown, options?: Pick<RequestInit, "signal">) =>
+  request<T>(url, {
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+    ...options,
+  });
 export const postForm = <T>(url: string, body: FormData) =>
   request<T>(url, { method: "POST", body });
 export const put = <T>(url: string, body: unknown) =>

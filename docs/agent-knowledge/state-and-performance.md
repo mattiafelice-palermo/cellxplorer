@@ -50,7 +50,13 @@ changed fingerprint is rehashed and rejected with a structured source-changed re
 content differs. The frontend cache key is the content hash, so switching back to a ready source or
 reopening identical content does not parse it again. Registration commits Cells first and returns a
 separate background cache-job handoff; missing scientific caches remain `parsing` until the existing
-cache worker marks them ready or reports a post-registration source error.
+cache worker marks them ready or reports a post-registration source error. The third-modal loaded-
+file panel is a fixed-row viewport window with bounded overscan; do not restore a full
+`drafts.map(...)` render for large imports. Preview requests are session-scoped and abortable, so
+closing the modal must clear disposable drafts and invalidate late responses. The actual
+`/api/imports/cells` submission returns `202` after atomically claiming its client token;
+registration then uses its own `SessionLocal` worker transaction, while cache preparation is a
+separate post-commit job and activity lifecycle.
 
 Inspection strategy is adaptive at the second-to-third modal boundary: batches of 25 or fewer files
 stay serial to avoid Windows process-pool startup overhead; larger batches inspect one first file as

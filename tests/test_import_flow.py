@@ -141,21 +141,64 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_registration_job_failure_is_failed_and_rolls_back(self):
         background_jobs.clear_jobs()
+        job_id = background_jobs.create_job(
+            kind="import_register",
+            title="Registering imported cells",
+            description="Validating and registering Cells",
+            total=1,
+            token="register-test",
+        )
         db = Mock()
-        with patch.object(files, "_create_imported_cells_impl", side_effect=RuntimeError("injected failure")):
-            with self.assertRaises(RuntimeError):
-                files.create_imported_cells(
-                    files.ImportCellsRequest(
-                        cells=[],
-                        job_token="register-test",
-                    ),
-                    db=db,
-                )
+        with patch.object(files, "SessionLocal", return_value=db), patch.object(
+            files, "_create_imported_cells_impl", side_effect=RuntimeError("injected failure")
+        ):
+            files.run_import_registration_job(
+                files.ImportCellsRequest(
+                    cells=[files.ImportCellDraft(cell_name="Broken import", staged_name="x.ndax", filename="x.ndax")],
+                    job_token="register-test",
+                ),
+                job_id,
+            )
         job = background_jobs.find_by_token("register-test")
         self.assertEqual(job["kind"], "import_register")
         self.assertEqual(job["status"], "failed")
         self.assertIn("injected failure", job["error"])
         db.rollback.assert_called_once()
+        background_jobs.clear_jobs()
+
+    def test_import_submission_returns_before_registration_worker_finishes(self):
+        background_jobs.clear_jobs()
+        request = files.ImportCellsRequest(
+            cells=[files.ImportCellDraft(staged_name="x.ndax", filename="x.ndax", cell_name="Queued")],
+            job_token="queued-import",
+        )
+        with patch.object(files, "run_import_registration_job") as worker:
+            response = files.create_imported_cells(request)
+
+        self.assertEqual(response["accepted"], True)
+        self.assertEqual(response["submitted_cells"], 1)
+        self.assertEqual(response["submitted_sources"], 1)
+        self.assertEqual(response["status"], "running")
+        worker.assert_called_once()
+        self.assertEqual(background_jobs.find_by_token("queued-import")["status"], "running")
+        background_jobs.clear_jobs()
+
+    def test_import_submission_token_rejects_a_different_payload(self):
+        background_jobs.clear_jobs()
+        first = files.ImportCellsRequest(
+            cells=[files.ImportCellDraft(staged_name="x.ndax", filename="x.ndax", cell_name="First")],
+            job_token="single-use-token",
+        )
+        with patch.object(files, "run_import_registration_job"):
+            files.create_imported_cells(first)
+
+        changed = files.ImportCellsRequest(
+            cells=[files.ImportCellDraft(staged_name="x.ndax", filename="x.ndax", cell_name="Changed")],
+            job_token="single-use-token",
+        )
+        with self.assertRaises(files.HTTPException) as raised:
+            files.create_imported_cells(changed)
+        self.assertEqual(raised.exception.status_code, 409)
         background_jobs.clear_jobs()
 
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
@@ -707,7 +750,7 @@ class ImportFlowTests(unittest.TestCase):
             parsing.compute_hash = lambda _path: "import-test-hash"
             parsing.read_header_metadata = lambda _path: {"builder": "test"}
             try:
-                result = files.create_imported_cells(
+                result = files._create_imported_cells_impl(
                     files.ImportCellsRequest(
                         cells=[
                             files.ImportCellDraft(

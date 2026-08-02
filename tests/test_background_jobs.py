@@ -113,6 +113,26 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertEqual(background_jobs.find_by_token("tok-1")["id"], job_id)
         self.assertIsNone(background_jobs.find_by_token(None))
 
+    def test_create_or_get_job_claims_a_token_once(self):
+        first_id, first_created = background_jobs.create_or_get_job(
+            kind="import_register",
+            title="Registering",
+            description="Working",
+            total=1,
+            token="same-submission",
+        )
+        second_id, second_created = background_jobs.create_or_get_job(
+            kind="import_register",
+            title="Registering again",
+            description="Retry",
+            total=2,
+            token="same-submission",
+        )
+        self.assertTrue(first_created)
+        self.assertFalse(second_created)
+        self.assertEqual(second_id, first_id)
+        self.assertEqual(len(background_jobs.list_jobs()), 1)
+
     def test_finish_job_marks_recognition_items_ready_without_cache_counters(self):
         """Uncached recognition must not leave Activity rows badged 'queued'."""
         from app.routers.analyses import _finish_job, _recognition_progress_callback

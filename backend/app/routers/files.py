@@ -6,6 +6,7 @@ import re
 import threading
 import uuid
 import json
+import hashlib
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -489,6 +490,22 @@ def run_import_cache_jobs(
                 + (f"; {failed} failed" if failed else "")
             ),
         )
+        record_activity(
+            db,
+            category="import",
+            action="prepare_import_caches",
+            message=(
+                f"Prepared cycling caches for {len(cache_results) - failed} files"
+                + (f"; {failed} failed" if failed else "")
+            ),
+            severity="warning" if failed else "info",
+            details={
+                "background_job_id": background_job_id,
+                "source_file_ids": list(source_file_ids_by_staged_name.values()),
+                "failed": failed,
+            },
+        )
+        db.commit()
     except Exception as exc:
         error = f"Cell registration succeeded; cycling cache preparation failed: {exc}"
         for source_file_id in set(source_file_ids_by_staged_name.values()):
@@ -498,6 +515,19 @@ def run_import_cache_jobs(
             sf.parse_status = "error"
             sf.parse_error = error
             sf.capacity_summary_status = "error"
+        db.commit()
+        record_activity(
+            db,
+            category="import",
+            action="prepare_import_caches",
+            message="Cell registration succeeded; cycling cache preparation failed",
+            severity="error",
+            details={
+                "background_job_id": background_job_id,
+                "source_file_ids": list(source_file_ids_by_staged_name.values()),
+                "error": error,
+            },
+        )
         db.commit()
         for cache_job in cache_jobs:
             background_jobs.update_item(
@@ -2301,40 +2331,151 @@ def _create_imported_cells_impl(
     }
 
 
-@router.post("/imports/cells")
-def create_imported_cells(req: ImportCellsRequest, db: Session = Depends(get_db)):
-    job_id = None
-    if req.job_token:
-        items = []
-        for index, draft in enumerate(req.cells):
-            first_filename = (
-                draft.sources[0].filename
-                if draft.sources
-                else draft.filename
-                or "source file"
-            )
-            items.append(
-                {
-                    "id": str(index),
-                    "label": draft.cell_name.strip() or first_filename,
-                }
-            )
-        job_id = background_jobs.create_job(
-            kind="import_register",
-            title="Registering imported cells",
-            description="Validating and registering Cells",
-            total=len(req.cells),
-            items=items,
-            token=req.job_token,
-        )
-        background_jobs.update_job(job_id, stage="register", total_bytes=0)
+def run_import_registration_job(req: ImportCellsRequest, background_job_id: int) -> None:
+    """Register an accepted import outside the request thread.
+
+    The request payload is already copied before this worker is started. The
+    worker owns its SQLAlchemy session and rolls it back on every pre-commit
+    failure, while the cache handoff remains post-commit work.
+    """
+    apply_background_thread_priority()
+    db = SessionLocal()
     try:
-        return _create_imported_cells_impl(req, db, job_id=job_id)
+        record_activity(
+            db,
+            category="import",
+            action="import_registration_started",
+            message=f"Registering {len(req.cells)} imported cells",
+            details={
+                "background_job_id": background_job_id,
+                "submitted_cells": len(req.cells),
+            },
+        )
+        db.commit()
+        result = _create_imported_cells_impl(req, db, job_id=background_job_id)
+        record_activity(
+            db,
+            category="import",
+            action="import_registration_completed",
+            message=f"Registered {len(result.get('created', []))} imported cells",
+            details={
+                "background_job_id": background_job_id,
+                "cell_ids": [item["cell_id"] for item in result.get("created", [])],
+            },
+        )
+        db.commit()
+        background_jobs.update_job(
+            background_job_id,
+            status="completed",
+            description=(
+                f"Imported {len(result.get('created', []))} cells; "
+                "scientific preparation continues separately"
+                if result.get("parsing_started")
+                else f"Imported {len(result.get('created', []))} cells"
+            ),
+        )
     except Exception as exc:
         db.rollback()
-        if job_id is not None:
-            background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
-        raise
+        try:
+            record_activity(
+                db,
+                category="import",
+                action="import_registration_failed",
+                message="Imported Cell registration failed",
+                severity="error",
+                details={
+                    "background_job_id": background_job_id,
+                    "error": _import_job_error(exc),
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        background_jobs.update_job(
+            background_job_id,
+            status="failed",
+            error=_import_job_error(exc),
+            description="Cell registration failed",
+        )
+    finally:
+        db.close()
+
+
+def _accept_imported_cells(req: ImportCellsRequest):
+    if not req.cells:
+        raise HTTPException(400, "No files selected")
+    frozen_request = req.model_copy(deep=True)
+    submitted_sources = sum(
+        len(normalize_import_cell_sources(draft))
+        for draft in frozen_request.cells
+    )
+    submission_fingerprint = hashlib.sha256(
+        json.dumps(
+            frozen_request.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    items = []
+    for index, draft in enumerate(frozen_request.cells):
+        sources = normalize_import_cell_sources(draft)
+        items.append({
+            "id": str(index),
+            "label": draft.cell_name.strip() or sources[0].filename,
+        })
+    job_id, created = background_jobs.create_or_get_job(
+        kind="import_register",
+        title="Registering imported cells",
+        description="Validating and registering Cells",
+        total=len(frozen_request.cells),
+        items=items,
+        token=frozen_request.job_token,
+        fingerprint=submission_fingerprint,
+    )
+    existing = background_jobs.get_job(job_id)
+    if not created:
+        if existing and existing.get("payload_fingerprint") != submission_fingerprint:
+            raise HTTPException(409, "This import submission token was already used for another payload")
+        return {
+            "accepted": True,
+            "job_id": job_id,
+            "job_token": frozen_request.job_token,
+            "submitted_cells": len(frozen_request.cells),
+            "submitted_sources": submitted_sources,
+            "status": existing["status"] if existing else "running",
+        }
+    background_jobs.update_job(job_id, stage="register", total_bytes=0)
+    thread = threading.Thread(
+        target=run_import_registration_job,
+        args=(frozen_request, job_id),
+        daemon=True,
+    )
+    thread.start()
+    return {
+        "accepted": True,
+        "job_id": job_id,
+        "job_token": frozen_request.job_token,
+        "submitted_cells": len(frozen_request.cells),
+        "submitted_sources": submitted_sources,
+        "status": "running",
+    }
+
+
+@router.post("/imports/cells", status_code=202)
+def create_imported_cells_endpoint(req: ImportCellsRequest):
+    return _accept_imported_cells(req)
+
+
+def create_imported_cells(req: ImportCellsRequest, db: Session | None = None):
+    """Compatibility wrapper for direct callers of the former synchronous helper.
+
+    HTTP callers use ``create_imported_cells_endpoint`` and receive the queued
+    202 response. Focused internal callers that explicitly provide a session
+    retain the old synchronous helper semantics for migration/test coverage.
+    """
+    if db is not None:
+        return _create_imported_cells_impl(req, db, job_id=None)
+    return _accept_imported_cells(req)
 
 
 @router.post("/scan")

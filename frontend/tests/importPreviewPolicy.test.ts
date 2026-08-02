@@ -7,6 +7,8 @@ import {
   importPreviewRequest,
   importPreviewStateFromResult,
   importPreviewStateMessage,
+  importDraftWindow,
+  shouldRequestImportPreview,
 } from "../src/importPreviewPolicy.ts";
 
 function result(patch: Partial<ImportPreviewResult> = {}): ImportPreviewResult {
@@ -49,4 +51,25 @@ test("preview results distinguish ready and retryable error states", () => {
   const failed = importPreviewStateFromResult(result({ preview_error: "Source changed" }));
   assert.deepEqual(failed, { status: "error", message: "Source changed" });
   assert.equal(importPreviewStateMessage(failed), "Source changed");
+});
+
+test("preview generation requires an explicit selection and only starts from idle", () => {
+  const idle = { ...draft, preview_state: { status: "idle" as const } };
+  assert.equal(shouldRequestImportPreview(idle, false), false);
+  assert.equal(shouldRequestImportPreview(idle, true), true);
+  assert.equal(
+    shouldRequestImportPreview({ ...idle, preview_state: { status: "loading" } }, true),
+    false,
+  );
+  assert.equal(
+    shouldRequestImportPreview({ ...idle, preview_state: { status: "ready", preview: result() } }, true),
+    false,
+  );
+});
+
+test("large import draft windows stay bounded", () => {
+  const window = importDraftWindow(1000, 148 * 400);
+  assert.ok(window.start >= 394);
+  assert.ok(window.end <= 414);
+  assert.ok(window.end - window.start <= 20);
 });

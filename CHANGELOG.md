@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta021 - 2026-08-02
+
+- Fix Spec 035.8 import modal regressions.
+
 ## 0.17.0-beta020 - 2026-08-02
 
 - Fix import progress polling during job startup.

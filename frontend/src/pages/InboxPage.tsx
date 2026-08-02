@@ -114,6 +114,8 @@ import {
   importPreviewQueryKey,
   importPreviewRequest,
   importPreviewStateFromResult,
+  importDraftWindow,
+  shouldRequestImportPreview,
   type ImportPreviewDraftState,
   type ImportPreviewState,
 } from "../importPreviewPolicy";
@@ -140,10 +142,22 @@ function useImportPreviewLoader(
   setDrafts: Dispatch<SetStateAction<ImportDraft[]>>,
 ) {
   const inFlight = useRef(new Map<string, Promise<ImportPreviewResult>>());
+  const controllers = useRef(new Map<string, AbortController>());
   const ready = useRef(new Map<string, ImportPreviewResult>());
   const requestVersions = useRef(new Map<string, number>());
+  const sessionVersion = useRef(0);
 
-  return useCallback((draft: ImportPreviewDraftState, retry = false) => {
+  const cancel = useCallback(() => {
+    sessionVersion.current += 1;
+    controllers.current.forEach((controller) => controller.abort());
+    controllers.current.clear();
+    inFlight.current.clear();
+    ready.current.clear();
+    requestVersions.current.clear();
+  }, []);
+
+  const load = useCallback((draft: ImportPreviewDraftState, retry = false) => {
+    const currentSession = sessionVersion.current;
     const previewKey = importPreviewQueryKey(draft.hash)[1];
     const version = (requestVersions.current.get(draft.staged_name) ?? 0) + 1;
     requestVersions.current.set(draft.staged_name, version);
@@ -151,6 +165,8 @@ function useImportPreviewLoader(
     const apply = (state: ImportPreviewState) => {
       setDrafts((current) => current.map((item) => {
         if (
+          currentSession !== sessionVersion.current
+          ||
           item.staged_name !== draft.staged_name
           || item.hash.toLowerCase() !== draft.hash.toLowerCase()
           || requestVersions.current.get(draft.staged_name) !== version
@@ -188,6 +204,7 @@ function useImportPreviewLoader(
     apply({ status: "loading" });
     let request = inFlight.current.get(previewKey);
     if (!request) {
+      const controller = new AbortController();
       addDebugEvent("import:previewRequested", {
         staged_name: draft.staged_name,
         filename: draft.filename,
@@ -196,11 +213,14 @@ function useImportPreviewLoader(
       request = post<ImportPreviewResult>(
         "/api/imports/preview",
         importPreviewRequest(draft),
+        { signal: controller.signal },
       );
+      controllers.current.set(previewKey, controller);
       inFlight.current.set(previewKey, request);
     }
     request
       .then((result) => {
+        if (currentSession !== sessionVersion.current) return;
         ready.current.set(previewKey, result);
         addDebugEvent("import:previewReady", {
           staged_name: draft.staged_name,
@@ -211,6 +231,7 @@ function useImportPreviewLoader(
         apply(importPreviewStateFromResult(result));
       })
       .catch((error: Error) => {
+        if (currentSession !== sessionVersion.current) return;
         addDebugEvent("import:previewFailed", {
           staged_name: draft.staged_name,
           error: error.message,
@@ -221,9 +242,13 @@ function useImportPreviewLoader(
       .finally(() => {
         if (inFlight.current.get(previewKey) === request) {
           inFlight.current.delete(previewKey);
+          controllers.current.delete(previewKey);
         }
       });
   }, [setDrafts]);
+
+  useEffect(() => cancel, [cancel]);
+  return { load, cancel };
 }
 
 type ImportReplicateDraft = {
@@ -248,6 +273,8 @@ type FolderImportTreeRow =
 
 const FOLDER_IMPORT_ROW_HEIGHT = 34;
 const FOLDER_IMPORT_ROW_OVERSCAN = 8;
+const IMPORT_DRAFT_ROW_HEIGHT = 148;
+const IMPORT_DRAFT_ROW_OVERSCAN = 6;
 
 function folderCandidateKey(candidate: FolderImportCandidate) {
   return candidate.path ?? candidate.relative_path;
@@ -376,7 +403,7 @@ function FolderImportSelectionModal({
       setSelected(new Set(candidates.map(folderCandidateKey)));
       setSearch("");
       setLastSelected(null);
-      setFocusedKey(candidates[0] ? folderCandidateKey(candidates[0]) : null);
+      setFocusedKey(null);
       setRootsExpanded(false);
       setTreeScrollTop(0);
     }
@@ -1388,6 +1415,8 @@ function ImportModal({
   const [rawData, setRawData] = useState<ImportRawDataResult | null>(null);
   const [rawLoading, setRawLoading] = useState(false);
   const [rawError, setRawError] = useState<string | null>(null);
+  const rawRequestVersion = useRef(0);
+  const rawController = useRef<AbortController | null>(null);
   const [metadataOpen, setMetadataOpen] = useState(false);
   const [destinationFolders, setDestinationFolders] = useState<string[]>(
     targetFolderId === null ? [] : [String(targetFolderId)]
@@ -1397,6 +1426,8 @@ function ImportModal({
   const [newGroupName, setNewGroupName] = useState("");
   const [continuedMode, setContinuedMode] = useState(false);
   const [registerToken, setRegisterToken] = useState<string | null>(null);
+  const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
+  const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
   const [continuedCellDraft, setContinuedCellDraft] = useState<ContinuedCellDraft>(() => continuedCellDraftFrom(drafts[0]));
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
@@ -1438,24 +1469,24 @@ function ImportModal({
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
       setContinuedMode(false);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
+    } else {
+      rawRequestVersion.current += 1;
+      rawController.current?.abort();
+      rawController.current = null;
+      setRawOpen(false);
+      setRawData(null);
+      setRawLoading(false);
+      setRawError(null);
     }
   }, [opened, targetFolderId]);
 
-  useEffect(() => {
-    if (
-      !opened
-      || continuedMode
-      || !draft
-      || isRegisteredExactDuplicate(draft)
-      || draft.preview_state.status !== "idle"
-    ) {
-      return;
-    }
-    onPreviewRequested(draft);
-  }, [opened, continuedMode, draft?.staged_name, draft?.preview_state.status, onPreviewRequested]);
-
   const loadRawData = (offset = 0, targetDraft = draft) => {
     if (!targetDraft) return;
+    rawRequestVersion.current += 1;
+    const requestVersion = rawRequestVersion.current;
+    rawController.current?.abort();
+    const controller = new AbortController();
+    rawController.current = controller;
     setRawOpen(true);
     setRawLoading(true);
     setRawError(null);
@@ -1470,8 +1501,9 @@ function ImportModal({
       source_path: targetDraft.source_path,
       offset,
       limit: RAW_PAGE_SIZE,
-    })
+    }, { signal: controller.signal })
       .then((result) => {
+        if (rawRequestVersion.current !== requestVersion) return;
         addDebugEvent("import:rawDataReady", {
           staged_name: targetDraft.staged_name,
           columns: result.columns.length,
@@ -1482,18 +1514,42 @@ function ImportModal({
         setRawData(result);
       })
       .catch((error: Error) => {
+        if (rawRequestVersion.current !== requestVersion) return;
         addDebugEvent("import:rawDataFailed", {
           staged_name: targetDraft.staged_name,
           error: error.message,
         });
         setRawError(error.message);
       })
-      .finally(() => setRawLoading(false));
+      .finally(() => {
+        if (rawRequestVersion.current === requestVersion) {
+          rawController.current = null;
+          setRawLoading(false);
+        }
+      });
   };
 
   const handleClose = () => {
+    rawRequestVersion.current += 1;
+    rawController.current?.abort();
+    rawController.current = null;
     setRawOpen(false);
+    setRawData(null);
+    setRawError(null);
     onClose();
+  };
+
+  const activateDraft = (index: number) => {
+    const target = drafts[index];
+    onActive(index);
+    if (
+      !continuedMode
+      && target
+      && !isRegisteredExactDuplicate(target)
+      && shouldRequestImportPreview(target, true)
+    ) {
+      onPreviewRequested(target);
+    }
   };
 
   const removeSource = (stagedName: string) => {
@@ -1607,16 +1663,12 @@ function ImportModal({
       jobToken: string;
     }) => {
       return post<{
-        created: { cell_id: number; cell_name: string }[];
-        replicate_group?: { id: number; name: string; cell_ids: number[] } | null;
-        replicate_groups?: { id: number; name: string; cell_ids: number[] }[];
-        parsing_started?: boolean;
-        cache_jobs?: {
-          queued: boolean;
-          count: number;
-          job_id: number | null;
-          status: "ready" | "running" | "completed" | "failed" | string;
-        } | null;
+        accepted: boolean;
+        job_id: number;
+        job_token: string | null;
+        submitted_cells: number;
+        submitted_sources: number;
+        status: string;
       }>("/api/imports/cells", {
         job_token: variables.jobToken,
         folder_ids: destinationFolders.map(Number),
@@ -1673,9 +1725,11 @@ function ImportModal({
       });
     },
     onSuccess: (result, variables) => {
+      const submittedCells = result.submitted_cells
+        ?? (variables.mode === "continued" ? 1 : includedDrafts.length);
       recordImportTimingSample({
         recordedAt: new Date().toISOString(),
-        fileCount: variables.mode === "continued" ? drafts.length : includedDrafts.length,
+        fileCount: variables.mode === "continued" ? drafts.length : submittedCells,
         totalBytes: drafts.reduce((total, item) => total + Math.max(0, item.size), 0),
         blockingSeconds: blockingInspectionSeconds + Math.max(
           0,
@@ -1683,12 +1737,9 @@ function ImportModal({
         ),
       });
       setRegisterToken(null);
-      const importedCount = result.created.length;
-      const importedLabel = `${importedCount} cell${importedCount === 1 ? "" : "s"} imported`;
+      const importedLabel = `${submittedCells} cell${submittedCells === 1 ? "" : "s"}`;
       notifications.show({
-        message: result.cache_jobs?.queued
-          ? `${importedLabel}. Cycling data are being prepared in the background.`
-          : `${importedLabel} and ready.`,
+        message: `${importedLabel} accepted. Registration and cycling data preparation continue in the background.`,
         color: "teal",
       });
       qc.invalidateQueries({ queryKey: ["cells"] });
@@ -1696,6 +1747,7 @@ function ImportModal({
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
       onSaved();
     },
     onError: (e: Error, variables) => {
@@ -1734,6 +1786,27 @@ function ImportModal({
     ? Math.min(rawData.offset + rawData.rows.length, rawData.total_rows)
     : 0;
   const metadataRows = draft ? Object.entries(combinedMetadata(draft)) : [];
+  const loadedFilesWindow = importDraftWindow(
+    drafts.length,
+    loadedFilesScrollTop,
+    520,
+    IMPORT_DRAFT_ROW_HEIGHT,
+    IMPORT_DRAFT_ROW_OVERSCAN,
+  );
+  const loadedFilesStart = loadedFilesWindow.start;
+  const loadedFilesEnd = loadedFilesWindow.end;
+  const visibleDrafts = drafts.slice(loadedFilesStart, loadedFilesEnd);
+
+  useEffect(() => {
+    const viewport = loadedFilesViewportRef.current;
+    if (!viewport || drafts.length === 0) return;
+    const top = active * IMPORT_DRAFT_ROW_HEIGHT;
+    const bottom = top + IMPORT_DRAFT_ROW_HEIGHT;
+    if (top < viewport.scrollTop) viewport.scrollTop = top;
+    else if (bottom > viewport.scrollTop + viewport.clientHeight) {
+      viewport.scrollTop = bottom - viewport.clientHeight;
+    }
+  }, [active, drafts.length]);
 
   return (
     <>
@@ -1990,99 +2063,122 @@ function ImportModal({
                     <Text size="sm" fw={700}>
                       Loaded files
                     </Text>
-                    <Badge size="xs" variant="light">
-                      {selectedNames.length} selected
-                    </Badge>
-                  </Group>
-                  <ScrollArea h={520} type="auto">
-                    <Stack gap={6}>
-                        {drafts.map((item, index) => {
-                          const groups = stagedNameToGroups.get(item.staged_name) ?? [];
-                          const checked = selectedStagedNames.has(item.staged_name);
-                          const duplicate = isRegisteredExactDuplicate(item);
-                          const previewError = item.preview_state.status === "error"
-                            ? item.preview_state.message
-                            : null;
-                          const stateLabel = previewError
-                            ? "Preview failed"
-                            : duplicate
-                              ? "Already imported"
-                              : item.import_match?.kind === "possible_update"
-                                ? "Possible update"
-                                : item.preview_state.status === "loading"
-                                  ? "Loading preview"
-                                  : item.preview_state.status === "idle"
-                                    ? "Preview not loaded"
-                                    : "Ready";
-                        return (
-                          <Paper
-                            key={item.staged_name}
-                            withBorder
-                            p="sm"
-                            draggable
-                            onDragStart={(event) => handleFileDragStart(event, item.staged_name)}
-                            style={{
-                              cursor: "pointer",
-                              borderColor:
-                                index === active ? "var(--mantine-primary-color-5)" : undefined,
-                              background: checked ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
-                            }}
-                            onClick={() => onActive(index)}
-                          >
-                            <Group align="start" wrap="nowrap">
-                              <Checkbox
-                                mt={2}
-                                checked={checked}
-                                onClick={(event) => event.stopPropagation()}
-                                onChange={() => toggleSelectedStagedName(item.staged_name)}
-                              />
-                              <Stack gap={3} style={{ flex: 1, minWidth: 0 }}>
-                                <Text size="sm" fw={index === active ? 700 : 500} truncate>
-                                  {item.cell_name || item.filename}
-                                </Text>
-                                <Text size="xs" c="dimmed" truncate>
-                                  {item.filename}
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  {formatBytes(item.size)}
-                                </Text>
-                                <Group gap={4} wrap="nowrap">
-                                  {previewError || duplicate || item.import_match?.kind === "possible_update" ? (
-                                    <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" />
-                                  ) : null}
-                                  <Text size="xs" c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
-                                    {stateLabel}
-                                  </Text>
-                                </Group>
-                                {groups.length > 0 && (
-                                  <Group gap={4}>
-                                    {groups.map((group) => (
-                                      <Badge key={group.id} size="xs" color="var(--mantine-primary-color-6)" variant="light">
-                                        {group.name}
-                                      </Badge>
-                                    ))}
-                                  </Group>
-                                )}
-                              </Stack>
-                              <Button
-                                variant="subtle"
-                                color="red"
-                                size="compact-xs"
-                                aria-label={`Remove ${item.filename} from import`}
-                                disabled={save.isPending}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  removeSource(item.staged_name);
-                                }}
-                              >
-                                <IconX size={14} />
-                              </Button>
-                            </Group>
-                          </Paper>
-                        );
-                      })}
-                    </Stack>
-                  </ScrollArea>
+                   <Badge size="xs" variant="light">
+                     {selectedNames.length} selected
+                   </Badge>
+                 </Group>
+                   <Box
+                     ref={loadedFilesViewportRef}
+                     onScroll={(event) => setLoadedFilesScrollTop(event.currentTarget.scrollTop)}
+                     style={{ height: 520, overflowY: "auto" }}
+                   >
+                     <Box style={{ position: "relative", height: drafts.length * IMPORT_DRAFT_ROW_HEIGHT }}>
+                       <Box
+                         style={{
+                           position: "absolute",
+                           top: loadedFilesStart * IMPORT_DRAFT_ROW_HEIGHT,
+                           left: 0,
+                           right: 0,
+                         }}
+                       >
+                         {visibleDrafts.map((item, visibleIndex) => {
+                           const index = loadedFilesStart + visibleIndex;
+                           const groups = stagedNameToGroups.get(item.staged_name) ?? [];
+                           const checked = selectedStagedNames.has(item.staged_name);
+                           const duplicate = isRegisteredExactDuplicate(item);
+                           const previewError = item.preview_state.status === "error"
+                             ? item.preview_state.message
+                             : null;
+                           const stateLabel = previewError
+                             ? "Preview failed"
+                             : duplicate
+                               ? "Already imported"
+                               : item.import_match?.kind === "possible_update"
+                                 ? "Possible update"
+                                 : item.preview_state.status === "loading"
+                                   ? "Loading preview"
+                                   : item.preview_state.status === "idle"
+                                     ? "Preview not loaded"
+                                     : "Ready";
+                           return (
+                             <Box key={item.staged_name} style={{ height: IMPORT_DRAFT_ROW_HEIGHT, paddingBottom: 6 }}>
+                               <Paper
+                                 withBorder
+                                 p="sm"
+                                 draggable
+                                 onDragStart={(event) => handleFileDragStart(event, item.staged_name)}
+                                 style={{
+                                   cursor: "pointer",
+                                   borderColor: index === active ? "var(--mantine-primary-color-5)" : undefined,
+                                   background: checked ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined,
+                                 }}
+                                 tabIndex={0}
+                                 onClick={() => activateDraft(index)}
+                                 onKeyDown={(event) => {
+                                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                     event.preventDefault();
+                                     const offset = event.key === "ArrowDown" ? 1 : -1;
+                                     const nextIndex = Math.max(0, Math.min(drafts.length - 1, index + offset));
+                                     activateDraft(nextIndex);
+                                   }
+                                 }}
+                               >
+                                 <Group align="start" wrap="nowrap">
+                                   <Checkbox
+                                     mt={2}
+                                     checked={checked}
+                                     onClick={(event) => event.stopPropagation()}
+                                     onChange={() => toggleSelectedStagedName(item.staged_name)}
+                                   />
+                                   <Stack gap={3} style={{ flex: 1, minWidth: 0 }}>
+                                     <Text size="sm" fw={index === active ? 700 : 500} truncate>
+                                       {item.cell_name || item.filename}
+                                     </Text>
+                                     <Text size="xs" c="dimmed" truncate>
+                                       {item.filename}
+                                     </Text>
+                                     <Text size="xs" c="dimmed">
+                                       {formatBytes(item.size)}
+                                     </Text>
+                                     <Group gap={4} wrap="nowrap">
+                                       {previewError || duplicate || item.import_match?.kind === "possible_update" ? (
+                                         <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" />
+                                       ) : null}
+                                       <Text size="xs" c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
+                                         {stateLabel}
+                                       </Text>
+                                     </Group>
+                                     {groups.length > 0 && (
+                                       <Group gap={4}>
+                                         {groups.map((group) => (
+                                           <Badge key={group.id} size="xs" color="var(--mantine-primary-color-6)" variant="light">
+                                             {group.name}
+                                           </Badge>
+                                         ))}
+                                       </Group>
+                                     )}
+                                   </Stack>
+                                   <Button
+                                     variant="subtle"
+                                     color="red"
+                                     size="compact-xs"
+                                     aria-label={`Remove ${item.filename} from import`}
+                                     disabled={save.isPending}
+                                     onClick={(event) => {
+                                       event.stopPropagation();
+                                       removeSource(item.staged_name);
+                                     }}
+                                   >
+                                     <IconX size={14} />
+                                   </Button>
+                                 </Group>
+                               </Paper>
+                             </Box>
+                           );
+                         })}
+                       </Box>
+                     </Box>
+                   </Box>
                 </Stack>
               </Paper>
 
@@ -2567,7 +2663,14 @@ export function ImportCellsLauncher({
   const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
   const inspectionStartedAt = useRef<number | null>(null);
   const progressQuery = useImportJobProgress(progressToken, Boolean(progressStage));
-  const loadPreview = useImportPreviewLoader(setDrafts);
+  const previewLoader = useImportPreviewLoader(setDrafts);
+
+  const closeImportSession = () => {
+    previewLoader.cancel();
+    setModalOpen(false);
+    setDrafts([]);
+    setActive(0);
+  };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
     const added = appendUniqueDrafts(append ? drafts : [], result.files);
@@ -2708,7 +2811,7 @@ export function ImportCellsLauncher({
         targetFolderId={targetFolderId}
         blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
-        onPreviewRequested={loadPreview}
+        onPreviewRequested={previewLoader.load}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
@@ -2735,10 +2838,9 @@ export function ImportCellsLauncher({
           });
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
-        onClose={() => setModalOpen(false)}
+        onClose={closeImportSession}
         onSaved={() => {
-          setModalOpen(false);
-          setDrafts([]);
+          closeImportSession();
           onSaved?.();
         }}
       />
@@ -2774,7 +2876,14 @@ export function InboxPage() {
     [drafts]
   );
   const targetFolderName = findFolderName(treeQuery.data?.folders ?? [], targetFolderId);
-  const loadPreview = useImportPreviewLoader(setDrafts);
+  const previewLoader = useImportPreviewLoader(setDrafts);
+
+  const closeImportSession = () => {
+    previewLoader.cancel();
+    setModalOpen(false);
+    setDrafts([]);
+    setActive(0);
+  };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
     const added = appendUniqueDrafts(append ? drafts : [], result.files);
@@ -2953,7 +3062,7 @@ export function InboxPage() {
         targetFolderId={targetFolderId}
         blockingInspectionSeconds={blockingInspectionSeconds}
         onActive={setActive}
-        onPreviewRequested={loadPreview}
+        onPreviewRequested={previewLoader.load}
         onChange={(index, draft) =>
           setDrafts((current) => current.map((item, i) => (i === index ? draft : item)))
         }
@@ -2980,10 +3089,9 @@ export function InboxPage() {
           });
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
-        onClose={() => setModalOpen(false)}
+        onClose={closeImportSession}
         onSaved={() => {
-          setModalOpen(false);
-          setDrafts([]);
+          closeImportSession();
         }}
       />
     </Stack>

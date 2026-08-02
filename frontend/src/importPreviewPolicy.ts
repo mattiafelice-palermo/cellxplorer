@@ -38,3 +38,26 @@ export function importPreviewStateFromResult(result: ImportPreviewResult): Impor
 export function importPreviewStateMessage(state: ImportPreviewState): string | null {
   return state.status === "error" ? state.message : null;
 }
+
+export function shouldRequestImportPreview(
+  draft: ImportPreviewDraftState | undefined,
+  explicitSelection: boolean,
+): draft is ImportPreviewDraftState {
+  return Boolean(explicitSelection && draft && draft.preview_state.status === "idle");
+}
+
+export function importDraftWindow(
+  total: number,
+  scrollTop: number,
+  viewportHeight = 520,
+  rowHeight = 148,
+  overscan = 6,
+): { start: number; end: number } {
+  const safeTotal = Math.max(0, total);
+  const start = Math.max(0, Math.floor(Math.max(0, scrollTop) / rowHeight) - overscan);
+  const end = Math.min(
+    safeTotal,
+    Math.ceil((Math.max(0, scrollTop) + viewportHeight) / rowHeight) + overscan,
+  );
+  return { start, end: Math.max(start, end) };
+}
