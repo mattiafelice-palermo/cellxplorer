@@ -7,6 +7,7 @@ import {
   importProgressCurrentLabel,
   importProgressMode,
   importProgressPercent,
+  importJobPollInterval,
   importRemainingEstimate,
   importStageExplanation,
   importStageTitle,
@@ -95,4 +96,10 @@ test("inspection estimate is explicitly presented as a sampled total", () => {
   assert.ok(estimate);
   assert.equal(estimate.scope, "total");
   assert.equal(Math.round(estimate.minimumSeconds), 9);
+});
+
+test("job polling survives the token-creation race", () => {
+  assert.equal(importJobPollInterval(null), 500);
+  assert.equal(importJobPollInterval(job({ phase: "starting_workers" })), 250);
+  assert.equal(importJobPollInterval(job({ status: "completed" })), false);
 });

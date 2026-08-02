@@ -9,6 +9,20 @@ export type ImportProgressPhase =
   | "finalizing"
   | "completed";
 
+export function importJobPollInterval(
+  job: BackgroundJob | null | undefined,
+): number | false {
+  // The first token lookup can race job creation. Keep polling when the server
+  // has not created the job yet; stopping here strands the modal at "Working".
+  if (job === null || job?.status === "running") {
+    const phase = job?.phase;
+    return phase === "sampling" || phase === "starting_workers" || phase === "finalizing"
+      ? 250
+      : 500;
+  }
+  return false;
+}
+
 export function newImportJobToken(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
