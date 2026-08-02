@@ -1844,7 +1844,12 @@ function ImportModal({
 
   return (
     <>
-      <Modal opened={opened} onClose={save.isPending ? () => undefined : handleClose} title="Import cells" size="95rem">
+      <Modal
+        opened={opened}
+        onClose={registrationUi.closeLocked ? () => undefined : handleClose}
+        title="Import cells"
+        size="95rem"
+      >
         {registerToken && (
           <Paper withBorder mb="sm" p="xs">
             <ImportProgressPanel
@@ -1855,7 +1860,7 @@ function ImportModal({
             {registrationUi.showContinue && (
               <Group justify="space-between" align="center" px="sm" pb="sm">
                 <Text size="sm" c="dimmed">
-                  Registration is running in the background. You can keep watching here or continue working.
+                  Registration is committed. Scientific data preparation continues in the background.
                 </Text>
                 <Button size="compact-sm" onClick={onSaved}>
                   Continue in background

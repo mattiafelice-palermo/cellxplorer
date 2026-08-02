@@ -34,10 +34,14 @@ export function importRegistrationUiState(
   accepted: boolean,
   status: BackgroundJob["status"] | undefined,
   savePending = false,
-): { showContinue: boolean; editingLocked: boolean } {
+): { showContinue: boolean; editingLocked: boolean; closeLocked: boolean } {
+  const registrationFinished = status === "completed" || status === "failed";
   return {
-    showContinue: accepted && status === "running",
+    // Detaching is safe only after the relational registration transaction has
+    // committed. Cache generation is the work that may continue after detach.
+    showContinue: accepted && status === "completed",
     editingLocked: savePending || (accepted && status !== "failed"),
+    closeLocked: savePending || (accepted && !registrationFinished),
   };
 }
 

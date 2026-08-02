@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta025 - 2026-08-02
+
+- Keep background import attached until Cells are committed.
+
 ## 0.17.0-beta024 - 2026-08-02
 
 - Show background import progress and early Cell visibility.

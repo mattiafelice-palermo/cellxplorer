@@ -563,6 +563,53 @@ class ImportFlowTests(unittest.TestCase):
             engine.dispose()
         background_jobs.clear_jobs()
 
+    def test_committed_import_rejects_same_source_on_retry(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database_path = root / "duplicate-import.db"
+            engine = create_engine(
+                f"sqlite:///{database_path.as_posix()}",
+                connect_args={"check_same_thread": False},
+            )
+            Base.metadata.create_all(engine)
+            factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            source_path = root / "already-loaded.ndax"
+            source_path.write_bytes(b"already-loaded-source")
+            first_request = files.ImportCellsRequest(
+                cells=[files.ImportCellDraft(
+                    staged_name=source_path.name,
+                    source_path=str(source_path),
+                    filename=source_path.name,
+                    cell_name="First loaded cell",
+                )]
+            )
+            db = factory()
+            try:
+                with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
+                    patch.object(files.parsing, "read_header_metadata", return_value={}):
+                    files._create_imported_cells_impl(first_request, db)
+
+                self.assertEqual(db.query(Cell).count(), 1)
+                retry_request = files.ImportCellsRequest(
+                    cells=[files.ImportCellDraft(
+                        staged_name=source_path.name,
+                        source_path=str(source_path),
+                        filename=source_path.name,
+                        cell_name="Retry loaded cell",
+                    )]
+                )
+                with patch.object(files.parsing, "read_header_metadata", return_value={}):
+                    with self.assertRaises(files.HTTPException) as raised:
+                        files._create_imported_cells_impl(retry_request, db)
+                self.assertEqual(raised.exception.status_code, 409)
+                self.assertIn("already registered", str(raised.exception.detail))
+                self.assertEqual(db.query(Cell).count(), 1)
+            finally:
+                db.close()
+                engine.dispose()
+        background_jobs.clear_jobs()
+
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
         with tempfile.TemporaryDirectory() as tmp:
             outer = Path(tmp)

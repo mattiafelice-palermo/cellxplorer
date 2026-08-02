@@ -34,17 +34,25 @@ test("trimmed duplicate Cell names identify every affected staged file", () => {
   })), [{ name: "Cell A", filenames: ["first.ndax", "second.ndax"] }]);
 });
 
-test("failed registration hides background continuation and unlocks the drafts", () => {
+test("registration stays attached until relational rows are committed", () => {
   assert.deepEqual(importRegistrationUiState(true, "failed"), {
     showContinue: false,
     editingLocked: false,
+    closeLocked: false,
   });
   assert.deepEqual(importRegistrationUiState(true, "running"), {
-    showContinue: true,
-    editingLocked: true,
-  });
-  assert.deepEqual(importRegistrationUiState(true, "completed"), {
     showContinue: false,
     editingLocked: true,
+    closeLocked: true,
+  });
+  assert.deepEqual(importRegistrationUiState(true, "completed"), {
+    showContinue: true,
+    editingLocked: true,
+    closeLocked: false,
+  });
+  assert.deepEqual(importRegistrationUiState(true, undefined), {
+    showContinue: false,
+    editingLocked: true,
+    closeLocked: true,
   });
 });
