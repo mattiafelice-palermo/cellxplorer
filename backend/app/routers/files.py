@@ -17,7 +17,7 @@ from ..services import import_inspection
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..config import CALC_VERSION, IMPORT_DIR
 from ..db import SessionLocal, get_db
@@ -181,6 +181,10 @@ def _inspect_import_path(
             # JSON numbers cannot represent Windows nanosecond timestamps
             # exactly in JavaScript; keep this fingerprint lossless.
             "mtime_ns": str(inspected.mtime_ns),
+            # The second modal already paid the header-read cost. Carry the
+            # normalized header forward so registration never has to reopen
+            # the Neware container when the in-memory cache is cold.
+            "header_metadata": meta,
         },
         "capacity_preview": None,
         "preview_error": None,
@@ -1835,6 +1839,25 @@ def _validate_staged_source_snapshots(
         _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
 
 
+def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile | None) -> dict:
+    if existing is not None and existing.test_link is not None:
+        cell = existing.test_link.test.cell
+        if not cell.archived:
+            raise HTTPException(409, f"{prepared['filename']} is already registered")
+
+    prepared["existing_source_file_id"] = existing.id if existing is not None else None
+    prepared["cache_ready"] = bool(
+        existing is not None
+        and existing.parse_status == "parsed"
+        and existing.parser_version == parsing.PARSER_VERSION
+        and existing.row_count is not None
+        and existing.cycle_count is not None
+        and existing.capacity_summary_status == "ready"
+        and cache.has_cycles(existing.hash, existing.parser_version, CALC_VERSION)
+    )
+    return prepared
+
+
 def _prepare_import_source_file(
     db: Session,
     *,
@@ -1842,12 +1865,13 @@ def _prepare_import_source_file(
     filename: str,
     expected_hash: str | None = None,
     inspection: dict | None = None,
+    existing_sources_by_hash: dict[str, SourceFile] | None = None,
 ) -> dict:
     """Prepare immutable source facts before the relational write transaction."""
-    if not source_path.exists():
-        raise HTTPException(404, f"Source file is missing: {filename}")
     try:
         source_stat = source_path.stat()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"Source file is missing: {filename}") from exc
     except OSError as exc:
         raise HTTPException(409, f"Source became unavailable: {filename}") from exc
 
@@ -1860,6 +1884,28 @@ def _prepare_import_source_file(
     )
     if fingerprint_matches:
         file_hash = expected_hash
+        # The inspected fingerprint is authoritative for the bytes, but a
+        # final lightweight stat still catches a source that changed while
+        # the user was editing the third modal.
+        try:
+            final_stat = source_path.stat()
+        except FileNotFoundError as exc:
+            raise HTTPException(404, f"Source file is missing: {filename}") from exc
+        except OSError as exc:
+            raise HTTPException(409, f"Source became unavailable: {filename}") from exc
+        if (
+            final_stat.st_size != source_stat.st_size
+            or final_stat.st_mtime_ns != source_stat.st_mtime_ns
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_unstable",
+                    "message": "The source changed after inspection; inspect again.",
+                    "filename": source_path.name,
+                },
+            )
+        source_stat = final_stat
     else:
         file_hash = parsing.compute_hash(source_path).lower()
         if expected_hash and file_hash != expected_hash:
@@ -1902,21 +1948,7 @@ def _prepare_import_source_file(
     if not isinstance(meta, dict):
         meta = parsing.read_header_metadata(source_path)
 
-    existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
-    if existing is not None and existing.test_link is not None:
-        if not existing.test_link.test.cell.archived:
-            raise HTTPException(409, f"{filename} is already registered")
-
-    cache_ready = bool(
-        existing is not None
-        and existing.parse_status == "parsed"
-        and existing.parser_version == parsing.PARSER_VERSION
-        and existing.row_count is not None
-        and existing.cycle_count is not None
-        and existing.capacity_summary_status == "ready"
-        and cache.has_cycles(existing.hash, existing.parser_version, CALC_VERSION)
-    )
-    return {
+    prepared = {
         "source_path": source_path,
         "filename": filename,
         "hash": file_hash,
@@ -1924,9 +1956,13 @@ def _prepare_import_source_file(
         "observed_mtime_ns": source_stat.st_mtime_ns,
         "ext": Path(filename).suffix.lower().lstrip("."),
         "meta": meta,
-        "existing_source_file_id": existing.id if existing is not None else None,
-        "cache_ready": cache_ready,
     }
+    existing = (
+        db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
+        if existing_sources_by_hash is None
+        else existing_sources_by_hash.get(file_hash)
+    )
+    return _complete_prepared_import_source_file(prepared, existing)
 
 
 def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceFile:
@@ -1971,7 +2007,6 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
             capacity_summary_status="ready" if prepared["cache_ready"] else "pending",
         )
         db.add(sf)
-        db.flush()
         return sf
 
     for key, value in values.items():
@@ -2412,10 +2447,12 @@ def _create_imported_cells_impl_raw(
         except continuations.ContinuationValidationError as exc:
             _raise_continuation_validation(exc)
 
-    # Stage A: resolve and verify every source while the session is still
-    # read-only. Hashing and header extraction belong here, never between the
-    # first relational INSERT and the final commit.
+    # Stage A: consume the immutable inspection payload and resolve every
+    # source while the session is still read-only. The first pass deliberately
+    # does not query SourceFile one row at a time; the existing identity rows
+    # are joined in one batch after all inspected hashes are known.
     prepared_sources_by_staged_name: dict[str, dict] = {}
+    source_hashes: set[str] = set()
     for draft_index, draft in enumerate(req.cells):
         if job_id is not None:
             sources = normalize_import_cell_sources(draft)
@@ -2444,13 +2481,73 @@ def _create_imported_cells_impl_raw(
                 filename=source_draft.filename,
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
                 inspection=inspection,
+                existing_sources_by_hash={},
             )
+            source_hashes.add(prepared_sources_by_staged_name[source_draft.staged_name]["hash"])
+
+    existing_sources_by_hash: dict[str, SourceFile] = {}
+    if source_hashes:
+        existing_sources_by_hash = {
+            source.hash: source
+            for source in (
+                db.query(SourceFile)
+                .options(
+                    joinedload(SourceFile.test_link)
+                    .joinedload(TestFile.test)
+                    .joinedload(Test.cell)
+                )
+                .filter(SourceFile.hash.in_(source_hashes))
+                .all()
+            )
+        }
+
+    prepared_by_hash: dict[str, dict] = {}
+    for staged_name, prepared in prepared_sources_by_staged_name.items():
+        existing = existing_sources_by_hash.get(prepared["hash"])
+        if existing is None:
+            previous = prepared_by_hash.get(prepared["hash"])
+            if previous is not None:
+                raise HTTPException(
+                    409,
+                    {
+                        "code": "duplicate_submitted_source",
+                        "message": "The same source file was submitted more than once.",
+                        "filenames": [previous["filename"], prepared["filename"]],
+                        "staged_names": [
+                            next(
+                                key
+                                for key, value in prepared_sources_by_staged_name.items()
+                                if value is previous
+                            ),
+                            staged_name,
+                        ],
+                    },
+                )
+            prepared_by_hash[prepared["hash"]] = prepared
+        _complete_prepared_import_source_file(prepared, existing)
 
     # End the read transaction before Stage B starts. The prepared dictionaries
     # contain only immutable source facts and database ids, so no ORM object
     # from the validation phase is carried into the write transaction.
     db.rollback()
 
+    next_folder_positions = {
+        folder_id: max(
+            (
+                row[0]
+                for row in db.query(FolderCell.position)
+                .filter(FolderCell.folder_id == folder_id)
+                .all()
+            ),
+            default=-1,
+        ) + 1
+        for folder_id in target_folder_ids
+    }
+    pending_cells: list[dict] = []
+
+    # Build the complete relational graph in memory first. Relationships let
+    # SQLAlchemy order the dependent INSERTs, so the batch needs one flush
+    # instead of one flush for every Cell, SourceFile, and TestFile.
     for draft_index, draft in enumerate(req.cells):
         if job_id is not None:
             sources = normalize_import_cell_sources(draft)
@@ -2468,56 +2565,52 @@ def _create_imported_cells_impl_raw(
         replicate_key = import_cell_replicate_key(draft)
 
         cell = Cell(name=draft.cell_name.strip(), description=(draft.description or "").strip() or None)
-        db.add(cell)
-        db.flush()
-
-        # Test is an internal compatibility container.  Continued import never
+        # Test is an internal compatibility container. Continued import never
         # accepts or derives a user-facing Test name and always creates exactly
         # one row for the newly created Cell.
-        test = Test(cell_id=cell.id, name="Imported file")
-        db.add(test)
-        db.flush()
+        test = Test(cell=cell, name="Imported file")
+        db.add_all([cell, test])
 
-        created_source_ids: list[int] = []
+        if sources:
+            first_prepared = prepared_sources_by_staged_name[sources[0].staged_name]
+            imported_metadata = full_cell_metadata_from_header(
+                first_prepared["meta"],
+                draft.metadata,
+            )
+            override_values = {
+                "override.active_mass_mg": draft.active_mass_mg_override,
+                "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
+                "override.electrode_area_cm2": draft.electrode_area_cm2_override,
+                "override.active_material_specific_capacity_mah_g":
+                    draft.active_material_specific_capacity_mah_g,
+            }
+            for key, value in override_values.items():
+                if value is not None:
+                    if value <= 0:
+                        raise HTTPException(422, f"{key} must be positive")
+                    imported_metadata[key] = str(float(value))
+            text_overrides = {
+                "override.active_material_preset_id": draft.active_material_preset_id,
+                "override.active_material_name": draft.active_material_name,
+                "override.electrode_area_preset_id": draft.electrode_area_preset_id,
+                "override.electrode_area_preset_name": draft.electrode_area_preset_name,
+            }
+            for key, value in text_overrides.items():
+                text = (value or "").strip()
+                if text:
+                    imported_metadata[key] = text
+            for key, value in imported_metadata.items():
+                k = key.strip()
+                v = str(value).strip()
+                if k and v:
+                    db.add(CellMetadata(cell=cell, key=k, value=v))
+
+        source_objects: list[tuple[ImportSourceDraft, SourceFile]] = []
         for position, source_draft in enumerate(sources):
             prepared_source = prepared_sources_by_staged_name[source_draft.staged_name]
             sf = _persist_prepared_import_source_file(db, prepared_source)
-            if position == 0:
-                imported_metadata = full_cell_metadata_from_header(
-                    prepared_source["meta"],
-                    draft.metadata,
-                )
-                override_values = {
-                    "override.active_mass_mg": draft.active_mass_mg_override,
-                    "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
-                    "override.electrode_area_cm2": draft.electrode_area_cm2_override,
-                    "override.active_material_specific_capacity_mah_g":
-                        draft.active_material_specific_capacity_mah_g,
-                }
-                for key, value in override_values.items():
-                    if value is not None:
-                        if value <= 0:
-                            raise HTTPException(422, f"{key} must be positive")
-                        imported_metadata[key] = str(float(value))
-                text_overrides = {
-                    "override.active_material_preset_id": draft.active_material_preset_id,
-                    "override.active_material_name": draft.active_material_name,
-                    "override.electrode_area_preset_id": draft.electrode_area_preset_id,
-                    "override.electrode_area_preset_name": draft.electrode_area_preset_name,
-                }
-                for key, value in text_overrides.items():
-                    text = (value or "").strip()
-                    if text:
-                        imported_metadata[key] = text
-                for key, value in imported_metadata.items():
-                    k = key.strip()
-                    v = str(value).strip()
-                    if k and v:
-                        db.add(CellMetadata(cell_id=cell.id, key=k, value=v))
-
-            db.add(TestFile(test_id=test.id, file_id=sf.id, position=position))
-            db.flush()
-            source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
+            db.add(TestFile(test=test, file=sf, position=position))
+            source_objects.append((source_draft, sf))
             if not prepared_source["cache_ready"]:
                 cache_jobs.append(
                     {
@@ -2526,26 +2619,37 @@ def _create_imported_cells_impl_raw(
                         "path": str(prepared_source["source_path"]),
                     }
                 )
-            created_source_ids.append(sf.id)
+        pending_cells.append(
+            {
+                "cell": cell,
+                "test": test,
+                "sources": sources,
+                "source_objects": source_objects,
+                "replicate_key": replicate_key,
+            }
+        )
+
+    db.flush()
+
+    for pending in pending_cells:
+        cell = pending["cell"]
+        test = pending["test"]
+        sources = pending["sources"]
+        replicate_key = pending["replicate_key"]
+        created_source_ids = [source.id for _, source in pending["source_objects"]]
+        for source_draft, source in pending["source_objects"]:
+            source_file_ids_by_staged_name[source_draft.staged_name] = source.id
 
         if replicate_key not in grouped_staged_names:
             for folder_id in target_folder_ids:
-                exists = (
-                    db.query(FolderCell)
-                    .filter(FolderCell.folder_id == folder_id, FolderCell.cell_id == cell.id)
-                    .first()
-                )
-                if exists is None:
-                    position = max(
-                        (
-                            row[0]
-                            for row in db.query(FolderCell.position)
-                            .filter(FolderCell.folder_id == folder_id)
-                            .all()
-                        ),
-                        default=-1,
+                db.add(
+                    FolderCell(
+                        folder_id=folder_id,
+                        cell_id=cell.id,
+                        position=next_folder_positions[folder_id],
                     )
-                    db.add(FolderCell(folder_id=folder_id, cell_id=cell.id, position=position + 1))
+                )
+                next_folder_positions[folder_id] += 1
 
         created.append(
             {
@@ -2618,6 +2722,7 @@ def _create_imported_cells_impl_raw(
             phase_total=len(req.cells),
             phase_detail="Relational registration committed; scientific preparation continues separately",
             stage="register",
+            registration_committed=True,
             status="completed",
             description="Cell registration committed",
         )
@@ -2698,6 +2803,7 @@ def run_import_registration_job(
         db.commit()
         background_jobs.update_job(
             background_job_id,
+            registration_committed=True,
             status="completed",
             description=(
                 f"Imported {len(result.get('created', []))} cells; "

@@ -610,6 +610,53 @@ class ImportFlowTests(unittest.TestCase):
                 engine.dispose()
         background_jobs.clear_jobs()
 
+    def test_registration_consumes_inspection_identity_and_header_without_reopening_source(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database_path = root / "inspection-backed-import.db"
+            engine = create_engine(
+                f"sqlite:///{database_path.as_posix()}",
+                connect_args={"check_same_thread": False},
+            )
+            Base.metadata.create_all(engine)
+            factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            source_path = root / "inspection-backed.ndax"
+            source_path.write_bytes(b"inspection-backed-source")
+            source_stat = source_path.stat()
+            inspected_hash = parsing.compute_hash(source_path)
+            request = files.ImportCellsRequest(
+                cells=[files.ImportCellDraft(
+                    staged_name=source_path.name,
+                    source_path=str(source_path),
+                    filename=source_path.name,
+                    inspection={
+                        "hash": inspected_hash,
+                        "size": source_stat.st_size,
+                        "mtime_ns": str(source_stat.st_mtime_ns),
+                        "header_metadata": {
+                            "barcode": "INSPECTED-BARCODE",
+                            "raw": {"Config.Barcode": "INSPECTED-BARCODE"},
+                        },
+                    },
+                    cell_name="Inspection-backed cell",
+                )]
+            )
+            db = factory()
+            try:
+                with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
+                    patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
+                    patch.object(files.parsing, "read_header_metadata", side_effect=AssertionError("header reopened")):
+                    files._create_imported_cells_impl(request, db)
+                source = db.query(SourceFile).one()
+                self.assertEqual(source.hash, inspected_hash)
+                self.assertEqual(source.barcode, "INSPECTED-BARCODE")
+                self.assertEqual(db.query(Cell).count(), 1)
+            finally:
+                db.close()
+                engine.dispose()
+        background_jobs.clear_jobs()
+
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
         with tempfile.TemporaryDirectory() as tmp:
             outer = Path(tmp)

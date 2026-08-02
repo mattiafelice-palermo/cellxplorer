@@ -1814,6 +1814,7 @@ function ImportModal({
     registrationAccepted,
     registrationStatus,
     save.isPending,
+    Boolean(registerProgress.data?.registration_committed),
   );
   const rawRangeStart = rawData && rawData.total_rows > 0 ? rawData.offset + 1 : 0;
   const rawRangeEnd = rawData

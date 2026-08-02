@@ -11,6 +11,7 @@ import {
   importProgressMode,
   importProgressPercent,
   importJobPollInterval,
+  importRegistrationUiState,
   importRemainingEstimate,
   importStageExplanation,
   importStageTitle,
@@ -136,6 +137,17 @@ test("background refresh policy handles detached registration and throttled cach
   const terminal = backgroundImportRefreshPlan(refreshed.snapshots, [cacheFailed], 2200, 2100);
   assert.equal(terminal.cacheTerminal, true);
   assert.equal(terminal.cacheAdvanced, true);
+});
+
+test("registration controls unlock from the explicit commit marker before cache completion", () => {
+  assert.deepEqual(
+    importRegistrationUiState(true, "running", false, true),
+    { showContinue: true, editingLocked: true, closeLocked: false },
+  );
+  assert.deepEqual(
+    importRegistrationUiState(true, "failed", false, true),
+    { showContinue: false, editingLocked: false, closeLocked: false },
+  );
 });
 
 test("inspection estimate is explicitly presented as a sampled total", () => {

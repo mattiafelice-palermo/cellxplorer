@@ -1561,6 +1561,7 @@ export interface BackgroundJob {
   title: string;
   description: string;
   status: "running" | "paused" | "completed" | "failed";
+  registration_committed?: boolean;
   total: number;
   completed: number;
   counters: Record<string, number>;

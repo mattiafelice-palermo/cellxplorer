@@ -1,7 +1,7 @@
 {
   "name": "cellxplorer-frontend",
   "private": true,
-  "version": "0.17.0-beta025",
+  "version": "0.17.0-beta026",
   "type": "module",
   "scripts": {
     "dev": "vite",

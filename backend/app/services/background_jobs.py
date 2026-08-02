@@ -34,6 +34,11 @@ def _create_job_locked(
         "title": title,
         "description": description,
         "status": "running",
+        # Import registration and cache preparation are separate lifecycles.
+        # Keep an explicit commit marker so the UI can detach as soon as the
+        # relational transaction is durable, even while status/progress for a
+        # longer handoff is still being observed.
+        "registration_committed": False,
         "total": max(0, int(total)),
         "completed": 0,
         "counters": {},
