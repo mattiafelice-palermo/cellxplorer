@@ -3,6 +3,9 @@ import test from "node:test";
 
 import type { BackgroundJob } from "../src/api.ts";
 import {
+  backgroundImportRefreshPlan,
+  importProgressCount,
+  importProgressCountText,
   importProgressCountLabel,
   importProgressCurrentLabel,
   importProgressMode,
@@ -103,6 +106,36 @@ test("registration progress distinguishes validation from durable commit", () =>
     ),
     "Registering 4 of 10 selected cells",
   );
+});
+
+test("shared progress count uses registration phase progress everywhere", () => {
+  const current = job({
+    phase: "validation",
+    phase_current: 620,
+    phase_total: 1000,
+    completed: 0,
+  });
+  assert.deepEqual(importProgressCount(current), { current: 620, total: 1000 });
+  assert.equal(importProgressCountText(current), "620 / 1000");
+  assert.equal(importProgressPercent(current), 62);
+});
+
+test("background refresh policy handles detached registration and throttled cache progress", () => {
+  const register = job({ kind: "import_register", status: "completed", completed: 10, total: 10 });
+  const first = backgroundImportRefreshPlan(new Map(), [register], 1000, 0);
+  assert.equal(first.registrationCommitted, true);
+
+  const cacheRunning = job({ kind: "import_cache", completed: 1, total: 10 });
+  const previous = new Map([[cacheRunning.id, "running:0:::" ]]);
+  const throttled = backgroundImportRefreshPlan(previous, [cacheRunning], 1500, 1000);
+  assert.equal(throttled.cacheAdvanced, false);
+  const refreshed = backgroundImportRefreshPlan(previous, [cacheRunning], 2100, 1000);
+  assert.equal(refreshed.cacheAdvanced, true);
+
+  const cacheFailed = { ...cacheRunning, status: "failed" as const };
+  const terminal = backgroundImportRefreshPlan(refreshed.snapshots, [cacheFailed], 2200, 2100);
+  assert.equal(terminal.cacheTerminal, true);
+  assert.equal(terminal.cacheAdvanced, true);
 });
 
 test("inspection estimate is explicitly presented as a sampled total", () => {

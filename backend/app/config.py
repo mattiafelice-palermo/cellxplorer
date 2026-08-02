@@ -27,7 +27,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.17.0-beta023"
+APP_VERSION = "0.17.0-beta024"
 INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").strip() or None
 
 # Version of our derived per-cycle calculation code. Bump when the

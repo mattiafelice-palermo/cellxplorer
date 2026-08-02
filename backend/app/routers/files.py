@@ -1835,6 +1835,154 @@ def _validate_staged_source_snapshots(
         _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
 
 
+def _prepare_import_source_file(
+    db: Session,
+    *,
+    source_path: Path,
+    filename: str,
+    expected_hash: str | None = None,
+    inspection: dict | None = None,
+) -> dict:
+    """Prepare immutable source facts before the relational write transaction."""
+    if not source_path.exists():
+        raise HTTPException(404, f"Source file is missing: {filename}")
+    try:
+        source_stat = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(409, f"Source became unavailable: {filename}") from exc
+
+    inspection = inspection if isinstance(inspection, dict) else {}
+    expected_hash = (expected_hash or inspection.get("hash") or "").strip().lower() or None
+    fingerprint_matches = bool(
+        expected_hash
+        and inspection.get("size") == source_stat.st_size
+        and _mtime_fingerprint_matches(inspection.get("mtime_ns"), source_stat.st_mtime_ns)
+    )
+    if fingerprint_matches:
+        file_hash = expected_hash
+    else:
+        file_hash = parsing.compute_hash(source_path).lower()
+        if expected_hash and file_hash != expected_hash:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_changed",
+                    "message": "The source bytes differ from the inspected source; inspect again.",
+                    "filename": source_path.name,
+                    "expected_hash_prefix": continuations.hash_prefix(expected_hash),
+                    "actual_hash_prefix": continuations.hash_prefix(file_hash),
+                },
+            )
+        try:
+            after_hash_stat = source_path.stat()
+        except OSError as exc:
+            raise HTTPException(409, f"Source became unavailable: {filename}") from exc
+        if (
+            after_hash_stat.st_size != source_stat.st_size
+            or after_hash_stat.st_mtime_ns != source_stat.st_mtime_ns
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_unstable",
+                    "message": "The source changed during submission; inspect again.",
+                    "filename": source_path.name,
+                },
+            )
+
+    meta = (
+        inspection.get("header_metadata")
+        if fingerprint_matches and isinstance(inspection.get("header_metadata"), dict)
+        else import_inspection.cached_header_metadata(
+            file_hash,
+            source_stat.st_size,
+            source_stat.st_mtime_ns,
+        )
+    )
+    if not isinstance(meta, dict):
+        meta = parsing.read_header_metadata(source_path)
+
+    existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
+    if existing is not None and existing.test_link is not None:
+        if not existing.test_link.test.cell.archived:
+            raise HTTPException(409, f"{filename} is already registered")
+
+    cache_ready = bool(
+        existing is not None
+        and existing.parse_status == "parsed"
+        and existing.parser_version == parsing.PARSER_VERSION
+        and existing.row_count is not None
+        and existing.cycle_count is not None
+        and existing.capacity_summary_status == "ready"
+        and cache.has_cycles(existing.hash, existing.parser_version, CALC_VERSION)
+    )
+    return {
+        "source_path": source_path,
+        "filename": filename,
+        "hash": file_hash,
+        "size": source_stat.st_size,
+        "observed_mtime_ns": source_stat.st_mtime_ns,
+        "ext": Path(filename).suffix.lower().lstrip("."),
+        "meta": meta,
+        "existing_source_file_id": existing.id if existing is not None else None,
+        "cache_ready": cache_ready,
+    }
+
+
+def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceFile:
+    """Persist Stage-A source facts without opening or parsing the source."""
+    existing = (
+        db.get(SourceFile, prepared["existing_source_file_id"])
+        if prepared.get("existing_source_file_id") is not None
+        else None
+    )
+    if existing is not None and existing.test_link is not None:
+        remove_archived_cell_blocking_source(db, existing)
+        db.flush()
+        existing = db.query(SourceFile).filter(SourceFile.hash == prepared["hash"]).first()
+    if existing is not None and existing.test_link is not None:
+        raise HTTPException(409, f"{prepared['filename']} is already registered")
+
+    meta = prepared["meta"]
+    values = {
+        "hash": prepared["hash"],
+        "path": str(prepared["source_path"]),
+        "filename": prepared["filename"],
+        "size": prepared["size"],
+        "ext": prepared["ext"],
+        "observed_size": prepared["size"],
+        "observed_mtime_ns": prepared["observed_mtime_ns"],
+        "last_source_check_at": datetime.now(timezone.utc),
+        "nda_version": meta.get("nda_version"),
+        "device_info": meta.get("device_info"),
+        "channel": meta.get("channel"),
+        "barcode": meta.get("barcode"),
+        "remarks": meta.get("remarks"),
+        "start_time": meta.get("start_time"),
+        "active_mass_mg": meta.get("active_mass_mg"),
+        "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
+        "header_meta": meta.get("raw") or None,
+        "location_status": "online",
+    }
+    if existing is None:
+        sf = SourceFile(
+            **values,
+            parse_status="parsed" if prepared["cache_ready"] else "parsing",
+            capacity_summary_status="ready" if prepared["cache_ready"] else "pending",
+        )
+        db.add(sf)
+        db.flush()
+        return sf
+
+    for key, value in values.items():
+        setattr(existing, key, value)
+    if not prepared["cache_ready"]:
+        existing.parse_status = "parsing"
+        existing.parse_error = None
+        existing.capacity_summary_status = "pending"
+    return existing
+
+
 def _register_or_refresh_source_file(
     db: Session,
     *,
@@ -2233,18 +2381,6 @@ def _create_imported_cells_impl_raw(
     continuation_draft_ids = {id(draft) for draft in continuation_drafts}
 
     for draft_index, draft in enumerate(req.cells):
-        if job_id is not None:
-            sources = normalize_import_cell_sources(draft)
-            background_jobs.update_job(
-                job_id,
-                stage="register",
-                phase="validation",
-                phase_current=draft_index + 1,
-                phase_total=len(req.cells),
-                phase_detail="Checking source identity and import constraints",
-                current_item_id=str(draft_index),
-                current_item_label=draft.cell_name.strip() or sources[0].filename,
-            )
         if id(draft) not in continuation_draft_ids:
             # Separate-cell registration needs only source identity, header
             # metadata and relational validation.  Continuation analysis is
@@ -2276,15 +2412,44 @@ def _create_imported_cells_impl_raw(
         except continuations.ContinuationValidationError as exc:
             _raise_continuation_validation(exc)
 
-    if continuation_drafts:
-        _validate_staged_source_snapshots(
-            [
-                source
-                for draft in continuation_drafts
-                for source in normalize_import_cell_sources(draft)
-            ],
-            inspected_hashes_by_staged_name,
-        )
+    # Stage A: resolve and verify every source while the session is still
+    # read-only. Hashing and header extraction belong here, never between the
+    # first relational INSERT and the final commit.
+    prepared_sources_by_staged_name: dict[str, dict] = {}
+    for draft_index, draft in enumerate(req.cells):
+        if job_id is not None:
+            sources = normalize_import_cell_sources(draft)
+            background_jobs.update_job(
+                job_id,
+                stage="register",
+                phase="validation",
+                phase_current=draft_index + 1,
+                phase_total=len(req.cells),
+                phase_detail="Checking source identity and import constraints",
+                current_item_id=str(draft_index),
+                current_item_label=draft.cell_name.strip() or sources[0].filename,
+            )
+        for source_draft in normalize_import_cell_sources(draft):
+            try:
+                source_path = resolve_import_source_path(
+                    source_draft.staged_name,
+                    source_draft.source_path,
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            inspection = source_draft.inspection if isinstance(source_draft.inspection, dict) else {}
+            prepared_sources_by_staged_name[source_draft.staged_name] = _prepare_import_source_file(
+                db,
+                source_path=source_path,
+                filename=source_draft.filename,
+                expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
+                inspection=inspection,
+            )
+
+    # End the read transaction before Stage B starts. The prepared dictionaries
+    # contain only immutable source facts and database ids, so no ORM object
+    # from the validation phase is carried into the write transaction.
+    db.rollback()
 
     for draft_index, draft in enumerate(req.cells):
         if job_id is not None:
@@ -2315,37 +2480,13 @@ def _create_imported_cells_impl_raw(
 
         created_source_ids: list[int] = []
         for position, source_draft in enumerate(sources):
-            try:
-                source_path = resolve_import_source_path(
-                    source_draft.staged_name,
-                    source_draft.source_path,
-                )
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-
-            sf = _register_or_refresh_source_file(
-                db,
-                source_path=source_path,
-                filename=source_draft.filename,
-                expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
-                inspection=source_draft.inspection,
-            )
+            prepared_source = prepared_sources_by_staged_name[source_draft.staged_name]
+            sf = _persist_prepared_import_source_file(db, prepared_source)
             if position == 0:
-                header_meta = source_draft.inspection.get("header_metadata") if (
-                    isinstance(source_draft.inspection, dict)
-                    and source_draft.inspection.get("hash") == sf.hash
-                    and source_draft.inspection.get("size") == sf.size
-                    and _mtime_fingerprint_matches(
-                        source_draft.inspection.get("mtime_ns"),
-                        sf.observed_mtime_ns,
-                    )
-                    and isinstance(source_draft.inspection.get("header_metadata"), dict)
-                ) else import_inspection.cached_header_metadata(
-                    sf.hash,
-                    sf.size,
-                    sf.observed_mtime_ns or 0,
-                ) or parsing.read_header_metadata(source_path)
-                imported_metadata = full_cell_metadata_from_header(header_meta, draft.metadata)
+                imported_metadata = full_cell_metadata_from_header(
+                    prepared_source["meta"],
+                    draft.metadata,
+                )
                 override_values = {
                     "override.active_mass_mg": draft.active_mass_mg_override,
                     "override.nominal_capacity_mah": draft.nominal_capacity_mah_override,
@@ -2375,20 +2516,16 @@ def _create_imported_cells_impl_raw(
                         db.add(CellMetadata(cell_id=cell.id, key=k, value=v))
 
             db.add(TestFile(test_id=test.id, file_id=sf.id, position=position))
-            sf.parse_status = "parsing"
-            sf.capacity_summary_status = "pending"
             db.flush()
             source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
-            # Even a warm cache is handed off after the relational commit. A
-            # cache hit can then be adopted by the background worker without
-            # allowing scientific reads or summaries inside this transaction.
-            cache_jobs.append(
-                {
-                    "staged_name": source_draft.staged_name,
-                    "hash": sf.hash,
-                    "path": str(source_path),
-                }
-            )
+            if not prepared_source["cache_ready"]:
+                cache_jobs.append(
+                    {
+                        "staged_name": source_draft.staged_name,
+                        "hash": prepared_source["hash"],
+                        "path": str(prepared_source["source_path"]),
+                    }
+                )
             created_source_ids.append(sf.id)
 
         if replicate_key not in grouped_staged_names:

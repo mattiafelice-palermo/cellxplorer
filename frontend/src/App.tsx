@@ -61,6 +61,11 @@ import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigat
 import { startupQueryPersistence } from "./startupQueryPersistence";
 import { invalidateAnalysisQueries } from "./analysisQueryCache";
 import { APP_BRANDING } from "./appChannel";
+import {
+  backgroundImportRefreshPlan,
+  importProgressCount,
+  importProgressPercent,
+} from "./importProgress";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -105,6 +110,8 @@ export default function App({
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
   const handledSourceCheckJob = useRef<number | null>(null);
   const handledSourceChangingState = useRef("");
+  const backgroundJobSnapshots = useRef(new Map<number, string>());
+  const lastImportCacheRefreshAt = useRef(0);
   const [uiZoom, setUiZoom] = useState(() => {
     const stored = Number(window.localStorage.getItem("cellxplorer-ui-zoom"));
     return Number.isFinite(stored) && stored >= 0.7 && stored <= 1.6 ? stored : 1;
@@ -261,6 +268,38 @@ export default function App({
     refetchInterval: (query) =>
       query.state.data?.some((job) => job.status === "running") ? 700 : 5000,
   });
+  useEffect(() => {
+    const jobs = backgroundJobs.data ?? [];
+    const refresh = (keys: string[][]) => {
+      keys.forEach((queryKey) => {
+        void queryClient.invalidateQueries({ queryKey });
+      });
+    };
+    const plan = backgroundImportRefreshPlan(
+      backgroundJobSnapshots.current,
+      jobs,
+      Date.now(),
+      lastImportCacheRefreshAt.current,
+    );
+    backgroundJobSnapshots.current = plan.snapshots;
+    lastImportCacheRefreshAt.current = plan.lastCacheRefreshAt;
+    if (plan.registrationCommitted) {
+      refresh([
+        ["cells"],
+        ["files"],
+        ["tree"],
+        ["replicate-groups"],
+        ["activity"],
+        ["background-jobs"],
+      ]);
+    }
+    if (plan.cacheAdvanced && !plan.cacheTerminal) {
+      refresh([["cells"], ["files"]]);
+    }
+    if (plan.cacheTerminal) {
+      refresh([["cells"], ["files"], ["activity"], ["background-jobs"]]);
+    }
+  }, [backgroundJobs.data, queryClient]);
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
     queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
@@ -350,11 +389,8 @@ export default function App({
     if (window.dispatchEvent(event)) navigate(path);
   };
   const activeJob = backgroundJobs.data?.find((job) => job.status === "running") ?? null;
-  const activityProgress = activeJob?.total
-    ? (activeJob.completed / activeJob.total) * 100
-    : activeJob
-      ? 100
-      : 0;
+  const activeJobCount = importProgressCount(activeJob);
+  const activityProgress = importProgressPercent(activeJob) ?? (activeJob ? 100 : 0);
 
   if (databaseStatus.isError || (!databaseStatus.isLoading && !databaseStatus.data)) {
     return (
@@ -543,7 +579,7 @@ export default function App({
                       {activeJob.description}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {activeJob.completed}/{activeJob.total}
+                      {activeJobCount.current}/{activeJobCount.total}
                     </Text>
                   </Group>
                   <Progress value={activityProgress} size={3} animated color={APP_BRANDING.primaryColor} />
@@ -665,7 +701,8 @@ export default function App({
             }
           >
             {(backgroundJobs.data ?? []).map((job) => {
-              const progress = job.total ? (job.completed / job.total) * 100 : 100;
+              const progress = importProgressPercent(job) ?? (job.total ? 0 : 100);
+              const count = importProgressCount(job);
               const jobColor = job.status === "failed" ? "red" : job.status === "running" ? "teal" : "gray";
               return (
                 <Accordion.Item key={job.id} value={String(job.id)}>
@@ -679,7 +716,7 @@ export default function App({
                         <Text size="sm" c="dimmed" mt={2}>{job.description}</Text>
                       </div>
                       <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
-                        {job.completed} / {job.total}
+                        {count.current} / {count.total}
                       </Text>
                     </Group>
                   </Accordion.Control>

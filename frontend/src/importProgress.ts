@@ -71,8 +71,96 @@ export function importProgressPercent(job: BackgroundJob | null | undefined): nu
   if (Number.isFinite(job.progress_percent)) {
     return Math.max(0, Math.min(99, job.progress_percent ?? 0));
   }
-  if (job.total <= 0) return null;
-  return Math.max(0, Math.min(99, (job.completed / job.total) * 100));
+  const count = importProgressCount(job);
+  if (count.total <= 0) return null;
+  return Math.max(0, Math.min(99, (count.current / count.total) * 100));
+}
+
+export type ImportProgressCount = {
+  current: number;
+  total: number;
+};
+
+/**
+ * Return the count users should see for every import-progress surface.
+ * Registration advances its phase before individual jobs are marked complete,
+ * so completed/total would otherwise remain misleadingly at 0/N.
+ */
+export function importProgressCount(
+  job: BackgroundJob | null | undefined,
+): ImportProgressCount {
+  if (!job) return { current: 0, total: 0 };
+  if (job.status === "completed") {
+    return { current: Math.max(0, job.total), total: Math.max(0, job.total) };
+  }
+  const phaseIsCounted = job.phase === "validation" || job.phase === "registration";
+  const phaseTotal = Number(job.phase_total);
+  const phaseCurrent = Number(job.phase_current);
+  if (phaseIsCounted && Number.isFinite(phaseTotal) && phaseTotal > 0 && Number.isFinite(phaseCurrent)) {
+    return {
+      current: Math.max(0, Math.min(phaseTotal, phaseCurrent)),
+      total: phaseTotal,
+    };
+  }
+  const total = Math.max(0, job.total);
+  return {
+    current: Math.max(0, Math.min(total, job.completed)),
+    total,
+  };
+}
+
+export function importProgressCountText(job: BackgroundJob | null | undefined): string {
+  const count = importProgressCount(job);
+  return `${count.current} / ${count.total}`;
+}
+
+export type BackgroundImportRefreshPlan = {
+  registrationCommitted: boolean;
+  cacheAdvanced: boolean;
+  cacheTerminal: boolean;
+  snapshots: Map<number, string>;
+  lastCacheRefreshAt: number;
+};
+
+function backgroundJobSnapshot(job: BackgroundJob): string {
+  return `${job.status}:${job.completed}:${job.phase ?? ""}:${job.phase_current ?? ""}:${job.progress_percent ?? ""}`;
+}
+
+export function backgroundImportRefreshPlan(
+  previous: ReadonlyMap<number, string>,
+  jobs: readonly BackgroundJob[],
+  nowMs: number,
+  lastCacheRefreshAt: number,
+): BackgroundImportRefreshPlan {
+  const snapshots = new Map(previous);
+  let registrationCommitted = false;
+  let cacheAdvanced = false;
+  let cacheTerminal = false;
+  for (const job of jobs) {
+    const before = previous.get(job.id);
+    const after = backgroundJobSnapshot(job);
+    if (job.kind === "import_register" && job.status === "completed" && (!before || before !== after)) {
+      registrationCommitted = true;
+    }
+    if (job.kind === "import_cache") {
+      if (before && before !== after && job.status === "running") cacheAdvanced = true;
+      if ((!before || before !== after) && (job.status === "completed" || job.status === "failed")) {
+        cacheTerminal = true;
+      }
+    }
+    snapshots.set(job.id, after);
+  }
+  let nextLastCacheRefreshAt = lastCacheRefreshAt;
+  if (cacheTerminal || (cacheAdvanced && nowMs - lastCacheRefreshAt >= 1000)) {
+    nextLastCacheRefreshAt = nowMs;
+  }
+  return {
+    registrationCommitted,
+    cacheAdvanced: cacheTerminal || (cacheAdvanced && nowMs - lastCacheRefreshAt >= 1000),
+    cacheTerminal,
+    snapshots,
+    lastCacheRefreshAt: nextLastCacheRefreshAt,
+  };
 }
 
 export function importProgressCountLabel(
@@ -98,11 +186,12 @@ export function importProgressCountLabel(
     }
   }
   if (stage === "register") {
+    const count = importProgressCount(job);
     if (job.phase === "validation") {
-      return `Validating ${job.phase_current ?? 0} of ${job.phase_total ?? job.total} selected cell${(job.phase_total ?? job.total) === 1 ? "" : "s"}`;
+      return `Validating ${count.current} of ${count.total} selected cell${count.total === 1 ? "" : "s"}`;
     }
     if (job.phase === "registration") {
-      return `Registering ${job.phase_current ?? 0} of ${job.phase_total ?? job.total} selected cell${(job.phase_total ?? job.total) === 1 ? "" : "s"}`;
+      return `Registering ${count.current} of ${count.total} selected cell${count.total === 1 ? "" : "s"}`;
     }
   }
   const unit = stage === "register" ? "cell" : "file";

@@ -436,6 +436,133 @@ class ImportFlowTests(unittest.TestCase):
             engine.dispose()
         background_jobs.clear_jobs()
 
+    def test_registration_commits_all_cells_before_blocked_cache_worker(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database_path = root / "atomic-import.db"
+            engine = create_engine(
+                f"sqlite:///{database_path.as_posix()}",
+                connect_args={"check_same_thread": False},
+            )
+            Base.metadata.create_all(engine)
+            factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            first = root / "first.ndax"
+            second = root / "second.ndax"
+            first.write_bytes(b"first-source")
+            second.write_bytes(b"second-source")
+            request = files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        staged_name=first.name,
+                        source_path=str(first),
+                        filename=first.name,
+                        cell_name="First atomic cell",
+                    ),
+                    files.ImportCellDraft(
+                        staged_name=second.name,
+                        source_path=str(second),
+                        filename=second.name,
+                        cell_name="Second atomic cell",
+                    ),
+                ]
+            )
+            request_db = factory()
+            prepared_jobs = []
+            committed_snapshots = []
+
+            def capture_cache_handoff(file_ids, jobs):
+                prepared_jobs.extend(jobs)
+                observer = factory()
+                try:
+                    committed_snapshots.append(
+                        {
+                            "cells": observer.query(Cell).count(),
+                            "sources": [
+                                (source.parse_status, source.capacity_summary_status)
+                                for source in observer.query(SourceFile).order_by(SourceFile.id).all()
+                            ],
+                        }
+                    )
+                finally:
+                    observer.close()
+                return {"queued": True, "count": len(jobs), "job_id": 99, "status": "running"}
+
+            with patch.object(files, "start_import_cache_jobs", side_effect=capture_cache_handoff), \
+                patch.object(files.parsing, "read_header_metadata", return_value={}), \
+                patch.object(files.cache, "build", side_effect=AssertionError("cache worker ran before commit")):
+                result = files._create_imported_cells_impl(request, request_db)
+
+            self.assertTrue(result["parsing_started"])
+            self.assertEqual(len(prepared_jobs), 2)
+            self.assertEqual(committed_snapshots, [{
+                "cells": 2,
+                "sources": [("parsing", "pending"), ("parsing", "pending")],
+            }])
+
+            cache_job_id = background_jobs.create_job(
+                kind="import_cache",
+                title="Preparing imported cells",
+                description="Building cycling caches",
+                total=len(prepared_jobs),
+                items=[{"id": item["staged_name"], "label": item["staged_name"]} for item in prepared_jobs],
+            )
+            incremental_snapshots = []
+
+            def fake_cache_builder(jobs, progress_callback=None, **_kwargs):
+                results = {}
+                for index, cache_job in enumerate(jobs):
+                    result = {
+                        "staged_name": cache_job["staged_name"],
+                        "ok": index == 0,
+                        "parser_version": parsing.PARSER_VERSION,
+                        "rows": 12,
+                        "cycles": 2,
+                        "total_charge_capacity_mah": 3.0,
+                        "total_discharge_capacity_mah": 2.5,
+                        "max_discharge_capacity_mah": 2.5,
+                    }
+                    if not result["ok"]:
+                        result["error"] = "blocked cache worker"
+                    results[cache_job["staged_name"]] = result
+                    if progress_callback:
+                        progress_callback(cache_job, result)
+                        observer = factory()
+                        try:
+                            incremental_snapshots.append([
+                                (source.parse_status, source.capacity_summary_status)
+                                for source in observer.query(SourceFile).order_by(SourceFile.id).all()
+                            ])
+                        finally:
+                            observer.close()
+                return results
+
+            with patch.object(files, "SessionLocal", side_effect=factory), patch.object(
+                files, "build_import_caches_parallel", side_effect=fake_cache_builder
+            ):
+                files.run_import_cache_jobs(
+                    {item["staged_name"]: source_id for item, source_id in zip(
+                        prepared_jobs,
+                        [row[0] for row in request_db.query(TestFile.file_id).all()],
+                    )},
+                    prepared_jobs,
+                    cache_job_id,
+                )
+
+            observer = factory()
+            try:
+                self.assertEqual(observer.query(Cell).count(), 2)
+                final_sources = observer.query(SourceFile).order_by(SourceFile.id).all()
+                self.assertEqual(final_sources[0].parse_status, "parsed")
+                self.assertEqual(final_sources[1].parse_status, "error")
+            finally:
+                observer.close()
+            self.assertEqual(incremental_snapshots[0], [("parsed", "ready"), ("parsing", "pending")])
+            self.assertEqual(incremental_snapshots[1], [("parsed", "ready"), ("error", "error")])
+            request_db.close()
+            engine.dispose()
+        background_jobs.clear_jobs()
+
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
         with tempfile.TemporaryDirectory() as tmp:
             outer = Path(tmp)
