@@ -12,7 +12,7 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import AppSession
+from app.models import ActivityEvent, AppSession, ImportSubmission
 from app.services import sessions
 
 
@@ -54,6 +54,36 @@ class AppSessionTests(unittest.TestCase):
         self.assertEqual(finished.exit_reason, "tray_quit")
         self.assertIsNotNone(finished.finished_at)
         self.assertEqual(db.query(AppSession).count(), 2)
+
+    def test_new_startup_marks_accepted_import_as_interrupted(self):
+        db = self.make_session()
+        submission = ImportSubmission(
+            token="restart-safe-import",
+            fingerprint="a" * 64,
+            job_id=42,
+            submitted_cells=3,
+            submitted_sources=3,
+            status="running",
+        )
+        db.add(submission)
+        db.commit()
+
+        sessions.begin_session(
+            db,
+            startup_mode="startup",
+            app_version="0.17.0",
+            backend_pid=11,
+        )
+
+        db.refresh(submission)
+        self.assertEqual(submission.status, "interrupted")
+        self.assertIn("previous backend session", submission.error)
+        event = (
+            db.query(ActivityEvent)
+            .filter(ActivityEvent.action == "import_registration_interrupted")
+            .one()
+        )
+        self.assertEqual(event.details["job_id"], 42)
 
 
 if __name__ == "__main__":

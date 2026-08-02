@@ -54,9 +54,13 @@ cache worker marks them ready or reports a post-registration source error. The t
 file panel is a fixed-row viewport window with bounded overscan; do not restore a full
 `drafts.map(...)` render for large imports. Preview requests are session-scoped and abortable, so
 closing the modal must clear disposable drafts and invalidate late responses. The actual
-`/api/imports/cells` submission returns `202` after atomically claiming its client token;
-registration then uses its own `SessionLocal` worker transaction, while cache preparation is a
-separate post-commit job and activity lifecycle.
+`/api/imports/cells` submission returns `202` after atomically claiming its durable
+`ImportSubmission` token; registration then uses its own `SessionLocal` worker transaction, while
+cache preparation is a separate post-commit job and activity lifecycle. Separate-cell registration
+does not run continuation timing or cache-dependent validation, and even a warm scientific cache
+is handed to the post-commit worker rather than read inside the registration transaction. Cache
+results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
+serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
 Inspection strategy is adaptive at the second-to-third modal boundary: batches of 25 or fewer files
 stay serial to avoid Windows process-pool startup overhead; larger batches inspect one first file as

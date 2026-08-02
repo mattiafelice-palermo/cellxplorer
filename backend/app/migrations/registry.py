@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import ModuleType
 
-from .versions import v0001_initial, v0002_max_discharge_summary
+from .versions import v0001_initial, v0002_max_discharge_summary, v0003_import_submissions
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,11 @@ REVISIONS = (
         revision=v0002_max_discharge_summary.revision,
         down_revision=v0002_max_discharge_summary.down_revision,
         module=v0002_max_discharge_summary,
+    ),
+    MigrationRevision(
+        revision=v0003_import_submissions.revision,
+        down_revision=v0003_import_submissions.down_revision,
+        module=v0003_import_submissions,
     ),
 )
 

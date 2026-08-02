@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import AppSession
+from ..models import ActivityEvent, AppSession, ImportSubmission
 
 _lock = threading.Lock()
 _current_session_id: int | None = None
@@ -32,6 +32,31 @@ def begin_session(
         row.status = "interrupted"
         row.exit_reason = "process_ended_without_shutdown"
         row.finished_at = now
+
+    stale_imports = (
+        db.query(ImportSubmission)
+        .filter(ImportSubmission.status.in_(["accepted", "running"]))
+        .all()
+    )
+    for submission in stale_imports:
+        submission.status = "interrupted"
+        submission.error = "The previous backend session ended before registration completed."
+        submission.finished_at = now
+        db.add(
+            ActivityEvent(
+                category="import",
+                action="import_registration_interrupted",
+                message="Import registration was interrupted by backend shutdown",
+                severity="error",
+                details={
+                    "submission_id": submission.id,
+                    "job_id": submission.job_id,
+                    "job_token": submission.token,
+                },
+                started_at=submission.started_at or submission.created_at,
+                finished_at=now,
+            )
+        )
 
     session = AppSession(
         startup_mode=startup_mode,

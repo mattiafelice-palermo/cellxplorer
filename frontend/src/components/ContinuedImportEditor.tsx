@@ -21,6 +21,7 @@ import {
   IconDeviceFloppy,
   IconInfoCircle,
   IconPlus,
+  IconSearch,
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -138,6 +139,7 @@ export function ContinuedImportEditor({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [submittedOrder, setSubmittedOrder] = useState<string[] | null>(null);
   const [previewKey, setPreviewKey] = useState<string>(drafts[0]?.staged_name ?? "");
+  const [inspectionRequested, setInspectionRequested] = useState(false);
   const byKey = useMemo(() => new Map(drafts.map((item) => [item.staged_name, item])), [drafts]);
   const orderedDrafts = useMemo(
     () => order.map((key) => byKey.get(key)).filter((item): item is DraftSource => Boolean(item)),
@@ -153,9 +155,9 @@ export function ContinuedImportEditor({
       sources: orderedDrafts.map(draftSource),
       proposed_order: order,
     }),
-    enabled: opened && orderedDrafts.length >= 2,
+    enabled: opened && inspectionRequested && orderedDrafts.length >= 2,
     refetchInterval: (query) =>
-      opened && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
+      opened && inspectionRequested && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
   });
   const result = inspectionQuery.data;
   const orderedSources = useMemo(
@@ -186,6 +188,14 @@ export function ContinuedImportEditor({
   useEffect(() => {
     if (!importing) setSubmittedOrder(null);
   }, [importing]);
+
+  useEffect(() => {
+    if (!opened) {
+      setInspectionRequested(false);
+      setSubmittedOrder(null);
+      setAcknowledged(new Set());
+    }
+  }, [opened]);
 
   const disabled = inspectionQuery.isPending || importing || submittedOrder !== null;
   const move = (index: number, direction: -1 | 1) => {
@@ -256,6 +266,18 @@ export function ContinuedImportEditor({
             searchable
           />
           <Button
+            variant="default"
+            leftSection={<IconSearch size={16} />}
+            disabled={orderedDrafts.length < 2 || importing || submittedOrder !== null}
+            loading={inspectionQuery.isFetching}
+            onClick={() => {
+              setInspectionRequested(true);
+              void inspectionQuery.refetch();
+            }}
+          >
+            Inspect continuity
+          </Button>
+          <Button
             leftSection={<IconDeviceFloppy size={16} />}
             disabled={!canImport || disabled}
             loading={importing}
@@ -274,12 +296,17 @@ export function ContinuedImportEditor({
           </Button>
         </Alert>
       )}
+      {!inspectionRequested && orderedDrafts.length >= 2 && (
+        <Alert color="blue">
+          Continuity inspection is deferred until you explicitly request it.
+        </Alert>
+      )}
       {inspectionQuery.isError && (
         <Alert color="red" title="Inspection failed">
           {inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuation inspection failed."}
         </Alert>
       )}
-      {inspectionQuery.isPending && (
+      {inspectionRequested && inspectionQuery.isPending && (
         <Alert color="blue">Preparing source timing, local cycles, and protocol compatibility…</Alert>
       )}
       {result && !result.inspection_complete && !inspectionQuery.isPending && (

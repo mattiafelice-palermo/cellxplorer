@@ -389,11 +389,11 @@ function FolderImportSelectionModal({
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
   const previewQuery = useQuery({
     queryKey: ["folder-import-preview", focusedCandidate?.path],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       post<ImportPreviewResult>("/api/imports/preview", {
         staged_name: "folder-selection-preview",
         source_path: focusedCandidate?.path,
-      }),
+      }, { signal }),
     enabled: opened && Boolean(focusedCandidate?.path),
     staleTime: Infinity,
   });
@@ -1426,6 +1426,7 @@ function ImportModal({
   const [newGroupName, setNewGroupName] = useState("");
   const [continuedMode, setContinuedMode] = useState(false);
   const [registerToken, setRegisterToken] = useState<string | null>(null);
+  const [registrationAccepted, setRegistrationAccepted] = useState(false);
   const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
@@ -1468,6 +1469,8 @@ function ImportModal({
       setReplicateGroups([]);
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
       setContinuedMode(false);
+      setRegistrationAccepted(false);
+      setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
     } else {
       rawRequestVersion.current += 1;
@@ -1477,6 +1480,8 @@ function ImportModal({
       setRawData(null);
       setRawLoading(false);
       setRawError(null);
+      setRegistrationAccepted(false);
+      setRegisterToken(null);
     }
   }, [opened, targetFolderId]);
 
@@ -1736,7 +1741,7 @@ function ImportModal({
           (Date.now() - (registerStartedAt.current ?? Date.now())) / 1000,
         ),
       });
-      setRegisterToken(null);
+      setRegistrationAccepted(true);
       const importedLabel = `${submittedCells} cell${submittedCells === 1 ? "" : "s"}`;
       notifications.show({
         message: `${importedLabel} accepted. Registration and cycling data preparation continue in the background.`,
@@ -1748,7 +1753,6 @@ function ImportModal({
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
-      onSaved();
     },
     onError: (e: Error, variables) => {
       if (variables?.mode === "continued") {
@@ -1758,6 +1762,18 @@ function ImportModal({
     },
   });
   const registerProgress = useImportJobProgress(registerToken, Boolean(registerToken));
+
+  useEffect(() => {
+    if (!registrationAccepted || !registerProgress.data) return;
+    if (registerProgress.data.status === "completed") {
+      void qc.invalidateQueries({ queryKey: ["cells"] });
+      void qc.invalidateQueries({ queryKey: ["files"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["replicate-groups"] });
+      void qc.invalidateQueries({ queryKey: ["background-jobs"] });
+      void qc.invalidateQueries({ queryKey: ["activity"] });
+    }
+  }, [qc, registerProgress.data, registrationAccepted]);
 
   const groupNames = replicateGroups.map((group) => group.name.trim()).filter(Boolean);
   const duplicateGroupName = new Set(groupNames).size !== groupNames.length;
@@ -1818,9 +1834,23 @@ function ImportModal({
               job={registerProgress.data}
               error={save.isError && save.error instanceof Error ? save.error.message : null}
             />
+            {registrationAccepted && (
+              <Group justify="space-between" align="center" px="sm" pb="sm">
+                <Text size="sm" c="dimmed">
+                  Registration is running in the background. You can keep watching here or continue working.
+                </Text>
+                <Button size="compact-sm" onClick={onSaved}>
+                  Continue in background
+                </Button>
+              </Group>
+            )}
           </Paper>
         )}
         {draft && (
+          <fieldset
+            disabled={registrationAccepted || save.isPending}
+            style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
+          >
           <Stack gap="md">
             {drafts.length >= 2 && (
               <SegmentedControl
@@ -1855,6 +1885,7 @@ function ImportModal({
                 onImport={(order, acknowledgedFindingIds) => {
                   const jobToken = newImportJobToken();
                   registerStartedAt.current = Date.now();
+                  setRegistrationAccepted(false);
                   setRegisterToken(jobToken);
                   save.mutate({
                     mode: "continued",
@@ -1918,6 +1949,7 @@ function ImportModal({
                   onClick={() => {
                     const jobToken = newImportJobToken();
                     registerStartedAt.current = Date.now();
+                    setRegistrationAccepted(false);
                     setRegisterToken(jobToken);
                     save.mutate({ mode: "separate", jobToken });
                   }}
@@ -2548,6 +2580,7 @@ function ImportModal({
             </Stack>
             )}
           </Stack>
+          </fieldset>
         )}
       </Modal>
 

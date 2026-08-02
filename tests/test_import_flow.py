@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 import os
+from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,7 +16,7 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, CellMetadata, SourceFile, Test, TestFile
+from app.models import Cell, CellMetadata, ImportSubmission, SourceFile, Test, TestFile
 from app.routers import files
 from app.routers import library
 from app.services import parsing
@@ -166,6 +167,49 @@ class ImportFlowTests(unittest.TestCase):
         db.rollback.assert_called_once()
         background_jobs.clear_jobs()
 
+    def test_registration_worker_setup_failure_marks_job_failed(self):
+        background_jobs.clear_jobs()
+        job_id = background_jobs.create_job(
+            kind="import_register",
+            title="Registering imported cells",
+            description="Validating and registering Cells",
+            total=1,
+            token="setup-failure",
+        )
+        with patch.object(files, "SessionLocal", side_effect=RuntimeError("session unavailable")):
+            files.run_import_registration_job(
+                files.ImportCellsRequest(
+                    cells=[files.ImportCellDraft(staged_name="x.ndax", filename="x.ndax", cell_name="Broken")],
+                    job_token="setup-failure",
+                ),
+                job_id,
+            )
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("session unavailable", job["error"])
+        background_jobs.clear_jobs()
+
+    def test_cache_worker_setup_failure_marks_job_failed(self):
+        background_jobs.clear_jobs()
+        job_id = background_jobs.create_job(
+            kind="import_cache",
+            title="Preparing imported cells",
+            description="Building cycling caches",
+            total=1,
+            items=[{"id": "x.ndax", "label": "x.ndax"}],
+        )
+        with patch.object(files, "SessionLocal", side_effect=RuntimeError("session unavailable")):
+            files.run_import_cache_jobs(
+                {"x.ndax": 1},
+                [{"staged_name": "x.ndax", "hash": "hash", "path": "C:/data/x.ndax"}],
+                job_id,
+            )
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("session unavailable", job["error"])
+        self.assertEqual(job["items"][0]["status"], "failed")
+        background_jobs.clear_jobs()
+
     def test_import_submission_returns_before_registration_worker_finishes(self):
         background_jobs.clear_jobs()
         request = files.ImportCellsRequest(
@@ -199,6 +243,99 @@ class ImportFlowTests(unittest.TestCase):
         with self.assertRaises(files.HTTPException) as raised:
             files.create_imported_cells(changed)
         self.assertEqual(raised.exception.status_code, 409)
+        background_jobs.clear_jobs()
+
+    def test_durable_import_submission_is_idempotent_across_live_job_loss(self):
+        background_jobs.clear_jobs()
+        db = self.make_session()
+        request = files.ImportCellsRequest(
+            cells=[files.ImportCellDraft(staged_name="x.ndax", filename="x.ndax", cell_name="Durable")],
+            job_token="durable-submission",
+        )
+        with patch.object(files, "run_import_registration_job") as worker:
+            first = files._accept_imported_cells(request, db=db)
+        original_job_id = first["job_id"]
+        background_jobs.clear_jobs()
+
+        second = files._accept_imported_cells(request, db=db)
+
+        self.assertEqual(second["job_id"], original_job_id)
+        self.assertEqual(second["status"], "accepted")
+        self.assertEqual(db.query(ImportSubmission).count(), 1)
+        worker.assert_called_once()
+        background_jobs.clear_jobs()
+
+    def test_real_registration_worker_commits_cells_before_cache_handoff(self):
+        background_jobs.clear_jobs()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            database_path = root / "worker.db"
+            engine = create_engine(
+                f"sqlite:///{database_path.as_posix()}",
+                connect_args={"check_same_thread": False},
+            )
+            Base.metadata.create_all(engine)
+            factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+            source_path = root / "cold.ndax"
+            source_path.write_bytes(b"cold-cache-registration")
+            request = files.ImportCellsRequest(
+                cells=[files.ImportCellDraft(
+                    staged_name="cold.ndax",
+                    source_path=str(source_path),
+                    filename="cold.ndax",
+                    cell_name="Cold worker cell",
+                )],
+                job_token="real-worker-import",
+            )
+            request_db = factory()
+            submission = ImportSubmission(
+                token=request.job_token,
+                fingerprint="b" * 64,
+                job_id=1,
+                submitted_cells=1,
+                submitted_sources=1,
+                status="accepted",
+            )
+            request_db.add(submission)
+            request_db.commit()
+            job_id = background_jobs.create_job(
+                kind="import_register",
+                title="Registering imported cells",
+                description="Validating and registering Cells",
+                total=1,
+                token=request.job_token,
+                fingerprint="b" * 64,
+                items=[{"id": "0", "label": "cold.ndax"}],
+            )
+            submission.job_id = job_id
+            request_db.commit()
+            committed_counts = []
+
+            def capture_cache_handoff(file_ids, jobs):
+                observer = factory()
+                try:
+                    committed_counts.append(observer.query(Cell).count())
+                finally:
+                    observer.close()
+                return {"queued": True, "count": len(jobs), "job_id": 99, "status": "running"}
+
+            with patch.object(files, "SessionLocal", side_effect=factory), \
+                patch.object(files, "start_import_cache_jobs", side_effect=capture_cache_handoff), \
+                patch.object(files.parsing, "read_header_metadata", return_value={}):
+                files.run_import_registration_job(request, job_id, submission.id)
+
+            observer = factory()
+            try:
+                self.assertEqual(observer.query(Cell).count(), 1)
+                self.assertEqual(observer.query(SourceFile).one().parse_status, "parsing")
+                stored_submission = observer.get(ImportSubmission, submission.id)
+                self.assertEqual(stored_submission.status, "completed")
+            finally:
+                observer.close()
+            self.assertEqual(committed_counts, [1])
+            self.assertEqual(background_jobs.get_job(job_id)["status"], "completed")
+            request_db.close()
+            engine.dispose()
         background_jobs.clear_jobs()
 
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
@@ -684,39 +821,53 @@ class ImportFlowTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-            def map(self, fn, jobs):
-                job_list = list(jobs)
-                FakeExecutor.calls.append(("map", len(job_list)))
-                return [
+            def submit(self, fn, job):
+                FakeExecutor.calls.append(("submit", job["staged_name"]))
+                future = Future()
+                future.set_result(
                     {
+                        "staged_name": job["staged_name"],
                         "hash": job["hash"],
                         "rows": 10,
                         "cycles": 2,
                         "parser_version": "parser-test",
                         "calc_version": "calc-test",
                     }
-                    for job in job_list
-                ]
+                )
+                return future
 
         jobs = [
-            {"staged_name": "a.ndax", "hash": "hash-a", "path": "C:/data/a.ndax"},
-            {"staged_name": "b.ndax", "hash": "hash-b", "path": "C:/data/b.ndax"},
+            {"staged_name": f"file-{index}.ndax", "hash": f"hash-{index}", "path": f"C:/data/{index}.ndax"}
+            for index in range(26)
         ]
 
         reported = []
-        results = files.build_import_caches_parallel(
-            jobs,
-            executor_cls=FakeExecutor,
-            max_workers=8,
-            progress_callback=lambda job, result: reported.append(
-                (job["staged_name"], result["staged_name"])
+        with patch.object(files.os, "cpu_count", return_value=8):
+            results = files.build_import_caches_parallel(
+                jobs,
+                executor_cls=FakeExecutor,
+                max_workers=8,
+                progress_callback=lambda job, result: reported.append(
+                    (job["staged_name"], result["staged_name"])
+                ),
+            )
+
+        self.assertEqual(FakeExecutor.calls[0], ("init", 4))
+        self.assertEqual(FakeExecutor.calls[1:], [("submit", f"file-{index}.ndax") for index in range(26)])
+        self.assertEqual(results["file-0.ndax"]["rows"], 10)
+        self.assertEqual(results["file-25.ndax"]["parser_version"], "parser-test")
+        self.assertEqual(
+            sorted(reported),
+            sorted(
+                (f"file-{index}.ndax", f"file-{index}.ndax")
+                for index in range(26)
             ),
         )
 
-        self.assertEqual(FakeExecutor.calls, [("init", 2), ("map", 2)])
-        self.assertEqual(results["a.ndax"]["rows"], 10)
-        self.assertEqual(results["b.ndax"]["parser_version"], "parser-test")
-        self.assertEqual(reported, [("a.ndax", "a.ndax"), ("b.ndax", "b.ndax")])
+    def test_import_cache_worker_count_uses_serial_threshold(self):
+        with patch.object(files.os, "cpu_count", return_value=8):
+            self.assertEqual(files.import_cache_worker_count(25, max_workers=8), 1)
+            self.assertEqual(files.import_cache_worker_count(26, max_workers=8), 4)
 
     def test_create_imported_cells_starts_cache_jobs_after_committing_import(self):
         db = self.make_session()
@@ -733,20 +884,9 @@ class ImportFlowTests(unittest.TestCase):
                 return {"queued": True, "count": len(jobs), "job_id": 99, "status": "running"}
 
             files.start_import_cache_jobs = capture_cache_jobs
-            files._inspect_cell_draft_chain = lambda draft, db, **kwargs: {
-                "can_submit": True,
-                "inspection_complete": True,
-                "findings": [],
-                "sources": [
-                    {
-                        "key": source.staged_name,
-                        "kind": "staged",
-                        "hash": "import-test-hash",
-                        "inspection_status": "ready",
-                    }
-                    for source in files.normalize_import_cell_sources(draft)
-                ],
-            }
+            files._inspect_cell_draft_chain = Mock(
+                side_effect=AssertionError("separate-cell import must not inspect continuation timing")
+            )
             parsing.compute_hash = lambda _path: "import-test-hash"
             parsing.read_header_metadata = lambda _path: {"builder": "test"}
             try:
@@ -772,6 +912,7 @@ class ImportFlowTests(unittest.TestCase):
                     ),
                     db=db,
                 )
+                files._inspect_cell_draft_chain.assert_not_called()
             finally:
                 files.start_import_cache_jobs = original_start
                 files._inspect_cell_draft_chain = original_inspect

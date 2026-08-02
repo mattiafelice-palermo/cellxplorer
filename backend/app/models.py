@@ -400,6 +400,24 @@ class ActivityEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class ImportSubmission(Base):
+    """Durable claim and terminal state for a submitted import token."""
+
+    __tablename__ = "import_submissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    submitted_cells: Mapped[int] = mapped_column(Integer, default=0)
+    submitted_sources: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="accepted", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AppSession(Base):
     """One desktop/backend run, retained for uptime and startup diagnostics."""
 

@@ -86,6 +86,14 @@ export function importProgressCountLabel(
       return `Finalizing import review ${job.phase_current ?? 0} of ${job.phase_total ?? job.total}`;
     }
   }
+  if (stage === "register") {
+    if (job.phase === "validation") {
+      return `Validating ${job.phase_current ?? 0} of ${job.phase_total ?? job.total} selected cell${(job.phase_total ?? job.total) === 1 ? "" : "s"}`;
+    }
+    if (job.phase === "registration") {
+      return `Registering ${job.phase_current ?? 0} of ${job.phase_total ?? job.total} selected cell${(job.phase_total ?? job.total) === 1 ? "" : "s"}`;
+    }
+  }
   const unit = stage === "register" ? "cell" : "file";
   return `${job.completed} of ${job.total} ${unit}${job.total === 1 ? "" : "s"}`;
 }

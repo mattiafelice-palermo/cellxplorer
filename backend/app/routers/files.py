@@ -16,6 +16,7 @@ from ..services import import_inspection
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION, IMPORT_DIR
@@ -31,6 +32,7 @@ from ..models import (
     ProjectCell,
     ReplicateGroup,
     ReplicateGroupCell,
+    ImportSubmission,
     SourceFile,
     AppSetting,
     Test,
@@ -386,8 +388,13 @@ def _build_import_cache_worker(job: dict) -> dict:
 
 
 def import_cache_worker_count(n_jobs: int, max_workers: int | None = None) -> int:
-    available = max_workers or os.cpu_count() or 1
-    return max(1, min(n_jobs, available))
+    if n_jobs <= 25:
+        return 1
+    logical_cpus = os.cpu_count() or 1
+    cap = min(4, max(1, logical_cpus // 2), n_jobs)
+    if max_workers is not None:
+        cap = min(cap, max(1, int(max_workers)))
+    return max(1, cap)
 
 
 def build_import_caches_parallel(
@@ -414,7 +421,13 @@ def build_import_caches_parallel(
     pool = process_pool_executor(worker_count) if executor_cls is ProcessPoolExecutor else executor_cls(max_workers=worker_count)
     with pool as executor:
         results = {}
-        for job, result in zip(jobs, executor.map(_build_import_cache_worker, jobs)):
+        futures = {
+            executor.submit(_build_import_cache_worker, job): job
+            for job in jobs
+        }
+        for future in as_completed(futures):
+            job = futures[future]
+            result = future.result()
             normalized = {
                 **result,
                 "staged_name": result.get("staged_name", job["staged_name"]),
@@ -456,9 +469,10 @@ def run_import_cache_jobs(
     cache_jobs: list[dict],
     background_job_id: int,
 ) -> None:
-    apply_background_thread_priority()
-    db = SessionLocal()
+    db: Session | None = None
     try:
+        apply_background_thread_priority()
+        db = SessionLocal()
         for cache_job in cache_jobs:
             background_jobs.update_item(
                 background_job_id,
@@ -467,6 +481,11 @@ def run_import_cache_jobs(
             )
 
         def report_progress(cache_job: dict, result: dict) -> None:
+            apply_import_cache_results(
+                db,
+                {cache_job["staged_name"]: source_file_ids_by_staged_name[cache_job["staged_name"]]},
+                {cache_job["staged_name"]: result},
+            )
             background_jobs.record_result(
                 background_job_id,
                 cache_job["staged_name"],
@@ -480,7 +499,6 @@ def run_import_cache_jobs(
             cache_jobs,
             progress_callback=report_progress,
         )
-        apply_import_cache_results(db, source_file_ids_by_staged_name, cache_results)
         failed = sum(1 for result in cache_results.values() if not result.get("ok"))
         background_jobs.update_job(
             background_job_id,
@@ -508,27 +526,28 @@ def run_import_cache_jobs(
         db.commit()
     except Exception as exc:
         error = f"Cell registration succeeded; cycling cache preparation failed: {exc}"
-        for source_file_id in set(source_file_ids_by_staged_name.values()):
-            sf = db.get(SourceFile, source_file_id)
-            if sf is None:
-                continue
-            sf.parse_status = "error"
-            sf.parse_error = error
-            sf.capacity_summary_status = "error"
-        db.commit()
-        record_activity(
-            db,
-            category="import",
-            action="prepare_import_caches",
-            message="Cell registration succeeded; cycling cache preparation failed",
-            severity="error",
-            details={
-                "background_job_id": background_job_id,
-                "source_file_ids": list(source_file_ids_by_staged_name.values()),
-                "error": error,
-            },
-        )
-        db.commit()
+        if db is not None:
+            for source_file_id in set(source_file_ids_by_staged_name.values()):
+                sf = db.get(SourceFile, source_file_id)
+                if sf is None:
+                    continue
+                sf.parse_status = "error"
+                sf.parse_error = error
+                sf.capacity_summary_status = "error"
+            db.commit()
+            record_activity(
+                db,
+                category="import",
+                action="prepare_import_caches",
+                message="Cell registration succeeded; cycling cache preparation failed",
+                severity="error",
+                details={
+                    "background_job_id": background_job_id,
+                    "source_file_ids": list(source_file_ids_by_staged_name.values()),
+                    "error": error,
+                },
+            )
+            db.commit()
         for cache_job in cache_jobs:
             background_jobs.update_item(
                 background_job_id,
@@ -543,7 +562,8 @@ def run_import_cache_jobs(
             error=error,
         )
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 def start_import_cache_jobs(
@@ -1701,25 +1721,6 @@ def _validate_staged_source_snapshots(
         _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
 
 
-def _mark_existing_import_cache_ready(sf: SourceFile, source_path: Path) -> bool:
-    """Adopt a complete current-version cache without queuing duplicate work."""
-    try:
-        if not cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file():
-            return False
-        if not cache.has_cycles(sf.hash, parsing.PARSER_VERSION, CALC_VERSION):
-            return False
-        info = cache.build(sf.hash, source_path)
-    except Exception:
-        return False
-    sf.parse_status = "parsed"
-    sf.parse_error = None
-    sf.parser_version = info["parser_version"]
-    sf.row_count = info["rows"]
-    sf.cycle_count = info["cycles"]
-    scanner.apply_capacity_summary(sf, info)
-    return True
-
-
 def _register_or_refresh_source_file(
     db: Session,
     *,
@@ -2096,21 +2097,53 @@ def _create_imported_cells_impl(
     source_file_ids_by_staged_name: dict[str, int] = {}
     cache_jobs: list[dict] = []
     inspected_hashes_by_staged_name: dict[str, str] = {}
+    continuation_drafts = [
+        draft
+        for draft in req.cells
+        if len(normalize_import_cell_sources(draft)) > 1
+        or bool(draft.acknowledged_finding_ids)
+    ]
+    continuation_draft_ids = {id(draft) for draft in continuation_drafts}
+    existing_cell_names = {name for (name,) in db.query(Cell.name).all()}
+    submitted_cell_names: set[str] = set()
 
     for draft_index, draft in enumerate(req.cells):
+        name = draft.cell_name.strip()
+        if not name:
+            raise HTTPException(400, "Every imported cell needs a name")
+        if name in existing_cell_names or name in submitted_cell_names:
+            raise HTTPException(409, f"Cell already exists: {name}")
+        submitted_cell_names.add(name)
         if job_id is not None:
             sources = normalize_import_cell_sources(draft)
             background_jobs.update_job(
                 job_id,
                 stage="register",
+                phase="validation",
+                phase_current=draft_index + 1,
+                phase_total=len(req.cells),
+                phase_detail="Checking source identity and import constraints",
                 current_item_id=str(draft_index),
                 current_item_label=draft.cell_name.strip() or sources[0].filename,
             )
-        name = draft.cell_name.strip()
-        if not name:
-            raise HTTPException(400, "Every imported cell needs a name")
-        if db.query(Cell).filter(Cell.name == name).first() is not None:
-            raise HTTPException(409, f"Cell already exists: {name}")
+        if id(draft) not in continuation_draft_ids:
+            # Separate-cell registration needs only source identity, header
+            # metadata and relational validation.  Continuation analysis is
+            # the path that may schedule timing/cache work, so keep it out of
+            # the pre-commit separate-cell path.
+            continue
+        if job_id is not None:
+            sources = normalize_import_cell_sources(draft)
+            background_jobs.update_job(
+                job_id,
+                stage="register",
+                phase="validation",
+                phase_current=draft_index + 1,
+                phase_total=len(req.cells),
+                phase_detail="Checking continuation compatibility",
+                current_item_id=str(draft_index),
+                current_item_label=draft.cell_name.strip() or sources[0].filename,
+            )
         normalize_import_cell_sources(draft)
         analysis = _inspect_cell_draft_chain(draft, db)
         for source in analysis.get("sources") or []:
@@ -2124,14 +2157,15 @@ def _create_imported_cells_impl(
         except continuations.ContinuationValidationError as exc:
             _raise_continuation_validation(exc)
 
-    _validate_staged_source_snapshots(
-        [
-            source
-            for draft in req.cells
-            for source in normalize_import_cell_sources(draft)
-        ],
-        inspected_hashes_by_staged_name,
-    )
+    if continuation_drafts:
+        _validate_staged_source_snapshots(
+            [
+                source
+                for draft in continuation_drafts
+                for source in normalize_import_cell_sources(draft)
+            ],
+            inspected_hashes_by_staged_name,
+        )
 
     for draft_index, draft in enumerate(req.cells):
         if job_id is not None:
@@ -2139,6 +2173,10 @@ def _create_imported_cells_impl(
             background_jobs.update_job(
                 job_id,
                 stage="register",
+                phase="registration",
+                phase_current=draft_index + 1,
+                phase_total=len(req.cells),
+                phase_detail="Preparing relational Cell registration",
                 current_item_id=str(draft_index),
                 current_item_label=draft.cell_name.strip() or sources[0].filename,
             )
@@ -2222,14 +2260,16 @@ def _create_imported_cells_impl(
             sf.capacity_summary_status = "pending"
             db.flush()
             source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
-            if not _mark_existing_import_cache_ready(sf, source_path):
-                cache_jobs.append(
-                    {
-                        "staged_name": source_draft.staged_name,
-                        "hash": sf.hash,
-                        "path": str(source_path),
-                    }
-                )
+            # Even a warm cache is handed off after the relational commit. A
+            # cache hit can then be adopted by the background worker without
+            # allowing scientific reads or summaries inside this transaction.
+            cache_jobs.append(
+                {
+                    "staged_name": source_draft.staged_name,
+                    "hash": sf.hash,
+                    "path": str(source_path),
+                }
+            )
             created_source_ids.append(sf.id)
 
         if replicate_key not in grouped_staged_names:
@@ -2263,13 +2303,6 @@ def _create_imported_cells_impl(
         )
         created_cell_ids.append(cell.id)
         cell_ids_by_staged_name[replicate_key] = cell.id
-        if job_id is not None:
-            background_jobs.record_result(
-                job_id,
-                str(draft_index),
-                status="ready",
-                detail="Cell staged for commit",
-            )
 
     replicate_groups = []
     for planned_group in replicate_plan["groups"]:
@@ -2315,8 +2348,19 @@ def _create_imported_cells_impl(
     )
     db.commit()
     if job_id is not None:
+        for draft_index in range(len(req.cells)):
+            background_jobs.record_result(
+                job_id,
+                str(draft_index),
+                status="ready",
+                detail="Cell registration committed",
+            )
         background_jobs.update_job(
             job_id,
+            phase="completed",
+            phase_current=len(req.cells),
+            phase_total=len(req.cells),
+            phase_detail="Relational registration committed; scientific preparation continues separately",
             stage="register",
             status="completed",
             description="Cell registration committed",
@@ -2331,16 +2375,37 @@ def _create_imported_cells_impl(
     }
 
 
-def run_import_registration_job(req: ImportCellsRequest, background_job_id: int) -> None:
+def _import_submission_response(
+    submission: ImportSubmission,
+    *,
+    fallback_status: str | None = None,
+) -> dict:
+    live_job = background_jobs.get_job(submission.job_id) if submission.job_id is not None else None
+    return {
+        "accepted": True,
+        "job_id": submission.job_id,
+        "job_token": submission.token,
+        "submitted_cells": submission.submitted_cells,
+        "submitted_sources": submission.submitted_sources,
+        "status": (live_job or {}).get("status") or submission.status or fallback_status or "accepted",
+    }
+
+
+def run_import_registration_job(
+    req: ImportCellsRequest,
+    background_job_id: int,
+    submission_id: int | None = None,
+) -> None:
     """Register an accepted import outside the request thread.
 
     The request payload is already copied before this worker is started. The
     worker owns its SQLAlchemy session and rolls it back on every pre-commit
     failure, while the cache handoff remains post-commit work.
     """
-    apply_background_thread_priority()
-    db = SessionLocal()
+    db: Session | None = None
     try:
+        apply_background_thread_priority()
+        db = SessionLocal()
         record_activity(
             db,
             category="import",
@@ -2351,6 +2416,11 @@ def run_import_registration_job(req: ImportCellsRequest, background_job_id: int)
                 "submitted_cells": len(req.cells),
             },
         )
+        if submission_id is not None:
+            submission = db.get(ImportSubmission, submission_id)
+            if submission is not None:
+                submission.status = "running"
+                submission.started_at = datetime.now(timezone.utc)
         db.commit()
         result = _create_imported_cells_impl(req, db, job_id=background_job_id)
         record_activity(
@@ -2363,6 +2433,12 @@ def run_import_registration_job(req: ImportCellsRequest, background_job_id: int)
                 "cell_ids": [item["cell_id"] for item in result.get("created", [])],
             },
         )
+        if submission_id is not None:
+            submission = db.get(ImportSubmission, submission_id)
+            if submission is not None:
+                submission.status = "completed"
+                submission.error = None
+                submission.finished_at = datetime.now(timezone.utc)
         db.commit()
         background_jobs.update_job(
             background_job_id,
@@ -2375,22 +2451,31 @@ def run_import_registration_job(req: ImportCellsRequest, background_job_id: int)
             ),
         )
     except Exception as exc:
-        db.rollback()
-        try:
-            record_activity(
-                db,
-                category="import",
-                action="import_registration_failed",
-                message="Imported Cell registration failed",
-                severity="error",
-                details={
-                    "background_job_id": background_job_id,
-                    "error": _import_job_error(exc),
-                },
-            )
-            db.commit()
-        except Exception:
+        if db is not None:
             db.rollback()
+        try:
+            if submission_id is not None and db is not None:
+                submission = db.get(ImportSubmission, submission_id)
+                if submission is not None:
+                    submission.status = "failed"
+                    submission.error = _import_job_error(exc)
+                    submission.finished_at = datetime.now(timezone.utc)
+            if db is not None:
+                record_activity(
+                    db,
+                    category="import",
+                    action="import_registration_failed",
+                    message="Imported Cell registration failed",
+                    severity="error",
+                    details={
+                        "background_job_id": background_job_id,
+                        "error": _import_job_error(exc),
+                    },
+                )
+                db.commit()
+        except Exception:
+            if db is not None:
+                db.rollback()
         background_jobs.update_job(
             background_job_id,
             status="failed",
@@ -2398,10 +2483,11 @@ def run_import_registration_job(req: ImportCellsRequest, background_job_id: int)
             description="Cell registration failed",
         )
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
-def _accept_imported_cells(req: ImportCellsRequest):
+def _accept_imported_cells(req: ImportCellsRequest, *, db: Session | None = None):
     if not req.cells:
         raise HTTPException(400, "No files selected")
     frozen_request = req.model_copy(deep=True)
@@ -2432,6 +2518,45 @@ def _accept_imported_cells(req: ImportCellsRequest):
         token=frozen_request.job_token,
         fingerprint=submission_fingerprint,
     )
+    submission = None
+    if frozen_request.job_token and db is not None:
+        submission = db.query(ImportSubmission).filter(
+            ImportSubmission.token == frozen_request.job_token
+        ).first()
+        if submission is not None:
+            if submission.fingerprint != submission_fingerprint:
+                if created:
+                    background_jobs.discard_job(job_id)
+                raise HTTPException(409, "This import submission token was already used for another payload")
+            if created:
+                background_jobs.discard_job(job_id)
+            return _import_submission_response(submission)
+        submission = ImportSubmission(
+            token=frozen_request.job_token,
+            fingerprint=submission_fingerprint,
+            job_id=job_id,
+            submitted_cells=len(frozen_request.cells),
+            submitted_sources=submitted_sources,
+            status="accepted",
+        )
+        db.add(submission)
+        try:
+            db.commit()
+            db.refresh(submission)
+        except IntegrityError:
+            db.rollback()
+            if created:
+                background_jobs.discard_job(job_id)
+            submission = db.query(ImportSubmission).filter(
+                ImportSubmission.token == frozen_request.job_token
+            ).first()
+            if submission is None:
+                raise
+            if submission.fingerprint != submission_fingerprint:
+                if created:
+                    background_jobs.discard_job(job_id)
+                raise HTTPException(409, "This import submission token was already used for another payload")
+            return _import_submission_response(submission)
     existing = background_jobs.get_job(job_id)
     if not created:
         if existing and existing.get("payload_fingerprint") != submission_fingerprint:
@@ -2447,7 +2572,7 @@ def _accept_imported_cells(req: ImportCellsRequest):
     background_jobs.update_job(job_id, stage="register", total_bytes=0)
     thread = threading.Thread(
         target=run_import_registration_job,
-        args=(frozen_request, job_id),
+        args=(frozen_request, job_id, submission.id if submission is not None else None),
         daemon=True,
     )
     thread.start()
@@ -2462,8 +2587,8 @@ def _accept_imported_cells(req: ImportCellsRequest):
 
 
 @router.post("/imports/cells", status_code=202)
-def create_imported_cells_endpoint(req: ImportCellsRequest):
-    return _accept_imported_cells(req)
+def create_imported_cells_endpoint(req: ImportCellsRequest, db: Session = Depends(get_db)):
+    return _accept_imported_cells(req, db=db)
 
 
 def create_imported_cells(req: ImportCellsRequest, db: Session | None = None):

@@ -214,3 +214,9 @@ def clear_jobs() -> None:
     with _lock:
         _jobs.clear()
         _next_id = 1
+
+
+def discard_job(job_id: int) -> None:
+    """Remove an in-memory claim when durable submission claiming loses a race."""
+    with _lock:
+        _jobs.pop(int(job_id), None)

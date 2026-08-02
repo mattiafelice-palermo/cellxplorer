@@ -88,6 +88,23 @@ test("inspection progress explains sampling, worker startup, and finalization", 
   assert.equal(importProgressCurrentLabel("inspect", job({ phase: "finalizing", phase_detail: "Combining metadata" })), "Combining metadata");
 });
 
+test("registration progress distinguishes validation from durable commit", () => {
+  assert.equal(
+    importProgressCountLabel(
+      "register",
+      job({ phase: "validation", phase_current: 2, phase_total: 10, completed: 0 }),
+    ),
+    "Validating 2 of 10 selected cells",
+  );
+  assert.equal(
+    importProgressCountLabel(
+      "register",
+      job({ phase: "registration", phase_current: 4, phase_total: 10, completed: 0 }),
+    ),
+    "Registering 4 of 10 selected cells",
+  );
+});
+
 test("inspection estimate is explicitly presented as a sampled total", () => {
   const estimate = importRemainingEstimate(
     job({ estimated_total_seconds: 12, estimate_scope: "total", completed: 1 }),
