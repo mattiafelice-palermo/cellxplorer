@@ -163,6 +163,16 @@ def update_item(job_id: int, item_id: str | int, **values) -> None:
         job = _jobs.get(job_id)
         if job is None:
             return
+        if (
+            job.get("kind") == "import_cache"
+            and job.get("phase") == "queued"
+            and values.get("status") == "processing"
+        ):
+            job.update(
+                phase="processing",
+                phase_detail="Preparing cycling caches",
+                description=f"Building cycling caches for {job['total']} files",
+            )
         target = str(item_id)
         for item in job["items"]:
             if item["id"] == target:
