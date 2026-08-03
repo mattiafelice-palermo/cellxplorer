@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import threading
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 
 _lock = threading.Lock()
 _jobs: dict[int, dict] = {}
 _next_id = 1
+
+# Large imports start CPU-heavy cache workers only after the committed Cell rows
+# have had time to reach the detached frontend. The registration job is already
+# durable before the import_cache job is created, so this is a UI handoff gate,
+# not part of the database transaction or scientific calculation.
+LARGE_IMPORT_CACHE_THRESHOLD = 25
+LARGE_IMPORT_CACHE_HANDOFF_SECONDS = 3.0
 
 
 def _now() -> str:
@@ -71,7 +79,7 @@ def create_job(
     token: str | None = None,
     fingerprint: str | None = None,
 ) -> int:
-    return create_or_get_job(
+    job_id, created = create_or_get_job(
         kind=kind,
         title=title,
         description=description,
@@ -79,7 +87,18 @@ def create_job(
         items=items,
         token=token,
         fingerprint=fingerprint,
-    )[0]
+    )
+    if created and kind == "import_cache" and total > LARGE_IMPORT_CACHE_THRESHOLD:
+        update_job(
+            job_id,
+            phase="queued",
+            phase_current=0,
+            phase_total=max(0, int(total)),
+            phase_detail="Committed Cells are becoming visible before scientific preparation starts",
+            description="Queued after Cell registration",
+        )
+        time.sleep(LARGE_IMPORT_CACHE_HANDOFF_SECONDS)
+    return job_id
 
 
 def create_or_get_job(
