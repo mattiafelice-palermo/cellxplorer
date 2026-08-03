@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
@@ -85,6 +86,33 @@ class BackgroundJobTests(unittest.TestCase):
         self.assertIsNone(job["current_item_id"])
         self.assertIsNone(job["current_item_label"])
 
+    def test_large_import_cache_job_waits_for_the_ui_handoff(self):
+        with patch.object(background_jobs.time, "sleep") as sleep:
+            job_id = background_jobs.create_job(
+                kind="import_cache",
+                title="Preparing imported cells",
+                description="Building caches",
+                total=background_jobs.LARGE_IMPORT_CACHE_THRESHOLD + 1,
+            )
+
+        sleep.assert_called_once_with(background_jobs.LARGE_IMPORT_CACHE_HANDOFF_SECONDS)
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["phase"], "queued")
+        self.assertEqual(job["phase_current"], 0)
+        self.assertEqual(job["phase_total"], background_jobs.LARGE_IMPORT_CACHE_THRESHOLD + 1)
+        self.assertIn("becoming visible", job["phase_detail"])
+
+    def test_small_import_cache_job_starts_without_the_large_batch_grace(self):
+        with patch.object(background_jobs.time, "sleep") as sleep:
+            job_id = background_jobs.create_job(
+                kind="import_cache",
+                title="Preparing imported cells",
+                description="Building caches",
+                total=background_jobs.LARGE_IMPORT_CACHE_THRESHOLD,
+            )
+
+        sleep.assert_not_called()
+        self.assertIsNone(background_jobs.get_job(job_id).get("phase"))
 
     def test_jobs_are_findable_by_client_token(self):
         """Compute endpoints open a job only when the cache misses.
