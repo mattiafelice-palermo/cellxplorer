@@ -130,22 +130,33 @@ def ensure_cell_caches(db: Session, cell: Cell) -> None:
 
 
 def delete_empty_replicate_groups(db: Session) -> list[int]:
-    group_ids = [row[0] for row in db.query(ReplicateGroup.id).all()]
+    """Remove replicate groups that no longer reference any cell.
+
+    One aggregate query, not a COUNT per group. Call this once after a batch of
+    cell deletions rather than once per cell: at 20 groups the per-cell form
+    issued ~21,000 reads to delete 1,000 cells.
+    """
+    empty_group_ids = [
+        row[0]
+        for row in db.query(ReplicateGroup.id)
+        .outerjoin(ReplicateGroupCell, ReplicateGroupCell.group_id == ReplicateGroup.id)
+        .group_by(ReplicateGroup.id)
+        .having(func.count(ReplicateGroupCell.cell_id) == 0)
+        .order_by(ReplicateGroup.id)
+        .all()
+    ]
     deleted: list[int] = []
-    for group_id in group_ids:
-        n_cells = (
-            db.query(ReplicateGroupCell)
-            .filter(ReplicateGroupCell.group_id == group_id)
-            .count()
-        )
-        if n_cells == 0:
-            db.query(FolderReplicateGroup).filter(
-                FolderReplicateGroup.group_id == group_id
-            ).delete(synchronize_session=False)
-            group = db.get(ReplicateGroup, group_id)
-            if group is not None:
-                db.delete(group)
-                deleted.append(group_id)
+    for chunk in _id_chunks(empty_group_ids):
+        db.query(FolderReplicateGroup).filter(
+            FolderReplicateGroup.group_id.in_(chunk)
+        ).delete(synchronize_session=False)
+    for group_id in empty_group_ids:
+        group = db.get(ReplicateGroup, group_id)
+        if group is not None:
+            # ORM delete, not a bulk statement: callers still holding this group
+            # must see it gone from the session, not just from the table.
+            db.delete(group)
+            deleted.append(group_id)
     return deleted
 
 
@@ -180,71 +191,149 @@ def remove_deleted_source_caches(source_hashes: list[str]) -> dict:
     }
 
 
+# Removing one cache is a small rmtree, so a handful stay on the request and the
+# response can report the bytes reclaimed. A large deletion is different in kind:
+# 1,000 sources is roughly 11 GB of Parquet, which belongs in the background with
+# the other long filesystem work rather than holding the UI.
+CACHE_CLEANUP_BACKGROUND_THRESHOLD = 25
+
+
+# Removing a cache directory is I/O bound — stat every file, then unlink the
+# tree — so a small thread pool overlaps the syscalls. Measured on NTFS: 2.2x at
+# four threads, with little beyond that. Threads, not processes: the work never
+# holds the GIL, and the parent spec permits conservative filesystem thread pools.
+CACHE_CLEANUP_WORKERS = 4
+
+
+def _remove_one_source_cache(source_hash: str) -> tuple[str, int, str | None]:
+    try:
+        return source_hash, cache.remove_hash_cache(source_hash), None
+    except (OSError, ValueError) as exc:
+        # Best-effort, exactly as on the synchronous path: an orphaned cache is
+        # reclaimable by the normal cleanup action and must never make a
+        # committed Cell deletion look like it failed.
+        logger.warning("could not remove cache for deleted source %s: %s", source_hash[:12], exc)
+        return source_hash, 0, str(exc)
+
+
+def run_source_cache_cleanup_job(source_hashes: list[str], background_job_id: int) -> None:
+    apply_background_thread_priority()
+    bytes_removed = 0
+    failed = 0
+    for source_hash in source_hashes:
+        background_jobs.update_item(background_job_id, source_hash, status="processing")
+    workers = min(CACHE_CLEANUP_WORKERS, len(source_hashes))
+    with thread_pool_executor(max(1, workers)) as pool:
+        for source_hash, removed, error in pool.map(_remove_one_source_cache, source_hashes):
+            bytes_removed += removed
+            if error is None:
+                background_jobs.record_result(
+                    background_job_id, source_hash, status="ready", counter="ready"
+                )
+            else:
+                failed += 1
+                background_jobs.record_result(
+                    background_job_id,
+                    source_hash,
+                    status="failed",
+                    error=error,
+                    counter="failed",
+                )
+    description = f"Reclaimed {bytes_removed / 1e9:.1f} GB of cached cycling data"
+    if failed:
+        description += f"; {failed} could not be removed"
+    background_jobs.update_job(
+        background_job_id,
+        status="completed",
+        description=description,
+        cache_bytes_removed=bytes_removed,
+        cache_cleanup_failed=failed,
+    )
+    db = SessionLocal()
+    try:
+        record_activity(
+            db,
+            category="cell",
+            action="cleanup_deleted_caches",
+            message=description,
+            severity="warning" if failed else "info",
+            details={
+                "background_job_id": background_job_id,
+                "sources": len(source_hashes),
+                "cache_bytes_removed": bytes_removed,
+                "cache_cleanup_failed": failed,
+            },
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def start_source_cache_cleanup(source_hashes: list[str]) -> dict:
+    """Remove caches for deleted sources, in the background when there are many.
+
+    The relational deletion has already committed when this runs, so the Cells
+    are gone from the database either way; this only reclaims disk.
+    """
+    unique_hashes = list(dict.fromkeys(source_hashes))
+    if len(unique_hashes) <= CACHE_CLEANUP_BACKGROUND_THRESHOLD:
+        return {**remove_deleted_source_caches(unique_hashes), "cache_cleanup_job": None}
+    background_job_id = background_jobs.create_job(
+        kind="cache_cleanup",
+        title="Removing cached cycling data",
+        description=f"Reclaiming cache space for {len(unique_hashes)} deleted sources",
+        total=len(unique_hashes),
+        items=[{"id": source_hash, "label": source_hash[:12]} for source_hash in unique_hashes],
+    )
+    threading.Thread(
+        target=run_source_cache_cleanup_job,
+        args=(unique_hashes, background_job_id),
+        daemon=True,
+    ).start()
+    return {
+        "cache_bytes_removed": 0,
+        "cache_cleanup_failed": 0,
+        "cache_cleanup_job": {"job_id": background_job_id, "count": len(unique_hashes)},
+    }
+
+
 def delete_cell_from_library(db: Session, cell: Cell) -> dict:
-    """Remove a cell and every active reference to it.
+    """Remove one cell and every active reference to it.
+
+    Delegates to the batch path so the single-cell and multi-cell endpoints
+    cannot drift apart in what they delete or preserve.
+    """
+    result = delete_cells_from_library(db, [cell.id])
+    return {
+        "deleted_cell_id": cell.id,
+        "deleted_replicate_group_ids": result["deleted_replicate_group_ids"],
+        "deleted_source_file_ids": result["deleted_source_file_ids"],
+        "preserved_source_file_ids": result["preserved_source_file_ids"],
+        "retained_source_file_ids": result["retained_source_file_ids"],
+        "_cache_hashes_to_remove": result["_cache_hashes_to_remove"],
+    }
+
+
+def _id_chunks(ids: list[int], size: int = 500):
+    """Yield id chunks small enough to stay well inside SQLite's variable limit."""
+    for start in range(0, len(ids), size):
+        yield ids[start : start + size]
+
+
+def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
+    """Remove many cells and every active reference to them, set at a time.
 
     Online SourceFile rows become unregistered data once their Cell is deleted,
     so they and their regenerable caches are removed after the transaction
     commits. Offline or changed sources are retained together with their cache:
     the cache may be the only locally readable copy of that data.
+
+    Every dependent table is cleared with one statement per chunk rather than
+    one per cell, and empty replicate groups are collected once at the end. The
+    per-cell form issued ~55,000 statements to delete 1,000 cells. Cells,
+    sources, and groups are still removed through the ORM so that callers
+    holding those objects see them disappear from the session too.
     """
-    cell_id = cell.id
-    source_files = (
-        db.query(SourceFile)
-        .join(TestFile, TestFile.file_id == SourceFile.id)
-        .join(Test, Test.id == TestFile.test_id)
-        .filter(Test.cell_id == cell_id)
-        .all()
-    )
-    source_file_ids = list(dict.fromkeys(source.id for source in source_files))
-    db.query(FolderCell).filter(FolderCell.cell_id == cell_id).delete(synchronize_session=False)
-    db.query(ProjectCell).filter(ProjectCell.cell_id == cell_id).delete(synchronize_session=False)
-    db.query(GroupCell).filter(GroupCell.cell_id == cell_id).delete(synchronize_session=False)
-    db.query(ReplicateGroupCell).filter(ReplicateGroupCell.cell_id == cell_id).delete(
-        synchronize_session=False
-    )
-    db.query(CellTag).filter(CellTag.cell_id == cell_id).delete(synchronize_session=False)
-    db.query(CellMetadata).filter(CellMetadata.cell_id == cell_id).delete(synchronize_session=False)
-
-    test_ids = [row[0] for row in db.query(Test.id).filter(Test.cell_id == cell_id).all()]
-    if test_ids:
-        db.query(TestFile).filter(TestFile.test_id.in_(test_ids)).delete(synchronize_session=False)
-        db.query(Test).filter(Test.id.in_(test_ids)).delete(synchronize_session=False)
-
-    deleted_source_file_ids: list[int] = []
-    preserved_source_file_ids: list[int] = []
-    retained_source_file_ids: list[int] = []
-    cache_hashes_to_remove: list[str] = []
-    remaining_source_file_ids = {
-        source_id
-        for (source_id,) in db.query(TestFile.file_id)
-        .filter(TestFile.file_id.in_(source_file_ids))
-        .distinct()
-        .all()
-    } if source_file_ids else set()
-    for source in source_files:
-        if source.id in remaining_source_file_ids:
-            retained_source_file_ids.append(source.id)
-        elif _source_is_available(source):
-            db.delete(source)
-            deleted_source_file_ids.append(source.id)
-            cache_hashes_to_remove.append(source.hash)
-        else:
-            preserved_source_file_ids.append(source.id)
-
-    db.delete(cell)
-    deleted_groups = delete_empty_replicate_groups(db)
-    return {
-        "deleted_cell_id": cell_id,
-        "deleted_replicate_group_ids": deleted_groups,
-        "deleted_source_file_ids": deleted_source_file_ids,
-        "preserved_source_file_ids": preserved_source_file_ids,
-        "retained_source_file_ids": retained_source_file_ids,
-        "_cache_hashes_to_remove": cache_hashes_to_remove,
-    }
-
-
-def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
     unique_ids = list(dict.fromkeys(int(cell_id) for cell_id in cell_ids))
     if not unique_ids:
         return {
@@ -256,27 +345,80 @@ def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
             "retained_source_file_ids": [],
             "_cache_hashes_to_remove": [],
         }
-    cells = {
-        cell.id: cell
-        for cell in db.query(Cell).filter(Cell.id.in_(unique_ids)).all()
-    }
-    deleted_cell_ids: list[int] = []
-    deleted_group_ids: list[int] = []
+    cells: dict[int, Cell] = {}
+    for chunk in _id_chunks(unique_ids):
+        for cell in db.query(Cell).filter(Cell.id.in_(chunk)).all():
+            cells[cell.id] = cell
+    deleted_cell_ids = [cell_id for cell_id in unique_ids if cell_id in cells]
+    if not deleted_cell_ids:
+        return {
+            "deleted_cell_ids": [],
+            "deleted_replicate_group_ids": [],
+            "missing_cell_ids": list(unique_ids),
+            "deleted_source_file_ids": [],
+            "preserved_source_file_ids": [],
+            "retained_source_file_ids": [],
+            "_cache_hashes_to_remove": [],
+        }
+
+    # Sources in submitted-cell order, so the reported ids keep the order the
+    # per-cell implementation produced.
+    sources_by_cell: dict[int, list[SourceFile]] = {}
+    for chunk in _id_chunks(deleted_cell_ids):
+        rows = (
+            db.query(Test.cell_id, SourceFile)
+            .join(TestFile, TestFile.file_id == SourceFile.id)
+            .join(Test, Test.id == TestFile.test_id)
+            .filter(Test.cell_id.in_(chunk))
+            .order_by(Test.cell_id, TestFile.position)
+            .all()
+        )
+        for cell_id, source in rows:
+            sources_by_cell.setdefault(int(cell_id), []).append(source)
+
+    for chunk in _id_chunks(deleted_cell_ids):
+        for model in (FolderCell, ProjectCell, GroupCell, ReplicateGroupCell, CellTag, CellMetadata):
+            db.query(model).filter(model.cell_id.in_(chunk)).delete(synchronize_session=False)
+
+    test_ids: list[int] = []
+    for chunk in _id_chunks(deleted_cell_ids):
+        test_ids.extend(row[0] for row in db.query(Test.id).filter(Test.cell_id.in_(chunk)).all())
+    for chunk in _id_chunks(test_ids):
+        db.query(TestFile).filter(TestFile.test_id.in_(chunk)).delete(synchronize_session=False)
+        db.query(Test).filter(Test.id.in_(chunk)).delete(synchronize_session=False)
+
+    all_source_ids = list(
+        dict.fromkeys(
+            source.id for sources in sources_by_cell.values() for source in sources
+        )
+    )
+    remaining_source_file_ids: set[int] = set()
+    for chunk in _id_chunks(all_source_ids):
+        remaining_source_file_ids.update(
+            source_id
+            for (source_id,) in db.query(TestFile.file_id)
+            .filter(TestFile.file_id.in_(chunk))
+            .distinct()
+            .all()
+        )
+
     deleted_source_file_ids: list[int] = []
     preserved_source_file_ids: list[int] = []
     retained_source_file_ids: list[int] = []
     cache_hashes_to_remove: list[str] = []
-    for cell_id in unique_ids:
-        cell = cells.get(cell_id)
-        if cell is None:
-            continue
-        result = delete_cell_from_library(db, cell)
-        deleted_cell_ids.append(result["deleted_cell_id"])
-        deleted_group_ids.extend(result["deleted_replicate_group_ids"])
-        deleted_source_file_ids.extend(result["deleted_source_file_ids"])
-        preserved_source_file_ids.extend(result["preserved_source_file_ids"])
-        retained_source_file_ids.extend(result["retained_source_file_ids"])
-        cache_hashes_to_remove.extend(result.pop("_cache_hashes_to_remove", []))
+    for cell_id in deleted_cell_ids:
+        for source in sources_by_cell.get(cell_id, []):
+            if source.id in remaining_source_file_ids:
+                retained_source_file_ids.append(source.id)
+            elif _source_is_available(source):
+                db.delete(source)
+                deleted_source_file_ids.append(source.id)
+                cache_hashes_to_remove.append(source.hash)
+            else:
+                preserved_source_file_ids.append(source.id)
+        db.delete(cells[cell_id])
+
+    deleted_group_ids = delete_empty_replicate_groups(db)
     return {
         "deleted_cell_ids": deleted_cell_ids,
         "deleted_replicate_group_ids": list(dict.fromkeys(deleted_group_ids)),
@@ -2484,7 +2626,7 @@ def delete_cells(req: CellDeleteRequest, db: Session = Depends(get_db)):
         details=result,
     )
     db.commit()
-    cache_cleanup = remove_deleted_source_caches(cache_hashes_to_remove)
+    cache_cleanup = start_source_cache_cleanup(cache_hashes_to_remove)
     return {"ok": True, **result, **cache_cleanup}
 
 

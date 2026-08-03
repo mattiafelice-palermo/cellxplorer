@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pandas as pd
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -515,6 +515,106 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertIsNone(db.get(Cell, cell_b.id))
         self.assertIsNotNone(db.get(Cell, cell_c.id))
         self.assertEqual(db.query(FolderCell).count(), 0)
+
+    def test_delete_cells_batches_dependent_table_deletes(self):
+        """Deleting N cells must not cost work proportional to N x groups.
+
+        The per-cell implementation called delete_empty_replicate_groups inside
+        the loop, and that function ran one COUNT per replicate group, so
+        deleting 1,000 cells issued ~55,000 statements.
+        """
+        db = self.make_session()
+        n_cells = 60
+        n_groups = 10
+        for index in range(n_groups):
+            db.add(ReplicateGroup(name=f"group-{index}"))
+        cells = [Cell(name=f"cell-{index:03d}") for index in range(n_cells)]
+        db.add_all(cells)
+        db.flush()
+        # One group keeps a member so it must survive the batch.
+        surviving = db.query(ReplicateGroup).first()
+        db.add(ReplicateGroupCell(group_id=surviving.id, cell_id=cells[0].id, position=0))
+        db.flush()
+
+        statements = []
+        engine = db.get_bind()
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def record(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        try:
+            result = library.delete_cells_from_library(db, [cell.id for cell in cells])
+            db.flush()
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        self.assertEqual(len(result["deleted_cell_ids"]), n_cells)
+        # Nine groups were already empty and the tenth lost its only member, so
+        # one collection pass at the end removes all of them.
+        self.assertEqual(len(result["deleted_replicate_group_ids"]), n_groups)
+        self.assertEqual(db.query(Cell).count(), 0)
+        self.assertEqual(db.query(ReplicateGroup).count(), 0)
+        # Generous ceiling: the point is that cost is not per-cell-times-groups.
+        self.assertLess(len(statements), n_cells * 5)
+
+    def test_small_cache_cleanup_stays_on_the_request(self):
+        with patch.object(cache, "remove_hash_cache", return_value=50) as remove_cache:
+            result = library.start_source_cache_cleanup(["a" * 64, "b" * 64])
+
+        self.assertIsNone(result["cache_cleanup_job"])
+        self.assertEqual(result["cache_bytes_removed"], 100)
+        self.assertEqual(result["cache_cleanup_failed"], 0)
+        self.assertEqual(remove_cache.call_count, 2)
+
+    def test_large_cache_cleanup_is_handed_to_a_background_job(self):
+        hashes = [f"{index:064d}" for index in range(library.CACHE_CLEANUP_BACKGROUND_THRESHOLD + 5)]
+        started = {}
+
+        class FakeThread:
+            def __init__(self, target=None, args=(), daemon=None):
+                started["target"] = target
+                started["args"] = args
+
+            def start(self):
+                started["started"] = True
+
+        with patch.object(cache, "remove_hash_cache") as remove_cache:
+            with patch.object(library.threading, "Thread", FakeThread):
+                result = library.start_source_cache_cleanup(hashes)
+
+        # The deletion has already committed; nothing is removed on the request.
+        remove_cache.assert_not_called()
+        self.assertTrue(started["started"])
+        self.assertEqual(result["cache_cleanup_job"]["count"], len(hashes))
+        self.assertIsNotNone(result["cache_cleanup_job"]["job_id"])
+
+    def test_cache_cleanup_job_reports_totals_and_survives_failures(self):
+        hashes = [f"{index:064d}" for index in range(6)]
+        failing = hashes[2]
+
+        def remove(source_hash):
+            if source_hash == failing:
+                raise OSError("locked by another process")
+            return 1_000
+
+        job_id = background_jobs.create_job(
+            kind="cache_cleanup",
+            title="Removing cached cycling data",
+            description="test",
+            total=len(hashes),
+            items=[{"id": h, "label": h[:12]} for h in hashes],
+        )
+        # The job records its own activity through a worker session; this test
+        # is about the cleanup totals, not the application database.
+        with patch.object(cache, "remove_hash_cache", side_effect=remove):
+            with patch.object(library, "record_activity"):
+                library.run_source_cache_cleanup_job(hashes, job_id)
+
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["cache_bytes_removed"], 5_000)
+        self.assertEqual(job["cache_cleanup_failed"], 1)
 
     def test_import_cleanup_removes_archived_cell_blocking_existing_source(self):
         db = self.make_session()

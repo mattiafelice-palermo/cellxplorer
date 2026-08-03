@@ -1518,6 +1518,30 @@ export function LibraryPage() {
         </Paper>
       ) : (
         <>
+        {/* Above the table, directly under the pagination controls: at the foot of a
+            full page of rows this prompt sits below the fold and is never seen. */}
+        {selectionScope.showSelectAllMatchingPrompt && (
+          <Alert
+            color="orange"
+            variant="light"
+            radius="md"
+            p="xs"
+            icon={<IconInfoCircle size={16} />}
+            style={{ border: "1px solid var(--mantine-color-orange-6)" }}
+          >
+            <Group justify="space-between" gap="sm" wrap="wrap">
+              <Text size="sm">All {pageCells.length} cells on this page are selected.</Text>
+              <Button
+                size="compact-sm"
+                variant="light"
+                color="orange"
+                onClick={selectAllMatching}
+              >
+                {selectAllMatchingLabel}
+              </Button>
+            </Group>
+          </Alert>
+        )}
         <Paper withBorder>
           <ScrollArea type="auto">
             <Table highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
@@ -1854,28 +1878,6 @@ export function LibraryPage() {
             </Table>
           </ScrollArea>
         </Paper>
-        {selectionScope.showSelectAllMatchingPrompt && (
-          <Alert
-            color="orange"
-            variant="light"
-            radius="md"
-            p="xs"
-            icon={<IconInfoCircle size={16} />}
-            style={{ border: "1px solid var(--mantine-color-orange-6)" }}
-          >
-            <Group justify="space-between" gap="sm" wrap="wrap">
-              <Text size="sm">All {pageCells.length} cells on this page are selected.</Text>
-              <Button
-                size="compact-sm"
-                variant="light"
-                color="orange"
-                onClick={selectAllMatching}
-              >
-                {selectAllMatchingLabel}
-              </Button>
-            </Group>
-          </Alert>
-        )}
         <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Text size="sm" c="dimmed">
             {pageCells.length === 0

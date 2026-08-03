@@ -62,6 +62,27 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
+Cell deletion is a set operation, not a loop. `delete_cells_from_library` clears each dependent
+table with one chunked statement for the whole batch and collects empty replicate groups **once** at
+the end; `delete_empty_replicate_groups` uses a single aggregate query rather than a `COUNT` per
+group. The per-cell form issued ~55,000 statements and took 8.7 s to delete 1,000 cells, almost
+entirely because it re-scanned every replicate group for every cell; batching brought that to ~3,100
+statements and 0.45 s. `delete_cell_from_library` delegates to the batch path so the single-cell and
+multi-cell endpoints cannot diverge. Cells, sources, and replicate groups are still removed through
+the ORM rather than bulk statements, because callers and tests hold those objects and must see them
+leave the session. The residual per-cell reads are SQLAlchemy cascade loads on delete; they are not
+worth removing with `passive_deletes` given the risk on a deletion path.
+
+Cache removal for deleted sources happens **after** the relational commit and never blocks it. Above
+`CACHE_CLEANUP_BACKGROUND_THRESHOLD` sources it becomes a `cache_cleanup` background job, because
+1,000 sources is roughly 11 GB of Parquet; at or below it the work stays on the request so the
+response can report the bytes reclaimed. Removal is I/O bound — stat every file, then unlink the
+tree — so the job uses a four-thread pool, measured at 2.2x over serial on NTFS with little gain
+beyond that. Threads rather than processes: the work never holds the GIL. Cleanup stays best-effort
+in both paths; an orphaned cache is reclaimable by the normal cleanup action and must never make a
+committed Cell deletion look like it failed. Offline or changed sources keep their cache because it
+may be the only locally readable copy of that data.
+
 Parsed file headers belong to `SourceFile.header_meta` as one JSON document per source, never
 expanded into `CellMetadata` rows. `CellMetadata` is for Cell-level facts only: the curated header
 summary, user entries, and `override.*` values. This is a hard performance boundary, not a

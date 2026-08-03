@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.18.0-beta001 - 2026-08-03
+
+- Delete large cell selections in a fraction of the time and reclaim their cached cycling data in the background. Move the select-all-matching prompt above the table so it is visible.
+
 ## 0.17.0-beta028 - 2026-08-03
 
 - Show imported Cells in the database as soon as registration commits, and store each file header once on its source instead of copying it onto the Cell.
