@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta027 - 2026-08-03
+
+- Fix background import handoff visibility and remove caches for deleted online sources.
+
 ## 0.17.0-beta026 - 2026-08-02
 
 - Use inspected import data for fast Cell registration and expose the committed state before cache preparation finishes.

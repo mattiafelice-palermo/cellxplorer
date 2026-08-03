@@ -417,7 +417,7 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertIsNone(db.get(ReplicateGroup, group.id))
         self.assertEqual(result["deleted_replicate_group_ids"], [group.id])
 
-    def test_delete_cell_unregisters_source_file_for_reimport(self):
+    def test_delete_cell_preserves_offline_source_and_cache_for_reimport(self):
         db = self.make_session()
         cell = Cell(name="A")
         sf = SourceFile(
@@ -426,7 +426,7 @@ class SourceAndReplicateTests(unittest.TestCase):
             filename="a.ndax",
             size=10,
             ext="ndax",
-            location_status="online",
+            location_status="offline",
             parse_status="parsed",
         )
         db.add_all([cell, sf])
@@ -437,12 +437,55 @@ class SourceAndReplicateTests(unittest.TestCase):
         db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
         db.flush()
 
-        library.delete_cell_from_library(db, cell)
+        result = library.delete_cell_from_library(db, cell)
         db.flush()
         db.expire(sf, ["test_link"])
 
         self.assertIsNone(sf.test_link)
         self.assertIsNotNone(db.get(SourceFile, sf.id))
+        self.assertEqual(result["deleted_source_file_ids"], [])
+        self.assertEqual(result["preserved_source_file_ids"], [sf.id])
+
+    def test_delete_cell_removes_online_source_and_cache_after_commit(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "a.ndax"
+            source_path.write_bytes(b"original source")
+            source_hash = "a" * 64
+            cell = Cell(name="A")
+            sf = SourceFile(
+                hash=source_hash,
+                path=str(source_path),
+                filename=source_path.name,
+                size=source_path.stat().st_size,
+                ext="ndax",
+                location_status="online",
+                parse_status="parsed",
+            )
+            db.add_all([cell, sf])
+            db.flush()
+            test = Test(cell_id=cell.id, name="Imported file")
+            db.add(test)
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
+            db.flush()
+
+            with patch.object(cache, "remove_hash_cache", return_value=123) as remove_cache:
+                result = library.delete_cell_from_library(db, cell)
+                db.commit()
+                cleanup = library.remove_deleted_source_caches(
+                    result.pop("_cache_hashes_to_remove")
+                )
+
+            self.assertIsNone(db.get(Cell, cell.id))
+            self.assertIsNone(db.get(SourceFile, sf.id))
+            self.assertEqual(result["deleted_source_file_ids"], [sf.id])
+            self.assertEqual(result["preserved_source_file_ids"], [])
+            self.assertEqual(cleanup["cache_bytes_removed"], 123)
+            self.assertEqual(cleanup["cache_cleanup_failed"], 0)
+            remove_cache.assert_called_once_with(source_hash)
+            self.assertTrue(source_path.is_file())
+            self.assertEqual(source_path.read_bytes(), b"original source")
 
     def test_delete_cells_from_library_removes_many_and_empty_groups(self):
         db = self.make_session()

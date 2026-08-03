@@ -50,6 +50,17 @@ def _wait_for_pending(file_hash: str) -> None:
         thread.join()
 
 
+def _wait_for_cleanup_safe(file_hash: str) -> None:
+    """Wait until no in-process writer or protected build owns this hash."""
+    while True:
+        _wait_for_pending(file_hash)
+        with _pending_lock:
+            protected = file_hash in _protected_hashes
+        if not protected:
+            return
+        time.sleep(0.05)
+
+
 def wait_for_pending(file_hash: str) -> None:
     """Block until any in-flight background cache write for this hash is
     done. Needed before handing work to OTHER processes (which cannot see
@@ -132,12 +143,14 @@ def remove_hash_cache(file_hash: str) -> int:
     """Remove one obsolete content-addressed cache after its replacement is durable."""
     if re.fullmatch(r"[0-9a-fA-F]{64}", file_hash) is None:
         raise ValueError("Invalid source checksum")
-    _wait_for_pending(file_hash)
+    _wait_for_cleanup_safe(file_hash)
     directory = _dir(file_hash)
     if not directory.exists():
         return 0
     removed = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
-    shutil.rmtree(directory, ignore_errors=True)
+    shutil.rmtree(directory)
+    if directory.exists():
+        raise OSError(f"Cache directory could not be removed: {directory}")
     return removed
 
 

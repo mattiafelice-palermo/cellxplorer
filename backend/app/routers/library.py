@@ -1,6 +1,7 @@
 """The canonical Library: Cells, source-chain compatibility rows, metadata, and tags."""
 from __future__ import annotations
 
+import logging
 import math
 import os
 import threading
@@ -96,6 +97,8 @@ stitch = LazyModule(_load_stitch)
 
 router = APIRouter(prefix="/api", tags=["library"])
 
+logger = logging.getLogger(__name__)
+
 _source_check_job_lock = threading.Lock()
 _source_check_jobs: dict[int, dict] = {}
 _latest_source_check_job_id: int | None = None
@@ -146,14 +149,54 @@ def delete_empty_replicate_groups(db: Session) -> list[int]:
     return deleted
 
 
+def _source_is_available(source: SourceFile) -> bool:
+    """Return whether a source can safely regenerate its cache."""
+    return source.location_status == "online" and Path(source.path).is_file()
+
+
+def remove_deleted_source_caches(source_hashes: list[str]) -> dict:
+    """Remove caches for source rows deleted after the DB transaction commits.
+
+    The original source files are never touched. Cache removal is deliberately
+    best-effort: a failed filesystem cleanup must not make a successful Cell
+    deletion look like it failed. The remaining orphan is eligible for the
+    normal cache cleanup action.
+    """
+    bytes_removed = 0
+    errors: list[str] = []
+    for source_hash in dict.fromkeys(source_hashes):
+        try:
+            bytes_removed += cache.remove_hash_cache(source_hash)
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "could not remove cache for deleted source %s: %s",
+                source_hash[:12],
+                exc,
+            )
+            errors.append(source_hash)
+    return {
+        "cache_bytes_removed": bytes_removed,
+        "cache_cleanup_failed": len(errors),
+    }
+
+
 def delete_cell_from_library(db: Session, cell: Cell) -> dict:
     """Remove a cell and every active reference to it.
 
-    SourceFile rows are deliberately kept. Deleting TestFile/Test records makes
-    the original file unregistered again, so the same data can be imported as a
-    new cell while preserving checksum/path history.
+    Online SourceFile rows become unregistered data once their Cell is deleted,
+    so they and their regenerable caches are removed after the transaction
+    commits. Offline or changed sources are retained together with their cache:
+    the cache may be the only locally readable copy of that data.
     """
     cell_id = cell.id
+    source_files = (
+        db.query(SourceFile)
+        .join(TestFile, TestFile.file_id == SourceFile.id)
+        .join(Test, Test.id == TestFile.test_id)
+        .filter(Test.cell_id == cell_id)
+        .all()
+    )
+    source_file_ids = list(dict.fromkeys(source.id for source in source_files))
     db.query(FolderCell).filter(FolderCell.cell_id == cell_id).delete(synchronize_session=False)
     db.query(ProjectCell).filter(ProjectCell.cell_id == cell_id).delete(synchronize_session=False)
     db.query(GroupCell).filter(GroupCell.cell_id == cell_id).delete(synchronize_session=False)
@@ -168,9 +211,37 @@ def delete_cell_from_library(db: Session, cell: Cell) -> dict:
         db.query(TestFile).filter(TestFile.test_id.in_(test_ids)).delete(synchronize_session=False)
         db.query(Test).filter(Test.id.in_(test_ids)).delete(synchronize_session=False)
 
+    deleted_source_file_ids: list[int] = []
+    preserved_source_file_ids: list[int] = []
+    retained_source_file_ids: list[int] = []
+    cache_hashes_to_remove: list[str] = []
+    remaining_source_file_ids = {
+        source_id
+        for (source_id,) in db.query(TestFile.file_id)
+        .filter(TestFile.file_id.in_(source_file_ids))
+        .distinct()
+        .all()
+    } if source_file_ids else set()
+    for source in source_files:
+        if source.id in remaining_source_file_ids:
+            retained_source_file_ids.append(source.id)
+        elif _source_is_available(source):
+            db.delete(source)
+            deleted_source_file_ids.append(source.id)
+            cache_hashes_to_remove.append(source.hash)
+        else:
+            preserved_source_file_ids.append(source.id)
+
     db.delete(cell)
     deleted_groups = delete_empty_replicate_groups(db)
-    return {"deleted_cell_id": cell_id, "deleted_replicate_group_ids": deleted_groups}
+    return {
+        "deleted_cell_id": cell_id,
+        "deleted_replicate_group_ids": deleted_groups,
+        "deleted_source_file_ids": deleted_source_file_ids,
+        "preserved_source_file_ids": preserved_source_file_ids,
+        "retained_source_file_ids": retained_source_file_ids,
+        "_cache_hashes_to_remove": cache_hashes_to_remove,
+    }
 
 
 def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
@@ -180,6 +251,10 @@ def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
             "deleted_cell_ids": [],
             "deleted_replicate_group_ids": [],
             "missing_cell_ids": [],
+            "deleted_source_file_ids": [],
+            "preserved_source_file_ids": [],
+            "retained_source_file_ids": [],
+            "_cache_hashes_to_remove": [],
         }
     cells = {
         cell.id: cell
@@ -187,6 +262,10 @@ def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
     }
     deleted_cell_ids: list[int] = []
     deleted_group_ids: list[int] = []
+    deleted_source_file_ids: list[int] = []
+    preserved_source_file_ids: list[int] = []
+    retained_source_file_ids: list[int] = []
+    cache_hashes_to_remove: list[str] = []
     for cell_id in unique_ids:
         cell = cells.get(cell_id)
         if cell is None:
@@ -194,10 +273,18 @@ def delete_cells_from_library(db: Session, cell_ids: list[int]) -> dict:
         result = delete_cell_from_library(db, cell)
         deleted_cell_ids.append(result["deleted_cell_id"])
         deleted_group_ids.extend(result["deleted_replicate_group_ids"])
+        deleted_source_file_ids.extend(result["deleted_source_file_ids"])
+        preserved_source_file_ids.extend(result["preserved_source_file_ids"])
+        retained_source_file_ids.extend(result["retained_source_file_ids"])
+        cache_hashes_to_remove.extend(result.pop("_cache_hashes_to_remove", []))
     return {
         "deleted_cell_ids": deleted_cell_ids,
         "deleted_replicate_group_ids": list(dict.fromkeys(deleted_group_ids)),
         "missing_cell_ids": [cell_id for cell_id in unique_ids if cell_id not in cells],
+        "deleted_source_file_ids": deleted_source_file_ids,
+        "preserved_source_file_ids": preserved_source_file_ids,
+        "retained_source_file_ids": list(dict.fromkeys(retained_source_file_ids)),
+        "_cache_hashes_to_remove": list(dict.fromkeys(cache_hashes_to_remove)),
     }
 
 
@@ -2360,6 +2447,7 @@ def delete_cells(req: CellDeleteRequest, db: Session = Depends(get_db)):
     result = delete_cells_from_library(db, req.cell_ids)
     if not result["deleted_cell_ids"] and result["missing_cell_ids"]:
         raise HTTPException(404, "No selected cells were found")
+    cache_hashes_to_remove = result.pop("_cache_hashes_to_remove", [])
     record_activity(
         db,
         category="cell",
@@ -2369,7 +2457,8 @@ def delete_cells(req: CellDeleteRequest, db: Session = Depends(get_db)):
         details=result,
     )
     db.commit()
-    return {"ok": True, **result}
+    cache_cleanup = remove_deleted_source_caches(cache_hashes_to_remove)
+    return {"ok": True, **result, **cache_cleanup}
 
 
 @router.delete("/cells/{cell_id}")
@@ -2378,6 +2467,7 @@ def delete_cell(cell_id: int, db: Session = Depends(get_db)):
     if cell is None:
         raise HTTPException(404, "No such cell")
     result = delete_cell_from_library(db, cell)
+    cache_hashes_to_remove = result.pop("_cache_hashes_to_remove", [])
     record_activity(
         db,
         category="cell",
@@ -2389,7 +2479,8 @@ def delete_cell(cell_id: int, db: Session = Depends(get_db)):
         details=result,
     )
     db.commit()
-    return {"ok": True, **result}
+    cache_cleanup = remove_deleted_source_caches(cache_hashes_to_remove)
+    return {"ok": True, **result, **cache_cleanup}
 
 
 class MetadataSet(BaseModel):

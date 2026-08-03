@@ -252,6 +252,9 @@ Settings exposes category actions with different safety boundaries:
 - **Clean eligible** scientific data removes only orphaned or currently regenerable caches and
   preserves offline/changed or actively written entries.
 - **Prepare missing** verifies sources and rebuilds absent current-version scientific caches.
+- Deleting a Cell removes its now-unregistered online `SourceFile` rows and their scientific
+  caches after the database commit. Offline or changed sources remain registered as detached
+  source records so their cache remains available; the original source file is never deleted.
 - Thumbnail cleanup removes both image payloads and their lookup indexes atomically from the
   user's perspective; rebuilding them clears prepared markers and reuses the saved-plot warmup.
 - A full saved-plot rebuild clears numerical results, plot artifacts, thumbnails, and prepared

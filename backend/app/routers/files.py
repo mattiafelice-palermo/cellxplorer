@@ -1,6 +1,7 @@
 """Source files: inbox, scanning, preview, registration into Test→Cell."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -109,6 +110,8 @@ analysis_usage = LazyModule(_load_analysis_usage)
 cache_maintenance = LazyModule(_load_cache_maintenance)
 
 router = APIRouter(prefix="/api", tags=["files"])
+
+logger = logging.getLogger(__name__)
 
 
 def import_filename_allowed(filename: str) -> bool:
@@ -490,6 +493,26 @@ def run_import_cache_jobs(
                 {cache_job["staged_name"]: source_file_ids_by_staged_name[cache_job["staged_name"]]},
                 {cache_job["staged_name"]: result},
             )
+            source_file_id = source_file_ids_by_staged_name[cache_job["staged_name"]]
+            source_is_registered = (
+                db.query(SourceFile.id)
+                .filter(SourceFile.id == source_file_id)
+                .first()
+                is not None
+            )
+            if not source_is_registered:
+                # A user may remove the Cell while this process-pool job is
+                # still finishing. The deletion request cannot see a worker's
+                # process-local locks, so clean the completed worker output at
+                # this durable registration check as well.
+                try:
+                    cache.remove_hash_cache(cache_job["hash"])
+                except (OSError, ValueError) as exc:
+                    logger.warning(
+                        "could not remove cache for deleted imported source %s: %s",
+                        cache_job["hash"][:12],
+                        exc,
+                    )
             background_jobs.record_result(
                 background_job_id,
                 cache_job["staged_name"],

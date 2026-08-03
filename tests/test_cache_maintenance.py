@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -219,6 +220,39 @@ class CacheMaintenanceTests(unittest.TestCase):
                 removed = cache.remove_hash_cache(source_hash)
 
             self.assertEqual(removed, len(b"raw-cache"))
+            self.assertFalse(scientific.exists())
+
+    def test_cache_removal_waits_for_active_protected_build(self):
+        source_hash = "c" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            cache_root = Path(folder)
+            scientific = cache_root / source_hash[:2] / source_hash
+            scientific.mkdir(parents=True)
+            (scientific / "raw.parquet").write_bytes(b"active")
+            entered = threading.Event()
+            release = threading.Event()
+            removed = threading.Event()
+
+            def protect_build():
+                with cache.protect_hash_from_cleanup(source_hash):
+                    entered.set()
+                    release.wait(timeout=2)
+
+            def remove_cache():
+                with patch.object(cache, "CACHE_DIR", cache_root):
+                    cache.remove_hash_cache(source_hash)
+                removed.set()
+
+            owner = threading.Thread(target=protect_build)
+            owner.start()
+            self.assertTrue(entered.wait(timeout=1))
+            remover = threading.Thread(target=remove_cache)
+            remover.start()
+            self.assertFalse(removed.wait(timeout=0.15))
+            release.set()
+            self.assertTrue(removed.wait(timeout=2))
+            owner.join(timeout=1)
+            remover.join(timeout=1)
             self.assertFalse(scientific.exists())
 
     def test_orphaned_source_cache_is_eligible_for_lru_cleanup(self):

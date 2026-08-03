@@ -1407,7 +1407,7 @@ function ImportModal({
   onRemoveSources: (stagedNames: string[]) => void;
   onPreviewRequested: (draft: ImportPreviewDraftState, retry?: boolean) => void;
   addingMore: boolean;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
   targetFolderId: number | null;
   blockingInspectionSeconds: number;
 }) {
@@ -1429,6 +1429,7 @@ function ImportModal({
   const [continuedMode, setContinuedMode] = useState(false);
   const [registerToken, setRegisterToken] = useState<string | null>(null);
   const [registrationAccepted, setRegistrationAccepted] = useState(false);
+  const [handoffPending, setHandoffPending] = useState(false);
   const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
@@ -1755,7 +1756,7 @@ function ImportModal({
       setRegistrationAccepted(true);
       const importedLabel = `${submittedCells} cell${submittedCells === 1 ? "" : "s"}`;
       notifications.show({
-        message: `${importedLabel} accepted. Registration and cycling data preparation continue in the background.`,
+        message: `${importedLabel} accepted. Registration is being committed; cycling data preparation continues in the background.`,
         color: "teal",
       });
       qc.invalidateQueries({ queryKey: ["cells"] });
@@ -1773,6 +1774,26 @@ function ImportModal({
     },
   });
   const registerProgress = useImportJobProgress(registerToken, Boolean(registerToken));
+
+  const continueInBackground = async () => {
+    if (handoffPending) return;
+    setHandoffPending(true);
+    try {
+      // The registration job exposes its commit boundary before the modal can
+      // be detached. Refresh active library queries here, after that boundary,
+      // so the Cell Database never renders the pre-registration empty result
+      // that the initial 202 response may have cached.
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["cells"], type: "active" }),
+        qc.refetchQueries({ queryKey: ["files"], type: "active" }),
+        qc.refetchQueries({ queryKey: ["tree"], type: "active" }),
+        qc.refetchQueries({ queryKey: ["replicate-groups"], type: "active" }),
+      ]);
+      await onSaved();
+    } finally {
+      setHandoffPending(false);
+    }
+  };
 
   useEffect(() => {
     if (!registrationAccepted || !registerProgress.data) return;
@@ -1863,7 +1884,12 @@ function ImportModal({
                 <Text size="sm" c="dimmed">
                   Registration is committed. Scientific data preparation continues in the background.
                 </Text>
-                <Button size="compact-sm" onClick={onSaved}>
+                <Button
+                  size="compact-sm"
+                  loading={handoffPending}
+                  disabled={handoffPending}
+                  onClick={() => void continueInBackground()}
+                >
                   Continue in background
                 </Button>
               </Group>
@@ -2722,7 +2748,7 @@ export function ImportCellsLauncher({
   children,
 }: {
   targetFolderId: number | null;
-  onSaved?: () => void;
+  onSaved?: () => void | Promise<void>;
   children: (state: {
     open: () => void;
     loading: boolean;
@@ -2918,9 +2944,9 @@ export function ImportCellsLauncher({
         }}
         addingMore={inspectPaths.isPending || listSources.isPending}
         onClose={closeImportSession}
-        onSaved={() => {
+        onSaved={async () => {
           closeImportSession();
-          onSaved?.();
+          await onSaved?.();
         }}
       />
     </>
