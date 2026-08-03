@@ -658,6 +658,104 @@ class ImportFlowTests(unittest.TestCase):
                 engine.dispose()
         background_jobs.clear_jobs()
 
+    def test_inspection_response_does_not_ship_the_parsed_header(self):
+        """~56 KB per file to the browser and back is ~58 MB each way at 1,000
+        files. Inspection already stored the header server-side."""
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inspect.ndax"
+            path.write_bytes(b"inspection-payload-content")
+            with patch.object(files.parsing, "compute_hash", return_value="c" * 64), \
+                patch.object(
+                    files.parsing,
+                    "read_header_metadata",
+                    return_value={"barcode": "B1", "raw": {f"F{n}": "v" for n in range(200)}},
+                ):
+                payload = files._inspect_import_path(path, db, staged_name="inspect.ndax")
+
+        self.assertNotIn("header_metadata", payload["inspection"])
+        self.assertEqual(
+            sorted(payload["inspection"]), ["hash", "mtime_ns", "size"]
+        )
+        # The curated display fields the modal actually shows still travel.
+        self.assertEqual(payload["barcode"], "B1")
+
+    def test_registration_reads_the_header_from_the_inspection_cache(self):
+        """With no header in the payload, registration must not reopen the file."""
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cached.ndax"
+            path.write_bytes(b"cached-header-content")
+            stat = path.stat()
+            file_hash = "d" * 64
+            import_inspection.remember_header_metadata(
+                file_hash,
+                stat.st_size,
+                stat.st_mtime_ns,
+                {"barcode": "FROM-CACHE", "raw": {"Config.Barcode": "FROM-CACHE"}},
+            )
+            request = files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        staged_name=path.name,
+                        source_path=str(path),
+                        filename=path.name,
+                        cell_name="Cache-backed cell",
+                        inspection={
+                            "hash": file_hash,
+                            "size": stat.st_size,
+                            "mtime_ns": str(stat.st_mtime_ns),
+                        },
+                    )
+                ]
+            )
+            with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
+                patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
+                patch.object(files.parsing, "read_header_metadata", side_effect=AssertionError("header reopened")):
+                files._create_imported_cells_impl(request, db)
+
+            source = db.query(SourceFile).one()
+            self.assertEqual(source.barcode, "FROM-CACHE")
+            self.assertEqual(source.header_meta, {"Config.Barcode": "FROM-CACHE"})
+        background_jobs.clear_jobs()
+
+    def test_registration_rereads_the_header_when_the_cache_evicted_it(self):
+        """A batch larger than the header cache arrives with its earliest
+        entries gone. Registration must still succeed by reopening the file."""
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "evicted.ndax"
+            path.write_bytes(b"evicted-header-content")
+            stat = path.stat()
+            file_hash = "e" * 64
+            import_inspection._header_cache.clear()
+            request = files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        staged_name=path.name,
+                        source_path=str(path),
+                        filename=path.name,
+                        cell_name="Evicted-header cell",
+                        inspection={
+                            "hash": file_hash,
+                            "size": stat.st_size,
+                            "mtime_ns": str(stat.st_mtime_ns),
+                        },
+                    )
+                ]
+            )
+            with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
+                patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
+                patch.object(
+                    files.parsing, "read_header_metadata", return_value={"barcode": "REREAD"}
+                ) as read_header:
+                files._create_imported_cells_impl(request, db)
+
+            # The bytes are never rehashed — only the header is reopened.
+            read_header.assert_called_once()
+            self.assertEqual(db.query(SourceFile).one().barcode, "REREAD")
+        background_jobs.clear_jobs()
+
     def test_source_listing_keeps_same_named_roots_distinguishable(self):
         with tempfile.TemporaryDirectory() as tmp:
             outer = Path(tmp)

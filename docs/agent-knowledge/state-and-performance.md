@@ -62,6 +62,23 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
+The inspection response carries an identity proof only — `hash`, `size`, `mtime_ns` — never the
+parsed header. The header is ~56 KB per file, so returning it cost ~58 MB to the browser and another
+~58 MB back on submit for a 1,000-file import, for data the server already held. Inspection stores
+every header it reads in `import_inspection`'s cache under the same `(hash, size, mtime_ns)` key and
+registration reads it from there; registration still accepts a header in the payload so a modal
+opened before the upgrade keeps working. That cache is bounded at `_HEADER_CACHE_LIMIT` (1024), so a
+larger batch reopens the evicted files' headers at ~6 ms each. Do not try to pool that fallback:
+header parsing is GIL-bound, and measurement puts a four-thread pool at 0.94x and a four-process
+pool at 0.57x of serial.
+
+Registration does **not** re-hash a submitted source. `_prepare_import_source_file` reuses the
+inspected hash whenever size and `mtime_ns` still match, and a real 200-file registration performs
+zero hash computations and zero header reads. The always-hashing
+`_source_identity_snapshot_or_error` is reached only through `_validate_staged_source_snapshots` on
+the continuation-attach path. Measured shares of the pre-commit path for 1,000 files: `scandir`
+discovery 0.01 s, inspection hashing 0.89 s and header reads 1.60 s at four workers, Stage A ~1.4 s.
+
 Cell deletion is a set operation, not a loop. `delete_cells_from_library` clears each dependent
 table with one chunked statement for the whole batch and collects empty replicate groups **once** at
 the end; `delete_empty_replicate_groups` uses a single aggregate query rather than a `COUNT` per

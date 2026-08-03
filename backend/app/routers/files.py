@@ -184,10 +184,11 @@ def _inspect_import_path(
             # JSON numbers cannot represent Windows nanosecond timestamps
             # exactly in JavaScript; keep this fingerprint lossless.
             "mtime_ns": str(inspected.mtime_ns),
-            # The second modal already paid the header-read cost. Carry the
-            # normalized header forward so registration never has to reopen
-            # the Neware container when the in-memory cache is cold.
-            "header_metadata": meta,
+            # The parsed header is deliberately NOT returned here. Inspection
+            # already stored it server-side under this exact fingerprint, so
+            # sending it would ship ~56 KB per file to the browser only to have
+            # the browser post the same bytes back at registration — ~58 MB in
+            # each direction for a 1,000-file import.
         },
         "capacity_preview": None,
         "preview_error": None,
@@ -633,13 +634,21 @@ def start_import_cache_jobs(
     }
 
 
-def _mtime_fingerprint_matches(value: object, actual: int | None) -> bool:
-    if actual is None or value is None:
-        return False
+def _parsed_mtime_fingerprint(value: object) -> int | None:
+    """Windows nanosecond mtimes travel as strings; JSON numbers would lose them."""
+    if value is None:
+        return None
     try:
-        return int(value) == actual
+        return int(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _mtime_fingerprint_matches(value: object, actual: int | None) -> bool:
+    if actual is None:
         return False
+    parsed = _parsed_mtime_fingerprint(value)
+    return parsed is not None and parsed == actual
 
 
 def _json_safe_scalar(value):

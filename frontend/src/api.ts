@@ -1704,11 +1704,16 @@ export interface ImportPreview {
     label: string;
   } | null;
   preview_error: string | null;
+  /**
+   * Opaque identity proof echoed back at registration. The backend no longer
+   * sends the parsed file header here — it keeps that server-side under this
+   * same fingerprint — so this object stays small enough to carry for a
+   * thousand staged files.
+   */
   inspection: {
     hash: string;
     size: number;
     mtime_ns: number | string;
-    header_metadata?: Record<string, unknown>;
   };
 }
 
