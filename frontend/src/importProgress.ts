@@ -129,7 +129,18 @@ export type BackgroundImportRefreshPlan = {
 };
 
 function backgroundJobSnapshot(job: BackgroundJob): string {
-  return `${job.status}:${job.completed}:${job.phase ?? ""}:${job.phase_current ?? ""}:${job.progress_percent ?? ""}`;
+  return [
+    job.status,
+    job.completed,
+    job.phase ?? "",
+    job.phase_current ?? "",
+    job.progress_percent ?? "",
+    job.registration_committed ? 1 : 0,
+  ].join(":");
+}
+
+function snapshotHasRegistrationCommit(snapshot: string | undefined): boolean {
+  return snapshot?.endsWith(":1") ?? false;
 }
 
 export function backgroundImportRefreshPlan(
@@ -145,12 +156,23 @@ export function backgroundImportRefreshPlan(
   for (const job of jobs) {
     const before = previous.get(job.id);
     const after = backgroundJobSnapshot(job);
-    if (job.kind === "import_register" && job.status === "completed" && (!before || before !== after)) {
+    const changed = !before || before !== after;
+    if (
+      job.kind === "import_register"
+      && changed
+      && (
+        (Boolean(job.registration_committed) && !snapshotHasRegistrationCommit(before))
+        || job.status === "completed"
+      )
+    ) {
       registrationCommitted = true;
     }
     if (job.kind === "import_cache") {
-      if (before && before !== after && job.status === "running") cacheAdvanced = true;
-      if ((!before || before !== after) && (job.status === "completed" || job.status === "failed")) {
+      // A cache job can only be created after relational registration commits.
+      // Its first appearance is therefore also a safe refresh boundary, even
+      // before the first scientific worker result is available.
+      if (changed && job.status === "running") cacheAdvanced = true;
+      if (changed && (job.status === "completed" || job.status === "failed")) {
         cacheTerminal = true;
       }
     }
