@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -969,7 +970,13 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(preview["builder"], "CY")
         self.assertEqual(preview["part_number"], "P-1")
 
-    def test_imported_cell_metadata_keeps_full_flattened_header(self):
+    def test_imported_cell_metadata_excludes_the_raw_header(self):
+        """The raw header belongs to SourceFile.header_meta, not to the Cell.
+
+        Expanding it here produced ~977 CellMetadata rows per Cell inside the
+        relational write transaction, which is what delayed Cell visibility for
+        a large import. The curated summary and user entries stay.
+        """
         meta = {
             "active_mass_mg": 333.77,
             "builder": "CY",
@@ -978,13 +985,12 @@ class ImportFlowTests(unittest.TestCase):
                 "Step.User_Info.Custom.Field": "all metadata survives",
             },
         }
-        metadata = files.full_cell_metadata_from_header(meta, {"operator_note": "checked"})
+        metadata = files.cell_metadata_from_header(meta, {"operator_note": "checked"})
 
         self.assertEqual(metadata["active_material_mg"], "333.77")
         self.assertEqual(metadata["builder"], "CY")
-        self.assertEqual(metadata["raw.Step.Head_Info.Creator.Value"], "CY")
-        self.assertEqual(metadata["raw.Step.User_Info.Custom.Field"], "all metadata survives")
         self.assertEqual(metadata["operator_note"], "checked")
+        self.assertEqual([key for key in metadata if key.startswith("raw.")], [])
 
     def test_raw_table_from_frame_returns_json_safe_page(self):
         raw = pd.DataFrame(
@@ -1267,6 +1273,110 @@ class ImportFlowTests(unittest.TestCase):
             metadata["override.electrode_area_preset_name"],
             "14 mm circular electrode",
         )
+
+    def test_registration_stores_the_raw_header_only_on_the_source_file(self):
+        """The header is one JSON document per source, not N CellMetadata rows.
+
+        Expanding a ~977-field header into relational rows put ~993k inserts
+        inside the Stage B write transaction, which is what kept imported Cells
+        invisible until an entire large batch finished.
+        """
+        db = self.make_session()
+        raw_header = {f"Step.Head_Info.Field_{n:04d}": f"value-{n}" for n in range(120)}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "header.ndax"
+            path.write_bytes(b"fake-import-test-content")
+            original_start = files.start_import_cache_jobs
+            original_hash = parsing.compute_hash
+            original_meta = parsing.read_header_metadata
+            files.start_import_cache_jobs = lambda *_: {"queued": False, "count": 0}
+            parsing.compute_hash = lambda _path: "header-test-hash"
+            parsing.read_header_metadata = lambda _path: {
+                "builder": "CY",
+                "active_mass_mg": 12.5,
+                "raw": raw_header,
+            }
+            try:
+                result = files._create_imported_cells_impl(
+                    files.ImportCellsRequest(
+                        cells=[
+                            files.ImportCellDraft(
+                                staged_name="header.ndax",
+                                source_path=str(path),
+                                filename=path.name,
+                                cell_name="Header ownership cell",
+                                test_name="Imported file",
+                                metadata={"operator_note": "checked"},
+                            )
+                        ]
+                    ),
+                    db=db,
+                )
+            finally:
+                files.start_import_cache_jobs = original_start
+                parsing.compute_hash = original_hash
+                parsing.read_header_metadata = original_meta
+
+        cell_id = result["created"][0]["cell_id"]
+        metadata = {
+            row.key: row.value
+            for row in db.query(CellMetadata).filter(CellMetadata.cell_id == cell_id).all()
+        }
+        self.assertEqual([key for key in metadata if key.startswith("raw.")], [])
+        # The curated summary and the user's own entry are Cell-level and stay.
+        self.assertEqual(metadata["builder"], "CY")
+        self.assertEqual(metadata["operator_note"], "checked")
+        self.assertLess(len(metadata), 30)
+
+        source_file = db.query(SourceFile).filter(SourceFile.filename == path.name).one()
+        self.assertEqual(source_file.header_meta, raw_header)
+
+    def test_cell_source_header_endpoint_serves_the_stored_header(self):
+        db = self.make_session()
+        cell = Cell(name="Header endpoint cell")
+        source = SourceFile(
+            hash="header-endpoint-hash",
+            path="C:/data/header.ndax",
+            filename="header.ndax",
+            size=10,
+            ext="ndax",
+            header_meta={"Step.Head_Info.Creator.Value": "CY"},
+        )
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [TestFile(file=source, position=0)]
+        db.add(cell)
+        db.flush()
+
+        payload = library.get_cell_source_header(cell.id, source.id, db=db)
+        self.assertEqual(payload["header"], {"Step.Head_Info.Creator.Value": "CY"})
+        self.assertEqual(payload["filename"], "header.ndax")
+
+        with self.assertRaises(HTTPException) as unknown_source:
+            library.get_cell_source_header(cell.id, source.id + 999, db=db)
+        self.assertEqual(unknown_source.exception.status_code, 404)
+
+        with self.assertRaises(HTTPException) as unknown_cell:
+            library.get_cell_source_header(cell.id + 999, source.id, db=db)
+        self.assertEqual(unknown_cell.exception.status_code, 404)
+
+    def test_cell_source_header_endpoint_is_empty_for_sources_without_a_header(self):
+        """Sources registered before header capture are empty, not an error."""
+        db = self.make_session()
+        cell = Cell(name="Headerless cell")
+        source = SourceFile(
+            hash="headerless-hash",
+            path="C:/data/old.ndax",
+            filename="old.ndax",
+            size=10,
+            ext="ndax",
+            header_meta=None,
+        )
+        test = Test(cell=cell, name="Imported file")
+        test.file_links = [TestFile(file=source, position=0)]
+        db.add(cell)
+        db.flush()
+
+        self.assertEqual(library.get_cell_source_header(cell.id, source.id, db=db)["header"], {})
 
     def test_ensure_cell_caches_does_not_parse_files_already_parsing(self):
         db = self.make_session()

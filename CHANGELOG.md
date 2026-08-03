@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.17.0-beta028 - 2026-08-03
+
+- Show imported Cells in the database as soon as registration commits, and store each file header once on its source instead of copying it onto the Cell.
+
 ## 0.17.0-beta027 - 2026-08-03
 
 - Fix background import handoff visibility and remove caches for deleted online sources.

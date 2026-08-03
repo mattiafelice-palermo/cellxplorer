@@ -320,6 +320,7 @@ Rules:
 - [035.8-adaptive-inspection-progress-and-dark-theme-review.md](reviews/035.8-adaptive-inspection-progress-and-dark-theme-review.md)
 - [035.8-duplicate-cell-names-and-failed-import-review.md](reviews/035.8-duplicate-cell-names-and-failed-import-review.md)
 - [035.8-background-import-progress-and-visibility-review.md](reviews/035.8-background-import-progress-and-visibility-review.md)
+- [035.8-metadata-storage-and-early-visibility-review.md](reviews/035.8-metadata-storage-and-early-visibility-review.md)
 
 ## Index
 

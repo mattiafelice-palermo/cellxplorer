@@ -518,6 +518,16 @@ export interface CellDetail extends CellSummary {
   sources: CellSource[];
 }
 
+/**
+ * One source's complete parsed file header. Fetched on demand rather than with
+ * the Cell detail: it is ~57 KB per source and is normally left collapsed.
+ */
+export interface CellSourceHeader {
+  source_file_id: number;
+  filename: string;
+  header: Record<string, string | number | boolean | null>;
+}
+
 export interface ProtocolStep {
   number: number;
   type_id: number;

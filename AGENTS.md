@@ -105,6 +105,11 @@ uncommitted or unpushed.
   per-cycle data live in regenerable Parquet caches.
 - Parser-derived metadata, source paths, checksums, and cycling data are read-only in the UI. Cell
   names and cell notes are user-editable.
+- The complete parsed file header belongs to `SourceFile.header_meta`, one JSON document per source.
+  `CellMetadata` holds Cell-level facts only: the curated header summary, user entries, and
+  `override.*` values. Never expand a header into `CellMetadata` rows — it is both scientifically
+  wrong for a multi-source Cell and the change that made large imports appear frozen. See
+  `docs/agent-knowledge/state-and-performance.md`.
 - Replicate groups are references to cells. Deleting one cell removes only that membership; a
   non-empty replicate group persists.
 - Folders organize references to cells, replicate groups, and analyses. Moving or copying a folder
@@ -207,11 +212,12 @@ Cellxplorer/
 │   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
 │   │   ├── librarySelectionScope.ts  Page-versus-result selection policy (Spec 035.12)
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
+│   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
 │   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
-│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts and librarySelectionScope.test.ts
+│   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, and cellMetadataDisplay.test.ts
 ├── tests/                          Python backend and domain tests
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
 │   ├── test_golden_approval_checkpoints.py  Fail-closed scientific/privacy approval checks

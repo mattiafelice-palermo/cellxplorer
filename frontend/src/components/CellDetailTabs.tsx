@@ -34,7 +34,8 @@ import {
 } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 
-import { CellDetail, CellProtocol, CellSource, get, ProtocolStep } from "../api";
+import { CellDetail, CellProtocol, CellSource, CellSourceHeader, get, ProtocolStep } from "../api";
+import { visibleCellMetadataEntries } from "../cellMetadataDisplay";
 import { CellQuickPlot } from "./CellQuickPlot";
 import { ContinuationManagementPanel } from "./ContinuationManagementPanel";
 import styles from "./CellDetailTabs.module.css";
@@ -376,24 +377,89 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
   ]
     .filter(([, value]) => value !== null)
     .map(([label, value, unit]) => [label, `${value}${unit ? ` ${unit}` : ""}`] as const);
-  const cellMetadata = Object.entries(cell.metadata).filter(
-    ([key]) => !key.startsWith("override.")
-  );
+  const cellMetadata = visibleCellMetadataEntries(cell.metadata);
   const rows = [...scientificRows, ...cellMetadata, ...sourceMetadata];
-  if (!rows.length) return <Alert color="gray">No metadata stored.</Alert>;
   return (
     <ScrollArea h={520} type="auto">
-      <Table withTableBorder striped>
-        <Table.Tbody>
-          {rows.map(([key, value], index) => (
-            <Table.Tr key={`${key}-${index}`}>
-              <Table.Td w="38%"><Text size="xs" c="dimmed">{displayMetadataKey(String(key))}</Text></Table.Td>
-              <Table.Td><Text size="xs">{String(value)}</Text></Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+      <Stack gap="sm">
+        {rows.length ? (
+          <Table withTableBorder striped>
+            <Table.Tbody>
+              {rows.map(([key, value], index) => (
+                <Table.Tr key={`${key}-${index}`}>
+                  <Table.Td w="38%"><Text size="xs" c="dimmed">{displayMetadataKey(String(key))}</Text></Table.Td>
+                  <Table.Td><Text size="xs">{String(value)}</Text></Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        ) : (
+          <Alert color="gray">No metadata stored.</Alert>
+        )}
+        {cell.sources.length > 0 && (
+          <SourceHeaderSections cellId={cell.id} sources={cell.sources} />
+        )}
+      </Stack>
     </ScrollArea>
+  );
+}
+
+/** Complete file headers, one collapsed section per source, fetched on expand.
+ *
+ * A header is ~977 fields, and a continued Cell has one per source, so this is
+ * never loaded with the Cell detail and never eagerly for a collapsed section. */
+function SourceHeaderSections({ cellId, sources }: { cellId: number; sources: CellSource[] }) {
+  const [open, setOpen] = useState<string[]>([]);
+  return (
+    <Stack gap={4}>
+      <Text size="xs" c="dimmed" fw={600}>Complete file header</Text>
+      <Accordion multiple variant="contained" value={open} onChange={setOpen} chevronPosition="left">
+        {sources.map((source, index) => (
+          <Accordion.Item key={source.id} value={String(source.id)}>
+            <Accordion.Control>
+              <Text size="xs">
+                Source {index + 1} — <Text span size="xs" c="dimmed">{source.filename}</Text>
+              </Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              {open.includes(String(source.id)) && (
+                <SourceHeaderTable cellId={cellId} sourceId={source.id} />
+              )}
+            </Accordion.Panel>
+          </Accordion.Item>
+        ))}
+      </Accordion>
+    </Stack>
+  );
+}
+
+function SourceHeaderTable({ cellId, sourceId }: { cellId: number; sourceId: number }) {
+  const header = useQuery({
+    queryKey: ["cell-source-header", cellId, sourceId],
+    queryFn: () => get<CellSourceHeader>(`/api/cells/${cellId}/sources/${sourceId}/header`),
+    staleTime: Infinity,
+  });
+  if (header.isPending) {
+    return <Group gap="xs" py="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Reading stored header…</Text></Group>;
+  }
+  if (header.isError) {
+    return <Alert color="red" title="Could not read the stored header">{String(header.error)}</Alert>;
+  }
+  const entries = Object.entries(header.data.header);
+  if (!entries.length) {
+    return <Alert color="gray">This source has no stored header. Update the source to capture it.</Alert>;
+  }
+  return (
+    <Table withTableBorder striped>
+      <Table.Tbody>
+        {entries.map(([key, value]) => (
+          <Table.Tr key={key}>
+            <Table.Td w="38%"><Text size="xs" c="dimmed">{key}</Text></Table.Td>
+            <Table.Td><Text size="xs">{String(value)}</Text></Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
   );
 }
 

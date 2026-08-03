@@ -859,6 +859,33 @@ def get_cell(cell_id: int, db: Session = Depends(get_db)):
     return d
 
 
+@router.get("/cells/{cell_id}/sources/{source_file_id}/header")
+def get_cell_source_header(cell_id: int, source_file_id: int, db: Session = Depends(get_db)):
+    """The complete parsed header of one source, fetched on demand.
+
+    Deliberately not folded into `GET /cells/{cell_id}`: a header is ~57 KB, so
+    a continued Cell would pay several hundred kilobytes on every detail open
+    for a panel the user usually leaves collapsed.
+    """
+    cell = db.get(Cell, cell_id)
+    if cell is None:
+        raise HTTPException(404, "No such cell")
+    link = next(
+        (link for link in _ordered_cell_file_links(cell) if link.file_id == source_file_id),
+        None,
+    )
+    if link is None:
+        raise HTTPException(404, "No such source for this cell")
+    # Sources registered before header capture, and headers that failed to
+    # parse, are an empty document rather than an error: the panel says "no
+    # stored header" instead of showing a failure the user cannot act on.
+    return {
+        "source_file_id": link.file_id,
+        "filename": link.file.filename,
+        "header": link.file.header_meta or {},
+    }
+
+
 def _observed_steps_for_source(source_file: SourceFile) -> list[dict]:
     parser_version = source_file.parser_version or parsing.PARSER_VERSION
     raw = cache.load_raw_columns(

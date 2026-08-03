@@ -62,6 +62,19 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
+Parsed file headers belong to `SourceFile.header_meta` as one JSON document per source, never
+expanded into `CellMetadata` rows. `CellMetadata` is for Cell-level facts only: the curated header
+summary, user entries, and `override.*` values. This is a hard performance boundary, not a
+preference. A representative NDAX header carries ~977 fields, so flattening it onto the Cell put
+~993,000 ORM inserts inside the registration transaction for a 1,000-file import: measured at 395 s
+and 3.5 GB of peak Python memory, against 15 s and ~100 MB without it. Because imported Cells cannot
+appear until that transaction commits, the expansion alone was what made a large import look frozen
+with an empty Cell Database. Removing it took the real registration path from 20.16 s to 0.31 s for
+200 cells. The ownership split is also the scientifically correct one: a continued Cell's sources
+have their own start times, channels, protocols, and software versions, so a single merged header
+misdescribes the Cell. Read a complete header through the per-source on-demand endpoint rather than
+folding it into Cell detail, which would cost ~57 KB per source on every open.
+
 Inspection strategy is adaptive at the second-to-third modal boundary: batches of 25 or fewer files
 stay serial to avoid Windows process-pool startup overhead; larger batches inspect one first file as
 a reusable timing sample, then use the bounded process pool for the remaining files. The inspection

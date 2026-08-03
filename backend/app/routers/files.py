@@ -220,14 +220,19 @@ def _raw_metadata_preview(raw: dict, limit: int = 80) -> dict[str, str]:
     return dict(list((raw or {}).items())[:limit])
 
 
-def full_cell_metadata_from_header(meta: dict, draft_metadata: dict[str, str] | None = None) -> dict[str, str]:
+def cell_metadata_from_header(meta: dict, draft_metadata: dict[str, str] | None = None) -> dict[str, str]:
+    """Cell-level metadata only: the curated header summary plus user entries.
+
+    The complete parsed header is **not** expanded into `CellMetadata` rows. It
+    already lives once per source in `SourceFile.header_meta`, which is both the
+    correct owner (a header describes one physical file, not the Cell) and the
+    only copy a bounded read path needs. Expanding it here cost ~977 extra rows
+    per Cell inside the Stage B write transaction — 395 s and 3.5 GB for a
+    1,000-file import — which is what kept imported Cells invisible until the
+    whole batch finished.
+    """
     metadata: dict[str, str] = {}
     metadata.update(_metadata_preview(meta))
-    for key, value in (meta.get("raw") or {}).items():
-        k = f"raw.{key}".strip()
-        v = str(value).strip()
-        if k and v:
-            metadata[k] = v
     for key, value in (draft_metadata or {}).items():
         k = key.strip()
         v = str(value).strip()
@@ -2596,7 +2601,7 @@ def _create_imported_cells_impl_raw(
 
         if sources:
             first_prepared = prepared_sources_by_staged_name[sources[0].staged_name]
-            imported_metadata = full_cell_metadata_from_header(
+            imported_metadata = cell_metadata_from_header(
                 first_prepared["meta"],
                 draft.metadata,
             )
