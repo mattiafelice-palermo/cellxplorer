@@ -127,7 +127,7 @@ test("background refresh policy handles detached registration and throttled cach
   assert.equal(first.registrationCommitted, true);
 
   const cacheRunning = job({ kind: "import_cache", completed: 1, total: 10 });
-  const previous = new Map([[cacheRunning.id, "running:0:::" ]]);
+  const previous = new Map([[cacheRunning.id, "running:0::::0"]]);
   const throttled = backgroundImportRefreshPlan(previous, [cacheRunning], 1500, 1000);
   assert.equal(throttled.cacheAdvanced, false);
   const refreshed = backgroundImportRefreshPlan(previous, [cacheRunning], 2100, 1000);
@@ -137,6 +137,37 @@ test("background refresh policy handles detached registration and throttled cach
   const terminal = backgroundImportRefreshPlan(refreshed.snapshots, [cacheFailed], 2200, 2100);
   assert.equal(terminal.cacheTerminal, true);
   assert.equal(terminal.cacheAdvanced, true);
+});
+
+test("explicit registration commit marker refreshes while the job is still running", () => {
+  const before = job({
+    kind: "import_register",
+    status: "running",
+    registration_committed: false,
+  });
+  const initial = backgroundImportRefreshPlan(new Map(), [before], 1000, 0);
+  assert.equal(initial.registrationCommitted, false);
+
+  const committed = { ...before, registration_committed: true };
+  const changed = backgroundImportRefreshPlan(initial.snapshots, [committed], 1200, 0);
+  assert.equal(changed.registrationCommitted, true);
+
+  const repeated = backgroundImportRefreshPlan(changed.snapshots, [committed], 1400, 0);
+  assert.equal(repeated.registrationCommitted, false);
+});
+
+test("the first post-commit cache job appearance refreshes Cell rows", () => {
+  const cache = job({
+    id: 44,
+    kind: "import_cache",
+    status: "running",
+    completed: 0,
+    total: 1000,
+    phase: "queued",
+  });
+  const plan = backgroundImportRefreshPlan(new Map(), [cache], 2000, 0);
+  assert.equal(plan.cacheAdvanced, true);
+  assert.equal(plan.cacheTerminal, false);
 });
 
 test("registration controls unlock from the explicit commit marker before cache completion", () => {
