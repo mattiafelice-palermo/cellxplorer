@@ -43,20 +43,42 @@ _background_builds: dict[tuple[str, str, str], threading.Thread] = {}
 _background_build_failures: dict[tuple[str, str, str], tuple[float, str]] = {}
 
 
-def _wait_for_pending(file_hash: str) -> None:
+# A cache write is seconds of work, so anything approaching this bound means the
+# owner is wedged. Waiting forever turns that into a background job that never
+# finishes and a progress count frozen mid-import, which is far worse than
+# proceeding: a reader that finds no cache rebuilds it, and `_write_atomic`
+# publishes through `os.replace`, so a partial file is never observable.
+CACHE_WAIT_TIMEOUT_SECONDS = 300.0
+
+
+def _wait_for_pending(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
     with _pending_lock:
         thread = _pending.get(file_hash)
     if thread is not None:
-        thread.join()
+        thread.join(timeout)
+        if thread.is_alive():
+            logger.warning(
+                "timed out waiting %.0fs for the cache write of %s; continuing",
+                timeout,
+                file_hash[:12],
+            )
 
 
-def _wait_for_cleanup_safe(file_hash: str) -> None:
+def _wait_for_cleanup_safe(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
     """Wait until no in-process writer or protected build owns this hash."""
+    deadline = time.monotonic() + timeout
     while True:
-        _wait_for_pending(file_hash)
+        _wait_for_pending(file_hash, timeout=max(0.0, deadline - time.monotonic()))
         with _pending_lock:
             protected = file_hash in _protected_hashes
         if not protected:
+            return
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "timed out waiting %.0fs for the protected build of %s; continuing",
+                timeout,
+                file_hash[:12],
+            )
             return
         time.sleep(0.05)
 

@@ -1372,6 +1372,87 @@ class ImportFlowTests(unittest.TestCase):
             "14 mm circular electrode",
         )
 
+    def test_cache_job_reaches_a_terminal_state_even_if_its_handler_fails(self):
+        """A job left 'running' is counted by the UI forever.
+
+        The failure handler does its own database work, so it can raise a second
+        time on an already-broken session. When that happened the thread died
+        silently and a large import stayed frozen at a partial count.
+        """
+        background_jobs.clear_jobs()
+        job_id = background_jobs.create_job(
+            kind="import_cache",
+            title="Preparing imported cells",
+            description="test",
+            total=1,
+            items=[{"id": "a.ndax", "label": "a.ndax"}],
+        )
+        broken = Mock()
+        broken.query.side_effect = RuntimeError("session unusable")
+        broken.get.side_effect = RuntimeError("session unusable")
+        broken.commit.side_effect = RuntimeError("session unusable")
+        broken.rollback.side_effect = RuntimeError("session unusable")
+
+        with patch.object(files, "SessionLocal", return_value=broken), \
+            patch.object(
+                files,
+                "build_import_caches_parallel",
+                side_effect=RuntimeError("worker pool died"),
+            ):
+            # Must not raise: the thread has no caller to handle it.
+            files.run_import_cache_jobs({"a.ndax": 1}, [{"staged_name": "a.ndax", "hash": "a" * 64, "path": "a"}], job_id)
+
+        self.assertEqual(background_jobs.get_job(job_id)["status"], "failed")
+        background_jobs.clear_jobs()
+
+    def test_cache_job_stops_when_every_imported_cell_was_deleted(self):
+        """Deleting the Cells mid-import must stop the work, not carry on
+        building caches only to delete each one it just wrote."""
+        background_jobs.clear_jobs()
+        db = self.make_session()
+        jobs = [
+            {"staged_name": f"f{index}.ndax", "hash": f"{index:064d}", "path": f"f{index}.ndax"}
+            for index in range(5)
+        ]
+        job_id = background_jobs.create_job(
+            kind="import_cache",
+            title="Preparing imported cells",
+            description="test",
+            total=len(jobs),
+            items=[{"id": job["staged_name"], "label": job["staged_name"]} for job in jobs],
+        )
+        built = []
+
+        def fake_parallel(cache_jobs, progress_callback=None, should_continue=None, **kwargs):
+            results = {}
+            for job in cache_jobs:
+                built.append(job["staged_name"])
+                result = {"staged_name": job["staged_name"], "ok": True,
+                          "parser_version": "1", "rows": 1, "cycles": 1}
+                results[job["staged_name"]] = result
+                if progress_callback:
+                    progress_callback(job, result)
+                if should_continue is not None and not should_continue():
+                    break
+            return results
+
+        # No SourceFile rows exist, so the very first result proves the import
+        # was deleted and the run must abandon the rest.
+        with patch.object(files, "SessionLocal", return_value=db), \
+            patch.object(files, "build_import_caches_parallel", side_effect=fake_parallel), \
+            patch.object(files.cache, "remove_hash_cache", return_value=0):
+            files.run_import_cache_jobs(
+                {job["staged_name"]: index + 1 for index, job in enumerate(jobs)},
+                jobs,
+                job_id,
+            )
+
+        self.assertEqual(built, ["f0.ndax"])
+        job = background_jobs.get_job(job_id)
+        self.assertEqual(job["status"], "completed")
+        self.assertIn("deleted", job["description"])
+        background_jobs.clear_jobs()
+
     def test_registration_stores_the_raw_header_only_on_the_source_file(self):
         """The header is one JSON document per source, not N CellMetadata rows.
 

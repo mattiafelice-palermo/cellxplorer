@@ -415,6 +415,7 @@ def build_import_caches_parallel(
     executor_cls=ProcessPoolExecutor,
     max_workers: int | None = None,
     progress_callback=None,
+    should_continue=None,
 ) -> dict[str, dict]:
     if not jobs:
         return {}
@@ -430,6 +431,8 @@ def build_import_caches_parallel(
             results[result["staged_name"]] = result
             if progress_callback:
                 progress_callback(job, result)
+            if should_continue is not None and not should_continue():
+                break
         return results
     pool = process_pool_executor(worker_count) if executor_cls is ProcessPoolExecutor else executor_cls(max_workers=worker_count)
     with pool as executor:
@@ -448,6 +451,12 @@ def build_import_caches_parallel(
             results[job["staged_name"]] = normalized
             if progress_callback:
                 progress_callback(job, normalized)
+            if should_continue is not None and not should_continue():
+                # Drop the queued work instead of parsing sources nobody wants.
+                # Futures already running finish; their results are discarded.
+                for pending in futures:
+                    pending.cancel()
+                break
         return results
 
 
@@ -477,6 +486,22 @@ def apply_import_cache_results(
     db.commit()
 
 
+def _ensure_terminal_background_job(background_job_id: int) -> None:
+    """Guarantee a job reaches a terminal state, whatever happened to its thread."""
+    try:
+        job = background_jobs.get_job(background_job_id)
+        if job is None or job.get("status") in {"completed", "failed"}:
+            return
+        background_jobs.update_job(
+            background_job_id,
+            status="failed",
+            description="Cycling cache preparation stopped unexpectedly",
+            error="The background worker exited without reporting a result.",
+        )
+    except Exception:
+        logger.exception("could not finalize background job %s", background_job_id)
+
+
 def run_import_cache_jobs(
     source_file_ids_by_staged_name: dict[str, int],
     cache_jobs: list[dict],
@@ -493,7 +518,11 @@ def run_import_cache_jobs(
                 status="processing",
             )
 
+        all_source_ids = set(source_file_ids_by_staged_name.values())
+        abandoned = False
+
         def report_progress(cache_job: dict, result: dict) -> None:
+            nonlocal abandoned
             apply_import_cache_results(
                 db,
                 {cache_job["staged_name"]: source_file_ids_by_staged_name[cache_job["staged_name"]]},
@@ -519,6 +548,11 @@ def run_import_cache_jobs(
                         cache_job["hash"][:12],
                         exc,
                     )
+                # Deleting the imported Cells is an explicit instruction to stop.
+                # Without this the job kept parsing hundreds of sources only to
+                # delete each cache it had just written.
+                if not db.query(SourceFile.id).filter(SourceFile.id.in_(all_source_ids)).first():
+                    abandoned = True
             background_jobs.record_result(
                 background_job_id,
                 cache_job["staged_name"],
@@ -531,7 +565,15 @@ def run_import_cache_jobs(
         cache_results = build_import_caches_parallel(
             cache_jobs,
             progress_callback=report_progress,
+            should_continue=lambda: not abandoned,
         )
+        if abandoned:
+            background_jobs.update_job(
+                background_job_id,
+                status="completed",
+                description="Stopped preparing cycling caches; the imported Cells were deleted",
+            )
+            return
         failed = sum(1 for result in cache_results.values() if not result.get("ok"))
         background_jobs.update_job(
             background_job_id,
@@ -558,29 +600,47 @@ def run_import_cache_jobs(
         )
         db.commit()
     except Exception as exc:
+        # Without the traceback a failure here is undiagnosable after the fact:
+        # this runs on a daemon thread whose stderr nobody keeps.
+        logger.exception("import cache preparation failed for job %s", background_job_id)
         error = f"Cell registration succeeded; cycling cache preparation failed: {exc}"
+        # Every step below is best-effort. The session may already be unusable —
+        # that is often *why* we are here — and an exception escaping this
+        # handler would kill the thread with the job still marked running, which
+        # is what left a large import stuck at a partial count forever.
         if db is not None:
-            for source_file_id in set(source_file_ids_by_staged_name.values()):
-                sf = db.get(SourceFile, source_file_id)
-                if sf is None:
-                    continue
-                sf.parse_status = "error"
-                sf.parse_error = error
-                sf.capacity_summary_status = "error"
-            db.commit()
-            record_activity(
-                db,
-                category="import",
-                action="prepare_import_caches",
-                message="Cell registration succeeded; cycling cache preparation failed",
-                severity="error",
-                details={
-                    "background_job_id": background_job_id,
-                    "source_file_ids": list(source_file_ids_by_staged_name.values()),
-                    "error": error,
-                },
-            )
-            db.commit()
+            try:
+                db.rollback()
+                for source_file_id in set(source_file_ids_by_staged_name.values()):
+                    sf = db.get(SourceFile, source_file_id)
+                    if sf is None:
+                        continue
+                    sf.parse_status = "error"
+                    sf.parse_error = error
+                    sf.capacity_summary_status = "error"
+                db.commit()
+            except Exception:
+                logger.exception("could not mark sources failed for job %s", background_job_id)
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception("could not roll back the cache worker session")
+            try:
+                record_activity(
+                    db,
+                    category="import",
+                    action="prepare_import_caches",
+                    message="Cell registration succeeded; cycling cache preparation failed",
+                    severity="error",
+                    details={
+                        "background_job_id": background_job_id,
+                        "source_file_ids": list(source_file_ids_by_staged_name.values()),
+                        "error": error,
+                    },
+                )
+                db.commit()
+            except Exception:
+                logger.exception("could not record the cache failure activity")
         for cache_job in cache_jobs:
             background_jobs.update_item(
                 background_job_id,
@@ -595,8 +655,14 @@ def run_import_cache_jobs(
             error=error,
         )
     finally:
+        # A job left running is invisible work the UI counts forever, so the
+        # thread must never exit without putting it in a terminal state.
+        _ensure_terminal_background_job(background_job_id)
         if db is not None:
-            db.close()
+            try:
+                db.close()
+            except Exception:
+                logger.exception("could not close the cache worker session")
 
 
 def start_import_cache_jobs(
