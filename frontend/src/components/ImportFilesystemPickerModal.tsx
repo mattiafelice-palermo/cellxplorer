@@ -7,7 +7,6 @@ import {
   Checkbox,
   Group,
   Loader,
-  Modal,
   Paper,
   ScrollArea,
   Stack,
@@ -51,6 +50,7 @@ import {
   post,
   put,
 } from "../api";
+import { ImportModalPrimaryActions, ImportModalShell } from "./ImportModalShell";
 import {
   folderSelectionState,
   clampImportBrowserLeftPaneWidth,
@@ -351,13 +351,41 @@ export function ImportFilesystemPickerModal({
   };
 
   return (
-    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title="Load cell files" size="68rem">
+    <ImportModalShell
+      opened={opened}
+      onClose={onClose}
+      closeDisabled={loading}
+      title="Load cell files"
+      step={1}
+      titleInfo="Select any combination of Neware files and folders. Click a folder row to open it; use its checkbox to select the folder recursively."
+      progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
+      actions={
+        <>
+          <Text size="sm" c="dimmed">
+            {folderCount} folder{folderCount === 1 ? "" : "s"}
+            {fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}
+          </Text>
+          <ImportModalPrimaryActions>
+            <Button variant="default" disabled={loading} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              loading={loading}
+              disabled={selectedEntries.length === 0}
+              onClick={() =>
+                onConfirm({
+                  filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
+                  folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
+                })
+              }
+            >
+              Continue
+            </Button>
+          </ImportModalPrimaryActions>
+        </>
+      }
+    >
       <Stack gap="sm">
-        <Text size="sm" c="dimmed">
-          Select any combination of Neware files and folders. Click a folder row to open it;
-          use its checkbox to select the folder recursively.
-        </Text>
-        {progress && <Paper withBorder p="xs">{progress}</Paper>}
         <Group ref={resizeContainerRef} align="stretch" gap={0} wrap="nowrap">
           <Paper
             p="xs"
@@ -369,7 +397,7 @@ export function ImportFilesystemPickerModal({
               flexShrink: 0,
             }}
           >
-            <ScrollArea h={590} type="auto">
+            <ScrollArea h={560} type="auto">
               <Box pr={8}>
                 <Stack gap="md">
                 {(["quick", "pinned", "recent"] as const).map((section) => {
@@ -475,7 +503,7 @@ export function ImportFilesystemPickerModal({
               <Button variant="default" disabled={shownSelection.disabled} onClick={toggleShownSelection}>{allVisibleSelected ? "Clear shown" : "Select shown"}</Button>
             </Group>
             <Paper withBorder p={0}>
-              {browseQuery.isPending && !browseQuery.data ? <Center h={390}><Loader /></Center> : browseQuery.isError ? <Center h={390} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={390} type="auto" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Stack gap={0}>
+              {browseQuery.isPending && !browseQuery.data ? <Center h={360}><Loader /></Center> : browseQuery.isError ? <Center h={360} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={360} type="auto" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Stack gap={0}>
                 <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
                 {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : <>
                   <Box h={leadingSpacerHeight} aria-hidden="true" />
@@ -492,11 +520,32 @@ export function ImportFilesystemPickerModal({
                 </>}
               </Stack></ScrollArea>}
             </Paper>
-            {selectedEntries.length > 0 && <Paper withBorder p="xs"><Group justify="space-between" mb={4}><Text size="xs" fw={700}>Selected sources</Text><Button size="compact-xs" variant="subtle" color="gray" onClick={() => setSelected(new Map())}>Clear all</Button></Group><ScrollArea h={Math.min(96, selectedEntries.length * 28)} type="auto"><Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack></ScrollArea></Paper>}
+            {/* Always mounted with a fixed height: revealing it on first
+                selection used to shrink the file browser above it. */}
+            <Paper withBorder p="xs" style={{ flex: "none" }}>
+              <Group justify="space-between" mb={4}>
+                <Text size="xs" fw={700}>Selected sources</Text>
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="gray"
+                  disabled={selectedEntries.length === 0}
+                  onClick={() => setSelected(new Map())}
+                >
+                  Clear all
+                </Button>
+              </Group>
+              <ScrollArea h={96} type="auto">
+                {selectedEntries.length === 0 ? (
+                  <Text size="xs" c="dimmed">Nothing selected yet.</Text>
+                ) : (
+                  <Stack gap={2}>{selectedEntries.map((entry) => <Group key={entry.path} gap="xs" wrap="nowrap">{entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}<Text size="xs" truncate title={entry.path} style={{ flex: 1 }}>{entry.path}</Text><ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Remove ${entry.name}`} onClick={() => setSelected((current) => { const next = new Map(current); next.delete(entry.path); return next; })}><IconX size={12} /></ActionIcon></Group>)}</Stack>
+                )}
+              </ScrollArea>
+            </Paper>
           </Stack>
         </Group>
-            <Group justify="space-between"><Text size="sm" c="dimmed">{folderCount} folder{folderCount === 1 ? "" : "s"}{fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}</Text><Group gap="xs"><Button variant="default" disabled={loading} onClick={onClose}>Cancel</Button><Button loading={loading} disabled={selectedEntries.length === 0} onClick={() => onConfirm({ filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path), folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path) })}>Continue</Button></Group></Group>
       </Stack>
-    </Modal>
+    </ImportModalShell>
   );
 }

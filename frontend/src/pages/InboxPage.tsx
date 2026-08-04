@@ -87,6 +87,11 @@ import {
 import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
+import {
+  ImportInfoHint,
+  ImportModalPrimaryActions,
+  ImportModalShell,
+} from "../components/ImportModalShell";
 import { ImportProgressPanel } from "../components/ImportProgressPanel";
 import { addDebugEvent } from "../debug";
 import { nominalCapacityFromMass } from "../scientificMetadata";
@@ -518,39 +523,42 @@ function FolderImportSelectionModal({
     [selectionSummary.fileCount, selectionSummary.totalBytes],
   );
   const visibleRootSummaries = rootsExpanded ? selectionSummary.roots : selectionSummary.roots.slice(0, 5);
-  const modalTitle = (
-    <Group gap="md" wrap="nowrap" style={{ width: "100%", minWidth: 0 }}>
-      <Text size="lg" fw={500} truncate style={{ minWidth: 0, flex: 1 }}>
-        Choose files to import
-      </Text>
-      <Group gap="xs" wrap="nowrap" ml="auto">
-        <Button
-          variant="default"
-          leftSection={<IconArrowLeft size={15} />}
-          disabled={loading}
-          onClick={onBack}
-        >
-          Back
-        </Button>
-        <Button
-          loading={loading}
-          disabled={selectedCandidates.length === 0}
-          onClick={() => onConfirm(selectedCandidates)}
-        >
-          Continue with {selectedCandidates.length} file
-          {selectedCandidates.length === 1 ? "" : "s"}
-        </Button>
-      </Group>
-    </Group>
-  );
   return (
-    <Modal opened={opened} onClose={loading ? () => undefined : onClose} title={modalTitle} size="78rem">
+    <ImportModalShell
+      opened={opened}
+      onClose={onClose}
+      closeDisabled={loading}
+      title="Choose files to import"
+      step={2}
+      titleInfo="Selected folders are expanded recursively. Use checkboxes to choose files and Preview to inspect them."
+      progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
+      actions={
+        <>
+          <Button variant="default" disabled={loading} onClick={onClose}>
+            Cancel
+          </Button>
+          <ImportModalPrimaryActions>
+            <Button
+              variant="default"
+              leftSection={<IconArrowLeft size={15} />}
+              disabled={loading}
+              onClick={onBack}
+            >
+              Back
+            </Button>
+            <Button
+              loading={loading}
+              disabled={selectedCandidates.length === 0}
+              onClick={() => onConfirm(selectedCandidates)}
+            >
+              Continue with {selectedCandidates.length} file
+              {selectedCandidates.length === 1 ? "" : "s"}
+            </Button>
+          </ImportModalPrimaryActions>
+        </>
+      }
+    >
       <Stack gap="sm">
-        <Text size="sm" c="dimmed">
-          Selected folders are expanded recursively. Use checkboxes to choose files and Preview to
-          inspect them.
-        </Text>
-        {progress && <Paper withBorder p="xs">{progress}</Paper>}
         <Group justify="space-between">
           <TextInput
             placeholder="Search paths"
@@ -808,7 +816,7 @@ function FolderImportSelectionModal({
           </Paper>
         </Group>
       </Stack>
-    </Modal>
+    </ImportModalShell>
   );
 }
 
@@ -1866,36 +1874,97 @@ function ImportModal({
 
   return (
     <>
-      <Modal
+      <ImportModalShell
         opened={opened}
-        onClose={registrationUi.closeLocked ? () => undefined : handleClose}
+        onClose={handleClose}
+        closeDisabled={registrationUi.closeLocked}
         title="Import cells"
-        size="95rem"
-      >
-        {registerToken && (
-          <Paper withBorder mb="sm" p="xs">
-            <ImportProgressPanel
-              stage="register"
-              job={registerProgress.data}
-              error={save.isError && save.error instanceof Error ? save.error.message : null}
-            />
-            {registrationUi.showContinue && (
-              <Group justify="space-between" align="center" px="sm" pb="sm">
-                <Text size="sm" c="dimmed">
-                  Registration is committed. Scientific data preparation continues in the background.
-                </Text>
+        step={3}
+        notice={
+          duplicateCount > 0 || hasCellNameConflicts ? (
+            <Stack gap="xs">
+              {duplicateCount > 0 && (
+                <Alert color="orange" icon={<IconAlertTriangle size={16} />} p="xs">
+                  {duplicateCount} already imported — will be skipped. They remain visible until removed.
+                  {includedDrafts.length === 0 && (
+                    <Text size="sm" fw={600} mt={4}>
+                      All selected files are already in the Cell Database.
+                    </Text>
+                  )}
+                </Alert>
+              )}
+              {hasCellNameConflicts && (
+                <Alert color="red" icon={<IconAlertTriangle size={16} />} p="xs">
+                  <Text size="sm" fw={600}>
+                    Rename the conflicting Cell names before importing.
+                  </Text>
+                  <Text size="sm" mt={4}>
+                    {cellNameConflicts.map((conflict) => (
+                      <span key={conflict.name}>
+                        {conflict.name}: {conflict.drafts.map((item) => item.filename).join(", ")}
+                        <br />
+                      </span>
+                    ))}
+                  </Text>
+                </Alert>
+              )}
+            </Stack>
+          ) : null
+        }
+        progress={
+          registerToken ? (
+            <Paper withBorder p="xs">
+              <ImportProgressPanel
+                stage="register"
+                job={registerProgress.data}
+                error={save.isError && save.error instanceof Error ? save.error.message : null}
+              />
+            </Paper>
+          ) : null
+        }
+        actions={
+          <>
+            <Text size="sm" c="dimmed">
+              {registrationUi.showContinue
+                ? "Registration is committed. Scientific data preparation continues in the background."
+                : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
+            </Text>
+            <ImportModalPrimaryActions>
+              {registrationUi.showContinue ? (
                 <Button
-                  size="compact-sm"
                   loading={handoffPending}
                   disabled={handoffPending}
                   onClick={() => void continueInBackground()}
                 >
                   Continue in background
                 </Button>
-              </Group>
-            )}
-          </Paper>
-        )}
+              ) : (
+                <>
+                  <Button variant="default" disabled={save.isPending} onClick={handleClose}>
+                    Cancel
+                  </Button>
+                  {!continuedMode && (
+                    <Button
+                      leftSection={<IconDeviceFloppy size={16} />}
+                      disabled={!canSave}
+                      loading={save.isPending}
+                      onClick={() => {
+                        const jobToken = newImportJobToken();
+                        registerStartedAt.current = Date.now();
+                        setRegistrationAccepted(false);
+                        setRegisterToken(jobToken);
+                        save.mutate({ mode: "separate", jobToken });
+                      }}
+                    >
+                      Import {includedDrafts.length} cell{includedDrafts.length === 1 ? "" : "s"}
+                    </Button>
+                  )}
+                </>
+              )}
+            </ImportModalPrimaryActions>
+          </>
+        }
+      >
         {draft && (
           <fieldset
             disabled={registrationUi.editingLocked}
@@ -1957,84 +2026,39 @@ function ImportModal({
               />
             ) : (
             <Stack gap="md">
-            <Group justify="space-between" align="center">
-              <Text size="sm" c="dimmed">
-                Review {drafts.length} selected file{drafts.length === 1 ? "" : "s"} before saving.
-              </Text>
-              <Group gap="xs">
-                <Button
-                  variant="subtle"
-                  color="red"
-                  disabled={duplicateCount === 0 || save.isPending}
-                  onClick={removeAllDuplicates}
-                >
-                  Remove all already imported
-                </Button>
-                <Button
-                  variant="default"
-                  leftSection={<IconPlus size={16} />}
-                  loading={addingMore || save.isPending}
-                  disabled={save.isPending}
-                  onClick={onAddMoreSources}
-                >
-                  Add more sources
-                </Button>
-                <MultiSelect
-                  w={320}
-                  size="xs"
-                  placeholder="No folder"
-                  data={folderSelectData}
-                  value={destinationFolders}
-                  onChange={setDestinationFolders}
-                  clearable
-                  searchable
-                />
-                <Button variant="default" disabled={save.isPending} onClick={handleClose}>
-                  Cancel
-                </Button>
-                <Button
-                  leftSection={<IconDeviceFloppy size={16} />}
-                  disabled={!canSave}
-                  loading={save.isPending}
-                  onClick={() => {
-                    const jobToken = newImportJobToken();
-                    registerStartedAt.current = Date.now();
-                    setRegistrationAccepted(false);
-                    setRegisterToken(jobToken);
-                    save.mutate({ mode: "separate", jobToken });
-                  }}
-                >
-                  Import {includedDrafts.length} cell{includedDrafts.length === 1 ? "" : "s"}
-                </Button>
-              </Group>
+            {/* Step-specific commands only. Cancel/Import live in the footer
+                with the other step navigation. */}
+            <Group justify="flex-end" align="center" gap="xs" wrap="wrap" style={{ minWidth: 0 }}>
+              <Button
+                variant="subtle"
+                color="red"
+                disabled={duplicateCount === 0 || save.isPending}
+                onClick={removeAllDuplicates}
+              >
+                Remove all already imported
+              </Button>
+              <Button
+                variant="default"
+                leftSection={<IconPlus size={16} />}
+                loading={addingMore || save.isPending}
+                disabled={save.isPending}
+                onClick={onAddMoreSources}
+              >
+                Add more sources
+              </Button>
+              <MultiSelect
+                w={280}
+                size="xs"
+                placeholder="No folder"
+                data={folderSelectData}
+                value={destinationFolders}
+                onChange={setDestinationFolders}
+                clearable
+                searchable
+              />
             </Group>
-            {duplicateCount > 0 && (
-              <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
-                {duplicateCount} already imported — will be skipped. They remain visible until removed.
-                {includedDrafts.length === 0 && (
-                  <Text size="sm" fw={600} mt={4}>
-                    All selected files are already in the Cell Database.
-                  </Text>
-                )}
-              </Alert>
-            )}
-            {hasCellNameConflicts && (
-              <Alert color="red" icon={<IconAlertTriangle size={16} />}>
-                <Text size="sm" fw={600}>
-                  Rename the conflicting Cell names before importing.
-                </Text>
-                <Text size="sm" mt={4}>
-                  {cellNameConflicts.map((conflict) => (
-                    <span key={conflict.name}>
-                      {conflict.name}: {conflict.drafts.map((item) => item.filename).join(", ")}
-                      <br />
-                    </span>
-                  ))}
-                </Text>
-              </Alert>
-            )}
-            <Group align="stretch" gap="md" wrap="nowrap">
-              <Paper withBorder p="xs" w={285}>
+            <Group align="stretch" gap="md" wrap="nowrap" style={{ minWidth: 0 }}>
+              <Paper withBorder p="xs" w={250} style={{ flex: "none" }}>
                 <Stack gap="xs" h="100%">
                   <Group justify="space-between" wrap="nowrap">
                     <Text size="sm" fw={700}>
@@ -2154,7 +2178,7 @@ function ImportModal({
                 </Stack>
               </Paper>
 
-              <Paper withBorder p="xs" w={360}>
+              <Paper withBorder p="xs" w={330} style={{ flex: "none" }}>
                 <Stack gap="xs">
                   <Group justify="space-between" wrap="nowrap">
                     <Text size="sm" fw={700}>
@@ -2363,11 +2387,15 @@ function ImportModal({
                 }
               />
 
-              <Divider label="Scientific values" labelPosition="left" />
-              <Alert color="gray">
-                Neware values remain preserved as source metadata. Enter an override only when the
-                source value is incorrect or missing.
-              </Alert>
+              <Divider
+                label={
+                  <Group gap={6} wrap="nowrap">
+                    <span>Scientific values</span>
+                    <ImportInfoHint label="Neware values remain preserved as source metadata. Enter an override only when the source value is incorrect or missing." />
+                  </Group>
+                }
+                labelPosition="left"
+              />
               <Group grow align="start">
                 <NumberInput
                   label="Active material mass (mg)"
@@ -2614,11 +2642,9 @@ function ImportModal({
               >
                 {metadataOpen ? "Hide metadata" : `Show metadata (${metadataRows.length})`}
               </Button>
+              <ImportInfoHint label="Metadata detected in the Neware file is read-only in this import step." />
               <Collapse in={metadataOpen}>
                 <Stack gap="xs">
-                  <Text size="xs" c="dimmed">
-                    Metadata detected in the Neware file is read-only in this import step.
-                  </Text>
                   {metadataRows.length > 0 ? (
                     <Table withTableBorder>
                       <Table.Thead>
@@ -2654,7 +2680,7 @@ function ImportModal({
           </Stack>
           </fieldset>
         )}
-      </Modal>
+      </ImportModalShell>
 
       <Modal
         opened={rawOpen}

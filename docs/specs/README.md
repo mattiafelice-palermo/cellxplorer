@@ -27,6 +27,10 @@
 - [`035.8-lazy-import-preview-and-cache-handoff.md`](035.8-lazy-import-preview-and-cache-handoff.md)
   loads previews only for the active staged source and reports post-registration cache preparation.
   **Implemented**; review checkpoint complete.
+- [`036-import-modal-shell-consistency.md`](036-import-modal-shell-consistency.md)
+  gives the three import steps one shell: fixed geometry, a sticky footer holding all step
+  navigation, and reserved notice/progress slots so the work area never moves. **Implemented**;
+  review pending.
 - [`035.12-import-browser-select-shown-and-resizable-panes.md`](035.12-import-browser-select-shown-and-resizable-panes.md)
   corrects the import-browser aggregate selection so shown folders are included, and adds a
   bounded accessible resize divider between the quick-access and file-browser panes. **Implemented**;

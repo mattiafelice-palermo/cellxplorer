@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.18.0-beta004 - 2026-08-04
+
+- Give the three import steps one consistent layout: step navigation always in a sticky footer, and progress and warnings no longer push the content you are reading.
+
 ## 0.18.0-beta003 - 2026-08-03
 
 - Stop background cache preparation when the imported cells are deleted, and always report a final state instead of leaving progress frozen.
