@@ -190,6 +190,7 @@ Cellxplorer/
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
 │   │   │   ├── AnalysisPlotSummary.tsx Shared saved-plot count and hover preview
+│   │   ├── SeriesStyleModal.tsx    Per-series appearance editor with live preview (Spec 037)
 │   │   │   ├── ChargeabilityPlotCard.tsx
 │   │   │   ├── RateCapabilityPlotCard.tsx
 │   │   │   ├── DestructiveImpactModal.tsx
@@ -212,6 +213,7 @@ Cellxplorer/
 │   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
 │   │   ├── librarySelectionScope.ts  Page-versus-result selection policy (Spec 035.12)
 │   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
+│   │   ├── seriesStyling.ts        Per-series style resolution (base → rules → override)
 │   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)

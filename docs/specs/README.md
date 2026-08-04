@@ -27,6 +27,10 @@
 - [`035.8-lazy-import-preview-and-cache-handoff.md`](035.8-lazy-import-preview-and-cache-handoff.md)
   loads previews only for the active staged source and reports post-registration cache preparation.
   **Implemented**; review checkpoint complete.
+- [`037-per-series-style-editor.md`](037-per-series-style-editor.md)
+  replaces global-only line styling with a per-series editor in its own modal: live preview,
+  individual series control, and ordered rules for bulk styling. **Implemented** for the Cycles tab;
+  review pending. Branch `feature/series-style-editor`.
 - [`036-import-modal-shell-consistency.md`](036-import-modal-shell-consistency.md)
   gives the three import steps one shell: fixed geometry, a sticky footer holding all step
   navigation, and reserved notice/progress slots so the work area never moves. **Implemented**;

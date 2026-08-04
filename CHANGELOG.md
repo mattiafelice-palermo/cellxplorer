@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.19.0-beta001 - 2026-08-05
+
+- Add a per-series appearance editor: style each line individually with colour, dashes, markers, shadow and legend name, or apply rules to many series at once, with a live preview.
+
 ## 0.18.0-beta005 - 2026-08-04
 
 - Keep the import review toolbar in place and scroll the file list and cell details independently, with more compact file cards.

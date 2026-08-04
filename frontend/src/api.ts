@@ -949,6 +949,57 @@ export interface PlotAxisScope {
   y2_axis?: Partial<PlotAxisStyle>;
 }
 
+export type PlotLineDash = "solid" | "dot" | "dash" | "longdash";
+export type PlotMarkerSymbol =
+  | "circle"
+  | "square"
+  | "diamond"
+  | "triangle-up"
+  | "cross"
+  | "x";
+export type PlotMarkerMode = "none" | "points" | "lines_points";
+
+/**
+ * Per-series appearance. Every field is optional and an unset field falls
+ * through to the layer beneath (rule, then the tab's base PlotStyle), so an
+ * override only carries what the user actually changed.
+ */
+export interface SeriesStyleOverride {
+  /** Legend label. Unset keeps the series' own name. */
+  name?: string | null;
+  color?: string | null;
+  line_width?: number | null;
+  line_dash?: PlotLineDash | null;
+  line_shape?: "linear" | "spline" | "hv" | null;
+  marker_mode?: PlotMarkerMode | null;
+  marker_symbol?: PlotMarkerSymbol | null;
+  marker_size?: number | null;
+  marker_open?: boolean | null;
+  opacity?: number | null;
+  /** Soft drop shadow behind the line. */
+  shadow?: boolean | null;
+  /** Draw the series but keep it out of the legend box. */
+  show_in_legend?: boolean | null;
+  /** Hide the series entirely without removing it from the analysis. */
+  hidden?: boolean | null;
+}
+
+export type SeriesRuleField = "label" | "cell_name" | "group_name" | "kind";
+
+/**
+ * Bulk styling for series matching a condition. Rules apply in array order,
+ * later winning, and all of them lose to an explicit per-series override.
+ */
+export interface SeriesStyleRule {
+  id: string;
+  enabled: boolean;
+  field: SeriesRuleField;
+  operator: "contains" | "equals" | "starts_with" | "ends_with" | "matches";
+  value: string;
+  case_sensitive?: boolean;
+  style: SeriesStyleOverride;
+}
+
 export interface PlotStyle {
   palette: PlotPaletteKey;
   palette_id?: string | null;
@@ -1033,6 +1084,14 @@ export interface PlotStyle {
   export_height: number;
   export_scale: number;
   export_include_title: boolean;
+  /**
+   * Per-series appearance, keyed by series identity (`c<cell_id>`,
+   * `g<group_id>`, or those prefixed `ce:` for the CE overlay). Absent means
+   * the plot renders exactly as it did before per-series styling existed.
+   */
+  series_overrides?: Record<string, SeriesStyleOverride>;
+  /** Ordered bulk styling rules; see `seriesStyling.ts` for resolution order. */
+  series_rules?: SeriesStyleRule[];
 }
 
 export interface AnalysisSpec {

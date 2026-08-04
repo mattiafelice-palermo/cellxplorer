@@ -56,6 +56,7 @@ import {
   IconGauge,
   IconInfoCircle,
   IconLayersIntersect,
+  IconPalette,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -113,6 +114,10 @@ import {
   PlotStyle,
   PlotStylePresetSettings,
   PlotAxisScope,
+  AggregateSeries,
+  CellSeries,
+  SeriesStyleOverride,
+  SeriesStyleRule,
   TimeCapacityResult,
   TimeCapacityTrace,
   Tree,
@@ -205,6 +210,13 @@ import {
   type PlotExplainer,
 } from "../plotExplainers";
 import { applyPlotStylePreset } from "../plotStylePresets";
+import {
+  resolveSeriesStyle,
+  seriesPlotlyMode,
+  seriesPlotlySymbol,
+  type SeriesDescriptor,
+} from "../seriesStyling";
+import { SeriesStyleModal } from "../components/SeriesStyleModal";
 import { axisLayout, numericTraceExtent } from "../plotAxisLayout";
 import {
   sourceBoundaryPointIndices,
@@ -1051,6 +1063,79 @@ function plotNamingQuantityKey(
   }
   // Time/capacity plot name is not quantity-driven today.
   return tab;
+}
+
+/**
+ * Series identity for the style resolver.
+ *
+ * The keys match what `custom_colors` has always used, so plots saved before
+ * per-series styling keep their colours with no migration.
+ */
+export function cellSeriesDescriptor(s: CellSeries): SeriesDescriptor {
+  return {
+    key: `c${s.cell_id}`,
+    kind: "cell",
+    label: s.group_name ? `${s.label} (${s.group_name})` : s.label,
+    cellName: s.cell_name,
+    groupName: s.group_name,
+  };
+}
+
+export function aggregateSeriesDescriptor(
+  agg: AggregateSeries,
+  compact = false,
+): SeriesDescriptor {
+  return {
+    key: `g${agg.group_id}`,
+    kind: "group",
+    label: compact ? agg.group_name : `${agg.group_name} mean`,
+    cellName: null,
+    groupName: agg.group_name,
+  };
+}
+
+/** Every stylable series on the cycles plot, in the order it is drawn. */
+export function cyclesSeriesDescriptors(
+  result: ComputeResult,
+  spec: AnalysisSpec,
+): SeriesDescriptor[] {
+  const out: SeriesDescriptor[] = [];
+  for (const agg of result.aggregates) out.push(aggregateSeriesDescriptor(agg));
+  const showIndividual =
+    spec.presentation.show_individual_cells || result.aggregates.length === 0;
+  for (const s of result.cell_series) {
+    if (s.excluded) continue;
+    if (s.group_id !== null && !showIndividual) continue;
+    out.push(cellSeriesDescriptor(s));
+  }
+  return out;
+}
+
+/**
+ * Sample curves for the editor's preview, keyed like the descriptors.
+ *
+ * Uses the quantity the plot is currently showing so the preview is the real
+ * data, not a synthetic shape.
+ */
+export function cyclesSeriesPreviewData(
+  result: ComputeResult,
+  spec: AnalysisSpec,
+): { key: string; x: number[]; y: (number | null)[] }[] {
+  const column = resolvedQuantity(result, spec).column;
+  const out: { key: string; x: number[]; y: (number | null)[] }[] = [];
+  for (const agg of result.aggregates) {
+    const q = agg.quantities[column];
+    if (!q) continue;
+    out.push({ key: `g${agg.group_id}`, x: agg.x, y: q.mean });
+  }
+  const showIndividual =
+    spec.presentation.show_individual_cells || result.aggregates.length === 0;
+  for (const s of result.cell_series) {
+    if (s.excluded) continue;
+    if (s.group_id !== null && !showIndividual) continue;
+    out.push({ key: `c${s.cell_id}`, x: s.x, y: s.quantities[column] ?? [] });
+  }
+  return out;
 }
 
 function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
@@ -2894,26 +2979,66 @@ function tracesForResult(
     const color = pick(`g${agg.group_id}`);
     const q = agg.quantities[column];
     if (!q) continue;
+    const aggDescriptor = aggregateSeriesDescriptor(agg, compact);
+    const aggResolved = resolveSeriesStyle(
+      {
+        color,
+        lineWidth: compact ? 2 : style.line_width,
+        lineDash: compact ? "solid" : style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: compact ? 3 : style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      },
+      aggDescriptor,
+      style.series_rules,
+      style.series_overrides,
+    );
+    if (aggResolved.hidden) continue;
     if (!compact) {
       out.push(
         ...bandSegmentTraces(
           agg.x,
           q.band_low,
           q.band_high,
-          color,
+          aggResolved.color,
           style.band_opacity,
           `${agg.group_name} band`
         )
       );
     }
+    if (aggResolved.shadow && !compact) {
+      out.push({
+        x: agg.x,
+        y: q.mean,
+        type: "scatter",
+        mode: "lines",
+        hoverinfo: "skip",
+        showlegend: false,
+        opacity: 0.18,
+        line: { color: "#000000", width: aggResolved.lineWidth + 4, dash: aggResolved.lineDash },
+      } as Plotly.Data);
+    }
     out.push({
       x: agg.x,
       y: q.mean,
-      name: compact ? agg.group_name : `${agg.group_name} mean`,
-      line: { color, width: compact ? 2 : style.line_width, dash: compact ? "solid" : style.line_dash },
-      marker: { color, size: compact ? 3 : style.marker_size, symbol: markerSymbol(style) },
+      name: aggResolved.name,
+      line: {
+        color: aggResolved.color,
+        width: aggResolved.lineWidth,
+        dash: aggResolved.lineDash,
+        shape: aggResolved.lineShape,
+      },
+      marker: {
+        color: aggResolved.color,
+        size: aggResolved.markerSize,
+        symbol: seriesPlotlySymbol(aggResolved),
+      },
+      opacity: aggResolved.opacity,
+      showlegend: aggResolved.showInLegend,
       type: "scatter",
-      mode,
+      mode: compact ? mode : seriesPlotlyMode(aggResolved),
       customdata: q.n,
       hovertemplate: compact
         ? undefined
@@ -2983,6 +3108,25 @@ function tracesForResult(
     if (s.excluded || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
     const color = grouped ? pick(`g${s.group_id}`) : pick(`c${s.cell_id}`);
+    // Per-series resolution. The base carries exactly what this trace used to
+    // hardcode, so a plot with no overrides and no rules is byte-identical.
+    const descriptor = cellSeriesDescriptor(s);
+    const resolved = resolveSeriesStyle(
+      {
+        color,
+        lineWidth: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
+        lineDash: compact ? "solid" : style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: compact ? 3 : style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
+      },
+      descriptor,
+      style.series_rules,
+      style.series_overrides,
+    );
+    if (resolved.hidden) continue;
     const sourceCycle = s.source_cycle ?? s.x.map(() => null);
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
@@ -3001,20 +3145,38 @@ function tracesForResult(
       sourcePosition[index] ?? "",
       sourceFilename[index] ?? "",
     ]);
+    if (resolved.shadow && !compact) {
+      // Plotly has no line shadow, so it is a wider, faint copy underneath.
+      out.push({
+        x: s.x,
+        y: s.quantities[column] ?? [],
+        type: "scatter",
+        mode: "lines",
+        hoverinfo: "skip",
+        showlegend: false,
+        opacity: 0.18,
+        line: { color: "#000000", width: resolved.lineWidth + 4, dash: resolved.lineDash },
+      } as Plotly.Data);
+    }
     out.push({
       x: s.x,
       y: s.quantities[column] ?? [],
-      name: s.group_name ? `${s.label} (${s.group_name})` : s.label,
+      name: resolved.name,
       line: {
-        color,
-        width: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
-        dash: compact ? "solid" : style.line_dash,
+        color: resolved.color,
+        width: resolved.lineWidth,
+        dash: resolved.lineDash,
+        shape: resolved.lineShape,
       },
-      marker: { color, size: compact ? 3 : style.marker_size, symbol: markerSymbol(style) },
-      opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
+      marker: {
+        color: resolved.color,
+        size: resolved.markerSize,
+        symbol: seriesPlotlySymbol(resolved),
+      },
+      opacity: resolved.opacity,
       type: "scatter",
-      mode,
-      showlegend: !compact && !grouped,
+      mode: compact ? mode : seriesPlotlyMode(resolved),
+      showlegend: !compact && !grouped && resolved.showInLegend,
       customdata,
       cellxplorer_export_columns: sourceColumns,
       hovertemplate:
@@ -5415,6 +5577,7 @@ export function PlotStylePanel({
     axisScope === "time_capacity" ? "time_capacity" : "cycles",
   );
   const [presetDefault, setPresetDefault] = useState(false);
+  const [seriesStyleOpen, setSeriesStyleOpen] = useState(false);
   const style = currentPlotStyle(spec, axisScope);
   const colorTargets = plotColorTargets(result);
   const computeResult = result && "cell_traces" in result ? undefined : result;
@@ -5426,6 +5589,46 @@ export function PlotStylePanel({
   const setStyle = (fn: (style: PlotStyle) => void) => {
     update((s) => writeScopedStyle(s, axisScope, fn));
   };
+
+  // Per-series styling. Descriptors and preview curves come from the same
+  // compute result the plot draws, so the editor lists exactly what is on screen.
+  const seriesDescriptors = useMemo(
+    () => (computeResult ? cyclesSeriesDescriptors(computeResult, spec) : []),
+    [computeResult, spec],
+  );
+  const seriesPreviewData = useMemo(
+    () => (computeResult ? cyclesSeriesPreviewData(computeResult, spec) : []),
+    [computeResult, spec],
+  );
+  const seriesPalette = plotPalette(style);
+  const seriesBaseFor = useCallback(
+    (descriptor: SeriesDescriptor) => {
+      const index = seriesDescriptors.findIndex((item) => item.key === descriptor.key);
+      const fallback = seriesPalette[(index < 0 ? 0 : index) % seriesPalette.length];
+      return {
+        color: style.custom_colors[descriptor.key] ?? fallback,
+        lineWidth: style.line_width,
+        lineDash: style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+    },
+    [seriesDescriptors, seriesPalette, style],
+  );
+  const customisedSeriesCount = Object.keys(style.series_overrides ?? {}).length;
+  const seriesRuleCount = (style.series_rules ?? []).length;
+  const seriesStyleSummary =
+    customisedSeriesCount || seriesRuleCount
+      ? [
+          customisedSeriesCount ? `${customisedSeriesCount} customised` : null,
+          seriesRuleCount ? `${seriesRuleCount} rule${seriesRuleCount === 1 ? "" : "s"}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : null;
   const setAxisTitle = (key: "x_title" | "y_title" | "y2_title", value: string) => {
     setStyle((next) => void (next[key] = value || null));
   };
@@ -5671,6 +5874,21 @@ export function PlotStylePanel({
           </Accordion.Control>
           <Accordion.Panel>
             <Stack gap="xs">
+              {/* The controls below apply to every series at once; this opens
+                  the editor for styling series individually or by rule. */}
+              <Button
+                variant="light"
+                leftSection={<IconPalette size={15} />}
+                onClick={() => setSeriesStyleOpen(true)}
+              >
+                Series appearance…
+              </Button>
+              {seriesStyleSummary && (
+                <Text size="xs" c="dimmed">
+                  {seriesStyleSummary}
+                </Text>
+              )}
+              <Divider label="Applies to all series" labelPosition="left" />
               <Group grow>
                 <DebouncedNumberInput
                   label="Width"
@@ -6575,6 +6793,21 @@ export function PlotStylePanel({
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
+      <SeriesStyleModal
+        opened={seriesStyleOpen}
+        onClose={() => setSeriesStyleOpen(false)}
+        descriptors={seriesDescriptors}
+        overrides={style.series_overrides ?? {}}
+        rules={style.series_rules ?? []}
+        baseFor={seriesBaseFor}
+        previewData={seriesPreviewData}
+        onChange={({ overrides, rules }) =>
+          setStyle((next) => {
+            next.series_overrides = overrides;
+            next.series_rules = rules;
+          })
+        }
+      />
       <Modal
         opened={savePresetOpen}
         onClose={() => setSavePresetOpen(false)}
