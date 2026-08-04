@@ -29,6 +29,18 @@
   overflow-x: auto;
 }
 
+/* Fill mode: the step manages its own scrolling regions, so the work area must
+   not scroll as a whole. A step with a tall side panel would otherwise drag its
+   own toolbar and column headers out of view. */
+.workFill {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .footer {
   flex: none;
   display: flex;

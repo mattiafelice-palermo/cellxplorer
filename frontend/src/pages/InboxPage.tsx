@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -30,26 +29,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   IconAlertTriangle,
   IconArrowLeft,
-  IconArrowDown,
-  IconArrowUp,
   IconChevronDown,
   IconChevronRight,
   IconDeviceFloppy,
   IconFileImport,
   IconFile,
   IconFolder,
-  IconClock,
-  IconDeviceDesktop,
-  IconDownload,
   IconEye,
-  IconHome,
   IconGripVertical,
   IconInfoCircle,
   IconPlus,
-  IconPin,
-  IconPinnedOff,
   IconRefresh,
-  IconSearch,
   IconTable,
   IconUpload,
   IconX,
@@ -69,9 +59,6 @@ import { useSearchParams } from "react-router-dom";
 
 import {
   ImportInspectResult,
-  ImportBrowseEntry,
-  ImportBrowseResult,
-  ImportQuickAccessItem,
   ActiveMaterialPresetSettings,
   ElectrodeAreaPresetSettings,
   ImportFolderFile,
@@ -81,12 +68,14 @@ import {
   ImportRawDataResult,
   get,
   post,
-  put,
   Tree,
 } from "../api";
 import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
-import { ImportFilesystemPickerModal as SharedImportFilesystemPickerModal } from "../components/ImportFilesystemPickerModal";
+import {
+  ImportFilesystemPickerModal as SharedImportFilesystemPickerModal,
+  type ImportSourceSelection,
+} from "../components/ImportFilesystemPickerModal";
 import {
   ImportInfoHint,
   ImportModalPrimaryActions,
@@ -280,7 +269,7 @@ type FolderImportTreeRow =
 
 const FOLDER_IMPORT_ROW_HEIGHT = 34;
 const FOLDER_IMPORT_ROW_OVERSCAN = 8;
-const IMPORT_DRAFT_ROW_HEIGHT = 148;
+const IMPORT_DRAFT_ROW_HEIGHT = 104;
 const IMPORT_DRAFT_ROW_OVERSCAN = 6;
 
 function folderCandidateKey(candidate: FolderImportCandidate) {
@@ -817,478 +806,6 @@ function FolderImportSelectionModal({
         </Group>
       </Stack>
     </ImportModalShell>
-  );
-}
-
-type ImportSourceSelection = {
-  filePaths: string[];
-  folderPaths: string[];
-};
-
-function ImportFilesystemPickerModal({
-  opened,
-  loading,
-  onClose,
-  onConfirm,
-}: {
-  opened: boolean;
-  loading: boolean;
-  onClose: () => void;
-  onConfirm: (selection: ImportSourceSelection) => void;
-}) {
-  const [requestedPath, setRequestedPath] = useState<string | null>(null);
-  const [pathInput, setPathInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(new Map());
-  const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
-  const browseQuery = useQuery({
-    queryKey: ["import-filesystem", requestedPath],
-    queryFn: () => post<ImportBrowseResult>("/api/imports/browse", { path: requestedPath }),
-    enabled: opened,
-  });
-  const pinnedMutation = useMutation({
-    mutationFn: (paths: string[]) =>
-      put<{ items: ImportQuickAccessItem[] }>("/api/imports/quick-access/pinned", { paths }),
-    onSuccess: () => void browseQuery.refetch(),
-    onError: (error: Error) =>
-      notifications.show({ message: error.message, color: "red" }),
-  });
-  const visibleEntries = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    return (browseQuery.data?.entries ?? []).filter(
-      (entry) => !query || entry.name.toLocaleLowerCase().includes(query)
-    );
-  }, [browseQuery.data, search]);
-
-  useEffect(() => {
-    if (!opened) return;
-    setRequestedPath(null);
-    setPathInput("");
-    setSearch("");
-    setSelected(new Map());
-    setLastSelectedPath(null);
-  }, [opened]);
-
-  useEffect(() => {
-    if (browseQuery.data?.current_path) setPathInput(browseQuery.data.current_path);
-  }, [browseQuery.data?.current_path]);
-
-  const navigate = (path: string | null) => {
-    setRequestedPath(path);
-    setSearch("");
-    setLastSelectedPath(null);
-  };
-
-  const toggleEntry = (
-    entry: ImportBrowseEntry,
-    shiftKey: boolean,
-    ctrlKey: boolean
-  ) => {
-    setSelected((current) => {
-      const next = new Map(current);
-      if (shiftKey && lastSelectedPath) {
-        const from = visibleEntries.findIndex((item) => item.path === lastSelectedPath);
-        const to = visibleEntries.findIndex((item) => item.path === entry.path);
-        if (from >= 0 && to >= 0) {
-          const [start, end] = from < to ? [from, to] : [to, from];
-          const shouldSelect = !next.has(entry.path);
-          visibleEntries.slice(start, end + 1).forEach((item) => {
-            if (shouldSelect) next.set(item.path, item);
-            else next.delete(item.path);
-          });
-          return next;
-        }
-      }
-      if (!ctrlKey && !shiftKey) {
-        if (next.has(entry.path)) next.delete(entry.path);
-        else next.set(entry.path, entry);
-        return next;
-      }
-      if (next.has(entry.path)) next.delete(entry.path);
-      else next.set(entry.path, entry);
-      return next;
-    });
-    setLastSelectedPath(entry.path);
-  };
-
-  const selectedEntries = [...selected.values()];
-  const fileCount = selectedEntries.filter((entry) => entry.kind === "file").length;
-  const folderCount = selectedEntries.filter((entry) => entry.kind === "folder").length;
-  const allVisibleSelected =
-    visibleEntries.length > 0 && visibleEntries.every((entry) => selected.has(entry.path));
-  const someVisibleSelected = visibleEntries.some((entry) => selected.has(entry.path));
-  const quickAccess = browseQuery.data?.quick_access ?? [];
-  const pinnedPaths = quickAccess.filter((item) => item.pinned).map((item) => item.path);
-  const setPinnedPaths = (paths: string[]) => pinnedMutation.mutate(paths);
-  const togglePinned = (item: ImportQuickAccessItem) => {
-    setPinnedPaths(
-      item.pinned
-        ? pinnedPaths.filter((path) => path !== item.path)
-        : [...pinnedPaths, item.path]
-    );
-  };
-  const movePinned = (path: string, direction: -1 | 1) => {
-    const index = pinnedPaths.indexOf(path);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= pinnedPaths.length) return;
-    const next = [...pinnedPaths];
-    [next[index], next[target]] = [next[target], next[index]];
-    setPinnedPaths(next);
-  };
-  const shortcutIcon = (item: ImportQuickAccessItem) => {
-    if (item.label === "Home") return <IconHome size={16} />;
-    if (item.label === "Desktop") return <IconDeviceDesktop size={16} />;
-    if (item.label === "Downloads") return <IconDownload size={16} />;
-    if (item.section === "recent") return <IconClock size={16} />;
-    return <IconFolder size={16} />;
-  };
-
-  return (
-    <Modal opened={opened} onClose={onClose} title="Load cell files" size="68rem">
-      <Stack gap="sm">
-        <Text size="sm" c="dimmed">
-          Select any combination of Neware files and folders. Double-click a folder to open it;
-          checked folders are expanded recursively in the next step.
-        </Text>
-        <Group align="stretch" gap="md" wrap="nowrap">
-          <Paper
-            p="xs"
-            w={235}
-            style={{ borderRight: "1px solid var(--mantine-color-default-border)" }}
-          >
-            <ScrollArea h={590} type="auto">
-              <Stack gap="md">
-                {(["quick", "pinned", "recent"] as const).map((section) => {
-                  const items = quickAccess.filter((item) => item.section === section);
-                  if (items.length === 0) return null;
-                  return (
-                    <Stack key={section} gap={3}>
-                      <Text size="xs" fw={700} c="dimmed">
-                        {section === "quick"
-                          ? "Quick access"
-                          : section === "pinned"
-                            ? "Pinned"
-                            : "Recent"}
-                      </Text>
-                      {items.map((item) => {
-                        const active = browseQuery.data?.current_path === item.path;
-                        const pinIndex = pinnedPaths.indexOf(item.path);
-                        return (
-                          <Group
-                            key={`${section}-${item.path}`}
-                            gap={4}
-                            wrap="nowrap"
-                            px="xs"
-                            py={6}
-                            bg={active ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
-                            style={{ borderRadius: 4, opacity: item.available ? 1 : 0.55 }}
-                          >
-                            <Button
-                              variant="subtle"
-                              color={active ? "var(--mantine-primary-color-6)" : undefined}
-                              size="compact-sm"
-                              leftSection={shortcutIcon(item)}
-                              disabled={!item.available}
-                              justify="flex-start"
-                              style={{ flex: 1, minWidth: 0 }}
-                              onClick={() => navigate(item.path)}
-                            >
-                              <Text size="sm" truncate>{item.label}</Text>
-                            </Button>
-                            {item.pinned && (
-                              <>
-                                <ActionIcon
-                                  size="xs"
-                                  variant="subtle"
-                                  color="gray"
-                                  disabled={pinIndex <= 0}
-                                  aria-label={`Move ${item.label} up`}
-                                  onClick={() => movePinned(item.path, -1)}
-                                >
-                                  <IconArrowUp size={12} />
-                                </ActionIcon>
-                                <ActionIcon
-                                  size="xs"
-                                  variant="subtle"
-                                  color="gray"
-                                  disabled={pinIndex < 0 || pinIndex >= pinnedPaths.length - 1}
-                                  aria-label={`Move ${item.label} down`}
-                                  onClick={() => movePinned(item.path, 1)}
-                                >
-                                  <IconArrowDown size={12} />
-                                </ActionIcon>
-                              </>
-                            )}
-                            <ActionIcon
-                              size="sm"
-                              variant="subtle"
-                              color="gray"
-                              aria-label={item.pinned ? `Unpin ${item.label}` : `Pin ${item.label}`}
-                              onClick={() => togglePinned(item)}
-                            >
-                              {item.pinned ? <IconPinnedOff size={14} /> : <IconPin size={14} />}
-                            </ActionIcon>
-                          </Group>
-                        );
-                      })}
-                    </Stack>
-                  );
-                })}
-                <Stack gap={3}>
-                  <Text size="xs" fw={700} c="dimmed">This PC</Text>
-                  {(browseQuery.data?.roots ?? []).map((root) => (
-                    <Button
-                      key={root.path}
-                      variant="subtle"
-                      color={browseQuery.data?.current_path === root.path ? "var(--mantine-primary-color-6)" : "dark"}
-                      size="compact-sm"
-                      leftSection={root.name === "Home" ? <IconHome size={15} /> : <IconFolder size={15} />}
-                      justify="flex-start"
-                      onClick={() => navigate(root.path)}
-                    >
-                      {root.name}
-                    </Button>
-                  ))}
-                </Stack>
-              </Stack>
-            </ScrollArea>
-          </Paper>
-          <Stack gap="sm" style={{ flex: 1, minWidth: 0 }}>
-        <Group gap="xs" wrap="nowrap">
-          <ActionIcon
-            variant="default"
-            size="lg"
-            aria-label="Go to parent folder"
-            disabled={!browseQuery.data?.parent_path}
-            onClick={() => navigate(browseQuery.data?.parent_path ?? null)}
-          >
-            <IconArrowUp size={18} />
-          </ActionIcon>
-          <TextInput
-            value={pathInput}
-            onChange={(event) => setPathInput(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && pathInput.trim()) navigate(pathInput.trim());
-            }}
-            aria-label="Current folder path"
-            style={{ flex: 1 }}
-          />
-          <ActionIcon
-            variant="default"
-            size="lg"
-            aria-label="Refresh folder"
-            onClick={() => void browseQuery.refetch()}
-          >
-            <IconRefresh size={17} />
-          </ActionIcon>
-        </Group>
-        <Group gap="xs">
-          <TextInput
-            placeholder="Search this folder"
-            leftSection={<IconSearch size={15} />}
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-            style={{ flex: 1 }}
-          />
-          <Button
-            variant="default"
-            onClick={() =>
-              setSelected((current) => {
-                const next = new Map(current);
-                const shouldSelect = !allVisibleSelected;
-                visibleEntries.forEach((entry) => {
-                  if (shouldSelect) next.set(entry.path, entry);
-                  else next.delete(entry.path);
-                });
-                return next;
-              })
-            }
-          >
-            {allVisibleSelected ? "Clear shown" : "Select shown"}
-          </Button>
-        </Group>
-        <Paper withBorder p={0}>
-          {browseQuery.isPending ? (
-            <Center h={390}>
-              <Loader />
-            </Center>
-          ) : browseQuery.isError ? (
-            <Center h={390} px="lg">
-              <Alert color="red" w="100%">
-                {browseQuery.error instanceof Error
-                  ? browseQuery.error.message
-                  : "This folder could not be opened."}
-              </Alert>
-            </Center>
-          ) : (
-            <ScrollArea h={390} type="auto">
-              <Stack gap={0}>
-                <Group
-                  gap="xs"
-                  wrap="nowrap"
-                  px="sm"
-                  py={8}
-                  bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
-                  style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
-                >
-                  <Checkbox
-                    checked={allVisibleSelected}
-                    indeterminate={someVisibleSelected && !allVisibleSelected}
-                    readOnly
-                    onClick={() =>
-                      setSelected((current) => {
-                        const next = new Map(current);
-                        visibleEntries.forEach((entry) => {
-                          if (allVisibleSelected) next.delete(entry.path);
-                          else next.set(entry.path, entry);
-                        });
-                        return next;
-                      })
-                    }
-                  />
-                  <Text size="xs" fw={700} style={{ flex: 1 }}>
-                    Name
-                  </Text>
-                  <Text size="xs" fw={700} w={90} ta="right">
-                    Size
-                  </Text>
-                  <Text size="xs" fw={700} w={145}>
-                    Modified
-                  </Text>
-                </Group>
-                {visibleEntries.length === 0 ? (
-                  <Center h={300}>
-                    <Text size="sm" c="dimmed">
-                      No folders or Neware files here.
-                    </Text>
-                  </Center>
-                ) : (
-                  visibleEntries.map((entry) => (
-                    <Group
-                      key={entry.path}
-                      gap="xs"
-                      wrap="nowrap"
-                      px="sm"
-                      py={7}
-                      bg={selected.has(entry.path) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
-                      style={{
-                        cursor: "pointer",
-                        borderBottom: "1px solid var(--mantine-color-default-border)",
-                      }}
-                      onClick={(event) =>
-                        toggleEntry(entry, event.shiftKey, event.ctrlKey || event.metaKey)
-                      }
-                      onDoubleClick={() => {
-                        if (entry.kind === "folder") navigate(entry.path);
-                      }}
-                    >
-                      <Checkbox checked={selected.has(entry.path)} readOnly />
-                      {entry.kind === "folder" ? (
-                        <IconFolder size={17} color="var(--mantine-primary-color-6)" />
-                      ) : (
-                        <IconFile size={17} color="var(--mantine-color-dimmed)" />
-                      )}
-                      <Text size="sm" truncate style={{ flex: 1 }}>
-                        {entry.name}
-                      </Text>
-                      <Text size="xs" c="dimmed" w={90} ta="right">
-                        {entry.size === null ? "" : formatBytes(entry.size)}
-                      </Text>
-                      <Text size="xs" c="dimmed" w={145}>
-                        {entry.modified_at
-                          ? new Date(entry.modified_at).toLocaleString()
-                          : ""}
-                      </Text>
-                      {entry.kind === "folder" && (
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          aria-label={`Open ${entry.name}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            navigate(entry.path);
-                          }}
-                        >
-                          <IconChevronRight size={16} />
-                        </ActionIcon>
-                      )}
-                    </Group>
-                  ))
-                )}
-              </Stack>
-            </ScrollArea>
-          )}
-        </Paper>
-        {selectedEntries.length > 0 && (
-          <Paper withBorder p="xs">
-            <Group justify="space-between" mb={4}>
-              <Text size="xs" fw={700}>
-                Selected sources
-              </Text>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setSelected(new Map())}>
-                Clear all
-              </Button>
-            </Group>
-            <ScrollArea h={Math.min(96, selectedEntries.length * 28)} type="auto">
-              <Stack gap={2}>
-                {selectedEntries.map((entry) => (
-                  <Group key={entry.path} gap="xs" wrap="nowrap">
-                    {entry.kind === "folder" ? <IconFolder size={14} /> : <IconFile size={14} />}
-                    <Text size="xs" truncate style={{ flex: 1 }}>
-                      {entry.path}
-                    </Text>
-                    <ActionIcon
-                      size="xs"
-                      variant="subtle"
-                      color="gray"
-                      aria-label={`Remove ${entry.name}`}
-                      onClick={() =>
-                        setSelected((current) => {
-                          const next = new Map(current);
-                          next.delete(entry.path);
-                          return next;
-                        })
-                      }
-                    >
-                      <IconX size={12} />
-                    </ActionIcon>
-                  </Group>
-                ))}
-              </Stack>
-            </ScrollArea>
-          </Paper>
-        )}
-          </Stack>
-        </Group>
-        <Group justify="space-between">
-          <Text size="sm" c="dimmed">
-            {folderCount} folder{folderCount === 1 ? "" : "s"}
-            {fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}
-          </Text>
-          <Group gap="xs">
-            <Button variant="default" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              loading={loading}
-              disabled={selectedEntries.length === 0}
-              onClick={() =>
-                onConfirm({
-                  filePaths: selectedEntries
-                    .filter((entry) => entry.kind === "file")
-                    .map((entry) => entry.path),
-                  folderPaths: selectedEntries
-                    .filter((entry) => entry.kind === "folder")
-                    .map((entry) => entry.path),
-                })
-              }
-            >
-              Continue
-            </Button>
-          </Group>
-        </Group>
-      </Stack>
-    </Modal>
   );
 }
 
@@ -1880,6 +1397,7 @@ function ImportModal({
         closeDisabled={registrationUi.closeLocked}
         title="Import cells"
         step={3}
+        fill
         notice={
           duplicateCount > 0 || hasCellNameConflicts ? (
             <Stack gap="xs">
@@ -1968,12 +1486,24 @@ function ImportModal({
         {draft && (
           <fieldset
             disabled={registrationUi.editingLocked}
-            style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
+            style={{
+              border: 0,
+              margin: 0,
+              minWidth: 0,
+              padding: 0,
+              // The step owns its scrolling from here down: this column fills
+              // the work area and only the panes at the bottom scroll.
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              flex: 1,
+            }}
           >
-          <Stack gap="md">
+          <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
             {drafts.length >= 2 && (
               <SegmentedControl
                 fullWidth
+                style={{ flex: "none" }}
                 value={continuedMode ? "continued" : "separate"}
                 onChange={(value) => {
                   const nextMode = value === "continued";
@@ -2025,10 +1555,16 @@ function ImportModal({
                 importing={save.isPending}
               />
             ) : (
-            <Stack gap="md">
+            <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
             {/* Step-specific commands only. Cancel/Import live in the footer
-                with the other step navigation. */}
-            <Group justify="flex-end" align="center" gap="xs" wrap="wrap" style={{ minWidth: 0 }}>
+                with the other step navigation. Stays put while the panes scroll. */}
+            <Group
+              justify="flex-end"
+              align="center"
+              gap="xs"
+              wrap="wrap"
+              style={{ minWidth: 0, flex: "none" }}
+            >
               <Button
                 variant="subtle"
                 color="red"
@@ -2057,9 +1593,19 @@ function ImportModal({
                 searchable
               />
             </Group>
-            <Group align="stretch" gap="md" wrap="nowrap" style={{ minWidth: 0 }}>
-              <Paper withBorder p="xs" w={250} style={{ flex: "none" }}>
-                <Stack gap="xs" h="100%">
+            <Group
+              align="stretch"
+              gap="md"
+              wrap="nowrap"
+              style={{ minWidth: 0, flex: 1, minHeight: 0 }}
+            >
+              <Paper
+                withBorder
+                p="xs"
+                w={250}
+                style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}
+              >
+                <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
                   <Group justify="space-between" wrap="nowrap">
                     <Text size="sm" fw={700}>
                       Replicates
@@ -2083,7 +1629,7 @@ function ImportModal({
                       Group
                     </Button>
                   </Group>
-                  <ScrollArea h={520} type="auto">
+                  <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
                     <Stack gap={8}>
                       {replicateGroups.map((group) => (
                         <Paper
@@ -2178,9 +1724,14 @@ function ImportModal({
                 </Stack>
               </Paper>
 
-              <Paper withBorder p="xs" w={330} style={{ flex: "none" }}>
-                <Stack gap="xs">
-                  <Group justify="space-between" wrap="nowrap">
+              <Paper
+                withBorder
+                p="xs"
+                w={330}
+                style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}
+              >
+                <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
+                  <Group justify="space-between" wrap="nowrap" style={{ flex: "none" }}>
                     <Text size="sm" fw={700}>
                       Loaded files
                     </Text>
@@ -2191,7 +1742,7 @@ function ImportModal({
                    <Box
                      ref={loadedFilesViewportRef}
                      onScroll={(event) => setLoadedFilesScrollTop(event.currentTarget.scrollTop)}
-                     style={{ height: 520, overflowY: "auto" }}
+                     style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
                    >
                      <Box style={{ position: "relative", height: drafts.length * IMPORT_DRAFT_ROW_HEIGHT }}>
                        <Box
@@ -2225,7 +1776,7 @@ function ImportModal({
                              <Box key={item.staged_name} style={{ height: IMPORT_DRAFT_ROW_HEIGHT, paddingBottom: 6 }}>
                                <Paper
                                  withBorder
-                                 p="sm"
+                                 p="xs"
                                  draggable
                                  onDragStart={(event) => handleFileDragStart(event, item.staged_name)}
                                  style={{
@@ -2258,21 +1809,26 @@ function ImportModal({
                                      onClick={(event) => event.stopPropagation()}
                                      onChange={() => toggleSelectedStagedName(item.staged_name)}
                                    />
-                                   <Stack gap={3} style={{ flex: 1, minWidth: 0 }}>
+                                   <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
                                      <Text size="sm" fw={index === active ? 700 : 500} truncate>
                                        {item.cell_name || item.filename}
                                      </Text>
                                      <Text size="xs" c="dimmed" truncate>
                                        {item.filename}
                                      </Text>
-                                     <Text size="xs" c="dimmed">
-                                       {formatBytes(item.size)}
-                                     </Text>
+                                     {/* Size and state share a line: two separate
+                                         rows made the card taller than its content. */}
                                      <Group gap={4} wrap="nowrap">
+                                       <Text size="xs" c="dimmed" style={{ flex: "none" }}>
+                                         {formatBytes(item.size)}
+                                       </Text>
+                                       <Text size="xs" c="dimmed" style={{ flex: "none" }} aria-hidden="true">
+                                         ·
+                                       </Text>
                                        {previewError || duplicate || item.import_match?.kind === "possible_update" ? (
-                                         <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" />
+                                         <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" style={{ flex: "none" }} />
                                        ) : null}
-                                       <Text size="xs" c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
+                                       <Text size="xs" truncate c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
                                          {stateLabel}
                                        </Text>
                                      </Group>
@@ -2310,7 +1866,15 @@ function ImportModal({
                 </Stack>
               </Paper>
 
-              <Stack style={{ flex: 1, minWidth: 0 }} gap="md">
+              {/* The detail panel is the tall one. It scrolls inside its own
+                  column so it cannot drag the toolbar and column headers with it. */}
+              <Paper
+                withBorder
+                p="xs"
+                style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}
+              >
+              <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+              <Stack gap="md" pr="xs">
               <Group justify="space-between" align="start">
                 <div>
                   <Text fw={700}>{draft.cell_name || draft.filename}</Text>
@@ -2674,6 +2238,8 @@ function ImportModal({
                 </Stack>
               </Collapse>
             </Stack>
+            </ScrollArea>
+            </Paper>
             </Group>
             </Stack>
             )}

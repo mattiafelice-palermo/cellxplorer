@@ -31,6 +31,7 @@ export function ImportModalShell({
   progress,
   actions,
   closeDisabled = false,
+  fill = false,
   children,
 }: {
   opened: boolean;
@@ -47,6 +48,13 @@ export function ImportModalShell({
   /** Footer buttons. Wrap trailing controls in `ImportModalPrimaryActions`. */
   actions?: ReactNode;
   closeDisabled?: boolean;
+  /**
+   * Let the step own its scrolling. The work area then fills the dialog without
+   * scrolling itself, and `children` must manage height (a column that ends in
+   * its own scrollable regions). Use this when a step has a tall side panel
+   * that would otherwise scroll the whole dialog, taking the toolbar with it.
+   */
+  fill?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -81,7 +89,7 @@ export function ImportModalShell({
       size={IMPORT_MODAL_WIDTH}
       classNames={{ content: styles.content, body: styles.body }}
     >
-      <div className={styles.work}>{children}</div>
+      <div className={fill ? styles.workFill : styles.work}>{children}</div>
       <div className={styles.footer}>
         {notice !== undefined && notice !== null && <div className={styles.slot}>{notice}</div>}
         {progress !== undefined && progress !== null && <div className={styles.slot}>{progress}</div>}

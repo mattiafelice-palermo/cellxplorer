@@ -135,6 +135,24 @@ Branch `feature/spec-035-user-experience-optimization`, version `0.18.0-beta004`
 - **T6** — Panes narrowed to 250/330 with an explicit `flex: none`, the command row wraps, and the
   shell carries `min-width: 0`. Horizontal overflow **92 px -> 0**.
 
+### T7 — Step 3 scrolls in its panes, not as a whole (follow-up)
+
+Reported after the first pass: the tall detail panel made the **entire** work area scroll, so the
+mode tabs and the command row scrolled out of view with it, and the file cards were too spaced out.
+
+- `ImportModalShell` gained `fill`. In that mode the work area is `overflow: hidden` and lays out as
+  a flex column; the step owns its scrolling regions. Step 3 opts in; steps 1 and 2 keep the default
+  scrolling work area.
+- Step 3's column: the mode tabs and the command row are `flex: none`, and the pane row is
+  `flex: 1; min-height: 0`. Each of the three panes is now its own flex column ending in a scroll
+  region, so Replicates, Loaded files, and the detail panel scroll independently while the toolbar
+  and the pane headers stay fixed.
+- The detail panel moved into a bordered `Paper` with its own `ScrollArea`; it previously had no
+  height constraint at all, which is what dragged the dialog.
+- Fixed `h={520}` scroll heights became flex-driven, so the panes use whatever height the dialog has.
+- Card density: `IMPORT_DRAFT_ROW_HEIGHT` 148 -> 104, padding `sm` -> `xs`, inner gap 3 -> 2, and the
+  file size and state label share one line instead of two.
+
 ### A mistake worth recording
 
 The first version of the shell used `overflow-x: hidden` on the work area without `min-width: 0` on
@@ -152,7 +170,8 @@ python scripts\preflight.py   PREFLIGHT PASSED, 5/5
 ```
 
 Browser: full three-step flow driven end to end against an isolated data root, in **light and
-dark**, including a real 3-cell import that reached `READY` in the Cell Database.
+dark**, including a real 3-cell import that reached `READY` in the Cell Database. The T7 follow-up
+was confirmed by the user in the running app rather than re-driven here.
 
 ### Not done
 
