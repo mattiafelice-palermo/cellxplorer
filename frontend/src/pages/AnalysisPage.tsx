@@ -217,8 +217,11 @@ import {
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
+  shadowOffsetValues,
+  shadowRgba,
   timeCapacitySeriesDescriptor,
   timeCapacitySeriesDescriptors,
+  type ResolvedSeriesStyle,
   type SeriesDescriptor,
 } from "../seriesStyling";
 import { SeriesStyleModal } from "../components/SeriesStyleModal";
@@ -2719,6 +2722,36 @@ function AddEntriesModal({
   );
 }
 
+/**
+ * The drop shadow: a wider, offset, semi-transparent copy drawn underneath.
+ *
+ * Plotly has no line shadow, so this is the only way to get one. Push it before
+ * the real trace so it renders below, and keep it out of the legend and hover.
+ */
+function shadowTraceFor(
+  x: (number | null)[],
+  y: (number | null)[],
+  resolved: ResolvedSeriesStyle,
+  axes: { xaxis?: string; yaxis?: string } = {},
+): Plotly.Data {
+  return {
+    x: shadowOffsetValues(x, resolved.shadowOffsetX),
+    y: shadowOffsetValues(y, -resolved.shadowOffsetY),
+    type: "scatter",
+    mode: "lines",
+    hoverinfo: "skip",
+    showlegend: false,
+    connectgaps: false,
+    line: {
+      color: shadowRgba(resolved.shadowColor, resolved.shadowOpacity),
+      width: resolved.lineWidth + resolved.shadowSpread,
+      dash: resolved.lineDash,
+      shape: resolved.lineShape,
+    },
+    ...axes,
+  } as Plotly.Data;
+}
+
 function bandSegmentTraces(
   x: number[],
   low: (number | null)[],
@@ -2941,16 +2974,7 @@ function tracesForResult(
       );
     }
     if (aggResolved.shadow && !compact) {
-      out.push({
-        x: agg.x,
-        y: q.mean,
-        type: "scatter",
-        mode: "lines",
-        hoverinfo: "skip",
-        showlegend: false,
-        opacity: 0.18,
-        line: { color: "#000000", width: aggResolved.lineWidth + 4, dash: aggResolved.lineDash },
-      } as Plotly.Data);
+      out.push(shadowTraceFor(agg.x, q.mean, aggResolved));
     }
     out.push({
       x: agg.x,
@@ -3078,17 +3102,7 @@ function tracesForResult(
       sourceFilename[index] ?? "",
     ]);
     if (resolved.shadow && !compact) {
-      // Plotly has no line shadow, so it is a wider, faint copy underneath.
-      out.push({
-        x: s.x,
-        y: s.quantities[column] ?? [],
-        type: "scatter",
-        mode: "lines",
-        hoverinfo: "skip",
-        showlegend: false,
-        opacity: 0.18,
-        line: { color: "#000000", width: resolved.lineWidth + 4, dash: resolved.lineDash },
-      } as Plotly.Data);
+      out.push(shadowTraceFor(s.x, s.quantities[column] ?? [], resolved));
     }
     out.push({
       x: s.x,
@@ -3408,6 +3422,7 @@ function tracesForTimeCapacity(
           }
           const showlegend = !legendShown.has(seriesKey);
           legendShown.add(seriesKey);
+          if (resolved.shadow) out.push(shadowTraceFor(x, y, resolved));
           out.push({
             x,
             y,
@@ -3466,6 +3481,7 @@ function tracesForTimeCapacity(
         segment.sourceFilename[index] ?? "",
       ]);
       legendShown.add(seriesKey);
+      if (resolved.shadow) out.push(shadowTraceFor(segment.x, segment.voltage, resolved));
       out.push({
         x: segment.x,
         y: segment.voltage,

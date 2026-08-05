@@ -175,6 +175,38 @@ The descriptor builders moved into `seriesStyling.ts` as pure functions over str
 four tests now pin them — including one asserting a populated result never yields an empty list.
 That is the specific regression that shipped, and it is now impossible to reship silently.
 
+### Follow-up: usability and performance
+
+**The modal was sluggish, and the cause was architectural.** Every control change wrote straight
+through to the analysis spec, which re-rendered the whole analysis page *and* rebuilt the main plot
+behind the modal. A colour picker fires continuously while dragging, so a single drag triggered
+dozens of full-page renders.
+
+Now the modal holds a **local draft**, commits to the spec on a 250 ms debounce, and flushes on
+close (and on unmount, so nothing is lost). The preview additionally uses `useDeferredValue`, so
+the controls stay responsive and the plot catches up a frame later. Two independent brakes: the
+debounce protects the page, the deferred value protects the modal.
+
+**Line style leads the form.** The three-way control was renamed from "Markers" to **Line style**
+(Line only / Points only / Line + points) and moved directly under colour and opacity, because it
+decides which of the following groups apply. The Line group is disabled for *Points only* and the
+Markers group for *Line only*, so the form states what is actually in effect.
+
+**The drop shadow was invisible** because it was only implemented for Cycles, and the report came
+from Time/capacity. It is now emitted by both tabs through one `shadowTraceFor` helper, and it is
+tunable: colour, opacity, spread, and X/Y offset.
+
+Offset is expressed as a **percentage of the series' own span, not pixels**. The shadow is a second
+trace in data coordinates, so a pixel offset would drift as soon as the plot is zoomed. The field
+labels say "% of span" rather than implying a precision the mechanism cannot deliver.
+
+**Removed "Hide this series"** from the editor — the eye toggle in the series list already does it,
+and two controls for one state invites them to disagree.
+
+**Layout**: every panel now has a titled header (Preview / Series / Appearance / Rules), panels
+stretch to the dialog height instead of leaving the lower half empty, the series list has a drag
+divider (180–460 px), and the appearance form lays out in rows of three so it uses the width.
+
 ### Not done
 
 - **No browser verification.** The modal, its preview, and light/dark rendering have not been seen

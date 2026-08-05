@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.19.0-beta003 - 2026-08-05
+
+- Make the series appearance editor responsive while editing, lead with a line style choice that enables the relevant controls, and give the drop shadow visible colour, opacity, spread and offset settings.
+
 ## 0.19.0-beta002 - 2026-08-05
 
 - Show the real plot as a live preview in the series appearance editor, list the series for the tab you are on, and apply per-series styling on time and capacity plots.

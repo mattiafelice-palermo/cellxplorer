@@ -978,6 +978,17 @@ export interface SeriesStyleOverride {
   opacity?: number | null;
   /** Soft drop shadow behind the line. */
   shadow?: boolean | null;
+  shadow_color?: string | null;
+  shadow_opacity?: number | null;
+  /** Extra line width of the shadow copy, in pixels. */
+  shadow_spread?: number | null;
+  /**
+   * Offset as a percentage of the visible axis span, not pixels: the shadow is
+   * a second trace in data coordinates, so a pixel offset would not survive a
+   * zoom. Positive y moves the shadow down.
+   */
+  shadow_offset_x?: number | null;
+  shadow_offset_y?: number | null;
   /** Draw the series but keep it out of the legend box. */
   show_in_legend?: boolean | null;
   /** Hide the series entirely without removing it from the analysis. */

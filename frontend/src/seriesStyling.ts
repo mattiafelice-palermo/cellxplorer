@@ -42,9 +42,22 @@ export interface ResolvedSeriesStyle {
   markerOpen: boolean;
   opacity: number;
   shadow: boolean;
+  shadowColor: string;
+  shadowOpacity: number;
+  shadowSpread: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
   showInLegend: boolean;
   hidden: boolean;
 }
+
+export const DEFAULT_SHADOW = {
+  color: "#000000",
+  opacity: 0.25,
+  spread: 4,
+  offsetX: 0,
+  offsetY: 0,
+};
 
 /** The tab-wide defaults a series starts from. */
 export interface BaseSeriesStyle {
@@ -268,6 +281,11 @@ function applyOverride(
     markerOpen: assign(resolved.markerOpen, override.marker_open),
     opacity: assign(resolved.opacity, override.opacity),
     shadow: assign(resolved.shadow, override.shadow),
+    shadowColor: assign(resolved.shadowColor, override.shadow_color),
+    shadowOpacity: assign(resolved.shadowOpacity, override.shadow_opacity),
+    shadowSpread: assign(resolved.shadowSpread, override.shadow_spread),
+    shadowOffsetX: assign(resolved.shadowOffsetX, override.shadow_offset_x),
+    shadowOffsetY: assign(resolved.shadowOffsetY, override.shadow_offset_y),
     showInLegend: assign(resolved.showInLegend, override.show_in_legend),
     hidden: assign(resolved.hidden, override.hidden),
   };
@@ -297,6 +315,11 @@ export function resolveSeriesStyle(
     markerOpen: base.markerOpen,
     opacity: base.opacity,
     shadow: false,
+    shadowColor: DEFAULT_SHADOW.color,
+    shadowOpacity: DEFAULT_SHADOW.opacity,
+    shadowSpread: DEFAULT_SHADOW.spread,
+    shadowOffsetX: DEFAULT_SHADOW.offsetX,
+    shadowOffsetY: DEFAULT_SHADOW.offsetY,
     showInLegend: true,
     hidden: false,
   };
@@ -318,6 +341,42 @@ export function seriesPlotlyMode(style: ResolvedSeriesStyle): "lines" | "markers
 /** Plotly marker symbol, honouring the open/filled choice. */
 export function seriesPlotlySymbol(style: ResolvedSeriesStyle): string {
   return style.markerOpen ? `${style.markerSymbol}-open` : style.markerSymbol;
+}
+
+/** `#rrggbb` plus alpha as an `rgba()` string Plotly accepts. */
+export function shadowRgba(color: string, opacity: number): string {
+  const hex = color.replace("#", "");
+  const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
+  const value = Number.parseInt(full, 16);
+  if (!Number.isFinite(value) || full.length !== 6) return `rgba(0,0,0,${opacity})`;
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `rgba(${r},${g},${b},${opacity})`;
+}
+
+/**
+ * Offset the shadow copy in data coordinates.
+ *
+ * Plotly has no line shadow, so it is a second, wider trace drawn underneath.
+ * That trace lives in data space, so the offset is a percentage of the series'
+ * own span rather than pixels — a pixel offset would drift on zoom.
+ */
+export function shadowOffsetValues(
+  values: (number | null)[],
+  percent: number,
+): (number | null)[] {
+  if (!percent) return values;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (value === null || !Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) return values;
+  const delta = ((max - min) * percent) / 100;
+  return values.map((value) => (value === null ? null : value + delta));
 }
 
 /** Whether an override carries any instruction at all. */

@@ -13,6 +13,8 @@ import {
   seriesPlotlyMode,
   seriesPlotlySymbol,
   seriesRuleError,
+  shadowOffsetValues,
+  shadowRgba,
   type BaseSeriesStyle,
   type SeriesDescriptor,
 } from "../src/seriesStyling.ts";
@@ -242,6 +244,40 @@ test("a populated result never yields an empty series list", () => {
   const cells = [traceLike()];
   assert.ok(cyclesSeriesDescriptors([], cells, false).length > 0);
   assert.ok(timeCapacitySeriesDescriptors(cells).length > 0);
+});
+
+test("shadow settings resolve with sensible defaults and are overridable", () => {
+  const plain = resolveSeriesStyle(base, cell(), [], { c1: { shadow: true } });
+  assert.equal(plain.shadow, true);
+  assert.equal(plain.shadowColor, "#000000");
+  assert.equal(plain.shadowSpread, 4);
+
+  const tuned = resolveSeriesStyle(base, cell(), [], {
+    c1: { shadow: true, shadow_color: "#ff0000", shadow_opacity: 0.5, shadow_spread: 10 },
+  });
+  assert.equal(tuned.shadowColor, "#ff0000");
+  assert.equal(tuned.shadowOpacity, 0.5);
+  assert.equal(tuned.shadowSpread, 10);
+});
+
+test("shadow colour converts to rgba, and bad input degrades to black", () => {
+  assert.equal(shadowRgba("#ff0000", 0.5), "rgba(255,0,0,0.5)");
+  assert.equal(shadowRgba("#f00", 0.25), "rgba(255,0,0,0.25)");
+  assert.equal(shadowRgba("not-a-colour", 0.3), "rgba(0,0,0,0.3)");
+});
+
+test("shadow offset shifts by a percentage of the series span", () => {
+  const values = [0, 5, 10];
+  // 10% of a span of 10 is 1.
+  assert.deepEqual(shadowOffsetValues(values, 10), [1, 6, 11]);
+  assert.deepEqual(shadowOffsetValues(values, -10), [-1, 4, 9]);
+  // No offset returns the same reference, so no needless array work.
+  assert.equal(shadowOffsetValues(values, 0), values);
+  // Nulls are gaps and stay gaps.
+  assert.deepEqual(shadowOffsetValues([0, null, 10], 10), [1, null, 11]);
+  // A flat series has no span to scale by, so it is left alone.
+  const flat = [3, 3, 3];
+  assert.equal(shadowOffsetValues(flat, 10), flat);
 });
 
 test("undefined rules and overrides are treated as none", () => {
