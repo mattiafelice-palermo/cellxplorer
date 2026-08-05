@@ -59,6 +59,100 @@ export interface BaseSeriesStyle {
   opacity: number;
 }
 
+/**
+ * Minimal shapes the descriptor builders need. Structural rather than the full
+ * API types so they can be unit tested without a compute result.
+ */
+export interface CellSeriesLike {
+  cell_id: number;
+  cell_name: string;
+  label: string;
+  group_id: number | null;
+  group_name: string | null;
+  excluded: boolean;
+}
+
+export interface AggregateSeriesLike {
+  group_id: number;
+  group_name: string;
+}
+
+export function cellSeriesDescriptor(s: CellSeriesLike): SeriesDescriptor {
+  return {
+    key: `c${s.cell_id}`,
+    kind: "cell",
+    label: s.group_name ? `${s.label} (${s.group_name})` : s.label,
+    cellName: s.cell_name,
+    groupName: s.group_name,
+  };
+}
+
+export function aggregateSeriesDescriptor(
+  agg: AggregateSeriesLike,
+  compact = false,
+): SeriesDescriptor {
+  return {
+    key: `g${agg.group_id}`,
+    kind: "group",
+    label: compact ? agg.group_name : `${agg.group_name} mean`,
+    cellName: null,
+    groupName: agg.group_name,
+  };
+}
+
+/**
+ * Every stylable series on the cycles plot, in draw order.
+ *
+ * `showIndividual` mirrors the plot: when replicate aggregates exist and
+ * individual cells are hidden, those cells are not drawn and must not be listed.
+ */
+export function cyclesSeriesDescriptors(
+  aggregates: AggregateSeriesLike[],
+  cellSeries: CellSeriesLike[],
+  showIndividualCells: boolean,
+): SeriesDescriptor[] {
+  const out: SeriesDescriptor[] = [];
+  for (const agg of aggregates) out.push(aggregateSeriesDescriptor(agg));
+  const showIndividual = showIndividualCells || aggregates.length === 0;
+  for (const s of cellSeries) {
+    if (s.excluded) continue;
+    if (s.group_id !== null && !showIndividual) continue;
+    out.push(cellSeriesDescriptor(s));
+  }
+  return out;
+}
+
+/**
+ * Time/capacity series identity.
+ *
+ * This tab draws one line per cell but colours grouped cells together, so the
+ * key is the group when there is one. Descriptors must use the same scheme as
+ * the trace builder, or the editor would list series the plot cannot match.
+ */
+export function timeCapacitySeriesDescriptor(trace: CellSeriesLike): SeriesDescriptor {
+  return {
+    key: trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`,
+    kind: trace.group_id ? "group" : "cell",
+    label: trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label,
+    cellName: trace.cell_name,
+    groupName: trace.group_name,
+  };
+}
+
+/** Stylable time/capacity series, de-duplicated by key. */
+export function timeCapacitySeriesDescriptors(traces: CellSeriesLike[]): SeriesDescriptor[] {
+  const seen = new Set<string>();
+  const out: SeriesDescriptor[] = [];
+  for (const trace of traces) {
+    if (trace.excluded) continue;
+    const descriptor = timeCapacitySeriesDescriptor(trace);
+    if (seen.has(descriptor.key)) continue;
+    seen.add(descriptor.key);
+    out.push(descriptor);
+  }
+  return out;
+}
+
 export const SERIES_RULE_FIELDS: { value: SeriesRuleField; label: string }[] = [
   { value: "label", label: "Series name" },
   { value: "cell_name", label: "Cell name" },

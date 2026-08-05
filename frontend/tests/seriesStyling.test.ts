@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  cyclesSeriesDescriptors,
+  timeCapacitySeriesDescriptors,
   emptySeriesRule,
   isEmptyOverride,
   matchingRules,
@@ -184,6 +186,62 @@ test("empty overrides are recognised and pruned", () => {
   assert.deepEqual(pruneOverrides({ c1: {}, c2: { color: "#fff" }, c3: { line_width: null } }), {
     c2: { color: "#fff" },
   });
+});
+
+// The editor shipped once listing zero series because the panel discarded the
+// time/capacity result. These pin that every tab produces a list.
+const traceLike = (over: Record<string, unknown> = {}) => ({
+  cell_id: 1,
+  cell_name: "A",
+  label: "A",
+  group_id: null,
+  group_name: null,
+  excluded: false,
+  ...over,
+}) as Parameters<typeof timeCapacitySeriesDescriptors>[0][number];
+
+test("cycles descriptors list aggregates and the cells that are drawn", () => {
+  const aggregates = [{ group_id: 7, group_name: "LFP" }];
+  const cells = [
+    traceLike({ cell_id: 1, group_id: 7, group_name: "LFP" }),
+    traceLike({ cell_id: 2, cell_name: "B", label: "B" }),
+    traceLike({ cell_id: 3, cell_name: "C", label: "C", excluded: true }),
+  ];
+
+  // Individual cells hidden: grouped cells are not drawn, so not listed.
+  const collapsed = cyclesSeriesDescriptors(aggregates, cells, false);
+  assert.deepEqual(collapsed.map((d) => d.key), ["g7", "c2"]);
+
+  // Individual cells shown: the grouped cell appears too.
+  const expanded = cyclesSeriesDescriptors(aggregates, cells, true);
+  assert.deepEqual(expanded.map((d) => d.key), ["g7", "c1", "c2"]);
+
+  // Excluded cells are never listed.
+  assert.equal(expanded.some((d) => d.key === "c3"), false);
+});
+
+test("with no aggregates every non-excluded cell is listed", () => {
+  const cells = [traceLike({ cell_id: 1, group_id: 4, group_name: "G" })];
+  assert.deepEqual(cyclesSeriesDescriptors([], cells, false).map((d) => d.key), ["c1"]);
+});
+
+test("time/capacity descriptors key grouped cells together and de-duplicate", () => {
+  const traces = [
+    traceLike({ cell_id: 1, group_id: 2, group_name: "G" }),
+    traceLike({ cell_id: 5, cell_name: "E", label: "E", group_id: 2, group_name: "G" }),
+    traceLike({ cell_id: 9, cell_name: "I", label: "I" }),
+    traceLike({ cell_id: 10, cell_name: "J", label: "J", excluded: true }),
+  ];
+  const descriptors = timeCapacitySeriesDescriptors(traces);
+  assert.deepEqual(descriptors.map((d) => d.key), ["g2", "c9"]);
+  assert.equal(descriptors[0].kind, "group");
+  assert.equal(descriptors[1].kind, "cell");
+});
+
+test("a populated result never yields an empty series list", () => {
+  const cells = [traceLike()];
+  assert.ok(cyclesSeriesDescriptors([], cells, false).length > 0);
+  assert.ok(timeCapacitySeriesDescriptors(cells).length > 0);
 });
 
 test("undefined rules and overrides are treated as none", () => {

@@ -146,13 +146,43 @@ npx.cmd vite build                                 built
 python scripts\preflight.py                        PREFLIGHT PASSED, 5/5
 ```
 
+### Follow-up: the editor shipped empty
+
+First user check: the modal listed **zero series** and the preview was blank.
+
+Cause: the style panel derived its result with
+`result && "cell_traces" in result ? undefined : result`, which discards the **time/capacity**
+result — and that is the tab it was opened on. The button was rendered on every tab's panel while
+only Cycles was wired, so on time/capacity it could only ever be empty.
+
+Fixed by:
+
+- **Descriptors for both tabs.** Time/capacity keys grouped cells as `g<id>` (it colours a group as
+  one series), unlike Cycles which keys every cell. Descriptors now follow each tab's own scheme,
+  because listing series the trace builder cannot match is what produced the empty panel.
+- **Time/capacity honours per-series styling**, in both the derivative and the voltage/current
+  views, so the editor actually changes that plot. The discharge-phase dash special case is kept as
+  the base, with overrides layered on top.
+- **The preview is the real plot.** The modal now takes a `buildPreview(overrides, rules)` callback;
+  the panel calls the page's own `tracesForResult` / `cyclePlotLayout` or
+  `tracesForTimeCapacity` / `timeCapacityLayout` against a draft spec. Bands, CE overlay, source
+  boundaries, axis titles and aspect ratio all come along, and the preview cannot drift from the
+  result. It builds only while the modal is open.
+- **Layout**: preview on the left at ~52% width, filling the height; series list and editor on the
+  right.
+
+The descriptor builders moved into `seriesStyling.ts` as pure functions over structural types, and
+four tests now pin them — including one asserting a populated result never yields an empty list.
+That is the specific regression that shipped, and it is now impossible to reship silently.
+
 ### Not done
 
 - **No browser verification.** The modal, its preview, and light/dark rendering have not been seen
   running; the user asked for sparing browser use and confirmed changes themselves.
-- Only the **Cycles** tab resolves per-series styling. Time/capacity, Steps, DCIR, Chargeability and
-  C-rate still use the global style. The resolver is tab-agnostic, so adopting it elsewhere is
-  wiring, not redesign.
+- **Cycles** and **Time/capacity** resolve per-series styling. Steps, DCIR, Chargeability and C-rate
+  still use the global style, and the button is still shown on their panels where it will list no
+  series — the same class of gap that produced the empty modal, left open deliberately rather than
+  hidden, since those tabs need their own key schemes.
 - The **CE overlay** still uses `ce_custom_colors` and the global `ce_*` fields. The `ce:` key prefix
   is reserved in the model but not yet emitted.
 - Rules expose colour, dash, width and marker mode. The remaining override fields (shape, symbol,

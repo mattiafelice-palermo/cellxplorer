@@ -211,9 +211,14 @@ import {
 } from "../plotExplainers";
 import { applyPlotStylePreset } from "../plotStylePresets";
 import {
+  aggregateSeriesDescriptor,
+  cellSeriesDescriptor,
+  cyclesSeriesDescriptors,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
+  timeCapacitySeriesDescriptor,
+  timeCapacitySeriesDescriptors,
   type SeriesDescriptor,
 } from "../seriesStyling";
 import { SeriesStyleModal } from "../components/SeriesStyleModal";
@@ -1063,79 +1068,6 @@ function plotNamingQuantityKey(
   }
   // Time/capacity plot name is not quantity-driven today.
   return tab;
-}
-
-/**
- * Series identity for the style resolver.
- *
- * The keys match what `custom_colors` has always used, so plots saved before
- * per-series styling keep their colours with no migration.
- */
-export function cellSeriesDescriptor(s: CellSeries): SeriesDescriptor {
-  return {
-    key: `c${s.cell_id}`,
-    kind: "cell",
-    label: s.group_name ? `${s.label} (${s.group_name})` : s.label,
-    cellName: s.cell_name,
-    groupName: s.group_name,
-  };
-}
-
-export function aggregateSeriesDescriptor(
-  agg: AggregateSeries,
-  compact = false,
-): SeriesDescriptor {
-  return {
-    key: `g${agg.group_id}`,
-    kind: "group",
-    label: compact ? agg.group_name : `${agg.group_name} mean`,
-    cellName: null,
-    groupName: agg.group_name,
-  };
-}
-
-/** Every stylable series on the cycles plot, in the order it is drawn. */
-export function cyclesSeriesDescriptors(
-  result: ComputeResult,
-  spec: AnalysisSpec,
-): SeriesDescriptor[] {
-  const out: SeriesDescriptor[] = [];
-  for (const agg of result.aggregates) out.push(aggregateSeriesDescriptor(agg));
-  const showIndividual =
-    spec.presentation.show_individual_cells || result.aggregates.length === 0;
-  for (const s of result.cell_series) {
-    if (s.excluded) continue;
-    if (s.group_id !== null && !showIndividual) continue;
-    out.push(cellSeriesDescriptor(s));
-  }
-  return out;
-}
-
-/**
- * Sample curves for the editor's preview, keyed like the descriptors.
- *
- * Uses the quantity the plot is currently showing so the preview is the real
- * data, not a synthetic shape.
- */
-export function cyclesSeriesPreviewData(
-  result: ComputeResult,
-  spec: AnalysisSpec,
-): { key: string; x: number[]; y: (number | null)[] }[] {
-  const column = resolvedQuantity(result, spec).column;
-  const out: { key: string; x: number[]; y: (number | null)[] }[] = [];
-  for (const agg of result.aggregates) {
-    const q = agg.quantities[column];
-    if (!q) continue;
-    out.push({ key: `g${agg.group_id}`, x: agg.x, y: q.mean });
-  }
-  const showIndividual =
-    spec.presentation.show_individual_cells || result.aggregates.length === 0;
-  for (const s of result.cell_series) {
-    if (s.excluded) continue;
-    if (s.group_id !== null && !showIndividual) continue;
-    out.push({ key: `c${s.cell_id}`, x: s.x, y: s.quantities[column] ?? [] });
-  }
-  return out;
 }
 
 function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotStyle {
@@ -3420,6 +3352,29 @@ function tracesForTimeCapacity(
     if (!colorFor.has(key)) colorFor.set(key, style.custom_colors[key] ?? palette[ci++ % palette.length]);
     return colorFor.get(key)!;
   };
+  // Per-series resolution against this tab's own key scheme. The base carries
+  // what each trace previously hardcoded, so an unstyled plot is unchanged.
+  const resolveTrace = (
+    trace: TimeCapacityTrace,
+    label: string,
+    color: string,
+    lineDash: PlotStyle["line_dash"],
+  ) =>
+    resolveSeriesStyle(
+      {
+        color,
+        lineWidth: style.line_width,
+        lineDash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      },
+      timeCapacitySeriesDescriptor(trace),
+      style.series_rules,
+      style.series_overrides,
+    );
 
   if (cfg.view !== "voltage_current") {
     for (const trace of result.cell_traces) {
@@ -3441,17 +3396,37 @@ function tracesForTimeCapacity(
           const sourcePosition = trace.source_position?.slice(start, end);
           const sourceFilename = trace.source_filename?.slice(start, end);
           const sourceHash = trace.source_hash?.slice(start, end);
+          const resolved = resolveTrace(
+            trace,
+            baseName,
+            color,
+            phase === "discharge" ? "dash" : style.line_dash,
+          );
+          if (resolved.hidden) {
+            start = end;
+            continue;
+          }
           const showlegend = !legendShown.has(seriesKey);
           legendShown.add(seriesKey);
           out.push({
             x,
             y,
-            name: baseName,
+            name: resolved.name,
             legendgroup: seriesKey,
-            showlegend,
-            line: { color, width: style.line_width, dash: phase === "discharge" ? "dash" : style.line_dash },
-            marker: { color, size: style.marker_size },
-            mode: plotMode(style),
+            showlegend: showlegend && resolved.showInLegend,
+            opacity: resolved.opacity,
+            line: {
+              color: resolved.color,
+              width: resolved.lineWidth,
+              dash: resolved.lineDash,
+              shape: resolved.lineShape,
+            },
+            marker: {
+              color: resolved.color,
+              size: resolved.markerSize,
+              symbol: seriesPlotlySymbol(resolved),
+            },
+            mode: seriesPlotlyMode(resolved),
             type: traceType,
             connectgaps: false,
             meta: `${phase}, cycle ${cycle ?? "?"}`,
@@ -3476,11 +3451,14 @@ function tracesForTimeCapacity(
     if (trace.excluded) continue;
     const seriesKey = trace.group_id ? `g${trace.group_id}` : `c${trace.cell_id}`;
     const color = pick(seriesKey);
-    const name = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+    const baseLabel = trace.group_name ? `${trace.label} (${trace.group_name})` : trace.label;
+    const resolved = resolveTrace(trace, baseLabel, color, style.line_dash);
+    if (resolved.hidden) continue;
+    const name = resolved.name;
     const fullX = timeCapacityX(trace, spec).x;
     for (const segment of timeCapacitySegments(trace, spec)) {
       if (!hasFinitePoint(segment.voltage)) continue;
-      const showlegend = !legendShown.has(seriesKey);
+      const showlegend = !legendShown.has(seriesKey) && resolved.showInLegend;
       const segmentCustomdata = segment.x.map((_, index) => [
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
@@ -3494,9 +3472,19 @@ function tracesForTimeCapacity(
         name,
         legendgroup: seriesKey,
         showlegend,
-        line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
-        mode: plotMode(style),
+        opacity: resolved.opacity,
+        line: {
+          color: resolved.color,
+          width: resolved.lineWidth,
+          dash: resolved.lineDash,
+          shape: resolved.lineShape,
+        },
+        marker: {
+          color: resolved.color,
+          size: resolved.markerSize,
+          symbol: seriesPlotlySymbol(resolved),
+        },
+        mode: seriesPlotlyMode(resolved),
         type: traceType,
         connectgaps: false,
         customdata: segmentCustomdata,
@@ -5590,15 +5578,42 @@ export function PlotStylePanel({
     update((s) => writeScopedStyle(s, axisScope, fn));
   };
 
-  // Per-series styling. Descriptors and preview curves come from the same
-  // compute result the plot draws, so the editor lists exactly what is on screen.
-  const seriesDescriptors = useMemo(
-    () => (computeResult ? cyclesSeriesDescriptors(computeResult, spec) : []),
-    [computeResult, spec],
-  );
-  const seriesPreviewData = useMemo(
-    () => (computeResult ? cyclesSeriesPreviewData(computeResult, spec) : []),
-    [computeResult, spec],
+  // Per-series styling. Descriptors come from whichever result this tab shows —
+  // the time/capacity result has `cell_traces`, the cycles result has
+  // `cell_series` — so the editor lists exactly what is on screen.
+  const timeCapacityResult = result && "cell_traces" in result ? result : undefined;
+  const seriesDescriptors = useMemo(() => {
+    if (timeCapacityResult) return timeCapacitySeriesDescriptors(timeCapacityResult.cell_traces);
+    if (computeResult) {
+      return cyclesSeriesDescriptors(
+        computeResult.aggregates,
+        computeResult.cell_series,
+        spec.presentation.show_individual_cells,
+      );
+    }
+    return [];
+  }, [timeCapacityResult, computeResult, spec]);
+  /**
+   * The preview is the real plot: the same trace and layout builders, called
+   * with the draft overrides applied. Rebuilding a simplified version here
+   * would let the preview drift from the result.
+   */
+  const buildSeriesPreview = useCallback(
+    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+      if (!result) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      const draftSpec = structuredClone(spec);
+      writeScopedStyle(draftSpec, axisScope, (next) => {
+        next.series_overrides = draftOverrides;
+        next.series_rules = draftRules;
+      });
+      if (timeCapacityResult) {
+        const data = tracesForTimeCapacity(timeCapacityResult, draftSpec);
+        return { data, layout: timeCapacityLayout(timeCapacityResult, draftSpec, data) };
+      }
+      const data = tracesForResult(result as ComputeResult, draftSpec);
+      return { data, layout: cyclePlotLayout(result as ComputeResult, draftSpec, data) };
+    },
+    [result, spec, axisScope, timeCapacityResult],
   );
   const seriesPalette = plotPalette(style);
   const seriesBaseFor = useCallback(
@@ -6800,7 +6815,7 @@ export function PlotStylePanel({
         overrides={style.series_overrides ?? {}}
         rules={style.series_rules ?? []}
         baseFor={seriesBaseFor}
-        previewData={seriesPreviewData}
+        buildPreview={buildSeriesPreview}
         onChange={({ overrides, rules }) =>
           setStyle((next) => {
             next.series_overrides = overrides;

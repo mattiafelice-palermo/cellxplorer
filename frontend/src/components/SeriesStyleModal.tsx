@@ -45,20 +45,17 @@ import {
   matchingRules,
   pruneOverrides,
   resolveSeriesStyle,
-  seriesPlotlyMode,
-  seriesPlotlySymbol,
   seriesRuleError,
   type BaseSeriesStyle,
   type SeriesDescriptor,
 } from "../seriesStyling";
 import Plot from "./Plot";
 
-/** Sample curve for one series, used only by the preview. */
-export interface SeriesPreviewData {
-  key: string;
-  x: number[];
-  y: (number | null)[];
-}
+/** The real plot, rebuilt with the draft styling applied. */
+export type SeriesPreviewBuilder = (
+  overrides: Record<string, SeriesStyleOverride>,
+  rules: SeriesStyleRule[],
+) => { data: unknown[]; layout: Record<string, unknown> };
 
 const DASH_OPTIONS: { value: PlotLineDash; label: string }[] = [
   { value: "solid", label: "Solid" },
@@ -97,7 +94,7 @@ export function SeriesStyleModal({
   overrides,
   rules,
   baseFor,
-  previewData,
+  buildPreview,
   onChange,
 }: {
   opened: boolean;
@@ -107,7 +104,7 @@ export function SeriesStyleModal({
   rules: SeriesStyleRule[];
   /** Palette colour and tab defaults for a series, before overrides. */
   baseFor: (descriptor: SeriesDescriptor) => BaseSeriesStyle;
-  previewData: SeriesPreviewData[];
+  buildPreview: SeriesPreviewBuilder;
   onChange: (next: {
     overrides: Record<string, SeriesStyleOverride>;
     rules: SeriesStyleRule[];
@@ -159,55 +156,12 @@ export function SeriesStyleModal({
     setRules(next);
   };
 
-  const previewTraces = useMemo(() => {
-    return previewData
-      .map((data) => {
-        const descriptor = descriptors.find((d) => d.key === data.key);
-        if (!descriptor) return null;
-        const style = resolvedByKey.get(data.key);
-        if (!style || style.hidden) return null;
-        return {
-          x: data.x,
-          y: data.y,
-          type: "scatter" as const,
-          mode: seriesPlotlyMode(style),
-          name: style.name,
-          showlegend: style.showInLegend,
-          opacity: style.opacity,
-          line: {
-            color: style.color,
-            width: style.lineWidth,
-            dash: style.lineDash,
-            shape: style.lineShape,
-          },
-          marker: {
-            color: style.color,
-            size: style.markerSize,
-            symbol: seriesPlotlySymbol(style),
-          },
-        };
-      })
-      .filter(Boolean) as Record<string, unknown>[];
-  }, [previewData, descriptors, resolvedByKey]);
-
-  const shadowTraces = useMemo(() => {
-    return previewData
-      .map((data) => {
-        const style = resolvedByKey.get(data.key);
-        if (!style || style.hidden || !style.shadow) return null;
-        return {
-          x: data.x,
-          y: data.y,
-          type: "scatter" as const,
-          mode: "lines" as const,
-          hoverinfo: "skip" as const,
-          showlegend: false,
-          opacity: 0.18,
-          line: { color: "#000000", width: style.lineWidth + 4, dash: style.lineDash },
-        };
-      })
-      .filter(Boolean) as Record<string, unknown>[];
-  }, [previewData, resolvedByKey]);
+  // Rebuilt from the page's own trace/layout builders, so the preview is the
+  // plot rather than an approximation of it. Only built while the modal is open.
+  const preview = useMemo(
+    () => (opened ? buildPreview(overrides, rules) : { data: [], layout: {} }),
+    [opened, buildPreview, overrides, rules],
+  );
 
   const activeOverride = active ? overrides[active.key] ?? {} : {};
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
@@ -221,30 +175,47 @@ export function SeriesStyleModal({
       size="82rem"
       styles={{ content: { height: "min(56rem, 94vh)", display: "flex", flexDirection: "column" } }}
     >
-      <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
-        <Paper withBorder p="xs" style={{ flex: "none" }}>
+      <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
+        {/* The plot keeps the left half at the real plot's aspect ratio, so the
+            user judges the styling at the shape they will actually export. */}
+        <Paper
+          withBorder
+          p="xs"
+          style={{
+            flex: "1 1 52%",
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
+        >
           <Plot
-            data={[...shadowTraces, ...previewTraces] as never}
+            data={preview.data as never}
             layout={
               {
-                height: 240,
-                margin: { l: 48, r: 12, t: 8, b: 36 },
-                showlegend: true,
-                legend: { orientation: "h", y: -0.25 },
-                paper_bgcolor: "rgba(0,0,0,0)",
-                plot_bgcolor: "rgba(0,0,0,0)",
+                ...preview.layout,
+                autosize: true,
+                width: undefined,
+                height: undefined,
+                margin: { l: 56, r: 16, t: 16, b: 48 },
               } as never
             }
             config={{ displayModeBar: false, responsive: true } as never}
-            style={{ width: "100%" }}
+            useResizeHandler
+            style={{ width: "100%", height: "100%", flex: 1, minHeight: 0 }}
           />
         </Paper>
 
-        <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
+        <Group
+          align="stretch"
+          gap="sm"
+          wrap="nowrap"
+          style={{ flex: "1 1 48%", minWidth: 0, minHeight: 0 }}
+        >
           <Paper
             withBorder
             p="xs"
-            w={260}
+            w={220}
             style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}
           >
             <Group justify="space-between" mb={6} style={{ flex: "none" }}>
@@ -690,7 +661,7 @@ export function SeriesStyleModal({
             </Tabs>
           </Paper>
         </Group>
-      </Stack>
+      </Group>
     </Modal>
   );
 }
