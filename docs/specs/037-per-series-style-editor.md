@@ -231,7 +231,37 @@ the extension, since that is what tells two variants apart — and both layouts 
 from the plot's own paper colour, frame colour and tick font, so the box follows the app's styling
 instead of Plotly's default.
 
-### Not done
+### Follow-up: the actual cause of the lag
+
+The debounce and `useDeferredValue` from the previous round treated symptoms. Reported again:
+typing still lagged, switching Series ↔ Rules still stalled, and opening the modal was slow.
+
+**The real cause was object identity, not state churn.** The plot was fed inline objects:
+
+```tsx
+layout={{ ...preview.layout, autosize: true, ... }}
+config={{ displayModeBar: false, responsive: true }}
+```
+
+`react-plotly.js` compares `layout` and `config` **by reference**, so every render — every
+keystroke, every tab switch, every unrelated parent update — handed Plotly a new object and forced
+a full relayout of the entire plot. No amount of debouncing could help, because the cost was paid
+on render, not on state change. Both are now memoised, along with the plot's `style` object.
+
+Three further costs removed:
+
+- **`structuredClone(spec)` per preview build.** The draft only needed two fields swapped, but the
+  whole selection, protocol segments and saved-plot state were being deep-copied on every change.
+  Replaced with a shallow spec that reuses everything except the scoped style.
+- **`baseFor` changed identity every render**, because `plotPalette(style)` returns a fresh array,
+  so every series was re-resolved constantly. The palette and the key order are now memoised.
+- **Preview traces are decimated** to `PREVIEW_MAX_POINTS` (400). A time/capacity plot can carry
+  tens of thousands of points per cell, which at 620 px land on the same pixels. Positional arrays
+  are thinned in lockstep — including `customdata` — and endpoints are always kept, so the curve
+  neither stops early nor loses hover alignment. Styling reads identically from a thinned curve.
+
+Also: the collapsed series panel keeps its **"Series"** heading (widened to 104 px to fit it with
+the chevron).
 
 - **No browser verification.** The modal, its preview, and light/dark rendering have not been seen
   running; the user asked for sparing browser use and confirmed changes themselves.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  decimatePreviewTraces,
   cyclesSeriesDescriptors,
   timeCapacitySeriesDescriptors,
   emptySeriesRule,
@@ -296,6 +297,48 @@ test("short names and empty names pass through untouched", () => {
   assert.equal(shortSourceName(""), "");
   const exact = "x".repeat(34);
   assert.equal(shortSourceName(exact), exact);
+});
+
+test("preview traces are thinned but keep their shape and endpoints", () => {
+  const x = Array.from({ length: 5000 }, (_, i) => i);
+  const y = x.map((v) => v * 2);
+  const [trace] = decimatePreviewTraces([{ x, y, name: "a" }], 400);
+
+  const nextX = trace.x as number[];
+  const nextY = trace.y as number[];
+  assert.ok(nextX.length <= 401, `expected <=401 points, got ${nextX.length}`);
+  // Endpoints survive so the curve does not appear to stop early.
+  assert.equal(nextX[0], 0);
+  assert.equal(nextX[nextX.length - 1], 4999);
+  // x and y stay aligned, which is what keeps hover data correct.
+  assert.equal(nextX.length, nextY.length);
+  nextX.forEach((value, index) => assert.equal(nextY[index], value * 2));
+  assert.equal(trace.name, "a");
+});
+
+test("decimation leaves short traces and non-array fields alone", () => {
+  const short = { x: [1, 2, 3], y: [4, 5, 6], line: { color: "#fff" } };
+  const [same] = decimatePreviewTraces([short], 400);
+  // Returned untouched, so no needless array churn.
+  assert.equal(same, short);
+
+  // A field whose length does not match x is not a per-point array.
+  const [mixed] = decimatePreviewTraces(
+    [{ x: Array.from({ length: 900 }, (_, i) => i), y: [1, 2], meta: "label" }],
+    100,
+  );
+  assert.deepEqual(mixed.y, [1, 2]);
+  assert.equal(mixed.meta, "label");
+});
+
+test("customdata is thinned in lockstep with the points", () => {
+  const x = Array.from({ length: 1000 }, (_, i) => i);
+  const customdata = x.map((i) => [i, `f${i}`]);
+  const [trace] = decimatePreviewTraces([{ x, y: x, customdata }], 100);
+  const nextX = trace.x as number[];
+  const nextCustom = trace.customdata as [number, string][];
+  assert.equal(nextX.length, nextCustom.length);
+  nextX.forEach((value, index) => assert.equal(nextCustom[index][0], value));
 });
 
 test("undefined rules and overrides are treated as none", () => {

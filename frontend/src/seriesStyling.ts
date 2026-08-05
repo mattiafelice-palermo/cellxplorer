@@ -393,6 +393,49 @@ export function shadowOffsetValues(
   return values.map((value) => (value === null ? null : value + delta));
 }
 
+/** Points kept per preview trace. The preview is ~620 px wide; more is invisible. */
+export const PREVIEW_MAX_POINTS = 400;
+
+function everyNth<T>(values: T[], step: number): T[] {
+  const out: T[] = [];
+  for (let index = 0; index < values.length; index += step) out.push(values[index]);
+  // Always keep the last point so the curve does not appear to stop early.
+  if (values.length && out[out.length - 1] !== values[values.length - 1]) {
+    out.push(values[values.length - 1]);
+  }
+  return out;
+}
+
+/**
+ * Thin the preview's traces.
+ *
+ * The editor redraws on every change, and a time/capacity plot can carry tens
+ * of thousands of points per cell. At preview size those points land on the
+ * same pixels, so drawing them all only costs time. Styling — colour, dash,
+ * markers, width — reads identically from a decimated curve.
+ *
+ * Only positional arrays are thinned, and only in lockstep, so a trace's points
+ * stay aligned with its hover data.
+ */
+export function decimatePreviewTraces<T extends Record<string, unknown>>(
+  traces: T[],
+  maxPoints = PREVIEW_MAX_POINTS,
+): T[] {
+  return traces.map((trace) => {
+    const x = trace.x as unknown[] | undefined;
+    if (!Array.isArray(x) || x.length <= maxPoints) return trace;
+    const step = Math.ceil(x.length / maxPoints);
+    const next: Record<string, unknown> = { ...trace };
+    for (const key of ["x", "y", "customdata", "text", "meta"]) {
+      const value = trace[key];
+      if (Array.isArray(value) && value.length === x.length) {
+        next[key] = everyNth(value, step);
+      }
+    }
+    return next as T;
+  });
+}
+
 /** Whether an override carries any instruction at all. */
 export function isEmptyOverride(override: SeriesStyleOverride | undefined): boolean {
   if (!override) return true;

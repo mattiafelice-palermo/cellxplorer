@@ -86,8 +86,11 @@ const MARKER_MODE_OPTIONS: { value: PlotMarkerMode; label: string }[] = [
 /** Fixed so the plot never relayouts when the right-hand content changes. */
 const PREVIEW_WIDTH = 620;
 const SERIES_PANEL_WIDTH = 260;
-/** Collapsed: swatch and visibility only, which is what picking a series needs. */
-const SERIES_PANEL_COLLAPSED_WIDTH = 62;
+/**
+ * Collapsed: swatch and visibility only, which is what picking a series needs.
+ * Wide enough to keep the "Series" heading and the chevron on one line.
+ */
+const SERIES_PANEL_COLLAPSED_WIDTH = 104;
 
 /** Commit delay: long enough to swallow a colour drag, short enough to feel live. */
 const COMMIT_DEBOUNCE_MS = 250;
@@ -241,6 +244,30 @@ export function SeriesStyleModal({
     [opened, buildPreview, previewOverrides, previewRules],
   );
 
+  /**
+   * Stable object identities for Plotly.
+   *
+   * `react-plotly.js` compares `layout` and `config` by reference. Building
+   * them inline meant every render — every keystroke, every tab switch —
+   * handed Plotly a new object and forced a full relayout of the whole plot.
+   * That, not the state updates, was the lag.
+   */
+  const previewLayout = useMemo(
+    () => ({
+      ...preview.layout,
+      autosize: true,
+      width: undefined,
+      height: undefined,
+      margin: { l: 56, r: 16, t: 16, b: 48 },
+    }),
+    [preview.layout],
+  );
+  const previewConfig = useMemo(() => ({ displayModeBar: false, responsive: true }), []);
+  const previewStyle = useMemo(
+    () => ({ width: "100%", height: "100%", flex: 1, minHeight: 0 }),
+    [],
+  );
+
   const activeOverride = active ? draftOverrides[active.key] ?? {} : {};
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
   const activeRules = active ? matchingRules(active, draftRules) : [];
@@ -263,23 +290,15 @@ export function SeriesStyleModal({
         <PanelShell title="Preview" style={{ width: PREVIEW_WIDTH, flex: "none" }}>
           <Plot
             data={preview.data as never}
-            layout={
-              {
-                ...preview.layout,
-                autosize: true,
-                width: undefined,
-                height: undefined,
-                margin: { l: 56, r: 16, t: 16, b: 48 },
-              } as never
-            }
-            config={{ displayModeBar: false, responsive: true } as never}
+            layout={previewLayout as never}
+            config={previewConfig as never}
             useResizeHandler
-            style={{ width: "100%", height: "100%", flex: 1, minHeight: 0 }}
+            style={previewStyle}
           />
         </PanelShell>
 
         <PanelShell
-          title={seriesCollapsed ? "" : "Series"}
+          title="Series"
           right={
             <Group gap={4} wrap="nowrap">
               {!seriesCollapsed && (

@@ -214,6 +214,7 @@ import {
   aggregateSeriesDescriptor,
   cellSeriesDescriptor,
   cyclesSeriesDescriptors,
+  decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
@@ -5630,37 +5631,70 @@ export function PlotStylePanel({
   const buildSeriesPreview = useCallback(
     (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
       if (!result) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
-      const draftSpec = structuredClone(spec);
-      writeScopedStyle(draftSpec, axisScope, (next) => {
-        next.series_overrides = draftOverrides;
-        next.series_rules = draftRules;
-      });
+      // A shallow spec with only the scoped style swapped. structuredClone here
+      // copied the whole selection, protocol segments and saved-plot state on
+      // every keystroke, for the sake of two fields.
+      const draftSpec: AnalysisSpec = {
+        ...spec,
+        presentation: {
+          ...spec.presentation,
+          plot_styles: {
+            ...(spec.presentation.plot_styles ?? {}),
+            [axisScope]: {
+              ...currentPlotStyle(spec, axisScope),
+              series_overrides: draftOverrides,
+              series_rules: draftRules,
+            },
+          },
+        },
+      };
       if (timeCapacityResult) {
-        const data = tracesForTimeCapacity(timeCapacityResult, draftSpec);
+        const data = decimatePreviewTraces(tracesForTimeCapacity(timeCapacityResult, draftSpec));
         return { data, layout: timeCapacityLayout(timeCapacityResult, draftSpec, data) };
       }
-      const data = tracesForResult(result as ComputeResult, draftSpec);
+      const data = decimatePreviewTraces(
+        tracesForResult(result as ComputeResult, draftSpec),
+      );
       return { data, layout: cyclePlotLayout(result as ComputeResult, draftSpec, data) };
     },
     [result, spec, axisScope, timeCapacityResult],
   );
-  const seriesPalette = plotPalette(style);
+  // Resolved once per style change rather than per render: plotPalette returns
+  // a fresh array each call, so an inline callback changed identity constantly
+  // and re-resolved every series on every render.
+  const seriesBaseDefaults = useMemo(
+    () => ({
+      palette: plotPalette(style),
+      customColors: style.custom_colors,
+      lineWidth: style.line_width,
+      lineDash: style.line_dash,
+      markerMode: style.marker_mode,
+      markerSymbol: style.marker_symbol,
+      markerSize: style.marker_size,
+      markerOpen: style.marker_open,
+    }),
+    [style],
+  );
+  const seriesKeyOrder = useMemo(
+    () => new Map(seriesDescriptors.map((item, index) => [item.key, index])),
+    [seriesDescriptors],
+  );
   const seriesBaseFor = useCallback(
     (descriptor: SeriesDescriptor) => {
-      const index = seriesDescriptors.findIndex((item) => item.key === descriptor.key);
-      const fallback = seriesPalette[(index < 0 ? 0 : index) % seriesPalette.length];
+      const index = seriesKeyOrder.get(descriptor.key) ?? 0;
+      const { palette } = seriesBaseDefaults;
       return {
-        color: style.custom_colors[descriptor.key] ?? fallback,
-        lineWidth: style.line_width,
-        lineDash: style.line_dash,
-        markerMode: style.marker_mode,
-        markerSymbol: style.marker_symbol,
-        markerSize: style.marker_size,
-        markerOpen: style.marker_open,
+        color: seriesBaseDefaults.customColors[descriptor.key] ?? palette[index % palette.length],
+        lineWidth: seriesBaseDefaults.lineWidth,
+        lineDash: seriesBaseDefaults.lineDash,
+        markerMode: seriesBaseDefaults.markerMode,
+        markerSymbol: seriesBaseDefaults.markerSymbol,
+        markerSize: seriesBaseDefaults.markerSize,
+        markerOpen: seriesBaseDefaults.markerOpen,
         opacity: 1,
       };
     },
-    [seriesDescriptors, seriesPalette, style],
+    [seriesKeyOrder, seriesBaseDefaults],
   );
   const customisedSeriesCount = Object.keys(style.series_overrides ?? {}).length;
   const seriesRuleCount = (style.series_rules ?? []).length;
