@@ -64,6 +64,27 @@ body {
   text-align: center;
 }
 
+.series-style-shadow-controls {
+  display: grid;
+  grid-template-columns: minmax(176px, 1.35fr) repeat(4, minmax(132px, 1fr));
+  gap: var(--mantine-spacing-xs);
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .series-style-shadow-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .series-style-shadow-controls > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .series-style-shadow-controls > * {
+    min-width: 0 !important;
+  }
+}
+
 /* Vertical-only scroll panel (downloads list, command palette results).
    Mantine's ScrollArea.Autosize grows to its content width, which pushed row
    actions outside a fixed-width dropdown, so these panels use a plain

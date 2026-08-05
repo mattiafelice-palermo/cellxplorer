@@ -15,6 +15,7 @@ import {
   seriesRuleError,
   shadowOffsetValues,
   shadowRgba,
+  shortSourceName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
 } from "../src/seriesStyling.ts";
@@ -278,6 +279,23 @@ test("shadow offset shifts by a percentage of the series span", () => {
   // A flat series has no span to scale by, so it is left alone.
   const flat = [3, 3, 3];
   assert.equal(shadowOffsetValues(flat, 10), flat);
+});
+
+test("long source filenames are truncated in the middle for hover labels", () => {
+  const long = "UU_BVL_TOP_SK_LE_39714_01_C3D3_25C_10uL_NewLi__variant_0313.ndax";
+  const short = shortSourceName(long);
+  assert.equal(short.length, 34);
+  assert.ok(short.startsWith("UU_BVL_TOP_SK_LE"));
+  // The tail survives, which is what distinguishes one variant from another.
+  assert.ok(short.endsWith("0313.ndax"));
+  assert.ok(short.includes("…"));
+});
+
+test("short names and empty names pass through untouched", () => {
+  assert.equal(shortSourceName("cell.ndax"), "cell.ndax");
+  assert.equal(shortSourceName(""), "");
+  const exact = "x".repeat(34);
+  assert.equal(shortSourceName(exact), exact);
 });
 
 test("undefined rules and overrides are treated as none", () => {

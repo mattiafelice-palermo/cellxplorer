@@ -23,6 +23,8 @@ import {
 import {
   IconArrowDown,
   IconArrowUp,
+  IconChevronLeft,
+  IconChevronRight,
   IconEye,
   IconEyeOff,
   IconPlus,
@@ -81,8 +83,11 @@ const MARKER_MODE_OPTIONS: { value: PlotMarkerMode; label: string }[] = [
   { value: "lines_points", label: "Line + points" },
 ];
 
-const SERIES_PANEL_MIN = 180;
-const SERIES_PANEL_MAX = 460;
+/** Fixed so the plot never relayouts when the right-hand content changes. */
+const PREVIEW_WIDTH = 620;
+const SERIES_PANEL_WIDTH = 260;
+/** Collapsed: swatch and visibility only, which is what picking a series needs. */
+const SERIES_PANEL_COLLAPSED_WIDTH = 62;
 
 /** Commit delay: long enough to swallow a colour drag, short enough to feel live. */
 const COMMIT_DEBOUNCE_MS = 250;
@@ -119,7 +124,7 @@ export function SeriesStyleModal({
 }) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>("series");
-  const [seriesPanelWidth, setSeriesPanelWidth] = useState(240);
+  const [seriesCollapsed, setSeriesCollapsed] = useState(false);
 
   // Local draft. The spec is only written on a debounce and on close.
   const [draftOverrides, setDraftOverrides] = useState(overrides);
@@ -236,22 +241,6 @@ export function SeriesStyleModal({
     [opened, buildPreview, previewOverrides, previewRules],
   );
 
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = seriesPanelWidth;
-    const move = (moveEvent: PointerEvent) => {
-      const next = startWidth - (moveEvent.clientX - startX);
-      setSeriesPanelWidth(Math.min(SERIES_PANEL_MAX, Math.max(SERIES_PANEL_MIN, next)));
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-  };
-
   const activeOverride = active ? draftOverrides[active.key] ?? {} : {};
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
   const activeRules = active ? matchingRules(active, draftRules) : [];
@@ -268,7 +257,10 @@ export function SeriesStyleModal({
       styles={{ content: { height: "min(58rem, 94vh)", display: "flex", flexDirection: "column" } }}
     >
       <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
-        <PanelShell title="Preview" style={{ flex: "1 1 0", minWidth: 320 }}>
+        {/* The plot is deliberately fixed width. It used to share the row with
+            flexible panels, so switching to Rules — whose controls are wider —
+            resized the plot and forced Plotly to relayout on every tab change. */}
+        <PanelShell title="Preview" style={{ width: PREVIEW_WIDTH, flex: "none" }}>
           <Plot
             data={preview.data as never}
             layout={
@@ -286,88 +278,105 @@ export function SeriesStyleModal({
           />
         </PanelShell>
 
-        <Box
-          onPointerDown={startResize}
-          role="separator"
-          aria-label="Resize series panel"
-          aria-orientation="vertical"
-          style={{
-            width: 8,
-            flex: "none",
-            cursor: "col-resize",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Box w={2} h={36} style={{ borderRadius: 2, background: "var(--mantine-color-default-border)" }} />
-        </Box>
-
         <PanelShell
-          title="Series"
+          title={seriesCollapsed ? "" : "Series"}
           right={
-            <Badge size="xs" variant="light">
-              {descriptors.length}
-            </Badge>
+            <Group gap={4} wrap="nowrap">
+              {!seriesCollapsed && (
+                <Badge size="xs" variant="light">
+                  {descriptors.length}
+                </Badge>
+              )}
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="gray"
+                aria-label={seriesCollapsed ? "Expand series list" : "Collapse series list"}
+                onClick={() => setSeriesCollapsed((current) => !current)}
+              >
+                {seriesCollapsed ? <IconChevronRight size={15} /> : <IconChevronLeft size={15} />}
+              </ActionIcon>
+            </Group>
           }
-          style={{ width: seriesPanelWidth, flex: "none" }}
+          style={{
+            width: seriesCollapsed ? SERIES_PANEL_COLLAPSED_WIDTH : SERIES_PANEL_WIDTH,
+            flex: "none",
+          }}
         >
           <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
             <Stack gap={2}>
               {descriptors.map((descriptor) => {
                 const style = resolvedByKey.get(descriptor.key);
                 const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
-                return (
-                  <Group
-                    key={descriptor.key}
-                    gap={6}
-                    wrap="nowrap"
-                    px={6}
-                    py={4}
-                    onClick={() => setActiveKey(descriptor.key)}
+                const swatch = (
+                  <div
+                    aria-hidden="true"
                     style={{
-                      borderRadius: 4,
-                      cursor: "pointer",
-                      background:
-                        descriptor.key === active?.key
-                          ? "var(--mantine-primary-color-light)"
-                          : undefined,
-                      opacity: style?.hidden ? 0.5 : 1,
+                      width: 14,
+                      height: 3,
+                      borderRadius: 2,
+                      flex: "none",
+                      background: style?.color ?? "#888",
+                    }}
+                  />
+                );
+                const visibility = (
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    aria-label={style?.hidden ? `Show ${descriptor.label}` : `Hide ${descriptor.label}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOverride(descriptor.key, { hidden: !style?.hidden });
                     }}
                   >
-                    <div
-                      aria-hidden="true"
+                    {style?.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                  </ActionIcon>
+                );
+                return (
+                  <Tooltip
+                    key={descriptor.key}
+                    label={style?.name ?? descriptor.label}
+                    disabled={!seriesCollapsed}
+                    position="right"
+                    withArrow
+                  >
+                    <Group
+                      gap={6}
+                      wrap="nowrap"
+                      px={6}
+                      py={4}
+                      justify={seriesCollapsed ? "center" : undefined}
+                      onClick={() => setActiveKey(descriptor.key)}
                       style={{
-                        width: 14,
-                        height: 3,
-                        borderRadius: 2,
-                        flex: "none",
-                        background: style?.color ?? "#888",
-                      }}
-                    />
-                    <Text size="xs" truncate style={{ flex: 1 }} title={style?.name}>
-                      {style?.name ?? descriptor.label}
-                    </Text>
-                    {customised && (
-                      <Tooltip label="Has its own settings">
-                        <Badge size="xs" variant="light" color="grape" circle>
-                          {" "}
-                        </Badge>
-                      </Tooltip>
-                    )}
-                    <ActionIcon
-                      size="xs"
-                      variant="subtle"
-                      color="gray"
-                      aria-label={style?.hidden ? `Show ${descriptor.label}` : `Hide ${descriptor.label}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setOverride(descriptor.key, { hidden: !style?.hidden });
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        background:
+                          descriptor.key === active?.key
+                            ? "var(--mantine-primary-color-light)"
+                            : undefined,
+                        opacity: style?.hidden ? 0.5 : 1,
                       }}
                     >
-                      {style?.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                    </ActionIcon>
-                  </Group>
+                      {swatch}
+                      {!seriesCollapsed && (
+                        <>
+                          <Text size="xs" truncate style={{ flex: 1 }} title={style?.name}>
+                            {style?.name ?? descriptor.label}
+                          </Text>
+                          {customised && (
+                            <Tooltip label="Has its own settings">
+                              <Badge size="xs" variant="light" color="grape" circle>
+                                {" "}
+                              </Badge>
+                            </Tooltip>
+                          )}
+                        </>
+                      )}
+                      {visibility}
+                    </Group>
+                  </Tooltip>
                 );
               })}
             </Stack>
@@ -376,7 +385,9 @@ export function SeriesStyleModal({
 
         <PanelShell
           title={tab === "rules" ? "Rules" : "Appearance"}
-          style={{ flex: "1 1 0", minWidth: 340 }}
+          // minWidth 0 matters: without it the wider Rules controls set the
+          // panel's min-content width and stole space from the plot.
+          style={{ flex: "1 1 0", minWidth: 0 }}
           bodyPadding={0}
           right={
             <Tabs value={tab} onChange={setTab} variant="pills">
@@ -604,14 +615,11 @@ export function SeriesStyleModal({
                 )}
 
                 <Group grow align="start">
-                  <TextInput
-                    size="xs"
-                    label="Legend name"
+                  <LegendNameInput
+                    seriesKey={active.key}
                     placeholder={active.label}
                     value={activeOverride.name ?? ""}
-                    onChange={(event) =>
-                      setOverride(active.key, { name: event.currentTarget.value || null })
-                    }
+                    onCommit={(next) => setOverride(active.key, { name: next || null })}
                   />
                   <ColorInput
                     size="xs"
@@ -744,17 +752,23 @@ export function SeriesStyleModal({
                   }
                 />
                 {activeResolved?.shadow && (
-                  <Group grow align="start">
+                  <Box
+                    className="series-style-shadow-controls"
+                  >
                     <ColorInput
                       size="xs"
+                      style={{ minWidth: 176 }}
                       label="Colour"
+                      description=" "
                       format="hex"
                       value={activeResolved.shadowColor ?? DEFAULT_SHADOW.color}
                       onChange={(value) => setOverride(active.key, { shadow_color: value })}
                     />
                     <NumberInput
                       size="xs"
+                      style={{ minWidth: 132 }}
                       label="Opacity"
+                      description=" "
                       min={0.02}
                       max={1}
                       step={0.05}
@@ -768,6 +782,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
+                      style={{ minWidth: 132 }}
                       label="Spread"
                       description="px"
                       min={0}
@@ -782,6 +797,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
+                      style={{ minWidth: 132 }}
                       label="Offset X"
                       description="% of span"
                       min={-20}
@@ -797,6 +813,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
+                      style={{ minWidth: 132 }}
                       label="Offset Y"
                       description="% of span"
                       min={-20}
@@ -810,7 +827,7 @@ export function SeriesStyleModal({
                         })
                       }
                     />
-                  </Group>
+                  </Box>
                 )}
 
                 <Divider label="Legend" labelPosition="left" />
@@ -828,6 +845,64 @@ export function SeriesStyleModal({
         </PanelShell>
       </Group>
     </Modal>
+  );
+}
+
+/**
+ * Legend name field with its own state.
+ *
+ * Driving this straight from the draft made every keystroke re-resolve every
+ * series and rebuild the preview before the character appeared, so holding
+ * Backspace did nothing and then deleted everything at once. Typing is local
+ * and instant; the draft is updated on a short debounce.
+ */
+function LegendNameInput({
+  seriesKey,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  seriesKey: string;
+  value: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+}) {
+  const [text, setText] = useState(value);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+
+  // Re-seed only when the selected series changes, never on the draft coming
+  // back, which would fight what is being typed.
+  useEffect(() => {
+    setText(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesKey]);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  return (
+    <TextInput
+      size="xs"
+      label="Legend name"
+      placeholder={placeholder}
+      value={text}
+      onChange={(event) => {
+        const next = event.currentTarget.value;
+        setText(next);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => commitRef.current(next), 200);
+      }}
+      onBlur={() => {
+        if (timer.current) clearTimeout(timer.current);
+        commitRef.current(text);
+      }}
+    />
   );
 }
 

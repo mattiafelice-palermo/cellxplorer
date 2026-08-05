@@ -343,6 +343,20 @@ export function seriesPlotlySymbol(style: ResolvedSeriesStyle): string {
   return style.markerOpen ? `${style.markerSymbol}-open` : style.markerSymbol;
 }
 
+/**
+ * Shorten a source filename for hover labels.
+ *
+ * Plotly cannot wrap or clip hover text, so a long `.ndax` name stretched the
+ * box across the plot. Truncating in the middle keeps the distinguishing head
+ * and the extension, which is what tells two variants apart.
+ */
+export function shortSourceName(name: string, max = 34): string {
+  if (!name || name.length <= max) return name;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${name.slice(0, head)}…${name.slice(name.length - tail)}`;
+}
+
 /** `#rrggbb` plus alpha as an `rgba()` string Plotly accepts. */
 export function shadowRgba(color: string, opacity: number): string {
   const hex = color.replace("#", "");

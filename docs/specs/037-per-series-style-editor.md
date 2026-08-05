@@ -207,6 +207,30 @@ and two controls for one state invites them to disagree.
 stretch to the dialog height instead of leaving the lower half empty, the series list has a drag
 divider (180–460 px), and the appearance form lays out in rows of three so it uses the width.
 
+### Follow-up: layout, hover labels, and the last of the lag
+
+**The resizer was the wrong answer.** Replaced with a chevron that collapses the series panel to a
+62 px strip showing only the colour swatch and the visibility toggle, with the series name on hover.
+That is all picking a series needs, and it frees the width without a drag interaction.
+
+**The plot is now a fixed 620 px.** Switching Series ↔ Rules was slow because the plot shared a
+flexible row with the right-hand panel; the Rules controls are wider, so their min-content width
+stole space from the plot and forced a Plotly relayout on every tab change. The preview panel no
+longer flexes, and the right panel carries `minWidth: 0` so its content can never push back. Same
+plot, same size, both tabs.
+
+**Legend name typing was still gated by the render cycle.** Holding Backspace did nothing and then
+deleted everything at once, because each keystroke re-resolved every series and rebuilt the preview
+before the character could appear. The field is now a small component with its own state: typing is
+local and instant, the draft is updated on a 200 ms debounce, and it flushes on blur. It re-seeds
+only when the selected series changes, so an incoming draft cannot fight what is being typed.
+
+**Hover labels were enormous** because the full `.ndax` filename set their width.
+`shortSourceName` truncates in the middle to 34 characters — keeping the distinguishing head and
+the extension, since that is what tells two variants apart — and both layouts now set `hoverlabel`
+from the plot's own paper colour, frame colour and tick font, so the box follows the app's styling
+instead of Plotly's default.
+
 ### Not done
 
 - **No browser verification.** The modal, its preview, and light/dark rendering have not been seen

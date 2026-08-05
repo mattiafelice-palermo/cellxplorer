@@ -219,6 +219,7 @@ import {
   seriesPlotlySymbol,
   shadowOffsetValues,
   shadowRgba,
+  shortSourceName,
   timeCapacitySeriesDescriptor,
   timeCapacitySeriesDescriptors,
   type ResolvedSeriesStyle,
@@ -2722,6 +2723,17 @@ function AddEntriesModal({
   );
 }
 
+/** Hover label styling shared by every analysis plot. */
+function hoverLabelLayout(style: PlotStyle) {
+  return {
+    bgcolor: style.paper_bgcolor || "#ffffff",
+    bordercolor: style.frame_color || "#adb5bd",
+    font: { size: Math.max(10, style.tick_font_size - 1), family: "inherit" },
+    align: "left" as const,
+    namelength: 28,
+  };
+}
+
 /**
  * The drop shadow: a wider, offset, semi-transparent copy drawn underneath.
  *
@@ -3099,7 +3111,7 @@ function tracesForResult(
       cycle,
       sourceCycle[index] ?? "",
       sourcePosition[index] ?? "",
-      sourceFilename[index] ?? "",
+      shortSourceName(String(sourceFilename[index] ?? "")),
     ]);
     if (resolved.shadow && !compact) {
       out.push(shadowTraceFor(s.x, s.quantities[column] ?? [], resolved));
@@ -3149,7 +3161,7 @@ function tracesForResult(
           s.x[index],
           sourceCycle[index] ?? "",
           sourcePosition[index] ?? "",
-          sourceFilename[index] ?? "",
+          shortSourceName(String(sourceFilename[index] ?? "")),
         ]),
         hovertemplate:
           "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
@@ -3478,7 +3490,7 @@ function tracesForTimeCapacity(
         segment.cycle[index] ?? "",
         segment.sourceCycle[index] ?? "",
         segment.sourcePosition[index] ?? "",
-        segment.sourceFilename[index] ?? "",
+        shortSourceName(String(segment.sourceFilename[index] ?? "")),
       ]);
       legendShown.add(seriesKey);
       if (resolved.shadow) out.push(shadowTraceFor(segment.x, segment.voltage, resolved));
@@ -3685,6 +3697,7 @@ function timeCapacityLayout(
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
+    hoverlabel: hoverLabelLayout(style),
     // uirevision together with `matches` axes is a documented plotly.js
     // infinite-relayout trap — skip zoom persistence in stacked mode. In
     // flat mode, key the revision to the x-axis semantics so changing the
@@ -7532,6 +7545,7 @@ function cyclePlotLayout(
     paper_bgcolor: style.paper_bgcolor,
     plot_bgcolor: style.plot_bgcolor,
     font: { size: style.tick_font_size },
+    hoverlabel: hoverLabelLayout(style),
     // keep the user's zoom/pan across STYLE edits, but reset the view when
     // the data or the plotted quantity changes — otherwise switching e.g.
     // from CE (~99) to capacity (~120 mAh) kept the old ranges and showed
