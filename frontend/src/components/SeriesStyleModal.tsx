@@ -796,18 +796,14 @@ export function SeriesStyleModal({
                   >
                     <ColorInput
                       size="xs"
-                      style={{ minWidth: 176 }}
                       label="Colour"
-                      description=" "
                       format="hex"
                       value={activeResolved.shadowColor ?? DEFAULT_SHADOW.color}
                       onChange={(value) => setOverride(active.key, { shadow_color: value })}
                     />
                     <NumberInput
                       size="xs"
-                      style={{ minWidth: 132 }}
                       label="Opacity"
-                      description=" "
                       min={0.02}
                       max={1}
                       step={0.05}
@@ -821,9 +817,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
-                      style={{ minWidth: 132 }}
-                      label="Spread"
-                      description="px"
+                      label="Spread (px)"
                       min={0}
                       max={24}
                       step={1}
@@ -836,9 +830,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
-                      style={{ minWidth: 132 }}
-                      label="Offset X"
-                      description="% of span"
+                      label="Offset X (% span)"
                       min={-20}
                       max={20}
                       step={0.5}
@@ -852,9 +844,7 @@ export function SeriesStyleModal({
                     />
                     <NumberInput
                       size="xs"
-                      style={{ minWidth: 132 }}
-                      label="Offset Y"
-                      description="% of span"
+                      label="Offset Y (% span)"
                       min={-20}
                       max={20}
                       step={0.5}

@@ -65,24 +65,20 @@ body {
 }
 
 .series-style-shadow-controls {
-  display: grid;
-  grid-template-columns: minmax(176px, 1.35fr) repeat(4, minmax(132px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--mantine-spacing-xs);
-  align-items: start;
+  align-items: flex-start;
+  min-width: 0;
 }
 
-@media (max-width: 800px) {
-  .series-style-shadow-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.series-style-shadow-controls > * {
+  flex: 1 1 132px;
+  min-width: 0;
+}
 
-  .series-style-shadow-controls > :first-child {
-    grid-column: 1 / -1;
-  }
-
-  .series-style-shadow-controls > * {
-    min-width: 0 !important;
-  }
+.series-style-shadow-controls > :first-child {
+  flex-basis: 176px;
 }
 
 /* Vertical-only scroll panel (downloads list, command palette results).
