@@ -993,6 +993,8 @@ export interface SeriesStyleOverride {
   show_in_legend?: boolean | null;
   /** Hide the series entirely without removing it from the analysis. */
   hidden?: boolean | null;
+  /** Per-series override of the tab-level secondary-colour-linking default. */
+  link_color?: boolean | null;
 }
 
 export type SeriesRuleField = "label" | "cell_name" | "group_name" | "kind";
@@ -1103,6 +1105,12 @@ export interface PlotStyle {
   series_overrides?: Record<string, SeriesStyleOverride>;
   /** Ordered bulk styling rules; see `seriesStyling.ts` for resolution order. */
   series_rules?: SeriesStyleRule[];
+  /** Whether a secondary series (y2 axis or a named measure) inherits its primary's colour by default. Default true. */
+  link_secondary_colors?: boolean;
+  /** How a secondary series' legend name is derived by default. Default "derive". */
+  secondary_name_mode?: "derive" | "independent";
+  /** Suffix appended to the primary's name when deriving a secondary's name; null falls back to the descriptor's own suffix. */
+  secondary_name_suffix?: string | null;
 }
 
 export interface AnalysisSpec {

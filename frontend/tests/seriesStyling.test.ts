@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  composeSeriesKey,
   decimatePreviewTraces,
   cyclesSeriesDescriptors,
   timeCapacitySeriesDescriptors,
   emptySeriesRule,
   isEmptyOverride,
+  isSecondarySeries,
   matchingRules,
+  primarySeriesKeyFor,
   pruneOverrides,
+  resolveAllSeriesStyles,
   resolveSeriesStyle,
   seriesMatchesRule,
   seriesPlotlyMode,
@@ -345,4 +349,262 @@ test("undefined rules and overrides are treated as none", () => {
   const resolved = resolveSeriesStyle(base, cell(), undefined, undefined);
   assert.equal(resolved.color, "#111111");
   assert.deepEqual(matchingRules(cell(), undefined), []);
+});
+
+// --- composeSeriesKey ---------------------------------------------------
+
+test("composeSeriesKey composes from structured identity, omitting defaults", () => {
+  assert.equal(composeSeriesKey({ sourceKey: "c12" }), "c12");
+  assert.equal(composeSeriesKey({ sourceKey: "c12", plot: 0, axis: "y", measure: null }), "c12");
+  assert.equal(
+    composeSeriesKey({ sourceKey: "c12", axis: "y2", measure: "coulombic_efficiency" }),
+    "y2:coulombic_efficiency:c12",
+  );
+  assert.equal(
+    composeSeriesKey({ sourceKey: "g3", plot: 1, measure: "voltage" }),
+    "p1:voltage:g3",
+  );
+});
+
+test("a primary series' composed key equals its legacy key, so saved plots need no migration", () => {
+  assert.equal(composeSeriesKey({ sourceKey: "c12", plot: 0, axis: "y", measure: null }), "c12");
+  assert.equal(composeSeriesKey({ sourceKey: "g7" }), "g7");
+});
+
+// --- primarySeriesKeyFor / isSecondarySeries -----------------------------
+
+test("primarySeriesKeyFor returns null for a primary descriptor", () => {
+  assert.equal(primarySeriesKeyFor(cell({ sourceKey: "c12" })), null);
+  assert.equal(primarySeriesKeyFor(cell({ sourceKey: "c12", axis: "y", measure: null })), null);
+  // No sourceKey at all: nothing to link to.
+  assert.equal(primarySeriesKeyFor(cell()), null);
+});
+
+test("primarySeriesKeyFor resolves the primary axis/measure key for a secondary", () => {
+  assert.equal(
+    primarySeriesKeyFor(cell({ sourceKey: "c12", axis: "y2", measure: "ce" })),
+    "c12",
+  );
+  assert.equal(
+    primarySeriesKeyFor(cell({ sourceKey: "g3", plot: 1, measure: "voltage" })),
+    "p1:g3",
+  );
+});
+
+test("isSecondarySeries is true only for y2 axis or a named measure", () => {
+  assert.equal(isSecondarySeries(cell({ sourceKey: "c1" })), false);
+  assert.equal(isSecondarySeries(cell({ sourceKey: "c1", axis: "y", measure: null })), false);
+  assert.equal(isSecondarySeries(cell({ sourceKey: "c1", axis: "y2" })), true);
+  assert.equal(isSecondarySeries(cell({ sourceKey: "c1", measure: "coulombic_efficiency" })), true);
+});
+
+// --- resolveAllSeriesStyles ----------------------------------------------
+
+const baseFor = () => base;
+
+test("a y2 series takes its primary's colour by default", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE own label",
+  });
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    overrides: { c1: { color: "#ff0000" } },
+  });
+  assert.equal(resolved.get("c1")!.color, "#ff0000");
+  assert.equal(resolved.get("y2:ce:c1")!.color, "#ff0000");
+});
+
+test("linking off leaves the secondary's own colour", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE",
+  });
+  const secondaryBase: BaseSeriesStyle = { ...base, color: "#00ff00" };
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor: (d) => (d.key === "y2:ce:c1" ? secondaryBase : base),
+    overrides: { c1: { color: "#ff0000" } },
+    linkSecondaryColors: false,
+  });
+  assert.equal(resolved.get("c1")!.color, "#ff0000");
+  assert.equal(resolved.get("y2:ce:c1")!.color, "#00ff00");
+});
+
+test("a per-series link_color override beats the tab-level default in both directions", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE",
+  });
+  const secondaryBase: BaseSeriesStyle = { ...base, color: "#00ff00" };
+  const baseForMixed = (d: SeriesDescriptor) => (d.key === "y2:ce:c1" ? secondaryBase : base);
+
+  // Tab default is linking ON, but this series opts out.
+  const off = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor: baseForMixed,
+    overrides: { c1: { color: "#ff0000" }, "y2:ce:c1": { link_color: false } },
+    linkSecondaryColors: true,
+  });
+  assert.equal(off.get("y2:ce:c1")!.color, "#00ff00");
+
+  // Tab default is linking OFF, but this series opts in.
+  const on = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor: baseForMixed,
+    overrides: { c1: { color: "#ff0000" }, "y2:ce:c1": { link_color: true } },
+    linkSecondaryColors: false,
+  });
+  assert.equal(on.get("y2:ce:c1")!.color, "#ff0000");
+});
+
+test("the secondary inherits a colour the primary got from a rule (two-pass ordering)", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A", groupName: "LFP" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE",
+  });
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    rules: [rule({ field: "group_name", value: "LFP", style: { color: "#123456" } })],
+  });
+  assert.equal(resolved.get("c1")!.color, "#123456");
+  assert.equal(resolved.get("y2:ce:c1")!.color, "#123456");
+});
+
+test("the secondary inherits a colour the primary got from an explicit override", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE",
+  });
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    overrides: { c1: { color: "#abcdef" } },
+  });
+  assert.equal(resolved.get("y2:ce:c1")!.color, "#abcdef");
+});
+
+test("secondary name derives from the primary's resolved name plus a suffix, and follows a rename", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "own label",
+    secondarySuffix: " CE",
+  });
+  const resolved = resolveAllSeriesStyles({ descriptors: [primary, secondary], baseFor });
+  assert.equal(resolved.get("c1")!.name, "Cell A");
+  assert.equal(resolved.get("y2:ce:c1")!.name, "Cell A CE");
+
+  // Renaming the primary via an override flows into the derived name.
+  const renamed = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    overrides: { c1: { name: "Reference Cell" } },
+  });
+  assert.equal(renamed.get("c1")!.name, "Reference Cell");
+  assert.equal(renamed.get("y2:ce:c1")!.name, "Reference Cell CE");
+});
+
+test("an explicit name override on the secondary beats derivation", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "own label",
+    secondarySuffix: " CE",
+  });
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    overrides: { "y2:ce:c1": { name: "Custom CE Name" } },
+  });
+  assert.equal(resolved.get("y2:ce:c1")!.name, "Custom CE Name");
+});
+
+test("secondaryNameMode independent leaves the secondary's own label", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "own label",
+    secondarySuffix: " CE",
+  });
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor,
+    secondaryNameMode: "independent",
+  });
+  assert.equal(resolved.get("y2:ce:c1")!.name, "own label");
+});
+
+test("a missing primary does not throw and leaves the secondary untouched", () => {
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "own label",
+  });
+  let resolved: Map<string, ReturnType<typeof resolveSeriesStyle>> | undefined;
+  assert.doesNotThrow(() => {
+    resolved = resolveAllSeriesStyles({ descriptors: [secondary], baseFor });
+  });
+  assert.equal(resolved!.get("y2:ce:c1")!.color, base.color);
+  assert.equal(resolved!.get("y2:ce:c1")!.name, "own label");
+});
+
+test("linking copies colour only — the secondary keeps its own lineDash/lineWidth/markerSize", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1", label: "Cell A" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell A CE",
+  });
+  const secondaryBase: BaseSeriesStyle = {
+    ...base,
+    lineDash: "dash",
+    lineWidth: 9,
+    markerSize: 20,
+  };
+  const resolved = resolveAllSeriesStyles({
+    descriptors: [primary, secondary],
+    baseFor: (d) => (d.key === "y2:ce:c1" ? secondaryBase : base),
+    overrides: { c1: { color: "#ff0000" } },
+  });
+  const secondaryStyle = resolved.get("y2:ce:c1")!;
+  assert.equal(secondaryStyle.color, "#ff0000");
+  assert.equal(secondaryStyle.lineDash, "dash");
+  assert.equal(secondaryStyle.lineWidth, 9);
+  assert.equal(secondaryStyle.markerSize, 20);
 });

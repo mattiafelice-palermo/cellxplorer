@@ -27,6 +27,16 @@ export interface SeriesDescriptor {
   label: string;
   cellName: string | null;
   groupName: string | null;
+  /** Subplot index. Default 0. */
+  plot?: number;
+  /** Which y axis the series is drawn on. Default "y". */
+  axis?: "y" | "y2";
+  /** The quantity plotted, when it differs from the plot's primary quantity. Default null. */
+  measure?: string | null;
+  /** Identity within a plot/axis/measure, e.g. "c12", "g3", "dcir-abc". */
+  sourceKey?: string;
+  /** Default legend suffix when deriving a name from a linked primary, e.g. " CE". */
+  secondarySuffix?: string;
 }
 
 /** Everything a trace needs, after all three layers are applied. */
@@ -164,6 +174,48 @@ export function timeCapacitySeriesDescriptors(traces: CellSeriesLike[]): SeriesD
     out.push(descriptor);
   }
   return out;
+}
+
+/**
+ * Compose a series key from its structured identity.
+ *
+ * Defaults are omitted entirely so a primary series on plot 0's primary axis
+ * and measure produces exactly its legacy `sourceKey` — saved plots need no
+ * migration.
+ */
+export function composeSeriesKey(parts: {
+  sourceKey: string;
+  plot?: number;
+  axis?: "y" | "y2";
+  measure?: string | null;
+}): string {
+  const segments: string[] = [];
+  if (parts.plot !== undefined && parts.plot !== 0) segments.push(`p${parts.plot}`);
+  if (parts.axis !== undefined && parts.axis !== "y") segments.push(parts.axis);
+  if (typeof parts.measure === "string" && parts.measure.length > 0) segments.push(parts.measure);
+  segments.push(parts.sourceKey);
+  return segments.join(":");
+}
+
+/**
+ * The key of the same source on the same plot's primary axis and primary
+ * measure — i.e. what a secondary series is linked to.
+ *
+ * `null` when the descriptor is already primary, or has no `sourceKey`.
+ */
+export function primarySeriesKeyFor(descriptor: SeriesDescriptor): string | null {
+  if (!descriptor.sourceKey) return null;
+  const isPrimary =
+    (descriptor.axis === undefined || descriptor.axis === "y") &&
+    (descriptor.measure === undefined || descriptor.measure === null);
+  if (isPrimary) return null;
+  return composeSeriesKey({ sourceKey: descriptor.sourceKey, plot: descriptor.plot });
+}
+
+/** True when a series is on the secondary axis, or plots a named (non-primary) measure. */
+export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
+  if (descriptor.axis === "y2") return true;
+  return typeof descriptor.measure === "string" && descriptor.measure.length > 0;
 }
 
 export const SERIES_RULE_FIELDS: { value: SeriesRuleField; label: string }[] = [
@@ -329,6 +381,68 @@ export function resolveSeriesStyle(
   }
   // Last, so a hand-set value is never taken away by a bulk rule.
   return applyOverride(resolved, overrides?.[descriptor.key]);
+}
+
+/**
+ * Resolve every descriptor's style, then link secondary series (y2 axis or a
+ * named measure) to their primary's resolved colour and, by default, derive
+ * their legend name from it.
+ *
+ * Two passes, deliberately: pass 1 resolves every series independently
+ * (base -> rules -> explicit override) exactly like `resolveSeriesStyle`, so
+ * a primary's colour from a rule or an override is already final before any
+ * secondary reads it in pass 2.
+ */
+export function resolveAllSeriesStyles(input: {
+  descriptors: SeriesDescriptor[];
+  baseFor: (d: SeriesDescriptor) => BaseSeriesStyle;
+  rules?: SeriesStyleRule[];
+  overrides?: Record<string, SeriesStyleOverride>;
+  linkSecondaryColors?: boolean;
+  secondaryNameMode?: "derive" | "independent";
+  secondaryNameSuffix?: string | null;
+}): Map<string, ResolvedSeriesStyle> {
+  const {
+    descriptors,
+    baseFor,
+    rules,
+    overrides,
+    linkSecondaryColors = true,
+    secondaryNameMode = "derive",
+    secondaryNameSuffix = null,
+  } = input;
+
+  // Pass 1: resolve every descriptor independently.
+  const resolved = new Map<string, ResolvedSeriesStyle>();
+  for (const descriptor of descriptors) {
+    resolved.set(descriptor.key, resolveSeriesStyle(baseFor(descriptor), descriptor, rules, overrides));
+  }
+
+  // Pass 2: link secondaries to their primary's resolved style.
+  for (const descriptor of descriptors) {
+    if (!isSecondarySeries(descriptor)) continue;
+    const primaryKey = primarySeriesKeyFor(descriptor);
+    if (primaryKey === null) continue;
+    const primary = resolved.get(primaryKey);
+    if (!primary) continue;
+
+    const style = resolved.get(descriptor.key);
+    if (!style) continue;
+
+    const override = overrides?.[descriptor.key];
+    const linkEnabled = override?.link_color ?? linkSecondaryColors ?? true;
+    if (linkEnabled) {
+      style.color = primary.color;
+    }
+
+    const hasExplicitName = override?.name !== undefined && override?.name !== null;
+    if (secondaryNameMode === "derive" && !hasExplicitName) {
+      const suffix = secondaryNameSuffix ?? descriptor.secondarySuffix ?? "";
+      style.name = `${primary.name}${suffix}`;
+    }
+  }
+
+  return resolved;
 }
 
 /** Plotly `mode` for a resolved series. */
