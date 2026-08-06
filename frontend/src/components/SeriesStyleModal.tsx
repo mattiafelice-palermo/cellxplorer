@@ -10,6 +10,7 @@ import {
   Modal,
   NumberInput,
   Paper,
+  Popover,
   ScrollArea,
   SegmentedControl,
   Select,
@@ -27,6 +28,7 @@ import {
   IconChevronRight,
   IconEye,
   IconEyeOff,
+  IconList,
   IconPlus,
   IconRotate,
   IconTrash,
@@ -62,6 +64,7 @@ import {
   resolveAllSeriesStyles,
   seriesRuleError,
   type BaseSeriesStyle,
+  type ResolvedSeriesStyle,
   type SeriesDescriptor,
 } from "../seriesStyling";
 import { PALETTE_OPTIONS, PLOT_PALETTES } from "../plotStyle";
@@ -97,6 +100,7 @@ const MARKER_MODE_OPTIONS: { value: PlotMarkerMode; label: string }[] = [
 
 /** Fixed so the plot never relayouts when the right-hand content changes. */
 const PREVIEW_WIDTH = 620;
+const PREVIEW_HEIGHT = 465; // 4:3 aspect ratio
 /**
  * The pseudo-entry that edits the tab's base style.
  *
@@ -325,22 +329,23 @@ export function SeriesStyleModal({
   }, [descriptors, resolvedByKey]);
 
   /**
-   * Series grouped by plot, then axis, in that order.
+   * Series grouped by plot, then by quantity label or axis, in that order.
    *
    * On most tabs every descriptor is plot 0 / axis "y" — a single group — and
    * `heading` is left `null` for all of them so nothing renders: there is
    * nothing to disambiguate. A heading only appears once a second plot or a
-   * secondary (y2) axis is actually present.
+   * secondary quantity/axis is actually present.
    */
   const seriesGroups = useMemo(() => {
-    const groups = new Map<string, { plot: number; axis: "y" | "y2"; items: SeriesDescriptor[] }>();
+    const groups = new Map<string, { plot: number; axis: "y" | "y2"; measureLabel?: string; items: SeriesDescriptor[] }>();
     for (const descriptor of descriptors) {
       const plot = descriptor.plot ?? 0;
       const axis = descriptor.axis ?? "y";
-      const key = `${plot}:${axis}`;
+      const measureLabel = descriptor.measureLabel;
+      const key = `${plot}:${measureLabel ?? axis ?? "y"}`;
       let group = groups.get(key);
       if (!group) {
-        group = { plot, axis, items: [] };
+        group = { plot, axis, measureLabel, items: [] };
         groups.set(key, group);
       }
       group.items.push(descriptor);
@@ -353,9 +358,11 @@ export function SeriesStyleModal({
     const multiPlot = new Set(ordered.map((g) => g.plot)).size > 1;
     const showHeadings = ordered.length > 1;
     return ordered.map((group) => ({
-      key: `${group.plot}:${group.axis}`,
+      key: `${group.plot}:${group.measureLabel ?? group.axis ?? "y"}`,
       heading: showHeadings
-        ? `${multiPlot ? `Plot ${group.plot + 1} · ` : ""}${group.axis === "y2" ? "Right axis" : "Left axis"}`
+        ? `${multiPlot ? `Plot ${group.plot + 1} · ` : ""}${
+            group.measureLabel ?? (group.axis === "y2" ? "Right axis" : "Left axis")
+          }`
         : null,
       items: group.items,
     }));
@@ -428,16 +435,18 @@ export function SeriesStyleModal({
   const previewLayout = useMemo(
     () => ({
       ...preview.layout,
-      autosize: true,
-      width: undefined,
-      height: undefined,
-      margin: { l: 56, r: 16, t: 16, b: 48 },
+      autosize: false,
+      width: PREVIEW_WIDTH,
+      height: PREVIEW_HEIGHT,
+      showlegend: false,
+      legend: undefined,
+      margin: { l: 64, r: 64, t: 16, b: 56 },
     }),
     [preview.layout],
   );
   const previewConfig = useMemo(() => ({ displayModeBar: false, responsive: true }), []);
   const previewStyle = useMemo(
-    () => ({ width: "100%", height: "100%", flex: 1, minHeight: 0 }),
+    () => ({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
     [],
   );
 
@@ -463,18 +472,17 @@ export function SeriesStyleModal({
       styles={{ content: { height: "min(58rem, 94vh)", display: "flex", flexDirection: "column" } }}
     >
       <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
-        {/* The plot is deliberately fixed width. It used to share the row with
+        {/* The plot is deliberately fixed width and height. It used to share the row with
             flexible panels, so switching to Rules — whose controls are wider —
             resized the plot and forced Plotly to relayout on every tab change. */}
-        <PanelShell title="Preview" style={{ width: PREVIEW_WIDTH, flex: "none" }}>
-          <Plot
-            data={preview.data as never}
-            layout={previewLayout as never}
-            config={previewConfig as never}
-            useResizeHandler
-            style={previewStyle}
-          />
-        </PanelShell>
+        <PreviewPanel
+          preview={preview}
+          previewLayout={previewLayout}
+          previewConfig={previewConfig}
+          previewStyle={previewStyle}
+          resolvedByKey={resolvedByKey}
+          descriptors={descriptors}
+        />
 
         <PanelShell
           title="Series"
@@ -1425,6 +1433,113 @@ function PaletteRow({
         ))}
       </Group>
     </Group>
+  );
+}
+
+/**
+ * Preview panel with fixed dimensions and optional legend popover.
+ */
+function PreviewPanel({
+  preview,
+  previewLayout,
+  previewConfig,
+  previewStyle,
+  resolvedByKey,
+  descriptors,
+}: {
+  preview: { data: unknown[]; layout: Record<string, unknown> };
+  previewLayout: Record<string, unknown>;
+  previewConfig: Record<string, unknown>;
+  previewStyle: React.CSSProperties;
+  resolvedByKey: Map<string, ResolvedSeriesStyle>;
+  descriptors: SeriesDescriptor[];
+}) {
+  const [legendOpened, setLegendOpened] = useState(false);
+
+  // Build the list of visible series in draw order for the legend popover
+  const visibleSeries = useMemo(() => {
+    return descriptors
+      .map((descriptor) => ({
+        descriptor,
+        resolved: resolvedByKey.get(descriptor.key),
+      }))
+      .filter(({ resolved }) => resolved && !resolved.hidden && resolved.showInLegend);
+  }, [descriptors, resolvedByKey]);
+
+  return (
+    <Popover opened={legendOpened} onClose={() => setLegendOpened(false)} position="bottom-start">
+      <Popover.Target>
+        <PanelShell
+          title="Preview"
+          right={
+            <Tooltip label="Show legend" disabled={visibleSeries.length === 0}>
+              <ActionIcon
+                size="sm"
+                variant={legendOpened ? "filled" : "subtle"}
+                color={legendOpened ? "gray" : "gray"}
+                aria-label="Toggle legend"
+                disabled={visibleSeries.length === 0}
+                onClick={() => setLegendOpened((prev) => !prev)}
+              >
+                <IconList size={15} />
+              </ActionIcon>
+            </Tooltip>
+          }
+          style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
+          bodyPadding={0}
+        >
+          <Plot
+            data={preview.data as never}
+            layout={previewLayout as never}
+            config={previewConfig as never}
+            style={previewStyle}
+          />
+        </PanelShell>
+      </Popover.Target>
+      <Popover.Dropdown p="xs">
+        <Stack gap={6} style={{ maxWidth: 320 }}>
+          {visibleSeries.length === 0 ? (
+            <Text size="xs" c="dimmed">
+              No visible series
+            </Text>
+          ) : (
+            <Stack gap={4}>
+              {visibleSeries.map(({ descriptor, resolved }) => (
+                <Group
+                  key={descriptor.key}
+                  gap={6}
+                  wrap="nowrap"
+                  style={{
+                    borderRadius: 4,
+                    padding: "4px 6px",
+                    background: "var(--mantine-color-default-hover)",
+                  }}
+                >
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 2,
+                      flex: "none",
+                      background: resolved?.color ?? "#888",
+                    }}
+                  />
+                  <Text
+                    size="xs"
+                    truncate
+                    title={resolved?.name ?? descriptor.label}
+                    style={{ flex: 1 }}
+                  >
+                    {resolved?.name ?? descriptor.label}
+                  </Text>
+                </Group>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 

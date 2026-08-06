@@ -37,6 +37,8 @@ export interface SeriesDescriptor {
   sourceKey?: string;
   /** Default legend suffix when deriving a name from a linked primary, e.g. " CE". */
   secondarySuffix?: string;
+  /** Human name of the plotted quantity, e.g. "Discharge capacity", "Coulombic efficiency". */
+  measureLabel?: string;
 }
 
 /** Everything a trace needs, after all three layers are applied. */
@@ -134,14 +136,21 @@ export function cyclesSeriesDescriptors(
   cellSeries: CellSeriesLike[],
   showIndividualCells: boolean,
   includeCoulombicEfficiency = false,
+  primaryMeasureLabel?: string,
 ): SeriesDescriptor[] {
   const out: SeriesDescriptor[] = [];
-  for (const agg of aggregates) out.push(aggregateSeriesDescriptor(agg));
+  for (const agg of aggregates) {
+    const descriptor = aggregateSeriesDescriptor(agg);
+    if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
+    out.push(descriptor);
+  }
   const showIndividual = showIndividualCells || aggregates.length === 0;
   for (const s of cellSeries) {
     if (s.excluded) continue;
     if (s.group_id !== null && !showIndividual) continue;
-    out.push(cellSeriesDescriptor(s));
+    const descriptor = cellSeriesDescriptor(s);
+    if (primaryMeasureLabel) descriptor.measureLabel = primaryMeasureLabel;
+    out.push(descriptor);
   }
   if (includeCoulombicEfficiency) {
     // CE overlays always draw for aggregates, but only for solo (ungrouped)
@@ -161,6 +170,7 @@ export function cyclesSeriesDescriptors(
         measure: "coulombic_efficiency",
         sourceKey,
         secondarySuffix: " CE",
+        measureLabel: "Coulombic efficiency",
       });
     }
     for (const s of cellSeries) {
@@ -178,6 +188,7 @@ export function cyclesSeriesDescriptors(
         measure: "coulombic_efficiency",
         sourceKey,
         secondarySuffix: " CE",
+        measureLabel: "Coulombic efficiency",
       });
     }
   }

@@ -158,10 +158,12 @@ export function PlotStylePanel({
         computeResult.aggregates,
         computeResult.cell_series,
         spec.presentation.show_individual_cells,
+        ceOverlayActive,
+        yTitlePlaceholder,
       );
     }
     return [];
-  }, [timeCapacityResult, computeResult, spec]);
+  }, [timeCapacityResult, computeResult, spec, ceOverlayActive, yTitlePlaceholder]);
   const seriesDescriptors = seriesDescriptorsProp ?? computedSeriesDescriptors;
   // Resolved once per style change rather than per render: plotPalette returns
   // a fresh array each call, so an inline callback changed identity constantly

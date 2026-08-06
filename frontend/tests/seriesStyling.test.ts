@@ -608,3 +608,33 @@ test("linking copies colour only — the secondary keeps its own lineDash/lineWi
   assert.equal(secondaryStyle.lineWidth, 9);
   assert.equal(secondaryStyle.markerSize, 20);
 });
+
+test("measureLabel is set on primary and CE descriptors when provided", () => {
+  const aggregates = [{ group_id: 1, group_name: "LFP" }];
+  const cells = [
+    traceLike({ cell_id: 1, group_id: 1, group_name: "LFP" }),
+    traceLike({ cell_id: 2, cell_name: "B", label: "B" }),
+  ];
+
+  // With CE enabled and a measureLabel provided
+  const withCE = cyclesSeriesDescriptors(aggregates, cells, true, true, "Discharge capacity");
+
+  // Primary descriptors should have measureLabel set
+  const primaryDescriptors = withCE.filter((d) => d.axis !== "y2" || !d.measure);
+  primaryDescriptors.forEach((d) => {
+    assert.equal(d.measureLabel, "Discharge capacity", `Primary descriptor ${d.key} should have measureLabel`);
+  });
+
+  // CE descriptors should have measureLabel "Coulombic efficiency" and axis "y2"
+  const ceDescriptors = withCE.filter((d) => d.axis === "y2" && d.measure === "coulombic_efficiency");
+  assert.ok(ceDescriptors.length > 0, "Should have CE descriptors");
+  ceDescriptors.forEach((d) => {
+    assert.equal(d.measureLabel, "Coulombic efficiency");
+    assert.equal(d.axis, "y2");
+  });
+
+  // Without CE, no CE descriptors should appear
+  const noCE = cyclesSeriesDescriptors(aggregates, cells, true, false, "Discharge capacity");
+  const noDescriptorsWithCE = noCE.filter((d) => d.axis === "y2" && d.measure === "coulombic_efficiency");
+  assert.equal(noDescriptorsWithCE.length, 0, "Should have no CE descriptors when includeCoulombicEfficiency is false");
+});
