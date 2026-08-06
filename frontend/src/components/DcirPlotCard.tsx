@@ -30,7 +30,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   post,
@@ -43,6 +43,8 @@ import {
   type FileProtocol,
   type PlotExportFormat,
   type ProtocolSegment,
+  type SeriesStyleOverride,
+  type SeriesStyleRule,
 } from "../api";
 import {
   axisTitleFont,
@@ -62,6 +64,13 @@ import {
   tracesToColumns,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import {
+  decimatePreviewTraces,
+  resolveSeriesStyle,
+  seriesPlotlyMode,
+  seriesPlotlySymbol,
+  type SeriesDescriptor,
+} from "../seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
@@ -184,6 +193,20 @@ export function dcirVisibleSeries(
   );
 }
 
+/**
+ * Per-series appearance descriptors for the style editor. Maps DCIR result
+ * series to their stable keys and display labels.
+ */
+export function dcirSeriesDescriptors(items: DcirResultSeries[]): SeriesDescriptor[] {
+  return items.map((item) => ({
+    key: `dcir-${item.series_id}`,
+    kind: "cell",
+    label: item.label,
+    cellName: item.cell_name,
+    groupName: null,
+  }));
+}
+
 export function dcirTracesForResult(
   result: DcirResult,
   spec: AnalysisSpec,
@@ -194,17 +217,31 @@ export function dcirTracesForResult(
   const yColumn = view.quantity === "relative" ? "dcir_change_pct" : "dcir_mohm";
   const yTitle = view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
   const defaultXTitle = dcirXTitle(view.x_axis);
-  const mode =
-    style.marker_mode === "none"
-      ? "lines"
-      : style.marker_mode === "points"
-        ? "markers"
-        : "lines+markers";
-  return dcirVisibleSeries(result, spec)
+  const visibleSeries = dcirVisibleSeries(result, spec);
+  const descriptors = dcirSeriesDescriptors(visibleSeries);
+  return visibleSeries
     .map((item, index) => {
+      const descriptor = descriptors[index];
       const color =
         style.custom_colors[`dcir-${item.series_id}`] ??
         palette[index % palette.length];
+      const baseStyle = {
+        color,
+        lineWidth: style.line_width,
+        lineDash: style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+      const resolved = resolveSeriesStyle(
+        baseStyle,
+        descriptor,
+        style.series_rules,
+        style.series_overrides
+      );
+      if (resolved.hidden) return null;
       const x =
         view.x_axis === "cycle"
           ? item.x_cycle
@@ -213,18 +250,21 @@ export function dcirTracesForResult(
             : item.x_occurrence;
       return {
         type: "scatter",
-        mode,
+        mode: seriesPlotlyMode(resolved),
         x,
         y: item.quantities[yColumn],
-        name: item.label,
-        line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
+        name: resolved.name,
+        showlegend: resolved.showInLegend,
+        opacity: resolved.opacity,
+        line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
+        marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },
         customdata: x.map(() => [item.direction, item.c_rate, item.current_ma]),
         hovertemplate:
           `%{fullData.name}<br>${defaultXTitle}: %{x}<br>${yTitle}: %{y:.4g}` +
           "<extra></extra>",
       } as Plotly.Data;
-    });
+    })
+    .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
 export function dcirLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
@@ -1082,6 +1122,38 @@ export function DcirPlotCard({
     );
   };
 
+  const visibleSeriesItems = useMemo(
+    () => (result.data ? dcirVisibleSeries(result.data, spec) : []),
+    [result.data, spec]
+  );
+  const seriesDescriptors = useMemo(
+    () => dcirSeriesDescriptors(visibleSeriesItems),
+    [visibleSeriesItems]
+  );
+
+  const buildSeriesPreview = useCallback(
+    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+      if (!result.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      const draftSpec: AnalysisSpec = {
+        ...spec,
+        presentation: {
+          ...spec.presentation,
+          plot_styles: {
+            ...(spec.presentation.plot_styles ?? {}),
+            dcir: {
+              ...currentPlotStyle(spec, "dcir"),
+              series_overrides: draftOverrides,
+              series_rules: draftRules,
+            },
+          },
+        },
+      };
+      const data = decimatePreviewTraces(dcirTracesForResult(result.data, draftSpec));
+      return { data, layout: dcirLayoutForSpec(draftSpec) };
+    },
+    [result.data, spec],
+  );
+
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     try {
       await downloadStyledPlotExport(
@@ -1226,6 +1298,8 @@ export function DcirPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="dcir"
+        seriesDescriptors={seriesDescriptors}
+        buildSeriesPreview={buildSeriesPreview}
       />
     </Group>
   );

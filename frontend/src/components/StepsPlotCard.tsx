@@ -29,7 +29,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
   get,
@@ -38,6 +38,8 @@ import {
   type CellProtocol,
   type CellSummary,
   type PlotExportFormat,
+  type SeriesStyleOverride,
+  type SeriesStyleRule,
   type StepsSeriesSpec,
   type StepsViewSpec,
 } from "../api";
@@ -60,6 +62,13 @@ import {
   useDelayedFlag,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import {
+  decimatePreviewTraces,
+  resolveSeriesStyle,
+  seriesPlotlyMode,
+  seriesPlotlySymbol,
+  type SeriesDescriptor,
+} from "../seriesStyling";
 import Plot from "./Plot";
 
 interface StepSeries {
@@ -702,21 +711,49 @@ export function stepsVisibleSeries(result: StepsResult, spec: AnalysisSpec): Ste
   );
 }
 
+/**
+ * Per-series appearance descriptors for the style editor. Maps Steps result
+ * series to their stable keys and display labels.
+ */
+export function stepsSeriesDescriptors(items: StepSeries[]): SeriesDescriptor[] {
+  return items.map((item) => ({
+    key: `steps-${item.series_id}`,
+    kind: "cell",
+    label: item.label,
+    cellName: item.cell_name,
+    groupName: null,
+  }));
+}
+
 export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): Plotly.Data[] {
   const view = readStepsView(spec);
   const style = currentPlotStyle(spec, "steps");
   const column = quantityColumn(view);
   const palette = plotPalette(style);
-  const mode =
-    style.marker_mode === "none"
-      ? "lines"
-      : style.marker_mode === "points"
-        ? "markers"
-        : "lines+markers";
-  return stepsVisibleSeries(result, spec)
+  const visibleSeries = stepsVisibleSeries(result, spec);
+  const descriptors = stepsSeriesDescriptors(visibleSeries);
+  return visibleSeries
     .map((item, index) => {
+      const descriptor = descriptors[index];
       const color =
         style.custom_colors[`steps-${item.series_id}`] ?? palette[index % palette.length];
+      const baseStyle = {
+        color,
+        lineWidth: style.line_width,
+        lineDash: style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+      const resolved = resolveSeriesStyle(
+        baseStyle,
+        descriptor,
+        style.series_rules,
+        style.series_overrides
+      );
+      if (resolved.hidden) return null;
       const x =
         view.x_axis === "cycle"
           ? item.x_cycle
@@ -726,13 +763,16 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
       return {
         x,
         y: item.quantities[column] ?? [],
-        name: item.label,
-        line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
+        name: resolved.name,
+        showlegend: resolved.showInLegend,
+        opacity: resolved.opacity,
+        line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
+        marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },
         type: "scatter",
-        mode,
+        mode: seriesPlotlyMode(resolved),
       } as Plotly.Data;
-    });
+    })
+    .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
 export function stepsLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
@@ -809,6 +849,38 @@ export function StepsPlotCard({
         : next
     );
   };
+
+  const visibleSeriesItems = useMemo(
+    () => (data ? stepsVisibleSeries(data, spec) : []),
+    [data, spec]
+  );
+  const seriesDescriptors = useMemo(
+    () => stepsSeriesDescriptors(visibleSeriesItems),
+    [visibleSeriesItems]
+  );
+
+  const buildSeriesPreview = useCallback(
+    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+      if (!data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      const draftSpec: AnalysisSpec = {
+        ...spec,
+        presentation: {
+          ...spec.presentation,
+          plot_styles: {
+            ...(spec.presentation.plot_styles ?? {}),
+            steps: {
+              ...currentPlotStyle(spec, "steps"),
+              series_overrides: draftOverrides,
+              series_rules: draftRules,
+            },
+          },
+        },
+      };
+      const previewTraces = decimatePreviewTraces(stepsTracesForResult(data, draftSpec));
+      return { data: previewTraces, layout: stepsLayoutForSpec(draftSpec) };
+    },
+    [data, spec],
+  );
 
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     try {
@@ -949,6 +1021,8 @@ export function StepsPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="steps"
+        seriesDescriptors={seriesDescriptors}
+        buildSeriesPreview={buildSeriesPreview}
       />
     </Group>
   );
