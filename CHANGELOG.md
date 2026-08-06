@@ -4,6 +4,13 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.19.1 - 2026-08-06
+
+### Bug fixes
+
+- Keep legend-name edits responsive while holding Delete or Backspace.
+- Wrap drop-shadow controls to the available panel width and keep their units aligned.
+
 ## 0.19.0-beta005 - 2026-08-05
 
 - Make the series appearance editor open and respond quickly by keeping the preview plot stable across renders and drawing it from thinned data.
