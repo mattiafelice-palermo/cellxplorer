@@ -31,7 +31,16 @@ import {
   IconRotate,
   IconTrash,
 } from "@tabler/icons-react";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type {
   PlotLineDash,
@@ -47,9 +56,10 @@ import {
   SERIES_RULE_OPERATORS,
   emptySeriesRule,
   isEmptyOverride,
+  isSecondarySeries,
   matchingRules,
   pruneOverrides,
-  resolveSeriesStyle,
+  resolveAllSeriesStyles,
   seriesRuleError,
   type BaseSeriesStyle,
   type SeriesDescriptor,
@@ -277,16 +287,27 @@ export function SeriesStyleModal({
     [descriptors, activeKey, isAllSeries],
   );
 
-  const resolvedByKey = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof resolveSeriesStyle>>();
-    for (const descriptor of descriptors) {
-      map.set(
-        descriptor.key,
-        resolveSeriesStyle(baseFor(descriptor), descriptor, draftRules, draftOverrides),
-      );
-    }
-    return map;
-  }, [descriptors, draftRules, draftOverrides, baseFor]);
+  const resolvedByKey = useMemo(
+    () =>
+      resolveAllSeriesStyles({
+        descriptors,
+        baseFor,
+        rules: draftRules,
+        overrides: draftOverrides,
+        linkSecondaryColors: draftBaseStyle.link_secondary_colors ?? false,
+        secondaryNameMode: draftBaseStyle.secondary_name_mode ?? "independent",
+        secondaryNameSuffix: draftBaseStyle.secondary_name_suffix ?? null,
+      }),
+    [
+      descriptors,
+      draftRules,
+      draftOverrides,
+      baseFor,
+      draftBaseStyle.link_secondary_colors,
+      draftBaseStyle.secondary_name_mode,
+      draftBaseStyle.secondary_name_suffix,
+    ],
+  );
 
   // Current resolved colour of every series, in list order and de-duplicated,
   // for "Save current colours as palette…".
@@ -302,6 +323,43 @@ export function SeriesStyleModal({
     }
     return colors;
   }, [descriptors, resolvedByKey]);
+
+  /**
+   * Series grouped by plot, then axis, in that order.
+   *
+   * On most tabs every descriptor is plot 0 / axis "y" — a single group — and
+   * `heading` is left `null` for all of them so nothing renders: there is
+   * nothing to disambiguate. A heading only appears once a second plot or a
+   * secondary (y2) axis is actually present.
+   */
+  const seriesGroups = useMemo(() => {
+    const groups = new Map<string, { plot: number; axis: "y" | "y2"; items: SeriesDescriptor[] }>();
+    for (const descriptor of descriptors) {
+      const plot = descriptor.plot ?? 0;
+      const axis = descriptor.axis ?? "y";
+      const key = `${plot}:${axis}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = { plot, axis, items: [] };
+        groups.set(key, group);
+      }
+      group.items.push(descriptor);
+    }
+    const ordered = Array.from(groups.values()).sort((a, b) => {
+      if (a.plot !== b.plot) return a.plot - b.plot;
+      if (a.axis === b.axis) return 0;
+      return a.axis === "y" ? -1 : 1;
+    });
+    const multiPlot = new Set(ordered.map((g) => g.plot)).size > 1;
+    const showHeadings = ordered.length > 1;
+    return ordered.map((group) => ({
+      key: `${group.plot}:${group.axis}`,
+      heading: showHeadings
+        ? `${multiPlot ? `Plot ${group.plot + 1} · ` : ""}${group.axis === "y2" ? "Right axis" : "Left axis"}`
+        : null,
+      items: group.items,
+    }));
+  }, [descriptors]);
 
   const setOverride = (key: string, patch: SeriesStyleOverride) =>
     commit(
@@ -391,6 +449,10 @@ export function SeriesStyleModal({
   const markersEnabled = markerMode !== "none";
   const baseLineEnabled = draftBaseStyle.marker_mode !== "points";
   const baseMarkersEnabled = draftBaseStyle.marker_mode !== "none";
+  const activeIsSecondary = active ? isSecondarySeries(active) : false;
+  const activeLinkColor = active
+    ? draftOverrides[active.key]?.link_color ?? draftBaseStyle.link_secondary_colors ?? false
+    : false;
 
   return (
     <Modal
@@ -466,80 +528,100 @@ export function SeriesStyleModal({
                 </Group>
               </Tooltip>
               <Divider my={2} />
-              {descriptors.map((descriptor) => {
-                const style = resolvedByKey.get(descriptor.key);
-                const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
-                const swatch = (
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      width: 14,
-                      height: 3,
-                      borderRadius: 2,
-                      flex: "none",
-                      background: style?.color ?? "#888",
-                    }}
-                  />
-                );
-                const visibility = (
-                  <ActionIcon
-                    size="xs"
-                    variant="subtle"
-                    color="gray"
-                    aria-label={style?.hidden ? `Show ${descriptor.label}` : `Hide ${descriptor.label}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOverride(descriptor.key, { hidden: !style?.hidden });
-                    }}
-                  >
-                    {style?.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                  </ActionIcon>
-                );
-                return (
-                  <Tooltip
-                    key={descriptor.key}
-                    label={style?.name ?? descriptor.label}
-                    disabled={!seriesCollapsed}
-                    position="right"
-                    withArrow
-                  >
-                    <Group
-                      gap={6}
-                      wrap="nowrap"
+              {seriesGroups.map((group) => (
+                <Fragment key={group.key}>
+                  {group.heading && !seriesCollapsed && (
+                    <Text
+                      size="9px"
+                      fw={700}
+                      c="dimmed"
+                      tt="uppercase"
                       px={6}
-                      py={4}
-                      justify={seriesCollapsed ? "center" : undefined}
-                      onClick={() => setActiveKey(descriptor.key)}
-                      style={{
-                        borderRadius: 4,
-                        cursor: "pointer",
-                        background:
-                          descriptor.key === active?.key
-                            ? "var(--mantine-primary-color-light)"
-                            : undefined,
-                        opacity: style?.hidden ? 0.5 : 1,
-                      }}
+                      pt={6}
+                      pb={2}
+                      style={{ letterSpacing: 0.4 }}
                     >
-                      {swatch}
-                      {!seriesCollapsed && (
-                        <>
-                          <Text size="xs" truncate style={{ flex: 1 }} title={style?.name}>
-                            {style?.name ?? descriptor.label}
-                          </Text>
-                          {customised && (
-                            <Tooltip label="Has its own settings">
-                              <Badge size="xs" variant="light" color="grape" circle>
-                                {" "}
-                              </Badge>
-                            </Tooltip>
+                      {group.heading}
+                    </Text>
+                  )}
+                  {group.items.map((descriptor) => {
+                    const style = resolvedByKey.get(descriptor.key);
+                    const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
+                    const swatch = (
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          width: 14,
+                          height: 3,
+                          borderRadius: 2,
+                          flex: "none",
+                          background: style?.color ?? "#888",
+                        }}
+                      />
+                    );
+                    const visibility = (
+                      <ActionIcon
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        aria-label={
+                          style?.hidden ? `Show ${descriptor.label}` : `Hide ${descriptor.label}`
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOverride(descriptor.key, { hidden: !style?.hidden });
+                        }}
+                      >
+                        {style?.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                      </ActionIcon>
+                    );
+                    return (
+                      <Tooltip
+                        key={descriptor.key}
+                        label={style?.name ?? descriptor.label}
+                        disabled={!seriesCollapsed}
+                        position="right"
+                        withArrow
+                      >
+                        <Group
+                          gap={6}
+                          wrap="nowrap"
+                          px={6}
+                          py={4}
+                          justify={seriesCollapsed ? "center" : undefined}
+                          onClick={() => setActiveKey(descriptor.key)}
+                          style={{
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            background:
+                              descriptor.key === active?.key
+                                ? "var(--mantine-primary-color-light)"
+                                : undefined,
+                            opacity: style?.hidden ? 0.5 : 1,
+                          }}
+                        >
+                          {swatch}
+                          {!seriesCollapsed && (
+                            <>
+                              <Text size="xs" truncate style={{ flex: 1 }} title={style?.name}>
+                                {style?.name ?? descriptor.label}
+                              </Text>
+                              {customised && (
+                                <Tooltip label="Has its own settings">
+                                  <Badge size="xs" variant="light" color="grape" circle>
+                                    {" "}
+                                  </Badge>
+                                </Tooltip>
+                              )}
+                            </>
                           )}
-                        </>
-                      )}
-                      {visibility}
-                    </Group>
-                  </Tooltip>
-                );
-              })}
+                          {visibility}
+                        </Group>
+                      </Tooltip>
+                    );
+                  })}
+                </Fragment>
+              ))}
             </Stack>
           </ScrollArea>
         </PanelShell>
@@ -898,6 +980,47 @@ export function SeriesStyleModal({
                     }
                   />
                 </Group>
+
+                {descriptors.some((d) => isSecondarySeries(d)) && (
+                  <>
+                    <Divider label="Secondary axis" labelPosition="left" />
+                    <Switch
+                      size="xs"
+                      label="Link colours to the primary series"
+                      description="A right-axis series takes the colour of the same cell on the left axis."
+                      checked={draftBaseStyle.link_secondary_colors ?? false}
+                      onChange={(event) =>
+                        patchBaseStyle({ link_secondary_colors: event.currentTarget.checked })
+                      }
+                    />
+                    <Select
+                      size="xs"
+                      label="Legend names"
+                      data={[
+                        { value: "independent", label: "Independent" },
+                        { value: "derive", label: "Follow the primary series" },
+                      ]}
+                      allowDeselect={false}
+                      value={draftBaseStyle.secondary_name_mode ?? "independent"}
+                      onChange={(value) =>
+                        value &&
+                        patchBaseStyle({
+                          secondary_name_mode: value as "derive" | "independent",
+                        })
+                      }
+                    />
+                    <TextInput
+                      size="xs"
+                      label="Name suffix"
+                      placeholder=" CE"
+                      disabled={(draftBaseStyle.secondary_name_mode ?? "independent") !== "derive"}
+                      value={draftBaseStyle.secondary_name_suffix ?? ""}
+                      onChange={(event) =>
+                        patchBaseStyle({ secondary_name_suffix: event.currentTarget.value })
+                      }
+                    />
+                  </>
+                )}
               </Stack>
             </ScrollArea>
           ) : !active ? (
@@ -932,6 +1055,17 @@ export function SeriesStyleModal({
                   </Alert>
                 )}
 
+                {activeIsSecondary && (
+                  <Switch
+                    size="xs"
+                    label="Link colour to primary series"
+                    checked={activeLinkColor}
+                    onChange={(event) =>
+                      setOverride(active.key, { link_color: event.currentTarget.checked })
+                    }
+                  />
+                )}
+
                 <Group grow align="start">
                   <LegendNameInput
                     seriesKey={active.key}
@@ -939,13 +1073,21 @@ export function SeriesStyleModal({
                     value={activeOverride.name ?? ""}
                     onCommit={commitLegendName}
                   />
-                  <ColorInput
-                    size="xs"
-                    label="Colour"
-                    format="hex"
-                    value={activeResolved?.color ?? "#000000"}
-                    onChange={(value) => setOverride(active.key, { color: value })}
-                  />
+                  <div>
+                    <ColorInput
+                      size="xs"
+                      label="Colour"
+                      format="hex"
+                      disabled={activeIsSecondary && activeLinkColor}
+                      value={activeResolved?.color ?? "#000000"}
+                      onChange={(value) => setOverride(active.key, { color: value })}
+                    />
+                    {activeIsSecondary && activeLinkColor && (
+                      <Text size="9px" c="dimmed" mt={2}>
+                        Colour comes from the primary series.
+                      </Text>
+                    )}
+                  </div>
                   <NumberInput
                     size="xs"
                     label="Opacity"
