@@ -140,6 +140,7 @@ export function PlotStylePanel({
   ceOverlayActive = false,
   timeCapacityStacked = false,
   yTitlePlaceholder,
+  seriesDescriptors: seriesDescriptorsProp,
 }: {
   opened: boolean;
   spec: AnalysisSpec;
@@ -160,6 +161,13 @@ export function PlotStylePanel({
   timeCapacityStacked?: boolean;
   /** Placeholder shown in the Y-axis title input when it is empty. */
   yTitlePlaceholder?: string;
+  /**
+   * Series descriptors for the per-series editor. When omitted, the panel
+   * falls back to its own cycles/time-capacity computation below — tabs with
+   * their own series shape (DCIR, Steps, Chargeability, C-rate) supply this
+   * instead.
+   */
+  seriesDescriptors?: SeriesDescriptor[];
 }) {
   const queryClient = useQueryClient();
   const presetQuery = useQuery({
@@ -194,7 +202,7 @@ export function PlotStylePanel({
   // the time/capacity result has `cell_traces`, the cycles result has
   // `cell_series` — so the editor lists exactly what is on screen.
   const timeCapacityResult = result && "cell_traces" in result ? result : undefined;
-  const seriesDescriptors = useMemo(() => {
+  const computedSeriesDescriptors = useMemo(() => {
     if (timeCapacityResult) return timeCapacitySeriesDescriptors(timeCapacityResult.cell_traces);
     if (computeResult) {
       return cyclesSeriesDescriptors(
@@ -205,6 +213,7 @@ export function PlotStylePanel({
     }
     return [];
   }, [timeCapacityResult, computeResult, spec]);
+  const seriesDescriptors = seriesDescriptorsProp ?? computedSeriesDescriptors;
   // Resolved once per style change rather than per render: plotPalette returns
   // a fresh array each call, so an inline callback changed identity constantly
   // and re-resolved every series on every render.
@@ -309,6 +318,23 @@ export function PlotStylePanel({
     },
     onError: (error: Error) =>
       notifications.show({ message: error.message || "Could not save the preset.", color: "red" }),
+  });
+  const savePalette = useMutation({
+    mutationFn: (payload: { name: string; colors: string[] }) => {
+      const existing = paletteQuery.data?.palettes ?? [];
+      return put<ColorPaletteSettings>("/api/settings/color-palettes", {
+        palettes: [
+          ...existing,
+          { id: crypto.randomUUID(), name: payload.name, kind: "categorical", colors: payload.colors },
+        ],
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["color-palettes"], saved);
+      notifications.show({ message: "Color palette saved.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not save the palette.", color: "red" }),
   });
   const applySelectedPreset = () => {
     const preset = availablePresets.find((item) => item.id === selectedPresetId);
@@ -1436,6 +1462,18 @@ export function PlotStylePanel({
               next.series_rules = rules;
             })
           }
+          baseStyle={style}
+          onBaseChange={setStyle}
+          palettes={paletteQuery.data?.palettes ?? []}
+          onApplyPalette={(colors, paletteId) =>
+            setStyle((next) => {
+              next.palette = paletteId ? "custom" : next.palette;
+              next.palette_id = paletteId;
+              next.palette_colors = [...colors];
+              next.custom_colors = {};
+            })
+          }
+          onSavePalette={(name, colors) => savePalette.mutate({ name, colors })}
         />
       )}
       <Modal

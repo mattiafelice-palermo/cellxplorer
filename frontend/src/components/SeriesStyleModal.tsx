@@ -37,6 +37,7 @@ import type {
   PlotLineDash,
   PlotMarkerMode,
   PlotMarkerSymbol,
+  PlotStyle,
   SeriesStyleOverride,
   SeriesStyleRule,
 } from "../api";
@@ -53,6 +54,7 @@ import {
   type BaseSeriesStyle,
   type SeriesDescriptor,
 } from "../seriesStyling";
+import { PALETTE_OPTIONS, PLOT_PALETTES } from "../plotStyle";
 import Plot from "./Plot";
 
 /** The real plot, rebuilt with the draft styling applied. */
@@ -85,6 +87,16 @@ const MARKER_MODE_OPTIONS: { value: PlotMarkerMode; label: string }[] = [
 
 /** Fixed so the plot never relayouts when the right-hand content changes. */
 const PREVIEW_WIDTH = 620;
+/**
+ * The pseudo-entry that edits the tab's base style.
+ *
+ * Every series resolves from that base, so editing it is "style everything at
+ * once" — the job the sidebar's global Lines section used to do. Putting it at
+ * the head of the same list keeps one place and one mental model, and cannot
+ * collide with a real series key (those are `c…`, `g…`, `dcir-…`, and so on).
+ */
+export const ALL_SERIES_KEY = "__all_series__";
+
 const SERIES_PANEL_WIDTH = 260;
 /**
  * Collapsed: swatch and visibility only, which is what picking a series needs.
@@ -117,6 +129,11 @@ export function SeriesStyleModal({
   baseFor,
   buildPreview,
   onChange,
+  baseStyle,
+  onBaseChange,
+  palettes,
+  onApplyPalette,
+  onSavePalette,
 }: {
   opened: boolean;
   onClose: () => void;
@@ -130,27 +147,58 @@ export function SeriesStyleModal({
     overrides: Record<string, SeriesStyleOverride>;
     rules: SeriesStyleRule[];
   }) => void;
+  /**
+   * The tab's base style, edited through the "All series" entry. This is the
+   * bottom layer every series resolves from, so it belongs in the same place
+   * as the per-series settings rather than in a separate sidebar section.
+   */
+  baseStyle: PlotStyle;
+  onBaseChange: (fn: (style: PlotStyle) => void) => void;
+  /** User-saved palettes, shown below the built-in ones in the Palettes tab. */
+  palettes?: { id: string; name: string; kind: string; colors: string[] }[];
+  /**
+   * Applies a palette's colours to every series. `paletteId` is the saved
+   * palette's id, or null for a built-in palette. Omitting this prop hides
+   * the Palettes tab entirely — the panel has no way to apply a palette
+   * without it.
+   */
+  onApplyPalette?: (colors: string[], paletteId: string | null) => void;
+  /** Saves the currently resolved series colours as a new named palette. */
+  onSavePalette?: (name: string, colors: string[]) => void;
 }) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>("series");
   const [seriesCollapsed, setSeriesCollapsed] = useState(false);
+  const [paletteSaveName, setPaletteSaveName] = useState("");
 
   // Local draft. The spec is only written on a debounce and on close.
   const [draftOverrides, setDraftOverrides] = useState(overrides);
   const [draftRules, setDraftRules] = useState(rules);
+  // Draft of the "All series" base style, kept local for the same reason as
+  // the per-series draft above: writing straight to `onBaseChange` on every
+  // control re-renders the whole analysis page and rebuilds the main plot on
+  // every drag tick.
+  const [draftBaseStyle, setDraftBaseStyle] = useState(baseStyle);
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<{ overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[] } | null>(
     null,
   );
+  const baseCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBase = useRef<PlotStyle | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onBaseChangeRef = useRef(onBaseChange);
+  onBaseChangeRef.current = onBaseChange;
 
   useEffect(() => {
     if (!opened) return;
     setDraftOverrides(overrides);
     setDraftRules(rules);
+    setDraftBaseStyle(baseStyle);
     setActiveKey((current) =>
-      current && descriptors.some((d) => d.key === current) ? current : descriptors[0]?.key ?? null,
+      current === ALL_SERIES_KEY || (current && descriptors.some((d) => d.key === current))
+        ? current
+        : ALL_SERIES_KEY,
     );
     // Only when the dialog opens: re-syncing on every prop change would fight
     // the debounce and undo edits mid-typing.
@@ -165,6 +213,15 @@ export function SeriesStyleModal({
     if (pending.current) {
       onChangeRef.current(pending.current);
       pending.current = null;
+    }
+    if (baseCommitTimer.current) {
+      clearTimeout(baseCommitTimer.current);
+      baseCommitTimer.current = null;
+    }
+    if (pendingBase.current) {
+      const toApply = pendingBase.current;
+      pendingBase.current = null;
+      onBaseChangeRef.current((next) => void Object.assign(next, toApply));
     }
   }, []);
 
@@ -187,14 +244,37 @@ export function SeriesStyleModal({
     [],
   );
 
+  // Same debounce as `commit` above, kept on its own timer since the base
+  // style and the per-series draft are independent and can be edited
+  // without the other's pending edit resetting its delay.
+  const commitBaseStyle = useCallback((next: PlotStyle) => {
+    setDraftBaseStyle(next);
+    pendingBase.current = next;
+    if (baseCommitTimer.current) clearTimeout(baseCommitTimer.current);
+    baseCommitTimer.current = setTimeout(() => {
+      baseCommitTimer.current = null;
+      if (pendingBase.current) {
+        const toApply = pendingBase.current;
+        pendingBase.current = null;
+        onBaseChangeRef.current((next) => void Object.assign(next, toApply));
+      }
+    }, COMMIT_DEBOUNCE_MS);
+  }, []);
+
+  const patchBaseStyle = (patch: Partial<PlotStyle>) =>
+    commitBaseStyle({ ...draftBaseStyle, ...patch });
+
   const handleClose = () => {
     flush();
     onClose();
   };
 
+  const isAllSeries = activeKey === ALL_SERIES_KEY;
+
   const active = useMemo(
-    () => descriptors.find((d) => d.key === activeKey) ?? descriptors[0] ?? null,
-    [descriptors, activeKey],
+    () =>
+      isAllSeries ? null : descriptors.find((d) => d.key === activeKey) ?? descriptors[0] ?? null,
+    [descriptors, activeKey, isAllSeries],
   );
 
   const resolvedByKey = useMemo(() => {
@@ -207,6 +287,21 @@ export function SeriesStyleModal({
     }
     return map;
   }, [descriptors, draftRules, draftOverrides, baseFor]);
+
+  // Current resolved colour of every series, in list order and de-duplicated,
+  // for "Save current colours as palette…".
+  const currentSeriesColors = useMemo(() => {
+    const seen = new Set<string>();
+    const colors: string[] = [];
+    for (const descriptor of descriptors) {
+      const color = resolvedByKey.get(descriptor.key)?.color;
+      if (color && !seen.has(color)) {
+        seen.add(color);
+        colors.push(color);
+      }
+    }
+    return colors;
+  }, [descriptors, resolvedByKey]);
 
   const setOverride = (key: string, patch: SeriesStyleOverride) =>
     commit(
@@ -294,6 +389,8 @@ export function SeriesStyleModal({
   const markerMode = activeResolved?.markerMode ?? "none";
   const lineEnabled = markerMode !== "points";
   const markersEnabled = markerMode !== "none";
+  const baseLineEnabled = draftBaseStyle.marker_mode !== "points";
+  const baseMarkersEnabled = draftBaseStyle.marker_mode !== "none";
 
   return (
     <Modal
@@ -344,6 +441,31 @@ export function SeriesStyleModal({
         >
           <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
             <Stack gap={2}>
+              <Tooltip
+                label="All series"
+                disabled={!seriesCollapsed}
+                position="right"
+                withArrow
+              >
+                <Group
+                  gap={6}
+                  wrap="nowrap"
+                  px={6}
+                  py={4}
+                  justify={seriesCollapsed ? "center" : undefined}
+                  onClick={() => setActiveKey(ALL_SERIES_KEY)}
+                  style={{
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    background: isAllSeries ? "var(--mantine-primary-color-light)" : undefined,
+                  }}
+                >
+                  <Text size="xs" fw={600} truncate style={{ flex: seriesCollapsed ? "none" : 1 }}>
+                    {seriesCollapsed ? "All" : "All series"}
+                  </Text>
+                </Group>
+              </Tooltip>
+              <Divider my={2} />
               {descriptors.map((descriptor) => {
                 const style = resolvedByKey.get(descriptor.key);
                 const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
@@ -423,7 +545,7 @@ export function SeriesStyleModal({
         </PanelShell>
 
         <PanelShell
-          title={tab === "rules" ? "Rules" : "Appearance"}
+          title={tab === "rules" ? "Rules" : tab === "palettes" ? "Palettes" : "Appearance"}
           // minWidth 0 matters: without it the wider Rules controls set the
           // panel's min-content width and stole space from the plot.
           style={{ flex: "1 1 0", minWidth: 0 }}
@@ -435,6 +557,7 @@ export function SeriesStyleModal({
                 <Tabs.Tab value="rules">
                   Rules{draftRules.length ? ` (${draftRules.length})` : ""}
                 </Tabs.Tab>
+                {onApplyPalette && <Tabs.Tab value="palettes">Palettes</Tabs.Tab>}
               </Tabs.List>
             </Tabs>
           }
@@ -619,6 +742,162 @@ export function SeriesStyleModal({
                     </Paper>
                   );
                 })}
+              </Stack>
+            </ScrollArea>
+          ) : tab === "palettes" ? (
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+              <Stack gap="sm" p="xs">
+                <Text size="xs" c="dimmed">
+                  Applies a full set of colours to every series at once.
+                </Text>
+                <Stack gap={2}>
+                  {PALETTE_OPTIONS.filter((option) => option.value !== "custom").map((option) => {
+                    const colors = PLOT_PALETTES[option.value];
+                    return (
+                      <PaletteRow
+                        key={option.value}
+                        label={option.label}
+                        colors={colors}
+                        active={!baseStyle.palette_id && baseStyle.palette === option.value}
+                        onClick={() => onApplyPalette?.(colors, null)}
+                      />
+                    );
+                  })}
+                </Stack>
+
+                <Divider label="Your palettes" labelPosition="left" />
+                {palettes && palettes.length > 0 ? (
+                  <Stack gap={2}>
+                    {palettes.map((palette) => (
+                      <PaletteRow
+                        key={palette.id}
+                        label={palette.name}
+                        colors={palette.colors}
+                        active={baseStyle.palette_id === palette.id}
+                        onClick={() => onApplyPalette?.(palette.colors, palette.id)}
+                      />
+                    ))}
+                  </Stack>
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    No saved palettes yet.
+                  </Text>
+                )}
+
+                {onSavePalette && (
+                  <>
+                    <Divider label="Save current colours as palette…" labelPosition="left" />
+                    <Group gap="xs" wrap="nowrap" align="end">
+                      <TextInput
+                        size="xs"
+                        style={{ flex: 1 }}
+                        placeholder="Palette name"
+                        value={paletteSaveName}
+                        onChange={(event) => setPaletteSaveName(event.currentTarget.value)}
+                      />
+                      <Button
+                        size="xs"
+                        disabled={!paletteSaveName.trim() || currentSeriesColors.length === 0}
+                        onClick={() => {
+                          onSavePalette(paletteSaveName.trim(), currentSeriesColors);
+                          setPaletteSaveName("");
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </Group>
+                  </>
+                )}
+              </Stack>
+            </ScrollArea>
+          ) : isAllSeries ? (
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+              <Stack gap="sm" p="xs">
+                <Text size="sm" fw={700}>
+                  All series
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Applies to every series that has not been given its own setting.
+                </Text>
+
+                {/* Chosen before the line and marker groups because it decides
+                    which of them apply. */}
+                <div>
+                  <Text size="xs" fw={500} mb={4}>
+                    Line style
+                  </Text>
+                  <SegmentedControl
+                    size="xs"
+                    fullWidth
+                    data={MARKER_MODE_OPTIONS}
+                    value={draftBaseStyle.marker_mode}
+                    onChange={(value) => patchBaseStyle({ marker_mode: value as PlotMarkerMode })}
+                  />
+                </div>
+
+                <Divider label="Line" labelPosition="left" />
+                <Group grow align="start">
+                  <Select
+                    size="xs"
+                    label="Dash"
+                    data={DASH_OPTIONS}
+                    allowDeselect={false}
+                    disabled={!baseLineEnabled}
+                    value={draftBaseStyle.line_dash}
+                    onChange={(value) => value && patchBaseStyle({ line_dash: value as PlotLineDash })}
+                  />
+                  <NumberInput
+                    size="xs"
+                    label="Width"
+                    min={0.5}
+                    max={12}
+                    step={0.5}
+                    decimalScale={1}
+                    disabled={!baseLineEnabled}
+                    value={draftBaseStyle.line_width}
+                    onChange={(value) => {
+                      if (value === "") return;
+                      patchBaseStyle({ line_width: Number(value) });
+                    }}
+                  />
+                </Group>
+
+                <Divider label="Markers" labelPosition="left" />
+                <Group grow align="start">
+                  <Select
+                    size="xs"
+                    label="Symbol"
+                    data={SYMBOL_OPTIONS}
+                    allowDeselect={false}
+                    disabled={!baseMarkersEnabled}
+                    value={draftBaseStyle.marker_symbol}
+                    onChange={(value) =>
+                      value && patchBaseStyle({ marker_symbol: value as PlotMarkerSymbol })
+                    }
+                  />
+                  <NumberInput
+                    size="xs"
+                    label="Size"
+                    min={1}
+                    max={30}
+                    disabled={!baseMarkersEnabled}
+                    value={draftBaseStyle.marker_size}
+                    onChange={(value) => {
+                      if (value === "") return;
+                      patchBaseStyle({ marker_size: Number(value) });
+                    }}
+                  />
+                  <Switch
+                    size="xs"
+                    mt={22}
+                    label="Open"
+                    disabled={!baseMarkersEnabled}
+                    checked={draftBaseStyle.marker_open}
+                    onChange={(event) =>
+                      patchBaseStyle({ marker_open: event.currentTarget.checked })
+                    }
+                  />
+                </Group>
               </Stack>
             </ScrollArea>
           ) : !active ? (
@@ -959,6 +1238,53 @@ const LegendNameInput = memo(function LegendNameInput({
     />
   );
 });
+
+/** A clickable palette row: name plus a swatch strip of its colours. */
+function PaletteRow({
+  label,
+  colors,
+  active,
+  onClick,
+}: {
+  label: string;
+  colors: string[];
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Group
+      gap={6}
+      wrap="nowrap"
+      px={6}
+      py={4}
+      onClick={onClick}
+      style={{
+        borderRadius: 4,
+        cursor: "pointer",
+        background: active ? "var(--mantine-primary-color-light)" : undefined,
+      }}
+    >
+      <Text size="xs" truncate style={{ flex: 1 }}>
+        {label}
+      </Text>
+      <Group gap={2} wrap="nowrap">
+        {colors.map((color, index) => (
+          <div
+            key={index}
+            aria-hidden="true"
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: 2,
+              flex: "none",
+              background: color,
+            }}
+          />
+        ))}
+      </Group>
+    </Group>
+  );
+}
 
 /** Titled container so every panel in the dialog is labelled the same way. */
 function PanelShell({
