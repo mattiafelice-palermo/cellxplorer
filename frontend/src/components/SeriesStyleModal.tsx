@@ -31,7 +31,7 @@ import {
   IconRotate,
   IconTrash,
 } from "@tabler/icons-react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   PlotLineDash,
@@ -94,6 +94,12 @@ const SERIES_PANEL_COLLAPSED_WIDTH = 104;
 
 /** Commit delay: long enough to swallow a colour drag, short enough to feel live. */
 const COMMIT_DEBOUNCE_MS = 250;
+/**
+ * A held-key repeat can be slower than the other style controls' debounce.
+ * Keep legend edits local until there has been a real pause; committing the
+ * draft rebuilds the modal preview and the analysis plot.
+ */
+const LEGEND_NAME_DEBOUNCE_MS = 500;
 
 /**
  * Editor for how each series is drawn.
@@ -207,6 +213,20 @@ export function SeriesStyleModal({
       pruneOverrides({ ...draftOverrides, [key]: { ...(draftOverrides[key] ?? {}), ...patch } }),
       draftRules,
     );
+
+  // The legend input is memoized so background/query-driven parent renders do
+  // not make Mantine reconcile the controlled input while a key is repeating.
+  // Keep this callback stable for the same reason; the ref always points to
+  // the latest draft-aware setter.
+  const setOverrideRef = useRef(setOverride);
+  setOverrideRef.current = setOverride;
+  const commitLegendName = useCallback(
+    (next: string) => {
+      if (!activeKey) return;
+      setOverrideRef.current(activeKey, { name: next || null });
+    },
+    [activeKey],
+  );
 
   const clearOverride = (key: string) => {
     const next = { ...draftOverrides };
@@ -638,7 +658,7 @@ export function SeriesStyleModal({
                     seriesKey={active.key}
                     placeholder={active.label}
                     value={activeOverride.name ?? ""}
-                    onCommit={(next) => setOverride(active.key, { name: next || null })}
+                    onCommit={commitLegendName}
                   />
                   <ColorInput
                     size="xs"
@@ -875,7 +895,7 @@ export function SeriesStyleModal({
  * Backspace did nothing and then deleted everything at once. Typing is local
  * and instant; the draft is updated on a short debounce.
  */
-function LegendNameInput({
+const LegendNameInput = memo(function LegendNameInput({
   seriesKey,
   value,
   placeholder,
@@ -888,6 +908,7 @@ function LegendNameInput({
 }) {
   const [text, setText] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heldEraseKey = useRef(false);
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
 
@@ -905,6 +926,14 @@ function LegendNameInput({
     [],
   );
 
+  const scheduleCommit = (next: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      commitRef.current(next);
+    }, LEGEND_NAME_DEBOUNCE_MS);
+  };
+
   return (
     <TextInput
       size="xs"
@@ -914,16 +943,32 @@ function LegendNameInput({
       onChange={(event) => {
         const next = event.currentTarget.value;
         setText(next);
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => commitRef.current(next), 200);
+        // A held Backspace/Delete may repeat more slowly than the debounce.
+        // Wait for keyup rather than committing between individual repeats.
+        if (!heldEraseKey.current) scheduleCommit(next);
       }}
-      onBlur={() => {
+      onKeyDown={(event) => {
+        if (event.key !== "Backspace" && event.key !== "Delete") return;
+        heldEraseKey.current = true;
+        if (timer.current) {
+          clearTimeout(timer.current);
+          timer.current = null;
+        }
+      }}
+      onKeyUp={(event) => {
+        if (event.key !== "Backspace" && event.key !== "Delete") return;
+        heldEraseKey.current = false;
+        scheduleCommit(event.currentTarget.value);
+      }}
+      onBlur={(event) => {
+        heldEraseKey.current = false;
         if (timer.current) clearTimeout(timer.current);
-        commitRef.current(text);
+        timer.current = null;
+        commitRef.current(event.currentTarget.value);
       }}
     />
   );
-}
+});
 
 /** Titled container so every panel in the dialog is labelled the same way. */
 function PanelShell({
