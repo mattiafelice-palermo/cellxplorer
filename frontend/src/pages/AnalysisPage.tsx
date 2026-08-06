@@ -215,7 +215,9 @@ import { applyPlotStylePreset } from "../plotStylePresets";
 import {
   aggregateSeriesDescriptor,
   cellSeriesDescriptor,
+  composeSeriesKey,
   decimatePreviewTraces,
+  resolveAllSeriesStyles,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
@@ -223,7 +225,9 @@ import {
   shadowRgba,
   shortSourceName,
   timeCapacitySeriesDescriptor,
+  type BaseSeriesStyle,
   type ResolvedSeriesStyle,
+  type SeriesDescriptor,
 } from "../seriesStyling";
 import { axisLayout, numericTraceExtent } from "../plotAxisLayout";
 import {
@@ -246,7 +250,6 @@ import {
   cePalette,
   plotMode,
   markerSymbol,
-  cePlotMode,
   ceMarkerSymbol,
   hexToRgba,
 } from "../plotStyle";
@@ -2527,13 +2530,75 @@ function tracesForResult(
     return pick(key);
   };
 
+  const soloOrIndividual = (s: ComputeResult["cell_series"][number]) =>
+    compact ||
+    s.group_id === null ||
+    spec.presentation.show_individual_cells ||
+    result.aggregates.length === 0;
+
+  // The CE overlay is an ordinary secondary-axis series now: it gets a
+  // descriptor (key `y2:coulombic_efficiency:<sourceKey>`) alongside its
+  // primary's, and both are resolved together below so rules/overrides and
+  // (opt-in) colour/name linking apply consistently to every series on this
+  // plot. `ceDescriptorFor` mirrors the CE trace's own former `name` exactly,
+  // so it's the correct fallback label when linking is off (the default; see
+  // resolveAllSeriesStyles call below).
+  const ceDescriptorFor = (primary: SeriesDescriptor, sourceKey: string, label: string): SeriesDescriptor => ({
+    key: composeSeriesKey({ sourceKey, axis: "y2", measure: "coulombic_efficiency" }),
+    kind: primary.kind,
+    label,
+    cellName: primary.cellName,
+    groupName: primary.groupName,
+    plot: 0,
+    axis: "y2",
+    measure: "coulombic_efficiency",
+    sourceKey,
+    secondarySuffix: " CE",
+  });
+
+  // Every stylable series, primary and CE, in draw order — the same order the
+  // trace-building loops below walk, so `baseFor` (which calls `pick`/`pickCe`
+  // lazily as each descriptor resolves) reproduces the legacy palette-cycling
+  // call order exactly.
+  const descriptors: SeriesDescriptor[] = [];
+  const colorKeyFor = new Map<string, string>();
   for (const agg of result.aggregates) {
-    const color = pick(`g${agg.group_id}`);
-    const q = agg.quantities[column];
-    if (!q) continue;
     const aggDescriptor = aggregateSeriesDescriptor(agg, compact);
-    const aggResolved = resolveSeriesStyle(
-      {
+    colorKeyFor.set(aggDescriptor.key, `g${agg.group_id}`);
+    descriptors.push(aggDescriptor);
+    if (showCeOverlay && agg.quantities[column] && agg.quantities["coulombic_efficiency_pct"]) {
+      descriptors.push(ceDescriptorFor(aggDescriptor, `g${agg.group_id}`, `${agg.group_name} CE`));
+    }
+  }
+  for (const s of result.cell_series) {
+    if (s.excluded || !soloOrIndividual(s)) continue;
+    const grouped = s.group_id !== null;
+    const descriptor = cellSeriesDescriptor(s);
+    colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
+    descriptors.push(descriptor);
+    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
+      descriptors.push(ceDescriptorFor(descriptor, `c${s.cell_id}`, `${s.label} CE`));
+    }
+  }
+
+  const baseFor = (d: SeriesDescriptor): BaseSeriesStyle => {
+    if (d.measure === "coulombic_efficiency") {
+      // Reproduces `pickCe` exactly: ce_custom_colors, then ce_palette_mode
+      // "single" | "secondary" | "match" (which falls through to `pick`).
+      return {
+        color: pickCe(d.sourceKey ?? ""),
+        lineWidth: style.ce_line_width,
+        lineDash: style.ce_line_dash,
+        markerMode: style.ce_marker_mode,
+        markerSymbol: style.ce_marker_symbol,
+        markerSize: style.ce_marker_size,
+        markerOpen: style.ce_marker_open,
+        opacity: style.ce_opacity,
+      };
+    }
+    const color = pick(colorKeyFor.get(d.key) ?? d.key);
+    if (d.kind === "group") {
+      return {
         color,
         lineWidth: compact ? 2 : style.line_width,
         lineDash: compact ? "solid" : style.line_dash,
@@ -2542,12 +2607,45 @@ function tracesForResult(
         markerSize: compact ? 3 : style.marker_size,
         markerOpen: style.marker_open,
         opacity: 1,
-      },
-      aggDescriptor,
-      style.series_rules,
-      style.series_overrides,
-    );
-    if (aggResolved.hidden) continue;
+      };
+    }
+    const grouped = d.groupName !== null;
+    return {
+      color,
+      lineWidth: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
+      lineDash: compact ? "solid" : style.line_dash,
+      markerMode: style.marker_mode,
+      markerSymbol: style.marker_symbol,
+      markerSize: compact ? 3 : style.marker_size,
+      markerOpen: style.marker_open,
+      opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
+    };
+  };
+
+  // Resolve every series in one call so a CE trace's link to its primary (when
+  // enabled) sees the primary's *final* colour/name. Linking and name-deriving
+  // default OFF here rather than the model's own defaults: a CE trace whose
+  // ce_palette_mode is "secondary"/"single", or whose ce_custom_colors picks
+  // it out individually, must keep that colour by default (an aggregate's
+  // derived name would also gain a spurious " mean" from its primary's
+  // legend name). Both remain fully opt-in via style.link_secondary_colors /
+  // style.secondary_name_mode, or a per-series override.
+  const resolvedStyles = resolveAllSeriesStyles({
+    descriptors,
+    baseFor,
+    rules: style.series_rules,
+    overrides: style.series_overrides,
+    linkSecondaryColors: style.link_secondary_colors ?? false,
+    secondaryNameMode: style.secondary_name_mode ?? "independent",
+    secondaryNameSuffix: style.secondary_name_suffix ?? null,
+  });
+
+  for (const agg of result.aggregates) {
+    const aggKey = `g${agg.group_id}`;
+    const q = agg.quantities[column];
+    if (!q) continue;
+    const aggResolved = resolvedStyles.get(aggKey);
+    if (!aggResolved || aggResolved.hidden) continue;
     if (!compact) {
       out.push(
         ...bandSegmentTraces(
@@ -2626,50 +2724,33 @@ function tracesForResult(
       }
     }
     if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
-      const ceColor = pickCe(`g${agg.group_id}`);
-      out.push({
-        x: agg.x,
-        y: agg.quantities["coulombic_efficiency_pct"].mean,
-        name: `${agg.group_name} CE`,
-        yaxis: "y2",
-        line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
-        marker: { color: ceColor, size: style.ce_marker_size, symbol: ceMarkerSymbol(style) },
-        type: "scatter",
-        mode: cePlotMode(style),
-        opacity: style.ce_opacity,
-      } as Plotly.Data);
+      const ceResolved = resolvedStyles.get(
+        composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" })
+      );
+      if (ceResolved && !ceResolved.hidden) {
+        out.push({
+          x: agg.x,
+          y: agg.quantities["coulombic_efficiency_pct"].mean,
+          name: ceResolved.name,
+          yaxis: "y2",
+          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+          marker: { color: ceResolved.color, size: ceResolved.markerSize, symbol: seriesPlotlySymbol(ceResolved) },
+          type: "scatter",
+          mode: seriesPlotlyMode(ceResolved),
+          opacity: ceResolved.opacity,
+          showlegend: ceResolved.showInLegend,
+        } as Plotly.Data);
+      }
     }
   }
-
-  const soloOrIndividual = (s: ComputeResult["cell_series"][number]) =>
-    compact ||
-    s.group_id === null ||
-    spec.presentation.show_individual_cells ||
-    result.aggregates.length === 0;
 
   for (const s of result.cell_series) {
     if (s.excluded || !soloOrIndividual(s)) continue;
     const grouped = s.group_id !== null;
-    const color = grouped ? pick(`g${s.group_id}`) : pick(`c${s.cell_id}`);
-    // Per-series resolution. The base carries exactly what this trace used to
-    // hardcode, so a plot with no overrides and no rules is byte-identical.
-    const descriptor = cellSeriesDescriptor(s);
-    const resolved = resolveSeriesStyle(
-      {
-        color,
-        lineWidth: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
-        lineDash: compact ? "solid" : style.line_dash,
-        markerMode: style.marker_mode,
-        markerSymbol: style.marker_symbol,
-        markerSize: compact ? 3 : style.marker_size,
-        markerOpen: style.marker_open,
-        opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
-      },
-      descriptor,
-      style.series_rules,
-      style.series_overrides,
-    );
-    if (resolved.hidden) continue;
+    const cellKey = `c${s.cell_id}`;
+    const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
+    const resolved = resolvedStyles.get(cellKey);
+    if (!resolved || resolved.hidden) continue;
     const sourceCycle = s.source_cycle ?? s.x.map(() => null);
     const sourcePosition = s.source_position ?? s.x.map(() => null);
     const sourceFilename = s.source_filename ?? s.x.map(() => null);
@@ -2744,18 +2825,23 @@ function tracesForResult(
       } as Plotly.Data);
     }
     if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      const ceColor = pickCe(`c${s.cell_id}`);
-      out.push({
-        x: s.x,
-        y: s.quantities["coulombic_efficiency_pct"],
-        name: `${s.label} CE`,
-        yaxis: "y2",
-        line: { color: ceColor, width: style.ce_line_width, dash: style.ce_line_dash },
-        marker: { color: ceColor, size: style.ce_marker_size, symbol: ceMarkerSymbol(style) },
-        type: "scatter",
-        mode: cePlotMode(style),
-        opacity: style.ce_opacity,
-      } as Plotly.Data);
+      const ceResolved = resolvedStyles.get(
+        composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" })
+      );
+      if (ceResolved && !ceResolved.hidden) {
+        out.push({
+          x: s.x,
+          y: s.quantities["coulombic_efficiency_pct"],
+          name: ceResolved.name,
+          yaxis: "y2",
+          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
+          marker: { color: ceResolved.color, size: ceResolved.markerSize, symbol: seriesPlotlySymbol(ceResolved) },
+          type: "scatter",
+          mode: seriesPlotlyMode(ceResolved),
+          opacity: ceResolved.opacity,
+          showlegend: ceResolved.showInLegend,
+        } as Plotly.Data);
+      }
     }
   }
   return out;

@@ -133,6 +133,7 @@ export function cyclesSeriesDescriptors(
   aggregates: AggregateSeriesLike[],
   cellSeries: CellSeriesLike[],
   showIndividualCells: boolean,
+  includeCoulombicEfficiency = false,
 ): SeriesDescriptor[] {
   const out: SeriesDescriptor[] = [];
   for (const agg of aggregates) out.push(aggregateSeriesDescriptor(agg));
@@ -141,6 +142,44 @@ export function cyclesSeriesDescriptors(
     if (s.excluded) continue;
     if (s.group_id !== null && !showIndividual) continue;
     out.push(cellSeriesDescriptor(s));
+  }
+  if (includeCoulombicEfficiency) {
+    // CE overlays always draw for aggregates, but only for solo (ungrouped)
+    // cells — grouped members rely on their group's aggregate CE line, same
+    // rule the trace builder applies regardless of showIndividualCells.
+    for (const agg of aggregates) {
+      const primary = aggregateSeriesDescriptor(agg);
+      const sourceKey = `g${agg.group_id}`;
+      out.push({
+        key: composeSeriesKey({ sourceKey, axis: "y2", measure: "coulombic_efficiency" }),
+        kind: primary.kind,
+        label: `${agg.group_name} CE`,
+        cellName: primary.cellName,
+        groupName: primary.groupName,
+        plot: 0,
+        axis: "y2",
+        measure: "coulombic_efficiency",
+        sourceKey,
+        secondarySuffix: " CE",
+      });
+    }
+    for (const s of cellSeries) {
+      if (s.excluded || s.group_id !== null) continue;
+      const primary = cellSeriesDescriptor(s);
+      const sourceKey = `c${s.cell_id}`;
+      out.push({
+        key: composeSeriesKey({ sourceKey, axis: "y2", measure: "coulombic_efficiency" }),
+        kind: primary.kind,
+        label: `${s.label} CE`,
+        cellName: primary.cellName,
+        groupName: primary.groupName,
+        plot: 0,
+        axis: "y2",
+        measure: "coulombic_efficiency",
+        sourceKey,
+        secondarySuffix: " CE",
+      });
+    }
   }
   return out;
 }
