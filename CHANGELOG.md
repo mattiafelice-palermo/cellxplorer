@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.19.2 - 2026-08-06
+
+- Reorganize the plot styling code so the settings panel and style model live in their own modules.
+
 ## 0.19.1 - 2026-08-06
 
 ### Bug fixes
