@@ -53,11 +53,9 @@ import {
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
 import {
   PLOT_PALETTES,
-  PALETTE_OPTIONS,
   currentPlotStyle,
   writeScopedStyle,
   plotPalette,
-  cePalette,
   normalizePlotStyle,
 } from "../plotStyle";
 
@@ -80,54 +78,6 @@ const LEGEND_INSIDE_POSITION_OPTIONS: {
 const COLOR_SWATCHES = Array.from(
   new Set(Object.entries(PLOT_PALETTES).filter(([key]) => key !== "custom").flatMap(([, colors]) => colors))
 );
-
-const MARKER_SYMBOL_OPTIONS = [
-  { value: "circle", label: "Circle" },
-  { value: "square", label: "Square" },
-  { value: "diamond", label: "Diamond" },
-  { value: "triangle-up", label: "Triangle" },
-  { value: "cross", label: "Cross" },
-  { value: "x", label: "X" },
-];
-
-function snapshotPaletteColors(
-  style: PlotStyle,
-  targets: { key: string; label: string; sub: string }[]
-): void {
-  const palette = plotPalette(style);
-  targets.forEach((target, index) => {
-    if (!style.custom_colors[target.key]) {
-      style.custom_colors[target.key] = palette[index % palette.length];
-    }
-  });
-}
-
-function plotColorTargets(
-  result: ComputeResult | TimeCapacityResult | undefined
-): { key: string; label: string; sub: string }[] {
-  const targets: { key: string; label: string; sub: string }[] = [];
-  const seen = new Set<string>();
-  const add = (key: string, label: string, sub: string) => {
-    if (seen.has(key)) return;
-    seen.add(key);
-    targets.push({ key, label, sub });
-  };
-
-  if (result && "cell_traces" in result) {
-    for (const s of result.cell_traces) {
-      if (s.group_id !== null) add(`g${s.group_id}`, s.group_name ?? `replicate #${s.group_id}`, "replicate");
-      else add(`c${s.cell_id}`, s.label, "cell");
-    }
-    return targets;
-  }
-
-  for (const agg of result?.aggregates ?? []) add(`g${agg.group_id}`, agg.group_name, "replicate");
-  for (const s of result?.cell_series ?? []) {
-    if (s.group_id !== null) add(`g${s.group_id}`, s.group_name ?? `replicate #${s.group_id}`, "replicate");
-    else add(`c${s.cell_id}`, s.label, "cell");
-  }
-  return targets;
-}
 
 export function PlotStylePanel({
   opened,
@@ -191,7 +141,6 @@ export function PlotStylePanel({
   const [presetDefault, setPresetDefault] = useState(false);
   const [seriesStyleOpen, setSeriesStyleOpen] = useState(false);
   const style = currentPlotStyle(spec, axisScope);
-  const colorTargets = plotColorTargets(result);
   const computeResult = result && "cell_traces" in result ? undefined : result;
   const showRightAxisControls = ceOverlayActive || timeCapacityStacked;
   const setStyle = (fn: (style: PlotStyle) => void) => {
@@ -281,17 +230,6 @@ export function PlotStylePanel({
   const availablePresets = (presetQuery.data?.presets ?? []).filter(
     (preset) => preset.plot_family === "all" || preset.plot_family === axisScope,
   );
-  const customPaletteOptions = (paletteQuery.data?.palettes ?? []).map((palette) => ({
-    value: `user:${palette.id}`,
-    label: palette.name,
-  }));
-  const paletteOptions = [
-    ...PALETTE_OPTIONS.filter((option) => option.value !== "custom"),
-    ...(customPaletteOptions.length
-      ? [{ group: "Custom palettes", items: customPaletteOptions }]
-      : []),
-    { value: "custom", label: "Manual colors" },
-  ];
   const savePreset = useMutation({
     mutationFn: () => {
       const id = crypto.randomUUID();
@@ -440,82 +378,7 @@ export function PlotStylePanel({
           </Button>
         </Group>
       </Stack>
-      <Accordion multiple defaultValue={["colors", "axes", "ce-overlay"]}>
-        <Accordion.Item value="colors">
-          <Accordion.Control>
-            <Text fw={700} size="sm">
-              Colors
-            </Text>
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack gap="xs">
-              <Select
-                label="Palette"
-                data={paletteOptions}
-                value={style.palette_id ? `user:${style.palette_id}` : style.palette}
-                onChange={(value) =>
-                  value &&
-                  setStyle((next) => {
-                    if (value.startsWith("user:")) {
-                      const palette = paletteQuery.data?.palettes.find(
-                        (item) => item.id === value.slice(5),
-                      );
-                      if (!palette) return;
-                      next.palette = "custom";
-                      next.palette_id = palette.id;
-                      next.palette_colors = [...palette.colors];
-                      next.custom_colors = {};
-                      return;
-                    }
-                    if (value === "custom") {
-                      // freeze the CURRENT colors so nothing jumps
-                      snapshotPaletteColors(next, colorTargets);
-                      next.palette_id = null;
-                      next.palette_colors = [];
-                      next.palette = "custom";
-                      return;
-                    }
-                    next.palette_id = null;
-                    next.palette_colors = [];
-                    next.custom_colors = {};
-                    next.palette = value as PlotStyle["palette"];
-                  })
-                }
-              />
-              {colorTargets.length > 0 && (
-                <Stack gap={6}>
-                  {colorTargets.map((target, index) => {
-                    const activePalette = plotPalette(style);
-                    const fallback = activePalette[index % activePalette.length];
-                    return (
-                      <DebouncedColorInput
-                        key={target.key}
-                        label={target.label}
-                        description={target.sub}
-                        value={style.custom_colors[target.key] ?? fallback}
-                        format="hex"
-                        onCommit={(value) =>
-                          setStyle((next) => {
-                            if (next.palette !== "custom") {
-                              // editing one series must not repaint the others:
-                              // snapshot the active palette before going custom
-                              snapshotPaletteColors(next, colorTargets);
-                              next.palette = "custom";
-                            }
-                            next.custom_colors[target.key] = value;
-                          })
-                        }
-                        swatches={COLOR_SWATCHES}
-                        swatchesPerRow={8}
-                      />
-                    );
-                  })}
-                </Stack>
-              )}
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
-
+      <Accordion multiple defaultValue={["axes"]}>
         <Accordion.Item value="lines">
           <Accordion.Control>
             <Text fw={700} size="sm">
@@ -524,8 +387,9 @@ export function PlotStylePanel({
           </Accordion.Control>
           <Accordion.Panel>
             <Stack gap="xs">
-              {/* The controls below apply to every series at once; this opens
-                  the editor for styling series individually or by rule. */}
+              {/* Per-series width/dash/marker styling now lives in the
+                  "Series appearance…" editor, including the "All series"
+                  entry for styling every series at once. */}
               {buildSeriesPreview && (
                 <>
                   <Button
@@ -541,76 +405,6 @@ export function PlotStylePanel({
                     </Text>
                   )}
                 </>
-              )}
-              <Divider label="Applies to all series" labelPosition="left" />
-              <Group grow>
-                <DebouncedNumberInput
-                  label="Width"
-                  min={0.5}
-                  max={8}
-                  step={0.25}
-                  value={style.line_width}
-                  onCommit={(value) =>
-                    setStyle((next) => void (next.line_width = value ?? 2.5))
-                  }
-                />
-                <Select
-                  label="Dash"
-                  data={[
-                    { value: "solid", label: "Solid" },
-                    { value: "dot", label: "Dot" },
-                    { value: "dash", label: "Dash" },
-                    { value: "longdash", label: "Long dash" },
-                  ]}
-                  value={style.line_dash}
-                  onChange={(value) =>
-                    value && setStyle((next) => void (next.line_dash = value as PlotStyle["line_dash"]))
-                  }
-                />
-              </Group>
-              <Group grow>
-                <Select
-                  label="Markers"
-                  data={[
-                    { value: "none", label: "None" },
-                    { value: "points", label: "Points" },
-                    { value: "lines_points", label: "Lines + points" },
-                  ]}
-                  value={style.marker_mode}
-                  onChange={(value) =>
-                    value && setStyle((next) => void (next.marker_mode = value as PlotStyle["marker_mode"]))
-                  }
-                />
-                <DebouncedNumberInput
-                  label="Size"
-                  min={2}
-                  max={14}
-                  value={style.marker_size}
-                  onCommit={(value) =>
-                    setStyle((next) => void (next.marker_size = value ?? 5))
-                  }
-                />
-              </Group>
-              {style.marker_mode !== "none" && (
-                <Group grow align="flex-end">
-                  <Select
-                    label="Marker shape"
-                    data={MARKER_SYMBOL_OPTIONS}
-                    value={style.marker_symbol}
-                    onChange={(value) =>
-                      value &&
-                      setStyle((next) => void (next.marker_symbol = value as PlotStyle["marker_symbol"]))
-                    }
-                  />
-                  <Switch
-                    label="Open (outline only)"
-                    checked={style.marker_open}
-                    onChange={(event) =>
-                      setStyle((next) => void (next.marker_open = event.currentTarget.checked))
-                    }
-                    mb={8}
-                  />
-                </Group>
               )}
               <Group grow>
                 <DebouncedNumberInput
@@ -685,191 +479,6 @@ export function PlotStylePanel({
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
-
-        {ceOverlayActive && (
-          <Accordion.Item value="ce-overlay">
-            <Accordion.Control>
-              <Text fw={700} size="sm">
-                CE overlay
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack gap="xs">
-                <Text size="xs" c="dimmed">
-                  These settings apply only to coulombic-efficiency traces on the right axis.
-                </Text>
-                <Select
-                  label="CE colors"
-                  data={[
-                    { value: "match", label: "Match primary series" },
-                    { value: "secondary", label: "Independent palette" },
-                    { value: "single", label: "Single color" },
-                  ]}
-                  value={style.ce_palette_mode ?? "match"}
-                  onChange={(value) =>
-                    value &&
-                    setStyle((next) => {
-                      next.ce_palette_mode = value as NonNullable<PlotStyle["ce_palette_mode"]>;
-                      next.ce_custom_colors = {};
-                    })
-                  }
-                />
-                {(style.ce_palette_mode ?? "match") === "secondary" && (
-                  <Select
-                    label="CE palette"
-                    data={paletteOptions.filter(
-                      (option) => !("value" in option) || option.value !== "custom",
-                    )}
-                    value={
-                      style.ce_palette_id
-                        ? `user:${style.ce_palette_id}`
-                        : "app"
-                    }
-                    onChange={(value) =>
-                      value &&
-                      setStyle((next) => {
-                        if (value.startsWith("user:")) {
-                          const palette = paletteQuery.data?.palettes.find(
-                            (item) => item.id === value.slice(5),
-                          );
-                          if (!palette) return;
-                          next.ce_palette_id = palette.id;
-                          next.ce_palette_colors = [...palette.colors];
-                        } else {
-                          next.ce_palette_id = null;
-                          next.ce_palette_colors = [
-                            ...(PLOT_PALETTES[value as PlotStyle["palette"]] ??
-                              PLOT_PALETTES.app),
-                          ];
-                        }
-                        next.ce_custom_colors = {};
-                      })
-                    }
-                  />
-                )}
-                {(style.ce_palette_mode ?? "match") === "single" && (
-                  <DebouncedColorInput
-                    label="CE color"
-                    value={style.ce_single_color ?? "#495057"}
-                    format="hex"
-                    onCommit={(value) =>
-                      setStyle((next) => {
-                        next.ce_single_color = value;
-                        next.ce_custom_colors = {};
-                      })
-                    }
-                    swatches={COLOR_SWATCHES}
-                    swatchesPerRow={8}
-                  />
-                )}
-                {colorTargets.length > 0 && (
-                  <Stack gap={6}>
-                    {colorTargets.map((target, index) => {
-                      const palette =
-                        style.ce_palette_mode === "secondary"
-                          ? cePalette(style)
-                          : plotPalette(style);
-                      const mainColor =
-                        style.ce_palette_mode === "single"
-                          ? style.ce_single_color ?? "#495057"
-                          : style.custom_colors[target.key] ?? palette[index % palette.length];
-                      return (
-                        <DebouncedColorInput
-                          key={`ce-${target.key}`}
-                          label={`${target.label} CE`}
-                          description={target.sub}
-                          value={style.ce_custom_colors[target.key] ?? mainColor}
-                          format="hex"
-                          onCommit={(value) =>
-                            setStyle((next) => {
-                              next.ce_custom_colors[target.key] = value;
-                            })
-                          }
-                          swatches={COLOR_SWATCHES}
-                          swatchesPerRow={8}
-                        />
-                      );
-                    })}
-                  </Stack>
-                )}
-                <Group grow>
-                  <DebouncedNumberInput
-                    label="Width"
-                    min={0.5}
-                    max={8}
-                    step={0.25}
-                    value={style.ce_line_width}
-                    onCommit={(value) => setStyle((next) => void (next.ce_line_width = value ?? 1.5))}
-                  />
-                  <Select
-                    label="Dash"
-                    data={[
-                      { value: "solid", label: "Solid" },
-                      { value: "dot", label: "Dot" },
-                      { value: "dash", label: "Dash" },
-                      { value: "longdash", label: "Long dash" },
-                    ]}
-                    value={style.ce_line_dash}
-                    onChange={(value) =>
-                      value && setStyle((next) => void (next.ce_line_dash = value as PlotStyle["ce_line_dash"]))
-                    }
-                  />
-                </Group>
-                <Group grow>
-                  <Select
-                    label="Markers"
-                    data={[
-                      { value: "none", label: "None" },
-                      { value: "points", label: "Points" },
-                      { value: "lines_points", label: "Lines + points" },
-                    ]}
-                    value={style.ce_marker_mode}
-                    onChange={(value) =>
-                      value &&
-                      setStyle((next) => void (next.ce_marker_mode = value as PlotStyle["ce_marker_mode"]))
-                    }
-                  />
-                  <DebouncedNumberInput
-                    label="Marker size"
-                    min={2}
-                    max={14}
-                    value={style.ce_marker_size}
-                    onCommit={(value) => setStyle((next) => void (next.ce_marker_size = value ?? 5))}
-                  />
-                </Group>
-                {style.ce_marker_mode !== "none" && (
-                  <Group grow align="flex-end">
-                    <Select
-                      label="Marker shape"
-                      data={MARKER_SYMBOL_OPTIONS}
-                      value={style.ce_marker_symbol ?? "circle"}
-                      onChange={(value) =>
-                        value &&
-                        setStyle((next) => void (next.ce_marker_symbol = value as PlotStyle["ce_marker_symbol"]))
-                      }
-                    />
-                    <Switch
-                      label="Open (outline only)"
-                      checked={style.ce_marker_open ?? false}
-                      onChange={(event) =>
-                        setStyle((next) => void (next.ce_marker_open = event.currentTarget.checked))
-                      }
-                      mb={8}
-                    />
-                  </Group>
-                )}
-                <DebouncedNumberInput
-                  label="Opacity"
-                  min={0.05}
-                  max={1}
-                  step={0.05}
-                  value={style.ce_opacity}
-                  onCommit={(value) => setStyle((next) => void (next.ce_opacity = value ?? 0.7))}
-                />
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        )}
 
         <Accordion.Item value="axes">
           <Accordion.Control>
