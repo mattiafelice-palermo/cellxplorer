@@ -19,7 +19,7 @@ import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
 import { IconListSearch } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   post,
@@ -28,6 +28,8 @@ import {
   type RateCapabilityComputationSpec,
   type RateCapabilityFamilyPatternSpec,
   type RateCapabilityViewSpec,
+  type SeriesStyleOverride,
+  type SeriesStyleRule,
 } from "../api";
 import {
   isCellHiddenInAnalysis,
@@ -48,6 +50,13 @@ import {
   tracesToColumns,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import {
+  decimatePreviewTraces,
+  resolveSeriesStyle,
+  seriesPlotlyMode,
+  seriesPlotlySymbol,
+  type SeriesDescriptor,
+} from "../seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
@@ -291,6 +300,64 @@ function finite(value: number | null | undefined): value is number {
   return value != null && Number.isFinite(value);
 }
 
+/**
+ * Per-series appearance descriptors for the style editor. Maps Rate Capability result
+ * blocks and cells to their stable keys and display labels. Produces both block-level
+ * descriptors (one per block) and cell-level descriptors (one per visible cell).
+ */
+export function rateCapabilitySeriesDescriptors(
+  result: RateCapabilityResult,
+  spec: AnalysisSpec,
+): SeriesDescriptor[] {
+  const view = rateCapabilityViewFor(spec);
+  const visibleFamilies = new Set([
+    ...(view.show_charge ? ["charge"] : []),
+    ...(view.show_discharge ? ["discharge"] : []),
+  ]);
+  const visibleBlocks = result.blocks.filter(
+    (block) =>
+      visibleFamilies.has(block.family) &&
+      !isCellHiddenInAnalysis(spec, block.cell_id, result.selection_contexts) &&
+      block.points.some(
+        (point) => finite(pointX(point, view)) && finite(pointY(point, view)),
+      ),
+  );
+
+  const descriptors: SeriesDescriptor[] = [];
+
+  // Add descriptors for each visible block
+  const multipleCells = new Set(visibleBlocks.map((block) => block.cell_id)).size > 1;
+  for (const block of visibleBlocks) {
+    const name = multipleCells
+      ? `${block.label} — ${familyLabel(block.family)}`
+      : familyLabel(block.family);
+    descriptors.push({
+      key: `rate-capability-${block.id}`,
+      kind: "cell",
+      label: name,
+      cellName: block.cell_name,
+      groupName: null,
+    });
+  }
+
+  // Add descriptors for each visible cell
+  const cellIds = [
+    ...new Set(visibleBlocks.map((block) => block.cell_id)),
+  ].sort((a, b) => a - b);
+  for (const cellId of cellIds) {
+    const cellName = visibleBlocks.find((b) => b.cell_id === cellId)?.cell_name ?? `Cell ${cellId}`;
+    descriptors.push({
+      key: `rate-capability-cell-${cellId}`,
+      kind: "cell",
+      label: cellName,
+      cellName,
+      groupName: null,
+    });
+  }
+
+  return descriptors;
+}
+
 function pointX(point: RateCapabilityPoint, view: RateCapabilityViewSpec) {
   const axis = effectiveXAxis(view);
   if (axis === "c_rate") return point.rate_c;
@@ -388,6 +455,7 @@ export function rateCapabilityTracesForResult(
   const style = currentPlotStyle(spec, "crate");
   const palette = plotPalette(style);
   const comparisonPoints = result.comparison?.points ?? [];
+  const descriptors = rateCapabilitySeriesDescriptors(result, spec);
   const cellIds = [
     ...new Set([
       ...result.blocks.map((block) => block.cell_id),
@@ -409,12 +477,6 @@ export function rateCapabilityTracesForResult(
   const plottedX = (value: number) =>
     view.x_spacing === "equal" ? xCategory(value, view) : value;
   const isBar = view.visualization === "bar";
-  const mode =
-    style.marker_mode === "none"
-      ? "lines"
-      : style.marker_mode === "points"
-        ? "markers"
-        : "lines+markers";
 
   if (view.y_axis === "asymmetry_ratio") {
     return cellIds.flatMap((cellId) => {
@@ -425,10 +487,31 @@ export function rateCapabilityTracesForResult(
         )
         .sort((first, second) => first.rate_c - second.rate_c);
       if (!points.length) return [];
+      const descriptor = descriptors.find((d) => d.key === `rate-capability-cell-${cellId}`);
+      if (!descriptor) return [];
       const color = colorForCell(cellId);
+      const baseStyle = {
+        color,
+        lineWidth: style.line_width,
+        lineDash: style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+      const resolved = resolveSeriesStyle(
+        baseStyle,
+        descriptor,
+        style.series_rules,
+        style.series_overrides
+      );
+      if (resolved.hidden) return [];
       const actualX = points.map((point) => point.rate_c);
       const common = {
-        name: points[0].label,
+        name: resolved.name,
+        showlegend: resolved.showInLegend,
+        opacity: resolved.opacity,
         x: actualX.map(plottedX),
         y: points.map((point) => point.asymmetry_ratio),
         meta: { cellxplorer_export_x: actualX },
@@ -457,7 +540,7 @@ export function rateCapabilityTracesForResult(
             offsetgroup: `cell-${cellId}`,
             alignmentgroup: "rate-capability",
             marker: {
-              color,
+              color: resolved.color,
               line: { color: "#1f2937", width: 0.5 },
             },
           } as Plotly.Data,
@@ -467,13 +550,14 @@ export function rateCapabilityTracesForResult(
         {
           ...common,
           type: "scatter",
-          mode,
+          mode: seriesPlotlyMode(resolved),
           line: {
-            color,
-            width: style.line_width,
-            dash: style.line_dash,
+            color: resolved.color,
+            width: resolved.lineWidth,
+            dash: resolved.lineDash,
+            shape: resolved.lineShape,
           },
-          marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
+          marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },
         } as Plotly.Data,
       ];
     });
@@ -496,82 +580,103 @@ export function rateCapabilityTracesForResult(
       ),
   );
   const multipleCells = new Set(visibleBlocks.map((block) => block.cell_id)).size > 1;
-  return visibleBlocks.map((block) => {
-    const points = [...block.points]
-      .filter(
-        (point) => finite(pointX(point, view)) && finite(pointY(point, view)),
-      )
-      .sort((first, second) => pointX(first, view)! - pointX(second, view)!);
-    const color = colorForCell(block.cell_id, block.id);
-    const name = multipleCells
-      ? `${block.label} — ${familyLabel(block.family)}`
-      : familyLabel(block.family);
-    const actualX = points.map((point) => pointX(point, view)!);
-    const common = {
-      name,
-      x: actualX.map(plottedX),
-      y: points.map((point) => pointY(point, view)),
-      meta: { cellxplorer_export_x: actualX },
-      legendgroup: `cell-${block.cell_id}`,
-      customdata: points.map((point) => [
-        pointX(point, view),
-        point.family,
-        point.rate_c,
-        point.current_ma,
-        point.capacity_mah,
-        point.fixed_rate_c,
-        point.cycle,
-        point.measurement_step_index,
-      ]),
-      hovertemplate:
-        "%{fullData.name}<br>" +
-        `${xTitle(view)}: %{customdata[0]:.4g}<br>` +
-        `${yTitle(view)}: %{y:.4g}<br>` +
-        "Sweep rate: %{customdata[2]:.4g}C<br>" +
-        "Fixed complementary rate: %{customdata[5]:.4g}C<br>" +
-        "Cycle: %{customdata[6]}<extra></extra>",
-    };
-    if (isBar) {
+  return visibleBlocks
+    .map((block) => {
+      const descriptor = descriptors.find((d) => d.key === `rate-capability-${block.id}`);
+      if (!descriptor) return null;
+      const points = [...block.points]
+        .filter(
+          (point) => finite(pointX(point, view)) && finite(pointY(point, view)),
+        )
+        .sort((first, second) => pointX(first, view)! - pointX(second, view)!);
+      const color = colorForCell(block.cell_id, block.id);
+      const baseStyle = {
+        color,
+        lineWidth: style.line_width,
+        lineDash: block.family === "discharge" ? "dash" : style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+      const resolved = resolveSeriesStyle(
+        baseStyle,
+        descriptor,
+        style.series_rules,
+        style.series_overrides
+      );
+      if (resolved.hidden) return null;
+      const actualX = points.map((point) => pointX(point, view)!);
+      const common = {
+        name: resolved.name,
+        showlegend: resolved.showInLegend,
+        opacity: resolved.opacity,
+        x: actualX.map(plottedX),
+        y: points.map((point) => pointY(point, view)),
+        meta: { cellxplorer_export_x: actualX },
+        legendgroup: `cell-${block.cell_id}`,
+        customdata: points.map((point) => [
+          pointX(point, view),
+          point.family,
+          point.rate_c,
+          point.current_ma,
+          point.capacity_mah,
+          point.fixed_rate_c,
+          point.cycle,
+          point.measurement_step_index,
+        ]),
+        hovertemplate:
+          "%{fullData.name}<br>" +
+          `${xTitle(view)}: %{customdata[0]:.4g}<br>` +
+          `${yTitle(view)}: %{y:.4g}<br>` +
+          "Sweep rate: %{customdata[2]:.4g}C<br>" +
+          "Fixed complementary rate: %{customdata[5]:.4g}C<br>" +
+          "Cycle: %{customdata[6]}<extra></extra>",
+      };
+      if (isBar) {
+        return {
+          ...common,
+          type: "bar",
+          offsetgroup: `cell-${block.cell_id}-${block.family}`,
+          alignmentgroup: "rate-capability",
+          marker: {
+            color: resolved.color,
+            line: { color: "#1f2937", width: 0.5 },
+            pattern:
+              block.family === "discharge"
+                ? {
+                    shape: "/",
+                    fgcolor: "#1f2937",
+                    fillmode: "overlay",
+                    solidity: 0.22,
+                  }
+                : { shape: "" },
+          },
+        } as Plotly.Data;
+      }
       return {
         ...common,
-        type: "bar",
-        offsetgroup: `cell-${block.cell_id}-${block.family}`,
-        alignmentgroup: "rate-capability",
+        type: "scatter",
+        mode: seriesPlotlyMode(resolved),
+        line: {
+          color: resolved.color,
+          width: resolved.lineWidth,
+          dash: resolved.lineDash,
+          shape: resolved.lineShape,
+        },
         marker: {
-          color,
-          line: { color: "#1f2937", width: 0.5 },
-          pattern:
-            block.family === "discharge"
-              ? {
-                  shape: "/",
-                  fgcolor: "#1f2937",
-                  fillmode: "overlay",
-                  solidity: 0.22,
-                }
-              : { shape: "" },
+          color: resolved.color,
+          size: resolved.markerSize,
+          // Charge/discharge stay distinguishable by shape here; the style panel's
+          // open/filled choice still applies on top of that family shape.
+          symbol:
+            (block.family === "charge" ? "circle" : "diamond") +
+            (resolved.markerOpen ? "-open" : ""),
         },
       } as Plotly.Data;
-    }
-    return {
-      ...common,
-      type: "scatter",
-      mode,
-      line: {
-        color,
-        width: style.line_width,
-        dash: block.family === "discharge" ? "dash" : style.line_dash,
-      },
-      marker: {
-        color,
-        size: style.marker_size,
-        // Charge/discharge stay distinguishable by shape here; the style panel's
-        // open/filled choice still applies on top of that family shape.
-        symbol:
-          (block.family === "charge" ? "circle" : "diamond") +
-          (style.marker_open ? "-open" : ""),
-      },
-    } as Plotly.Data;
-  });
+    })
+    .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
 export function rateCapabilityLayoutForSpec(
@@ -1258,6 +1363,37 @@ export function RateCapabilityPlotCard({
     );
   };
 
+  const seriesDescriptors = useMemo(
+    () =>
+      result.data
+        ? rateCapabilitySeriesDescriptors(result.data, spec)
+        : [],
+    [result.data, spec]
+  );
+
+  const buildSeriesPreview = useCallback(
+    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+      if (!result.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      const draftSpec: AnalysisSpec = {
+        ...spec,
+        presentation: {
+          ...spec.presentation,
+          plot_styles: {
+            ...(spec.presentation.plot_styles ?? {}),
+            crate: {
+              ...currentPlotStyle(spec, "crate"),
+              series_overrides: draftOverrides,
+              series_rules: draftRules,
+            },
+          },
+        },
+      };
+      const data = decimatePreviewTraces(rateCapabilityTracesForResult(result.data, draftSpec));
+      return { data, layout: rateCapabilityLayoutForSpec(draftSpec, result.data) };
+    },
+    [result.data, spec],
+  );
+
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     try {
       await downloadStyledPlotExport(
@@ -1437,6 +1573,8 @@ export function RateCapabilityPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="crate"
+        seriesDescriptors={seriesDescriptors}
+        buildSeriesPreview={buildSeriesPreview}
       />
     </Group>
   );

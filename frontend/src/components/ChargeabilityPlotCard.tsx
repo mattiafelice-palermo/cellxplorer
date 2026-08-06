@@ -16,7 +16,7 @@ import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
 import { IconListSearch } from "@tabler/icons-react";
 import Plotly from "plotly.js-dist-min";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   post,
@@ -24,6 +24,8 @@ import {
   type ChargeabilityComputationSpec,
   type ChargeabilityViewSpec,
   type PlotExportFormat,
+  type SeriesStyleOverride,
+  type SeriesStyleRule,
 } from "../api";
 import {
   axisTitleFont,
@@ -41,6 +43,13 @@ import {
   tracesToColumns,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import {
+  decimatePreviewTraces,
+  resolveSeriesStyle,
+  seriesPlotlyMode,
+  seriesPlotlySymbol,
+  type SeriesDescriptor,
+} from "../seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
@@ -259,6 +268,29 @@ function hasFinite(values: (number | null)[]) {
   return values.some((value) => value != null && Number.isFinite(value));
 }
 
+/**
+ * Per-series appearance descriptors for the style editor. Maps Chargeability result
+ * matches to their stable keys and display labels.
+ */
+export function chargeabilitySeriesDescriptors(
+  matches: ChargeabilityMatch[],
+  result: ChargeabilityResult,
+): SeriesDescriptor[] {
+  return matches.map((match) => {
+    const name =
+      result.matches.filter((other) => other.cell_id === match.cell_id).length > 1
+        ? `${match.label} — cycle ${match.cycle ?? "—"}`
+        : match.label;
+    return {
+      key: `chargeability-${match.id}`,
+      kind: "cell",
+      label: name,
+      cellName: match.cell_name,
+      groupName: null,
+    };
+  });
+}
+
 export function chargeabilityTracesForResult(
   result: ChargeabilityResult,
   spec: AnalysisSpec,
@@ -266,38 +298,49 @@ export function chargeabilityTracesForResult(
   const view = chargeabilityViewFor(spec);
   const style = currentPlotStyle(spec, "chargeability");
   const palette = plotPalette(style);
-  const mode =
-    style.marker_mode === "none"
-      ? "lines"
-      : style.marker_mode === "points"
-        ? "markers"
-        : "lines+markers";
-  return (result.matches ?? [])
-    .filter((match) => {
-      const x = xValues(match, view);
-      return (
-        hasFinite(x) &&
-        hasFinite(match.y[view.y_axis]) &&
-        // Respect the "Analysis samples" eye toggle: a hidden cell draws nothing.
-        !isCellHiddenInAnalysis(spec, match.cell_id)
-      );
-    })
+  const visibleMatches = (result.matches ?? []).filter((match) => {
+    const x = xValues(match, view);
+    return (
+      hasFinite(x) &&
+      hasFinite(match.y[view.y_axis]) &&
+      // Respect the "Analysis samples" eye toggle: a hidden cell draws nothing.
+      !isCellHiddenInAnalysis(spec, match.cell_id)
+    );
+  });
+  const descriptors = chargeabilitySeriesDescriptors(visibleMatches, result);
+  return visibleMatches
     .map((match, index) => {
+      const descriptor = descriptors[index];
       const color =
         style.custom_colors[`chargeability-${match.id}`] ??
         palette[index % palette.length];
-      const name =
-        result.matches.filter((other) => other.cell_id === match.cell_id).length > 1
-          ? `${match.label} — cycle ${match.cycle ?? "—"}`
-          : match.label;
+      const baseStyle = {
+        color,
+        lineWidth: style.line_width,
+        lineDash: style.line_dash,
+        markerMode: style.marker_mode,
+        markerSymbol: style.marker_symbol,
+        markerSize: style.marker_size,
+        markerOpen: style.marker_open,
+        opacity: 1,
+      };
+      const resolved = resolveSeriesStyle(
+        baseStyle,
+        descriptor,
+        style.series_rules,
+        style.series_overrides
+      );
+      if (resolved.hidden) return null;
       return {
         type: "scatter",
-        mode,
+        mode: seriesPlotlyMode(resolved),
         x: xValues(match, view),
         y: match.y[view.y_axis],
-        name,
-        line: { color, width: style.line_width, dash: style.line_dash },
-        marker: { color, size: style.marker_size, symbol: markerSymbol(style) },
+        name: resolved.name,
+        showlegend: resolved.showInLegend,
+        opacity: resolved.opacity,
+        line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
+        marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },
         customdata: (match.y[view.y_axis] ?? []).map(() => [
           match.initial_soc_pct,
           match.final_soc_pct,
@@ -313,7 +356,8 @@ export function chargeabilityTracesForResult(
           `Ceiling: ${cRate(match.current_ceiling_c)}` +
           "<extra></extra>",
       } as Plotly.Data;
-    });
+    })
+    .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
 function cRateTicks(result?: ChargeabilityResult) {
@@ -678,6 +722,52 @@ export function ChargeabilityPlotCard({
     );
   };
 
+  const visibleSeriesItems = useMemo(
+    () => {
+      if (!result.data) return [];
+      const matches = result.data.matches ?? [];
+      return matches.filter((match) => {
+        const x = xValues(match, view);
+        return (
+          hasFinite(x) &&
+          hasFinite(match.y[view.y_axis]) &&
+          !isCellHiddenInAnalysis(spec, match.cell_id)
+        );
+      });
+    },
+    [result.data, spec, view]
+  );
+  const seriesDescriptors = useMemo(
+    () =>
+      result.data
+        ? chargeabilitySeriesDescriptors(visibleSeriesItems, result.data)
+        : [],
+    [visibleSeriesItems, result.data]
+  );
+
+  const buildSeriesPreview = useCallback(
+    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+      if (!result.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      const draftSpec: AnalysisSpec = {
+        ...spec,
+        presentation: {
+          ...spec.presentation,
+          plot_styles: {
+            ...(spec.presentation.plot_styles ?? {}),
+            chargeability: {
+              ...currentPlotStyle(spec, "chargeability"),
+              series_overrides: draftOverrides,
+              series_rules: draftRules,
+            },
+          },
+        },
+      };
+      const data = decimatePreviewTraces(chargeabilityTracesForResult(result.data, draftSpec));
+      return { data, layout: chargeabilityLayoutForSpec(draftSpec, result.data) };
+    },
+    [result.data, spec],
+  );
+
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
     try {
       await downloadStyledPlotExport(
@@ -840,6 +930,8 @@ export function ChargeabilityPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="chargeability"
+        seriesDescriptors={seriesDescriptors}
+        buildSeriesPreview={buildSeriesPreview}
       />
     </Group>
   );
