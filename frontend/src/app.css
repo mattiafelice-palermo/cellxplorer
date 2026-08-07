@@ -95,12 +95,19 @@ body {
 
 .palette-swatch-remove {
   opacity: 0;
-  transition: opacity 100ms ease;
+  transition: opacity 100ms ease, background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
 .palette-swatch:hover .palette-swatch-remove,
 .palette-swatch:focus-within .palette-swatch-remove {
   opacity: 1;
+}
+
+.palette-swatch-remove:hover,
+.palette-swatch-remove:focus-visible {
+  background-color: var(--mantine-color-red-6);
+  border-color: var(--mantine-color-red-6);
+  color: white;
 }
 
 /* Vertical-only scroll panel (downloads list, command palette results).

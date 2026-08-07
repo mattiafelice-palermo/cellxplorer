@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   ColorInput,
+  ColorPicker,
   Divider,
   Group,
   Modal,
@@ -24,8 +25,6 @@ import {
 } from "@mantine/core";
 import {
   IconArrowDown,
-  IconArrowLeft,
-  IconArrowRight,
   IconArrowUp,
   IconChevronLeft,
   IconChevronRight,
@@ -287,6 +286,10 @@ export function SeriesStyleModal({
     [genSwatchId],
   );
   const [swatchIds, setSwatchIds] = useState<string[]>(() => genSwatchIds(scratchColors.length));
+  // Which swatch's colour-picker popover is open, if any. Only one at a time —
+  // opening a different swatch's popover, or any structural change to the
+  // palette (add/remove/duplicate/reverse/preset/drag), closes it.
+  const [openSwatchIndex, setOpenSwatchIndex] = useState<number | null>(null);
 
   // Local draft. The spec is only written on a debounce and on close.
   const [draftOverrides, setDraftOverrides] = useState(overrides);
@@ -321,6 +324,7 @@ export function SeriesStyleModal({
     setSwatchIds(genSwatchIds(plotPalette(baseStyle).length));
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
     setSelectedSwatch(0);
+    setOpenSwatchIndex(null);
     // Only when the dialog opens: re-syncing on every prop change would fight
     // the debounce and undo edits mid-typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,17 +337,8 @@ export function SeriesStyleModal({
     setSwatchIds(genSwatchIds(colors.length));
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
     setSelectedSwatch(0);
+    setOpenSwatchIndex(null);
   }, [baseStyle, palettes, genSwatchIds]);
-
-  const applyPaletteMove = (delta: number) => {
-    const target = selectedSwatch + delta;
-    const next = movePaletteColor(scratchColors, selectedSwatch, target);
-    if (next === scratchColors) return;
-    setScratchColors(next);
-    setSwatchIds((ids) => movePaletteColor(ids, selectedSwatch, target));
-    setPaletteSelection(customPaletteSelection(next));
-    setSelectedSwatch(target);
-  };
 
   const duplicateScratchSwatch = () => {
     const next = duplicatePaletteColor(scratchColors, selectedSwatch);
@@ -358,6 +353,7 @@ export function SeriesStyleModal({
     });
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(selectedSwatch + 1);
+    setOpenSwatchIndex(null);
   };
 
   /**
@@ -375,6 +371,7 @@ export function SeriesStyleModal({
       const adjusted = index < current ? current - 1 : current;
       return Math.min(adjusted, next.length - 1);
     });
+    setOpenSwatchIndex(null);
   };
 
   const addScratchSwatch = () => {
@@ -383,10 +380,12 @@ export function SeriesStyleModal({
     setSwatchIds((ids) => [...ids, genSwatchId()]);
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(next.length - 1);
+    setOpenSwatchIndex(null);
   };
 
-  const editScratchSwatch = (value: string) => {
-    const next = setPaletteColor(scratchColors, selectedSwatch, value);
+  /** Edits the colour at `index` through the shared normalising helper. */
+  const editScratchSwatchAt = (index: number, value: string) => {
+    const next = setPaletteColor(scratchColors, index, value);
     if (next === scratchColors) return;
     setScratchColors(next);
     setPaletteSelection(customPaletteSelection(next));
@@ -398,6 +397,7 @@ export function SeriesStyleModal({
     setSwatchIds((ids) => reversePalette(ids));
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch((index) => next.length - 1 - index);
+    setOpenSwatchIndex(null);
   };
 
   /** Reorders the palette via the existing pure helper, driven by drag-and-drop. */
@@ -419,6 +419,9 @@ export function SeriesStyleModal({
     reorderScratchSwatch(from, to);
   };
 
+  /** A real drag beginning always closes whichever swatch's popover is open. */
+  const handleSwatchDragStart = () => setOpenSwatchIndex(null);
+
   const swatchSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -433,6 +436,7 @@ export function SeriesStyleModal({
       setSwatchIds(genSwatchIds(colors.length));
       setPaletteSelection(builtInPaletteSelection(key));
       setSelectedSwatch(0);
+      setOpenSwatchIndex(null);
     } else if (value.startsWith("saved:")) {
       const id = value.slice("saved:".length);
       const saved = palettes?.find((p) => p.id === id);
@@ -441,6 +445,7 @@ export function SeriesStyleModal({
       setSwatchIds(genSwatchIds(saved.colors.length));
       setPaletteSelection(savedPaletteSelection(id, saved.colors));
       setSelectedSwatch(0);
+      setOpenSwatchIndex(null);
     }
   };
 
@@ -1166,20 +1171,6 @@ export function SeriesStyleModal({
                         );
                       }}
                     />
-                    <Group gap={2} wrap="nowrap" style={{ flex: "none" }} aria-hidden="true">
-                      {scratchColors.slice(0, 8).map((color, index) => (
-                        <div
-                          key={index}
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: 2,
-                            flex: "none",
-                            background: color,
-                          }}
-                        />
-                      ))}
-                    </Group>
                     <Tooltip label="Reverse palette order">
                       <ActionIcon
                         size="lg"
@@ -1198,30 +1189,6 @@ export function SeriesStyleModal({
                         Current palette
                       </Text>
                       <Group gap={4} wrap="nowrap">
-                        <Tooltip label="Move colour left">
-                          <ActionIcon
-                            size="sm"
-                            variant="subtle"
-                            color="gray"
-                            aria-label="Move colour left"
-                            disabled={selectedSwatch <= 0}
-                            onClick={() => applyPaletteMove(-1)}
-                          >
-                            <IconArrowLeft size={14} />
-                          </ActionIcon>
-                        </Tooltip>
-                        <Tooltip label="Move colour right">
-                          <ActionIcon
-                            size="sm"
-                            variant="subtle"
-                            color="gray"
-                            aria-label="Move colour right"
-                            disabled={selectedSwatch >= scratchColors.length - 1}
-                            onClick={() => applyPaletteMove(1)}
-                          >
-                            <IconArrowRight size={14} />
-                          </ActionIcon>
-                        </Tooltip>
                         <Tooltip label={scratchColors.length >= MAX_PALETTE_COLOURS ? "A palette can hold up to 20 colours" : "Duplicate colour"}>
                           <ActionIcon
                             size="sm"
@@ -1236,11 +1203,16 @@ export function SeriesStyleModal({
                         </Tooltip>
                       </Group>
                     </Group>
+                    <Text size="9px" c="dimmed" mb={8}>
+                      Click a colour to edit it. Drag to reorder, or focus a colour and press Space
+                      then the arrow keys.
+                    </Text>
 
                     <Group wrap="wrap" gap="xs" pb={4}>
                       <DndContext
                         sensors={swatchSensors}
                         collisionDetection={closestCenter}
+                        onDragStart={handleSwatchDragStart}
                         onDragEnd={handleSwatchDragEnd}
                       >
                         <SortableContext items={swatchIds} strategy={rectSortingStrategy}>
@@ -1252,7 +1224,15 @@ export function SeriesStyleModal({
                               index={index}
                               selected={index === selectedSwatch}
                               removeDisabled={scratchColors.length <= 1}
-                              onSelect={() => setSelectedSwatch(index)}
+                              popoverOpened={index === openSwatchIndex}
+                              onSelect={() => {
+                                setSelectedSwatch(index);
+                                setOpenSwatchIndex(index);
+                              }}
+                              onPopoverClose={() =>
+                                setOpenSwatchIndex((current) => (current === index ? null : current))
+                              }
+                              onColorChange={(value) => editScratchSwatchAt(index, value)}
                               onRemove={() => removeSwatchAt(index)}
                             />
                           ))}
@@ -1281,16 +1261,6 @@ export function SeriesStyleModal({
                         </UnstyledButton>
                       </Tooltip>
                     </Group>
-
-                    <ColorInput
-                      mt="xs"
-                      size="xs"
-                      w={180}
-                      label={`Colour ${selectedSwatch + 1}`}
-                      format="hex"
-                      value={scratchColors[selectedSwatch] ?? "#000000"}
-                      onChange={editScratchSwatch}
-                    />
                   </div>
 
                   {onSavePalette && (
@@ -1848,7 +1818,8 @@ const LegendNameInput = memo(function LegendNameInput({
 
 /**
  * One colour in the palette being composed: its 1-based index, a large
- * swatch, and — only while selected — its hex value spelled out beneath it.
+ * swatch, and a colour-picker popover anchored to the swatch while it is
+ * open.
  *
  * Sortable via @dnd-kit: `useSortable` supplies the drag handle props
  * (`attributes`/`listeners`) that go on the whole item, a `transform` for the
@@ -1860,6 +1831,16 @@ const LegendNameInput = memo(function LegendNameInput({
  * by CSS (`:hover`/`:focus-within` on `.palette-swatch`, see app.css) — never
  * by JS mouseenter/mouseleave state — and stops pointer/click propagation so
  * dnd-kit never mistakes clicking it for the start of a drag.
+ *
+ * The popover's dropdown is rendered `withinPortal`, so DOM-wise it sits
+ * outside this whole item — but React still bubbles its synthetic events
+ * (pointerdown, keydown) up through the *component* tree, i.e. through this
+ * item, regardless of where the portal lands in the DOM. Without stopping
+ * that propagation, dragging the colour picker's saturation/hue handles
+ * would be seen by dnd-kit's pointer sensor as dragging the swatch, and
+ * arrow/Backspace/Delete keys typed into the hex field would be seen by this
+ * item's own keydown handler as reorder or remove commands. Both are
+ * stopped at the dropdown's root.
  */
 function SortablePaletteSwatch({
   id,
@@ -1867,7 +1848,10 @@ function SortablePaletteSwatch({
   index,
   selected,
   removeDisabled,
+  popoverOpened,
   onSelect,
+  onPopoverClose,
+  onColorChange,
   onRemove,
 }: {
   id: string;
@@ -1875,12 +1859,29 @@ function SortablePaletteSwatch({
   index: number;
   selected: boolean;
   removeDisabled: boolean;
+  popoverOpened: boolean;
   onSelect: () => void;
+  onPopoverClose: () => void;
+  onColorChange: (value: string) => void;
   onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
+
+  // The hex text field is typed freely, including transiently-invalid text
+  // (e.g. a paste mid-edit); it only pushes a colour through when the value
+  // is valid, via the shared `setPaletteColor` helper (invalid input is
+  // rejected there and this field simply keeps showing what was typed until
+  // it is corrected or the popover re-opens on the current colour).
+  const [hexText, setHexText] = useState(color);
+  useEffect(() => {
+    if (popoverOpened) setHexText(color);
+    // Re-seed only when the popover opens (or the colour changes while
+    // open, e.g. via the picker) — not on every parent render, which would
+    // clobber an in-progress edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [popoverOpened, color]);
 
   return (
     <Stack
@@ -1903,7 +1904,9 @@ function SortablePaletteSwatch({
         // Delete/Backspace removes the swatch; every other key (Space/Enter
         // to pick up, arrow keys to move, Escape to cancel) must still reach
         // dnd-kit's own keyboard-sensor handler, which `{...listeners}`
-        // supplied above and this explicit prop would otherwise shadow.
+        // supplied above and this explicit prop would otherwise shadow. This
+        // only runs while the popover is closed: while open, the dropdown's
+        // own onKeyDown below stops these events before they bubble here.
         if (event.key === "Delete" || event.key === "Backspace") {
           event.preventDefault();
           if (!removeDisabled) onRemove();
@@ -1915,27 +1918,65 @@ function SortablePaletteSwatch({
       <Text size="9px" c="dimmed">
         {index + 1}
       </Text>
-      <Tooltip label={color} disabled={selected}>
-        <UnstyledButton
-          aria-label={`Colour ${index + 1}: ${color}`}
-          title={color}
-          onClick={onSelect}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 8,
-            background: color,
-            outline: selected ? "2px solid var(--mantine-primary-color-6)" : "1px solid var(--mantine-color-default-border)",
-            outlineOffset: 2,
-          }}
-        />
-      </Tooltip>
+      <Popover
+        opened={popoverOpened}
+        onClose={onPopoverClose}
+        position="bottom"
+        withArrow
+        shadow="md"
+        trapFocus
+        withinPortal
+      >
+        <Popover.Target>
+          <Tooltip label={color} disabled={selected || popoverOpened}>
+            <UnstyledButton
+              aria-label={`Colour ${index + 1}: ${color}`}
+              title={color}
+              onClick={onSelect}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: color,
+                outline: selected ? "2px solid var(--mantine-primary-color-6)" : "1px solid var(--mantine-color-default-border)",
+                outlineOffset: 2,
+              }}
+            />
+          </Tooltip>
+        </Popover.Target>
+        <Popover.Dropdown
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <Stack gap={6} style={{ width: 200 }}>
+            <ColorPicker
+              format="hex"
+              value={color}
+              onChange={(value) => {
+                setHexText(value);
+                onColorChange(value);
+              }}
+              fullWidth
+            />
+            <TextInput
+              size="xs"
+              label={`Colour ${index + 1}`}
+              value={hexText}
+              onChange={(event) => setHexText(event.currentTarget.value)}
+              onBlur={(event) => onColorChange(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onColorChange(event.currentTarget.value);
+                }
+              }}
+            />
+          </Stack>
+        </Popover.Dropdown>
+      </Popover>
       <Tooltip label={`Remove colour ${index + 1}`}>
         <ActionIcon
           className="palette-swatch-remove"
-          size="xs"
-          variant="filled"
-          color="red"
           radius="xl"
           aria-label={`Remove colour ${index + 1}`}
           disabled={removeDisabled}
@@ -1946,11 +1987,20 @@ function SortablePaletteSwatch({
           }}
           style={{
             position: "absolute",
-            top: -6,
-            right: -6,
+            top: -2,
+            right: -2,
+            width: 18,
+            height: 18,
+            minWidth: 18,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: removeDisabled ? "var(--mantine-color-body)" : "var(--mantine-color-body)",
+            border: `1px solid var(--mantine-color-default-border)`,
+            color: "var(--mantine-color-dimmed)",
           }}
         >
-          <IconX size={11} />
+          <IconX size={12} />
         </ActionIcon>
       </Tooltip>
     </Stack>
