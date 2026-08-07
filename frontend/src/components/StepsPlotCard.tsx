@@ -38,6 +38,7 @@ import {
   type CellProtocol,
   type CellSummary,
   type PlotExportFormat,
+  type PlotStyle,
   type SeriesStyleOverride,
   type SeriesStyleRule,
   type StepsSeriesSpec,
@@ -860,7 +861,7 @@ export function StepsPlotCard({
   );
 
   const buildSeriesPreview = useCallback(
-    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+    (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
       if (!data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
       const draftSpec: AnalysisSpec = {
         ...spec,
@@ -870,8 +871,9 @@ export function StepsPlotCard({
             ...(spec.presentation.plot_styles ?? {}),
             steps: {
               ...currentPlotStyle(spec, "steps"),
-              series_overrides: draftOverrides,
-              series_rules: draftRules,
+              ...(draft.styleOverlay ?? {}),
+              series_overrides: draft.overrides,
+              series_rules: draft.rules,
             },
           },
         },

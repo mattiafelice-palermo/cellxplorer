@@ -24,6 +24,7 @@ import {
   type ChargeabilityComputationSpec,
   type ChargeabilityViewSpec,
   type PlotExportFormat,
+  type PlotStyle,
   type SeriesStyleOverride,
   type SeriesStyleRule,
 } from "../api";
@@ -746,7 +747,7 @@ export function ChargeabilityPlotCard({
   );
 
   const buildSeriesPreview = useCallback(
-    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+    (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
       if (!result.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
       const draftSpec: AnalysisSpec = {
         ...spec,
@@ -756,8 +757,9 @@ export function ChargeabilityPlotCard({
             ...(spec.presentation.plot_styles ?? {}),
             chargeability: {
               ...currentPlotStyle(spec, "chargeability"),
-              series_overrides: draftOverrides,
-              series_rules: draftRules,
+              ...(draft.styleOverlay ?? {}),
+              series_overrides: draft.overrides,
+              series_rules: draft.rules,
             },
           },
         },

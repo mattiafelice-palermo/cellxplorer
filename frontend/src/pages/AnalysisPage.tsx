@@ -6888,7 +6888,7 @@ function CyclePlotCard({
    * would let the preview drift from the result.
    */
   const buildSeriesPreview = useCallback(
-    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+    (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
       if (!result) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
       // A shallow spec with only the scoped style swapped. structuredClone here
       // copied the whole selection, protocol segments and saved-plot state on
@@ -6901,8 +6901,9 @@ function CyclePlotCard({
             ...(spec.presentation.plot_styles ?? {}),
             cycles: {
               ...currentPlotStyle(spec, "cycles"),
-              series_overrides: draftOverrides,
-              series_rules: draftRules,
+              ...(draft.styleOverlay ?? {}),
+              series_overrides: draft.overrides,
+              series_rules: draft.rules,
             },
           },
         },
@@ -7324,7 +7325,7 @@ function TimeCapacityPlotCardView({
    * would let the preview drift from the result.
    */
   const buildSeriesPreview = useCallback(
-    (draftOverrides: Record<string, SeriesStyleOverride>, draftRules: SeriesStyleRule[]) => {
+    (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
       if (!timeResult.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
       // A shallow spec with only the scoped style swapped. structuredClone here
       // copied the whole selection, protocol segments and saved-plot state on
@@ -7337,8 +7338,9 @@ function TimeCapacityPlotCardView({
             ...(spec.presentation.plot_styles ?? {}),
             time_capacity: {
               ...currentPlotStyle(spec, "time_capacity"),
-              series_overrides: draftOverrides,
-              series_rules: draftRules,
+              ...(draft.styleOverlay ?? {}),
+              series_overrides: draft.overrides,
+              series_rules: draft.rules,
             },
           },
         },

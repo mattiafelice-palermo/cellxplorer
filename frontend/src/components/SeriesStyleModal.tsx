@@ -20,17 +20,22 @@ import {
   Text,
   TextInput,
   Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   IconArrowDown,
+  IconArrowLeft,
+  IconArrowRight,
   IconArrowUp,
   IconChevronLeft,
   IconChevronRight,
+  IconCopy,
   IconEye,
   IconEyeOff,
   IconList,
   IconPlus,
   IconRotate,
+  IconSwitchHorizontal,
   IconTrash,
 } from "@tabler/icons-react";
 import {
@@ -67,14 +72,28 @@ import {
   type ResolvedSeriesStyle,
   type SeriesDescriptor,
 } from "../seriesStyling";
-import { PALETTE_OPTIONS, PLOT_PALETTES } from "../plotStyle";
+import { PALETTE_OPTIONS, PLOT_PALETTES, plotPalette } from "../plotStyle";
+import {
+  builtInPaletteSelection,
+  customPaletteSelection,
+  duplicatePaletteColor,
+  movePaletteColor,
+  removePaletteColor,
+  reversePalette,
+  savedPaletteSelection,
+  seriesWithOwnColour,
+  setPaletteColor,
+  type PaletteSelection,
+} from "../paletteDraft";
 import Plot from "./Plot";
 
 /** The real plot, rebuilt with the draft styling applied. */
-export type SeriesPreviewBuilder = (
-  overrides: Record<string, SeriesStyleOverride>,
-  rules: SeriesStyleRule[],
-) => { data: unknown[]; layout: Record<string, unknown> };
+export type SeriesPreviewBuilder = (draft: {
+  overrides: Record<string, SeriesStyleOverride>;
+  rules: SeriesStyleRule[];
+  /** Uncommitted style fields to preview, e.g. a palette being composed. */
+  styleOverlay?: Partial<PlotStyle>;
+}) => { data: unknown[]; layout: Record<string, unknown> };
 
 const DASH_OPTIONS: { value: PlotLineDash; label: string }[] = [
   { value: "solid", label: "Solid" },
@@ -126,6 +145,40 @@ const COMMIT_DEBOUNCE_MS = 250;
  * draft rebuilds the modal preview and the analysis plot.
  */
 const LEGEND_NAME_DEBOUNCE_MS = 500;
+
+/** Neutral starting colour for a freshly added palette swatch. */
+const NEW_PALETTE_COLOR = "#868e96";
+
+/**
+ * Which preset the plot's current palette corresponds to, for seeding the
+ * scratch palette and its `Select`.
+ *
+ * A saved palette wins if `palette_id` is set (even if that palette has since
+ * been deleted — then the resolved colours are used as a one-off custom
+ * selection). Otherwise it's a built-in preset, or a hand-edited custom list.
+ */
+function currentPaletteSelection(
+  style: PlotStyle,
+  palettes: { id: string; colors: string[] }[] | undefined,
+): PaletteSelection {
+  if (style.palette_id) {
+    const saved = palettes?.find((p) => p.id === style.palette_id);
+    return savedPaletteSelection(style.palette_id, saved?.colors ?? plotPalette(style));
+  }
+  if (style.palette === "custom") {
+    return customPaletteSelection(plotPalette(style));
+  }
+  return builtInPaletteSelection(style.palette);
+}
+
+/**
+ * Whether two colour lists differ, so the modal knows whether the scratch
+ * palette being composed has actually diverged from the plot's current one.
+ */
+function palettesDiffer(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return true;
+  return a.some((color, index) => color !== b[index]);
+}
 
 /**
  * Editor for how each series is drawn.
@@ -185,6 +238,18 @@ export function SeriesStyleModal({
   const [seriesCollapsed, setSeriesCollapsed] = useState(false);
   const [paletteSaveName, setPaletteSaveName] = useState("");
 
+  // The palette being composed. Purely local scratch state: it only reaches
+  // the plot when "Apply palette" calls `onApplyPalette`. Everything else in
+  // this modal is live-editing, but a palette is a set of colours edited as a
+  // unit, so committing colour-by-colour would flash a half-built palette
+  // onto the real plot on every click.
+  const [scratchColors, setScratchColors] = useState<string[]>(() => plotPalette(baseStyle));
+  const [paletteSelection, setPaletteSelection] = useState<PaletteSelection>(() =>
+    currentPaletteSelection(baseStyle, palettes),
+  );
+  const [selectedSwatch, setSelectedSwatch] = useState(0);
+  const [draggedSwatch, setDraggedSwatch] = useState<number | null>(null);
+
   // Local draft. The spec is only written on a debounce and on close.
   const [draftOverrides, setDraftOverrides] = useState(overrides);
   const [draftRules, setDraftRules] = useState(rules);
@@ -214,10 +279,96 @@ export function SeriesStyleModal({
         ? current
         : ALL_SERIES_KEY,
     );
+    setScratchColors(plotPalette(baseStyle));
+    setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
+    setSelectedSwatch(0);
     // Only when the dialog opens: re-syncing on every prop change would fight
     // the debounce and undo edits mid-typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened]);
+
+  /** Restores the scratch palette to the plot's currently-applied one. */
+  const resetScratchPalette = useCallback(() => {
+    setScratchColors(plotPalette(baseStyle));
+    setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
+    setSelectedSwatch(0);
+  }, [baseStyle, palettes]);
+
+  const applyPaletteMove = (delta: number) => {
+    const target = selectedSwatch + delta;
+    const next = movePaletteColor(scratchColors, selectedSwatch, target);
+    if (next === scratchColors) return;
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch(target);
+  };
+
+  const duplicateScratchSwatch = () => {
+    const next = duplicatePaletteColor(scratchColors, selectedSwatch);
+    if (next === scratchColors) return;
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch(selectedSwatch + 1);
+  };
+
+  const deleteScratchSwatch = () => {
+    const next = removePaletteColor(scratchColors, selectedSwatch);
+    if (next === scratchColors) return;
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch((index) => Math.min(index, next.length - 1));
+  };
+
+  const addScratchSwatch = () => {
+    const next = [...scratchColors, NEW_PALETTE_COLOR];
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch(next.length - 1);
+  };
+
+  const editScratchSwatch = (value: string) => {
+    const next = setPaletteColor(scratchColors, selectedSwatch, value);
+    if (next === scratchColors) return;
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+  };
+
+  const reverseScratchPalette = () => {
+    const next = reversePalette(scratchColors);
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch((index) => next.length - 1 - index);
+  };
+
+  const reorderScratchSwatch = (from: number, to: number) => {
+    const next = movePaletteColor(scratchColors, from, to);
+    if (next === scratchColors) return;
+    setScratchColors(next);
+    setPaletteSelection(customPaletteSelection(next));
+    setSelectedSwatch(to);
+  };
+
+  const applyPreset = (value: string | null) => {
+    if (!value) return;
+    if (value.startsWith("builtin:")) {
+      const key = value.slice("builtin:".length) as PlotStyle["palette"];
+      const colors = PLOT_PALETTES[key] ?? PLOT_PALETTES.app;
+      setScratchColors(colors);
+      setPaletteSelection(builtInPaletteSelection(key));
+      setSelectedSwatch(0);
+    } else if (value.startsWith("saved:")) {
+      const id = value.slice("saved:".length);
+      const saved = palettes?.find((p) => p.id === id);
+      if (!saved) return;
+      setScratchColors([...saved.colors]);
+      setPaletteSelection(savedPaletteSelection(id, saved.colors));
+      setSelectedSwatch(0);
+    }
+  };
+
+  const applyScratchPalette = () => {
+    onApplyPalette?.(scratchColors, paletteSelection.palette_id);
+  };
 
   const flush = useCallback(() => {
     if (commitTimer.current) {
@@ -394,6 +545,43 @@ export function SeriesStyleModal({
     commit(next, draftRules);
   };
 
+  // Series with their own explicit colour that a palette apply cannot touch.
+  const seriesOwningColour = useMemo(() => seriesWithOwnColour(draftOverrides), [draftOverrides]);
+
+  const clearSeriesColours = () => {
+    if (seriesOwningColour.length === 0) return;
+    let next = draftOverrides;
+    for (const key of seriesOwningColour) {
+      next = { ...next, [key]: { ...next[key], color: null } };
+    }
+    commit(pruneOverrides(next), draftRules);
+  };
+
+  // "Preset palette" dropdown data: built-in presets, then saved palettes.
+  const presetSelectData = useMemo(() => {
+    const groups: { group: string; items: { value: string; label: string }[] }[] = [
+      {
+        group: "Built-in",
+        items: PALETTE_OPTIONS.filter((option) => option.value !== "custom").map((option) => ({
+          value: `builtin:${option.value}`,
+          label: option.label,
+        })),
+      },
+    ];
+    if (palettes && palettes.length > 0) {
+      groups.push({
+        group: "Saved palettes",
+        items: palettes.map((palette) => ({ value: `saved:${palette.id}`, label: palette.name })),
+      });
+    }
+    return groups;
+  }, [palettes]);
+  const presetSelectValue = paletteSelection.palette_id
+    ? `saved:${paletteSelection.palette_id}`
+    : paletteSelection.palette !== "custom"
+      ? `builtin:${paletteSelection.palette}`
+      : null;
+
   const setRules = (nextRules: SeriesStyleRule[]) => commit(draftOverrides, nextRules);
 
   const patchRule = (id: string, patch: Partial<SeriesStyleRule>) =>
@@ -419,9 +607,27 @@ export function SeriesStyleModal({
   // controls update immediately and the plot catches up a frame later.
   const previewOverrides = useDeferredValue(draftOverrides);
   const previewRules = useDeferredValue(draftRules);
+
+  // The scratch palette only reaches the preview while it's actually being
+  // composed and it differs from what's already applied — otherwise the
+  // overlay would be a needless no-op copy of the committed palette.
+  const scratchPaletteDirty = useMemo(
+    () => palettesDiffer(scratchColors, plotPalette(baseStyle)),
+    [scratchColors, baseStyle],
+  );
+  const paletteOverlay = useMemo<Partial<PlotStyle> | undefined>(
+    () =>
+      tab === "palettes" && scratchPaletteDirty
+        ? { palette: "custom", palette_id: null, palette_colors: scratchColors }
+        : undefined,
+    [tab, scratchPaletteDirty, scratchColors],
+  );
   const preview = useMemo(
-    () => (opened ? buildPreview(previewOverrides, previewRules) : { data: [], layout: {} }),
-    [opened, buildPreview, previewOverrides, previewRules],
+    () =>
+      opened
+        ? buildPreview({ overrides: previewOverrides, rules: previewRules, styleOverlay: paletteOverlay })
+        : { data: [], layout: {} },
+    [opened, buildPreview, previewOverrides, previewRules, paletteOverlay],
   );
 
   /**
@@ -835,71 +1041,220 @@ export function SeriesStyleModal({
               </Stack>
             </ScrollArea>
           ) : tab === "palettes" ? (
-            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
-              <Stack gap="sm" p="xs">
-                <Text size="xs" c="dimmed">
-                  Applies a full set of colours to every series at once.
-                </Text>
-                <Stack gap={2}>
-                  {PALETTE_OPTIONS.filter((option) => option.value !== "custom").map((option) => {
-                    const colors = PLOT_PALETTES[option.value];
-                    return (
-                      <PaletteRow
-                        key={option.value}
-                        label={option.label}
-                        colors={colors}
-                        active={!baseStyle.palette_id && baseStyle.palette === option.value}
-                        onClick={() => onApplyPalette?.(colors, null)}
-                      />
-                    );
-                  })}
-                </Stack>
-
-                <Divider label="Your palettes" labelPosition="left" />
-                {palettes && palettes.length > 0 ? (
-                  <Stack gap={2}>
-                    {palettes.map((palette) => (
-                      <PaletteRow
-                        key={palette.id}
-                        label={palette.name}
-                        colors={palette.colors}
-                        active={baseStyle.palette_id === palette.id}
-                        onClick={() => onApplyPalette?.(palette.colors, palette.id)}
-                      />
-                    ))}
-                  </Stack>
-                ) : (
+            <Box style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+                <Stack gap="sm" p="xs">
                   <Text size="xs" c="dimmed">
-                    No saved palettes yet.
+                    Applies a full set of colours to every series at once. Changes here only reach the
+                    plot once you apply them.
                   </Text>
-                )}
 
-                {onSavePalette && (
-                  <>
-                    <Divider label="Save current colours as palette…" labelPosition="left" />
-                    <Group gap="xs" wrap="nowrap" align="end">
-                      <TextInput
-                        size="xs"
-                        style={{ flex: 1 }}
-                        placeholder="Palette name"
-                        value={paletteSaveName}
-                        onChange={(event) => setPaletteSaveName(event.currentTarget.value)}
-                      />
-                      <Button
-                        size="xs"
-                        disabled={!paletteSaveName.trim() || currentSeriesColors.length === 0}
-                        onClick={() => {
-                          onSavePalette(paletteSaveName.trim(), currentSeriesColors);
-                          setPaletteSaveName("");
-                        }}
-                      >
-                        Save
-                      </Button>
+                  <Group gap="xs" wrap="nowrap" align="end">
+                    <Select
+                      size="xs"
+                      label="Preset palette"
+                      placeholder="Custom"
+                      style={{ flex: 1 }}
+                      data={presetSelectData}
+                      value={presetSelectValue}
+                      onChange={applyPreset}
+                    />
+                    <Group gap={2} wrap="nowrap" style={{ flex: "none" }} aria-hidden="true">
+                      {scratchColors.slice(0, 8).map((color, index) => (
+                        <div
+                          key={index}
+                          style={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: 2,
+                            flex: "none",
+                            background: color,
+                          }}
+                        />
+                      ))}
                     </Group>
-                  </>
-                )}
-              </Stack>
-            </ScrollArea>
+                    <Tooltip label="Reverse palette order">
+                      <ActionIcon
+                        size="lg"
+                        variant="default"
+                        aria-label="Reverse palette order"
+                        onClick={reverseScratchPalette}
+                      >
+                        <IconSwitchHorizontal size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+
+                  <div>
+                    <Group justify="space-between" align="center" mb={4}>
+                      <Text size="xs" fw={700}>
+                        Current palette
+                      </Text>
+                      <Group gap={4} wrap="nowrap">
+                        <Tooltip label="Move colour left">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="gray"
+                            aria-label="Move colour left"
+                            disabled={selectedSwatch <= 0}
+                            onClick={() => applyPaletteMove(-1)}
+                          >
+                            <IconArrowLeft size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Move colour right">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="gray"
+                            aria-label="Move colour right"
+                            disabled={selectedSwatch >= scratchColors.length - 1}
+                            onClick={() => applyPaletteMove(1)}
+                          >
+                            <IconArrowRight size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Duplicate colour">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="gray"
+                            aria-label="Duplicate colour"
+                            onClick={duplicateScratchSwatch}
+                          >
+                            <IconCopy size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Delete colour">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            aria-label="Delete colour"
+                            disabled={scratchColors.length <= 1}
+                            onClick={deleteScratchSwatch}
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Group>
+
+                    <ScrollArea type="auto" scrollbarSize={8} offsetScrollbars>
+                      <Group wrap="nowrap" gap="xs" pb={4}>
+                        {scratchColors.map((color, index) => (
+                          <PaletteSwatch
+                            key={index}
+                            color={color}
+                            index={index}
+                            selected={index === selectedSwatch}
+                            onSelect={() => setSelectedSwatch(index)}
+                            onDragStart={() => setDraggedSwatch(index)}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={() => {
+                              if (draggedSwatch !== null) reorderScratchSwatch(draggedSwatch, index);
+                              setDraggedSwatch(null);
+                            }}
+                          />
+                        ))}
+                        <Tooltip label="Add colour">
+                          <UnstyledButton
+                            aria-label="Add colour"
+                            onClick={addScratchSwatch}
+                            style={{
+                              width: 40,
+                              height: 40,
+                              flex: "none",
+                              borderRadius: 8,
+                              border: "1px dashed var(--mantine-color-default-border)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "var(--mantine-color-dimmed)",
+                            }}
+                          >
+                            <IconPlus size={16} />
+                          </UnstyledButton>
+                        </Tooltip>
+                      </Group>
+                    </ScrollArea>
+
+                    <ColorInput
+                      mt="xs"
+                      size="xs"
+                      w={180}
+                      label={`Colour ${selectedSwatch + 1}`}
+                      format="hex"
+                      value={scratchColors[selectedSwatch] ?? "#000000"}
+                      onChange={editScratchSwatch}
+                    />
+                  </div>
+
+                  {onSavePalette && (
+                    <>
+                      <Divider label="Save current colours as palette…" labelPosition="left" />
+                      <Group gap="xs" wrap="nowrap" align="end">
+                        <TextInput
+                          size="xs"
+                          style={{ flex: 1 }}
+                          placeholder="Palette name"
+                          value={paletteSaveName}
+                          onChange={(event) => setPaletteSaveName(event.currentTarget.value)}
+                        />
+                        <Button
+                          size="xs"
+                          disabled={!paletteSaveName.trim() || currentSeriesColors.length === 0}
+                          onClick={() => {
+                            onSavePalette(paletteSaveName.trim(), currentSeriesColors);
+                            setPaletteSaveName("");
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </Group>
+                    </>
+                  )}
+
+                  {seriesOwningColour.length > 0 && (
+                    <Alert color="gray" p="xs">
+                      <Group justify="space-between" wrap="nowrap" gap="xs">
+                        <Text size="xs" c="dimmed">
+                          {seriesOwningColour.length} series have their own colour and will not
+                          change.
+                        </Text>
+                        <Button size="compact-xs" variant="subtle" onClick={clearSeriesColours}>
+                          Clear their colours
+                        </Button>
+                      </Group>
+                    </Alert>
+                  )}
+                </Stack>
+              </ScrollArea>
+
+              <Group
+                justify="space-between"
+                wrap="nowrap"
+                px="xs"
+                py={8}
+                style={{
+                  flex: "none",
+                  borderTop: "1px solid var(--mantine-color-default-border)",
+                }}
+              >
+                <Button variant="subtle" size="xs" onClick={resetScratchPalette}>
+                  Reset
+                </Button>
+                <Group gap="xs" wrap="nowrap">
+                  <Button variant="default" size="xs" onClick={resetScratchPalette}>
+                    Cancel
+                  </Button>
+                  <Button size="xs" onClick={applyScratchPalette}>
+                    Apply palette
+                  </Button>
+                </Group>
+              </Group>
+            </Box>
           ) : isAllSeries ? (
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="sm" p="xs">
@@ -1389,50 +1744,64 @@ const LegendNameInput = memo(function LegendNameInput({
   );
 });
 
-/** A clickable palette row: name plus a swatch strip of its colours. */
-function PaletteRow({
-  label,
-  colors,
-  active,
-  onClick,
+/**
+ * One colour in the palette being composed: its 1-based index, a large
+ * swatch, and — only while selected — its hex value spelled out beneath it.
+ * Native HTML5 drag is wired as a mouse-only reordering shortcut; the
+ * "Move left"/"Move right" buttons next to the "Current palette" heading are
+ * the keyboard-accessible way to do the same thing.
+ */
+function PaletteSwatch({
+  color,
+  index,
+  selected,
+  onSelect,
+  onDragStart,
+  onDragOver,
+  onDrop,
 }: {
-  label: string;
-  colors: string[];
-  active: boolean;
-  onClick: () => void;
+  color: string;
+  index: number;
+  selected: boolean;
+  onSelect: () => void;
+  onDragStart: () => void;
+  onDragOver: (event: React.DragEvent) => void;
+  onDrop: () => void;
 }) {
   return (
-    <Group
-      gap={6}
-      wrap="nowrap"
-      px={6}
-      py={4}
-      onClick={onClick}
-      style={{
-        borderRadius: 4,
-        cursor: "pointer",
-        background: active ? "var(--mantine-primary-color-light)" : undefined,
-      }}
+    <Stack
+      gap={2}
+      align="center"
+      style={{ flex: "none" }}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
-      <Text size="xs" truncate style={{ flex: 1 }}>
-        {label}
+      <Text size="9px" c="dimmed">
+        {index + 1}
       </Text>
-      <Group gap={2} wrap="nowrap">
-        {colors.map((color, index) => (
-          <div
-            key={index}
-            aria-hidden="true"
-            style={{
-              width: 14,
-              height: 14,
-              borderRadius: 2,
-              flex: "none",
-              background: color,
-            }}
-          />
-        ))}
-      </Group>
-    </Group>
+      <Tooltip label={color} disabled={selected}>
+        <UnstyledButton
+          aria-label={`Colour ${index + 1}: ${color}`}
+          title={selected ? undefined : color}
+          onClick={onSelect}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 8,
+            background: color,
+            outline: selected ? "2px solid var(--mantine-primary-color-6)" : "1px solid var(--mantine-color-default-border)",
+            outlineOffset: 2,
+          }}
+        />
+      </Tooltip>
+      {selected && (
+        <Text size="9px" ff="monospace">
+          {color}
+        </Text>
+      )}
+    </Stack>
   );
 }
 
