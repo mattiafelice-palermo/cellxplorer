@@ -81,6 +81,28 @@ body {
   flex-basis: 176px;
 }
 
+/* Palette editor swatch (SeriesStyleModal): the remove (×) button only
+   appears on hover or keyboard focus, via CSS rather than JS
+   mouseenter/mouseleave state, so it never lags or misses fast pointer
+   movement. Opacity (not display/visibility) keeps it reachable by Tab even
+   before it becomes visible, so :focus-within picks it up as soon as it is
+   focused. */
+.palette-swatch:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-6);
+  outline-offset: 2px;
+  border-radius: var(--mantine-radius-sm);
+}
+
+.palette-swatch-remove {
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.palette-swatch:hover .palette-swatch-remove,
+.palette-swatch:focus-within .palette-swatch-remove {
+  opacity: 1;
+}
+
 /* Vertical-only scroll panel (downloads list, command palette results).
    Mantine's ScrollArea.Autosize grows to its content width, which pushed row
    actions outside a fixed-width dropdown, so these panels use a plain

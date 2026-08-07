@@ -37,7 +37,24 @@ import {
   IconRotate,
   IconSwitchHorizontal,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Fragment,
   memo,
@@ -149,6 +166,9 @@ const LEGEND_NAME_DEBOUNCE_MS = 500;
 /** Neutral starting colour for a freshly added palette swatch. */
 const NEW_PALETTE_COLOR = "#868e96";
 
+/** Maximum number of colours a palette can hold. */
+export const MAX_PALETTE_COLOURS = 20;
+
 /**
  * Which preset the plot's current palette corresponds to, for seeding the
  * scratch palette and its `Select`.
@@ -248,7 +268,25 @@ export function SeriesStyleModal({
     currentPaletteSelection(baseStyle, palettes),
   );
   const [selectedSwatch, setSelectedSwatch] = useState(0);
-  const [draggedSwatch, setDraggedSwatch] = useState<number | null>(null);
+
+  /**
+   * Stable per-slot ids for the palette swatches, parallel to `scratchColors`.
+   *
+   * Colours can repeat (the same hex twice in one palette), so dnd-kit's
+   * sortable items and React's list keys cannot be keyed by colour value —
+   * two swatches with the same colour would collide. Each slot gets a unique
+   * id once, generated here, and every mutation below (move, duplicate,
+   * delete, add, reverse, drag) applies the identical operation to this array
+   * in lockstep with `scratchColors`, so index `i` in one array always
+   * describes the same physical swatch as index `i` in the other.
+   */
+  const nextSwatchIdRef = useRef(0);
+  const genSwatchId = useCallback(() => `swatch-${nextSwatchIdRef.current++}`, []);
+  const genSwatchIds = useCallback(
+    (count: number) => Array.from({ length: count }, () => genSwatchId()),
+    [genSwatchId],
+  );
+  const [swatchIds, setSwatchIds] = useState<string[]>(() => genSwatchIds(scratchColors.length));
 
   // Local draft. The spec is only written on a debounce and on close.
   const [draftOverrides, setDraftOverrides] = useState(overrides);
@@ -280,6 +318,7 @@ export function SeriesStyleModal({
         : ALL_SERIES_KEY,
     );
     setScratchColors(plotPalette(baseStyle));
+    setSwatchIds(genSwatchIds(plotPalette(baseStyle).length));
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
     setSelectedSwatch(0);
     // Only when the dialog opens: re-syncing on every prop change would fight
@@ -289,16 +328,19 @@ export function SeriesStyleModal({
 
   /** Restores the scratch palette to the plot's currently-applied one. */
   const resetScratchPalette = useCallback(() => {
-    setScratchColors(plotPalette(baseStyle));
+    const colors = plotPalette(baseStyle);
+    setScratchColors(colors);
+    setSwatchIds(genSwatchIds(colors.length));
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
     setSelectedSwatch(0);
-  }, [baseStyle, palettes]);
+  }, [baseStyle, palettes, genSwatchIds]);
 
   const applyPaletteMove = (delta: number) => {
     const target = selectedSwatch + delta;
     const next = movePaletteColor(scratchColors, selectedSwatch, target);
     if (next === scratchColors) return;
     setScratchColors(next);
+    setSwatchIds((ids) => movePaletteColor(ids, selectedSwatch, target));
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(target);
   };
@@ -307,21 +349,38 @@ export function SeriesStyleModal({
     const next = duplicatePaletteColor(scratchColors, selectedSwatch);
     if (next === scratchColors) return;
     setScratchColors(next);
+    // Not `duplicatePaletteColor` on the id array: that would duplicate the
+    // id too, and two swatches must never share one — each gets a fresh id.
+    setSwatchIds((ids) => {
+      const nextIds = [...ids];
+      nextIds.splice(selectedSwatch + 1, 0, genSwatchId());
+      return nextIds;
+    });
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(selectedSwatch + 1);
   };
 
-  const deleteScratchSwatch = () => {
-    const next = removePaletteColor(scratchColors, selectedSwatch);
+  /**
+   * Removes the colour at `index` (defaults to the selected swatch, for the
+   * toolbar's keyboard-reachable actions). Used by the per-swatch × button
+   * and by Delete/Backspace on a focused swatch, as well as the toolbar.
+   */
+  const removeSwatchAt = (index: number) => {
+    const next = removePaletteColor(scratchColors, index);
     if (next === scratchColors) return;
     setScratchColors(next);
+    setSwatchIds((ids) => removePaletteColor(ids, index));
     setPaletteSelection(customPaletteSelection(next));
-    setSelectedSwatch((index) => Math.min(index, next.length - 1));
+    setSelectedSwatch((current) => {
+      const adjusted = index < current ? current - 1 : current;
+      return Math.min(adjusted, next.length - 1);
+    });
   };
 
   const addScratchSwatch = () => {
     const next = [...scratchColors, NEW_PALETTE_COLOR];
     setScratchColors(next);
+    setSwatchIds((ids) => [...ids, genSwatchId()]);
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(next.length - 1);
   };
@@ -336,17 +395,34 @@ export function SeriesStyleModal({
   const reverseScratchPalette = () => {
     const next = reversePalette(scratchColors);
     setScratchColors(next);
+    setSwatchIds((ids) => reversePalette(ids));
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch((index) => next.length - 1 - index);
   };
 
+  /** Reorders the palette via the existing pure helper, driven by drag-and-drop. */
   const reorderScratchSwatch = (from: number, to: number) => {
     const next = movePaletteColor(scratchColors, from, to);
     if (next === scratchColors) return;
     setScratchColors(next);
+    setSwatchIds((ids) => movePaletteColor(ids, from, to));
     setPaletteSelection(customPaletteSelection(next));
     setSelectedSwatch(to);
   };
+
+  const handleSwatchDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = swatchIds.indexOf(String(active.id));
+    const to = swatchIds.indexOf(String(over.id));
+    if (from === -1 || to === -1) return;
+    reorderScratchSwatch(from, to);
+  };
+
+  const swatchSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const applyPreset = (value: string | null) => {
     if (!value) return;
@@ -354,6 +430,7 @@ export function SeriesStyleModal({
       const key = value.slice("builtin:".length) as PlotStyle["palette"];
       const colors = PLOT_PALETTES[key] ?? PLOT_PALETTES.app;
       setScratchColors(colors);
+      setSwatchIds(genSwatchIds(colors.length));
       setPaletteSelection(builtInPaletteSelection(key));
       setSelectedSwatch(0);
     } else if (value.startsWith("saved:")) {
@@ -361,6 +438,7 @@ export function SeriesStyleModal({
       const saved = palettes?.find((p) => p.id === id);
       if (!saved) return;
       setScratchColors([...saved.colors]);
+      setSwatchIds(genSwatchIds(saved.colors.length));
       setPaletteSelection(savedPaletteSelection(id, saved.colors));
       setSelectedSwatch(0);
     }
@@ -1058,6 +1136,35 @@ export function SeriesStyleModal({
                       data={presetSelectData}
                       value={presetSelectValue}
                       onChange={applyPreset}
+                      renderOption={({ option }) => {
+                        const colors =
+                          option.value?.startsWith("builtin:")
+                            ? PLOT_PALETTES[(option.value.slice("builtin:".length) as PlotStyle["palette"]) ?? "app"]
+                            : option.value?.startsWith("saved:")
+                              ? palettes?.find((p) => p.id === option.value.slice("saved:".length))?.colors ?? []
+                              : [];
+                        return (
+                          <Group gap={6} wrap="nowrap" style={{ flex: 1 }}>
+                            <Text size="xs" style={{ flex: 1 }}>
+                              {option.label}
+                            </Text>
+                            <Group gap={2} wrap="nowrap" style={{ flex: "none" }} aria-hidden="true">
+                              {colors.slice(0, 8).map((color, index) => (
+                                <div
+                                  key={index}
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 2,
+                                    flex: "none",
+                                    background: color,
+                                  }}
+                                />
+                              ))}
+                            </Group>
+                          </Group>
+                        );
+                      }}
                     />
                     <Group gap={2} wrap="nowrap" style={{ flex: "none" }} aria-hidden="true">
                       {scratchColors.slice(0, 8).map((color, index) => (
@@ -1115,70 +1222,65 @@ export function SeriesStyleModal({
                             <IconArrowRight size={14} />
                           </ActionIcon>
                         </Tooltip>
-                        <Tooltip label="Duplicate colour">
+                        <Tooltip label={scratchColors.length >= MAX_PALETTE_COLOURS ? "A palette can hold up to 20 colours" : "Duplicate colour"}>
                           <ActionIcon
                             size="sm"
                             variant="subtle"
                             color="gray"
                             aria-label="Duplicate colour"
+                            disabled={scratchColors.length >= MAX_PALETTE_COLOURS}
                             onClick={duplicateScratchSwatch}
                           >
                             <IconCopy size={14} />
                           </ActionIcon>
                         </Tooltip>
-                        <Tooltip label="Delete colour">
-                          <ActionIcon
-                            size="sm"
-                            variant="subtle"
-                            color="red"
-                            aria-label="Delete colour"
-                            disabled={scratchColors.length <= 1}
-                            onClick={deleteScratchSwatch}
-                          >
-                            <IconTrash size={14} />
-                          </ActionIcon>
-                        </Tooltip>
                       </Group>
                     </Group>
 
-                    <ScrollArea type="auto" scrollbarSize={8} offsetScrollbars>
-                      <Group wrap="nowrap" gap="xs" pb={4}>
-                        {scratchColors.map((color, index) => (
-                          <PaletteSwatch
-                            key={index}
-                            color={color}
-                            index={index}
-                            selected={index === selectedSwatch}
-                            onSelect={() => setSelectedSwatch(index)}
-                            onDragStart={() => setDraggedSwatch(index)}
-                            onDragOver={(event) => event.preventDefault()}
-                            onDrop={() => {
-                              if (draggedSwatch !== null) reorderScratchSwatch(draggedSwatch, index);
-                              setDraggedSwatch(null);
-                            }}
-                          />
-                        ))}
-                        <Tooltip label="Add colour">
-                          <UnstyledButton
-                            aria-label="Add colour"
-                            onClick={addScratchSwatch}
-                            style={{
-                              width: 40,
-                              height: 40,
-                              flex: "none",
-                              borderRadius: 8,
-                              border: "1px dashed var(--mantine-color-default-border)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              color: "var(--mantine-color-dimmed)",
-                            }}
-                          >
-                            <IconPlus size={16} />
-                          </UnstyledButton>
-                        </Tooltip>
-                      </Group>
-                    </ScrollArea>
+                    <Group wrap="wrap" gap="xs" pb={4}>
+                      <DndContext
+                        sensors={swatchSensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleSwatchDragEnd}
+                      >
+                        <SortableContext items={swatchIds} strategy={rectSortingStrategy}>
+                          {scratchColors.map((color, index) => (
+                            <SortablePaletteSwatch
+                              key={swatchIds[index]}
+                              id={swatchIds[index]}
+                              color={color}
+                              index={index}
+                              selected={index === selectedSwatch}
+                              removeDisabled={scratchColors.length <= 1}
+                              onSelect={() => setSelectedSwatch(index)}
+                              onRemove={() => removeSwatchAt(index)}
+                            />
+                          ))}
+                        </SortableContext>
+                      </DndContext>
+                      <Tooltip label={scratchColors.length >= MAX_PALETTE_COLOURS ? "A palette can hold up to 20 colours" : "Add colour"}>
+                        <UnstyledButton
+                          aria-label="Add colour"
+                          onClick={addScratchSwatch}
+                          disabled={scratchColors.length >= MAX_PALETTE_COLOURS}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            flex: "none",
+                            borderRadius: 8,
+                            border: "1px dashed var(--mantine-color-default-border)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "var(--mantine-color-dimmed)",
+                            opacity: scratchColors.length >= MAX_PALETTE_COLOURS ? 0.5 : 1,
+                            cursor: scratchColors.length >= MAX_PALETTE_COLOURS ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          <IconPlus size={16} />
+                        </UnstyledButton>
+                      </Tooltip>
+                    </Group>
 
                     <ColorInput
                       mt="xs"
@@ -1747,36 +1849,68 @@ const LegendNameInput = memo(function LegendNameInput({
 /**
  * One colour in the palette being composed: its 1-based index, a large
  * swatch, and — only while selected — its hex value spelled out beneath it.
- * Native HTML5 drag is wired as a mouse-only reordering shortcut; the
- * "Move left"/"Move right" buttons next to the "Current palette" heading are
- * the keyboard-accessible way to do the same thing.
+ *
+ * Sortable via @dnd-kit: `useSortable` supplies the drag handle props
+ * (`attributes`/`listeners`) that go on the whole item, a `transform` for the
+ * live reorder animation, and `isDragging` for the raised/faded drag state.
+ * The "Move left"/"Move right" toolbar buttons remain as the alternative that
+ * does not require first "picking up" the item with the keyboard sensor.
+ *
+ * The remove (×) button sits on top of the swatch and is only ever revealed
+ * by CSS (`:hover`/`:focus-within` on `.palette-swatch`, see app.css) — never
+ * by JS mouseenter/mouseleave state — and stops pointer/click propagation so
+ * dnd-kit never mistakes clicking it for the start of a drag.
  */
-function PaletteSwatch({
+function SortablePaletteSwatch({
+  id,
   color,
   index,
   selected,
+  removeDisabled,
   onSelect,
-  onDragStart,
-  onDragOver,
-  onDrop,
+  onRemove,
 }: {
+  id: string;
   color: string;
   index: number;
   selected: boolean;
+  removeDisabled: boolean;
   onSelect: () => void;
-  onDragStart: () => void;
-  onDragOver: (event: React.DragEvent) => void;
-  onDrop: () => void;
+  onRemove: () => void;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+
   return (
     <Stack
+      ref={setNodeRef}
       gap={2}
       align="center"
-      style={{ flex: "none" }}
-      draggable
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+      className="palette-swatch"
+      style={{
+        flex: "none",
+        position: "relative",
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 1 : undefined,
+        cursor: "grab",
+      }}
+      {...attributes}
+      {...listeners}
+      onKeyDown={(event) => {
+        // Delete/Backspace removes the swatch; every other key (Space/Enter
+        // to pick up, arrow keys to move, Escape to cancel) must still reach
+        // dnd-kit's own keyboard-sensor handler, which `{...listeners}`
+        // supplied above and this explicit prop would otherwise shadow.
+        if (event.key === "Delete" || event.key === "Backspace") {
+          event.preventDefault();
+          if (!removeDisabled) onRemove();
+          return;
+        }
+        listeners?.onKeyDown?.(event);
+      }}
     >
       <Text size="9px" c="dimmed">
         {index + 1}
@@ -1784,7 +1918,7 @@ function PaletteSwatch({
       <Tooltip label={color} disabled={selected}>
         <UnstyledButton
           aria-label={`Colour ${index + 1}: ${color}`}
-          title={selected ? undefined : color}
+          title={color}
           onClick={onSelect}
           style={{
             width: 40,
@@ -1796,11 +1930,29 @@ function PaletteSwatch({
           }}
         />
       </Tooltip>
-      {selected && (
-        <Text size="9px" ff="monospace">
-          {color}
-        </Text>
-      )}
+      <Tooltip label={`Remove colour ${index + 1}`}>
+        <ActionIcon
+          className="palette-swatch-remove"
+          size="xs"
+          variant="filled"
+          color="red"
+          radius="xl"
+          aria-label={`Remove colour ${index + 1}`}
+          disabled={removeDisabled}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          style={{
+            position: "absolute",
+            top: -6,
+            right: -6,
+          }}
+        >
+          <IconX size={11} />
+        </ActionIcon>
+      </Tooltip>
     </Stack>
   );
 }
