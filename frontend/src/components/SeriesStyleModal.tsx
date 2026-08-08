@@ -549,20 +549,6 @@ export function SeriesStyleModal({
     ],
   );
 
-  // Current resolved colour of every series, in list order and de-duplicated,
-  // for "Save current colours as palette…".
-  const currentSeriesColors = useMemo(() => {
-    const seen = new Set<string>();
-    const colors: string[] = [];
-    for (const descriptor of descriptors) {
-      const color = resolvedByKey.get(descriptor.key)?.color;
-      if (color && !seen.has(color)) {
-        seen.add(color);
-        colors.push(color);
-      }
-    }
-    return colors;
-  }, [descriptors, resolvedByKey]);
 
   /**
    * Series grouped by plot, then by quantity label or axis, in that order.
@@ -1139,6 +1125,8 @@ export function SeriesStyleModal({
                       size="xs"
                       label="Preset palette"
                       placeholder="Custom"
+                      searchable
+                      nothingFoundMessage="No palette found"
                       style={{ flex: 1 }}
                       data={presetSelectData}
                       value={presetSelectValue}
@@ -1240,34 +1228,37 @@ export function SeriesStyleModal({
                           ))}
                         </SortableContext>
                       </DndContext>
-                      <Tooltip label={scratchColors.length >= MAX_PALETTE_COLOURS ? "A palette can hold up to 20 colours" : "Add colour"}>
-                        <UnstyledButton
-                          aria-label="Add colour"
-                          onClick={addScratchSwatch}
-                          disabled={scratchColors.length >= MAX_PALETTE_COLOURS}
-                          style={{
-                            width: 40,
-                            height: 40,
-                            flex: "none",
-                            borderRadius: 8,
-                            border: "1px dashed var(--mantine-color-default-border)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            color: "var(--mantine-color-dimmed)",
-                            opacity: scratchColors.length >= MAX_PALETTE_COLOURS ? 0.5 : 1,
-                            cursor: scratchColors.length >= MAX_PALETTE_COLOURS ? "not-allowed" : "pointer",
-                          }}
-                        >
-                          <IconPlus size={16} />
-                        </UnstyledButton>
-                      </Tooltip>
+                      <Stack gap={2} align="center" style={{ flex: "none" }}>
+                        <div style={{ height: 16 }} />
+                        <Tooltip label={scratchColors.length >= MAX_PALETTE_COLOURS ? "A palette can hold up to 20 colours" : "Add colour"}>
+                          <UnstyledButton
+                            aria-label="Add colour"
+                            onClick={addScratchSwatch}
+                            disabled={scratchColors.length >= MAX_PALETTE_COLOURS}
+                            style={{
+                              width: 40,
+                              height: 40,
+                              flex: "none",
+                              borderRadius: 8,
+                              border: "1px dashed var(--mantine-color-default-border)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "var(--mantine-color-dimmed)",
+                              opacity: scratchColors.length >= MAX_PALETTE_COLOURS ? 0.5 : 1,
+                              cursor: scratchColors.length >= MAX_PALETTE_COLOURS ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            <IconPlus size={16} />
+                          </UnstyledButton>
+                        </Tooltip>
+                      </Stack>
                     </Group>
                   </div>
 
                   <PalettePreview colors={scratchColors} />
 
-                  <Group wrap="nowrap" align="flex-end" gap="xs">
+                  <Group wrap="nowrap" align="center" gap="xs">
                     <Text size="xs" c="dimmed" style={{ flex: 1 }}>
                       If the plot has more than {scratchColors.length} series
                     </Text>
@@ -1300,9 +1291,9 @@ export function SeriesStyleModal({
                         />
                         <Button
                           size="xs"
-                          disabled={!paletteSaveName.trim() || currentSeriesColors.length === 0}
+                          disabled={!paletteSaveName.trim() || scratchColors.length === 0}
                           onClick={() => {
-                            onSavePalette(paletteSaveName.trim(), currentSeriesColors);
+                            onSavePalette(paletteSaveName.trim(), scratchColors);
                             setPaletteSaveName("");
                           }}
                         >
@@ -1338,17 +1329,14 @@ export function SeriesStyleModal({
                   borderTop: "1px solid var(--mantine-color-default-border)",
                 }}
               >
-                <Button variant="subtle" size="xs" onClick={resetScratchPalette}>
-                  Reset
+                <Tooltip label="Go back to the palette the plot is currently using">
+                  <Button variant="subtle" size="xs" onClick={resetScratchPalette}>
+                    Reset
+                  </Button>
+                </Tooltip>
+                <Button size="xs" onClick={applyScratchPalette}>
+                  Apply palette
                 </Button>
-                <Group gap="xs" wrap="nowrap">
-                  <Button variant="default" size="xs" onClick={resetScratchPalette}>
-                    Cancel
-                  </Button>
-                  <Button size="xs" onClick={applyScratchPalette}>
-                    Apply palette
-                  </Button>
-                </Group>
               </Group>
             </Box>
           ) : isAllSeries ? (
@@ -1939,17 +1927,21 @@ function SortablePaletteSwatch({
         listeners?.onKeyDown?.(event);
       }}
     >
-      <Text size="9px" c="dimmed">
+      <Text size="9px" c="dimmed" style={{ marginBottom: 4 }}>
         {index + 1}
       </Text>
       <Popover
         opened={popoverOpened}
-        onClose={onPopoverClose}
+        onChange={(opened) => {
+          if (!opened) onPopoverClose();
+        }}
         position="bottom"
         withArrow
         shadow="md"
         trapFocus
         withinPortal
+        closeOnClickOutside
+        closeOnEscape
       >
         <Popover.Target>
           <Tooltip label={color} disabled={selected || popoverOpened}>
@@ -2001,7 +1993,6 @@ function SortablePaletteSwatch({
       <Tooltip label={`Remove colour ${index + 1}`}>
         <ActionIcon
           className="palette-swatch-remove"
-          radius="xl"
           aria-label={`Remove colour ${index + 1}`}
           disabled={removeDisabled}
           onPointerDown={(event) => event.stopPropagation()}
@@ -2009,22 +2000,8 @@ function SortablePaletteSwatch({
             event.stopPropagation();
             onRemove();
           }}
-          style={{
-            position: "absolute",
-            top: -2,
-            right: -2,
-            width: 18,
-            height: 18,
-            minWidth: 18,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: removeDisabled ? "var(--mantine-color-body)" : "var(--mantine-color-body)",
-            border: `1px solid var(--mantine-color-default-border)`,
-            color: "var(--mantine-color-dimmed)",
-          }}
         >
-          <IconX size={12} />
+          <IconX size={10} stroke={2.5} />
         </ActionIcon>
       </Tooltip>
     </Stack>
@@ -2032,38 +2009,173 @@ function SortablePaletteSwatch({
 }
 
 /** Height, in px, of the palette preview's SVG. */
-const PALETTE_PREVIEW_HEIGHT = 180;
+const PALETTE_PREVIEW_HEIGHT = 220;
 
 /**
- * A deterministic, pleasant curve for palette-preview line `index` of `count`.
+ * A deterministic curve for palette-preview line `index` of `count`.
  *
  * Pure (no randomness, no `Date`) so the same palette always draws the same
  * shapes — the point is to compare colours, not to watch the lines move.
- * Phase-shifting by `index / count` spreads the curves apart so lines for
- * adjacent colours in a large palette don't sit right on top of each other.
+ * Each curve uses a distinct amplitude and offset so they read as different
+ * measurements rather than an interference pattern.
+ *
+ * Returns a smooth cubic Bézier curve (via midpoint smoothing) through sampled points.
+ * Formula maps v from data range -1.5..1.5 onto plot area (v=-1.5→y=200, v=+1.5→y=24).
  */
-function palettePreviewPath(index: number, count: number, steps = 60): string {
-  const points: string[] = [];
+function palettePreviewPath(index: number, count: number): string {
+  const n = count > 0 ? count : 1;
+  const steps = 80;
+  const points: Array<[number, number]> = [];
+
+  const phase = (index / n) * Math.PI * 2;
+  const amp = 0.45 + 0.5 * (((index * 7) % n) / Math.max(1, n - 1));
+  const drift = 0.28 * Math.sin(phase * 0.5);
+
+  // Sample x over 0..1
   for (let step = 0; step <= steps; step++) {
     const x = step / steps;
-    const y =
-      0.5 +
-      0.34 *
-        Math.sin(2 * Math.PI * (1.1 * x + index / count)) *
-        Math.cos(0.7 * Math.PI * (x + index / (2 * count)));
-    points.push(`${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`);
+    const v =
+      drift +
+      amp * Math.sin(2 * Math.PI * (0.9 * x) + phase) +
+      0.22 * amp * Math.sin(2 * Math.PI * (2.3 * x) + phase * 1.7);
+
+    // Map v from [-1.5, 1.5] onto plot area [200, 24] (y increases downward in SVG)
+    const dataMin = -1.5;
+    const dataMax = 1.5;
+    const plotTop = 24;
+    const plotBottom = 200;
+    const svgY = plotBottom - ((v - dataMin) / (dataMax - dataMin)) * (plotBottom - plotTop);
+    const clampedY = Math.max(plotTop, Math.min(plotBottom, svgY));
+
+    // Map x from [0, 1] onto plot area [56, 330]
+    const plotLeft = 56;
+    const plotRight = 330;
+    const svgX = plotLeft + x * (plotRight - plotLeft);
+
+    points.push([svgX, clampedY]);
   }
-  return `M${points.join(" L")}`;
+
+  // Build a smooth cubic Bézier path using midpoint smoothing
+  // Start with move command
+  let pathData = `M${points[0][0].toFixed(2)},${points[0][1].toFixed(2)}`;
+
+  // Use cubic Bézier segments with control points derived from adjacent points
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+
+    if (i === 1) {
+      // First segment: simple quadratic to next point
+      const midX = (prev[0] + curr[0]) / 2;
+      const midY = (prev[1] + curr[1]) / 2;
+      pathData += ` Q${curr[0].toFixed(2)},${curr[1].toFixed(2)},${midX.toFixed(2)},${midY.toFixed(2)}`;
+    } else if (i < points.length - 1) {
+      // Middle segments: cubic Bézier through curr toward next
+      // Control points: 2/3 along the line from prev to next
+      const cp1x = prev[0] + (curr[0] - prev[0]) * (2 / 3);
+      const cp1y = prev[1] + (curr[1] - prev[1]) * (2 / 3);
+      const cp2x = curr[0] + (next[0] - curr[0]) * (1 / 3);
+      const cp2y = curr[1] + (next[1] - curr[1]) * (1 / 3);
+
+      pathData += ` C${cp1x.toFixed(2)},${cp1y.toFixed(2)},${cp2x.toFixed(2)},${cp2y.toFixed(2)},${curr[0].toFixed(2)},${curr[1].toFixed(2)}`;
+    } else {
+      // Last segment
+      pathData += ` L${curr[0].toFixed(2)},${curr[1].toFixed(2)}`;
+    }
+  }
+
+  return pathData;
 }
 
 /**
- * Every colour in the palette being composed, drawn as one line each.
+ * Generate grid, axis, and legend elements for the palette preview chart.
+ * Plot area: x from 56 to 330, y from 24 to 200.
+ * Data range: y from -1.5 to +1.5.
+ */
+function generatePreviewChartElements(colors: string[]) {
+  const plotLeft = 56;
+  const plotRight = 330;
+  const plotTop = 24;
+  const plotBottom = 200;
+  const yTickLabelX = 50;
+  const xTickLabelY = 218;
+
+  // Grid lines: vertical at 0, 0.2, 0.4, 0.6, 0.8, 1.0
+  // Horizontal at -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5
+  const verticalTicks = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+  const horizontalTicks = [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
+
+  const gridLines: Array<{
+    type: "vertical" | "horizontal";
+    x1?: number;
+    y1?: number;
+    x2?: number;
+    y2?: number;
+  }> = [];
+
+  // Vertical gridlines
+  for (const tick of verticalTicks) {
+    const x = plotLeft + tick * (plotRight - plotLeft);
+    gridLines.push({ type: "vertical", x1: x, y1: plotTop, x2: x, y2: plotBottom });
+  }
+
+  // Horizontal gridlines (map -1.5..1.5 to y plotTop..plotBottom)
+  for (const tick of horizontalTicks) {
+    const yNorm = (tick - (-1.5)) / (1.5 - (-1.5)); // Normalize to 0..1
+    const y = plotBottom - yNorm * (plotBottom - plotTop);
+    gridLines.push({ type: "horizontal", x1: plotLeft, y1: y, x2: plotRight, y2: y });
+  }
+
+  // Axes: left (y), bottom (x), and baseline (y=0)
+  const axes = [
+    { type: "left", x1: plotLeft, y1: plotTop, x2: plotLeft, y2: plotBottom }, // Y axis
+    { type: "bottom", x1: plotLeft, y1: plotBottom, x2: plotRight, y2: plotBottom }, // X axis
+    // Zero line at y = 0 (which maps to y = 112)
+    {
+      type: "baseline",
+      x1: plotLeft,
+      y1: plotBottom - (0 - (-1.5)) / 3.0 * (plotBottom - plotTop),
+      x2: plotRight,
+      y2: plotBottom - (0 - (-1.5)) / 3.0 * (plotBottom - plotTop),
+    },
+  ];
+
+  // Y axis tick labels: right-aligned at x=50, vertically centered
+  const yTickLabels: Array<{ x: number; y: number; text: string }> = [];
+  for (const tick of horizontalTicks) {
+    const yNorm = (tick - (-1.5)) / (1.5 - (-1.5));
+    const y = plotBottom - yNorm * (plotBottom - plotTop);
+    yTickLabels.push({ x: yTickLabelX, y, text: tick.toFixed(1) });
+  }
+
+  // X axis tick labels: centered at each tick position
+  const xTickLabels: Array<{ x: number; y: number; text: string }> = [];
+  for (const tick of verticalTicks) {
+    const x = plotLeft + tick * (plotRight - plotLeft);
+    xTickLabels.push({ x, y: xTickLabelY, text: (tick * 10).toFixed(0) });
+  }
+
+  // Legend: starts at x=348, each entry spaced ~19 units apart, showing up to 12
+  const legendEntries: Array<{ color: string; label: string }> = [];
+  const maxLegendItems = 12;
+  for (let i = 0; i < Math.min(colors.length, maxLegendItems); i++) {
+    legendEntries.push({ color: colors[i], label: `Series ${i + 1}` });
+  }
+  if (colors.length > maxLegendItems) {
+    legendEntries.push({ color: "transparent", label: `+${colors.length - maxLegendItems} more` });
+  }
+
+  return { gridLines, axes, yTickLabels, xTickLabels, legendEntries };
+}
+
+/**
+ * Every colour in the palette being composed, drawn as one line each in a scientific chart.
  *
  * The modal's main preview is the real plot, which may only have a handful
  * of series — nowhere near enough to show what colours 4..N of a larger
  * palette look like. This renders every colour instead, as hand-built SVG
- * rather than a second Plotly instance, so composing a palette never triggers
- * a second relayout on top of the main preview's.
+ * in a styled chart with gridlines, axes, and legend.
  *
  * Memoised, with the path data itself memoised on `colors`, so neither
  * recomputes on renders caused by unrelated modal state (e.g. typing a
@@ -2075,8 +2187,29 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
     [colors],
   );
 
+  const chartElements = useMemo(() => generatePreviewChartElements(colors), [colors]);
+
   if (strokes.length === 0) {
-    return <Paper withBorder p="xs" />;
+    return (
+      <Paper withBorder p="xs">
+        <Text size="xs" fw={700} mb={2}>
+          Palette preview
+        </Text>
+        <Text size="9px" c="dimmed" mb={8}>
+          One line per colour, so you can judge the whole palette even when the plot uses fewer
+          series.
+        </Text>
+        <div
+          style={{
+            width: "100%",
+            height: PALETTE_PREVIEW_HEIGHT,
+            borderRadius: 4,
+            border: "1px solid var(--mantine-color-default-border)",
+            background: "transparent",
+          }}
+        />
+      </Paper>
+    );
   }
 
   return (
@@ -2092,22 +2225,125 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
         {`Preview of ${strokes.length} colour${strokes.length === 1 ? "" : "s"}, one curve per colour.`}
       </VisuallyHidden>
       <svg
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
+        viewBox="0 0 480 260"
         width="100%"
         height={PALETTE_PREVIEW_HEIGHT}
         aria-hidden="true"
         style={{ display: "block" }}
       >
-        <line
-          x1={0}
-          y1={50}
-          x2={100}
-          y2={50}
-          stroke="var(--mantine-color-default-border)"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-        />
+        {/* Gridlines */}
+        {chartElements.gridLines.map((line, idx) =>
+          line.type === "vertical" ? (
+            <line
+              key={`vgrid-${idx}`}
+              x1={line.x1}
+              y1={line.y1}
+              x2={line.x2}
+              y2={line.y2}
+              stroke="var(--mantine-color-default-border)"
+              strokeWidth={0.5}
+              opacity={0.3}
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : (
+            <line
+              key={`hgrid-${idx}`}
+              x1={line.x1}
+              y1={line.y1}
+              x2={line.x2}
+              y2={line.y2}
+              stroke="var(--mantine-color-default-border)"
+              strokeWidth={0.5}
+              opacity={0.3}
+              vectorEffect="non-scaling-stroke"
+            />
+          ),
+        )}
+
+        {/* Axes */}
+        {chartElements.axes.map((axis, idx) =>
+          axis.type === "baseline" ? (
+            <line
+              key={`baseline-${idx}`}
+              x1={axis.x1}
+              y1={axis.y1}
+              x2={axis.x2}
+              y2={axis.y2}
+              stroke="var(--mantine-color-default-border)"
+              strokeWidth={0.7}
+              opacity={0.5}
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : (
+            <line
+              key={`axis-${idx}`}
+              x1={axis.x1}
+              y1={axis.y1}
+              x2={axis.x2}
+              y2={axis.y2}
+              stroke="var(--mantine-color-default-border)"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+          ),
+        )}
+
+        {/* Y axis tick labels */}
+        {chartElements.yTickLabels.map((label, idx) => (
+          <text
+            key={`ytick-${idx}`}
+            x={label.x}
+            y={label.y}
+            fontSize={11}
+            fill="var(--mantine-color-dimmed)"
+            textAnchor="end"
+            dominantBaseline="middle"
+          >
+            {label.text}
+          </text>
+        ))}
+
+        {/* X axis tick labels */}
+        {chartElements.xTickLabels.map((label, idx) => (
+          <text
+            key={`xtick-${idx}`}
+            x={label.x}
+            y={label.y}
+            fontSize={11}
+            fill="var(--mantine-color-dimmed)"
+            textAnchor="middle"
+            dominantBaseline="middle"
+          >
+            {label.text}
+          </text>
+        ))}
+
+        {/* Y axis title */}
+        <text
+          x={20}
+          y={112}
+          fontSize={12}
+          fill="var(--mantine-color-dimmed)"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          transform="rotate(-90 20 112)"
+        >
+          Value
+        </text>
+
+        {/* X axis title */}
+        <text
+          x={193}
+          y={244}
+          fontSize={12}
+          fill="var(--mantine-color-dimmed)"
+          textAnchor="middle"
+          dominantBaseline="middle"
+        >
+          X
+        </text>
+
+        {/* Series curves */}
         {strokes.map(({ color, d }, index) => (
           <path
             key={index}
@@ -2119,6 +2355,39 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
             vectorEffect="non-scaling-stroke"
           />
         ))}
+
+        {/* Legend */}
+        <g>
+          {chartElements.legendEntries.map((entry, idx) => {
+            const legendX = 348;
+            const legendY = 34 + idx * 19;
+            return (
+              <g key={`legend-${idx}`}>
+                {/* Color line sample */}
+                <line
+                  x1={legendX}
+                  y1={legendY}
+                  x2={legendX + 18}
+                  y2={legendY}
+                  stroke={entry.color}
+                  strokeWidth={2}
+                  opacity={entry.color === "transparent" ? 0.5 : 1}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {/* Legend label */}
+                <text
+                  x={legendX + 24}
+                  y={legendY}
+                  fontSize={12}
+                  fill={entry.color === "transparent" ? "var(--mantine-color-dimmed)" : "var(--mantine-color-text)"}
+                  dominantBaseline="middle"
+                >
+                  {entry.label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
       </svg>
     </Paper>
   );

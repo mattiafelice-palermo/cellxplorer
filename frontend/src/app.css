@@ -93,7 +93,25 @@ body {
   border-radius: var(--mantine-radius-sm);
 }
 
+/* Every visual property lives here rather than on the element's `style` prop:
+   an inline background/colour would outrank the :hover rules below, which is
+   why an earlier version never changed colour on hover. */
 .palette-swatch-remove {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  min-height: 15px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background-color: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  color: var(--mantine-color-dimmed);
   opacity: 0;
   transition: opacity 100ms ease, background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }
@@ -105,9 +123,14 @@ body {
 
 .palette-swatch-remove:hover,
 .palette-swatch-remove:focus-visible {
-  background-color: var(--mantine-color-red-6);
-  border-color: var(--mantine-color-red-6);
-  color: white;
+  background-color: light-dark(var(--mantine-color-red-1), var(--mantine-color-red-9));
+  border-color: light-dark(var(--mantine-color-red-4), var(--mantine-color-red-7));
+  color: var(--mantine-color-red-7);
+}
+
+[data-mantine-color-scheme="dark"] .palette-swatch-remove:hover,
+[data-mantine-color-scheme="dark"] .palette-swatch-remove:focus-visible {
+  color: var(--mantine-color-red-3);
 }
 
 /* Vertical-only scroll panel (downloads list, command palette results).
