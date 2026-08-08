@@ -2008,104 +2008,80 @@ function SortablePaletteSwatch({
   );
 }
 
-/** Height, in px, of the palette preview's SVG. */
+/** Plot-area geometry for the palette preview, in viewBox units. */
+const PREVIEW_PLOT = { left: 64, right: 648, top: 26, bottom: 268 };
+const PREVIEW_DATA_MIN = -1.5;
+const PREVIEW_DATA_MAX = 1.5;
+
+/** Height, in px, of the palette preview's empty placeholder. */
 const PALETTE_PREVIEW_HEIGHT = 220;
 
 /**
- * A deterministic curve for palette-preview line `index` of `count`.
+ * A deterministic sample curve for preview line `index` of `count`.
  *
- * Pure (no randomness, no `Date`) so the same palette always draws the same
- * shapes — the point is to compare colours, not to watch the lines move.
- * Each curve uses a distinct amplitude and offset so they read as different
- * measurements rather than an interference pattern.
+ * Amplitude, vertical offset and period are all spread deterministically so
+ * ten lines read as ten different measurements rather than one braided rope.
+ * `cos(phase)` is symmetric about zero, which keeps the band of curves centred
+ * instead of bunched in the top half.
+ */
+function palettePreviewValue(x: number, index: number, count: number): number {
+  const n = Math.max(1, count);
+  const spread = ((index * 7) % n) / Math.max(1, n - 1);
+  const tempo = ((index * 3) % n) / Math.max(1, n - 1);
+  const phase = (index / n) * Math.PI * 2;
+  const amp = 0.30 + 0.46 * spread;
+  const drift = 0.62 * Math.cos(phase);
+  const freq = 0.48 + 0.38 * tempo;
+  return (
+    drift +
+    amp * Math.sin(2 * Math.PI * freq * x + phase) +
+    0.14 * amp * Math.sin(2 * Math.PI * (2.1 * freq) * x + phase * 1.7)
+  );
+}
+
+/**
+ * A smooth path for one preview line.
  *
- * Returns a smooth cubic Bézier curve (via midpoint smoothing) through sampled points.
- * Formula maps v from data range -1.5..1.5 onto plot area (v=-1.5→y=200, v=+1.5→y=24).
+ * Catmull-Rom converted to cubic Bezier. The control points must stay inside
+ * the segment being drawn; an earlier version placed the second control point
+ * past the endpoint, so every one of the 80 segments overshot and doubled
+ * back, which is what made the lines look dotted.
  */
 function palettePreviewPath(index: number, count: number): string {
-  const n = count > 0 ? count : 1;
-  const steps = 80;
-  const points: Array<[number, number]> = [];
-
-  const phase = (index / n) * Math.PI * 2;
-  const amp = 0.45 + 0.5 * (((index * 7) % n) / Math.max(1, n - 1));
-  const drift = 0.28 * Math.sin(phase * 0.5);
-
-  // Sample x over 0..1
-  for (let step = 0; step <= steps; step++) {
+  const steps = 64;
+  const pts: Array<[number, number]> = [];
+  for (let step = 0; step <= steps; step += 1) {
     const x = step / steps;
-    const v =
-      drift +
-      amp * Math.sin(2 * Math.PI * (0.9 * x) + phase) +
-      0.22 * amp * Math.sin(2 * Math.PI * (2.3 * x) + phase * 1.7);
-
-    // Map v from [-1.5, 1.5] onto plot area [200, 24] (y increases downward in SVG)
-    const dataMin = -1.5;
-    const dataMax = 1.5;
-    const plotTop = 24;
-    const plotBottom = 200;
-    const svgY = plotBottom - ((v - dataMin) / (dataMax - dataMin)) * (plotBottom - plotTop);
-    const clampedY = Math.max(plotTop, Math.min(plotBottom, svgY));
-
-    // Map x from [0, 1] onto plot area [62, 660]
-    const plotLeft = 62;
-    const plotRight = 660;
-    const svgX = plotLeft + x * (plotRight - plotLeft);
-
-    points.push([svgX, clampedY]);
+    const v = palettePreviewValue(x, index, count);
+    const y =
+      PREVIEW_PLOT.bottom -
+      ((v - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) *
+        (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
+    pts.push([
+      PREVIEW_PLOT.left + x * (PREVIEW_PLOT.right - PREVIEW_PLOT.left),
+      Math.max(PREVIEW_PLOT.top, Math.min(PREVIEW_PLOT.bottom, y)),
+    ]);
   }
-
-  // Build a smooth cubic Bézier path using midpoint smoothing
-  // Start with move command
-  let pathData = `M${points[0][0].toFixed(2)},${points[0][1].toFixed(2)}`;
-
-  // Use cubic Bézier segments with control points derived from adjacent points
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const next = points[i + 1];
-
-    if (i === 1) {
-      // First segment: simple quadratic to next point
-      const midX = (prev[0] + curr[0]) / 2;
-      const midY = (prev[1] + curr[1]) / 2;
-      pathData += ` Q${curr[0].toFixed(2)},${curr[1].toFixed(2)},${midX.toFixed(2)},${midY.toFixed(2)}`;
-    } else if (i < points.length - 1) {
-      // Middle segments: cubic Bézier through curr toward next
-      // Control points: 2/3 along the line from prev to next
-      const cp1x = prev[0] + (curr[0] - prev[0]) * (2 / 3);
-      const cp1y = prev[1] + (curr[1] - prev[1]) * (2 / 3);
-      const cp2x = curr[0] + (next[0] - curr[0]) * (1 / 3);
-      const cp2y = curr[1] + (next[1] - curr[1]) * (1 / 3);
-
-      pathData += ` C${cp1x.toFixed(2)},${cp1y.toFixed(2)},${cp2x.toFixed(2)},${cp2y.toFixed(2)},${curr[0].toFixed(2)},${curr[1].toFixed(2)}`;
-    } else {
-      // Last segment
-      pathData += ` L${curr[0].toFixed(2)},${curr[1].toFixed(2)}`;
-    }
+  let d = `M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = i > 0 ? pts[i - 1] : pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = i + 2 < pts.length ? pts[i + 2] : p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C${c1x.toFixed(2)},${c1y.toFixed(2)},${c2x.toFixed(2)},${c2y.toFixed(2)},${p2[0].toFixed(2)},${p2[1].toFixed(2)}`;
   }
-
-  return pathData;
+  return d;
 }
 
 /**
  * Generate grid, axis, and legend elements for the palette preview chart.
- * Plot area: x from 62 to 660, y from 24 to 200.
- * Data range: y from -1.5 to +1.5.
+ * Uses PREVIEW_PLOT geometry so the grid can never drift from the curves.
  */
 function generatePreviewChartElements(colors: string[]) {
-  const plotLeft = 62;
-  const plotRight = 660;
-  const plotTop = 24;
-  const plotBottom = 200;
-  const yTickLabelX = 56;
-  const xTickLabelY = 220;
-
-  // Grid lines: vertical at 0, 0.2, 0.4, 0.6, 0.8, 1.0
-  // Horizontal at -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5
-  const verticalTicks = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
-  const horizontalTicks = [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
-
   const gridLines: Array<{
     type: "vertical" | "horizontal";
     x1?: number;
@@ -2114,49 +2090,51 @@ function generatePreviewChartElements(colors: string[]) {
     y2?: number;
   }> = [];
 
-  // Vertical gridlines
-  for (const tick of verticalTicks) {
-    const x = plotLeft + tick * (plotRight - plotLeft);
-    gridLines.push({ type: "vertical", x1: x, y1: plotTop, x2: x, y2: plotBottom });
+  // Vertical gridlines at x ticks 0,2,4,6,8,10
+  const xTicks = [0, 2, 4, 6, 8, 10];
+  for (const tick of xTicks) {
+    const x = PREVIEW_PLOT.left + (tick / 10) * (PREVIEW_PLOT.right - PREVIEW_PLOT.left);
+    gridLines.push({ type: "vertical", x1: x, y1: PREVIEW_PLOT.top, x2: x, y2: PREVIEW_PLOT.bottom });
   }
 
-  // Horizontal gridlines (map -1.5..1.5 to y plotTop..plotBottom)
-  for (const tick of horizontalTicks) {
-    const yNorm = (tick - (-1.5)) / (1.5 - (-1.5)); // Normalize to 0..1
-    const y = plotBottom - yNorm * (plotBottom - plotTop);
-    gridLines.push({ type: "horizontal", x1: plotLeft, y1: y, x2: plotRight, y2: y });
+  // Horizontal gridlines at y ticks -1.5,-1.0,-0.5,0,0.5,1.0,1.5
+  const yTicks = [-1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5];
+  for (const tick of yTicks) {
+    const yNorm = (tick - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN);
+    const y = PREVIEW_PLOT.bottom - yNorm * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
+    gridLines.push({ type: "horizontal", x1: PREVIEW_PLOT.left, y1: y, x2: PREVIEW_PLOT.right, y2: y });
   }
 
   // Axes: left (y), bottom (x), and baseline (y=0)
   const axes = [
-    { type: "left", x1: plotLeft, y1: plotTop, x2: plotLeft, y2: plotBottom }, // Y axis
-    { type: "bottom", x1: plotLeft, y1: plotBottom, x2: plotRight, y2: plotBottom }, // X axis
-    // Zero line at y = 0 (which maps to y = 112)
+    { type: "left", x1: PREVIEW_PLOT.left, y1: PREVIEW_PLOT.top, x2: PREVIEW_PLOT.left, y2: PREVIEW_PLOT.bottom }, // Y axis
+    { type: "bottom", x1: PREVIEW_PLOT.left, y1: PREVIEW_PLOT.bottom, x2: PREVIEW_PLOT.right, y2: PREVIEW_PLOT.bottom }, // X axis
+    // Zero line at y = 0
     {
       type: "baseline",
-      x1: plotLeft,
-      y1: plotBottom - (0 - (-1.5)) / 3.0 * (plotBottom - plotTop),
-      x2: plotRight,
-      y2: plotBottom - (0 - (-1.5)) / 3.0 * (plotBottom - plotTop),
+      x1: PREVIEW_PLOT.left,
+      y1: PREVIEW_PLOT.bottom - ((0 - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top),
+      x2: PREVIEW_PLOT.right,
+      y2: PREVIEW_PLOT.bottom - ((0 - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top),
     },
   ];
 
-  // Y axis tick labels: right-aligned at x=50, vertically centered
+  // Y axis tick labels: right-aligned at x=54, vertically centered
   const yTickLabels: Array<{ x: number; y: number; text: string }> = [];
-  for (const tick of horizontalTicks) {
-    const yNorm = (tick - (-1.5)) / (1.5 - (-1.5));
-    const y = plotBottom - yNorm * (plotBottom - plotTop);
-    yTickLabels.push({ x: yTickLabelX, y, text: tick.toFixed(1) });
+  for (const tick of yTicks) {
+    const yNorm = (tick - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN);
+    const y = PREVIEW_PLOT.bottom - yNorm * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
+    yTickLabels.push({ x: 54, y, text: tick.toFixed(1) });
   }
 
-  // X axis tick labels: centered at each tick position
+  // X axis tick labels at y=290, centered at each x tick position
   const xTickLabels: Array<{ x: number; y: number; text: string }> = [];
-  for (const tick of verticalTicks) {
-    const x = plotLeft + tick * (plotRight - plotLeft);
-    xTickLabels.push({ x, y: xTickLabelY, text: (tick * 10).toFixed(0) });
+  for (const tick of xTicks) {
+    const x = PREVIEW_PLOT.left + (tick / 10) * (PREVIEW_PLOT.right - PREVIEW_PLOT.left);
+    xTickLabels.push({ x, y: 290, text: tick.toFixed(0) });
   }
 
-  // Legend: starts at x=348, each entry spaced ~19 units apart, showing up to 12
+  // Legend: line sample from x=676 to x=702, label at x=710, first entry at y=40, step 24
   const legendEntries: Array<{ color: string; label: string }> = [];
   const maxLegendItems = 12;
   for (let i = 0; i < Math.min(colors.length, maxLegendItems); i++) {
@@ -2225,11 +2203,10 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
         {`Preview of ${strokes.length} colour${strokes.length === 1 ? "" : "s"}, one curve per colour.`}
       </VisuallyHidden>
       <svg
-        viewBox="0 0 900 260"
+        viewBox="0 0 900 340"
         width="100%"
-        height="auto"
+        style={{ display: "block", height: "auto" }}
         aria-hidden="true"
-        style={{ display: "block" }}
       >
         {/* Gridlines */}
         {chartElements.gridLines.map((line, idx) =>
@@ -2242,7 +2219,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y2={line.y2}
               stroke="var(--mantine-color-default-border)"
               strokeWidth={1}
-              opacity={0.7}
               vectorEffect="non-scaling-stroke"
             />
           ) : (
@@ -2254,7 +2230,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y2={line.y2}
               stroke="var(--mantine-color-default-border)"
               strokeWidth={1}
-              opacity={0.7}
               vectorEffect="non-scaling-stroke"
             />
           ),
@@ -2271,7 +2246,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y2={axis.y2}
               stroke="var(--mantine-color-dimmed)"
               strokeWidth={1.2}
-              opacity={0.9}
               vectorEffect="non-scaling-stroke"
             />
           ) : (
@@ -2283,7 +2257,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y2={axis.y2}
               stroke="var(--mantine-color-dimmed)"
               strokeWidth={1.2}
-              opacity={0.9}
               vectorEffect="non-scaling-stroke"
             />
           ),
@@ -2297,7 +2270,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
             y={label.y}
             fontSize={13}
             fill="var(--mantine-color-text)"
-            opacity={0.75}
             textAnchor="end"
             dominantBaseline="middle"
           >
@@ -2313,7 +2285,6 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
             y={label.y}
             fontSize={13}
             fill="var(--mantine-color-text)"
-            opacity={0.75}
             textAnchor="middle"
             dominantBaseline="middle"
           >
@@ -2323,25 +2294,21 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
 
         {/* Y axis title */}
         <text
-          x={22}
-          y={112}
+          transform="translate(22,147) rotate(-90)"
           fontSize={14}
           fill="var(--mantine-color-text)"
-          opacity={0.75}
           textAnchor="middle"
           dominantBaseline="middle"
-          transform="rotate(-90 22 112)"
         >
           Value
         </text>
 
         {/* X axis title */}
         <text
-          x={361}
-          y={246}
+          x={356}
+          y={318}
           fontSize={14}
           fill="var(--mantine-color-text)"
-          opacity={0.75}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -2353,10 +2320,11 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
           <path
             key={index}
             d={d}
-            fill="none"
             stroke={color}
-            strokeWidth={2}
+            strokeWidth={2.4}
             strokeLinecap="round"
+            strokeLinejoin="round"
+            fill="none"
             vectorEffect="non-scaling-stroke"
           />
         ))}
@@ -2364,24 +2332,24 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
         {/* Legend */}
         <g>
           {chartElements.legendEntries.map((entry, idx) => {
-            const legendX = 690;
-            const legendY = 34 + idx * 20;
+            const legendX = 676;
+            const legendY = 40 + idx * 24;
             return (
               <g key={`legend-${idx}`}>
                 {/* Color line sample */}
                 <line
                   x1={legendX}
                   y1={legendY}
-                  x2={legendX + 26}
+                  x2={702}
                   y2={legendY}
                   stroke={entry.color}
-                  strokeWidth={2}
+                  strokeWidth={2.4}
                   opacity={entry.color === "transparent" ? 0.5 : 1}
                   vectorEffect="non-scaling-stroke"
                 />
                 {/* Legend label */}
                 <text
-                  x={legendX + 34}
+                  x={710}
                   y={legendY}
                   fontSize={13}
                   fill={entry.color === "transparent" ? "var(--mantine-color-dimmed)" : "var(--mantine-color-text)"}
