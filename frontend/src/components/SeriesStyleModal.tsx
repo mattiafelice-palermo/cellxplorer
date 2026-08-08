@@ -314,6 +314,13 @@ export function SeriesStyleModal({
   // control re-renders the whole analysis page and rebuilds the main plot on
   // every drag tick.
   const [draftBaseStyle, setDraftBaseStyle] = useState(baseStyle);
+  /**
+   * Series hidden in the modal's preview only, so the user can temporarily
+   * isolate series while judging line and marker styling. This never reaches
+   * `draftOverrides`/`onChange` — the app's own visibility mechanism is the
+   * only thing that should hide a series from the real analysis plot.
+   */
+  const [previewHidden, setPreviewHidden] = useState<Set<string>>(new Set());
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<{ overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[] } | null>(
     null,
@@ -340,6 +347,7 @@ export function SeriesStyleModal({
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
     setSelectedSwatch(0);
     setOpenSwatchIndex(null);
+    setPreviewHidden(new Set());
     // Only when the dialog opens: re-syncing on every prop change would fight
     // the debounce and undo edits mid-typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -769,6 +777,21 @@ export function SeriesStyleModal({
   const previewOverrides = useDeferredValue(draftOverrides);
   const previewRules = useDeferredValue(draftRules);
 
+  /**
+   * Layers the preview-only eye toggle on top of the deferred draft, without
+   * mutating it. Only the modal's own preview plot sees this merged object —
+   * `onChange`/the committed draft (and hence the real analysis plot) only
+   * ever receives `draftOverrides`/`previewOverrides` unmerged.
+   */
+  const previewOverridesWithHiding = useMemo(() => {
+    if (previewHidden.size === 0) return previewOverrides;
+    const merged = { ...previewOverrides };
+    for (const key of previewHidden) {
+      merged[key] = { ...(merged[key] ?? {}), hidden: true };
+    }
+    return merged;
+  }, [previewOverrides, previewHidden]);
+
   // The scratch palette only reaches the preview while it's actually being
   // composed and it differs from what's already applied — otherwise the
   // overlay would be a needless no-op copy of the committed palette.
@@ -786,9 +809,13 @@ export function SeriesStyleModal({
   const preview = useMemo(
     () =>
       opened
-        ? buildPreview({ overrides: previewOverrides, rules: previewRules, styleOverlay: paletteOverlay })
+        ? buildPreview({
+            overrides: previewOverridesWithHiding,
+            rules: previewRules,
+            styleOverlay: paletteOverlay,
+          })
         : { data: [], layout: {} },
-    [opened, buildPreview, previewOverrides, previewRules, paletteOverlay],
+    [opened, buildPreview, previewOverridesWithHiding, previewRules, paletteOverlay],
   );
 
   /**
@@ -878,6 +905,11 @@ export function SeriesStyleModal({
         >
           <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
             <Stack gap={2}>
+              {!seriesCollapsed && (
+                <Text size="9px" c="dimmed" px={6} pb={2}>
+                  Hiding here only affects this preview, not the plot.
+                </Text>
+              )}
               <Tooltip
                 label="All series"
                 disabled={!seriesCollapsed}
@@ -934,20 +966,28 @@ export function SeriesStyleModal({
                         }}
                       />
                     );
+                    const isPreviewHidden = previewHidden.has(descriptor.key);
                     const visibility = (
                       <ActionIcon
                         size="xs"
                         variant="subtle"
                         color="gray"
                         aria-label={
-                          style?.hidden ? `Show ${descriptor.label}` : `Hide ${descriptor.label}`
+                          isPreviewHidden
+                            ? `Show ${descriptor.label} in the preview`
+                            : `Hide ${descriptor.label} in the preview`
                         }
                         onClick={(event) => {
                           event.stopPropagation();
-                          setOverride(descriptor.key, { hidden: !style?.hidden });
+                          setPreviewHidden((current) => {
+                            const next = new Set(current);
+                            if (next.has(descriptor.key)) next.delete(descriptor.key);
+                            else next.add(descriptor.key);
+                            return next;
+                          });
                         }}
                       >
-                        {style?.hidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                        {isPreviewHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
                       </ActionIcon>
                     );
                     return (
@@ -972,7 +1012,7 @@ export function SeriesStyleModal({
                               descriptor.key === active?.key
                                 ? "var(--mantine-primary-color-light)"
                                 : undefined,
-                            opacity: style?.hidden ? 0.5 : 1,
+                            opacity: isPreviewHidden ? 0.5 : 1,
                           }}
                         >
                           {swatch}
