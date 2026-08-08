@@ -34,6 +34,10 @@ Useful options:
 The script passes the selected backend port to both `run.py` and Vite, so the second command keeps
 API proxying working when the default ports are occupied.
 
+If the backend port is already occupied, the launcher lists the owning program, process ID, and
+executable when available. Confirm the prompt with `y` to stop that process and continue launching;
+answering anything else leaves it running and exits without starting the app.
+
 ## Build the Windows installer
 
 ```powershell

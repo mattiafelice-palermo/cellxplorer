@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "cellxplorer"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "notify-rust",
  "rusqlite",

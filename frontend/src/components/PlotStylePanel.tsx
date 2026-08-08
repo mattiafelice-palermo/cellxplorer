@@ -278,6 +278,22 @@ export function PlotStylePanel({
     onError: (error: Error) =>
       notifications.show({ message: error.message || "Could not save the palette.", color: "red" }),
   });
+  const overwritePalette = useMutation({
+    mutationFn: (payload: { id: string; colors: string[] }) => {
+      const existing = paletteQuery.data?.palettes ?? [];
+      return put<ColorPaletteSettings>("/api/settings/color-palettes", {
+        palettes: existing.map((palette) =>
+          palette.id === payload.id ? { ...palette, colors: payload.colors } : palette,
+        ),
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["color-palettes"], saved);
+      notifications.show({ message: "Colour palette updated.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not update the palette.", color: "red" }),
+  });
   const deletePalette = useMutation({
     mutationFn: (payload: { id: string }) => {
       const existing = paletteQuery.data?.palettes ?? [];
@@ -1117,6 +1133,7 @@ export function PlotStylePanel({
             })
           }
           onSavePalette={(name, colors) => savePalette.mutate({ name, colors })}
+          onOverwritePalette={(id, colors) => overwritePalette.mutate({ id, colors })}
           onDeletePalette={(id) => deletePalette.mutate({ id })}
           onRenamePalette={(id, name) => renamePalette.mutate({ id, name })}
         />

@@ -4,6 +4,11 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.20.2 - 2026-08-08
+
+- Saved colour palettes can be updated in place while plots keep copied colours.
+- The development launcher identifies the process occupying the backend port and offers to stop it.
+
 ## 0.20.1 - 2026-08-08
 
 - Add a palette editor: compose a palette before applying it, preview every colour, and choose whether extra series repeat the palette or get generated colours.

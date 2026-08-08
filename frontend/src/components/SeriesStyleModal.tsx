@@ -226,6 +226,7 @@ export function SeriesStyleModal({
   palettes,
   onApplyPalette,
   onSavePalette,
+  onOverwritePalette,
   onDeletePalette,
   onRenamePalette,
 }: {
@@ -259,6 +260,12 @@ export function SeriesStyleModal({
   onApplyPalette?: (colors: string[], paletteId: string | null) => void;
   /** Saves the currently resolved series colours as a new named palette. */
   onSavePalette?: (name: string, colors: string[]) => void;
+  /**
+   * Replaces a saved palette's colours in place, leaving its id, name and
+   * kind untouched. Omitting this prop leaves the save control creating new
+   * palettes only, even when the typed/fallback name matches an existing one.
+   */
+  onOverwritePalette?: (id: string, colors: string[]) => void;
   /**
    * Deletes a saved palette. Omitting this prop hides the "Saved palettes"
    * section entirely, since there would be no way to act on it.
@@ -738,6 +745,46 @@ export function SeriesStyleModal({
   }, [savedPaletteForSelection, paletteSelection.palette_id, paletteSelection.palette]);
 
   const canRenamePalette = Boolean(savedPaletteForSelection) && Boolean(onRenamePalette);
+
+  /**
+   * Resolves what the "Save current colours as palette…" control targets:
+   * the typed name if there is one, else the currently selected saved
+   * palette's name, matched case-insensitively against the saved list so the
+   * button can offer an update instead of always creating a new entry.
+   */
+  const typedName = paletteSaveName.trim();
+  const fallbackName = savedPaletteForSelection?.name ?? "";
+  const effectiveName = typedName || fallbackName;
+  const matchedPalette = useMemo(
+    () =>
+      palettes?.find(
+        (palette) => palette.name.trim().toLowerCase() === effectiveName.trim().toLowerCase(),
+      ),
+    [palettes, effectiveName],
+  );
+  const matchedPaletteUnchanged = useMemo(
+    () =>
+      Boolean(
+        matchedPalette &&
+          matchedPalette.colors.length === scratchColors.length &&
+          matchedPalette.colors.every(
+            (color, index) => color.toLowerCase() === scratchColors[index]?.toLowerCase(),
+          ),
+      ),
+    [matchedPalette, scratchColors],
+  );
+  const saveControlDisabled =
+    !effectiveName || scratchColors.length === 0 || (Boolean(matchedPalette) && matchedPaletteUnchanged && !typedName);
+  const saveControlLabel = matchedPalette
+    ? `Update "${matchedPalette.name}"`
+    : effectiveName
+      ? `Save as "${effectiveName}"`
+      : "Save";
+  const saveControlTitle = matchedPalette
+    ? `Replace the colours of "${matchedPalette.name}"`
+    : effectiveName
+      ? `Create a new palette called "${effectiveName}"`
+      : "Type a palette name";
 
   const paletteHeading = useMemo(
     () => (
@@ -1441,21 +1488,34 @@ export function SeriesStyleModal({
                         <TextInput
                           size="xs"
                           style={{ flex: 1 }}
-                          placeholder="Palette name"
+                          placeholder={fallbackName || "Palette name"}
                           value={paletteSaveName}
                           onChange={(event) => setPaletteSaveName(event.currentTarget.value)}
                         />
-                        <Button
-                          size="xs"
-                          disabled={!paletteSaveName.trim() || scratchColors.length === 0}
-                          onClick={() => {
-                            onSavePalette(paletteSaveName.trim(), scratchColors);
-                            setPaletteSaveName("");
-                          }}
-                        >
-                          Save
-                        </Button>
+                        <Tooltip label={saveControlTitle}>
+                          <Button
+                            size="xs"
+                            disabled={saveControlDisabled}
+                            title={saveControlTitle}
+                            onClick={() => {
+                              if (matchedPalette && onOverwritePalette) {
+                                onOverwritePalette(matchedPalette.id, scratchColors);
+                              } else {
+                                onSavePalette(effectiveName, scratchColors);
+                              }
+                              setPaletteSaveName("");
+                            }}
+                          >
+                            {saveControlLabel}
+                          </Button>
+                        </Tooltip>
                       </Group>
+                      {matchedPalette && (
+                        <Text size="9px" c="dimmed">
+                          Updating a palette does not change plots that already use it — each plot
+                          keeps its own copy of the colours.
+                        </Text>
+                      )}
                     </>
                   )}
 
