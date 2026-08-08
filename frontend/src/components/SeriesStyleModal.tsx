@@ -26,7 +26,6 @@ import {
 } from "@mantine/core";
 import {
   IconArrowDown,
-  IconArrowRight,
   IconArrowUp,
   IconCheck,
   IconChevronLeft,
@@ -58,6 +57,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { modals } from "@mantine/modals";
 import {
   Fragment,
   memo,
@@ -67,6 +67,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import type {
@@ -678,6 +679,70 @@ export function SeriesStyleModal({
       ? `builtin:${paletteSelection.palette}`
       : null;
 
+  /**
+   * Confirms and then deletes a saved palette from the preset dropdown.
+   *
+   * Deleting only removes the saved entry — it never touches a plot, since
+   * every plot that used this palette already stored its own copy of the
+   * colours when it was applied.
+   */
+  const confirmDeletePalette = useCallback(
+    (id: string, name: string) => {
+      modals.openConfirmModal({
+        title: "Delete palette",
+        children: (
+          <Text size="sm">
+            Delete "{name}"? Plots already using it keep their colours, since each plot stores its
+            own copy.
+          </Text>
+        ),
+        labels: { confirm: "Delete", cancel: "Cancel" },
+        confirmProps: { color: "red" },
+        onConfirm: () => onDeletePalette?.(id),
+      });
+    },
+    [onDeletePalette],
+  );
+
+  /**
+   * The saved palette record matching the current selection, if any — used
+   * both for the preview heading's name and to gate the rename pencil.
+   *
+   * Looked up by id rather than trusting `palette_id` alone: a selection can
+   * point at a palette that has since been deleted (see `currentPaletteSelection`),
+   * in which case there is nothing left to rename.
+   */
+  const savedPaletteForSelection = useMemo(
+    () => (paletteSelection.palette_id ? palettes?.find((p) => p.id === paletteSelection.palette_id) : undefined),
+    [paletteSelection.palette_id, palettes],
+  );
+
+  const currentPaletteName = useMemo(() => {
+    if (savedPaletteForSelection) return savedPaletteForSelection.name;
+    if (paletteSelection.palette_id) return "Custom palette"; // saved palette since deleted
+    if (paletteSelection.palette !== "custom") {
+      return (
+        PALETTE_OPTIONS.find((option) => option.value === paletteSelection.palette)?.label ??
+        paletteSelection.palette
+      );
+    }
+    return "Custom palette";
+  }, [savedPaletteForSelection, paletteSelection.palette_id, paletteSelection.palette]);
+
+  const canRenamePalette = Boolean(savedPaletteForSelection) && Boolean(onRenamePalette);
+
+  const paletteHeading = useMemo(
+    () => (
+      <PaletteNameHeading
+        name={currentPaletteName}
+        paletteId={paletteSelection.palette_id}
+        canRename={canRenamePalette}
+        onRename={onRenamePalette}
+      />
+    ),
+    [currentPaletteName, paletteSelection.palette_id, canRenamePalette, onRenamePalette],
+  );
+
   const setRules = (nextRules: SeriesStyleRule[]) => commit(draftOverrides, nextRules);
 
   const patchRule = (id: string, patch: Partial<SeriesStyleRule>) =>
@@ -1157,11 +1222,13 @@ export function SeriesStyleModal({
                       value={presetSelectValue}
                       onChange={applyPreset}
                       renderOption={({ option }) => {
+                        const isSaved = option.value?.startsWith("saved:") ?? false;
+                        const savedId = isSaved ? option.value.slice("saved:".length) : null;
                         const colors =
                           option.value?.startsWith("builtin:")
                             ? PLOT_PALETTES[(option.value.slice("builtin:".length) as PlotStyle["palette"]) ?? "app"]
-                            : option.value?.startsWith("saved:")
-                              ? palettes?.find((p) => p.id === option.value.slice("saved:".length))?.colors ?? []
+                            : savedId
+                              ? palettes?.find((p) => p.id === savedId)?.colors ?? []
                               : [];
                         return (
                           <Group gap={6} wrap="nowrap" style={{ flex: 1 }}>
@@ -1182,6 +1249,30 @@ export function SeriesStyleModal({
                                 />
                               ))}
                             </Group>
+                            {/* Only saved palettes can be deleted here — built-ins are permanent. */}
+                            {savedId && onDeletePalette && (
+                              <Tooltip label={`Delete palette "${option.label}"`}>
+                                <ActionIcon
+                                  size="xs"
+                                  variant="subtle"
+                                  color="red"
+                                  aria-label={`Delete palette "${option.label}"`}
+                                  // Stops the click from selecting this option or closing the
+                                  // dropdown — it should only open the delete confirmation.
+                                  onMouseDown={(event) => {
+                                    event.stopPropagation();
+                                    event.preventDefault();
+                                  }}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    event.preventDefault();
+                                    confirmDeletePalette(savedId, option.label);
+                                  }}
+                                >
+                                  <IconX size={12} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
                           </Group>
                         );
                       }}
@@ -1281,7 +1372,7 @@ export function SeriesStyleModal({
                     </Group>
                   </div>
 
-                  <PalettePreview colors={scratchColors} />
+                  <PalettePreview colors={scratchColors} heading={paletteHeading} />
 
                   <Group wrap="nowrap" align="center" gap="xs">
                     <Text size="xs" c="dimmed" style={{ flex: 1 }}>
@@ -1325,27 +1416,6 @@ export function SeriesStyleModal({
                           Save
                         </Button>
                       </Group>
-                    </>
-                  )}
-
-                  {palettes && palettes.length > 0 && onDeletePalette && (
-                    <>
-                      <Divider label="Saved palettes" labelPosition="left" />
-                      <ScrollArea.Autosize mah={190} type="auto" offsetScrollbars>
-                        <Stack gap={2}>
-                          {palettes.map((palette) => (
-                            <SavedPaletteRow
-                              key={palette.id}
-                              id={palette.id}
-                              name={palette.name}
-                              colors={palette.colors}
-                              onApply={() => applySavedPalette(palette.id, palette.colors)}
-                              onRename={onRenamePalette}
-                              onDelete={onDeletePalette}
-                            />
-                          ))}
-                        </Stack>
-                      </ScrollArea.Autosize>
                     </>
                   )}
 
@@ -1875,188 +1945,6 @@ const LegendNameInput = memo(function LegendNameInput({
 });
 
 /**
- * One row in the "Saved palettes" list: a swatch strip, the palette's name,
- * and controls to apply, rename, or delete it.
- *
- * Renaming and the delete confirmation are both local UI state — neither has
- * any bearing on another row or on the modal's own draft state, so they live
- * here rather than being lifted to the parent.
- */
-function SavedPaletteRow({
-  id,
-  name,
-  colors,
-  onApply,
-  onRename,
-  onDelete,
-}: {
-  id: string;
-  name: string;
-  colors: string[];
-  onApply: () => void;
-  onRename?: (id: string, name: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [renaming, setRenaming] = useState(false);
-  const [draftName, setDraftName] = useState(name);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const startRename = () => {
-    setDraftName(name);
-    setRenaming(true);
-  };
-
-  const commitRename = () => {
-    const trimmed = draftName.trim();
-    if (trimmed && trimmed !== name) onRename?.(id, trimmed);
-    setRenaming(false);
-  };
-
-  const cancelRename = () => {
-    setDraftName(name);
-    setRenaming(false);
-  };
-
-  return (
-    <Group gap={6} wrap="nowrap" px={4} py={2} style={{ borderRadius: 4 }}>
-      <Group gap={2} wrap="nowrap" style={{ flex: "none" }} aria-hidden="true">
-        {colors.slice(0, 10).map((color, index) => (
-          <div
-            key={index}
-            style={{ width: 12, height: 12, borderRadius: 2, flex: "none", background: color }}
-          />
-        ))}
-      </Group>
-      {renaming ? (
-        <TextInput
-          size="xs"
-          style={{ flex: 1 }}
-          value={draftName}
-          aria-label={`Rename palette "${name}"`}
-          autoFocus
-          onChange={(event) => setDraftName(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              commitRename();
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              cancelRename();
-            }
-          }}
-          onBlur={cancelRename}
-        />
-      ) : (
-        <Text size="xs" truncate title={name} style={{ flex: 1 }}>
-          {name}
-        </Text>
-      )}
-      <Group gap={2} wrap="nowrap" style={{ flex: "none" }}>
-        {renaming ? (
-          <>
-            <Tooltip label="Save name">
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color="gray"
-                aria-label={`Save new name for palette "${name}"`}
-                disabled={!draftName.trim()}
-                // Fires before the input's onBlur cancels the edit.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={commitRename}
-              >
-                <IconCheck size={14} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Cancel rename">
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color="gray"
-                aria-label={`Cancel renaming palette "${name}"`}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={cancelRename}
-              >
-                <IconX size={14} />
-              </ActionIcon>
-            </Tooltip>
-          </>
-        ) : (
-          <>
-            <Tooltip label={`Apply palette "${name}"`}>
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color="gray"
-                aria-label={`Apply palette "${name}"`}
-                onClick={onApply}
-              >
-                <IconArrowRight size={14} />
-              </ActionIcon>
-            </Tooltip>
-            {onRename && (
-              <Tooltip label={`Rename palette "${name}"`}>
-                <ActionIcon
-                  size="sm"
-                  variant="subtle"
-                  color="gray"
-                  aria-label={`Rename palette "${name}"`}
-                  onClick={startRename}
-                >
-                  <IconPencil size={14} />
-                </ActionIcon>
-              </Tooltip>
-            )}
-            <Popover
-              opened={confirmOpen}
-              onChange={setConfirmOpen}
-              position="bottom-end"
-              withArrow
-              shadow="md"
-              withinPortal
-            >
-              <Popover.Target>
-                <Tooltip label={`Delete palette "${name}"`} disabled={confirmOpen}>
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="red"
-                    aria-label={`Delete palette "${name}"`}
-                    onClick={() => setConfirmOpen((current) => !current)}
-                  >
-                    <IconTrash size={14} />
-                  </ActionIcon>
-                </Tooltip>
-              </Popover.Target>
-              <Popover.Dropdown>
-                <Stack gap={6} style={{ width: 180 }}>
-                  <Text size="xs">Delete this palette?</Text>
-                  <Group gap="xs" justify="flex-end">
-                    <Button size="compact-xs" variant="default" onClick={() => setConfirmOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      size="compact-xs"
-                      color="red"
-                      onClick={() => {
-                        setConfirmOpen(false);
-                        onDelete(id);
-                      }}
-                    >
-                      Delete
-                    </Button>
-                  </Group>
-                </Stack>
-              </Popover.Dropdown>
-            </Popover>
-          </>
-        )}
-      </Group>
-    </Group>
-  );
-}
-
-/**
  * One colour in the palette being composed: its 1-based index, a large
  * swatch, and a colour-picker popover anchored to the swatch while it is
  * open.
@@ -2376,6 +2264,103 @@ function generatePreviewChartElements(colors: string[]) {
 }
 
 /**
+ * The palette preview's heading: the current palette's name, with an inline
+ * rename affordance when it names a saved palette.
+ *
+ * Editing is local state, committed through `onRename` only on Enter or the
+ * tick button; Escape or blur discards the edit instead. An empty or
+ * whitespace-only name is never committed — the field just closes back to
+ * showing the existing name.
+ */
+function PaletteNameHeading({
+  name,
+  paletteId,
+  canRename,
+  onRename,
+}: {
+  name: string;
+  paletteId: string | null;
+  canRename: boolean;
+  onRename?: (id: string, name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(name);
+
+  const startEditing = () => {
+    setDraftName(name);
+    setEditing(true);
+  };
+
+  const commit = () => {
+    const trimmed = draftName.trim();
+    if (trimmed && paletteId) onRename?.(paletteId, trimmed);
+    setEditing(false);
+  };
+
+  const cancel = () => {
+    setDraftName(name);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <TextInput
+        size="xs"
+        mb={2}
+        value={draftName}
+        autoFocus
+        aria-label={`Rename palette "${name}"`}
+        onChange={(event) => setDraftName(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            cancel();
+          }
+        }}
+        onBlur={cancel}
+        rightSection={
+          <ActionIcon
+            size="xs"
+            variant="subtle"
+            color="gray"
+            aria-label="Save name"
+            // Fires before the input's onBlur cancels the edit.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={commit}
+          >
+            <IconCheck size={12} />
+          </ActionIcon>
+        }
+      />
+    );
+  }
+
+  return (
+    <Group gap={4} wrap="nowrap" mb={2}>
+      <Text size="xs" fw={700} truncate title={name} style={{ flex: 1 }}>
+        {name}
+      </Text>
+      {canRename && (
+        <Tooltip label={`Rename palette "${name}"`}>
+          <ActionIcon
+            size="xs"
+            variant="subtle"
+            color="gray"
+            aria-label={`Rename palette "${name}"`}
+            onClick={startEditing}
+          >
+            <IconPencil size={12} />
+          </ActionIcon>
+        </Tooltip>
+      )}
+    </Group>
+  );
+}
+
+/**
  * Every colour in the palette being composed, drawn as one line each in a scientific chart.
  *
  * The modal's main preview is the real plot, which may only have a handful
@@ -2387,7 +2372,13 @@ function generatePreviewChartElements(colors: string[]) {
  * recomputes on renders caused by unrelated modal state (e.g. typing a
  * legend name on another tab).
  */
-const PalettePreview = memo(function PalettePreview({ colors }: { colors: string[] }) {
+const PalettePreview = memo(function PalettePreview({
+  colors,
+  heading,
+}: {
+  colors: string[];
+  heading: ReactNode;
+}) {
   const strokes = useMemo(
     () => colors.map((color, index) => ({ color, d: palettePreviewPath(index, colors.length) })),
     [colors],
@@ -2398,9 +2389,7 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
   if (strokes.length === 0) {
     return (
       <Paper withBorder p="xs">
-        <Text size="xs" fw={700} mb={2}>
-          Palette preview
-        </Text>
+        {heading}
         <Text size="9px" c="dimmed" mb={8}>
           One line per colour, so you can judge the whole palette even when the plot uses fewer
           series.
@@ -2420,9 +2409,7 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
 
   return (
     <Paper withBorder p="xs">
-      <Text size="xs" fw={700} mb={2}>
-        Palette preview
-      </Text>
+      {heading}
       <Text size="9px" c="dimmed" mb={8}>
         One line per colour, so you can judge the whole palette even when the plot uses fewer
         series.
