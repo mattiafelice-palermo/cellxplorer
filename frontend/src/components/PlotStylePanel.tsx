@@ -273,10 +273,40 @@ export function PlotStylePanel({
     },
     onSuccess: (saved) => {
       queryClient.setQueryData(["color-palettes"], saved);
-      notifications.show({ message: "Color palette saved.", color: "teal" });
+      notifications.show({ message: "Colour palette saved.", color: "teal" });
     },
     onError: (error: Error) =>
       notifications.show({ message: error.message || "Could not save the palette.", color: "red" }),
+  });
+  const deletePalette = useMutation({
+    mutationFn: (payload: { id: string }) => {
+      const existing = paletteQuery.data?.palettes ?? [];
+      return put<ColorPaletteSettings>("/api/settings/color-palettes", {
+        palettes: existing.filter((palette) => palette.id !== payload.id),
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["color-palettes"], saved);
+      notifications.show({ message: "Colour palette deleted.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not delete the palette.", color: "red" }),
+  });
+  const renamePalette = useMutation({
+    mutationFn: (payload: { id: string; name: string }) => {
+      const existing = paletteQuery.data?.palettes ?? [];
+      return put<ColorPaletteSettings>("/api/settings/color-palettes", {
+        palettes: existing.map((palette) =>
+          palette.id === payload.id ? { ...palette, name: payload.name } : palette,
+        ),
+      });
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["color-palettes"], saved);
+      notifications.show({ message: "Colour palette renamed.", color: "teal" });
+    },
+    onError: (error: Error) =>
+      notifications.show({ message: error.message || "Could not rename the palette.", color: "red" }),
   });
   const applySelectedPreset = () => {
     const preset = availablePresets.find((item) => item.id === selectedPresetId);
@@ -1087,6 +1117,8 @@ export function PlotStylePanel({
             })
           }
           onSavePalette={(name, colors) => savePalette.mutate({ name, colors })}
+          onDeletePalette={(id) => deletePalette.mutate({ id })}
+          onRenamePalette={(id, name) => renamePalette.mutate({ id, name })}
         />
       )}
       <Modal
