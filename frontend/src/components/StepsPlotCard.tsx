@@ -63,6 +63,7 @@ import {
   useDelayedFlag,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
@@ -314,13 +315,14 @@ export function StepsSettings({
   const seriesColor = useMemo(() => {
     const style = currentPlotStyle(spec, "steps");
     const palette = plotPalette(style);
+    const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
     const map = new Map<string, string>();
     (result.data ? stepsVisibleSeries(result.data, spec) : [])
       .forEach((item, index) => {
         map.set(
           item.series_id,
           style.custom_colors[`steps-${item.series_id}`] ??
-            palette[index % palette.length]
+            paletteColorAt(palette, index, paletteOverflow)
         );
       });
     return map;
@@ -733,11 +735,12 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
   const palette = plotPalette(style);
   const visibleSeries = stepsVisibleSeries(result, spec);
   const descriptors = stepsSeriesDescriptors(visibleSeries);
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   return visibleSeries
     .map((item, index) => {
       const descriptor = descriptors[index];
       const color =
-        style.custom_colors[`steps-${item.series_id}`] ?? palette[index % palette.length];
+        style.custom_colors[`steps-${item.series_id}`] ?? paletteColorAt(palette, index, paletteOverflow);
       const baseStyle = {
         color,
         lineWidth: style.line_width,

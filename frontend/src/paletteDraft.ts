@@ -231,3 +231,210 @@ export function paletteOverflowMode(
 ): "repeat" | "generate" {
   return value === "generate" ? "generate" : "repeat";
 }
+
+/**
+ * Convert a hex colour to HSL.
+ *
+ * Parses the input via `normalizePaletteColor` and returns hue in [0,360),
+ * saturation and lightness in [0,1]. Returns `null` for invalid input.
+ *
+ * The conversion is deterministic and round-trips to hex via `hslToHex` within
+ * floating-point precision (tolerant of ~1/255 per channel due to integer RGB).
+ */
+export function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
+  const normalized = normalizePaletteColor(hex);
+  if (normalized === null) return null;
+
+  // Extract RGB from #rrggbb.
+  const r = parseInt(normalized.slice(1, 3), 16) / 255;
+  const g = parseInt(normalized.slice(3, 5), 16) / 255;
+  const b = parseInt(normalized.slice(5, 7), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+
+  if (max === min) {
+    // Achromatic (grey): no hue or saturation.
+    return { h: 0, s: 0, l };
+  }
+
+  // Saturation.
+  const s = l < 0.5 ? (max - min) / (max + min) : (max - min) / (2 - max - min);
+
+  // Hue.
+  let h: number;
+  const c = max - min;
+  if (max === r) {
+    h = (g - b) / c + (g < b ? 6 : 0);
+  } else if (max === g) {
+    h = (b - r) / c + 2;
+  } else {
+    h = (r - g) / c + 4;
+  }
+  h = (h / 6) * 360;
+
+  return { h, s, l };
+}
+
+/**
+ * Convert HSL to a hex colour.
+ *
+ * Takes hue in any range (wraps modulo 360), saturation and lightness clamped
+ * to [0,1]. Always returns lowercase `#rrggbb`.
+ *
+ * The inverse of `hexToHsl`. Deterministic and tolerant of floating-point
+ * rounding due to integer RGB quantisation.
+ */
+export function hslToHex(h: number, s: number, l: number): string {
+  // Normalise hue to [0, 360).
+  h = ((h % 360) + 360) % 360;
+  // Clamp saturation and lightness to [0, 1].
+  s = Math.max(0, Math.min(1, s));
+  l = Math.max(0, Math.min(1, l));
+
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+
+  let r: number;
+  let g: number;
+  let b: number;
+
+  if (h < 60) {
+    [r, g, b] = [c, x, 0];
+  } else if (h < 120) {
+    [r, g, b] = [x, c, 0];
+  } else if (h < 180) {
+    [r, g, b] = [0, c, x];
+  } else if (h < 240) {
+    [r, g, b] = [0, x, c];
+  } else if (h < 300) {
+    [r, g, b] = [x, 0, c];
+  } else {
+    [r, g, b] = [c, 0, x];
+  }
+
+  // Convert to 0–255 and round to nearest integer.
+  const rr = Math.round((r + m) * 255);
+  const gg = Math.round((g + m) * 255);
+  const bb = Math.round((b + m) * 255);
+
+  return `#${rr.toString(16).padStart(2, "0")}${gg.toString(16).padStart(2, "0")}${bb.toString(16).padStart(2, "0")}`;
+}
+
+/**
+ * Extend a palette to a target length by generating new distinct colours.
+ *
+ * If `count <= colors.length`, returns the first `count` colours (a slice).
+ * Otherwise returns an array of exactly `count` colours whose first
+ * `colors.length` entries are the originals, unchanged and in order.
+ *
+ * Generated colours are produced deterministically by rotating hue from the
+ * original palette. Each colour cycles through a source from the originals,
+ * and the hue is rotated by the golden angle (137.508 degrees) per cycle.
+ * The golden angle spreads hues evenly across the colour wheel without ever
+ * revisiting a previous hue, which is what keeps generated colours
+ * distinguishable from one another.
+ *
+ * For generated index `k` (0-based, i.e. overall index `colors.length + k`):
+ *   source = colors[k % colors.length]  (converted to HSL)
+ *   h = (source.h + 137.508 * (Math.floor(k / colors.length) + 1)) % 360
+ *   s = source.s
+ *   l = source.l
+ *
+ * If `colors` is empty, returns an empty array regardless of `count`.
+ *
+ * If any colour fails to parse, it is skipped when picking sources. If NONE
+ * parse, falls back to repeating the input cyclically, so the function never
+ * throws.
+ *
+ * Always a pure function: calling twice with identical arguments returns
+ * deeply equal arrays.
+ */
+export function extendPalette(colors: string[], count: number): string[] {
+  // Empty input always returns empty output.
+  if (colors.length === 0) {
+    return [];
+  }
+
+  // If count <= length, return a slice.
+  if (count <= colors.length) {
+    return colors.slice(0, count);
+  }
+
+  // Try to parse all colours to HSL once. Track which ones are valid.
+  const parsed: Array<{ h: number; s: number; l: number } | null> = colors.map((hex) =>
+    hexToHsl(hex),
+  );
+
+  // Find valid sources (colours that parsed successfully).
+  const validIndices: number[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    if (parsed[i] !== null) {
+      validIndices.push(i);
+    }
+  }
+
+  // If no colours parsed, fall back to repeating the input cyclically.
+  if (validIndices.length === 0) {
+    const result: string[] = [];
+    for (let i = 0; i < count; i++) {
+      result.push(colors[i % colors.length]!);
+    }
+    return result;
+  }
+
+  // Build the result: originals first, then generated.
+  const result = [...colors];
+
+  const GOLDEN_ANGLE = 137.508;
+
+  for (let i = colors.length; i < count; i++) {
+    // How many complete cycles through the valid sources have we done?
+    const k = i - colors.length;
+    const cycle = Math.floor(k / validIndices.length);
+    const sourceIdx = validIndices[k % validIndices.length]!;
+    const source = parsed[sourceIdx]!;
+
+    // Rotate hue by the golden angle per cycle.
+    const newH = (source.h + GOLDEN_ANGLE * (cycle + 1)) % 360;
+
+    // Generate the colour.
+    const generated = hslToHex(newH, source.s, source.l);
+    result.push(generated);
+  }
+
+  return result;
+}
+
+/**
+ * Get the colour at an index from a palette, using either repeat or generate
+ * overflow mode.
+ *
+ * In `"repeat"` mode, wraps around: `colors[index % colors.length]`.
+ *
+ * In `"generate"` mode, extends the palette to `index + 1` colours and returns
+ * the colour at that index, so colours beyond the original length are generated
+ * deterministically rather than repeating.
+ *
+ * If `colors` is empty, returns `"#000000"` (black) rather than throwing,
+ * acting as a fallback for plots with no palette defined.
+ */
+export function paletteColorAt(
+  colors: string[],
+  index: number,
+  mode: "repeat" | "generate",
+): string {
+  if (colors.length === 0) {
+    return "#000000";
+  }
+
+  if (mode === "repeat") {
+    return colors[index % colors.length]!;
+  }
+
+  // mode === "generate"
+  const extended = extendPalette(colors, index + 1);
+  return extended[index]!;
+}

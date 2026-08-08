@@ -5,8 +5,12 @@ import {
   builtInPaletteSelection,
   customPaletteSelection,
   duplicatePaletteColor,
+  extendPalette,
+  hexToHsl,
+  hslToHex,
   movePaletteColor,
   normalizePaletteColor,
+  paletteColorAt,
   paletteOverflowMode,
   removePaletteColor,
   reversePalette,
@@ -385,4 +389,239 @@ test("paletteOverflowMode returns 'repeat' for unknown values", () => {
   assert.equal(paletteOverflowMode("unknown"), "repeat");
   assert.equal(paletteOverflowMode("GENERATE"), "repeat");
   assert.equal(paletteOverflowMode("nonsense"), "repeat");
+});
+
+// --- hexToHsl / hslToHex ---------------------------------------------------
+
+test("hexToHsl parses a valid 6-digit hex colour", () => {
+  const result = hexToHsl("#ff0000");
+  assert.ok(result !== null);
+  assert.ok(Math.abs(result!.h - 0) < 1); // Red hue near 0
+  assert.ok(Math.abs(result!.s - 1) < 0.01);
+  assert.ok(Math.abs(result!.l - 0.5) < 0.01);
+});
+
+test("hexToHsl parses green", () => {
+  const result = hexToHsl("#00ff00");
+  assert.ok(result !== null);
+  assert.ok(Math.abs(result!.h - 120) < 1); // Green hue near 120
+  assert.ok(Math.abs(result!.s - 1) < 0.01);
+  assert.ok(Math.abs(result!.l - 0.5) < 0.01);
+});
+
+test("hexToHsl parses blue", () => {
+  const result = hexToHsl("#0000ff");
+  assert.ok(result !== null);
+  assert.ok(Math.abs(result!.h - 240) < 1); // Blue hue near 240
+  assert.ok(Math.abs(result!.s - 1) < 0.01);
+  assert.ok(Math.abs(result!.l - 0.5) < 0.01);
+});
+
+test("hexToHsl parses grey (achromatic)", () => {
+  const result = hexToHsl("#808080");
+  assert.ok(result !== null);
+  assert.equal(result!.s, 0); // No saturation for grey
+  assert.ok(Math.abs(result!.l - 0.5) < 0.01);
+});
+
+test("hexToHsl parses black", () => {
+  const result = hexToHsl("#000000");
+  assert.ok(result !== null);
+  assert.equal(result!.s, 0);
+  assert.equal(result!.l, 0);
+});
+
+test("hexToHsl parses white", () => {
+  const result = hexToHsl("#ffffff");
+  assert.ok(result !== null);
+  assert.equal(result!.s, 0);
+  assert.equal(result!.l, 1);
+});
+
+test("hexToHsl returns null for invalid input", () => {
+  assert.equal(hexToHsl("not-a-colour"), null);
+  assert.equal(hexToHsl("#gggggg"), null);
+  assert.equal(hexToHsl(""), null);
+});
+
+test("hslToHex converts HSL back to hex lowercase", () => {
+  const hex = hslToHex(0, 1, 0.5);
+  assert.equal(hex, "#ff0000");
+});
+
+test("hslToHex handles hue wrapping modulo 360", () => {
+  const hex1 = hslToHex(0, 1, 0.5);
+  const hex2 = hslToHex(360, 1, 0.5);
+  const hex3 = hslToHex(-360, 1, 0.5);
+  assert.equal(hex1, hex2);
+  assert.equal(hex2, hex3);
+});
+
+test("hslToHex clamps saturation and lightness", () => {
+  // Saturation > 1 should clamp to 1.
+  const hex1 = hslToHex(0, 2, 0.5);
+  assert.equal(hex1, "#ff0000"); // Full saturation red
+  // Lightness > 1 should clamp to 1.
+  const hex2 = hslToHex(0, 1, 2);
+  assert.equal(hex2, "#ffffff"); // Clamped to white
+  // Negative values should clamp to 0.
+  const hex3 = hslToHex(0, -1, 0.5);
+  assert.equal(hex3, "#808080"); // Desaturated = grey
+});
+
+test("hexToHsl and hslToHex round-trip", () => {
+  const original = "#e74c3c";
+  const hsl = hexToHsl(original);
+  assert.ok(hsl !== null);
+  const roundTrip = hslToHex(hsl!.h, hsl!.s, hsl!.l);
+  // Allow 1/255 tolerance per channel due to rounding.
+  const origRgb = {
+    r: parseInt(original.slice(1, 3), 16),
+    g: parseInt(original.slice(3, 5), 16),
+    b: parseInt(original.slice(5, 7), 16),
+  };
+  const rtRgb = {
+    r: parseInt(roundTrip.slice(1, 3), 16),
+    g: parseInt(roundTrip.slice(3, 5), 16),
+    b: parseInt(roundTrip.slice(5, 7), 16),
+  };
+  assert.ok(Math.abs(origRgb.r - rtRgb.r) <= 1);
+  assert.ok(Math.abs(origRgb.g - rtRgb.g) <= 1);
+  assert.ok(Math.abs(origRgb.b - rtRgb.b) <= 1);
+});
+
+test("hexToHsl and hslToHex round-trip for multiple colours", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff", "#123456", "#abcdef"];
+  for (const colour of colours) {
+    const hsl = hexToHsl(colour);
+    assert.ok(hsl !== null);
+    const roundTrip = hslToHex(hsl!.h, hsl!.s, hsl!.l);
+    const origRgb = {
+      r: parseInt(colour.slice(1, 3), 16),
+      g: parseInt(colour.slice(3, 5), 16),
+      b: parseInt(colour.slice(5, 7), 16),
+    };
+    const rtRgb = {
+      r: parseInt(roundTrip.slice(1, 3), 16),
+      g: parseInt(roundTrip.slice(3, 5), 16),
+      b: parseInt(roundTrip.slice(5, 7), 16),
+    };
+    assert.ok(Math.abs(origRgb.r - rtRgb.r) <= 1);
+    assert.ok(Math.abs(origRgb.g - rtRgb.g) <= 1);
+    assert.ok(Math.abs(origRgb.b - rtRgb.b) <= 1);
+  }
+});
+
+// --- extendPalette ----------------------------------------------------------
+
+test("extendPalette with count < length returns a slice", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff"];
+  const result = extendPalette(colours, 2);
+  assert.deepEqual(result, ["#ff0000", "#00ff00"]);
+});
+
+test("extendPalette with count == length returns the originals", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff"];
+  const result = extendPalette(colours, 3);
+  assert.deepEqual(result, colours);
+});
+
+test("extendPalette with count > length preserves originals as prefix", () => {
+  const colours = ["#ff0000", "#00ff00"];
+  const result = extendPalette(colours, 4);
+  // First two must be exactly the originals.
+  assert.equal(result[0], "#ff0000");
+  assert.equal(result[1], "#00ff00");
+  // Total length must be exactly 4.
+  assert.equal(result.length, 4);
+});
+
+test("extendPalette returns exactly count colours", () => {
+  const colours = ["#ff0000", "#00ff00"];
+  for (const count of [1, 2, 5, 10]) {
+    const result = extendPalette(colours, count);
+    assert.equal(result.length, count);
+  }
+});
+
+test("extendPalette with empty input returns empty array", () => {
+  const result = extendPalette([], 5);
+  assert.deepEqual(result, []);
+});
+
+test("extendPalette is deterministic", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff"];
+  const result1 = extendPalette(colours, 10);
+  const result2 = extendPalette(colours, 10);
+  assert.deepEqual(result1, result2);
+});
+
+test("extendPalette generated colours are valid hex", () => {
+  const colours = ["#ff0000"];
+  const result = extendPalette(colours, 5);
+  for (const colour of result) {
+    assert.match(colour, /^#[0-9a-f]{6}$/);
+  }
+});
+
+test("extendPalette first generated colour differs from all originals", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff"];
+  const result = extendPalette(colours, 4);
+  const generated = result[3]; // First generated colour
+  assert.ok(!colours.includes(generated));
+});
+
+test("extendPalette with all-invalid input does not throw", () => {
+  const invalid = ["not-a-colour", "#gggggg", ""];
+  const result = extendPalette(invalid, 3);
+  assert.equal(result.length, 3);
+});
+
+test("extendPalette with partial invalid input skips them", () => {
+  const colours = ["#ff0000", "not-a-colour", "#0000ff"];
+  const result = extendPalette(colours, 6);
+  // First three are originals (including the invalid one, which stays as-is).
+  assert.equal(result[0], "#ff0000");
+  assert.equal(result[1], "not-a-colour");
+  assert.equal(result[2], "#0000ff");
+  // Remaining three are generated from the two valid colours.
+  assert.equal(result.length, 6);
+  // Generated colours should be valid hex.
+  assert.match(result[3], /^#[0-9a-f]{6}$/);
+  assert.match(result[4], /^#[0-9a-f]{6}$/);
+  assert.match(result[5], /^#[0-9a-f]{6}$/);
+});
+
+// --- paletteColorAt ---------------------------------------------------------
+
+test("paletteColorAt with repeat mode wraps like modulo", () => {
+  const colours = ["#ff0000", "#00ff00", "#0000ff"];
+  assert.equal(paletteColorAt(colours, 0, "repeat"), "#ff0000");
+  assert.equal(paletteColorAt(colours, 1, "repeat"), "#00ff00");
+  assert.equal(paletteColorAt(colours, 2, "repeat"), "#0000ff");
+  assert.equal(paletteColorAt(colours, 3, "repeat"), "#ff0000"); // Wraps
+  assert.equal(paletteColorAt(colours, 4, "repeat"), "#00ff00");
+  assert.equal(paletteColorAt(colours, 5, "repeat"), "#0000ff");
+});
+
+test("paletteColorAt with generate mode matches extendPalette", () => {
+  const colours = ["#ff0000", "#00ff00"];
+  for (const index of [0, 1, 2, 3, 4, 5]) {
+    const result = paletteColorAt(colours, index, "generate");
+    const extended = extendPalette(colours, index + 1);
+    assert.equal(result, extended[index]);
+  }
+});
+
+test("paletteColorAt with empty palette returns black", () => {
+  const empty: string[] = [];
+  assert.equal(paletteColorAt(empty, 0, "repeat"), "#000000");
+  assert.equal(paletteColorAt(empty, 5, "generate"), "#000000");
+});
+
+test("paletteColorAt with single colour repeats in repeat mode", () => {
+  const colours = ["#ff0000"];
+  assert.equal(paletteColorAt(colours, 0, "repeat"), "#ff0000");
+  assert.equal(paletteColorAt(colours, 1, "repeat"), "#ff0000");
+  assert.equal(paletteColorAt(colours, 100, "repeat"), "#ff0000");
 });

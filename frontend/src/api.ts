@@ -1017,6 +1017,8 @@ export interface PlotStyle {
   palette: PlotPaletteKey;
   palette_id?: string | null;
   palette_colors?: string[];
+  /** How colours are chosen past the end of the palette. Absent means "repeat". */
+  palette_overflow_mode?: "repeat" | "generate";
   custom_colors: Record<string, string>;
   line_width: number;
   line_dash: "solid" | "dot" | "dash" | "longdash";

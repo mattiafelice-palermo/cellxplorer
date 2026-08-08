@@ -79,6 +79,7 @@ import {
   useDelayedRecognitionProgress,
   useSharedRecognitionToken,
 } from "../recognitionProgress";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 import Plot from "./Plot";
 import {
   ProtocolSegmentsPanel,
@@ -220,12 +221,13 @@ export function dcirTracesForResult(
   const defaultXTitle = dcirXTitle(view.x_axis);
   const visibleSeries = dcirVisibleSeries(result, spec);
   const descriptors = dcirSeriesDescriptors(visibleSeries);
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   return visibleSeries
     .map((item, index) => {
       const descriptor = descriptors[index];
       const color =
         style.custom_colors[`dcir-${item.series_id}`] ??
-        palette[index % palette.length];
+        paletteColorAt(palette, index, paletteOverflow);
       const baseStyle = {
         color,
         lineWidth: style.line_width,
@@ -583,13 +585,14 @@ export function DcirSettings({
   const seriesColor = useMemo(() => {
     const style = currentPlotStyle(spec, "dcir");
     const palette = plotPalette(style);
+    const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
     const map = new Map<string, string>();
     (result.data ? dcirVisibleSeries(result.data, spec) : []).forEach(
       (item, index) => {
         map.set(
           item.series_id,
           style.custom_colors[`dcir-${item.series_id}`] ??
-            palette[index % palette.length]
+            paletteColorAt(palette, index, paletteOverflow)
         );
       });
     return map;

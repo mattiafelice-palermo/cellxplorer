@@ -44,6 +44,7 @@ import {
   tracesToColumns,
   usePlotSizeSync,
 } from "../pages/AnalysisPage";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
@@ -299,6 +300,7 @@ export function chargeabilityTracesForResult(
   const view = chargeabilityViewFor(spec);
   const style = currentPlotStyle(spec, "chargeability");
   const palette = plotPalette(style);
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   const visibleMatches = (result.matches ?? []).filter((match) => {
     const x = xValues(match, view);
     return (
@@ -314,7 +316,7 @@ export function chargeabilityTracesForResult(
       const descriptor = descriptors[index];
       const color =
         style.custom_colors[`chargeability-${match.id}`] ??
-        palette[index % palette.length];
+        paletteColorAt(palette, index, paletteOverflow);
       const baseStyle = {
         color,
         lineWidth: style.line_width,

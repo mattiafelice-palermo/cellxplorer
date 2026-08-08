@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.20.1 - 2026-08-08
+
+- Add a palette editor: compose a palette before applying it, preview every colour, and choose whether extra series repeat the palette or get generated colours.
+
 ## 0.20.0 - 2026-08-06
 
 - Move all series styling into the Series appearance editor: every plot tab can now style individual series, apply rules, link secondary-axis colours, and manage palettes in one place.

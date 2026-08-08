@@ -22,6 +22,7 @@ import {
   TextInput,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from "@mantine/core";
 import {
   IconArrowDown,
@@ -94,6 +95,7 @@ import {
   customPaletteSelection,
   duplicatePaletteColor,
   movePaletteColor,
+  paletteOverflowMode,
   removePaletteColor,
   reversePalette,
   savedPaletteSelection,
@@ -1263,6 +1265,28 @@ export function SeriesStyleModal({
                     </Group>
                   </div>
 
+                  <PalettePreview colors={scratchColors} />
+
+                  <Group wrap="nowrap" align="flex-end" gap="xs">
+                    <Text size="xs" c="dimmed" style={{ flex: 1 }}>
+                      If the plot has more than {scratchColors.length} series
+                    </Text>
+                    <Select
+                      size="xs"
+                      w={240}
+                      data={[
+                        { value: "repeat", label: "Repeat the palette" },
+                        { value: "generate", label: "Generate additional colours" },
+                      ]}
+                      value={paletteOverflowMode(baseStyle.palette_overflow_mode)}
+                      onChange={(value) => {
+                        if (value) {
+                          patchBaseStyle({ palette_overflow_mode: value as "repeat" | "generate" });
+                        }
+                      }}
+                    />
+                  </Group>
+
                   {onSavePalette && (
                     <>
                       <Divider label="Save current colours as palette…" labelPosition="left" />
@@ -2006,6 +2030,99 @@ function SortablePaletteSwatch({
     </Stack>
   );
 }
+
+/** Height, in px, of the palette preview's SVG. */
+const PALETTE_PREVIEW_HEIGHT = 180;
+
+/**
+ * A deterministic, pleasant curve for palette-preview line `index` of `count`.
+ *
+ * Pure (no randomness, no `Date`) so the same palette always draws the same
+ * shapes — the point is to compare colours, not to watch the lines move.
+ * Phase-shifting by `index / count` spreads the curves apart so lines for
+ * adjacent colours in a large palette don't sit right on top of each other.
+ */
+function palettePreviewPath(index: number, count: number, steps = 60): string {
+  const points: string[] = [];
+  for (let step = 0; step <= steps; step++) {
+    const x = step / steps;
+    const y =
+      0.5 +
+      0.34 *
+        Math.sin(2 * Math.PI * (1.1 * x + index / count)) *
+        Math.cos(0.7 * Math.PI * (x + index / (2 * count)));
+    points.push(`${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`);
+  }
+  return `M${points.join(" L")}`;
+}
+
+/**
+ * Every colour in the palette being composed, drawn as one line each.
+ *
+ * The modal's main preview is the real plot, which may only have a handful
+ * of series — nowhere near enough to show what colours 4..N of a larger
+ * palette look like. This renders every colour instead, as hand-built SVG
+ * rather than a second Plotly instance, so composing a palette never triggers
+ * a second relayout on top of the main preview's.
+ *
+ * Memoised, with the path data itself memoised on `colors`, so neither
+ * recomputes on renders caused by unrelated modal state (e.g. typing a
+ * legend name on another tab).
+ */
+const PalettePreview = memo(function PalettePreview({ colors }: { colors: string[] }) {
+  const strokes = useMemo(
+    () => colors.map((color, index) => ({ color, d: palettePreviewPath(index, colors.length) })),
+    [colors],
+  );
+
+  if (strokes.length === 0) {
+    return <Paper withBorder p="xs" />;
+  }
+
+  return (
+    <Paper withBorder p="xs">
+      <Text size="xs" fw={700} mb={2}>
+        Palette preview
+      </Text>
+      <Text size="9px" c="dimmed" mb={8}>
+        One line per colour, so you can judge the whole palette even when the plot uses fewer
+        series.
+      </Text>
+      <VisuallyHidden>
+        {`Preview of ${strokes.length} colour${strokes.length === 1 ? "" : "s"}, one curve per colour.`}
+      </VisuallyHidden>
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        width="100%"
+        height={PALETTE_PREVIEW_HEIGHT}
+        aria-hidden="true"
+        style={{ display: "block" }}
+      >
+        <line
+          x1={0}
+          y1={50}
+          x2={100}
+          y2={50}
+          stroke="var(--mantine-color-default-border)"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+        {strokes.map(({ color, d }, index) => (
+          <path
+            key={index}
+            d={d}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+    </Paper>
+  );
+});
 
 /**
  * Preview panel with fixed dimensions and optional legend popover.

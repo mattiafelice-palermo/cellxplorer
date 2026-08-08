@@ -58,6 +58,7 @@ import {
   seriesPlotlySymbol,
   type SeriesDescriptor,
 } from "../seriesStyling";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 import {
   clearRecognitionToken,
   newRecognitionToken,
@@ -455,6 +456,7 @@ export function rateCapabilityTracesForResult(
   const view = rateCapabilityViewFor(spec);
   const style = currentPlotStyle(spec, "crate");
   const palette = plotPalette(style);
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   const comparisonPoints = result.comparison?.points ?? [];
   const descriptors = rateCapabilitySeriesDescriptors(result, spec);
   const cellIds = [
@@ -474,7 +476,7 @@ export function rateCapabilityTracesForResult(
     (blockId
       ? style.custom_colors[`rate-capability-${blockId}`]
       : undefined) ??
-    palette[Math.max(0, cellIds.indexOf(cellId)) % palette.length];
+    paletteColorAt(palette, Math.max(0, cellIds.indexOf(cellId)), paletteOverflow);
   const plottedX = (value: number) =>
     view.x_spacing === "equal" ? xCategory(value, view) : value;
   const isBar = view.visualization === "bar";

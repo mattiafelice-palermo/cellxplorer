@@ -253,6 +253,7 @@ import {
   ceMarkerSymbol,
   hexToRgba,
 } from "../plotStyle";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 // Re-exported for consumers that previously imported these from AnalysisPage.tsx
 // (ChargeabilityPlotCard, DcirPlotCard, StepsPlotCard, RateCapabilityPlotCard, etc.).
 export { currentPlotStyle, plotPalette, cePalette, markerSymbol, ceMarkerSymbol } from "../plotStyle";
@@ -2515,9 +2516,11 @@ function tracesForResult(
   const mode = compact ? "lines" : plotMode(style);
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   let ci = 0;
   const pick = (key: string) => {
-    if (!colorFor.has(key)) colorFor.set(key, style.custom_colors[key] ?? palette[ci++ % palette.length]);
+    if (!colorFor.has(key))
+      colorFor.set(key, style.custom_colors[key] ?? paletteColorAt(palette, ci++, paletteOverflow));
     return colorFor.get(key)!;
   };
   let ceIndex = 0;
@@ -3034,9 +3037,11 @@ function tracesForTimeCapacity(
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
   const traceType = interactiveWebGl ? "scattergl" : "scatter";
+  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   let ci = 0;
   const pick = (key: string) => {
-    if (!colorFor.has(key)) colorFor.set(key, style.custom_colors[key] ?? palette[ci++ % palette.length]);
+    if (!colorFor.has(key))
+      colorFor.set(key, style.custom_colors[key] ?? paletteColorAt(palette, ci++, paletteOverflow));
     return colorFor.get(key)!;
   };
   // Per-series resolution against this tab's own key scheme. The base carries

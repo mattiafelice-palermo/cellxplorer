@@ -58,6 +58,7 @@ import {
   plotPalette,
   normalizePlotStyle,
 } from "../plotStyle";
+import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
 
 const LEGEND_INSIDE_POSITION_OPTIONS: {
   value: PlotStyle["legend_inside_position"];
@@ -171,6 +172,7 @@ export function PlotStylePanel({
   const seriesBaseDefaults = useMemo(
     () => ({
       palette: plotPalette(style),
+      paletteOverflow: paletteOverflowMode(style.palette_overflow_mode),
       customColors: style.custom_colors,
       lineWidth: style.line_width,
       lineDash: style.line_dash,
@@ -188,9 +190,9 @@ export function PlotStylePanel({
   const seriesBaseFor = useCallback(
     (descriptor: SeriesDescriptor) => {
       const index = seriesKeyOrder.get(descriptor.key) ?? 0;
-      const { palette } = seriesBaseDefaults;
+      const { palette, paletteOverflow } = seriesBaseDefaults;
       return {
-        color: seriesBaseDefaults.customColors[descriptor.key] ?? palette[index % palette.length],
+        color: seriesBaseDefaults.customColors[descriptor.key] ?? paletteColorAt(palette, index, paletteOverflow),
         lineWidth: seriesBaseDefaults.lineWidth,
         lineDash: seriesBaseDefaults.lineDash,
         markerMode: seriesBaseDefaults.markerMode,
