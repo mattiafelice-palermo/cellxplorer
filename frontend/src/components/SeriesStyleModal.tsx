@@ -1944,7 +1944,7 @@ function SortablePaletteSwatch({
         closeOnEscape
       >
         <Popover.Target>
-          <Tooltip label={color} disabled={selected || popoverOpened}>
+          <Tooltip label={color} position="bottom" disabled={selected || popoverOpened}>
             <UnstyledButton
               aria-label={`Colour ${index + 1}: ${color}`}
               title={color}
@@ -2047,9 +2047,9 @@ function palettePreviewPath(index: number, count: number): string {
     const svgY = plotBottom - ((v - dataMin) / (dataMax - dataMin)) * (plotBottom - plotTop);
     const clampedY = Math.max(plotTop, Math.min(plotBottom, svgY));
 
-    // Map x from [0, 1] onto plot area [56, 330]
-    const plotLeft = 56;
-    const plotRight = 330;
+    // Map x from [0, 1] onto plot area [62, 660]
+    const plotLeft = 62;
+    const plotRight = 660;
     const svgX = plotLeft + x * (plotRight - plotLeft);
 
     points.push([svgX, clampedY]);
@@ -2090,16 +2090,16 @@ function palettePreviewPath(index: number, count: number): string {
 
 /**
  * Generate grid, axis, and legend elements for the palette preview chart.
- * Plot area: x from 56 to 330, y from 24 to 200.
+ * Plot area: x from 62 to 660, y from 24 to 200.
  * Data range: y from -1.5 to +1.5.
  */
 function generatePreviewChartElements(colors: string[]) {
-  const plotLeft = 56;
-  const plotRight = 330;
+  const plotLeft = 62;
+  const plotRight = 660;
   const plotTop = 24;
   const plotBottom = 200;
-  const yTickLabelX = 50;
-  const xTickLabelY = 218;
+  const yTickLabelX = 56;
+  const xTickLabelY = 220;
 
   // Grid lines: vertical at 0, 0.2, 0.4, 0.6, 0.8, 1.0
   // Horizontal at -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5
@@ -2225,9 +2225,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
         {`Preview of ${strokes.length} colour${strokes.length === 1 ? "" : "s"}, one curve per colour.`}
       </VisuallyHidden>
       <svg
-        viewBox="0 0 480 260"
+        viewBox="0 0 900 260"
         width="100%"
-        height={PALETTE_PREVIEW_HEIGHT}
+        height="auto"
         aria-hidden="true"
         style={{ display: "block" }}
       >
@@ -2241,8 +2241,8 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               x2={line.x2}
               y2={line.y2}
               stroke="var(--mantine-color-default-border)"
-              strokeWidth={0.5}
-              opacity={0.3}
+              strokeWidth={1}
+              opacity={0.7}
               vectorEffect="non-scaling-stroke"
             />
           ) : (
@@ -2253,8 +2253,8 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               x2={line.x2}
               y2={line.y2}
               stroke="var(--mantine-color-default-border)"
-              strokeWidth={0.5}
-              opacity={0.3}
+              strokeWidth={1}
+              opacity={0.7}
               vectorEffect="non-scaling-stroke"
             />
           ),
@@ -2269,9 +2269,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              stroke="var(--mantine-color-default-border)"
-              strokeWidth={0.7}
-              opacity={0.5}
+              stroke="var(--mantine-color-dimmed)"
+              strokeWidth={1.2}
+              opacity={0.9}
               vectorEffect="non-scaling-stroke"
             />
           ) : (
@@ -2281,8 +2281,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              stroke="var(--mantine-color-default-border)"
-              strokeWidth={1}
+              stroke="var(--mantine-color-dimmed)"
+              strokeWidth={1.2}
+              opacity={0.9}
               vectorEffect="non-scaling-stroke"
             />
           ),
@@ -2294,8 +2295,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
             key={`ytick-${idx}`}
             x={label.x}
             y={label.y}
-            fontSize={11}
-            fill="var(--mantine-color-dimmed)"
+            fontSize={13}
+            fill="var(--mantine-color-text)"
+            opacity={0.75}
             textAnchor="end"
             dominantBaseline="middle"
           >
@@ -2309,8 +2311,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
             key={`xtick-${idx}`}
             x={label.x}
             y={label.y}
-            fontSize={11}
-            fill="var(--mantine-color-dimmed)"
+            fontSize={13}
+            fill="var(--mantine-color-text)"
+            opacity={0.75}
             textAnchor="middle"
             dominantBaseline="middle"
           >
@@ -2320,23 +2323,25 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
 
         {/* Y axis title */}
         <text
-          x={20}
+          x={22}
           y={112}
-          fontSize={12}
-          fill="var(--mantine-color-dimmed)"
+          fontSize={14}
+          fill="var(--mantine-color-text)"
+          opacity={0.75}
           textAnchor="middle"
           dominantBaseline="middle"
-          transform="rotate(-90 20 112)"
+          transform="rotate(-90 22 112)"
         >
           Value
         </text>
 
         {/* X axis title */}
         <text
-          x={193}
-          y={244}
-          fontSize={12}
-          fill="var(--mantine-color-dimmed)"
+          x={361}
+          y={246}
+          fontSize={14}
+          fill="var(--mantine-color-text)"
+          opacity={0.75}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -2359,15 +2364,15 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
         {/* Legend */}
         <g>
           {chartElements.legendEntries.map((entry, idx) => {
-            const legendX = 348;
-            const legendY = 34 + idx * 19;
+            const legendX = 690;
+            const legendY = 34 + idx * 20;
             return (
               <g key={`legend-${idx}`}>
                 {/* Color line sample */}
                 <line
                   x1={legendX}
                   y1={legendY}
-                  x2={legendX + 18}
+                  x2={legendX + 26}
                   y2={legendY}
                   stroke={entry.color}
                   strokeWidth={2}
@@ -2376,9 +2381,9 @@ const PalettePreview = memo(function PalettePreview({ colors }: { colors: string
                 />
                 {/* Legend label */}
                 <text
-                  x={legendX + 24}
+                  x={legendX + 34}
                   y={legendY}
-                  fontSize={12}
+                  fontSize={13}
                   fill={entry.color === "transparent" ? "var(--mantine-color-dimmed)" : "var(--mantine-color-text)"}
                   dominantBaseline="middle"
                 >
