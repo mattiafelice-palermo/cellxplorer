@@ -1,5 +1,30 @@
 # Feature specs
 
+- [`038-analyses-feature-modularization.md`](038-analyses-feature-modularization.md)
+  moves all frontend Analysis Database, workspace, editor-family, plotting, saved-artifact, warmup,
+  and portable-report ownership into `features/analyses/` while leaving the two route pages as
+  thin adapters. This is a behavior-preserving eight-child plan on the shared
+  `feature/analyses-feature-modularization` branch:
+  - [`038.1-shared-plotting-and-visibility-foundation.md`](038.1-shared-plotting-and-visibility-foundation.md)
+    creates the shared plotting home, extracts page-owned presentation/runtime/export helpers, and
+    establishes one context-aware visibility policy.
+  - [`038.2-analysis-database-and-workspace-organization.md`](038.2-analysis-database-and-workspace-organization.md)
+    organizes the Analysis Database and workspace and makes the index route thin.
+  - [`038.3-existing-editor-module-organization.md`](038.3-existing-editor-module-organization.md)
+    moves the four already-separated scientific families plus protocol, recognition, diagnostic,
+    and editor policy modules.
+  - [`038.4-cycles-family-extraction.md`](038.4-cycles-family-extraction.md)
+    extracts the complete Cycles frontend vertical slice and canonical figure builders.
+  - [`038.5-time-capacity-family-extraction.md`](038.5-time-capacity-family-extraction.md)
+    extracts the complete Time/Capacity frontend vertical slice and canonical figure builders.
+  - [`038.6-saved-plot-artifacts-extraction.md`](038.6-saved-plot-artifacts-extraction.md)
+    extracts saved previews/artifacts and moves draft and background-warmup modules.
+  - [`038.7-portable-report-flow-extraction.md`](038.7-portable-report-flow-extraction.md)
+    extracts portable estimate, source preflight/update, snapshot, export, and share orchestration.
+  - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
+    extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
+    durable architecture documentation, and runs final integration verification.
+  **Plan; no child implemented.**
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
   plot presets. Children 035.1–035.12 use the shared
@@ -514,6 +539,29 @@ Rules:
     — fail-closed Steps/DCIR/Chargeability/C-rate behavior until semantic mappings exist.
   - [034.9-portable-roundtrip-and-regression.md](034.9-portable-roundtrip-and-regression.md)
     — exact portable hierarchy, synthetic regression corpus, documentation, and final matrix.
+  **Plan; no child implemented.**
+- [038-analyses-feature-modularization.md](038-analyses-feature-modularization.md)
+  — parent plan for moving the complete frontend analyses domain behind one feature boundary while
+  preserving routes, UI, scientific results, API/query/cache contracts, saved artifacts, and
+  portable reports. Implement only through these sequential children on
+  `feature/analyses-feature-modularization`:
+  - [038.1-shared-plotting-and-visibility-foundation.md](038.1-shared-plotting-and-visibility-foundation.md)
+    — shared plotting presentation/export/runtime modules and one context-aware visibility policy.
+  - [038.2-analysis-database-and-workspace-organization.md](038.2-analysis-database-and-workspace-organization.md)
+    — Analysis Database and workspace ownership, with a thin index route.
+  - [038.3-existing-editor-module-organization.md](038.3-existing-editor-module-organization.md)
+    — relocation of existing families, protocol, recognition, diagnostic, and editor policies.
+  - [038.4-cycles-family-extraction.md](038.4-cycles-family-extraction.md)
+    — complete Cycles settings/query/result-to-figure/card extraction.
+  - [038.5-time-capacity-family-extraction.md](038.5-time-capacity-family-extraction.md)
+    — complete Time/Capacity settings/query/result-to-figure/card extraction.
+  - [038.6-saved-plot-artifacts-extraction.md](038.6-saved-plot-artifacts-extraction.md)
+    — saved previews, artifacts, draft card, and background warmup ownership.
+  - [038.7-portable-report-flow-extraction.md](038.7-portable-report-flow-extraction.md)
+    — portable estimate, source preflight/update, snapshots, export, and share orchestration.
+  - [038.8-analysis-editor-integration.md](038.8-analysis-editor-integration.md)
+    — final editor extraction, thin route, compatibility removal, documentation, and integration
+    verification.
   **Plan; no child implemented.**
 
 ## Assets
