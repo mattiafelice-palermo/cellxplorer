@@ -72,7 +72,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import {
   AnalysisFull,
@@ -1919,15 +1919,18 @@ function AnalysisSettingsPanel({
 export interface AnalysisEditorProps {
   analysisId: number;
   workspaceVisible?: boolean;
+  onOpenAnalysis: (analysisId: number) => void;
+  onOpenAnalysisDatabase: () => void;
 }
 
 function AnalysisEditorView({
   analysisId,
   workspaceVisible = true,
+  onOpenAnalysis,
+  onOpenAnalysisDatabase,
 }: AnalysisEditorProps) {
   const aid = analysisId;
   const workspaceState = useRef(getAnalysisWorkspaceEditorState(aid)).current;
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
 
@@ -2259,7 +2262,7 @@ function AnalysisEditorView({
       setActiveSavedPlotId(null);
       setActivePlotBaselineSignature(null);
       setPlotWorkspaceTouched(false);
-      navigate(`/analyses/${a.id}`);
+      onOpenAnalysis(a.id);
     },
   });
 
@@ -2267,7 +2270,7 @@ function AnalysisEditorView({
     mutationFn: () => del(`/api/analyses/${aid}`),
     onSuccess: async () => {
       clearAnalysisWorkspaceEditorState(aid);
-      navigate("/analyses");
+      onOpenAnalysisDatabase();
       await clearAnalysisQueryCache(qc, aid);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["analyses"] }),
@@ -2590,7 +2593,7 @@ function AnalysisEditorView({
       <Paper p="lg" withBorder>
         <Stack gap="sm">
           <Alert color="red">Analysis not found.</Alert>
-          <Button w="fit-content" variant="light" onClick={() => navigate("/analyses")}>
+          <Button w="fit-content" variant="light" onClick={onOpenAnalysisDatabase}>
             Back to analysis database
           </Button>
         </Stack>

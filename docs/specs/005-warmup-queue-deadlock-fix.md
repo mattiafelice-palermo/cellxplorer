@@ -10,7 +10,7 @@ has been idle for a long time."*
 
 ## 1. The defect
 
-`SavedPlotPreview`'s warmup-completion effect (`frontend/src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx`) has
+`SavedPlotPreview`'s warmup-completion effect (`frontend/src/pages/AnalysisPage.tsx` ~3656) has
 exactly four terminal branches:
 
 ```
@@ -28,7 +28,7 @@ None covers a failure of the two **lookup** queries that gate everything else:
 4. → `thumbnailPairReady` and `generationFailed` are both `false`.
 5. → **no branch fires; `onWarmupComplete` is never called.**
 
-In `CacheWarmupCoordinator` (`frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx`),
+In `CacheWarmupCoordinator` (`frontend/src/components/CacheWarmupCoordinator.tsx` ~94),
 `busy.current = true` is set before `setTask(...)` and is cleared **only** inside `finish()`.
 With no completion, `busy` stays `true` and `task` stays set, so every later tick returns at:
 
@@ -64,7 +64,7 @@ Adding a server-side lease would introduce a way for the same task to be handed 
 ### 3.1 Extract the completion logic into one pure, testable function
 
 The bug exists in two places because the logic was duplicated. Create
-`frontend/src/features/analyses/editor/artifacts/warmupCompletion.ts` exporting a pure resolver:
+`frontend/src/warmupCompletion.ts` exporting a pure resolver:
 
 ```ts
 export interface WarmupSignals {
@@ -169,10 +169,10 @@ Implemented 2026-07-25, same session as the spec.
 
 | File | Change |
 |---|---|
-| `frontend/src/features/analyses/editor/artifacts/warmupCompletion.ts` *(new)* | Pure `resolveWarmup(signals)` + `warmupErrorMessage(...)`. Seven ordered branches per §3.1. |
+| `frontend/src/warmupCompletion.ts` *(new)* | Pure `resolveWarmup(signals)` + `warmupErrorMessage(...)`. Seven ordered branches per §3.1. |
 | `frontend/tests/warmupCompletion.test.ts` *(new)* | 10 tests: every branch, branch order, message fallbacks, and an exhaustive "no terminal signal stays pending" guard. |
-| `frontend/src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx` | Both `SavedPlotPreview` and `SavedTimeCapacityPreview` now call `resolveWarmup`. The two completion blocks were **byte-identical** — the duplication that let the bug exist twice — and are now one shared function. `retry: false` → `retry: 1` on the four warmup lookup queries (lines ~3377, ~3399, ~3748, ~3770). |
-| `frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx` | `WARMUP_TASK_TIMEOUT_MS` (5 min) watchdog re-armed per task; `finish` made idempotent via `finishedTaskId`. |
+| `frontend/src/pages/AnalysisPage.tsx` | Both `SavedPlotPreview` and `SavedTimeCapacityPreview` now call `resolveWarmup`. The two completion blocks were **byte-identical** — the duplication that let the bug exist twice — and are now one shared function. `retry: false` → `retry: 1` on the four warmup lookup queries (lines ~3377, ~3399, ~3748, ~3770). |
+| `frontend/src/components/CacheWarmupCoordinator.tsx` | `WARMUP_TASK_TIMEOUT_MS` (5 min) watchdog re-armed per task; `finish` made idempotent via `finishedTaskId`. |
 
 `CachedSavedPlotPreview`'s thumbnail query (line ~4042) intentionally keeps `retry: false` — it
 is display-only and cannot stall a task.

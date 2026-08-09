@@ -73,7 +73,10 @@ function AnalysisWorkspaceDatabase() {
 
 export function AnalysisWorkspaceContent() {
   const location = useLocation();
+  const navigate = useNavigate();
   const activeId = analysisIdFromPath(location.pathname);
+  const onOpenAnalysis = useCallback((analysisId: number) => navigate(`/analyses/${analysisId}`), [navigate]);
+  const onOpenAnalysisDatabase = useCallback(() => navigate("/analyses"), [navigate]);
   const [displayedId, setDisplayedId] = useState<number | null>(activeId);
   const onHome = displayedId === null;
   const [policy, setPolicy] = useState<AnalysisWorkspaceMemoryPolicy>(
@@ -170,7 +173,16 @@ export function AnalysisWorkspaceContent() {
   }, [policy]);
 
   if (policy === "unmount") {
-    if (activeId !== null) return <AnalysisEditor key={activeId} analysisId={activeId} />;
+    if (activeId !== null) {
+      return (
+        <AnalysisEditor
+          key={activeId}
+          analysisId={activeId}
+          onOpenAnalysis={onOpenAnalysis}
+          onOpenAnalysisDatabase={onOpenAnalysisDatabase}
+        />
+      );
+    }
     return <AnalysisWorkspaceDatabase />;
   }
 
@@ -201,6 +213,8 @@ export function AnalysisWorkspaceContent() {
           <AnalysisEditor
             analysisId={analysisId}
             workspaceVisible={displayedId === analysisId}
+            onOpenAnalysis={onOpenAnalysis}
+            onOpenAnalysisDatabase={onOpenAnalysisDatabase}
           />
         </Box>
       ))}
