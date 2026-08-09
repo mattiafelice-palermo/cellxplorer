@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.5
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: de1b31e1987bd532e2bd30c070f6e6a14f03fd21
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: dbeb78fb0360e9eca6ebb64b9d5a80abc5138689
 LAST_REVIEW_SHA: 07dbe7fad21c6ba9d22006eee0d2f49b97385168
-NEXT_ACTION: Reconcile 038.4 status metadata with its clean review, set 038.5 active, implement 038.5 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
+NEXT_ACTION: Review 038.5 against the parent/child spec and update its canonical review file.
 ```
 
 ## Protocol
@@ -166,3 +166,21 @@ Reviewed 038.4 implementation `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` after v
 - Decision: **038.4 REVIEW_CLEAN — 038.5 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.5** in `dbeb78fb0360e9eca6ebb64b9d5a80abc5138689` and pushed the shared branch.
+
+- Extracted the complete Time/Capacity configuration, normalization, coordinate/segment/current
+  helpers, canonical trace/layout builders, settings, live query/progress/render/export card, and
+  style preview into the locked `families/time-capacity/TimeCapacityPlotCard.tsx` module. Saved
+  preview and portable snapshot consumers use the canonical family builders; no scientific,
+  backend, schema, cache, calculation-version, or artifact-version behavior changed.
+- Verification: focused suite **81/81**; TypeScript passed; Vite build passed with **7514** modules
+  transformed; page implementation search clean; one live `time-capacity` query owner plus the
+  intentional saved/portable requests; canonical elevated `python scripts\preflight.py`
+  **PREFLIGHT PASSED**, **5/5** stages, including **58** backend test modules, frontend policy
+  tests, type check, and production bundle. Existing Vite dynamic-import and large-chunk warnings
+  remain.
+- Manual checks: **NOT RUN**; browser/manual matrix was not run in this checkpoint.
+- Next action: independent reviewer reviews 038.5 and updates its canonical review file.

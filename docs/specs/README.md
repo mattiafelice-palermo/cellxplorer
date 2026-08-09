@@ -19,7 +19,7 @@
     **Implemented; review-clean.**
   - [`038.5-time-capacity-family-extraction.md`](038.5-time-capacity-family-extraction.md)
     extracts the complete Time/Capacity frontend vertical slice and canonical figure builders.
-    **In progress; active child.**
+    **Implemented; review pending.**
   - [`038.6-saved-plot-artifacts-extraction.md`](038.6-saved-plot-artifacts-extraction.md)
     extracts saved previews/artifacts and moves draft and background-warmup modules.
   - [`038.7-portable-report-flow-extraction.md`](038.7-portable-report-flow-extraction.md)
@@ -27,7 +27,7 @@
   - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
     extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
     durable architecture documentation, and runs final integration verification.
-  **In progress; 038.1–038.4 are implemented and review-clean, with 038.5 active.**
+  **In progress; 038.1–038.4 are implemented and review-clean, with 038.5 awaiting review.**
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
   plot presets. Children 035.1–035.12 use the shared

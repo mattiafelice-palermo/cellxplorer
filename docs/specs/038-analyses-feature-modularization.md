@@ -1,6 +1,6 @@
 # 038 — Analyses feature modularization
 
-**Status:** In progress — 038.1–038.4 implemented and review-clean; 038.5 active
+**Status:** In progress — 038.1–038.4 implemented and review-clean; 038.5 awaiting review
 **Implementation:** Implement only through the sequential child specifications listed below.
 **Repository:** `mattiafelice-palermo/cellxplorer`
 **Authoring baseline:** `main` and `origin/main` at `b6452a4d6691ef1f9b6acf3e353a6f05a5873ed7`
