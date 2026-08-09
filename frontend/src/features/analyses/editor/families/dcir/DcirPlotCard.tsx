@@ -46,52 +46,52 @@ import {
   type ProtocolSegment,
   type SeriesStyleOverride,
   type SeriesStyleRule,
-} from "../api";
+} from "../../../../../api";
 import {
   axisTitleFont,
   plotAxisStyle,
   plotLayoutStyle,
-} from "../features/analyses/editor/plotting/plotLayout";
+} from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
   styledPlotExportPreview,
   tracesToColumns,
-} from "../features/analyses/editor/plotting/plotExport";
-import { PlotHeader } from "../features/analyses/editor/plotting/PlotHeader";
-import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
-import { usePlotSizeSync } from "../features/analyses/editor/plotting/plotRuntime";
+} from "../../plotting/plotExport";
+import { PlotHeader } from "../../plotting/PlotHeader";
+import { PlotStylePanel } from "../../plotting/PlotStylePanel";
+import { usePlotSizeSync } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
   markerSymbol,
   plotPalette,
-} from "../features/analyses/editor/plotting/plotStyle";
+} from "../../plotting/plotStyle";
 import {
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
-} from "../features/analyses/editor/policies/analysisVisibility";
+} from "../../policies/analysisVisibility";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
-} from "../features/analyses/editor/plotting/seriesStyling";
+} from "../../plotting/seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
   setRecognitionToken,
   useDelayedRecognitionProgress,
   useSharedRecognitionToken,
-} from "../recognitionProgress";
-import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
-import Plot from "./Plot";
+} from "../../recognition/recognitionProgress";
+import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
+import Plot from "../../../../../components/Plot";
 import {
   ProtocolSegmentsPanel,
   type ProtocolSegmentSuggestion,
-} from "./ProtocolSegmentsPanel";
-import { RecognitionProgress } from "./RecognitionProgress";
+} from "../../protocol/ProtocolSegmentsPanel";
+import { RecognitionProgress } from "../../recognition/RecognitionProgress.tsx";
 
 interface DcirCandidate extends DcirSegmentTarget {
   id: string;

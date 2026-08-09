@@ -1,4 +1,4 @@
-import type { AnalysisDraftPlot, AnalysisSpec, AnalysisTabKey, SavedAnalysisPlot } from "./api";
+import type { AnalysisDraftPlot, AnalysisSpec, AnalysisTabKey, SavedAnalysisPlot } from "../../../../api";
 
 function clone<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value);

@@ -6,7 +6,7 @@ import {
   adjacentStepsAroundMatches,
   findInnermostGroupContaining,
   stepsInSameGroupsAsMatches,
-} from "../src/protocolStepNeighbours.ts";
+} from "../src/features/analyses/editor/protocol/protocolStepNeighbours.ts";
 
 function group(
   id: string,

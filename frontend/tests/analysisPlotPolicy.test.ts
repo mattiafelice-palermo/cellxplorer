@@ -6,7 +6,7 @@ import {
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
-} from "../src/analysisPlotPolicy.ts";
+} from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
 
 function makeSpec(
   entries: { kind: "cell" | "replicate_group"; ref_id: number }[],

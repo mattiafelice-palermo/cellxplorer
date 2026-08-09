@@ -24,12 +24,15 @@ The implementation is in:
 - `backend/app/services/dcir.py`: candidate detection and per-occurrence calculation
 - `backend/app/services/analysis_engine.py`: explicit `(cell, DCIR segment)` series computation
 - `backend/app/routers/analyses.py`: candidate and result endpoints
-- `frontend/src/components/DcirPlotCard.tsx`: DCIR adapter, series builder, and plot. Cold
-  compute uses the shared recognition progress helper (`frontend/src/recognitionProgress.ts`)
+- `frontend/src/features/analyses/editor/families/dcir/DcirPlotCard.tsx`: DCIR adapter, series
+  builder, and plot. Cold compute uses the shared recognition progress helper
+  (`frontend/src/features/analyses/editor/recognition/recognitionProgress.ts`)
   with a `job_token`, matching C-rate and Chargeability.
-- `frontend/src/components/ProtocolSegmentsPanel.tsx`: shared grouped protocol editor used by
+- `frontend/src/features/analyses/editor/protocol/ProtocolSegmentsPanel.tsx`: shared grouped
+  protocol editor used by
   DCIR and the other protocol-segment workflows
-- `frontend/src/components/ProtocolStructureViewer.tsx`: read-only protocol tree used by C-rate
+- `frontend/src/features/analyses/editor/protocol/ProtocolStructureViewer.tsx`: read-only
+  protocol tree used by C-rate
   and Chargeability to inspect auto-selected steps (not used by DCIR, which already edits
   targets in the segment panel)
 

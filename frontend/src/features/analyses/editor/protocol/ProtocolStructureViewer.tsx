@@ -21,8 +21,8 @@ import {
   type FileProtocol,
   type ProtocolGroup,
   type ProtocolStep,
-} from "../api";
-import { normalizeGroup } from "./ProtocolSegmentsPanel";
+} from "../../../../api";
+import { normalizeGroup } from "./protocolGroupNormalization";
 
 const STEP_GRID = "40px minmax(180px, 1fr) 78px 74px 68px 74px 90px";
 

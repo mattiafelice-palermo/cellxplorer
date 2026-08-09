@@ -106,11 +106,13 @@ when every occurrence of the cell is hidden. A scoped exclusion in one replicate
 standalone or differently grouped occurrence of the same cell.
 
 Frontend implementation lives in
-`frontend/src/components/RateCapabilityPlotCard.tsx`. It owns the dedicated React Query request,
+`frontend/src/features/analyses/editor/families/rate-capability/RateCapabilityPlotCard.tsx`. It
+owns the dedicated React Query request,
 automatic summaries, advanced semantic rules, rate filters, axis controls, traces/layout, styled
 image export, CSV/XLSX export, and the retained-plot/single-loader behavior. Cold recognition sends
 a `job_token` and polls `GET /api/background-jobs/by-token/{token}` through
-`frontend/src/recognitionProgress.ts` so the plot card can show staged progress (including
+`frontend/src/features/analyses/editor/recognition/recognitionProgress.ts` so the plot card can
+show staged progress (including
 intra-cell stages from `rate_capability.compute`). `Show detected steps` opens the read-only
 `ProtocolStructureViewer` highlighting `measurement_step_index` values from the result.
 `frontend/src/pages/AnalysisPage.tsx` supplies only tab wiring, saved-plot normalization,

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { get, type BackgroundJob } from "./api";
+import { get, type BackgroundJob } from "../../../../api";
 
 /** Client token so the server can attach a background job only on cache miss. */
 export function newRecognitionToken(): string {

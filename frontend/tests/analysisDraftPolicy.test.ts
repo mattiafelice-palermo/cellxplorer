@@ -16,9 +16,9 @@ import {
   shouldRunLivePlotCompute,
   stripDraftPlots,
   type NormalWorkspaceSnapshot,
-} from "../src/analysisDraftPolicy.ts";
+} from "../src/features/analyses/editor/policies/analysisDraftPolicy.ts";
 import type { AnalysisDraftPlot, AnalysisSpec, SavedAnalysisPlot } from "../src/api.ts";
-import { plotViewSignature } from "../src/analysisPlotPolicy.ts";
+import { plotViewSignature } from "../src/features/analyses/editor/policies/analysisPlotPolicy.ts";
 
 function makeSpec(quantity: string): AnalysisSpec {
   return {

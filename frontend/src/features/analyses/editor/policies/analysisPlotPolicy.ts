@@ -1,4 +1,4 @@
-import type { AnalysisSpec, SavedAnalysisPlot } from "./api";
+import type { AnalysisSpec, SavedAnalysisPlot } from "../../../../api";
 
 // Increment when thumbnail generation changes in a way that makes persisted
 // PNG/SVG artifacts visually incompatible with the live plot renderer.

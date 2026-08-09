@@ -1,4 +1,4 @@
-import type { ProtocolGroup } from "./api";
+import type { ProtocolGroup } from "../../../../api";
 
 export type NeighbourDirection = "before" | "after" | "both";
 export type NeighbourScope = "group" | "all";

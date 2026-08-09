@@ -8,7 +8,7 @@ import {
   findDiagnosticCyclesInSeries,
   formatCycleRanges,
   summarizeHidden,
-} from "../src/diagnosticCycles.ts";
+} from "../src/features/analyses/editor/families/cycles/diagnosticCycles.ts";
 
 /**
  * Build a series shaped like a real protocol: normal cycles at a steady

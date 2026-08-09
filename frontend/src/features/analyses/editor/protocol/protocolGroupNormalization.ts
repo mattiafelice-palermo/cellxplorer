@@ -1,4 +1,4 @@
-import type { ProtocolGroup } from "./api";
+import type { ProtocolGroup } from "../../../../api";
 
 function uniqueSorted(values: number[]): number[] {
   return [...new Set(values)].sort((a, b) => a - b);

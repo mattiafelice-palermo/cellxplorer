@@ -243,12 +243,12 @@ class AppChannelConfigurationTests(unittest.TestCase):
             "components/CellLibraryColumnMenu.tsx",
             "components/CellSamplePopovers.tsx",
             "components/CommandPalette.tsx",
-            "components/DcirPlotCard.tsx",
+            "features/analyses/editor/families/dcir/DcirPlotCard.tsx",
             "components/FilenameTemplateEditor.tsx",
             "components/FolderTree.module.css",
             "components/FolderTree.tsx",
-            "components/RecognitionProgress.tsx",
-            "components/StepsPlotCard.tsx",
+            "features/analyses/editor/recognition/RecognitionProgress.tsx",
+            "features/analyses/editor/families/steps/StepsPlotCard.tsx",
         ]
         for relative in chrome_only:
             with self.subTest(relative=relative):
@@ -272,10 +272,24 @@ class AppChannelConfigurationTests(unittest.TestCase):
                 self.assertNotIn('"teal.0"', source)
 
         protocol_segments = (
-            ROOT / "frontend" / "src" / "components" / "ProtocolSegmentsPanel.tsx"
+            ROOT
+            / "frontend"
+            / "src"
+            / "features"
+            / "analyses"
+            / "editor"
+            / "protocol"
+            / "ProtocolSegmentsPanel.tsx"
         ).read_text(encoding="utf-8")
         protocol_viewer = (
-            ROOT / "frontend" / "src" / "components" / "ProtocolStructureViewer.tsx"
+            ROOT
+            / "frontend"
+            / "src"
+            / "features"
+            / "analyses"
+            / "editor"
+            / "protocol"
+            / "ProtocolStructureViewer.tsx"
         ).read_text(encoding="utf-8")
         self.assertEqual(protocol_segments.count("--mantine-color-teal"), 1)
         self.assertEqual(protocol_viewer.count("--mantine-color-teal"), 1)

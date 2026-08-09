@@ -145,13 +145,13 @@ import {
   stripDraftPlots,
   type DraftSaveSource,
   type NormalWorkspaceSnapshot,
-} from "../analysisDraftPolicy";
+} from "../features/analyses/editor/policies/analysisDraftPolicy";
 import {
   plotViewSignature,
   savedPlotPreviewSignature,
   savedPlotSelectionFromSpec,
   specForSavedPlotView,
-} from "../analysisPlotPolicy";
+} from "../features/analyses/editor/policies/analysisPlotPolicy";
 import { DraftPlotCard } from "../components/DraftPlotCard";
 import {
   DebouncedNumberInput,
@@ -164,7 +164,7 @@ import {
   findDiagnosticCyclesAcross,
   formatCycleRanges,
   summarizeHidden,
-} from "../diagnosticCycles";
+} from "../features/analyses/editor/families/cycles/diagnosticCycles";
 import {
   CellHoverCard,
   RelatedAnalysesPopover,
@@ -177,14 +177,14 @@ import {
   stepsLayoutForSpec,
   stepsTracesForResult,
   type StepsResult,
-} from "../components/StepsPlotCard";
+} from "../features/analyses/editor/families/steps/StepsPlotCard";
 import {
   DcirPlotCard,
   DcirSettings,
   dcirLayoutForSpec,
   dcirTracesForResult,
   type DcirResult,
-} from "../components/DcirPlotCard";
+} from "../features/analyses/editor/families/dcir/DcirPlotCard";
 import {
   ChargeabilityPlotCard,
   ChargeabilitySettings,
@@ -192,7 +192,7 @@ import {
   chargeabilityTracesForResult,
   chargeabilityViewFor,
   type ChargeabilityResult,
-} from "../components/ChargeabilityPlotCard";
+} from "../features/analyses/editor/families/chargeability/ChargeabilityPlotCard";
 import {
   RateCapabilityPlotCard,
   RateCapabilitySettings,
@@ -200,9 +200,9 @@ import {
   rateCapabilityTracesForResult,
   rateCapabilityViewFor,
   type RateCapabilityResult,
-} from "../components/RateCapabilityPlotCard";
+} from "../features/analyses/editor/families/rate-capability/RateCapabilityPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
-import { ProtocolSegmentsPanel } from "../components/ProtocolSegmentsPanel";
+import { ProtocolSegmentsPanel } from "../features/analyses/editor/protocol/ProtocolSegmentsPanel";
 import { saveDownload, shareDownload } from "../downloads";
 import { renderExportFilename, sanitizeExportFilename } from "../exportFilenames";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
@@ -240,7 +240,7 @@ import {
   multiSourceAnalysisPolicy,
   type MultiSourceAnalysisPolicy,
   type SourceCountCell,
-} from "../multiSourceAnalysisPolicy";
+} from "../features/analyses/editor/policies/multiSourceAnalysisPolicy";
 import {
   DEFAULT_PLOT_STYLE,
   normalizePlotStyle,

@@ -53,7 +53,7 @@ import {
   ProtocolGroup,
   ProtocolSegmentTarget,
   ProtocolStep,
-} from "../api";
+} from "../../../../api";
 import {
   cRateExamples,
   FILTER_FIELDS,
@@ -63,16 +63,14 @@ import {
   protocolFilterValueOptions,
   type StepFilter,
   stepMatches,
-} from "../protocolStepFilters";
-import { normalizeGroup } from "../protocolGroupNormalization";
+} from "./protocolStepFilters";
+import { normalizeGroup } from "./protocolGroupNormalization";
 import {
   adjacentStepsAroundMatches,
   stepsInSameGroupsAsMatches,
   type NeighbourDirection,
   type NeighbourScope,
-} from "../protocolStepNeighbours";
-
-export { normalizeGroup } from "../protocolGroupNormalization";
+} from "./protocolStepNeighbours";
 
 interface ProtocolFileRef {
   cellId: number;

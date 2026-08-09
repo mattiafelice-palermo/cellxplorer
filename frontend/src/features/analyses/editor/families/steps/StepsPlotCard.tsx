@@ -43,43 +43,43 @@ import {
   type SeriesStyleRule,
   type StepsSeriesSpec,
   type StepsViewSpec,
-} from "../api";
+} from "../../../../../api";
 import {
   axisTitleFont,
   plotAxisStyle,
   plotLayoutStyle,
-} from "../features/analyses/editor/plotting/plotLayout";
+} from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
   styledPlotExportPreview,
   tracesToColumns,
-} from "../features/analyses/editor/plotting/plotExport";
-import { PlotHeader } from "../features/analyses/editor/plotting/PlotHeader";
-import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
+} from "../../plotting/plotExport";
+import { PlotHeader } from "../../plotting/PlotHeader";
+import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
   useDelayedFlag,
   usePlotSizeSync,
-} from "../features/analyses/editor/plotting/plotRuntime";
+} from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
   markerSymbol,
   plotPalette,
-} from "../features/analyses/editor/plotting/plotStyle";
+} from "../../plotting/plotStyle";
 import {
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
-} from "../features/analyses/editor/policies/analysisVisibility";
-import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
+} from "../../policies/analysisVisibility";
+import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
-} from "../features/analyses/editor/plotting/seriesStyling";
-import Plot from "./Plot";
+} from "../../plotting/seriesStyling";
+import Plot from "../../../../../components/Plot";
 
 interface StepSeries {
   series_id: string;

@@ -184,7 +184,8 @@ wide portable SVG into a 4:3 canvas; Plotly must first re-layout the figure at 4
 only a letterboxed wide plot. The renderer writes WebP when the browser supports it and falls back
 to PNG. A cache record is prepared only when both derivatives exist. A thumbnail-rendering change
 must bump both
-`SAVED_PLOT_THUMBNAIL_RENDER_VERSION` in `frontend/src/analysisPlotPolicy.ts` and
+`SAVED_PLOT_THUMBNAIL_RENDER_VERSION` in
+`frontend/src/features/analyses/editor/policies/analysisPlotPolicy.ts` and
 `THUMBNAIL_CACHE_VERSION` in `backend/app/services/analysis_cache.py`. Prepared markers record the
 backend version, so the idle coordinator requeues obsolete thumbnails while reusing an existing
 full plot artifact whenever possible. The coordinator's cheap analysis probe must include that

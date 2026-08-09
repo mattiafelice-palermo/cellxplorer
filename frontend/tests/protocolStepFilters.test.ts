@@ -12,7 +12,7 @@ import {
   protocolFilterValueOptions,
   stepMatches,
   stepMatchesFilter,
-} from "../src/protocolStepFilters.ts";
+} from "../src/features/analyses/editor/protocol/protocolStepFilters.ts";
 
 function step(partial: Partial<ProtocolStep>): ProtocolStep {
   return {

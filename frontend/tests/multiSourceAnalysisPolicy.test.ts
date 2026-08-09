@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   multiSourceAnalysisPolicy,
   protocolAnalysisFamilyForTab,
-} from "../src/multiSourceAnalysisPolicy.ts";
+} from "../src/features/analyses/editor/policies/multiSourceAnalysisPolicy.ts";
 
 test("maps the C-rate tab to the guarded rate-capability family", () => {
   assert.equal(protocolAnalysisFamilyForTab("crate"), "rate_capability");

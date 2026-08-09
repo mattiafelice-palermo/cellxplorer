@@ -27,45 +27,45 @@ import {
   type PlotStyle,
   type SeriesStyleOverride,
   type SeriesStyleRule,
-} from "../api";
+} from "../../../../../api";
 import {
   axisTitleFont,
   plotAxisStyle,
   plotLayoutStyle,
-} from "../features/analyses/editor/plotting/plotLayout";
+} from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
   styledPlotExportPreview,
   tracesToColumns,
-} from "../features/analyses/editor/plotting/plotExport";
-import { PlotHeader } from "../features/analyses/editor/plotting/PlotHeader";
-import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
-import { usePlotSizeSync } from "../features/analyses/editor/plotting/plotRuntime";
+} from "../../plotting/plotExport";
+import { PlotHeader } from "../../plotting/PlotHeader";
+import { PlotStylePanel } from "../../plotting/PlotStylePanel";
+import { usePlotSizeSync } from "../../plotting/plotRuntime";
 import {
   currentPlotStyle,
   markerSymbol,
   plotPalette,
-} from "../features/analyses/editor/plotting/plotStyle";
-import { isCellHiddenInAnalysis } from "../features/analyses/editor/policies/analysisVisibility";
-import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
+} from "../../plotting/plotStyle";
+import { isCellHiddenInAnalysis } from "../../policies/analysisVisibility";
+import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
-} from "../features/analyses/editor/plotting/seriesStyling";
+} from "../../plotting/seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
   setRecognitionToken,
   useDelayedRecognitionProgress,
   useSharedRecognitionToken,
-} from "../recognitionProgress";
-import Plot from "./Plot";
-import { ProtocolStructureViewer } from "./ProtocolStructureViewer";
-import { RecognitionProgress } from "./RecognitionProgress";
+} from "../../recognition/recognitionProgress";
+import Plot from "../../../../../components/Plot";
+import { ProtocolStructureViewer } from "../../protocol/ProtocolStructureViewer";
+import { RecognitionProgress } from "../../recognition/RecognitionProgress.tsx";
 
 export interface ChargeabilityMatch {
   id: string;

@@ -53,10 +53,12 @@ independent entry in `analysis_cache.RESULT_SCHEMA_VERSIONS`; change that entry 
 payload shape changes.
 
 Frontend tab logic lives in
-`frontend/src/components/ChargeabilityPlotCard.tsx`, not in the large Analysis page. The component
+`frontend/src/features/analyses/editor/families/chargeability/ChargeabilityPlotCard.tsx`, not in
+the large Analysis page. The component
 owns the dedicated React Query request, automatic-identification controls, axis choices, Plotly
 traces/layout, styled image export, CSV/XLSX export, and delayed single-loader behavior. Like
-C-rate, cold recognition uses a `job_token` plus `frontend/src/recognitionProgress.ts`, and
+C-rate, cold recognition uses a `job_token` plus
+`frontend/src/features/analyses/editor/recognition/recognitionProgress.ts`, and
 `Show detected steps` opens `ProtocolStructureViewer` highlighting matched `step_index` values.
 `frontend/src/pages/AnalysisPage.tsx` only supplies shared plot infrastructure, tab wiring, saved
 plot normalization, and thumbnail generation.

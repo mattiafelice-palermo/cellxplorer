@@ -1,4 +1,4 @@
-import type { ProtocolStep } from "./api";
+import type { ProtocolStep } from "../../../../api";
 
 /**
  * Filtering for the protocol step list.

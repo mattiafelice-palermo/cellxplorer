@@ -13,7 +13,8 @@ records the data contract and the decisions that must remain stable when the tab
   each source file by protocol signature. Older specs with a single global `segment_id` are
   expanded to every selected cell for compatibility.
 - `POST /api/analyses/{id}/steps` — cached under kind `"steps"`.
-- Frontend `frontend/src/components/StepsPlotCard.tsx` — `StepsPlotCard` + `StepsSettings`, reusing
+- Frontend `frontend/src/features/analyses/editor/families/steps/StepsPlotCard.tsx` —
+  `StepsPlotCard` + `StepsSettings`, reusing
   the exported `PlotHeader`/`PlotStylePanel`/`currentPlotStyle`/`plotPalette`/`tracesToColumns`/
   `downloadDataExport` from `AnalysisPage.tsx`. Its canonical trace and layout builders are also
   used by the live card and saved-plot thumbnail path; saved previews must call `POST /steps`, not

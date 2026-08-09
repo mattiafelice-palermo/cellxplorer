@@ -189,29 +189,27 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
-│   │   │   ├── ChargeabilityPlotCard.tsx
-│   │   │   ├── RateCapabilityPlotCard.tsx
 │   │   │   ├── DestructiveImpactModal.tsx
 │   │   │   ├── DraftPlotCard.tsx
 │   │   │   ├── FolderTree.tsx
 │   │   │   ├── PlaceInFoldersModal.tsx
-│   │   │   ├── ProtocolStructureViewer.tsx
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── AppUpdateModal.tsx
-│   │   │   ├── RecognitionProgress.tsx
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
 │   │   ├── features/               Feature-owned frontend modules
 │   │   │   └── analyses/
 │   │   │       ├── database/       Analysis Database collection and preview workflow
 │   │   │       ├── editor/
+│   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
-│   │   │       │   └── policies/   Analysis-specific visibility policies
+│   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
+│   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
+│   │   │       │   └── recognition/ Recognition job progress hooks and presentation
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
 │   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
-│   │   ├── analysisDraftPolicy.ts  Per-tab draft vs normal workspace leave/save/discard helpers
 │   │   ├── importBrowserSelection.ts Pure folder/file row and range-selection policy (Spec 035.1)
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
@@ -220,7 +218,6 @@ Cellxplorer/
 │   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)
-│   │   ├── recognitionProgress.ts  Shared job-token progress polling for recognition tabs
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
 │   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, and cellMetadataDisplay.test.ts
 ├── tests/                          Python backend and domain tests
