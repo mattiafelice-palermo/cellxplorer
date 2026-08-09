@@ -7,9 +7,9 @@ import {
   type AnalysisFull,
   type CacheSettings,
   type CacheWarmupTask,
-} from "../api";
-import { isTauriApp } from "../downloads";
-import { AnalysisCacheWarmupRenderer } from "../pages/AnalysisPage";
+} from "../../../../api";
+import { isTauriApp } from "../../../../downloads";
+import { AnalysisCacheWarmupRenderer } from "./AnalysisCacheWarmupRenderer";
 
 async function mainWindowIsHidden(): Promise<boolean> {
   if (!isTauriApp()) return document.visibilityState === "hidden";

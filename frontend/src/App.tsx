@@ -45,7 +45,7 @@ import {
 import { CommandPalette } from "./components/CommandPalette";
 import { DiagnosticsModal } from "./components/DiagnosticsModal";
 import { DownloadsButton } from "./components/DownloadsButton";
-import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
+import { CacheWarmupCoordinator } from "./features/analyses/editor/artifacts/CacheWarmupCoordinator";
 import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
 import { AnalysisWorkspaceTabs } from "./features/analyses/workspace/AnalysisWorkspaceTabs";

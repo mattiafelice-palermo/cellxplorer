@@ -54,7 +54,7 @@ import {
 } from "../api";
 import { isTauriApp } from "../downloads";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
-import { WARMUP_NOW_EVENT } from "../components/CacheWarmupCoordinator";
+import { WARMUP_NOW_EVENT } from "../features/analyses/editor/artifacts/CacheWarmupCoordinator";
 import { PAUSE_QUERY_KEY } from "../components/QuickSettingsMenu";
 import {
   loadAnalysisWorkspaceMemoryPolicy,

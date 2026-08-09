@@ -109,7 +109,7 @@ covers the destination-picker path (`copyTo` / `moveTo`) with the same code.
 **File (new):** `frontend/src/folderDrop.ts`
 **File (new):** `frontend/tests/folderDrop.test.ts`
 
-Follows the pattern established by `frontend/src/warmupCompletion.ts` — the decision logic is a
+Follows the pattern established by `frontend/src/features/analyses/editor/artifacts/warmupCompletion.ts` — the decision logic is a
 pure function with `node --test` coverage, so the rule is pinned without needing a browser.
 
 Exports:

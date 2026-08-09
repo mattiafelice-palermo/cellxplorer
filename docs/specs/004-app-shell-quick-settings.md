@@ -156,7 +156,7 @@ The app has **two** independent automatic systems, and the pause must stop **bot
    rescans registered source files on a schedule (`source_monitor_config` in `app_settings`:
    `enabled`, `schedule_mode`, interval, and `auto_update`, which re-parses changed files).
    Its loop is `_run_scheduler()`.
-2. **Cache warmup** — `frontend/src/components/CacheWarmupCoordinator.tsx`, gated by
+2. **Cache warmup** — `frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx`, gated by
    `warmup_enabled` from `GET /api/cache/settings`; it pre-renders saved-plot thumbnails.
 
 #### Storage

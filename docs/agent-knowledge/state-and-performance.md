@@ -313,7 +313,7 @@ Settings exposes category actions with different safety boundaries:
   markers before forcing a fresh bounded warmup scan. It does not attempt to enumerate arbitrary
   unsaved plot configurations.
 
-`frontend/src/components/CacheWarmupCoordinator.tsx` performs opportunistic preparation after an
+`frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx` performs opportunistic preparation after an
 idle delay. It requests one saved plot at a time, renders through the same analysis preview path,
 and reports progress as a normal background job. Backend compute work from this path uses reduced
 Windows thread priority. Browser/GPU thumbnail work cannot receive OS process priority, so it is

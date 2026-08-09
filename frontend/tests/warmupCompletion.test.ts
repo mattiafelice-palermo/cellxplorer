@@ -5,7 +5,7 @@ import {
   resolveWarmup,
   warmupErrorMessage,
   type WarmupSignals,
-} from "../src/warmupCompletion.ts";
+} from "../src/features/analyses/editor/artifacts/warmupCompletion.ts";
 
 /** Nothing has happened yet: the only state that may legitimately stay pending. */
 function idle(overrides: Partial<WarmupSignals> = {}): WarmupSignals {

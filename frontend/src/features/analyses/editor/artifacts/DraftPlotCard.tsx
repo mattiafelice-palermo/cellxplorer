@@ -1,7 +1,7 @@
 import { Badge, Box, Center, Group, Paper, Stack, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 
-import type { AnalysisDraftPlot, AnalysisTabKey } from "../api";
+import type { AnalysisDraftPlot, AnalysisTabKey } from "../../../../api";
 
 function tabLabel(tab: AnalysisTabKey): string {
   switch (tab) {

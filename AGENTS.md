@@ -152,7 +152,7 @@ production migrations. See `docs/database-migrations.md`.
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
 - `frontend/src/pages/AnalysisPage.tsx`: analysis editor and saved plots
-- `frontend/src/components/CacheWarmupCoordinator.tsx`: idle saved-plot cache preparation
+- `frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx`: idle saved-plot cache preparation
 - `frontend/src/api.ts`: typed frontend API client
 - `packaging/`, `src-tauri/`, and `docs/windows-packaging.md`: Windows desktop packaging
 - `docs/portable-analysis-html.md`: portable report format, security, and round-trip rules
@@ -190,7 +190,6 @@ Cellxplorer/
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
 │   │   │   ├── DestructiveImpactModal.tsx
-│   │   │   ├── DraftPlotCard.tsx
 │   │   │   ├── FolderTree.tsx
 │   │   │   ├── PlaceInFoldersModal.tsx
 │   │   │   ├── QuickSettingsMenu.tsx
@@ -201,6 +200,7 @@ Cellxplorer/
 │   │   │   └── analyses/
 │   │   │       ├── database/       Analysis Database collection and preview workflow
 │   │   │       ├── editor/
+│   │   │       │   ├── artifacts/  Saved previews, artifacts, draft cards, and cache warmup
 │   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
