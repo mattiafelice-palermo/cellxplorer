@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.21.0-beta.1 - 2026-08-10
+
+- Reorganize analysis editor into modular features. Cycles and Time/Capacity plots are now separate components alongside Steps, DCIR, Chargeability, and Rate Capability. No behavioral changes.
+
 ## 0.20.2 - 2026-08-08
 
 - Saved colour palettes can be updated in place while plots keep copied colours.
