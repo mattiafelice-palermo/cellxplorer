@@ -49,7 +49,6 @@ import {
   IconDownload,
   IconEye,
   IconEyeOff,
-  IconFileExport,
   IconFolder,
   IconGauge,
   IconInfoCircle,
@@ -57,7 +56,6 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
-  IconShare3,
   IconSettings,
   IconTable,
   IconTrash,
@@ -81,7 +79,6 @@ import {
   AnalysisSpec,
   AnalysisTabKey,
   ANALYSIS_TAB_KEYS,
-  ApiError,
   Badge as ApiBadge,
   CellMetrics,
   AnalysisSummary,
@@ -90,11 +87,7 @@ import {
   del,
   FolderNode,
   get,
-  PortableAnalysisEstimate,
-  PortableSourcePreflight,
-  PortableSourceUpdateResult,
   post,
-  postBlob,
   put,
   PlotAspectRatioKey,
   PlotExportFormat,
@@ -141,12 +134,8 @@ import {
   DebouncedTextInput,
 } from "../components/DebouncedInputs";
 import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
-import {
-  CachedSavedPlotPreview,
-  buildPortablePlotSnapshots,
-  type PlotArtifact,
-} from "../features/analyses/editor/artifacts/SavedPlotPreviews";
 import { SavedPlotsPanel } from "../features/analyses/editor/artifacts/SavedPlotsPanel";
+import { PortableReportFlow } from "../features/analyses/editor/portable/PortableReportFlow";
 import {
   CyclePlotCard,
   CycleSettings,
@@ -202,8 +191,6 @@ import {
 } from "../features/analyses/editor/families/rate-capability/RateCapabilityPlotCard";
 import { FilenameTemplateEditor } from "../components/FilenameTemplateEditor";
 import { ProtocolSegmentsPanel } from "../features/analyses/editor/protocol/ProtocolSegmentsPanel";
-import { saveDownload, shareDownload } from "../downloads";
-import { renderExportFilename, sanitizeExportFilename } from "../exportFilenames";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
 import {
   getTimeCapacityExplainer,
@@ -276,14 +263,6 @@ import {
   isCellHiddenInAnalysis,
   isSeriesHidden,
 } from "../features/analyses/editor/policies/analysisVisibility";
-function formatPortableBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  const amount = value / 1024 ** index;
-  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
-}
-
 const ASPECT_RATIO_OPTIONS: { value: PlotAspectRatioKey; label: string }[] = [
   { value: "view", label: "Current view" },
   { value: "square", label: "1:1 square" },
@@ -2005,27 +1984,6 @@ function AnalysisPageView({
       : {},
   );
   const [addOpen, setAddOpen] = useState(false);
-  const [portableExportOpen, setPortableExportOpen] = useState(false);
-  const [portableExportAction, setPortableExportAction] = useState<"download" | "share">("download");
-  const [preparedPortableShare, setPreparedPortableShare] = useState<{
-    blob: Blob;
-    filename: string;
-    title: string;
-  } | null>(null);
-  const [preparedShareBusy, setPreparedShareBusy] = useState(false);
-  const [includePortableOriginals, setIncludePortableOriginals] = useState(false);
-  const [portablePlotIds, setPortablePlotIds] = useState<string[]>([]);
-  const [portableSourceDecision, setPortableSourceDecision] =
-    useState<PortableSourcePreflight | null>(null);
-  const [pendingPortableExport, setPendingPortableExport] = useState<{
-    action: "download" | "share";
-  } | null>(null);
-  const [portableProgress, setPortableProgress] = useState<{
-    completed: number;
-    total: number;
-    stage: string;
-    phase: "plots" | "packing" | "done";
-  } | null>(null);
   const [saveDraft, setSaveDraft] = useState<{
     name: string;
     description: string;
@@ -2052,20 +2010,6 @@ function AnalysisPageView({
   const [timeCapacityReady, setTimeCapacityReady] = useState(false);
   const [chargeabilityReady, setChargeabilityReady] = useState(false);
   const [rateCapabilityReady, setRateCapabilityReady] = useState(false);
-  const portableEstimate = useQuery({
-    queryKey: ["portable-analysis-estimate", aid],
-    queryFn: () =>
-      get<PortableAnalysisEstimate>(`/api/analyses/${aid}/portable-estimate`),
-    enabled: portableExportOpen,
-    staleTime: 30_000,
-  });
-  const portableSourcePreflight = useMutation({
-    mutationFn: () =>
-      post<PortableSourcePreflight>(
-        `/api/analyses/${aid}/portable-source-preflight`,
-        {}
-      ),
-  });
   const autosaveSignature = useMemo(
     () => (spec ? JSON.stringify({ title, spec }) : "no-spec"),
     [spec, title]
@@ -2331,137 +2275,6 @@ function AnalysisPageView({
     },
   });
 
-  const portableExport = useMutation({
-    mutationFn: async ({
-      action,
-      includeOriginalFiles,
-    }: {
-      action: "download" | "share";
-      includeOriginalFiles: boolean;
-    }) => {
-      if (!spec) throw new Error("The analysis is not ready.");
-      if (portablePlotIds.length === 0) throw new Error("Select at least one saved plot.");
-      setPortableProgress({
-        completed: 0,
-        total: portablePlotIds.length,
-        stage: "Preparing plots",
-        phase: "plots",
-      });
-      const views = await buildPortablePlotSnapshots(
-        aid,
-        spec,
-        title,
-        portablePlotIds,
-        (completed, total, stage) =>
-          setPortableProgress({ completed, total, stage, phase: "plots" }),
-        (plotId, signature) =>
-          qc.getQueryData<PlotArtifact>([
-            "plot-artifact",
-            aid,
-            plotId,
-            signature,
-          ]) ?? null
-      );
-      setPortableProgress({
-        completed: portablePlotIds.length,
-        total: portablePlotIds.length,
-        stage: includeOriginalFiles ? "Packing report and source files" : "Packing report",
-        phase: "packing",
-      });
-      const blob = await postBlob(`/api/analyses/${aid}/portable-export`, {
-        include_original_files: includeOriginalFiles,
-        views,
-      });
-      setPortableProgress({
-        completed: portablePlotIds.length,
-        total: portablePlotIds.length,
-        stage: "Report ready",
-        phase: "done",
-      });
-      const filename = `${sanitizeExportFilename(title) || "CellXplorer analysis"}.html`;
-      if (action === "share") {
-        setPreparedPortableShare({
-          blob,
-          filename,
-          title: title || "CellXplorer analysis",
-        });
-        return {
-          cancelled: false,
-          usedDefaultFolder: false,
-          shared: false,
-          prepared: true,
-        };
-      }
-      return { ...(await saveDownload(blob, filename)), shared: false };
-    },
-    onSuccess: (result) => {
-      setPortableProgress(null);
-      if ("prepared" in result && result.prepared) {
-        notifications.show({
-          message: "Portable analysis ready. Open the Windows share sheet to continue.",
-          color: "teal",
-        });
-        return;
-      }
-      if (!result.cancelled) {
-        setPortableExportOpen(false);
-        setPortableSourceDecision(null);
-        setPendingPortableExport(null);
-        notifications.show({
-          message: result.shared
-            ? "Portable analysis shared."
-            : "shareFallback" in result && result.shareFallback
-              ? "Windows sharing is unavailable, so the portable analysis was saved instead."
-              : "Portable analysis exported.",
-          color: "teal",
-        });
-      }
-    },
-    onError: (
-      error: Error,
-      variables: { action: "download" | "share"; includeOriginalFiles: boolean }
-    ) => {
-      setPortableProgress(null);
-      if (
-        variables.includeOriginalFiles &&
-        error instanceof ApiError &&
-        error.status === 409
-      ) {
-        setPendingPortableExport({ action: variables.action });
-        void portableSourcePreflight
-          .mutateAsync()
-          .then(setPortableSourceDecision)
-          .catch((preflightError: Error) =>
-            notifications.show({ message: preflightError.message, color: "red" })
-          );
-      }
-      notifications.show({ message: error.message, color: "red" });
-    },
-  });
-
-  const updatePortableSources = useMutation({
-    mutationFn: (preflight: PortableSourcePreflight) =>
-      post<PortableSourceUpdateResult>(
-        `/api/analyses/${aid}/portable-source-update`,
-        {
-          sources: preflight.sources
-            .filter(
-              (source) =>
-                source.status === "changed" &&
-                source.expected_size !== null &&
-                source.expected_mtime_ns !== null
-            )
-            .map((source) => ({
-              source_id: source.source_id,
-              expected_size: source.expected_size,
-              expected_mtime_ns: source.expected_mtime_ns,
-            })),
-        }
-      ),
-    onError: (error: Error) =>
-      notifications.show({ message: error.message, color: "red" }),
-  });
-
   const buildPersistPayload = useCallback(() => {
     if (!spec) return null;
     const activePlotForPersist = activeSavedPlotId
@@ -2526,221 +2339,6 @@ function AnalysisPageView({
   }, [aid, autosaveSignature, buildPersistPayload, dirty, qc, spec, title]);
 
   const displayResult = rendered?.result ?? compute.data;
-  const portableSavedPlots = spec?.saved_plots ?? [];
-  const portablePlotOptions = portableSavedPlots.length
-    ? portableSavedPlots
-    : [
-        {
-          id: "current",
-          name: title || "Current analysis",
-          subtitle: "Current analysis view",
-          tab: "cycles" as AnalysisTabKey,
-        },
-      ];
-  const portablePlotPolicy = (plot: (typeof portablePlotOptions)[number]) => {
-    if (!analysis.data || !spec) {
-      return multiSourceAnalysisPolicy(plot.tab, []);
-    }
-    const plotSpec = "selection" in plot ? specForSavedPlot(spec, plot) : spec;
-    return multiSourceAnalysisPolicy(
-      plot.tab,
-      selectedSourceCountCells(analysis.data, plotSpec, cellsQuery.data, groupsQuery.data),
-    );
-  };
-  const portablePlotPolicies = portablePlotOptions.map((plot) => ({
-    plot,
-    policy: portablePlotPolicy(plot),
-  }));
-  const guardedPortablePlots = portablePlotPolicies.filter(
-    ({ policy }) => policy.family && !policy.supported,
-  );
-  const exportablePortablePlotIds = portablePlotPolicies
-    .filter(({ policy }) => !policy.family || policy.supported)
-    .map(({ plot }) => plot.id);
-  const openPortableExport = (action: "download" | "share" = "download") => {
-    if (activeProtocolPolicy.pending) {
-      notifications.show({
-        message: "Checking source compatibility. Portable export will be available when the selection is resolved.",
-        color: "blue",
-      });
-      return;
-    }
-    setPortableExportAction(action);
-    setPreparedPortableShare(null);
-    setPreparedShareBusy(false);
-    setPortableSourceDecision(null);
-    setPendingPortableExport(null);
-    setPortablePlotIds(exportablePortablePlotIds);
-    setPortableExportOpen(true);
-  };
-  useEffect(() => {
-    setPreparedPortableShare(null);
-  }, [aid, includePortableOriginals, portablePlotIds.join("|"), title]);
-
-  const sharePreparedPortable = () => {
-    const prepared = preparedPortableShare;
-    if (!prepared || preparedShareBusy) return;
-
-    // Calling shareDownload directly in this click handler is intentional:
-    // Windows WebView requires navigator.share() to retain this user gesture.
-    const shareRequest = shareDownload(
-      prepared.blob,
-      prepared.filename,
-      prepared.title,
-      "CellXplorer portable battery analysis",
-    );
-    setPreparedShareBusy(true);
-    void shareRequest
-      .then(async (result) => {
-        if (result === "cancelled") return;
-        if (result === "unsupported") {
-          const saved = await saveDownload(prepared.blob, prepared.filename);
-          if (saved.cancelled) return;
-          notifications.show({
-            message: "Windows sharing is unavailable, so the portable analysis was saved instead.",
-            color: "teal",
-          });
-        } else {
-          notifications.show({ message: "Portable analysis shared.", color: "teal" });
-        }
-        setPortableExportOpen(false);
-        setPreparedPortableShare(null);
-      })
-      .catch((error: Error) =>
-        notifications.show({ message: error.message, color: "red" })
-      )
-      .finally(() => setPreparedShareBusy(false));
-  };
-  const beginPortableExport = async (action: "download" | "share") => {
-    if (!spec || portablePlotIds.length === 0) return;
-    const blockedSelected = portablePlotPolicies.filter(
-      ({ plot, policy }) => portablePlotIds.includes(plot.id) && policy.family && !policy.supported,
-    );
-    if (blockedSelected.length > 0) {
-      setPortablePlotIds((current) =>
-        current.filter((id) => !blockedSelected.some(({ plot }) => plot.id === id)),
-      );
-      notifications.show({
-        message: "The selected portable plots are not source-compatible yet. Choose only the enabled plots.",
-        color: "yellow",
-      });
-      return;
-    }
-    try {
-      const persistSpec = buildPersistPayload();
-      if (!persistSpec) return;
-      await put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: persistSpec });
-      if (!includePortableOriginals) {
-        setPortableSourceDecision(null);
-        setPendingPortableExport(null);
-        portableExport.mutate({ action, includeOriginalFiles: false });
-        return;
-      }
-      setPendingPortableExport({ action });
-      const preflight = await portableSourcePreflight.mutateAsync();
-      if (!preflight.ready) {
-        setPortableSourceDecision(preflight);
-        return;
-      }
-      setPortableSourceDecision(null);
-      setPendingPortableExport(null);
-      portableExport.mutate({ action, includeOriginalFiles: true });
-    } catch (error) {
-      notifications.show({
-        message: error instanceof Error ? error.message : "Could not prepare the export.",
-        color: "red",
-      });
-    }
-  };
-  const continuePortableWithoutSources = () => {
-    const pending = pendingPortableExport;
-    if (!pending) return;
-    setPortableSourceDecision(null);
-    setPendingPortableExport(null);
-    portableExport.mutate({
-      action: pending.action,
-      includeOriginalFiles: false,
-    });
-  };
-  const updatePortableSourcesAndContinue = async () => {
-    const decision = portableSourceDecision;
-    const pending = pendingPortableExport;
-    if (!decision || !pending) return;
-    try {
-      const result = await updatePortableSources.mutateAsync(decision);
-      result.errors.forEach((error) =>
-        notifications.show({
-          message: `${error.filename}: ${error.error}`,
-          color: "red",
-        })
-      );
-      const affectedIds = new Set([
-        ...decision.affected_analysis_ids,
-        ...result.preflight.affected_analysis_ids,
-        aid,
-      ]);
-      for (const analysisId of affectedIds) {
-        for (const root of [
-          "saved-plot-preview",
-          "saved-time-preview",
-          "plot-thumbnail",
-          "plot-artifact",
-        ]) {
-          qc.removeQueries({ queryKey: [root, analysisId] });
-        }
-      }
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["cells"] }),
-        qc.invalidateQueries({ queryKey: ["cell"] }),
-        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
-        qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
-        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
-        qc.invalidateQueries({ queryKey: ["files"] }),
-        qc.invalidateQueries({ queryKey: ["tree"] }),
-        qc.invalidateQueries({ queryKey: ["analyses"] }),
-        qc.invalidateQueries({ queryKey: ["activity"] }),
-        invalidateAnalysisQueries(qc, aid),
-      ]);
-      if (!result.preflight.ready) {
-        setPortableSourceDecision(result.preflight);
-        return;
-      }
-      setPortableSourceDecision(null);
-      setPendingPortableExport(null);
-      notifications.show({
-        message: `Updated ${result.updated} source file${result.updated === 1 ? "" : "s"}; rebuilding the selected plots for export.`,
-        color: "teal",
-      });
-      portableExport.mutate({
-        action: pending.action,
-        includeOriginalFiles: true,
-      });
-    } catch {
-      // The mutation displays the error and keeps the decision available.
-    }
-  };
-  const portableExportBusy =
-    portableExport.isPending ||
-    portableSourcePreflight.isPending ||
-    updatePortableSources.isPending ||
-    preparedShareBusy;
-  const portableSourceBlockers =
-    portableSourceDecision?.sources.filter((source) => source.status !== "current") ?? [];
-  const canUpdatePortableSources = Boolean(
-    portableSourceDecision &&
-      portableSourceDecision.changed > 0 &&
-      portableSourceDecision.unavailable === 0 &&
-      portableSourceDecision.changing === 0 &&
-      portableSourceDecision.error === 0
-  );
-  const portableEstimatedBytes = portableEstimate.data
-    ? portableEstimate.data.runtime_embedded_bytes +
-      portableEstimate.data.report_shell_bytes +
-      portablePlotIds.length * portableEstimate.data.estimated_per_plot_bytes +
-      (includePortableOriginals
-        ? Math.ceil((portableEstimate.data.original_bytes * 4) / 3)
-        : 0)
-    : null;
   const activePlot = spec
     ? (spec.saved_plots ?? []).find((plot) => plot.id === activeSavedPlotId) ?? null
     : null;
@@ -3893,39 +3491,17 @@ function AnalysisPageView({
               Duplicate
             </Button>
           </Tooltip>
-          <Button.Group>
-            <Tooltip label="Create a standalone, re-importable HTML analysis">
-              <Button
-                variant="default"
-                leftSection={<IconFileExport size={16} />}
-                disabled={activeProtocolPolicy.pending}
-                onClick={() => openPortableExport("download")}
-              >
-                Portable report
-              </Button>
-            </Tooltip>
-            <Menu withinPortal position="bottom-end">
-              <Menu.Target>
-                <ActionIcon
-                  variant="default"
-                  size={36}
-                  aria-label="Portable report actions"
-                  disabled={activeProtocolPolicy.pending}
-                  style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
-                >
-                  <IconChevronDown size={15} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item
-                  leftSection={<IconShare3 size={16} />}
-                  onClick={() => openPortableExport("share")}
-                >
-                  Share to app
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          </Button.Group>
+          <PortableReportFlow
+            analysisId={aid}
+            title={title}
+            spec={spec}
+            analysis={analysis.data}
+            availableCells={cellsQuery.data}
+            availableGroups={groupsQuery.data}
+            sourceCompatibilityPending={activeProtocolPolicy.pending}
+            normalizeSpec={normalizeSpec}
+            persistSpec={buildPersistPayload}
+          />
           <ActionIcon
             variant="subtle"
             color="red"
@@ -4180,384 +3756,6 @@ function AnalysisPageView({
           }}
         />
       )}
-
-      <Modal
-        opened={portableExportOpen}
-        onClose={() => {
-          if (!portableExportBusy) {
-            setPortableExportOpen(false);
-            setPreparedPortableShare(null);
-            setPortableSourceDecision(null);
-            setPendingPortableExport(null);
-          }
-        }}
-        title={portableExportAction === "share" ? "Share portable analysis" : "Export portable analysis"}
-        size="xl"
-        closeOnClickOutside={!portableExportBusy}
-        closeOnEscape={!portableExportBusy}
-      >
-        <Stack>
-          <Text size="sm">
-            Creates one HTML file that opens as an interactive report in a browser and can be
-            imported into CellXplorer later.
-          </Text>
-          <Paper withBorder p="sm">
-            <Group justify="space-between" mb="xs">
-              <div>
-                <Text size="sm" fw={700}>
-                  Plots to include
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {portablePlotIds.length} of {portablePlotOptions.length} selected
-                </Text>
-              </div>
-              <Group gap="xs">
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  onClick={() => setPortablePlotIds(exportablePortablePlotIds)}
-                >
-                  Select all supported
-                </Button>
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="gray"
-                  onClick={() => setPortablePlotIds([])}
-                >
-                  Clear
-                </Button>
-              </Group>
-            </Group>
-            <ScrollArea.Autosize mah={430}>
-              <Stack gap="xs">
-                {portablePlotOptions.map((plot) => {
-                  const selected = portablePlotIds.includes(plot.id);
-                  const policy = portablePlotPolicies.find(({ plot: candidate }) => candidate.id === plot.id)?.policy;
-                  const blocked = Boolean(policy?.family && !policy.supported);
-                  const toggle = () =>
-                    !blocked && setPortablePlotIds((current) =>
-                      selected
-                        ? current.filter((id) => id !== plot.id)
-                        : [...current, plot.id]
-                    );
-                  return (
-                    <Paper
-                      key={plot.id}
-                      withBorder
-                      p="xs"
-                      bg={
-                        selected
-                          ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))"
-                          : "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
-                      }
-                      style={{
-                        borderColor: selected
-                          ? "var(--mantine-primary-color-3)"
-                          : "var(--mantine-color-gray-2)",
-                        cursor: blocked ? "not-allowed" : "pointer",
-                      }}
-                      onClick={blocked ? undefined : toggle}
-                    >
-                      <Group wrap="nowrap" align="center">
-                        <Checkbox
-                          checked={selected}
-                          disabled={blocked}
-                          onChange={toggle}
-                          onClick={(event) => event.stopPropagation()}
-                          aria-label={`Include ${plot.name}`}
-                        />
-                        <Box
-                          w={210}
-                          style={{ flexShrink: 0, pointerEvents: "none" }}
-                        >
-                          {"selection" in plot ? (
-                            plot.tab === "time_capacity" ||
-                            plot.tab === "cycles" ||
-                            plot.tab === "recap" ||
-                            plot.tab === "dcir" ||
-                            plot.tab === "steps" ||
-                            plot.tab === "chargeability" ||
-                            plot.tab === "crate" ? (
-                              <CachedSavedPlotPreview
-                                analysisId={aid}
-                                baseSpec={spec}
-                                plot={plot as SavedAnalysisPlot}
-                              />
-                            ) : (
-                              <Center h={130}>
-                                <Text size="xs" c="dimmed">
-                                  {tabLabel(plot.tab)}
-                                </Text>
-                              </Center>
-                            )
-                          ) : (
-                            <Center h={130}>
-                              <Text size="xs" c="dimmed">
-                                Current view
-                              </Text>
-                            </Center>
-                          )}
-                        </Box>
-                        <Stack gap={3} style={{ minWidth: 0, flex: 1 }}>
-                          <Badge size="xs" variant="light" color={selected ? "var(--mantine-primary-color-6)" : "gray"}>
-                            {tabLabel(plot.tab)}
-                          </Badge>
-                          <Text size="sm" fw={700} lineClamp={2}>
-                            {plot.name}
-                          </Text>
-                          <Text size="xs" c="dimmed" lineClamp={2}>
-                            {plot.subtitle || tabLabel(plot.tab)}
-                          </Text>
-                          {blocked && (
-                            <Text size="xs" c="orange" lineClamp={2}>
-                              {policy?.pending
-                                ? `Checking source compatibility: ${policy.unresolvedCells.map((cell) => cell.name).join(", ")}`
-                                : `Protocol mapping required: ${policy?.unsupportedCells.map((cell) => cell.name).join(", ")}`}
-                            </Text>
-                          )}
-                        </Stack>
-                      </Group>
-                    </Paper>
-                  );
-                })}
-              </Stack>
-            </ScrollArea.Autosize>
-          </Paper>
-          {guardedPortablePlots.length > 0 && (
-            <Alert color="yellow" title="Some saved plots cannot be included">
-              <Stack gap={4}>
-                <Text size="sm">
-                  These plots remain visible so the omission is explicit. They are disabled until
-                  their source compatibility is resolved.
-                </Text>
-                {guardedPortablePlots.map(({ plot, policy }) => (
-                  <Text key={plot.id} size="sm">
-                    <Text span fw={700}>{plot.name}</Text>: {policy.pending
-                      ? `checking ${policy.unresolvedCells.map((cell) => cell.name).join(", ")}`
-                      : `protocol mapping required for ${policy.unsupportedCells.map((cell) => cell.name).join(", ")}`}
-                  </Text>
-                ))}
-              </Stack>
-            </Alert>
-          )}
-          {portableEstimate.isError ? (
-            <Alert color="red">Could not estimate the export size.</Alert>
-          ) : (
-            <Paper withBorder p="sm" bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-              <Group justify="space-between" align="start">
-                <div>
-                  <Text size="sm" fw={700}>
-                    {portableEstimate.data?.cells ?? "..."} cells ·{" "}
-                    {portableEstimate.data?.sources ?? "..."} source files
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Embedded Plotly runtime after compression:{" "}
-                    {portableEstimate.data
-                      ? formatPortableBytes(portableEstimate.data.runtime_embedded_bytes)
-                      : "calculating..."}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Rough HTML estimate:{" "}
-                    {portableEstimatedBytes !== null
-                      ? formatPortableBytes(portableEstimatedBytes)
-                      : "calculating..."}
-                  </Text>
-                </div>
-                <Text size="xs" c="dimmed" maw={260}>
-                  Metadata, settings and provenance are always included. Plot data varies with
-                  point density, so this estimate is intentionally approximate.
-                </Text>
-              </Group>
-            </Paper>
-          )}
-          <Switch
-            checked={includePortableOriginals}
-            onChange={(event) => setIncludePortableOriginals(event.currentTarget.checked)}
-            disabled={portableExportBusy}
-            label="Include original .nda/.ndax files"
-            description={
-              portableEstimate.data
-                ? `${formatPortableBytes(portableEstimate.data.original_bytes)} before compression. Embedded sources are gzip-compressed and decoded only when extracted or imported.`
-                : "Original Neware files can make the HTML substantially larger."
-            }
-          />
-          {includePortableOriginals && portableEstimate.data?.missing_originals ? (
-            <Alert color="orange">
-              {portableEstimate.data.missing_originals} original source{" "}
-              {portableEstimate.data.missing_originals === 1 ? "is" : "are"} unavailable and
-              cannot be embedded. CellXplorer will check again before export and let you continue
-              without source files.
-            </Alert>
-          ) : null}
-          <Alert color="gray">
-            Reports without original files remain fully viewable. On import, CellXplorer reconnects
-            sources by checksum or recorded path; missing sources remain offline until relinked.
-          </Alert>
-          {portableExport.isPending && portableProgress ? (
-            <Paper withBorder p="sm">
-              <Stack gap={6}>
-                <Group justify="space-between">
-                  <Text size="sm" fw={600}>{portableProgress.stage}</Text>
-                  <Text size="xs" c="dimmed">
-                    {portableProgress.phase === "plots"
-                      ? `${portableProgress.completed} of ${portableProgress.total} plots`
-                      : portableProgress.phase === "packing"
-                        ? "Finalizing file"
-                        : "Complete"}
-                  </Text>
-                </Group>
-                <Progress
-                  animated
-                  value={
-                    portableProgress.phase === "plots"
-                      ? portableProgress.total > 0
-                        ? (portableProgress.completed / portableProgress.total) * 85
-                        : 0
-                      : portableProgress.phase === "packing"
-                        ? 92
-                        : 100
-                  }
-                />
-              </Stack>
-            </Paper>
-          ) : null}
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              disabled={portableExportBusy}
-              onClick={() => {
-                setPortableExportOpen(false);
-                setPreparedPortableShare(null);
-                setPortableSourceDecision(null);
-                setPendingPortableExport(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              leftSection={<IconFileExport size={16} />}
-              loading={portableExportBusy}
-              disabled={portablePlotIds.length === 0}
-              onClick={() =>
-                preparedPortableShare
-                  ? sharePreparedPortable()
-                  : void beginPortableExport(portableExportAction)
-              }
-            >
-              {preparedPortableShare
-                ? "Open share sheet"
-                : portableExportAction === "share"
-                  ? "Prepare HTML"
-                  : "Export HTML"}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      <Modal
-        opened={portableSourceDecision !== null}
-        onClose={() => {
-          if (!updatePortableSources.isPending) {
-            setPortableSourceDecision(null);
-            setPendingPortableExport(null);
-          }
-        }}
-        title="Source files changed"
-        size="lg"
-        closeOnClickOutside={!updatePortableSources.isPending}
-        closeOnEscape={!updatePortableSources.isPending}
-      >
-        <Stack>
-          <Alert color="orange" title="The requested source files cannot be embedded yet">
-            CellXplorer compared the current file bytes with the versions used by the analysis.
-            Export has paused before rebuilding any plots, so it cannot silently omit a changed
-            file.
-          </Alert>
-          <ScrollArea.Autosize mah={320}>
-            <Stack gap="xs">
-              {portableSourceBlockers.map((source) => (
-                <Paper key={source.source_id} withBorder p="sm">
-                  <Group justify="space-between" align="start" wrap="nowrap">
-                    <div style={{ minWidth: 0 }}>
-                      <Text size="sm" fw={700} truncate>
-                        {source.filename}
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        {source.cell_name}
-                      </Text>
-                    </div>
-                    <Badge
-                      color={
-                        source.status === "changed"
-                          ? "orange"
-                          : source.status === "changing"
-                            ? "yellow"
-                            : "red"
-                      }
-                      variant="light"
-                    >
-                      {source.status === "changed"
-                        ? "Changed"
-                        : source.status === "changing"
-                          ? "Still changing"
-                          : source.status === "unavailable"
-                            ? "Unavailable"
-                            : "Read error"}
-                    </Badge>
-                  </Group>
-                  <Text size="xs" mt={6}>
-                    {source.message}
-                  </Text>
-                </Paper>
-              ))}
-            </Stack>
-          </ScrollArea.Autosize>
-          {canUpdatePortableSources ? (
-            <Alert color="var(--mantine-primary-color-6)">
-              Updating adopts the new stable file version, rebuilds its scientific cache, and
-              invalidates {portableSourceDecision?.affected_analyses ?? 0} dependent{" "}
-              {(portableSourceDecision?.affected_analyses ?? 0) === 1
-                ? "analysis"
-                : "analyses"}. The selected plots are then regenerated before the report is
-              packaged.
-            </Alert>
-          ) : (
-            <Alert color="gray">
-              Automatic update is available once every source is present, readable, and no longer
-              being written. You can cancel and retry later, or export a fully viewable report
-              without the original source files.
-            </Alert>
-          )}
-          <Group justify="flex-end">
-            <Button
-              variant="default"
-              disabled={updatePortableSources.isPending}
-              onClick={() => {
-                setPortableSourceDecision(null);
-                setPendingPortableExport(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="light"
-              color="gray"
-              disabled={updatePortableSources.isPending}
-              onClick={continuePortableWithoutSources}
-            >
-              Export without .nda/.ndax
-            </Button>
-            <Button
-              loading={updatePortableSources.isPending}
-              disabled={!canUpdatePortableSources}
-              onClick={() => void updatePortableSourcesAndContinue()}
-            >
-              Update sources, refresh plots & export
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
 
       <Modal opened={saveDraft !== null} onClose={() => setSaveDraft(null)} title="Save new plot">
         <Stack>

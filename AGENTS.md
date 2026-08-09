@@ -205,6 +205,7 @@ Cellxplorer/
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
+│   │   │       │   ├── portable/   Portable report estimate, preflight, export, and share flow
 │   │   │       │   └── recognition/ Recognition job progress hooks and presentation
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
 │   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)

@@ -1,6 +1,6 @@
 # 038 — Analyses feature modularization
 
-**Status:** In progress — 038.1–038.5 implemented and review-clean; 038.6 implementation complete, review pending
+**Status:** In progress — 038.1–038.6 implemented and review-clean; 038.7 active
 **Implementation:** Implement only through the sequential child specifications listed below.
 **Repository:** `mattiafelice-palermo/cellxplorer`
 **Authoring baseline:** `main` and `origin/main` at `b6452a4d6691ef1f9b6acf3e353a6f05a5873ed7`
@@ -75,11 +75,12 @@ The important current anchors are:
   - Cycles blocks `CycleSettings`, `tracesForResult`, `cyclePlotLayout`, and `CyclePlotCard`;
   - Time/Capacity blocks `TimeCapacitySettings`, `tracesForTimeCapacity`, `timeCapacityLayout`, and
     `TimeCapacityPlotCardView`;
-  - saved-artifact blocks `SavedPlotPreview`, `SavedTimeCapacityPreview`,
-    `AnalysisCacheWarmupRenderer`, `CachedSavedPlotPreview`, `TabDraftPlotCard`, and
+  - saved-artifact ownership now lives in `features/analyses/editor/artifacts/`, including
+    `SavedPlotPreviews`, `AnalysisCacheWarmupRenderer`, `TabDraftPlotCard`, and
     `SavedPlotsPanel`;
-  - portable blocks from `PortablePlotSnapshot` and `buildPortablePlotSnapshots` through the
-    portable estimate/preflight/export state and two portable modals;
+  - portable ownership now lives in
+    `features/analyses/editor/portable/PortableReportFlow.tsx`, which consumes the canonical
+    snapshot builder and owns the portable estimate/preflight/export state and two portable modals;
   - page controller `AnalysisPageView`, exported as memoized `AnalysisPage`.
 - existing family cards:
   - `frontend/src/components/StepsPlotCard.tsx`;
