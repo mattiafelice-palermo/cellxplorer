@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.3
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: a1c7868b1cdb4d55f4ceb31bcfd88b9e055329fc
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: a57851fa9e19a2f323da6bc3fc0190a5c046fe7e
 LAST_REVIEW_SHA: cbabde5b954e18e77a9e20fed7cc09a78ba55bd4
-NEXT_ACTION: Reconcile 038/038.1/038.2 status metadata with the clean reviews, then implement 038.3 only. Run the child-required verification and canonical preflight, commit and push, then hand the turn to REVIEWER.
+NEXT_ACTION: Review 038.3 against the parent/child spec and update the canonical 038.3 review file.
 ```
 
 ## Protocol
@@ -107,3 +107,21 @@ first 038.2 implementation.
 - decision: **038.2 REVIEW_CLEAN — 038.3 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.3** in `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` and pushed the shared branch.
+
+- Moved the four existing family cards, diagnostic-cycle policy, protocol UI/helpers, recognition
+  UI/progress modules, and draft/plot/multi-source policies into their locked editor folders.
+- Updated direct owner imports, workspace policy typing, focused test imports, app-channel path
+  assertions, the maintained tree, and durable analysis path references; removed the protocol UI
+  helper re-export. No behavior, API, query-key, scientific, cache, or artifact-version changes.
+- Verification: focused 038.3 suite **71/71**; `tests.test_app_channels` **17/17**; TypeScript
+  passed; Vite build passed with **7512** modules transformed; all three stale-path searches had
+  no matches; `python scripts\preflight.py` **PREFLIGHT PASSED**, **5/5** stages, **459** frontend
+  tests and **58** backend test modules passed.
+- Manual checks: **NOT RUN**; browser automation was not authorized. The child’s requested family,
+  recognition, policy, multi-source, chrome, and keyboard matrix remains unverified manually.
+- Next action: independent reviewer reviews 038.3 against the parent/child specs and updates the
+  canonical 038.3 review file.
