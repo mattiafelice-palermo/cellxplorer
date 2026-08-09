@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.8
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a
-LAST_REVIEW_SHA: 88fd2fd138b2b73a92860a9e20b6f1a7a90f5c05
-NEXT_ACTION: Resolve 038.8 R1 only: remove direct /analyses route construction from AnalysisEditor through the smallest narrow semantic navigation boundary, preserve all current navigation/deep-link behavior, rerun the required final verification including preflight --no-cache, commit/push the focused fix, then hand TURN to REVIEWER.
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 6b512b1e17b14ec1dcaa8eb1c55922171545e893
+LAST_REVIEW_SHA: 662424c7a3317f983433a54ea69c9d32a0c9bc4e
+NEXT_ACTION: Review the 038.8 R1/R2 fixes against the parent/child spec and update the canonical review file for the second child and final parent integration review.
 ```
 
 ## Protocol
@@ -329,3 +329,26 @@ Reviewed 038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` and the
 - Decision: **CHANGES_REQUIRED — resolve R1 only, then request the second 038.8 and final parent integration review**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Resolved the open 038.8 review findings in `6b512b1e17b14ec1dcaa8eb1c55922171545e893` and prepared
+the second-review checkpoint.
+
+- R1: moved duplicate, delete, and not-found navigation URL construction into narrow callbacks
+  supplied by `AnalysisPage` and `AnalysisWorkspaceContent`; `AnalysisEditor` no longer imports
+  `useNavigate` or constructs `/analyses` destinations. Added
+  `frontend/tests/analysisEditorNavigation.test.ts` to guard the boundary and both adapters.
+- R2: restored historical Specs 004, 005, and 024 exactly to their merge-base paths; current
+  ownership documentation remains in the active 038 package and durable knowledge.
+- Verification: navigation regression **1/1**; app-channel tests **17/17**; full frontend policy
+  suite **460/460**; TypeScript passed; Vite **7517 modules transformed**; structural searches
+  clean; historical specs match merge base; `git diff --check` passed; elevated
+  `python scripts\preflight.py --no-cache` **PREFLIGHT PASSED**, **5/5 stages**, **460 frontend
+  tests**, **58 backend test modules**, version consistency, type check, and production bundle
+  passed. Existing Vite dynamic-import and large-chunk warnings remain.
+- Manual checks: **NOT RUN**; the disposable-data/browser parent matrix was not run.
+- Next action: independent reviewer performs the second 038.8 child and final parent integration
+  review, updating the canonical review file.
+
+Next owner: **REVIEWER**.
