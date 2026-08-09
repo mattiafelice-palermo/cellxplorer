@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.8
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: 51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a
 LAST_REVIEW_SHA: a33d75193b0ddf42097729be4772f16c54852079
-NEXT_ACTION: Reconcile 038.7 status metadata with its clean review, set 038.8 active, implement 038.8 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER for final child and parent integration review.
+NEXT_ACTION: Review 038.8 against the parent/child spec and update its canonical review file.
 ```
 
 ## Protocol
@@ -286,3 +286,24 @@ Reviewed 038.7 implementation `51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2` after v
 - Decision: **038.7 REVIEW_CLEAN — 038.8 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.8** in `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` and prepared the pushed
+review checkpoint.
+
+- Moved the remaining single-analysis controller and composition into the locked
+  `features/analyses/editor/AnalysisEditor.tsx` boundary, reduced `pages/AnalysisPage.tsx` to the
+  route/override adapter, and made `AnalysisWorkspaceContent.tsx` embed `AnalysisEditor` directly.
+- Removed feature-to-page imports, reconciled the database-view workspace composition, updated the
+  maintained tree, durable ownership knowledge, app-channel path assertion, and 038 records.
+- Verification: app-channel tests **17/17**; full frontend policy suite **459/459**; `tsc --noEmit`
+  passed; Vite **7517 modules transformed**; structural searches clean under the child’s stated
+  interpretation; `git diff --check` passed; elevated `python scripts\preflight.py --no-cache`
+  **PREFLIGHT PASSED**, **5/5 stages**, **459 frontend tests**, **58 backend test modules**, version
+  consistency, type check, and production bundle passed. Existing Vite dynamic-import and
+  large-chunk warnings remain.
+- Manual checks: **NOT RUN**; the disposable-data/browser parent matrix was not run.
+- Next action: independent reviewer reviews 038.8 and updates its canonical review file.
+
+Next owner: **REVIEWER**.
