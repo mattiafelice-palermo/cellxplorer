@@ -1,4 +1,4 @@
-import type { PlotAxisStyle } from "./api";
+import type { PlotAxisStyle } from "../../../../api";
 
 export type AxisOverrides = {
   autorange?: boolean;

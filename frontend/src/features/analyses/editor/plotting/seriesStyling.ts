@@ -14,7 +14,7 @@
  * Pure by design — no React, no Plotly, no network. Everything here is unit
  * tested in `frontend/tests/seriesStyling.test.ts`.
  */
-import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "./api";
+import type { SeriesStyleOverride, SeriesStyleRule, SeriesRuleField } from "../../../../api";
 
 export type SeriesKind = "cell" | "group";
 

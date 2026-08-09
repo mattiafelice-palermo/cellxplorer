@@ -9,7 +9,7 @@
  * Pure by design — no React, no Plotly, no network. Everything here is unit
  * tested in `frontend/tests/paletteDraft.test.ts`.
  */
-import type { SeriesStyleOverride } from "./api";
+import type { SeriesStyleOverride } from "../../../../api";
 
 /**
  * Normalise a hex colour string to lowercase `#rrggbb`.

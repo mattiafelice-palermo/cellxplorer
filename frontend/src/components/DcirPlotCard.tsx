@@ -49,29 +49,35 @@ import {
 } from "../api";
 import {
   axisTitleFont,
-  currentPlotStyle,
-  downloadStyledPlotExport,
+  plotAxisStyle,
+  plotLayoutStyle,
+} from "../features/analyses/editor/plotting/plotLayout";
+import {
   downloadDataExport,
+  downloadStyledPlotExport,
+  styledPlotExportPreview,
+  tracesToColumns,
+} from "../features/analyses/editor/plotting/plotExport";
+import { PlotHeader } from "../features/analyses/editor/plotting/PlotHeader";
+import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
+import { usePlotSizeSync } from "../features/analyses/editor/plotting/plotRuntime";
+import {
+  currentPlotStyle,
+  markerSymbol,
+  plotPalette,
+} from "../features/analyses/editor/plotting/plotStyle";
+import {
   isAnalysisSegmentHidden,
   isCellHiddenInAnalysis,
   isSeriesHidden,
-  plotAxisStyle,
-  markerSymbol,
-  plotLayoutStyle,
-  plotPalette,
-  PlotHeader,
-  PlotStylePanel,
-  styledPlotExportPreview,
-  tracesToColumns,
-  usePlotSizeSync,
-} from "../pages/AnalysisPage";
+} from "../features/analyses/editor/policies/analysisVisibility";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
-} from "../seriesStyling";
+} from "../features/analyses/editor/plotting/seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,
@@ -79,7 +85,7 @@ import {
   useDelayedRecognitionProgress,
   useSharedRecognitionToken,
 } from "../recognitionProgress";
-import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
+import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
 import Plot from "./Plot";
 import {
   ProtocolSegmentsPanel,

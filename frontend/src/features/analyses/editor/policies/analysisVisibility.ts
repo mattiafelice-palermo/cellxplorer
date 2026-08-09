@@ -1,4 +1,4 @@
-import type { AnalysisSpec, SelectionEntry } from "./api";
+import type { AnalysisSpec, SelectionEntry } from "../../../../api";
 
 export interface CellSelectionContext {
   cell_id: number;
@@ -52,4 +52,14 @@ export function isCellHiddenInAnalysis(
         exclusionAppliesToContext(exclusion, cellId, context),
       ),
   );
+}
+
+/** Display-only: has this analysis segment been hidden across all cells? */
+export function isAnalysisSegmentHidden(spec: AnalysisSpec, segmentId: string): boolean {
+  return (spec.presentation.hidden_analysis_segment_ids ?? []).includes(segmentId);
+}
+
+/** Display-only: has this individual series line been hidden? */
+export function isSeriesHidden(spec: AnalysisSpec, seriesId: string): boolean {
+  return (spec.presentation.hidden_series_ids ?? []).includes(seriesId);
 }

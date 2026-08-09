@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   getCycleQuantityExplainer,
   getTimeCapacityExplainer,
-} from "../src/plotExplainers.ts";
+} from "../src/features/analyses/editor/plotting/plotExplainers.ts";
 
 test("cycle quantity explainers describe normalized capacity inputs and formula", () => {
   const explainer = getCycleQuantityExplainer("discharge_capacity", true);

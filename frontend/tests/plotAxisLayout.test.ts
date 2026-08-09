@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PlotAxisStyle } from "../src/api.ts";
-import { axisLayout, axisManualRangeShowsData } from "../src/plotAxisLayout.ts";
+import { axisLayout, axisManualRangeShowsData } from "../src/features/analyses/editor/plotting/plotAxisLayout.ts";
 
 const manualAxis: PlotAxisStyle = {
   mode: "manual",

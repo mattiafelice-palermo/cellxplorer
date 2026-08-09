@@ -30,28 +30,32 @@ import {
 } from "../api";
 import {
   axisTitleFont,
-  currentPlotStyle,
+  plotAxisStyle,
+  plotLayoutStyle,
+} from "../features/analyses/editor/plotting/plotLayout";
+import {
   downloadDataExport,
   downloadStyledPlotExport,
-  isCellHiddenInAnalysis,
-  plotAxisStyle,
-  markerSymbol,
-  plotLayoutStyle,
-  plotPalette,
-  PlotHeader,
-  PlotStylePanel,
   styledPlotExportPreview,
   tracesToColumns,
-  usePlotSizeSync,
-} from "../pages/AnalysisPage";
-import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
+} from "../features/analyses/editor/plotting/plotExport";
+import { PlotHeader } from "../features/analyses/editor/plotting/PlotHeader";
+import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
+import { usePlotSizeSync } from "../features/analyses/editor/plotting/plotRuntime";
+import {
+  currentPlotStyle,
+  markerSymbol,
+  plotPalette,
+} from "../features/analyses/editor/plotting/plotStyle";
+import { isCellHiddenInAnalysis } from "../features/analyses/editor/policies/analysisVisibility";
+import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
-} from "../seriesStyling";
+} from "../features/analyses/editor/plotting/seriesStyling";
 import {
   clearRecognitionToken,
   newRecognitionToken,

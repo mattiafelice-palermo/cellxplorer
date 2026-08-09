@@ -77,7 +77,7 @@ import type {
   PlotStyle,
   SeriesStyleOverride,
   SeriesStyleRule,
-} from "../api";
+} from "../../../../api";
 import {
   DEFAULT_SHADOW,
   SERIES_RULE_FIELDS,
@@ -92,8 +92,8 @@ import {
   type BaseSeriesStyle,
   type ResolvedSeriesStyle,
   type SeriesDescriptor,
-} from "../seriesStyling";
-import { PALETTE_OPTIONS, PLOT_PALETTES, plotPalette } from "../plotStyle";
+} from "./seriesStyling";
+import { PALETTE_OPTIONS, PLOT_PALETTES, plotPalette } from "./plotStyle";
 import {
   builtInPaletteSelection,
   customPaletteSelection,
@@ -106,8 +106,8 @@ import {
   seriesWithOwnColour,
   setPaletteColor,
   type PaletteSelection,
-} from "../paletteDraft";
-import Plot from "./Plot";
+} from "./paletteDraft";
+import Plot from "../../../../components/Plot";
 
 /** The real plot, rebuilt with the draft styling applied. */
 export type SeriesPreviewBuilder = (draft: {

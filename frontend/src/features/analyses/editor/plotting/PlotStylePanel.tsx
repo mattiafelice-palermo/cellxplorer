@@ -38,18 +38,18 @@ import {
   SeriesStyleOverride,
   SeriesStyleRule,
   TimeCapacityResult,
-} from "../api";
+} from "../../../../api";
 import {
   DebouncedColorInput,
   DebouncedNumberInput,
   DebouncedTextInput,
-} from "./DebouncedInputs";
-import { applyPlotStylePreset } from "../plotStylePresets";
+} from "../../../../components/DebouncedInputs";
+import { applyPlotStylePreset } from "./plotStylePresets";
 import {
   cyclesSeriesDescriptors,
   timeCapacitySeriesDescriptors,
   type SeriesDescriptor,
-} from "../seriesStyling";
+} from "./seriesStyling";
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
 import {
   PLOT_PALETTES,
@@ -57,8 +57,8 @@ import {
   writeScopedStyle,
   plotPalette,
   normalizePlotStyle,
-} from "../plotStyle";
-import { paletteColorAt, paletteOverflowMode } from "../paletteDraft";
+} from "./plotStyle";
+import { paletteColorAt, paletteOverflowMode } from "./paletteDraft";
 
 const LEGEND_INSIDE_POSITION_OPTIONS: {
   value: PlotStyle["legend_inside_position"];

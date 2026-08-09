@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   sourceBoundaryPointIndices,
   sourceExportColumns,
-} from "../src/sourceChainPlot.ts";
+} from "../src/features/analyses/editor/plotting/sourceChainPlot.ts";
 
 test("source boundaries select the first finite plotted point of later sources", () => {
   assert.deepEqual(

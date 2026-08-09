@@ -8,7 +8,7 @@
  *
  * Extracted verbatim from `AnalysisPage.tsx`; behaviour is unchanged.
  */
-import type { AnalysisSpec, AnalysisTabKey, PlotAxisScope, PlotStyle } from "./api";
+import type { AnalysisSpec, AnalysisTabKey, PlotAxisScope, PlotStyle } from "../../../../api";
 
 export const PALETTE = [
   "#12b886",

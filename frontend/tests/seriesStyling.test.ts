@@ -23,7 +23,7 @@ import {
   shortSourceName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
-} from "../src/seriesStyling.ts";
+} from "../src/features/analyses/editor/plotting/seriesStyling.ts";
 import type { SeriesStyleRule } from "../src/api.ts";
 
 const base: BaseSeriesStyle = {

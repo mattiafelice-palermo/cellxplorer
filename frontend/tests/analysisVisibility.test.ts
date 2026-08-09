@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isCellHiddenInAnalysis, type CellSelectionContext } from "../src/analysisVisibility.ts";
+import {
+  isAnalysisSegmentHidden,
+  isCellHiddenInAnalysis,
+  isSeriesHidden,
+  type CellSelectionContext,
+} from "../src/features/analyses/editor/policies/analysisVisibility.ts";
 import type { AnalysisSpec } from "../src/api.ts";
 
 function specWithVisibility(
@@ -63,4 +68,55 @@ test("legacy cell-wide exclusions still hide every occurrence", () => {
     ),
     true,
   );
+});
+
+test("a scoped exclusion keeps the legacy no-context result hidden", () => {
+  const spec = specWithVisibility([
+    {
+      cell_id: 7,
+      entry_kind: "replicate_group",
+      entry_ref_id: 42,
+    },
+  ]);
+
+  assert.equal(isCellHiddenInAnalysis(spec, 7), true);
+});
+
+test("a context that does not belong to the cell does not hide it", () => {
+  const spec = specWithVisibility([
+    { cell_id: 7, entry_kind: "cell", entry_ref_id: 7 },
+  ]);
+
+  assert.equal(
+    isCellHiddenInAnalysis(spec, 7, [
+      { cell_id: 8, entry_kind: "cell", entry_ref_id: 8 },
+    ]),
+    false,
+  );
+});
+
+test("a direct occurrence can be hidden independently", () => {
+  const spec = specWithVisibility([
+    { cell_id: 7, entry_kind: "cell", entry_ref_id: 7 },
+  ]);
+
+  assert.equal(
+    isCellHiddenInAnalysis(spec, 7, [
+      { cell_id: 7, entry_kind: "cell", entry_ref_id: 7 },
+    ]),
+    true,
+  );
+});
+
+test("segment and series visibility are read from presentation state", () => {
+  const spec = specWithVisibility([]);
+  spec.presentation = {
+    hidden_analysis_segment_ids: ["segment-hidden"],
+    hidden_series_ids: ["series-hidden"],
+  } as AnalysisSpec["presentation"];
+
+  assert.equal(isAnalysisSegmentHidden(spec, "segment-hidden"), true);
+  assert.equal(isAnalysisSegmentHidden(spec, "segment-visible"), false);
+  assert.equal(isSeriesHidden(spec, "series-hidden"), true);
+  assert.equal(isSeriesHidden(spec, "series-visible"), false);
 });

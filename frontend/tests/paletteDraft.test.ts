@@ -18,7 +18,7 @@ import {
   seriesWithOwnColour,
   setPaletteColor,
   type PaletteSelection,
-} from "../src/paletteDraft.ts";
+} from "../src/features/analyses/editor/plotting/paletteDraft.ts";
 
 // --- normalizePaletteColor ------------------------------------------------
 

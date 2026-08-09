@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PlotStyle } from "../src/api.ts";
-import { applyPlotStylePreset } from "../src/plotStylePresets.ts";
+import { applyPlotStylePreset } from "../src/features/analyses/editor/plotting/plotStylePresets.ts";
 
 const axis = {
   mode: "manual" as const,

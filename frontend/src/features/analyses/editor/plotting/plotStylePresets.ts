@@ -1,4 +1,4 @@
-import type { PlotAxisStyle, PlotStyle } from "./api";
+import type { PlotAxisStyle, PlotStyle } from "../../../../api";
 
 function preserveAxisFields(
   applied: PlotAxisStyle,
