@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.8
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a
-LAST_REVIEW_SHA: a33d75193b0ddf42097729be4772f16c54852079
-NEXT_ACTION: Review 038.8 against the parent/child spec and update its canonical review file.
+LAST_REVIEW_SHA: 88fd2fd138b2b73a92860a9e20b6f1a7a90f5c05
+NEXT_ACTION: Resolve 038.8 R1 only: remove direct /analyses route construction from AnalysisEditor through the smallest narrow semantic navigation boundary, preserve all current navigation/deep-link behavior, rerun the required final verification including preflight --no-cache, commit/push the focused fix, then hand TURN to REVIEWER.
 ```
 
 ## Protocol
@@ -37,27 +37,34 @@ NEXT_ACTION: Review 038.8 against the parent/child spec and update its canonical
 
 038.1 through 038.7 are independently review-clean.
 
-Before beginning 038.8, update implementation-owned status metadata only as needed so that the
-parent, 038.7 child, and `docs/specs/README.md` accurately record 038.7 as review-clean and 038.8 as
-the active final child. Do not rewrite review conclusions.
+038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` has received its first independent
+review. The child and cumulative parent are **not yet clean** because one architecture finding
+remains open:
 
-Then implement only:
+- `R1 — Medium`: `AnalysisEditor.tsx` still directly constructs `/analyses` navigation destinations
+  for duplicate success, delete success, and the not-found Back action, contradicting the locked
+  final route/feature ownership boundary.
 
-`docs/specs/038.8-analysis-editor-integration.md`
+Implement **R1 only** from:
 
-Follow the parent and child exactly. When 038.8 is complete:
+`docs/specs/reviews/038.8-analysis-editor-integration-review.md`
 
-1. run every verification required by 038.8 and current repository guidance;
-2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
-   guidance explicitly supersedes it;
-3. record exact results and any manual checks not run;
-4. commit and push the implementation;
-5. update the state block to `ACTIVE_CHILD: 038.8`, `TURN: REVIEWER`,
-   `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
-   independent 038.8 review plus final parent integration review;
-6. append an IMPLEMENTER entry to this log;
-7. make no merge, release, version, or unrelated implementation change until the reviewer returns
-   the final decision.
+Preserve the existing duplicate/delete/not-found behavior, workspace behavior, and `?tab=` / `?plot=`
+deep-link semantics. Use the smallest narrow semantic navigation boundary; do not introduce a
+global state store, broad routing framework, or unrelated refactor.
+
+When the R1 follow-up is complete:
+
+1. rerun every verification required by the review and 038.8;
+2. rerun `python scripts\preflight.py --no-cache` and record the authoritative result;
+3. keep the browser/manual parent matrix recorded truthfully as run or NOT RUN;
+4. update the 038.8 implementation record so its route/URL-ownership statement is true;
+5. commit and push the focused follow-up;
+6. update this state block to `ACTIVE_CHILD: 038.8`, `TURN: REVIEWER`, `STATE: AWAITING_REVIEW`,
+   record the new implementation SHA, keep `LAST_REVIEW_SHA` at the latest reviewer checkpoint,
+   and request the second 038.8 plus final parent integration review;
+7. append an IMPLEMENTER entry to this log;
+8. make no merge, release, version, or unrelated implementation change before the final review.
 
 ## Coordination log
 
@@ -307,3 +314,18 @@ review checkpoint.
 - Next action: independent reviewer reviews 038.8 and updates its canonical review file.
 
 Next owner: **REVIEWER**.
+
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` and the cumulative parent 038 integration.
+
+- Confirmed the thin route wrapper preserves the previous analysis-id override precedence and workspace visibility default.
+- Confirmed `AnalysisEditor.tsx` owns the former editor controller/composition and `AnalysisWorkspaceContent.tsx` embeds it directly.
+- Confirmed cumulative 038 scope remains frontend ownership/dependency work with required path/documentation updates and no separate backend/scientific feature mixed in.
+- Implementer-reported final verification: app-channel `17/17`, frontend policy suite `459/459`, TypeScript passed, Vite passed (`7517` modules), structural searches clean, `git diff --check` passed, and no-cache preflight `5/5` with `459` frontend tests and `58` backend modules; manual parent/browser matrix NOT RUN.
+- Reviewer-independent execution: none; review used ChatGPT + the GitHub connector only.
+- Finding **R1 — Medium**: `AnalysisEditor` still constructs `/analyses` navigation destinations directly for duplicate success, delete success, and the not-found Back action, contradicting the locked final route/feature ownership boundary. The implementation record also incorrectly says the editor does not construct URLs.
+- Canonical review commit: `88fd2fd138b2b73a92860a9e20b6f1a7a90f5c05`.
+- Decision: **CHANGES_REQUIRED — resolve R1 only, then request the second 038.8 and final parent integration review**.
+
+Next owner: **IMPLEMENTER**.
