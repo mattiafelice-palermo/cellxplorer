@@ -8,12 +8,12 @@ Repository: `mattiafelice-palermo/cellxplorer`
 Branch: `feature/analyses-feature-modularization`
 
 ```text
-ACTIVE_CHILD: 038.5
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 038.6
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: dbeb78fb0360e9eca6ebb64b9d5a80abc5138689
-LAST_REVIEW_SHA: 07dbe7fad21c6ba9d22006eee0d2f49b97385168
-NEXT_ACTION: Review 038.5 against the parent/child spec and update its canonical review file.
+LAST_REVIEW_SHA: 6b5945c159396e58b5af1b9faa8356de05767c4a
+NEXT_ACTION: Implement only 038.6, run required verification/preflight, push the focused checkpoint, and hand back to the reviewer.
 ```
 
 ## Protocol
@@ -35,28 +35,24 @@ NEXT_ACTION: Review 038.5 against the parent/child spec and update its canonical
 
 ## Current handoff
 
-038.1 through 038.4 are independently review-clean.
+038.1 through 038.5 are independently review-clean.
 
-Before beginning 038.5, update implementation-owned status metadata only as needed so that the
-parent, 038.4 child, and `docs/specs/README.md` accurately record 038.4 as review-clean and 038.5 as
-the active next child. Do not rewrite the review conclusion.
+Implement only:
 
-Then implement only:
+`docs/specs/038.6-saved-plot-artifacts-extraction.md`
 
-`docs/specs/038.5-time-capacity-family-extraction.md`
+Follow the parent and child exactly. When 038.6 is complete:
 
-Follow the parent and child exactly. When 038.5 is complete:
-
-1. run every verification required by 038.5 and current repository guidance;
+1. run every verification required by 038.6 and current repository guidance;
 2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
    guidance explicitly supersedes it;
 3. record exact results and any manual checks not run;
 4. commit and push the implementation;
-5. update the state block to `ACTIVE_CHILD: 038.5`, `TURN: REVIEWER`,
+5. update the state block to `ACTIVE_CHILD: 038.6`, `TURN: REVIEWER`,
    `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
-   independent 038.5 review;
+   independent 038.6 review;
 6. append an IMPLEMENTER entry to this log;
-7. make no 038.6 implementation changes until the reviewer returns the turn.
+7. make no 038.7 implementation changes until the reviewer returns the turn.
 
 ## Coordination log
 
@@ -184,3 +180,19 @@ Implemented **038.5** in `dbeb78fb0360e9eca6ebb64b9d5a80abc5138689` and pushed t
   remain.
 - Manual checks: **NOT RUN**; browser/manual matrix was not run in this checkpoint.
 - Next action: independent reviewer reviews 038.5 and updates its canonical review file.
+
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.5 implementation `dbeb78fb0360e9eca6ebb64b9d5a80abc5138689` against the live parent/child specs, repository guidance, changed-file boundary, extracted family code, and current page consumers.
+
+- Confirmed `families/time-capacity/TimeCapacityPlotCard.tsx` owns the complete Time/Capacity configuration/query/builder/settings/live-card/style/export boundary required by 038.5.
+- Confirmed the locked query key, compact request payload, fixed 1200 viewport identity, data-signature inputs, 30-minute cache windows, placeholder behavior, job polling, delayed token clearing, and readiness semantics are preserved.
+- Confirmed saved preview and portable snapshot generation reuse the canonical family trace/layout builders and `AnalysisPage.tsx` no longer owns duplicate Time/Capacity settings/query/trace/layout/card logic.
+- Confirmed no backend/API/migration/persistent-spec/scientific/cache/artifact-version/configuration change in the implementation diff.
+- Implementer-reported verification: focused `81/81`, TypeScript passed, Vite passed (`7514` modules), structural searches clean, `git diff --check` passed, preflight `5/5`; manual browser matrix NOT RUN.
+- Reviewer-independent execution: none; review used ChatGPT + GitHub connector only, not Work.
+- No actionable finding.
+- Canonical review commit: `6b5945c159396e58b5af1b9faa8356de05767c4a`.
+- Decision: **038.5 REVIEW_CLEAN — 038.6 may begin**.
+
+Next owner: **IMPLEMENTER**.
