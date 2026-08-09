@@ -8,12 +8,12 @@ Repository: `mattiafelice-palermo/cellxplorer`
 Branch: `feature/analyses-feature-modularization`
 
 ```text
-ACTIVE_CHILD: 038.4
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 038.5
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: de1b31e1987bd532e2bd30c070f6e6a14f03fd21
-LAST_REVIEW_SHA: 0ed279ebdaf970807f09690ffe8e43bc62b3c20f
-NEXT_ACTION: Review 038.4 against the parent/child spec and update its canonical review file.
+LAST_REVIEW_SHA: 07dbe7fad21c6ba9d22006eee0d2f49b97385168
+NEXT_ACTION: Reconcile 038.4 status metadata with its clean review, set 038.5 active, implement 038.5 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
 ```
 
 ## Protocol
@@ -35,28 +35,28 @@ NEXT_ACTION: Review 038.4 against the parent/child spec and update its canonical
 
 ## Current handoff
 
-038.1, 038.2, and 038.3 are independently review-clean.
+038.1 through 038.4 are independently review-clean.
 
-Before beginning 038.4, update implementation-owned status metadata only as needed so that the
-parent, 038.3 child, and `docs/specs/README.md` accurately record 038.3 as review-clean and 038.4 as
+Before beginning 038.5, update implementation-owned status metadata only as needed so that the
+parent, 038.4 child, and `docs/specs/README.md` accurately record 038.4 as review-clean and 038.5 as
 the active next child. Do not rewrite the review conclusion.
 
 Then implement only:
 
-`docs/specs/038.4-cycles-family-extraction.md`
+`docs/specs/038.5-time-capacity-family-extraction.md`
 
-Follow the parent and child exactly. When 038.4 is complete:
+Follow the parent and child exactly. When 038.5 is complete:
 
-1. run every verification required by 038.4 and current repository guidance;
+1. run every verification required by 038.5 and current repository guidance;
 2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
    guidance explicitly supersedes it;
 3. record exact results and any manual checks not run;
 4. commit and push the implementation;
-5. update the state block to `ACTIVE_CHILD: 038.4`, `TURN: REVIEWER`,
+5. update the state block to `ACTIVE_CHILD: 038.5`, `TURN: REVIEWER`,
    `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
-   independent 038.4 review;
+   independent 038.5 review;
 6. append an IMPLEMENTER entry to this log;
-7. make no 038.5 implementation changes until the reviewer returns the turn.
+7. make no 038.6 implementation changes until the reviewer returns the turn.
 
 ## Coordination log
 
@@ -125,8 +125,6 @@ Reviewed 038.3 implementation `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` after v
 - Canonical review commit: `0ed279ebdaf970807f09690ffe8e43bc62b3c20f`.
 - Decision: **038.3 REVIEW_CLEAN — 038.4 may begin**.
 
-Next owner: **IMPLEMENTER**.
-
 ### 2026-08-09 — IMPLEMENTER
 
 Implemented **038.4** in `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` and pushed the shared branch.
@@ -146,4 +144,25 @@ Implemented **038.4** in `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` and pushed t
   portable, light/dark, and keyboard checks remain for independent review.
 - Next action: independent reviewer reviews 038.4 and updates its canonical review file.
 
-Next owner: **REVIEWER**.
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.4 implementation `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` after valid handoff checkpoint
+`555c0fe7b2d914acb811f29f88dffe96f2e4dddb`.
+
+- Confirmed `families/cycles/CyclePlotCard.tsx` owns the Cycles quantity/query/diagnostic/builder/
+  settings/live-card/style/export boundary required by the child.
+- Confirmed the exact live compute key, endpoint/payload/token, stale time, tab enablement, job
+  polling, and page last-valid-result behavior are preserved without a duplicate live query.
+- Compared the extracted trace/layout boundary with the prior page-owned builders; no scientific or
+  presentation contract change found.
+- Confirmed saved preview and portable snapshot orchestration use the canonical family builders and
+  the page no longer owns duplicate Cycles settings/card/builders.
+- Confirmed no backend/API/migration/scientific/query-key/cache/artifact-version change.
+- Implementer-reported verification: focused `90/90`, TypeScript passed, Vite passed (`7513`
+  modules), structural searches clean, `git diff --check` passed, preflight `5/5` with `459`
+  frontend tests and `58` backend modules; manual browser matrix NOT RUN.
+- No actionable finding.
+- Canonical review commit: `07dbe7fad21c6ba9d22006eee0d2f49b97385168`.
+- Decision: **038.4 REVIEW_CLEAN — 038.5 may begin**.
+
+Next owner: **IMPLEMENTER**.
