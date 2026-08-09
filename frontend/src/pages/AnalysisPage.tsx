@@ -160,11 +160,14 @@ import {
 import { PlotStylePanel } from "../features/analyses/editor/plotting/PlotStylePanel";
 import { resolveWarmup } from "../warmupCompletion";
 import {
-  DIAGNOSTIC_DEFAULTS,
-  findDiagnosticCyclesAcross,
-  formatCycleRanges,
-  summarizeHidden,
-} from "../features/analyses/editor/families/cycles/diagnosticCycles";
+  CyclePlotCard,
+  CycleSettings,
+  cyclePlotLayout,
+  cycleQuantityLabel,
+  cycleTracesForResult,
+  normalizeLegacyCycleQuantityKey,
+  useCyclesResult,
+} from "../features/analyses/editor/families/cycles/CyclePlotCard";
 import {
   CellHoverCard,
   RelatedAnalysesPopover,
@@ -207,34 +210,21 @@ import { saveDownload, shareDownload } from "../downloads";
 import { renderExportFilename, sanitizeExportFilename } from "../exportFilenames";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
 import {
-  getCycleQuantityExplainer,
   getTimeCapacityExplainer,
   type PlotExplainer,
 } from "../features/analyses/editor/plotting/plotExplainers";
 import { applyPlotStylePreset } from "../features/analyses/editor/plotting/plotStylePresets";
 import {
-  aggregateSeriesDescriptor,
-  cellSeriesDescriptor,
-  composeSeriesKey,
   decimatePreviewTraces,
-  resolveAllSeriesStyles,
   resolveSeriesStyle,
   seriesPlotlyMode,
   seriesPlotlySymbol,
-  shadowOffsetValues,
-  shadowRgba,
   shortSourceName,
   timeCapacitySeriesDescriptor,
-  type BaseSeriesStyle,
-  type ResolvedSeriesStyle,
-  type SeriesDescriptor,
 } from "../features/analyses/editor/plotting/seriesStyling";
 import { axisLayout, numericTraceExtent } from "../features/analyses/editor/plotting/plotAxisLayout";
 import {
-  sourceBoundaryPointIndices,
   sourceExportColumns,
-  type SourceExportColumn,
-  type SourceExportValue,
 } from "../features/analyses/editor/plotting/sourceChainPlot";
 import {
   multiSourceAnalysisPolicy,
@@ -249,20 +239,15 @@ import {
   plotPalette,
   cePalette,
   plotMode,
-  markerSymbol,
-  ceMarkerSymbol,
-  hexToRgba,
 } from "../features/analyses/editor/plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "../features/analyses/editor/plotting/paletteDraft";
 import {
   axisGapDelta,
-  axisTitleFont,
   draggedLegendPoint,
   hoverLabelLayout,
   legendLayout,
   legendMargins,
   plotAxisStyle,
-  plotLayoutStyle,
   shadowTraceFor,
   tickLayout,
 } from "../features/analyses/editor/plotting/plotLayout";
@@ -270,13 +255,11 @@ import {
   blobFromDataUrl,
   downloadBlob,
   downloadDataExport,
-  downloadStyledPlotExport,
   exportFigure,
   makeVectorPdf,
   pngWithPpi,
   resolveExportPlan,
   slugFilename,
-  styledPlotExportPreview,
   textFromDataUrl,
   tracesToColumns,
 } from "../features/analyses/editor/plotting/plotExport";
@@ -319,62 +302,6 @@ const EXPORT_FORMAT_OPTIONS: { value: PlotExportFormat; label: string }[] = [
   { value: "png", label: "PNG" },
   { value: "svg", label: "SVG" },
   { value: "pdf", label: "PDF" },
-];
-
-const CAPACITY_KEYS = new Set(["discharge_capacity", "charge_capacity"]);
-const CAPACITY_LIKE_KEYS = new Set([
-  "discharge_capacity",
-  "charge_capacity",
-  "discharge_capacity_specific",
-  "charge_capacity_specific",
-  "cv_charge_capacity",
-]);
-
-const NORMALIZED_QUANTITY_MAP: Record<string, { column: string; label: string }> = {
-  discharge_capacity: { column: "discharge_capacity_mah_g", label: "Discharge capacity (mAh/g)" },
-  charge_capacity: { column: "charge_capacity_mah_g", label: "Charge capacity (mAh/g)" },
-  discharge_energy: { column: "discharge_energy_mwh_g", label: "Discharge energy (mWh/g)" },
-  charge_energy: { column: "charge_energy_mwh_g", label: "Charge energy (mWh/g)" },
-  discharge_capacity_loss: {
-    column: "discharge_capacity_loss_mah_g_cycle",
-    label: "Discharge capacity loss (mAh/g/cycle)",
-  },
-  charge_capacity_loss: {
-    column: "charge_capacity_loss_mah_g_cycle",
-    label: "Charge capacity loss (mAh/g/cycle)",
-  },
-  cv_charge_capacity: {
-    column: "cv_charge_capacity_mah_g",
-    label: "CV charge capacity (mAh/g)",
-  },
-};
-
-const LEGACY_NORMALIZED_QUANTITY_MAP: Record<string, string> = {
-  discharge_capacity_specific: "discharge_capacity",
-  charge_capacity_specific: "charge_capacity",
-  discharge_energy_specific: "discharge_energy",
-  charge_energy_specific: "charge_energy",
-  discharge_capacity_loss_specific: "discharge_capacity_loss",
-  charge_capacity_loss_specific: "charge_capacity_loss",
-};
-
-const POLARIZATION_METHOD_OPTIONS: {
-  value: AnalysisSpec["computation"]["polarization"]["method"];
-  label: string;
-}[] = [
-  { value: "mean", label: "Mean charge - mean discharge" },
-  { value: "first_first", label: "First charge - first discharge" },
-  { value: "last_last", label: "Last charge - last discharge" },
-  { value: "last_charge_first_discharge", label: "Last charge - first discharge" },
-  { value: "first_charge_last_discharge", label: "First charge - last discharge" },
-];
-
-const POLARIZATION_DIRECTION_OPTIONS: {
-  value: AnalysisSpec["computation"]["polarization"]["direction"];
-  label: string;
-}[] = [
-  { value: "charge_minus_discharge", label: "Charge - discharge" },
-  { value: "discharge_minus_charge", label: "Discharge - charge" },
 ];
 
 const TAB_DEFS: {
@@ -689,37 +616,6 @@ const METRIC_COLUMNS: { key: keyof CellMetrics; label: string; digits: number }[
   { key: "mean_cv_charge_fraction_pct", label: "Mean CV Q (%)", digits: 2 },
 ];
 
-const FALLBACK_QUANTITY_LABELS: Record<string, string> = {
-  discharge_capacity: "Discharge capacity (mAh)",
-  charge_capacity: "Charge capacity (mAh)",
-  coulombic_efficiency: "Coulombic efficiency (%)",
-  discharge_energy: "Discharge energy (mWh)",
-  charge_energy: "Charge energy (mWh)",
-  energy_efficiency: "Energy efficiency (%)",
-  mean_charge_voltage: "Mean charge voltage (V)",
-  mean_discharge_voltage: "Mean discharge voltage (V)",
-  polarization: "Polarization ΔV (V)",
-  polarization_pct: "Polarization ΔV/V (%)",
-  discharge_capacity_specific: "Discharge capacity (mAh/g)",
-  charge_capacity_specific: "Charge capacity (mAh/g)",
-  discharge_energy_specific: "Discharge energy (mWh/g)",
-  charge_energy_specific: "Charge energy (mWh/g)",
-  cycle_duration: "Cycle duration (h)",
-  charge_time: "Charge time (h)",
-  discharge_time: "Discharge time (h)",
-  cv_charge_time: "CV charge time (h)",
-  cv_charge_capacity: "CV charge capacity (mAh)",
-  cv_charge_fraction: "CV charge fraction (%)",
-  cv_charge_events: "CV charge events",
-  cv_reached: "CV reached",
-  voltaic_efficiency: "Voltaic efficiency (%)",
-  capacity_retention: "Capacity retention / SoH (%)",
-  discharge_capacity_loss: "Discharge capacity loss (mAh/cycle)",
-  charge_capacity_loss: "Charge capacity loss (mAh/cycle)",
-  discharge_capacity_loss_specific: "Discharge capacity loss (mAh/g/cycle)",
-  charge_capacity_loss_specific: "Charge capacity loss (mAh/g/cycle)",
-};
-
 function clone<T>(value: T): T {
   if (typeof structuredClone === "function") return structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;
@@ -737,33 +633,6 @@ function fmt(v: number | null | undefined, digits = 2): string {
 
 function tabLabel(tab: AnalysisTabKey): string {
   return TAB_DEFS.find((t) => t.value === tab)?.label ?? tab;
-}
-
-function quantityLabel(result: ComputeResult | undefined, spec: AnalysisSpec): string {
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  return resolvedQuantity(result, spec).label;
-}
-
-function isMassNormalizableQuantity(quantity: string): boolean {
-  return quantity in NORMALIZED_QUANTITY_MAP;
-}
-
-function resolvedQuantity(result: ComputeResult | undefined, spec: AnalysisSpec) {
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const baseInfo = result?.quantities.find((q) => q.key === quantity);
-  if (spec.presentation.normalize_by_mass && isMassNormalizableQuantity(quantity)) {
-    const normalized = NORMALIZED_QUANTITY_MAP[quantity];
-    return {
-      key: quantity,
-      column: normalized.column,
-      label: normalized.label,
-    };
-  }
-  return {
-    key: quantity,
-    column: baseInfo?.column ?? "discharge_capacity_mah",
-    label: baseInfo?.label ?? FALLBACK_QUANTITY_LABELS[quantity] ?? quantity.replace(/_/g, " "),
-  };
 }
 
 function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
@@ -785,7 +654,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : `time (${cfg.time_unit})`;
     return `Voltage${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
-  if (tab === "cycles") return `${quantityLabel(result, spec)} vs cycle`;
+  if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
   if (tab === "dcir") {
     const view = { ...DEFAULT_DCIR_VIEW, ...(spec.presentation.dcir_view ?? {}) };
     const quantity =
@@ -847,10 +716,6 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
   return `${tabLabel(tab)} view`;
 }
 
-function isPolarizationQuantity(quantity: string): boolean {
-  return quantity === "polarization" || quantity === "polarization_pct";
-}
-
 function suggestedPlotName(tab: AnalysisTabKey, result: ComputeResult | undefined, spec: AnalysisSpec): string {
   if (tab === "time_capacity") return "Time / capacity comparison";
   if (tab === "dcir") {
@@ -881,7 +746,7 @@ function suggestedPlotName(tab: AnalysisTabKey, result: ComputeResult | undefine
     if (quantity === "block_duration") return "Steps block duration comparison";
     return "Steps time comparison";
   }
-  return tab === "cycles" ? `${quantityLabel(result, spec)} comparison` : `${tabLabel(tab)} view`;
+  return tab === "cycles" ? `${cycleQuantityLabel(result, spec)} comparison` : `${tabLabel(tab)} view`;
 }
 
 /** Quantity (and related options) that drive the default plot name. */
@@ -953,8 +818,8 @@ function normalizeSavedPlot(plot: SavedAnalysisPlot, base: AnalysisSpec): SavedA
     ].filter((id) => validSegmentIds.has(id)),
     plot_style: normalizePlotStyle(plot.presentation?.plot_style),
   };
-  const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[presentation.quantity];
-  if (legacyNormalized) {
+  const legacyNormalized = normalizeLegacyCycleQuantityKey(presentation.quantity);
+  if (legacyNormalized !== presentation.quantity) {
     presentation.quantity = legacyNormalized;
     presentation.normalize_by_mass = true;
   }
@@ -1140,8 +1005,8 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       ...(spec.presentation?.rate_capability_view ?? {}),
     },
   };
-  const legacyNormalized = LEGACY_NORMALIZED_QUANTITY_MAP[spec.presentation.quantity];
-  if (legacyNormalized) {
+  const legacyNormalized = normalizeLegacyCycleQuantityKey(spec.presentation.quantity);
+  if (legacyNormalized !== spec.presentation.quantity) {
     spec.presentation.quantity = legacyNormalized;
     spec.presentation.normalize_by_mass = true;
   }
@@ -1280,18 +1145,6 @@ function BlockedWarmupNotice({ onComplete }: { onComplete: (error?: string, deta
     onComplete(undefined, "Skipped: protocol mapping is required for multi-source Cells");
   }, [onComplete]);
   return null;
-}
-
-function computeSignature(spec: AnalysisSpec | null): string {
-  if (!spec) return "no-spec";
-  return JSON.stringify({
-    selection: spec.selection,
-    protocol_segments: spec.protocol_segments ?? [],
-    dcir_segments: spec.dcir_segments ?? [],
-    computation: spec.computation,
-    aggregation: spec.aggregation,
-    hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
-  });
 }
 
 function savedPlotFromSpec(
@@ -1723,477 +1576,6 @@ function AddEntriesModal({
       </Stack>
     </Modal>
   );
-}
-
-function bandSegmentTraces(
-  x: number[],
-  low: (number | null)[],
-  high: (number | null)[],
-  color: string,
-  opacity: number,
-  name: string
-): Plotly.Data[] {
-  const traces: Plotly.Data[] = [];
-  let start: number | null = null;
-  const flush = (endExclusive: number) => {
-    if (start === null || endExclusive - start < 2) {
-      start = null;
-      return;
-    }
-    const xs = x.slice(start, endExclusive);
-    const lows = low.slice(start, endExclusive) as number[];
-    const highs = high.slice(start, endExclusive) as number[];
-    traces.push({
-      x: [...xs, ...[...xs].reverse()],
-      y: [...highs, ...[...lows].reverse()],
-      fill: "toself",
-      fillcolor: hexToRgba(color, opacity),
-      line: { width: 0 },
-      hoverinfo: "skip",
-      showlegend: false,
-      name,
-      type: "scatter",
-    } as Plotly.Data);
-    start = null;
-  };
-
-  for (let index = 0; index < x.length; index += 1) {
-    const valid = low[index] !== null && high[index] !== null;
-    if (valid && start === null) start = index;
-    if (!valid) flush(index);
-  }
-  flush(x.length);
-  return traces;
-}
-
-function withoutDiagnosticCycles(
-  result: ComputeResult,
-  hidden: Set<number>,
-  reindex = false
-): ComputeResult {
-  if (hidden.size === 0) return result;
-  const keptIndices = (x: number[]) =>
-    x.reduce<number[]>((acc, cycle, index) => {
-      if (!hidden.has(cycle)) acc.push(index);
-      return acc;
-    }, []);
-  const take = <T,>(values: T[] | null | undefined, indices: number[]): T[] =>
-    Array.isArray(values) ? indices.map((i) => values[i]) : [];
-
-  // A single map from surviving cycle number to its 1-based position, built from
-  // the union across every series so cells stay aligned after the gaps close.
-  const remap = (() => {
-    if (!reindex) return null;
-    const surviving = new Set<number>();
-    for (const series of result.cell_series)
-      for (const cycle of series.x) if (!hidden.has(cycle)) surviving.add(cycle);
-    for (const agg of result.aggregates)
-      for (const cycle of agg.x) if (!hidden.has(cycle)) surviving.add(cycle);
-    const sorted = [...surviving].sort((a, b) => a - b);
-    return new Map(sorted.map((cycle, index) => [cycle, index + 1]));
-  })();
-  const remapX = (x: number[]) => (remap ? x.map((cycle) => remap.get(cycle) ?? cycle) : x);
-
-  return {
-    ...result,
-    aggregates: result.aggregates.map((agg) => {
-      const indices = keptIndices(agg.x);
-      return {
-        ...agg,
-        x: remapX(take(agg.x, indices)),
-        quantities: Object.fromEntries(
-          Object.entries(agg.quantities).map(([key, q]) => [
-            key,
-            {
-              ...q,
-              mean: take(q.mean, indices),
-              band_low: take(q.band_low, indices),
-              band_high: take(q.band_high, indices),
-              n: take(q.n, indices),
-            },
-          ])
-        ),
-      };
-    }),
-    cell_series: result.cell_series.map((series) => {
-      const indices = keptIndices(series.x);
-      return {
-        ...series,
-        x: remapX(take(series.x, indices)),
-        quantities: Object.fromEntries(
-          Object.entries(series.quantities).map(([key, values]) => [key, take(values, indices)])
-        ),
-        source_cycle: take(series.source_cycle, indices),
-        source_position: take(series.source_position, indices),
-        source_filename: take(series.source_filename, indices),
-        source_hash: take(series.source_hash, indices),
-      };
-    }),
-  };
-}
-
-/** The diagnostic cycles this spec asks to hide, or an empty set when off. */
-function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): Set<number> {
-  if (!spec.presentation.hide_diagnostic_cycles) return new Set();
-  return findDiagnosticCyclesAcross(
-    result.cell_series.filter((s) => !s.excluded),
-    { tolerance: spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance }
-  );
-}
-
-function tracesForResult(
-  original: ComputeResult,
-  spec: AnalysisSpec,
-  compact = false
-): Plotly.Data[] {
-  // Filter here rather than at each call site so the live plot, the saved
-  // thumbnail and the exported figure cannot disagree about what is shown.
-  const result = withoutDiagnosticCycles(
-    original,
-    diagnosticCyclesFor(original, spec),
-    spec.presentation.reindex_diagnostic_cycles ?? false
-  );
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const { column } = resolvedQuantity(result, spec);
-  const showCeOverlay = !compact && (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
-  const style = currentPlotStyle(spec, "cycles");
-  const palette = plotPalette(style);
-  const secondaryPalette = cePalette(style);
-  const mode = compact ? "lines" : plotMode(style);
-  const out: Plotly.Data[] = [];
-  const colorFor = new Map<string, string>();
-  const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
-  let ci = 0;
-  const pick = (key: string) => {
-    if (!colorFor.has(key))
-      colorFor.set(key, style.custom_colors[key] ?? paletteColorAt(palette, ci++, paletteOverflow));
-    return colorFor.get(key)!;
-  };
-  let ceIndex = 0;
-  const pickCe = (key: string) => {
-    if (style.ce_custom_colors[key]) return style.ce_custom_colors[key];
-    if (style.ce_palette_mode === "single") return style.ce_single_color ?? "#495057";
-    if (style.ce_palette_mode === "secondary") {
-      return secondaryPalette[ceIndex++ % secondaryPalette.length];
-    }
-    return pick(key);
-  };
-
-  const soloOrIndividual = (s: ComputeResult["cell_series"][number]) =>
-    compact ||
-    s.group_id === null ||
-    spec.presentation.show_individual_cells ||
-    result.aggregates.length === 0;
-
-  // The CE overlay is an ordinary secondary-axis series now: it gets a
-  // descriptor (key `y2:coulombic_efficiency:<sourceKey>`) alongside its
-  // primary's, and both are resolved together below so rules/overrides and
-  // (opt-in) colour/name linking apply consistently to every series on this
-  // plot. `ceDescriptorFor` mirrors the CE trace's own former `name` exactly,
-  // so it's the correct fallback label when linking is off (the default; see
-  // resolveAllSeriesStyles call below).
-  const ceDescriptorFor = (primary: SeriesDescriptor, sourceKey: string, label: string): SeriesDescriptor => ({
-    key: composeSeriesKey({ sourceKey, axis: "y2", measure: "coulombic_efficiency" }),
-    kind: primary.kind,
-    label,
-    cellName: primary.cellName,
-    groupName: primary.groupName,
-    plot: 0,
-    axis: "y2",
-    measure: "coulombic_efficiency",
-    sourceKey,
-    secondarySuffix: " CE",
-  });
-
-  // Every stylable series, primary and CE, in draw order — the same order the
-  // trace-building loops below walk, so `baseFor` (which calls `pick`/`pickCe`
-  // lazily as each descriptor resolves) reproduces the legacy palette-cycling
-  // call order exactly.
-  const descriptors: SeriesDescriptor[] = [];
-  const colorKeyFor = new Map<string, string>();
-  for (const agg of result.aggregates) {
-    const aggDescriptor = aggregateSeriesDescriptor(agg, compact);
-    colorKeyFor.set(aggDescriptor.key, `g${agg.group_id}`);
-    descriptors.push(aggDescriptor);
-    if (showCeOverlay && agg.quantities[column] && agg.quantities["coulombic_efficiency_pct"]) {
-      descriptors.push(ceDescriptorFor(aggDescriptor, `g${agg.group_id}`, `${agg.group_name} CE`));
-    }
-  }
-  for (const s of result.cell_series) {
-    if (s.excluded || !soloOrIndividual(s)) continue;
-    const grouped = s.group_id !== null;
-    const descriptor = cellSeriesDescriptor(s);
-    colorKeyFor.set(descriptor.key, grouped ? `g${s.group_id}` : `c${s.cell_id}`);
-    descriptors.push(descriptor);
-    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      descriptors.push(ceDescriptorFor(descriptor, `c${s.cell_id}`, `${s.label} CE`));
-    }
-  }
-
-  const baseFor = (d: SeriesDescriptor): BaseSeriesStyle => {
-    if (d.measure === "coulombic_efficiency") {
-      // Reproduces `pickCe` exactly: ce_custom_colors, then ce_palette_mode
-      // "single" | "secondary" | "match" (which falls through to `pick`).
-      return {
-        color: pickCe(d.sourceKey ?? ""),
-        lineWidth: style.ce_line_width,
-        lineDash: style.ce_line_dash,
-        markerMode: style.ce_marker_mode,
-        markerSymbol: style.ce_marker_symbol,
-        markerSize: style.ce_marker_size,
-        markerOpen: style.ce_marker_open,
-        opacity: style.ce_opacity,
-      };
-    }
-    const color = pick(colorKeyFor.get(d.key) ?? d.key);
-    if (d.kind === "group") {
-      return {
-        color,
-        lineWidth: compact ? 2 : style.line_width,
-        lineDash: compact ? "solid" : style.line_dash,
-        markerMode: style.marker_mode,
-        markerSymbol: style.marker_symbol,
-        markerSize: compact ? 3 : style.marker_size,
-        markerOpen: style.marker_open,
-        opacity: 1,
-      };
-    }
-    const grouped = d.groupName !== null;
-    return {
-      color,
-      lineWidth: compact ? 1.3 : grouped ? Math.max(1, style.line_width - 1.2) : style.line_width,
-      lineDash: compact ? "solid" : style.line_dash,
-      markerMode: style.marker_mode,
-      markerSymbol: style.marker_symbol,
-      markerSize: compact ? 3 : style.marker_size,
-      markerOpen: style.marker_open,
-      opacity: compact ? 0.45 : grouped ? style.individual_opacity : 0.95,
-    };
-  };
-
-  // Resolve every series in one call so a CE trace's link to its primary (when
-  // enabled) sees the primary's *final* colour/name. Linking and name-deriving
-  // default OFF here rather than the model's own defaults: a CE trace whose
-  // ce_palette_mode is "secondary"/"single", or whose ce_custom_colors picks
-  // it out individually, must keep that colour by default (an aggregate's
-  // derived name would also gain a spurious " mean" from its primary's
-  // legend name). Both remain fully opt-in via style.link_secondary_colors /
-  // style.secondary_name_mode, or a per-series override.
-  const resolvedStyles = resolveAllSeriesStyles({
-    descriptors,
-    baseFor,
-    rules: style.series_rules,
-    overrides: style.series_overrides,
-    linkSecondaryColors: style.link_secondary_colors ?? false,
-    secondaryNameMode: style.secondary_name_mode ?? "independent",
-    secondaryNameSuffix: style.secondary_name_suffix ?? null,
-  });
-
-  for (const agg of result.aggregates) {
-    const aggKey = `g${agg.group_id}`;
-    const q = agg.quantities[column];
-    if (!q) continue;
-    const aggResolved = resolvedStyles.get(aggKey);
-    if (!aggResolved || aggResolved.hidden) continue;
-    if (!compact) {
-      out.push(
-        ...bandSegmentTraces(
-          agg.x,
-          q.band_low,
-          q.band_high,
-          aggResolved.color,
-          style.band_opacity,
-          `${agg.group_name} band`
-        )
-      );
-    }
-    if (aggResolved.shadow && !compact) {
-      out.push(shadowTraceFor(agg.x, q.mean, aggResolved));
-    }
-    out.push({
-      x: agg.x,
-      y: q.mean,
-      name: aggResolved.name,
-      line: {
-        color: aggResolved.color,
-        width: aggResolved.lineWidth,
-        dash: aggResolved.lineDash,
-        shape: aggResolved.lineShape,
-      },
-      marker: {
-        color: aggResolved.color,
-        size: aggResolved.markerSize,
-        symbol: seriesPlotlySymbol(aggResolved),
-      },
-      opacity: aggResolved.opacity,
-      showlegend: aggResolved.showInLegend,
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(aggResolved),
-      customdata: q.n,
-      hovertemplate: compact
-        ? undefined
-        : `cycle %{x}: %{y:.4f} (n=%{customdata})<extra>${agg.group_name}</extra>`,
-    } as Plotly.Data);
-    if (!compact) {
-      const lowCountX: number[] = [];
-      const lowCountY: number[] = [];
-      const lowCountN: number[] = [];
-      q.n.forEach((count, index) => {
-        const value = q.mean[index];
-        if (
-          count > 0 &&
-          count < spec.aggregation.min_n_for_band &&
-          value !== null &&
-          Number.isFinite(value)
-        ) {
-          lowCountX.push(agg.x[index]);
-          lowCountY.push(value);
-          lowCountN.push(count);
-        }
-      });
-      if (lowCountX.length > 0) {
-        out.push({
-          x: lowCountX,
-          y: lowCountY,
-          name: `${agg.group_name} below minimum n`,
-          type: "scatter",
-          mode: "markers",
-          marker: {
-            color: style.low_n_color,
-            size: style.low_n_marker_size,
-            symbol: style.low_n_marker_symbol,
-            line: { color: style.paper_bgcolor, width: 0.8 },
-          },
-          customdata: lowCountN,
-          showlegend: false,
-          hovertemplate:
-            `cycle %{x}: %{y:.4f} (n=%{customdata}, band requires ${spec.aggregation.min_n_for_band})` +
-            `<extra>${agg.group_name}</extra>`,
-        } as Plotly.Data);
-      }
-    }
-    if (showCeOverlay && agg.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" })
-      );
-      if (ceResolved && !ceResolved.hidden) {
-        out.push({
-          x: agg.x,
-          y: agg.quantities["coulombic_efficiency_pct"].mean,
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: { color: ceResolved.color, size: ceResolved.markerSize, symbol: seriesPlotlySymbol(ceResolved) },
-          type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-        } as Plotly.Data);
-      }
-    }
-  }
-
-  for (const s of result.cell_series) {
-    if (s.excluded || !soloOrIndividual(s)) continue;
-    const grouped = s.group_id !== null;
-    const cellKey = `c${s.cell_id}`;
-    const color = grouped ? pick(`g${s.group_id}`) : pick(cellKey);
-    const resolved = resolvedStyles.get(cellKey);
-    if (!resolved || resolved.hidden) continue;
-    const sourceCycle = s.source_cycle ?? s.x.map(() => null);
-    const sourcePosition = s.source_position ?? s.x.map(() => null);
-    const sourceFilename = s.source_filename ?? s.x.map(() => null);
-    const sourceHash = s.source_hash ?? s.x.map(() => null);
-    const sourceColumns = sourceExportColumns(
-      s.label,
-      s.x,
-      sourceCycle,
-      sourcePosition,
-      sourceFilename,
-      sourceHash,
-    );
-    const customdata = s.x.map((cycle, index) => [
-      cycle,
-      sourceCycle[index] ?? "",
-      sourcePosition[index] ?? "",
-      shortSourceName(String(sourceFilename[index] ?? "")),
-    ]);
-    if (resolved.shadow && !compact) {
-      out.push(shadowTraceFor(s.x, s.quantities[column] ?? [], resolved));
-    }
-    out.push({
-      x: s.x,
-      y: s.quantities[column] ?? [],
-      name: resolved.name,
-      line: {
-        color: resolved.color,
-        width: resolved.lineWidth,
-        dash: resolved.lineDash,
-        shape: resolved.lineShape,
-      },
-      marker: {
-        color: resolved.color,
-        size: resolved.markerSize,
-        symbol: seriesPlotlySymbol(resolved),
-      },
-      opacity: resolved.opacity,
-      type: "scatter",
-      mode: compact ? mode : seriesPlotlyMode(resolved),
-      showlegend: !compact && !grouped && resolved.showInLegend,
-      customdata,
-      cellxplorer_export_columns: sourceColumns,
-      hovertemplate:
-        `cycle %{customdata[0]}: %{y:.4f}<br>local cycle %{customdata[1]}<br>` +
-        `%{customdata[3]} (source %{customdata[2]})<extra>${s.label}</extra>`,
-    } as Plotly.Data);
-    const values = s.quantities[column] ?? [];
-    const boundaryIndices = sourceBoundaryPointIndices(sourcePosition, s.x, values);
-    if (boundaryIndices.length) {
-      out.push({
-        x: boundaryIndices.map((index) => s.x[index]),
-        y: boundaryIndices.map((index) => values[index]),
-        name: "Source boundary",
-        type: "scatter",
-        mode: "markers",
-        marker: {
-          color,
-          size: Math.max(style.marker_size + 2, 7),
-          symbol: "diamond-open",
-          line: { color: style.paper_bgcolor, width: 1.2 },
-        },
-        showlegend: false,
-        customdata: boundaryIndices.map((index) => [
-          s.x[index],
-          sourceCycle[index] ?? "",
-          sourcePosition[index] ?? "",
-          shortSourceName(String(sourceFilename[index] ?? "")),
-        ]),
-        hovertemplate:
-          "source boundary<br>global cycle %{customdata[0]}<br>local cycle %{customdata[1]}<br>" +
-          "%{customdata[3]} (source %{customdata[2]})<extra></extra>",
-      } as Plotly.Data);
-    }
-    if (showCeOverlay && !grouped && s.quantities["coulombic_efficiency_pct"]) {
-      const ceResolved = resolvedStyles.get(
-        composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" })
-      );
-      if (ceResolved && !ceResolved.hidden) {
-        out.push({
-          x: s.x,
-          y: s.quantities["coulombic_efficiency_pct"],
-          name: ceResolved.name,
-          yaxis: "y2",
-          line: { color: ceResolved.color, width: ceResolved.lineWidth, dash: ceResolved.lineDash },
-          marker: { color: ceResolved.color, size: ceResolved.markerSize, symbol: seriesPlotlySymbol(ceResolved) },
-          type: "scatter",
-          mode: seriesPlotlyMode(ceResolved),
-          opacity: ceResolved.opacity,
-          showlegend: ceResolved.showInLegend,
-        } as Plotly.Data);
-      }
-    }
-  }
-  return out;
 }
 
 function numeric(values: (number | null)[]): number[] {
@@ -2967,7 +2349,7 @@ function SavedPlotPreview({
               preview.data as RateCapabilityResult,
               previewSpec
             )
-          : tracesForResult(preview.data as ComputeResult, previewSpec)
+          : cycleTracesForResult(preview.data as ComputeResult, previewSpec)
         : [],
     [plot.tab, preview.data, previewSpec]
   );
@@ -3991,277 +3373,6 @@ function SamplePanel({
   );
 }
 
-function CycleSettings({
-  spec,
-  result,
-  update,
-}: {
-  spec: AnalysisSpec;
-  result: ComputeResult | undefined;
-  update: (fn: (s: AnalysisSpec) => void) => void;
-}) {
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const polarizationSelected = isPolarizationQuantity(quantity);
-  const canNormalizeByMass = isMassNormalizableQuantity(quantity);
-  return (
-    <Paper p="sm" withBorder>
-      <Accordion
-        key={polarizationSelected ? "polarization" : "standard"}
-        multiple
-        defaultValue={polarizationSelected ? ["plot", "polarization"] : ["plot"]}
-      >
-        <Accordion.Item value="plot">
-          <Accordion.Control>
-            <Text fw={700} size="sm">
-              Plot settings
-            </Text>
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack gap="xs">
-              <Select
-                label="Quantity"
-                data={(result?.quantities ?? []).map((q) => ({ value: q.key, label: q.label }))}
-                value={quantity}
-                onChange={(v) =>
-                  v &&
-                  update((s) => {
-                    s.presentation.quantity = v;
-                    if (!isMassNormalizableQuantity(v)) s.presentation.normalize_by_mass = false;
-                    // a manual y-range was set for the OLD quantity's scale;
-                    // keeping it would render the new quantity off-screen
-                    resetManualAxis(s, "cycles", "y_axis");
-                  })
-                }
-              />
-              {canNormalizeByMass && (
-                <Switch
-                  label="Normalize by g"
-                  checked={Boolean(spec.presentation.normalize_by_mass)}
-                  onChange={(e) =>
-                    update((s) => {
-                      s.presentation.normalize_by_mass = e.currentTarget.checked;
-                      // mAh ↔ mAh/g changes the y scale entirely
-                      resetManualAxis(s, "cycles", "y_axis");
-                    })
-                  }
-                />
-              )}
-              {CAPACITY_LIKE_KEYS.has(quantity) && (
-                <Switch
-                  label="CE on right axis"
-                  checked={spec.presentation.ce_overlay}
-                  onChange={(e) =>
-                    update((s) => void (s.presentation.ce_overlay = e.currentTarget.checked))
-                  }
-                />
-              )}
-              <Switch
-                label="Individual cells"
-                checked={spec.presentation.show_individual_cells}
-                onChange={(e) =>
-                  update((s) => void (s.presentation.show_individual_cells = e.currentTarget.checked))
-                }
-              />
-              <Tooltip
-                label={
-                  "Hides protocol diagnostics — DCIR pulses and rate checks — found from cycle " +
-                  "durations rather than capacity, so a genuinely degrading cell is never hidden. " +
-                  "Display only: exports keep every cycle."
-                }
-                multiline
-                maw={320}
-                withArrow
-                openDelay={300}
-              >
-                <Switch
-                  label="Hide diagnostic cycles"
-                  checked={spec.presentation.hide_diagnostic_cycles ?? false}
-                  onChange={(e) =>
-                    update((s) => {
-                      s.presentation.hide_diagnostic_cycles = e.currentTarget.checked;
-                      // The visible range collapses to the healthy band; a
-                      // manual range chosen for the unfiltered plot would crop it.
-                      resetManualAxis(s, "cycles", "y_axis");
-                    })
-                  }
-                />
-              </Tooltip>
-              {(spec.presentation.hide_diagnostic_cycles ?? false) && (
-                <Tooltip
-                  label={
-                    "Close the gaps the hidden cycles leave: drop them from the x-axis and " +
-                    "renumber the remaining cycles 1..N. Display only — exports keep the real " +
-                    "cycle numbers."
-                  }
-                  multiline
-                  maw={320}
-                  withArrow
-                  openDelay={300}
-                >
-                  <Switch
-                    ml="md"
-                    label="Reindex remaining cycles"
-                    checked={spec.presentation.reindex_diagnostic_cycles ?? false}
-                    onChange={(e) =>
-                      update((s) => {
-                        s.presentation.reindex_diagnostic_cycles = e.currentTarget.checked;
-                        resetManualAxis(s, "cycles", "x_axis");
-                      })
-                    }
-                  />
-                </Tooltip>
-              )}
-              <Select
-                label="Replicates"
-                data={[
-                  { value: "replicate_mean", label: "Mean with band" },
-                  { value: "none", label: "Cells only" },
-                ]}
-                value={spec.aggregation.mode}
-                onChange={(v) =>
-                  v && update((s) => void (s.aggregation.mode = v as "replicate_mean" | "none"))
-                }
-              />
-              <Select
-                label="Band"
-                data={[
-                  { value: "std", label: "Standard deviation" },
-                  { value: "sem", label: "SEM" },
-                  { value: "minmax", label: "Min-max" },
-                  { value: "percentile", label: "10-90 percentile" },
-                ]}
-                value={spec.aggregation.dispersion}
-                onChange={(v) =>
-                  v &&
-                  update(
-                    (s) => void (s.aggregation.dispersion = v as AnalysisSpec["aggregation"]["dispersion"])
-                  )
-                }
-              />
-              <DebouncedNumberInput
-                label="Min cells for band"
-                min={1}
-                value={spec.aggregation.min_n_for_band}
-                onCommit={(v) => update((s) => void (s.aggregation.min_n_for_band = v ?? 2))}
-              />
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
-
-        {polarizationSelected && (
-          <Accordion.Item value="polarization">
-            <Accordion.Control>
-              <Text fw={700} size="sm">
-                Polarization
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack gap="xs">
-                <Select
-                  label="Voltage pair"
-                  data={POLARIZATION_METHOD_OPTIONS}
-                  value={spec.computation.polarization.method}
-                  onChange={(v) =>
-                    v &&
-                    update(
-                      (s) =>
-                        void (s.computation.polarization.method =
-                          v as AnalysisSpec["computation"]["polarization"]["method"])
-                    )
-                  }
-                />
-                <Select
-                  label="Direction"
-                  data={POLARIZATION_DIRECTION_OPTIONS}
-                  value={spec.computation.polarization.direction}
-                  onChange={(v) =>
-                    v &&
-                    update(
-                      (s) =>
-                        void (s.computation.polarization.direction =
-                          v as AnalysisSpec["computation"]["polarization"]["direction"])
-                    )
-                  }
-                />
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        )}
-
-        <Accordion.Item value="cycles">
-          <Accordion.Control>
-            <Text fw={700} size="sm">
-              Cycles
-            </Text>
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack gap="xs">
-              <Group grow>
-                <DebouncedNumberInput
-                  label="From"
-                  min={1}
-                  value={spec.computation.cycle_range.start}
-                  onCommit={(v) => update((s) => void (s.computation.cycle_range.start = v))}
-                />
-                <DebouncedNumberInput
-                  label="To"
-                  placeholder="end"
-                  min={1}
-                  value={spec.computation.cycle_range.end}
-                  onCommit={(v) => update((s) => void (s.computation.cycle_range.end = v))}
-                />
-              </Group>
-              <DebouncedNumberInput
-                label="Skip every Nth"
-                min={0}
-                value={spec.computation.exclude_check_cycles_every_n}
-                onCommit={(v) =>
-                  update((s) => void (s.computation.exclude_check_cycles_every_n = v ?? 0))
-                }
-              />
-              <Select
-                label="Retention reference"
-                data={[
-                  { value: "max_first_n", label: "Max in first N cycles" },
-                  { value: "cycle", label: "Specific cycle" },
-                ]}
-                value={spec.computation.retention_reference.mode}
-                onChange={(v) =>
-                  v &&
-                  update(
-                    (s) => void (s.computation.retention_reference.mode = v as "max_first_n" | "cycle")
-                  )
-                }
-              />
-              {spec.computation.retention_reference.mode === "max_first_n" ? (
-                <DebouncedNumberInput
-                  label="First N"
-                  min={1}
-                  value={spec.computation.retention_reference.n}
-                  onCommit={(v) => update((s) => void (s.computation.retention_reference.n = v ?? 5))}
-                />
-              ) : (
-                <DebouncedNumberInput
-                  label="Reference cycle"
-                  min={1}
-                  value={spec.computation.retention_reference.cycle ?? 3}
-                  onCommit={(v) => update((s) => void (s.computation.retention_reference.cycle = v ?? 3))}
-                />
-              )}
-              <DebouncedNumberInput
-                label="Formation cycles"
-                min={0}
-                value={spec.computation.formation_cycles}
-                onCommit={(v) => update((s) => void (s.computation.formation_cycles = v ?? 0))}
-              />
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
-      </Accordion>
-    </Paper>
-  );
-}
-
 function TimeCapacitySettings({
   spec,
   update,
@@ -4563,104 +3674,6 @@ function PlotWorkspaceEmpty({
       </Center>
     </Paper>
   );
-}
-
-function cyclePlotLayout(
-  result: ComputeResult | undefined,
-  spec: AnalysisSpec,
-  traces: Plotly.Data[] = []
-): Partial<Plotly.Layout> {
-  const style = currentPlotStyle(spec, "cycles");
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const quantityInfo = resolvedQuantity(result, spec);
-  const showCeOverlay = (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
-  const lm = legendMargins(style, spec.presentation.legend);
-  const leftGap = axisGapDelta(style.y_axis);
-  const bottomGap = axisGapDelta(style.x_axis);
-  const rightGap = showCeOverlay ? axisGapDelta(style.y2_axis) : 0;
-  const rightMargin = Math.max(
-    (showCeOverlay ? 64 : 24) + rightGap,
-    lm.r ? lm.r + 24 : 0
-  );
-  const topMargin = 20 + lm.t;
-  const axisBase = (axis: PlotStyle["x_axis"]) => ({
-    showgrid: style.show_grid,
-    gridcolor: "#edf2f7",
-    zeroline: false,
-    showline: style.show_frame,
-    mirror: style.show_frame,
-    linecolor: style.frame_color,
-    linewidth: style.frame_width,
-    ...tickLayout(style, axis),
-  });
-  const titleFont = { size: style.axis_title_size };
-  const xRange = numericTraceExtent(traces, "x", ["x"]);
-  const yRange = numericTraceExtent(traces, "y", ["y"]);
-  const y2Range = numericTraceExtent(traces, "y", ["y2"]);
-
-  return {
-    height: 500,
-    margin: {
-      l: 66 + lm.l + leftGap,
-      r: rightMargin,
-      t: topMargin,
-      b: 58 + lm.b + bottomGap,
-    },
-    paper_bgcolor: style.paper_bgcolor,
-    plot_bgcolor: style.plot_bgcolor,
-    font: { size: style.tick_font_size },
-    hoverlabel: hoverLabelLayout(style),
-    // keep the user's zoom/pan across STYLE edits, but reset the view when
-    // the data or the plotted quantity changes — otherwise switching e.g.
-    // from CE (~99) to capacity (~120 mAh) kept the old ranges and showed
-    // an empty plot
-    uirevision: `${result?.computed_at ?? "no-data"}|${quantity}|${spec.presentation.normalize_by_mass ? "g" : "abs"}|${
-      spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"
-    }`,
-    xaxis: {
-      ...axisBase(style.x_axis),
-      title: {
-        text: style.x_title ?? "Cycle",
-        font: titleFont,
-        standoff: style.x_axis.title_standoff,
-      },
-      ...axisLayout(style.x_axis, xRange),
-    },
-    yaxis: {
-      ...axisBase(style.y_axis),
-      // zero line only makes sense on the value axis of a cycle plot
-      zeroline: style.show_zero_line,
-      zerolinecolor: "#adb5bd",
-      title: {
-        text: style.y_title ?? quantityInfo?.label ?? "",
-        font: titleFont,
-        standoff: style.y_axis.title_standoff,
-      },
-      ...axisLayout(style.y_axis, yRange),
-    },
-    ...(showCeOverlay
-      ? {
-          yaxis2: {
-            title: {
-              text: style.y2_title ?? "CE (%)",
-              font: titleFont,
-              standoff: style.y2_axis.title_standoff,
-            },
-            overlaying: "y" as const,
-            side: "right" as const,
-            showgrid: false,
-            zeroline: false,
-            showline: style.show_frame,
-            linecolor: style.frame_color,
-            linewidth: style.frame_width,
-            ...tickLayout(style, style.y2_axis),
-            ...axisLayout(style.y2_axis, y2Range),
-          },
-        }
-      : {}),
-    showlegend: spec.presentation.legend,
-    legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
-  };
 }
 
 type PortablePlotSnapshot = {
@@ -5015,7 +4028,7 @@ async function buildPortablePlotSnapshots(
           `/api/analyses/${analysisId}/compute`,
           { spec: viewSpec, job_id: job.id }
         );
-        const traces = tracesForResult(result, viewSpec);
+        const traces = cycleTracesForResult(result, viewSpec);
         const layout = cyclePlotLayout(result, viewSpec, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
@@ -5288,389 +4301,6 @@ async function buildPortablePlotSnapshots(
   return snapshots;
 }
 
-
-function CyclePlotCard({
-  analysisTitle,
-  plotName,
-  subtitle,
-  result,
-  spec,
-  update,
-  updating,
-  error,
-  computeJob,
-  edited = false,
-  onNewPlot,
-  newPlotEnabled = false,
-  onUpdatePlot,
-  updatePlotEnabled = false,
-  updatePlotLabel = "Update",
-}: {
-  analysisTitle: string;
-  plotName: string;
-  subtitle: string;
-  result: ComputeResult | undefined;
-  spec: AnalysisSpec;
-  update: (fn: (s: AnalysisSpec) => void) => void;
-  updating: boolean;
-  error: Error | null;
-  edited?: boolean;
-  onNewPlot?: () => void;
-  newPlotEnabled?: boolean;
-  onUpdatePlot?: () => void;
-  updatePlotEnabled?: boolean;
-  updatePlotLabel?: string;
-  computeJob: BackgroundJob | undefined;
-}) {
-  const [stylePanelOpen, setStylePanelOpen] = useState(false);
-  const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
-  const showComputeProgress = useDelayedFlag(updating);
-  const plotDivRef = useRef<HTMLElement | null>(null);
-  const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
-  // Rebuild traces/layout only when the fields they actually read change —
-  // unrelated spec edits (other tabs' styles, autosave echoes) must not
-  // trigger a full Plotly re-render.
-  //
-  // Any presentation field that changes what is plotted (not merely how it is
-  // styled) must appear here, in zoomSignature, and in cyclePlotLayout
-  // uirevision. A flag that changes the data but not these keys silently does
-  // nothing.
-  const viewSignature = useMemo(
-    () =>
-      JSON.stringify({
-        quantity: spec.presentation.quantity,
-        // normalize swaps the plotted column (mAh ↔ mAh/g) at render time,
-        // so it MUST invalidate the trace/layout memos
-        normalize: spec.presentation.normalize_by_mass ?? false,
-        ce: spec.presentation.ce_overlay,
-        individual: spec.presentation.show_individual_cells,
-        legend: spec.presentation.legend,
-        // Hiding diagnostics drops points from every trace, so it belongs here
-        // for the same reason as normalize: it changes what is plotted.
-        hideDiagnostics: spec.presentation.hide_diagnostic_cycles ?? false,
-        reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
-        diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
-        style: currentPlotStyle(spec, "cycles"),
-      }),
-    [spec]
-  );
-  // Build one canonical SVG-capable trace set, then change only the renderer
-  // type for the interactive graph. Data, style, order and layout stay shared.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const exportTraces = useMemo(() => (result ? tracesForResult(result, spec) : []), [result, viewSignature]);
-  const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
-  // Reported next to the plot so a filtered view always states what it removed
-  // and what remains — the count is the disclosure, not a diagnostic aid.
-  const diagnostics = useMemo(() => {
-    if (!result || !spec.presentation.hide_diagnostic_cycles) return null;
-    const hidden = diagnosticCyclesFor(result, spec);
-    const everyCycle = result.cell_series
-      .filter((s) => !s.excluded)
-      .flatMap((s) => s.x);
-    return summarizeHidden(everyCycle, hidden);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result, spec.presentation.hide_diagnostic_cycles, spec.presentation.diagnostic_tolerance]);
-  // Any protocol-segment mode filters at the cycle level, never sub-cycle, so
-  // the plot must say so — a segment here changes which cycles appear, not the
-  // per-cycle quantity.
-  const segmentsActive =
-    (spec.computation.protocol_filter?.only_segment_ids?.length ?? 0) > 0 ||
-    (spec.computation.protocol_filter?.excluded_segment_ids?.length ?? 0) > 0 ||
-    (spec.presentation.hidden_protocol_segment_ids?.length ?? 0) > 0;
-  const zoomSignature = `${result?.computed_at ?? "no-data"}|${spec.presentation.quantity}|${
-    spec.presentation.normalize_by_mass ? "g" : "abs"
-  }|${spec.presentation.reindex_diagnostic_cycles ? "reidx" : "noreidx"}`;
-  const zoom = useZoomMemory(zoomSignature);
-  const layout = useMemo(
-    () => zoom.apply(cyclePlotLayout(result, spec, exportTraces)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result, viewSignature, exportTraces]
-  );
-  const style = currentPlotStyle(spec, "cycles");
-  const explainer = getCycleQuantityExplainer(
-    spec.presentation.quantity ?? "discharge_capacity",
-    Boolean(spec.presentation.normalize_by_mass)
-  );
-  const rememberPlotDiv = (graphDiv: unknown) => {
-    const element = graphDiv as HTMLElement;
-    plotDivRef.current = element;
-    const rect = element.getBoundingClientRect();
-    const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
-    setPlotSize((current) =>
-      current && current.width === next.width && current.height === next.height ? current : next
-    );
-  };
-  const updatePlotStyle = (fn: (style: PlotStyle) => void) => {
-    update((s) => writeScopedStyle(s, "cycles", fn));
-  };
-  const handlePlotRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
-    zoom.onRelayout(event);
-    if (style.legend_mode === "outside") return;
-    const point = draggedLegendPoint(event);
-    if (!point) return;
-    updatePlotStyle((next) => {
-      next.legend_mode = "inside";
-      next.legend_inside_position = "custom";
-      next.legend_custom_x = point.x;
-      next.legend_custom_y = point.y;
-    });
-  };
-
-  const currentViewSize = () => {
-    if (!plotDivRef.current) return plotSize;
-    const rect = plotDivRef.current.getBoundingClientRect();
-    return { width: Math.round(rect.width), height: Math.round(rect.height) };
-  };
-
-  // faithful mini-render of the export output for the settings popover
-  const getExportPreview = async (): Promise<string | null> => {
-    if (!plotDivRef.current || exportTraces.length === 0) return null;
-    const plan = resolveExportPlan(style, currentViewSize(), layout);
-    const toImage = (
-      PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
-    ).toImage;
-    const previewTraces = style.export_format === "png" ? traces : exportTraces;
-    return toImage(exportFigure(previewTraces, layout, style, plotName, plan), {
-      format: "png",
-      width: plan.layoutWidth,
-      height: plan.layoutHeight,
-      scale: Math.min(1, 420 / plan.layoutWidth),
-    });
-  };
-
-  const handleDataExport = (baseName: string) => {
-    downloadDataExport(tracesToColumns(exportTraces, layout), style, baseName).catch(
-      (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
-    );
-  };
-
-  const exportPlot = async (format: PlotExportFormat, baseName: string) => {
-    if (!plotDivRef.current || !result) return;
-    try {
-      const plan = resolveExportPlan(style, currentViewSize(), layout);
-      const ppi = Math.max(36, style.export_ppi ?? 96);
-      const filename = slugFilename(baseName);
-      // Render off the live figure with an export-only layout (exact size,
-      // optional in-figure title) so the on-screen plot is never disturbed.
-      const outputTraces = format === "png" ? traces : exportTraces;
-      const figure = exportFigure(outputTraces, layout, style, plotName, plan);
-      const toImage = (
-        PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
-      ).toImage;
-
-      if (format === "pdf") {
-        const svgUrl = await toImage(figure, {
-          format: "svg",
-          width: plan.layoutWidth,
-          height: plan.layoutHeight,
-        });
-        await downloadBlob(
-          await makeVectorPdf(
-            svgUrl,
-            plan.pixelWidth / plan.pixelHeight,
-            style.export_aspect_ratio
-          ),
-          `${filename}.pdf`
-        );
-        return;
-      }
-      const dataUrl = await toImage(figure, {
-        format,
-        width: plan.layoutWidth,
-        height: plan.layoutHeight,
-        scale: plan.scale,
-      });
-      const blob = format === "png" ? pngWithPpi(dataUrl, ppi) : blobFromDataUrl(dataUrl, "image/svg+xml");
-      await downloadBlob(blob, `${filename}.${format}`);
-    } catch (e) {
-      notifications.show({
-        message: e instanceof Error ? e.message : "Plot export failed.",
-        color: "red",
-      });
-    }
-  };
-
-  const quantity = spec.presentation.quantity ?? "discharge_capacity";
-  const ceOverlayActive = (spec.presentation.ce_overlay ?? false) && CAPACITY_LIKE_KEYS.has(quantity);
-  const yTitlePlaceholder = result ? quantityLabel(result, spec) : "Voltage (V)";
-  /**
-   * The preview is the real plot: the same trace and layout builders, called
-   * with the draft overrides applied. Rebuilding a simplified version here
-   * would let the preview drift from the result.
-   */
-  const buildSeriesPreview = useCallback(
-    (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
-      if (!result) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
-      // A shallow spec with only the scoped style swapped. structuredClone here
-      // copied the whole selection, protocol segments and saved-plot state on
-      // every keystroke, for the sake of two fields.
-      const draftSpec: AnalysisSpec = {
-        ...spec,
-        presentation: {
-          ...spec.presentation,
-          plot_styles: {
-            ...(spec.presentation.plot_styles ?? {}),
-            cycles: {
-              ...currentPlotStyle(spec, "cycles"),
-              ...(draft.styleOverlay ?? {}),
-              series_overrides: draft.overrides,
-              series_rules: draft.rules,
-            },
-          },
-        },
-      };
-      const data = decimatePreviewTraces(tracesForResult(result, draftSpec));
-      return { data, layout: cyclePlotLayout(result, draftSpec, data) };
-    },
-    [result, spec],
-  );
-
-  return (
-    <Group align="stretch" wrap="nowrap">
-      <Paper
-        p="sm"
-        withBorder
-        style={{ minHeight: 590, position: "relative", flex: 1, minWidth: 520, overflow: "hidden" }}
-      >
-        {/* spinner only when there is nothing to show — background
-            refetches of cached data keep the subtle opacity dim instead */}
-        <LoadingOverlay
-          visible={updating && traces.length === 0}
-          overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
-          loaderProps={{ size: "sm" }}
-        />
-        <PlotHeader
-          analysisTitle={analysisTitle}
-          tabName="Cycles"
-          plotName={plotName}
-          subtitle={subtitle}
-          quantityName={resolvedQuantity(result, spec)?.label ?? subtitle}
-          xAxisName={style.x_title ?? "Cycle"}
-          sampleSummary={`${spec.selection.entries.length} ${
-            spec.selection.entries.length === 1 ? "sample" : "samples"
-          }`}
-          explainer={explainer}
-          onExport={exportPlot}
-          onDataExport={handleDataExport}
-          getExportPreview={getExportPreview}
-          style={style}
-          updateStyle={updatePlotStyle}
-          viewSize={plotSize}
-          layout={layout}
-          canExport={exportTraces.length > 0}
-          edited={edited}
-          onNewPlot={onNewPlot}
-          newPlotEnabled={newPlotEnabled}
-          onUpdatePlot={onUpdatePlot}
-          updatePlotEnabled={updatePlotEnabled}
-          updatePlotLabel={updatePlotLabel}
-        />
-        {error && <Alert color="red">{error.message || "Compute failed"}</Alert>}
-        {segmentsActive && (
-          <Alert
-            color="yellow"
-            variant="light"
-            icon={<IconInfoCircle size={16} />}
-            styles={{ message: { fontSize: 12 } }}
-          >
-            Protocol segments here select whole cycles: a cycle is plotted if it contains the
-            segment. Each point is still computed over the entire cycle — the segment does not
-            isolate a single step's quantity.
-          </Alert>
-        )}
-        {diagnostics && diagnostics.hiddenCount > 0 && (
-          <Group gap="xs" wrap="nowrap" align="center">
-            <Badge color="var(--mantine-primary-color-6)" variant="light" style={{ flexShrink: 0 }}>
-              {diagnostics.hiddenCount} hidden · {diagnostics.shownCount} shown
-            </Badge>
-            <Tooltip
-              label={`Hidden cycles: ${formatCycleRanges(diagnostics.hidden)}`}
-              multiline
-              maw={420}
-              withArrow
-              openDelay={200}
-            >
-              <Text size="xs" c="dimmed" truncate="end">
-                diagnostic cycles {formatCycleRanges(diagnostics.hidden, 4)}
-              </Text>
-            </Tooltip>
-            <NumberInput
-              size="xs"
-              w={132}
-              min={5}
-              max={90}
-              step={5}
-              suffix="%"
-              label={undefined}
-              aria-label="Diagnostic sensitivity"
-              value={Math.round(
-                (spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance) * 100
-              )}
-              onChange={(value) => {
-                const pct = typeof value === "number" ? value : Number(value);
-                if (!Number.isFinite(pct)) return;
-                update((s) => {
-                  s.presentation.diagnostic_tolerance = Math.min(0.9, Math.max(0.05, pct / 100));
-                });
-              }}
-            />
-          </Group>
-        )}
-        {traces.length === 0 ? (
-          // The height is held whether or not progress is showing, so a load
-          // that beats the delay lands the plot without any reflow.
-          <Center h={500}>
-            {updating ? (
-              showComputeProgress ? (
-                <ComputeProgress job={computeJob} label="Preparing cycle plot" />
-              ) : null
-            ) : (
-              <Text size="sm" c="dimmed">
-                Add cells or replicates to start plotting.
-              </Text>
-            )}
-          </Center>
-        ) : (
-          <Box
-            ref={containerRef}
-            onPointerDownCapture={zoom.armOnPointerDown}
-            style={{ width: "100%", minWidth: 0, opacity: updating ? 0.42 : 1, transition: "opacity 160ms ease" }}
-          >
-            <Plot
-              data={traces}
-              layout={layout}
-              config={{
-                displaylogo: false,
-                edits: { legendPosition: style.legend_mode !== "outside" },
-              }}
-              style={{ width: "100%" }}
-              onRelayout={handlePlotRelayout}
-              onInitialized={(_, graphDiv) => {
-                rememberPlotDiv(graphDiv);
-                syncPlotSize();
-              }}
-              onUpdate={(_, graphDiv) => {
-                rememberPlotDiv(graphDiv);
-                syncPlotSize();
-              }}
-            />
-          </Box>
-        )}
-      </Paper>
-      <PlotStylePanel
-        opened={stylePanelOpen}
-        spec={spec}
-        result={result}
-        update={update}
-        onToggle={() => setStylePanelOpen((open) => !open)}
-        axisScope="cycles"
-        buildSeriesPreview={buildSeriesPreview}
-        ceOverlayActive={ceOverlayActive}
-        yTitlePlaceholder={yTitlePlaceholder}
-      />
-    </Group>
-  );
-}
 
 function TimeCapacityPlotCardView({
   analysisId,
@@ -6520,7 +5150,6 @@ function AnalysisPageView({
     stage: string;
     phase: "plots" | "packing" | "done";
   } | null>(null);
-  const [computeToken, setComputeToken] = useState<string | null>(null);
   const [saveDraft, setSaveDraft] = useState<{
     name: string;
     description: string;
@@ -6747,29 +5376,12 @@ function AnalysisPageView({
     setDirty(true);
   }, []);
 
-  const compute = useQuery({
-    queryKey: ["compute", aid, computeSignature(spec)],
-    queryFn: async () => {
-      // See the time/capacity card: the job is opened server-side only on a
-      // cache miss, so a warm analysis makes exactly one request.
-      const token = newComputeToken();
-      setComputeToken(token);
-      try {
-        return await post<ComputeResult>(`/api/analyses/${aid}/compute`, {
-          spec,
-          job_token: token,
-        });
-      } finally {
-        window.setTimeout(
-          () => setComputeToken((current) => (current === token ? null : current)),
-          300
-        );
-      }
-    },
-    // These tabs each own a dedicated scientific query.
-    // Running the cycle engine beside those queries duplicates cache reads,
-    // result decoding, and sometimes full computation without feeding the
-    // visible plot.
+  const { result: compute, job: computeJob } = useCyclesResult({
+    analysisId: aid,
+    spec,
+    // These tabs each own a dedicated scientific query. Running the cycle
+    // engine beside those queries would duplicate computation without feeding
+    // the visible plot.
     enabled:
       spec !== null &&
       initialComputeReady &&
@@ -6782,14 +5394,6 @@ function AnalysisPageView({
           "crate",
         ] as AnalysisTabKey[]
       ).includes(activeTab),
-    staleTime: 5 * 60_000,
-  });
-  const computeJob = useQuery({
-    queryKey: ["background-job-token", computeToken],
-    queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
-    enabled: computeToken !== null,
-    refetchInterval: (query) =>
-      query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   const cycleLivePlotReady =
     initialComputeReady &&
@@ -8236,7 +6840,14 @@ function AnalysisPageView({
         />
       )}
       {activeTab === "time_capacity" && <TimeCapacitySettings spec={spec} update={update} />}
-      {activeTab === "cycles" && <CycleSettings spec={spec} result={displayResult} update={update} />}
+      {activeTab === "cycles" && (
+        <CycleSettings
+          spec={spec}
+          result={displayResult}
+          update={update}
+          resetAxis={(s, axis) => resetManualAxis(s, "cycles", axis)}
+        />
+      )}
       {activeTab === "steps" && activeProtocolPolicy.supported && (
         <StepsSettings
           analysisId={aid}
@@ -8491,7 +7102,7 @@ function AnalysisPageView({
                   update={update}
                   updating={plotUpdating}
                   error={compute.isError ? (compute.error as Error) : null}
-                  computeJob={computeJob.data ?? undefined}
+                  computeJob={computeJob}
                   edited={activePlotDirty && activePlot?.tab === "cycles"}
                   {...newPlotHeaderProps}
                 />,
