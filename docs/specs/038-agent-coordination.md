@@ -8,12 +8,12 @@ Repository: `mattiafelice-palermo/cellxplorer`
 Branch: `feature/analyses-feature-modularization`
 
 ```text
-ACTIVE_CHILD: 038.3
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 038.4
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: a57851fa9e19a2f323da6bc3fc0190a5c046fe7e
-LAST_REVIEW_SHA: cbabde5b954e18e77a9e20fed7cc09a78ba55bd4
-NEXT_ACTION: Review 038.3 against the parent/child spec and update the canonical 038.3 review file.
+LAST_REVIEW_SHA: 0ed279ebdaf970807f09690ffe8e43bc62b3c20f
+NEXT_ACTION: Reconcile 038.3 status metadata with its clean review, set 038.4 active, implement 038.4 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
 ```
 
 ## Protocol
@@ -35,44 +35,28 @@ NEXT_ACTION: Review 038.3 against the parent/child spec and update the canonical
 
 ## Current handoff
 
-038.1 and 038.2 have now been independently reviewed through the GitHub connector and are clean.
+038.1, 038.2, and 038.3 are independently review-clean.
 
-The repository status text in the parent/child/index files may still describe the pre-review state
-because the reviewer intentionally did not rewrite implementation-owned status metadata during the
-review commits. Before beginning 038.3, update those status lines/implementation records only as
-needed so they accurately say:
-
-- 038.1: implemented and review-clean;
-- 038.2: implemented and review-clean;
-- 038 parent: in progress, 038.1 and 038.2 complete, 038.3 next;
-- `docs/specs/README.md`: same sequential state.
-
-Do not rewrite the review findings themselves.
+Before beginning 038.4, update implementation-owned status metadata only as needed so that the
+parent, 038.3 child, and `docs/specs/README.md` accurately record 038.3 as review-clean and 038.4 as
+the active next child. Do not rewrite the review conclusion.
 
 Then implement only:
 
-`docs/specs/038.3-existing-editor-module-organization.md`
+`docs/specs/038.4-cycles-family-extraction.md`
 
-Follow the parent and child exactly. When 038.3 is complete:
+Follow the parent and child exactly. When 038.4 is complete:
 
-1. run every verification required by 038.3 and current repository guidance;
+1. run every verification required by 038.4 and current repository guidance;
 2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
    guidance explicitly supersedes it;
 3. record exact results and any manual checks not run;
 4. commit and push the implementation;
-5. update this state block to:
-
-```text
-ACTIVE_CHILD: 038.3
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
-LAST_IMPLEMENTATION_SHA: <pushed 038.3 checkpoint>
-LAST_REVIEW_SHA: cbabde5b954e18e77a9e20fed7cc09a78ba55bd4
-NEXT_ACTION: Review 038.3 against the parent/child spec and update the canonical 038.3 review file.
-```
-
-6. append an IMPLEMENTER entry to the log;
-7. make no 038.4 implementation changes until the reviewer returns the turn.
+5. update the state block to `ACTIVE_CHILD: 038.4`, `TURN: REVIEWER`,
+   `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
+   independent 038.4 review;
+6. append an IMPLEMENTER entry to this log;
+7. make no 038.5 implementation changes until the reviewer returns the turn.
 
 ## Coordination log
 
@@ -106,8 +90,6 @@ first 038.2 implementation.
 - review commit: `cbabde5b954e18e77a9e20fed7cc09a78ba55bd4`;
 - decision: **038.2 REVIEW_CLEAN — 038.3 may begin**.
 
-Next owner: **IMPLEMENTER**.
-
 ### 2026-08-09 — IMPLEMENTER
 
 Implemented **038.3** in `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` and pushed the shared branch.
@@ -121,7 +103,26 @@ Implemented **038.3** in `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` and pushed t
   passed; Vite build passed with **7512** modules transformed; all three stale-path searches had
   no matches; `python scripts\preflight.py` **PREFLIGHT PASSED**, **5/5** stages, **459** frontend
   tests and **58** backend test modules passed.
-- Manual checks: **NOT RUN**; browser automation was not authorized. The child’s requested family,
-  recognition, policy, multi-source, chrome, and keyboard matrix remains unverified manually.
-- Next action: independent reviewer reviews 038.3 against the parent/child specs and updates the
-  canonical 038.3 review file.
+- Manual checks: **NOT RUN**; browser automation was not authorized.
+- Next action: independent reviewer reviews 038.3.
+
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.3 implementation `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` after valid handoff checkpoint
+`2cdabaa21b4d6f60513bff5b04f6e90cf9c1285c`.
+
+- Confirmed all 15 locked modules at their final family/protocol/recognition/policy paths.
+- Compared representative pre/post family cards; changes are ownership/import-path only and preserve
+  APIs, queries, builders, settings, visibility, exports, and one-way dependency direction.
+- Confirmed protocol pure-helper direct ownership and removal of the UI re-export.
+- Confirmed recognition shared-token/polling behavior remains in the moved module.
+- Confirmed `SAVED_PLOT_THUMBNAIL_RENDER_VERSION` remains `6` and policy logic is unchanged.
+- Confirmed no backend/API/migration/scientific/query-key/cache/artifact-version change.
+- Implementer-reported verification: focused `71/71`, app-channel `17/17`, TypeScript passed, Vite
+  passed (`7512` modules), stale-path searches clean, preflight `5/5` with `459` frontend tests and
+  `58` backend modules; manual browser matrix NOT RUN.
+- No actionable finding.
+- Canonical review commit: `0ed279ebdaf970807f09690ffe8e43bc62b3c20f`.
+- Decision: **038.3 REVIEW_CLEAN — 038.4 may begin**.
+
+Next owner: **IMPLEMENTER**.
