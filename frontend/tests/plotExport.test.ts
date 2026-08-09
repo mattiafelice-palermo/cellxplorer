@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildDelimitedText } from "../src/features/analyses/editor/plotting/plotCsv.ts";
+import { buildDelimitedText } from "../src/features/analyses/editor/plotting/plotExport.ts";
 
 test("CSV text starts with a UTF-8 BOM, not visible mojibake", () => {
   const text = buildDelimitedText(

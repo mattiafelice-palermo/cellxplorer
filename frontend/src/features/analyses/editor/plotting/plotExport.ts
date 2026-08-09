@@ -1,12 +1,8 @@
 import { notifications } from "@mantine/notifications";
-import PlotlyLib from "plotly.js-dist-min";
 import type { PlotAspectRatioKey, PlotExportFormat, PlotStyle } from "../../../../api";
-import { saveDownload } from "../../../../downloads";
-import {
-  buildDelimitedText,
-  exportDecimalPlaces,
-  type DataColumn,
-} from "./plotCsv";
+import type { SourceExportColumn, SourceExportValue } from "./sourceChainPlot";
+
+export type DataColumn = SourceExportColumn;
 
 export function slugFilename(value: string): string {
   return (
@@ -74,7 +70,44 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
   return columns;
 }
 
-export { buildDelimitedText } from "./plotCsv";
+export function exportDecimalPlaces(header: string): number {
+  const value = header.toLowerCase();
+  if (value.includes("cycle")) return 0;
+  if (value.includes("time")) return 3;
+  if (value.includes("voltage") || value.includes("current")) return 5;
+  if (value.includes("derivative") || value.includes("dq/dv") || value.includes("dv/dq")) return 7;
+  return 6;
+}
+
+export function buildDelimitedText(
+  columns: DataColumn[],
+  precision: PlotStyle["data_precision"],
+  decimal: PlotStyle["data_decimal_separator"],
+  delimiter: PlotStyle["data_delimiter"],
+): string {
+  const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
+  const formatNumber = (v: SourceExportValue | undefined, header: string) => {
+    if (v === null || v === undefined || Number.isNaN(v)) return "";
+    if (typeof v === "string") return v;
+    const rounded =
+      precision === "full"
+        ? v
+        : Number(v.toFixed(exportDecimalPlaces(header)));
+    const s = String(rounded);
+    return decimal === "comma" ? s.replace(".", ",") : s;
+  };
+  const quote = (s: string) =>
+    s.includes(sep) || s.includes('"') || s.includes("\n")
+      ? `"${s.replace(/"/g, '""')}"`
+      : s;
+  const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
+  const lines = [columns.map((c) => quote(c.header)).join(sep)];
+  for (let i = 0; i < rowCount; i += 1) {
+    lines.push(columns.map((c) => formatNumber(c.values[i], c.header)).join(sep));
+  }
+  // BOM so Excel detects UTF-8
+  return "\uFEFF" + lines.join("\r\n");
+}
 
 export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
   if (columns.length === 0) return;
@@ -115,10 +148,20 @@ export async function downloadDataExport(columns: DataColumn[], style: PlotStyle
 }
 
 export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
+  const { saveDownload } = await import("../../../../downloads");
   const result = await saveDownload(blob, filename);
   if (result.usedDefaultFolder && result.path) {
     notifications.show({ message: `Saved to ${result.path}`, color: "teal" });
   }
+}
+
+async function plotlyToImage(figure: unknown, options: unknown): Promise<string> {
+  const { default: PlotlyLib } = await import("plotly.js-dist-min");
+  return (
+    PlotlyLib as unknown as {
+      toImage: (fig: unknown, imageOptions: unknown) => Promise<string>;
+    }
+  ).toImage(figure, options);
 }
 
 function crc32(bytes: Uint8Array): number {
@@ -306,10 +349,7 @@ export async function styledPlotExportPreview(
 ): Promise<string | null> {
   if (traces.length === 0) return null;
   const plan = resolveExportPlan(style, viewSize, layout);
-  const toImage = (
-    PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
-  ).toImage;
-  return toImage(exportFigure(traces, layout, style, plotName, plan), {
+  return plotlyToImage(exportFigure(traces, layout, style, plotName, plan), {
     format: "png",
     width: plan.layoutWidth,
     height: plan.layoutHeight,
@@ -328,12 +368,9 @@ export async function downloadStyledPlotExport(
 ): Promise<void> {
   if (traces.length === 0) return;
   const plan = resolveExportPlan(style, viewSize, layout);
-  const toImage = (
-    PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
-  ).toImage;
   const figure = exportFigure(traces, layout, style, plotName, plan);
   if (format === "pdf") {
-    const svgUrl = await toImage(figure, {
+    const svgUrl = await plotlyToImage(figure, {
       format: "svg",
       width: plan.layoutWidth,
       height: plan.layoutHeight,
@@ -348,7 +385,7 @@ export async function downloadStyledPlotExport(
     );
     return;
   }
-  const dataUrl = await toImage(figure, {
+  const dataUrl = await plotlyToImage(figure, {
     format,
     width: plan.layoutWidth,
     height: plan.layoutHeight,
