@@ -2,7 +2,11 @@ import { notifications } from "@mantine/notifications";
 import PlotlyLib from "plotly.js-dist-min";
 import type { PlotAspectRatioKey, PlotExportFormat, PlotStyle } from "../../../../api";
 import { saveDownload } from "../../../../downloads";
-import type { SourceExportColumn, SourceExportValue } from "./sourceChainPlot";
+import {
+  buildDelimitedText,
+  exportDecimalPlaces,
+  type DataColumn,
+} from "./plotCsv";
 
 export function slugFilename(value: string): string {
   return (
@@ -40,17 +44,6 @@ export function textFromDataUrl(dataUrl: string): string {
 
 // ------------------------------------------------------ data export (CSV/XLSX)
 
-type DataColumn = SourceExportColumn;
-
-function exportDecimalPlaces(header: string): number {
-  const value = header.toLowerCase();
-  if (value.includes("cycle")) return 0;
-  if (value.includes("time")) return 3;
-  if (value.includes("voltage") || value.includes("current")) return 5;
-  if (value.includes("derivative") || value.includes("dq/dv") || value.includes("dv/dq")) return 7;
-  return 6;
-}
-
 // Export exactly what is plotted: one x/y column pair per visible trace
 // (works for any tab â€” traces need not share an x grid). Dispersion bands
 // (fill traces) are skipped.
@@ -81,33 +74,7 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
   return columns;
 }
 
-function buildDelimitedText(
-  columns: DataColumn[],
-  precision: PlotStyle["data_precision"],
-  decimal: PlotStyle["data_decimal_separator"],
-  delimiter: PlotStyle["data_delimiter"]
-): string {
-  const sep = delimiter === "tab" ? "\t" : delimiter === "semicolon" ? ";" : ",";
-  const formatNumber = (v: SourceExportValue | undefined, header: string) => {
-    if (v === null || v === undefined || Number.isNaN(v)) return "";
-    if (typeof v === "string") return v;
-    const rounded =
-      precision === "full"
-        ? v
-        : Number(v.toFixed(exportDecimalPlaces(header)));
-    const s = String(rounded);
-    return decimal === "comma" ? s.replace(".", ",") : s;
-  };
-  const quote = (s: string) =>
-    s.includes(sep) || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
-  const rowCount = columns.reduce((max, c) => Math.max(max, c.values.length), 0);
-  const lines = [columns.map((c) => quote(c.header)).join(sep)];
-  for (let i = 0; i < rowCount; i += 1) {
-    lines.push(columns.map((c) => formatNumber(c.values[i], c.header)).join(sep));
-  }
-  // BOM so Excel detects UTF-8
-  return "ï»¿" + lines.join("\r\n");
-}
+export { buildDelimitedText } from "./plotCsv";
 
 export async function downloadDataExport(columns: DataColumn[], style: PlotStyle, baseName: string): Promise<void> {
   if (columns.length === 0) return;
