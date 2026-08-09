@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.4
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: a57851fa9e19a2f323da6bc3fc0190a5c046fe7e
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: de1b31e1987bd532e2bd30c070f6e6a14f03fd21
 LAST_REVIEW_SHA: 0ed279ebdaf970807f09690ffe8e43bc62b3c20f
-NEXT_ACTION: Reconcile 038.3 status metadata with its clean review, set 038.4 active, implement 038.4 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
+NEXT_ACTION: Review 038.4 against the parent/child spec and update its canonical review file.
 ```
 
 ## Protocol
@@ -126,3 +126,24 @@ Reviewed 038.3 implementation `a57851fa9e19a2f323da6bc3fc0190a5c046fe7e` after v
 - Decision: **038.3 REVIEW_CLEAN — 038.4 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.4** in `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` and pushed the shared branch.
+
+- Extracted the Cycles query/quantity adapter, diagnostic display filtering, canonical trace and
+  layout builders, settings, live card, style preview, and ordinary export ownership into the
+  locked `families/cycles/CyclePlotCard.tsx` module. Saved preview, warmup, portable, naming, and
+  editor normalization consumers now use the family exports; no scientific, backend, schema,
+  cache, calculation-version, or artifact-version behavior changed.
+- Verification: focused frontend suite **90/90**; TypeScript passed; Vite build passed with
+  **7513** modules transformed; structural Cycles-owner/query searches passed; canonical elevated
+  `python scripts\\preflight.py` **PREFLIGHT PASSED**, **5/5** stages, **459** frontend tests and
+  **58** backend test modules passed. Existing Vite dynamic-import and large-chunk warnings
+  remain; the initial sandboxed preflight bundle was denied access by Windows and was rerun
+  successfully with elevation.
+- Manual checks: **NOT RUN**; browser settings, diagnostics, export, saved-preview, warmup,
+  portable, light/dark, and keyboard checks remain for independent review.
+- Next action: independent reviewer reviews 038.4 and updates its canonical review file.
+
+Next owner: **REVIEWER**.
