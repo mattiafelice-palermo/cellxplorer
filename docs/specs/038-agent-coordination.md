@@ -8,12 +8,12 @@ Repository: `mattiafelice-palermo/cellxplorer`
 Branch: `feature/analyses-feature-modularization`
 
 ```text
-ACTIVE_CHILD: 038.7
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 038.8
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: 51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2
-LAST_REVIEW_SHA: 242464010762a794ba73a5f37fee79d7bb46cf15
-NEXT_ACTION: Review 038.7 against the parent/child spec and update its canonical review file.
+LAST_REVIEW_SHA: a33d75193b0ddf42097729be4772f16c54852079
+NEXT_ACTION: Reconcile 038.7 status metadata with its clean review, set 038.8 active, implement 038.8 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER for final child and parent integration review.
 ```
 
 ## Protocol
@@ -35,28 +35,29 @@ NEXT_ACTION: Review 038.7 against the parent/child spec and update its canonical
 
 ## Current handoff
 
-038.1 through 038.6 are independently review-clean.
+038.1 through 038.7 are independently review-clean.
 
-Before beginning 038.7, update implementation-owned status metadata only as needed so that the
-parent, 038.6 child, and `docs/specs/README.md` accurately record 038.6 as review-clean and 038.7 as
-the active next child. Do not rewrite the review conclusion.
+Before beginning 038.8, update implementation-owned status metadata only as needed so that the
+parent, 038.7 child, and `docs/specs/README.md` accurately record 038.7 as review-clean and 038.8 as
+the active final child. Do not rewrite review conclusions.
 
 Then implement only:
 
-`docs/specs/038.7-portable-report-flow-extraction.md`
+`docs/specs/038.8-analysis-editor-integration.md`
 
-Follow the parent and child exactly. When 038.7 is complete:
+Follow the parent and child exactly. When 038.8 is complete:
 
-1. run every verification required by 038.7 and current repository guidance;
+1. run every verification required by 038.8 and current repository guidance;
 2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
    guidance explicitly supersedes it;
 3. record exact results and any manual checks not run;
 4. commit and push the implementation;
-5. update the state block to `ACTIVE_CHILD: 038.7`, `TURN: REVIEWER`,
+5. update the state block to `ACTIVE_CHILD: 038.8`, `TURN: REVIEWER`,
    `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
-   independent 038.7 review;
+   independent 038.8 review plus final parent integration review;
 6. append an IMPLEMENTER entry to this log;
-7. make no 038.8 implementation changes until the reviewer returns the turn.
+7. make no merge, release, version, or unrelated implementation change until the reviewer returns
+   the final decision.
 
 ## Coordination log
 
@@ -266,3 +267,22 @@ implementation checkpoint.
 - Next action: independent reviewer reviews 038.7 and updates its canonical review file.
 
 Next owner: **REVIEWER**.
+
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.7 implementation `51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2` after valid handoff checkpoint
+`f758bc4858697ede3945eaa42fdba726e6a1fca9`.
+
+- Confirmed the single locked `editor/portable/PortableReportFlow.tsx` owner contains the portable estimate, saved-plot chooser/policy, source preflight/update, canonical snapshot orchestration, package export, download/native-share/prepared-share fallback, progress, trigger controls, and both modals.
+- Confirmed the exact four endpoint methods/paths and relevant payload/query behavior remain equivalent to the pre-extraction page flow.
+- Confirmed 409 handling still re-runs source preflight and source-update success keeps the same artifact/query removals and library/analysis invalidations.
+- Confirmed portable snapshot generation is delegated to the canonical 038.6 artifact builder; no duplicate family scientific renderer was introduced.
+- Confirmed the page retains only composition plus editor-owned persistence/normalization callbacks, with no portable endpoint/orchestration blocks left behind.
+- Confirmed no backend/portable-format/manifest/checksum/viewer/import/migration/scientific/cache/version/dependency change.
+- Implementer-reported verification: portable backend `17/17`, app-channel `17/17`, policy/visibility `19/19`, TypeScript passed, Vite passed (`7518` modules), `git diff --check` passed, preflight `5/5` with `459` frontend tests and `58` backend modules; manual portable/browser matrix NOT RUN.
+- Reviewer-independent execution: none; review used ChatGPT + the GitHub connector only.
+- No actionable finding.
+- Canonical review commit: `a33d75193b0ddf42097729be4772f16c54852079`.
+- Decision: **038.7 REVIEW_CLEAN — 038.8 may begin**.
+
+Next owner: **IMPLEMENTER**.
