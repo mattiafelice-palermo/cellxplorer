@@ -29,8 +29,8 @@
   - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
     extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
     durable architecture documentation, and runs final integration verification.
-    **Implemented; review pending.**
-  **In progress; 038.1–038.7 are implemented and review-clean, with 038.8 implemented and review pending.**
+    **Implemented; review-clean.**
+  **Parent 038 complete/review-clean; 038.1–038.8 are implemented and review-clean, with the final cumulative review complete.**
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
   plot presets. Children 035.1–035.12 use the shared
@@ -545,7 +545,7 @@ Rules:
     — fail-closed Steps/DCIR/Chargeability/C-rate behavior until semantic mappings exist.
   - [034.9-portable-roundtrip-and-regression.md](034.9-portable-roundtrip-and-regression.md)
     — exact portable hierarchy, synthetic regression corpus, documentation, and final matrix.
-  **Plan; no child implemented.**
+  **Parent 038 complete/review-clean; 038.1–038.8 implemented and review-clean.**
 - [038-analyses-feature-modularization.md](038-analyses-feature-modularization.md)
   — parent plan for moving the complete frontend analyses domain behind one feature boundary while
   preserving routes, UI, scientific results, API/query/cache contracts, saved artifacts, and

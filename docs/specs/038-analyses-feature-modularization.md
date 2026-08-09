@@ -1,13 +1,13 @@
 # 038 — Analyses feature modularization
 
-**Status:** In progress — 038.1–038.7 implemented and review-clean; 038.8 implemented, review pending
+**Status:** Complete/review-clean — 038.1–038.8 implemented and review-clean; final cumulative parent review complete; ready for merge from the Spec 038 implementation/review perspective
 **Implementation:** Implement only through the sequential child specifications listed below.
 **Repository:** `mattiafelice-palermo/cellxplorer`
 **Authoring baseline:** `main` and `origin/main` at `b6452a4d6691ef1f9b6acf3e353a6f05a5873ed7`
 **Merge base:** `b6452a4d6691ef1f9b6acf3e353a6f05a5873ed7`
 **Shared branch:** `feature/analyses-feature-modularization`
 **Depends on:** None. The implementation must preserve every analysis behavior present on the current `main` when each child starts.
-**Parent review:** None. The parent closes through the eight child reviews and the final integration matrix.
+**Parent review:** [Final cumulative review](reviews/038.8-analysis-editor-integration-review.md) — complete; 038.8 REVIEW_CLEAN and Parent 038 FEATURE_COMPLETE.
 
 All UI work inherits
 [`../agent-knowledge/visual-style-guide.md`](../agent-knowledge/visual-style-guide.md).
@@ -425,3 +425,8 @@ manual/not run rather than claiming it passed:
 The parent closes only when every child has an implementation record and clean review, every
 focused commit is pushed on the shared branch, the final no-cache matrix is recorded exactly, and
 there is no undocumented deviation from the locked decisions above.
+
+The final cumulative review records that all eight children are implemented and review-clean,
+the parent-level review is complete, the final no-cache verification passed, and the manual/browser
+parent matrix was **NOT RUN**. Parent 038 is therefore complete/review-clean and ready for merge
+from the implementation/review perspective.

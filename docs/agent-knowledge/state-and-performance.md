@@ -173,7 +173,7 @@ that becomes visible when opening or closing the style panel resizes the plot. F
 `rememberPlotDiv` pattern used by the Cycles and Time/Capacity cards.
 
 The Analysis Database and Projects explorer render saved-plot counts and hover previews through
-the same `frontend/src/components/AnalysisPlotSummary.tsx` component. It uses the dedicated 4:3
+the same `frontend/src/features/analyses/database/AnalysisPlotSummary.tsx` component. It uses the dedicated 4:3
 `variant=preview` asset, not the wide saved-row thumbnail. Keep preview presentation and cache
 lookup behavior there rather than rebuilding a second hover card in another page.
 
@@ -215,11 +215,11 @@ the metadata value and override in the scientific/cache inputs.
   idle slices. Initializing directly from the global registry makes navigation back to the Analysis
   Database synchronously reconstruct every remembered editor before the home table can paint.
 
-`frontend/src/components/AnalysisWorkspaceTabs.tsx` persists open analysis IDs, labels, order,
-routes, and a bounded newest-first closed-tab history in local storage. Reordering changes that
-persisted order. `frontend/src/analysisWorkspace.ts` keeps editor drafts and the set of analyses
-visited during the current process in memory. React Query remains the owner of fetched server data
-and computed-result caching.
+`frontend/src/features/analyses/workspace/AnalysisWorkspaceTabs.tsx` persists open analysis IDs,
+labels, order, routes, and a bounded newest-first closed-tab history in local storage. Reordering
+changes that persisted order. `frontend/src/features/analyses/workspace/analysisWorkspace.ts` keeps
+editor drafts and the set of analyses visited during the current process in memory. React Query
+remains the owner of fetched server data and computed-result caching.
 
 The performance setting has two policies. `keep-mounted` is the default: analyses actually visited
 in this session remain mounted but visually hidden without collapsing their layout, preserving

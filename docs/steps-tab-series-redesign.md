@@ -14,12 +14,15 @@ records the data contract and the decisions that must remain stable when the tab
   expanded to every selected cell for compatibility.
 - `POST /api/analyses/{id}/steps` — cached under kind `"steps"`.
 - Frontend `frontend/src/features/analyses/editor/families/steps/StepsPlotCard.tsx` —
-  `StepsPlotCard` + `StepsSettings`, reusing
-  the exported `PlotHeader`/`PlotStylePanel`/`currentPlotStyle`/`plotPalette`/`tracesToColumns`/
-  `downloadDataExport` from `AnalysisPage.tsx`. Its canonical trace and layout builders are also
-  used by the live card and saved-plot thumbnail path; saved previews must call `POST /steps`, not
-  the cycle-compute endpoint. Tab wired into `AnalysisPage.tsx` (tab key `"steps"` in `api.ts`
-  ANALYSIS_TAB_KEYS, tab def, sidebar `StepsSettings`, `Tabs.Panel value="steps"`).
+  `StepsPlotCard` + `StepsSettings`, reusing the shared plotting/export/style owners in
+  `frontend/src/features/analyses/editor/plotting/` (`PlotHeader`, `PlotStylePanel`,
+  `currentPlotStyle`, `plotPalette`, `tracesToColumns`, and `downloadDataExport`). Its canonical
+  trace and layout builders are used by the live card, saved-plot previews/artifacts, and portable
+  figures; saved and portable rendering must call `POST /steps`, not the cycle-compute endpoint.
+  Editor/tab composition is wired in `frontend/src/features/analyses/editor/AnalysisEditor.tsx`
+  (tab key `"steps"` in `api.ts` `ANALYSIS_TAB_KEYS`, tab definition, sidebar `StepsSettings`,
+  and `Tabs.Panel value="steps"`). `frontend/src/pages/AnalysisPage.tsx` remains only the route
+  adapter.
 
 ## Series model
 
