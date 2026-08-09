@@ -5,7 +5,7 @@ import {
   ANALYSIS_WORKSPACE_STORAGE_KEY,
   parseAnalysisWorkspace,
   saveAnalysisWorkspace,
-} from "../src/analysisWorkspace.ts";
+} from "../src/features/analyses/workspace/analysisWorkspace.ts";
 
 test("analysis workspace parser rejects invalid persisted data", () => {
   assert.deepEqual(parseAnalysisWorkspace(null), { version: 1, tabs: [], closedTabs: [] });

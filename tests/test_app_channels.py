@@ -238,8 +238,8 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertNotIn('color="teal"', beta_modal)
 
         chrome_only = [
-            "components/AnalysisDatabaseTable.tsx",
-            "components/AnalysisWorkspaceTabs.tsx",
+            "features/analyses/database/AnalysisDatabaseTable.tsx",
+            "features/analyses/workspace/AnalysisWorkspaceTabs.tsx",
             "components/CellLibraryColumnMenu.tsx",
             "components/CellSamplePopovers.tsx",
             "components/CommandPalette.tsx",

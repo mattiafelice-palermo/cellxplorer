@@ -25,7 +25,7 @@ import { useEffect, useState } from "react";
 
 import { get, post, type AutomationPauseState } from "../api";
 import { APP_BRANDING } from "../appChannel";
-import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
+import { hasDirtyAnalysisWorkspaceEditors } from "../features/analyses/workspace/analysisWorkspace";
 import {
   getUpdateMenuLabel,
   isUpdateMenuDisabled,

@@ -39,7 +39,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { get, type AnalysisFull, type AnalysisSavedPlotSummary, type AnalysisSummary } from "../api";
+import { get, type AnalysisFull, type AnalysisSavedPlotSummary, type AnalysisSummary } from "../../../api";
 import { AnalysisPlotSummary } from "./AnalysisPlotSummary";
 import {
   AnalysisSamplePreviewModal,

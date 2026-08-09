@@ -82,7 +82,7 @@ import { FolderTree } from "../components/FolderTree";
 import { PlaceInFoldersModal } from "../components/PlaceInFoldersModal";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
-import { invalidateAnalysisQueries } from "../analysisQueryCache";
+import { invalidateAnalysisQueries } from "../features/analyses/workspace/analysisQueryCache";
 import { ImportCellsLauncher } from "./InboxPage";
 import {
   buildCellLibraryRows,

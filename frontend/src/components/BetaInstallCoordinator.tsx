@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { APP_CHANNEL } from "../appChannel";
-import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
+import { hasDirtyAnalysisWorkspaceEditors } from "../features/analyses/workspace/analysisWorkspace";
 import { post } from "../api";
 import {
   appUpdateIntervalMs,

@@ -60,7 +60,7 @@ import {
   loadAnalysisWorkspaceMemoryPolicy,
   saveAnalysisWorkspaceMemoryPolicy,
   type AnalysisWorkspaceMemoryPolicy,
-} from "../analysisWorkspace";
+} from "../features/analyses/workspace/analysisWorkspace";
 import {
   loadAppUpdatePreferences,
   saveAppUpdatePreferences,

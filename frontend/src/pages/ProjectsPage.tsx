@@ -59,7 +59,10 @@ import {
   SelectionEntry,
   Tree,
 } from "../api";
-import { clearAnalysisQueryCache, invalidateAnalysisQueries } from "../analysisQueryCache";
+import {
+  clearAnalysisQueryCache,
+  invalidateAnalysisQueries,
+} from "../features/analyses/workspace/analysisQueryCache";
 import { groupTransfersBySource, isNoOpDrop } from "../folderDrop";
 import {
   formatCapacity as formatMetricCapacity,
@@ -79,7 +82,7 @@ import {
   adjacentProjectSelectionItem,
   projectSelectionAfterClick,
 } from "../projectSelection";
-import { AnalysisPlotSummary } from "../components/AnalysisPlotSummary";
+import { AnalysisPlotSummary } from "../features/analyses/database/AnalysisPlotSummary";
 import { CellDetailTabs } from "../components/CellDetailTabs";
 import {
   deleteEmptyAnalysesIfRequested,

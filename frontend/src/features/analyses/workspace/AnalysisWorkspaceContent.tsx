@@ -11,9 +11,9 @@ import {
   markAnalysisWorkspaceMounted,
   showAnalysisWorkspaceView,
   type AnalysisWorkspaceMemoryPolicy,
-} from "../analysisWorkspace";
-import { AnalysesIndexPage } from "../pages/AnalysesIndexPage";
-import { AnalysisPage } from "../pages/AnalysisPage";
+} from "./analysisWorkspace";
+import { AnalysesIndexPage } from "../../../pages/AnalysesIndexPage";
+import { AnalysisPage } from "../../../pages/AnalysisPage";
 
 function analysisIdFromPath(pathname: string): number | null {
   const match = pathname.match(/^\/analyses\/(\d+)$/);

@@ -1,5 +1,5 @@
-import type { AnalysisSpec, AnalysisTabKey } from "./api";
-import type { NormalWorkspaceSnapshot } from "./analysisDraftPolicy";
+import type { AnalysisSpec, AnalysisTabKey } from "../../../api";
+import type { NormalWorkspaceSnapshot } from "../../../analysisDraftPolicy";
 
 export const ANALYSIS_WORKSPACE_CHANGED_EVENT = "cellxplorer:analysis-workspace-changed";
 export const ANALYSIS_WORKSPACE_TABS_EVENT = "cellxplorer:analysis-workspace-tabs";

@@ -14,7 +14,7 @@ import {
 
 import { post } from "../api";
 import { APP_CHANNEL } from "../appChannel";
-import { hasDirtyAnalysisWorkspaceEditors } from "../analysisWorkspace";
+import { hasDirtyAnalysisWorkspaceEditors } from "../features/analyses/workspace/analysisWorkspace";
 import {
   appUpdateReducer,
   checkAppUpdateTauri,

@@ -9,7 +9,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { get, type AnalysisSavedPlotSummary } from "../api";
+import { get, type AnalysisSavedPlotSummary } from "../../../api";
 
 export type AnalysisPlotPreviewSource = {
   id: number;

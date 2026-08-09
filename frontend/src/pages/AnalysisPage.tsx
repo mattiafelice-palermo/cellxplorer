@@ -122,13 +122,13 @@ import {
 import {
   clearAnalysisQueryCache,
   invalidateAnalysisQueries,
-} from "../analysisQueryCache";
+} from "../features/analyses/workspace/analysisQueryCache";
 import {
   clearAnalysisWorkspaceEditorState,
   getAnalysisWorkspaceEditorState,
   isAnalysisWorkspaceViewActive,
   setAnalysisWorkspaceEditorState,
-} from "../analysisWorkspace";
+} from "../features/analyses/workspace/analysisWorkspace";
 import {
   buildCommitSavedPlotSpec,
   buildDiscardEditedSavedPlotSpec,

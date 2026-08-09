@@ -48,8 +48,8 @@ import { DownloadsButton } from "./components/DownloadsButton";
 import { CacheWarmupCoordinator } from "./components/CacheWarmupCoordinator";
 import { BetaBootstrapCoordinator } from "./components/BetaBootstrapCoordinator";
 import { QuickSettingsMenu, PAUSE_QUERY_KEY } from "./components/QuickSettingsMenu";
-import { AnalysisWorkspaceTabs } from "./components/AnalysisWorkspaceTabs";
-import { AnalysisWorkspaceContent } from "./components/AnalysisWorkspaceContent";
+import { AnalysisWorkspaceTabs } from "./features/analyses/workspace/AnalysisWorkspaceTabs";
+import { AnalysisWorkspaceContent } from "./features/analyses/workspace/AnalysisWorkspaceContent";
 import { addDebugEvent, getDebugEvents } from "./debug";
 import { isTauriApp } from "./downloads";
 import { AnalysesIndexPage } from "./pages/AnalysesIndexPage";
@@ -59,7 +59,7 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
-import { invalidateAnalysisQueries } from "./analysisQueryCache";
+import { invalidateAnalysisQueries } from "./features/analyses/workspace/analysisQueryCache";
 import { APP_BRANDING } from "./appChannel";
 import {
   backgroundImportRefreshPlan,

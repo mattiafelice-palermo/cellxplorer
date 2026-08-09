@@ -9,7 +9,8 @@
     creates the shared plotting home, extracts page-owned presentation/runtime/export helpers, and
     establishes one context-aware visibility policy. **Implemented; changes required (R1/R2).**
   - [`038.2-analysis-database-and-workspace-organization.md`](038.2-analysis-database-and-workspace-organization.md)
-    organizes the Analysis Database and workspace and makes the index route thin.
+    organizes the Analysis Database and workspace and makes the index route thin. **Implemented;
+    review pending.**
   - [`038.3-existing-editor-module-organization.md`](038.3-existing-editor-module-organization.md)
     moves the four already-separated scientific families plus protocol, recognition, diagnostic,
     and editor policy modules.
@@ -24,8 +25,8 @@
   - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
     extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
     durable architecture documentation, and runs final integration verification.
-  **In progress; 038.1 implemented with review follow-ups required. 038.2 remains blocked until
-  the 038.1 review is clean.**
+  **In progress; 038.1 review follow-ups remain pending independent confirmation, and 038.2 is
+  implemented under explicit user direction with review pending.**
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
   plot presets. Children 035.1–035.12 use the shared

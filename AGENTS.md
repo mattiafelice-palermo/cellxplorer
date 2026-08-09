@@ -189,8 +189,6 @@ Cellxplorer/
 │   │   ├── main.tsx, App.tsx, app.css
 │   │   ├── api.ts                  Typed backend client
 │   │   ├── components/             Reusable UI and analysis/cell components
-│   │   │   ├── AnalysisPlotSummary.tsx Shared saved-plot count and hover preview
-│   │   ├── SeriesStyleModal.tsx    Per-series appearance editor with live preview (Spec 037)
 │   │   │   ├── ChargeabilityPlotCard.tsx
 │   │   │   ├── RateCapabilityPlotCard.tsx
 │   │   │   ├── DestructiveImpactModal.tsx
@@ -203,6 +201,13 @@ Cellxplorer/
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   ├── RecognitionProgress.tsx
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
+│   │   ├── features/               Feature-owned frontend modules
+│   │   │   └── analyses/
+│   │   │       ├── database/       Analysis Database collection and preview workflow
+│   │   │       ├── editor/
+│   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
+│   │   │       │   └── policies/   Analysis-specific visibility policies
+│   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
 │   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
 │   │   ├── updateNotifications.ts  Native Windows update notification adapter (Spec 020)
@@ -212,8 +217,6 @@ Cellxplorer/
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
 │   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
 │   │   ├── librarySelectionScope.ts  Page-versus-result selection policy (Spec 035.12)
-│   │   ├── analysisVisibility.ts   Context-aware cell-series visibility
-│   │   ├── seriesStyling.ts        Per-series style resolution (base → rules → override)
 │   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations
 │   │   ├── folderPlacement.ts      Pure placement-picker state (additive folder dialog)

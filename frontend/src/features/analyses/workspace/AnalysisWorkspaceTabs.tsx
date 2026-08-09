@@ -16,7 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { get, type AnalysisSummary } from "../api";
+import { get, type AnalysisSummary } from "../../../api";
 import {
   ANALYSIS_WORKSPACE_CHANGED_EVENT,
   ANALYSIS_WORKSPACE_ACTIVE_EVENT,
@@ -32,9 +32,9 @@ import {
   unmarkAnalysisWorkspaceMounted,
   type AnalysisWorkspaceSnapshot,
   type AnalysisWorkspaceTab,
-} from "../analysisWorkspace";
-import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../navigationEvents";
-import { refreshAnalysisQueries } from "../analysisQueryCache";
+} from "./analysisWorkspace";
+import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "../../../navigationEvents";
+import { refreshAnalysisQueries } from "./analysisQueryCache";
 
 function analysisIdFromPath(pathname: string): number | null {
   const match = pathname.match(/^\/analyses\/(\d+)$/);

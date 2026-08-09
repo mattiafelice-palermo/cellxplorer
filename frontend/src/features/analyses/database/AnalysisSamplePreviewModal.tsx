@@ -1,10 +1,10 @@
 import { Alert, Center, Loader, Modal } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 
-import type { CellDetail, ReplicateGroupPreview } from "../api";
-import { get } from "../api";
-import { CellDetailTabs } from "./CellDetailTabs";
-import { ReplicatePreviewPanel } from "./ReplicatePreviewPanel";
+import type { CellDetail, ReplicateGroupPreview } from "../../../api";
+import { get } from "../../../api";
+import { CellDetailTabs } from "../../../components/CellDetailTabs";
+import { ReplicatePreviewPanel } from "../../../components/ReplicatePreviewPanel";
 
 export type AnalysisSamplePreview = {
   kind: "cell" | "replicate";
