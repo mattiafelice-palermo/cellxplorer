@@ -12,8 +12,8 @@ ACTIVE_CHILD: 038.8
 TURN: IMPLEMENTER
 STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a
-LAST_REVIEW_SHA: 88fd2fd138b2b73a92860a9e20b6f1a7a90f5c05
-NEXT_ACTION: Resolve 038.8 R1 only: remove direct /analyses route construction from AnalysisEditor through the smallest narrow semantic navigation boundary, preserve all current navigation/deep-link behavior, rerun the required final verification including preflight --no-cache, commit/push the focused fix, then hand TURN to REVIEWER.
+LAST_REVIEW_SHA: 662424c7a3317f983433a54ea69c9d32a0c9bc4e
+NEXT_ACTION: Resolve 038.8 R1 and R2 only: remove direct /analyses route construction from AnalysisEditor through the smallest narrow semantic navigation boundary, restore or explicitly qualify historical pre-038 spec paths so their original implementation records remain truthful, rerun the required final verification including preflight --no-cache, commit/push the focused follow-up, then hand TURN to REVIEWER.
 ```
 
 ## Protocol
@@ -38,27 +38,35 @@ NEXT_ACTION: Resolve 038.8 R1 only: remove direct /analyses route construction f
 038.1 through 038.7 are independently review-clean.
 
 038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` has received its first independent
-review. The child and cumulative parent are **not yet clean** because one architecture finding
-remains open:
+review and cumulative documentation pass. The child and cumulative parent are **not yet clean**
+because two findings remain open:
 
 - `R1 — Medium`: `AnalysisEditor.tsx` still directly constructs `/analyses` navigation destinations
   for duplicate success, delete success, and the not-found Back action, contradicting the locked
   final route/feature ownership boundary.
+- `R2 — Medium`: historical pre-038 specs were path-rewritten so their old implementation records
+  now read as though they originally used the new Spec 038 feature paths, despite 038.8 explicitly
+  prohibiting that historical rewrite.
 
-Implement **R1 only** from:
+Implement **R1 and R2 only** from:
 
 `docs/specs/reviews/038.8-analysis-editor-integration-review.md`
 
-Preserve the existing duplicate/delete/not-found behavior, workspace behavior, and `?tab=` / `?plot=`
-deep-link semantics. Use the smallest narrow semantic navigation boundary; do not introduce a
-global state store, broad routing framework, or unrelated refactor.
+For R1, preserve existing duplicate/delete/not-found behavior, workspace behavior, and `?tab=` /
+`?plot=` deep-link semantics. Use the smallest narrow semantic navigation boundary and do not add a
+new production module outside the locked parent tree.
 
-When the R1 follow-up is complete:
+For R2, restore historically truthful old paths or clearly distinguish original paths from current
+post-038 owners. Keep current ownership documentation in `AGENTS.md`, `docs/agent-knowledge/`, and
+the active 038 package on the new paths.
+
+When the R1/R2 follow-up is complete:
 
 1. rerun every verification required by the review and 038.8;
 2. rerun `python scripts\preflight.py --no-cache` and record the authoritative result;
 3. keep the browser/manual parent matrix recorded truthfully as run or NOT RUN;
-4. update the 038.8 implementation record so its route/URL-ownership statement is true;
+4. update the 038.8 implementation record so its route/URL-ownership and documentation statements
+   match the actual implementation;
 5. commit and push the focused follow-up;
 6. update this state block to `ACTIVE_CHILD: 038.8`, `TURN: REVIEWER`, `STATE: AWAITING_REVIEW`,
    record the new implementation SHA, keep `LAST_REVIEW_SHA` at the latest reviewer checkpoint,
@@ -327,5 +335,16 @@ Reviewed 038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` and the
 - Finding **R1 — Medium**: `AnalysisEditor` still constructs `/analyses` navigation destinations directly for duplicate success, delete success, and the not-found Back action, contradicting the locked final route/feature ownership boundary. The implementation record also incorrectly says the editor does not construct URLs.
 - Canonical review commit: `88fd2fd138b2b73a92860a9e20b6f1a7a90f5c05`.
 - Decision: **CHANGES_REQUIRED — resolve R1 only, then request the second 038.8 and final parent integration review**.
+
+Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — REVIEWER
+
+Completed the cumulative documentation reconciliation pass after the first 038.8 review.
+
+- Added **R2 — Medium** to the canonical 038.8 review: historical pre-038 specs had been rewritten so original implementation records now claim the new 038 feature paths.
+- Verified the mismatch directly against the merge-base versions of Specs 005 and 024; current ownership remains correctly documented in `AGENTS.md`, `docs/agent-knowledge/`, and the active 038 package.
+- Updated canonical review commit: `662424c7a3317f983433a54ea69c9d32a0c9bc4e`.
+- Decision remains **CHANGES_REQUIRED — resolve R1 and R2 only, then request the second 038.8 and final parent integration review**.
 
 Next owner: **IMPLEMENTER**.
