@@ -3,10 +3,10 @@
  *
  * Pure by design — no React, no Plotly, no network. This is shared by the
  * settings panel, the series appearance editor, and every trace builder, so it
- * lives outside `AnalysisPage.tsx` where it can be read and unit tested without
+ * lives outside `AnalysisEditor.tsx` where it can be read and unit tested without
  * dragging in the whole analysis page.
  *
- * Extracted verbatim from `AnalysisPage.tsx`; behaviour is unchanged.
+ * Extracted verbatim from the editor controller; behaviour is unchanged.
  */
 import type { AnalysisSpec, AnalysisTabKey, PlotAxisScope, PlotStyle } from "../../../../api";
 

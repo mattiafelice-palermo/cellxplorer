@@ -22,7 +22,8 @@ The authoritative implementation anchors are:
 - `frontend/src/app.css` for global geometry and theme-safe CSS;
 - `frontend/src/App.tsx` for the application shell;
 - shared components under `frontend/src/components/`;
-- `frontend/src/pages/AnalysisPage.tsx` for the plot style and export system.
+- `frontend/src/features/analyses/editor/AnalysisEditor.tsx` for editor composition and
+  `frontend/src/features/analyses/editor/plotting/` for plot style and export behavior.
 
 ## Visual character
 
@@ -111,7 +112,7 @@ ordinary application chrome.
 ### Plot palette
 
 Plot colors are separate from chrome colors. The default CellXplorer plot palette is owned by
-`PLOT_PALETTES.app` in `AnalysisPage.tsx`:
+`PLOT_PALETTES.app` in `features/analyses/editor/plotting/plotStyle.ts`:
 
 ```text
 #12b886, #2E86AB, #E63946, #43AA8B, #F4A261,
@@ -251,7 +252,7 @@ Analysis plots follow the established three-part layout:
 - collapsible style panel: approximately 310 px.
 
 Tab-specific analysis logic belongs in a separate component when it would materially grow
-`AnalysisPage.tsx`. Match the neighbouring plot tabs: automatic-identification/settings section,
+`AnalysisEditor.tsx`. Match the neighbouring plot tabs: automatic-identification/settings section,
 series and axes, full export header, plot surface, style panel, and saved plots.
 
 Long modal workflows may use `lg`/`xl` or a deliberate rem width. Small confirmation and naming
@@ -265,7 +266,8 @@ Plot chrome follows the application theme; Plotly paper does not. Plot backgroun
 presentation settings and default to white so figures and exports remain publication-ready in
 both light and dark UI modes.
 
-Default plot styling is owned by `DEFAULT_PLOT_STYLE` in `AnalysisPage.tsx`. Important defaults:
+Default plot styling is owned by `DEFAULT_PLOT_STYLE` in
+`features/analyses/editor/plotting/plotStyle.ts`. Important defaults:
 
 - white paper and plot background;
 - 2.5 px solid lines;

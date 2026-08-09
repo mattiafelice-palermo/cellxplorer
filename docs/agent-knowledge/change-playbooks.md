@@ -65,7 +65,7 @@ paths.
 
 ## Adding a hook to a large page component
 
-`AnalysisPage` (and any component with early returns such as
+`AnalysisEditor` (and any component with early returns such as
 `if (analysis.isLoading || spec === null) return ...`) must receive new `useState`, `useRef`, and
 `useEffect` calls **above** those returns. Adding a hook further down compiles and type-checks
 cleanly but throws "Rendered more hooks than during the previous render" the moment the early

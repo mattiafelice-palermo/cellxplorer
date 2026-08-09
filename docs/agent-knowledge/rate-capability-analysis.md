@@ -115,7 +115,7 @@ a `job_token` and polls `GET /api/background-jobs/by-token/{token}` through
 show staged progress (including
 intra-cell stages from `rate_capability.compute`). `Show detected steps` opens the read-only
 `ProtocolStructureViewer` highlighting `measurement_step_index` values from the result.
-`frontend/src/pages/AnalysisPage.tsx` supplies only tab wiring, saved-plot normalization,
+`frontend/src/features/analyses/editor/AnalysisEditor.tsx` supplies only tab wiring, saved-plot normalization,
 thumbnail generation, and portable-report snapshots.
 
 The generic cycle compute must remain disabled while the C-rate tab is active. Saved thumbnails

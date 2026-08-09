@@ -151,7 +151,8 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
 - `frontend/src/pages/ProjectsPage.tsx`: folder tree and previews
-- `frontend/src/pages/AnalysisPage.tsx`: analysis editor and saved plots
+- `frontend/src/pages/AnalysisPage.tsx`: route/override adapter for analysis editing
+- `frontend/src/features/analyses/editor/AnalysisEditor.tsx`: single-analysis editor controller and composition
 - `frontend/src/features/analyses/editor/artifacts/CacheWarmupCoordinator.tsx`: idle saved-plot cache preparation
 - `frontend/src/api.ts`: typed frontend API client
 - `packaging/`, `src-tauri/`, and `docs/windows-packaging.md`: Windows desktop packaging
@@ -200,6 +201,7 @@ Cellxplorer/
 │   │   │   └── analyses/
 │   │   │       ├── database/       Analysis Database collection and preview workflow
 │   │   │       ├── editor/
+│   │   │       │   ├── AnalysisEditor.tsx  Single-analysis editor controller and composition
 │   │   │       │   ├── artifacts/  Saved previews, artifacts, draft cards, and cache warmup
 │   │   │       │   ├── families/   Analysis-family adapters and diagnostic-cycle policy
 │   │   │       │   ├── plotting/   Shared plot presentation, export, runtime, and style modules
@@ -406,8 +408,8 @@ outside the workspace. This is an execution-environment issue, not necessarily a
 - Keep expensive parsing, checksum, and cache rebuilding off the request/UI critical path. Existing
   batch parsing and source checks use background work or multiprocessing patterns worth reusing.
 - Metadata display should include all available values and remain collapsed by default.
-- Avoid broad refactors in `AnalysisPage.tsx` unless the task requires them; it is large and has
-  sensitive saved-plot/autosave behavior. Keep tab-specific logic isolated where possible.
+- Avoid broad refactors in `AnalysisEditor.tsx` unless the task requires them; it owns sensitive
+  saved-plot/autosave behavior. Keep tab-specific logic isolated in the feature modules.
 - Portable HTML is an untrusted, checksummed container. Import must never execute its JavaScript.
   Each exported plot keeps the serialized Plotly figure for interactive browsers and a frozen SVG
   from that same final figure for restricted previews such as Teams. Keep CSV data in the figure

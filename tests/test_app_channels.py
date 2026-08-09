@@ -258,7 +258,7 @@ class AppChannelConfigurationTests(unittest.TestCase):
                 self.assertNotIn("teal", source)
 
         mixed_semantics = [
-            "pages/AnalysisPage.tsx",
+            "features/analyses/editor/AnalysisEditor.tsx",
             "pages/InboxPage.tsx",
             "pages/LibraryPage.tsx",
             "pages/ProjectsPage.tsx",

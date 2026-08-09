@@ -25,11 +25,12 @@
     **Implemented; review-clean.**
   - [`038.7-portable-report-flow-extraction.md`](038.7-portable-report-flow-extraction.md)
     extracts portable estimate, source preflight/update, snapshot, export, and share orchestration.
-    **In progress; active child.**
+    **Implemented; review-clean.**
   - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
     extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
     durable architecture documentation, and runs final integration verification.
-  **In progress; 038.1–038.6 are implemented and review-clean, with 038.7 active.**
+    **Implemented; review pending.**
+  **In progress; 038.1–038.7 are implemented and review-clean, with 038.8 implemented and review pending.**
 - [`035-user-experience-and-workflow-optimization.md`](035-user-experience-and-workflow-optimization.md)
   locks the shared UX decisions for the import browser, import pipeline, Analysis workflows, and
   plot presets. Children 035.1–035.12 use the shared

@@ -88,7 +88,8 @@ without re-checking that typing `611` still ranks the `_611_` cell first.
 
 Results navigate through one-shot URL parameters, each consumed and stripped by its page:
 `/?cell=<id>` and `/?replicate=<id>` (LibraryPage), `/analyses/<id>?tab=<key>&plot=<id>`
-(AnalysisPage restores the saved plot and its tab), and `/projects?folder=<id>` (ProjectsPage
+(the AnalysisPage route adapter passes the id to AnalysisEditor, which restores the saved plot and
+its tab), and `/projects?folder=<id>` (ProjectsPage
 selects the folder and expands its ancestor chain). Saved plots are searchable because
 `analysis_dict` includes a compact `saved_plots` array (id, name, tab) in the list summary; keep
 that field small — the full spec must not be sent to the index.
@@ -150,11 +151,37 @@ The database has a stable instance UUID stored in `AppSetting`. Frontend startup
 accepted only when both this UUID and the schema revision match, preventing cached summaries from
 one database being shown for another.
 
+## Analysis frontend ownership
+
+Analysis routes are adapters around feature-owned views. `frontend/src/pages/AnalysisPage.tsx`
+reads the route id or explicit embedding override and renders
+`frontend/src/features/analyses/editor/AnalysisEditor.tsx`; it owns no editor state or helpers.
+`frontend/src/pages/AnalysesIndexPage.tsx` similarly adapts router/search parameters to
+`features/analyses/database/AnalysesIndexView.tsx`. Feature modules do not import route pages.
+
+The analysis feature ownership is split by responsibility:
+
+- `features/analyses/database/` owns the analysis collection, table, summaries, and sample preview;
+- `features/analyses/editor/AnalysisEditor.tsx` owns the remaining single-analysis controller and
+  screen composition;
+- `features/analyses/editor/families/` owns family-specific cards and result presentation;
+- `features/analyses/editor/plotting/` owns shared plot presentation, exports, runtime, and style;
+- `features/analyses/editor/policies/` owns draft, saved-view, visibility, and multi-source rules;
+- `features/analyses/editor/artifacts/` owns saved previews, draft cards, artifacts, and warmup;
+- `features/analyses/editor/portable/` owns portable-report orchestration and sharing;
+- `features/analyses/workspace/` owns tabs, mounted-editor composition, navigation state, and
+  analysis query-cache policy.
+
+The workspace embeds `AnalysisEditor` directly, so the stable direction is
+`route page -> feature editor` and `workspace -> feature editor`; the editor then composes the
+family, policy, plotting, artifact, portable, protocol, recognition, and workspace owners.
+
 ## Loading states
 
 Almost every read is served from cache in well under 250ms. A progress indicator shown for that long
 is worse than none: the appear/disappear registers as a flicker, and a spinner *means* "this is
-slow". `useDelayedFlag` in `AnalysisPage.tsx` gates them — nothing for the first 250ms, then a
+slow". `useDelayedFlag` in `features/analyses/editor/AnalysisEditor.tsx` gates them — nothing for
+the first 250ms, then a
 400ms floor once shown, because without the floor a 300ms load merely flashes at a new threshold.
 
 Hold the container's height whether or not the indicator is showing, so a fast result lands without

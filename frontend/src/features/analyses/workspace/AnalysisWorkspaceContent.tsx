@@ -1,6 +1,6 @@
 import { Box } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
   ANALYSIS_WORKSPACE_MOUNTED_EVENT,
@@ -12,14 +12,63 @@ import {
   showAnalysisWorkspaceView,
   type AnalysisWorkspaceMemoryPolicy,
 } from "./analysisWorkspace";
-import { AnalysesIndexPage } from "../../../pages/AnalysesIndexPage";
-import { AnalysisPage } from "../../../pages/AnalysisPage";
+import {
+  AnalysesIndexView,
+  type AnalysesIndexNavigationOptions,
+  type AnalysesIndexRouteIntent,
+} from "../database/AnalysesIndexView";
+import { AnalysisEditor } from "../editor/AnalysisEditor";
 
 function analysisIdFromPath(pathname: string): number | null {
   const match = pathname.match(/^\/analyses\/(\d+)$/);
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function AnalysisWorkspaceDatabase() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const routeIntent: AnalysesIndexRouteIntent = {
+    openCreate: searchParams.get("new") === "1",
+    openPortableImport: searchParams.get("portableImport") === "1",
+    portableSource: searchParams.get("portableSource"),
+  };
+
+  const consumeRouteKeys = useCallback(
+    (keys: Array<"new" | "portableImport" | "portableSource">) => {
+      const next = new URLSearchParams(searchParams);
+      keys.forEach((key) => next.delete(key));
+      if (next.toString() !== searchParams.toString()) {
+        setSearchParams(next, { replace: true });
+      }
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const navigateToAnalysis = useCallback(
+    (analysisId: number, options?: AnalysesIndexNavigationOptions) => {
+      const plotQuery = options?.plotId
+        ? `?plot=${encodeURIComponent(options.plotId)}`
+        : "";
+      navigate(`/analyses/${analysisId}${plotQuery}`);
+    },
+    [navigate],
+  );
+
+  const navigateToFolder = useCallback(
+    (folderId: number) => navigate(`/projects?folder=${folderId}`),
+    [navigate],
+  );
+
+  return (
+    <AnalysesIndexView
+      routeIntent={routeIntent}
+      consumeRouteKeys={consumeRouteKeys}
+      navigateToAnalysis={navigateToAnalysis}
+      navigateToFolder={navigateToFolder}
+    />
+  );
 }
 
 export function AnalysisWorkspaceContent() {
@@ -121,8 +170,8 @@ export function AnalysisWorkspaceContent() {
   }, [policy]);
 
   if (policy === "unmount") {
-    if (activeId !== null) return <AnalysisPage key={activeId} />;
-    return <AnalysesIndexPage />;
+    if (activeId !== null) return <AnalysisEditor key={activeId} analysisId={activeId} />;
+    return <AnalysisWorkspaceDatabase />;
   }
 
   return (
@@ -136,7 +185,7 @@ export function AnalysisWorkspaceContent() {
         }}
         aria-hidden={!onHome}
       >
-        <AnalysesIndexPage />
+        <AnalysisWorkspaceDatabase />
       </Box>
       {mountedIds.map((analysisId) => (
         <Box
@@ -149,8 +198,8 @@ export function AnalysisWorkspaceContent() {
           }}
           aria-hidden={displayedId !== analysisId}
         >
-          <AnalysisPage
-            analysisIdOverride={analysisId}
+          <AnalysisEditor
+            analysisId={analysisId}
             workspaceVisible={displayedId === analysisId}
           />
         </Box>

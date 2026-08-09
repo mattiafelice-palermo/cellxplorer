@@ -377,7 +377,7 @@ export function AnalysisWorkspaceTabs() {
   const closeTab = (id: number) => {
     const finishClose = () => removeTab(id);
     if (id !== visibleId && dirtyIds.has(id)) {
-      // Activate first so AnalysisPage's leave listener can open the same prompts
+      // Activate first so AnalysisEditor's leave listener can open the same prompts
       // used for navigation — do not show a second, different dialog.
       const tab = tabs.find((candidate) => candidate.id === id);
       if (tab) activateTab(tab);
