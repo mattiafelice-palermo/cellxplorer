@@ -8,12 +8,12 @@ Repository: `mattiafelice-palermo/cellxplorer`
 Branch: `feature/analyses-feature-modularization`
 
 ```text
-ACTIVE_CHILD: 038.6
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 038.7
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: c17be850c7cd8a647f05026b0b0f226f96a28b74
-LAST_REVIEW_SHA: 6b5945c159396e58b5af1b9faa8356de05767c4a
-NEXT_ACTION: Review 038.6 against the parent/child spec and update its canonical review file.
+LAST_REVIEW_SHA: 242464010762a794ba73a5f37fee79d7bb46cf15
+NEXT_ACTION: Reconcile 038.6 status metadata with its clean review, set 038.7 active, implement 038.7 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
 ```
 
 ## Protocol
@@ -35,24 +35,28 @@ NEXT_ACTION: Review 038.6 against the parent/child spec and update its canonical
 
 ## Current handoff
 
-038.1 through 038.5 are independently review-clean.
+038.1 through 038.6 are independently review-clean.
 
-Implement only:
+Before beginning 038.7, update implementation-owned status metadata only as needed so that the
+parent, 038.6 child, and `docs/specs/README.md` accurately record 038.6 as review-clean and 038.7 as
+the active next child. Do not rewrite the review conclusion.
 
-`docs/specs/038.6-saved-plot-artifacts-extraction.md`
+Then implement only:
 
-Follow the parent and child exactly. When 038.6 is complete:
+`docs/specs/038.7-portable-report-flow-extraction.md`
 
-1. run every verification required by 038.6 and current repository guidance;
+Follow the parent and child exactly. When 038.7 is complete:
+
+1. run every verification required by 038.7 and current repository guidance;
 2. run `python scripts\preflight.py` before the completed pushed checkpoint unless current branch
    guidance explicitly supersedes it;
 3. record exact results and any manual checks not run;
 4. commit and push the implementation;
-5. update the state block to `ACTIVE_CHILD: 038.6`, `TURN: REVIEWER`,
+5. update the state block to `ACTIVE_CHILD: 038.7`, `TURN: REVIEWER`,
    `STATE: AWAITING_REVIEW`, record the pushed implementation SHA, and set `NEXT_ACTION` to the
-   independent 038.6 review;
+   independent 038.7 review;
 6. append an IMPLEMENTER entry to this log;
-7. make no 038.7 implementation changes until the reviewer returns the turn.
+7. make no 038.8 implementation changes until the reviewer returns the turn.
 
 ## Coordination log
 
@@ -216,5 +220,25 @@ Reviewed 038.5 implementation `dbeb78fb0360e9eca6ebb64b9d5a80abc5138689` against
 - No actionable finding.
 - Canonical review commit: `6b5945c159396e58b5af1b9faa8356de05767c4a`.
 - Decision: **038.5 REVIEW_CLEAN — 038.6 may begin**.
+
+Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — REVIEWER
+
+Reviewed 038.6 implementation `c17be850c7cd8a647f05026b0b0f226f96a28b74` after valid handoff checkpoint
+`fd4d34d549a8a2476604bbff63f0f62f2e0a9b32`.
+
+- Confirmed all six locked artifact modules at their final `editor/artifacts/` paths.
+- Confirmed draft preview IDs remain blocked from server artifact lookup/store and remain session-only.
+- Confirmed all six scientific families reuse their canonical trace/layout builders in saved preview and portable artifact generation.
+- Confirmed saved-row thumbnail geometry, 4:3 hover geometry, serialized Plotly image generation, artifact retry schedule, and query identities/gates remain equivalent to the pre-extraction implementation.
+- Confirmed warmup publication ordering still waits for the authorized backend store, and the five-minute watchdog/idempotent terminal completion behavior is preserved.
+- Confirmed `AnalysisPage.tsx` retains editor persistence/session/autosave ownership and reconnects through typed artifact-panel callbacks rather than adding another state store.
+- Confirmed no backend/API/migration/scientific/cache/artifact-renderer/version/dependency change.
+- Implementer-reported verification: warmup `10/10`, policy/visibility `19/19`, app-channel `17/17`, TypeScript passed, Vite passed (`7517` modules), `git diff --check` passed, preflight `5/5` with `459` frontend tests and `58` backend modules; manual browser matrix NOT RUN.
+- Reviewer-independent execution: none; review used ChatGPT + GitHub connector only.
+- No actionable finding.
+- Canonical review commit: `242464010762a794ba73a5f37fee79d7bb46cf15`.
+- Decision: **038.6 REVIEW_CLEAN — 038.7 may begin**.
 
 Next owner: **IMPLEMENTER**.
