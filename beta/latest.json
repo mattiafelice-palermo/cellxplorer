@@ -1,15 +1,15 @@
 {
-  "version": "0.17.0-beta011",
-  "notes": "### New features\n\n- CellXplorer Beta opens noticeably faster, especially right after install or an update. The backend no longer unpacks a large temporary bundle on every launch — it runs directly from the installed app folder.\n- Everyday screens such as your library and project folders appear sooner. Heavy scientific libraries now load in the background and only when a feature actually needs them.",
-  "pub_date": "2026-07-30T15:21:24.644Z",
+  "version": "0.21.0-beta.1",
+  "notes": "- Reorganize analysis editor into modular features. Cycles and Time/Capacity plots are now separate components alongside Steps, DCIR, Chargeability, and Rate Capability. No behavioral changes.",
+  "pub_date": "2026-08-09T22:37:30.652Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVCUWxkYnlLUjNjYUNPTXFJRUp6NURKckN5TDl1bG1tbVRaRkNCS21rd2FZank3WmlBTGs2KzN1TEhMK0NkS2E0aXV0REphLzJSQXZBZmt1NkhDeUFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1NDI0ODc3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YTAxMV94NjQtc2V0dXAuZXhlCmJ3c0lPbS9heDArR3ROdUVKZ3MxV3o4UHR3cnRLY3pDbmlGOHZta0FmdTA3dG1sdHU2d1QxQ0o0WDBDd21rREh6Ri9ROUVVR3RyZWlEZ3JzVHMyTkFnPT0K",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/495519910"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFvdDFSbmdhZDgyQUxrWjdZN01YcTVsNHBSaTRuckIzSE9jQ3Q5Z1JMS1hzVnA0eHQ5a25xem04YjBxbVpPdzhZS3lrU0trWi9qZEE5WkFqbTRCREFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzE1MDQ2CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIxLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKT21Ha2dVQkdQNGVBSHJRNk42WWxGMm01K2VCRVVTVHJhTkFPaEJmSFJPcW80VGFNTTArMUlmOHVaMDY0cFhuU1ZsbGRxNFBPYStyUVpOMUN6SWdTRGc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/507978025"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVCUWxkYnlLUjNjYUNPTXFJRUp6NURKckN5TDl1bG1tbVRaRkNCS21rd2FZank3WmlBTGs2KzN1TEhMK0NkS2E0aXV0REphLzJSQXZBZmt1NkhDeUFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1NDI0ODc3CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjE3LjAtYmV0YTAxMV94NjQtc2V0dXAuZXhlCmJ3c0lPbS9heDArR3ROdUVKZ3MxV3o4UHR3cnRLY3pDbmlGOHZta0FmdTA3dG1sdHU2d1QxQ0o0WDBDd21rREh6Ri9ROUVVR3RyZWlEZ3JzVHMyTkFnPT0K",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/495519910"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFvdDFSbmdhZDgyQUxrWjdZN01YcTVsNHBSaTRuckIzSE9jQ3Q5Z1JMS1hzVnA0eHQ5a25xem04YjBxbVpPdzhZS3lrU0trWi9qZEE5WkFqbTRCREFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzE1MDQ2CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIxLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKT21Ha2dVQkdQNGVBSHJRNk42WWxGMm01K2VCRVVTVHJhTkFPaEJmSFJPcW80VGFNTTArMUlmOHVaMDY0cFhuU1ZsbGRxNFBPYStyUVpOMUN6SWdTRGc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/507978025"
     }
   }
 }
