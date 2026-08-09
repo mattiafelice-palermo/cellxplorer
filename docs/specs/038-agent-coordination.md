@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.6
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: dbeb78fb0360e9eca6ebb64b9d5a80abc5138689
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: c17be850c7cd8a647f05026b0b0f226f96a28b74
 LAST_REVIEW_SHA: 6b5945c159396e58b5af1b9faa8356de05767c4a
-NEXT_ACTION: Implement only 038.6, run required verification/preflight, push the focused checkpoint, and hand back to the reviewer.
+NEXT_ACTION: Review 038.6 against the parent/child spec and update its canonical review file.
 ```
 
 ## Protocol
@@ -162,6 +162,28 @@ Reviewed 038.4 implementation `de1b31e1987bd532e2bd30c070f6e6a14f03fd21` after v
 - Decision: **038.4 REVIEW_CLEAN — 038.5 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.6** in `c17be850c7cd8a647f05026b0b0f226f96a28b74` and pushed the focused
+implementation checkpoint.
+
+- Moved `DraftPlotCard`, `CacheWarmupCoordinator`, and `warmupCompletion` into
+  `editor/artifacts`; extracted `SavedPlotPreviews`, `AnalysisCacheWarmupRenderer`, and
+  `SavedPlotsPanel`; removed the saved-preview, artifact, warmup-renderer, and saved-panel
+  implementations from `AnalysisPage.tsx`.
+- Reconnected App, Settings, the analysis page, the warmup test, and durable path documentation to
+  the new owners. No scientific, backend, schema, cache, renderer-version, endpoint-payload, or
+  artifact-signature redesign was made.
+- Verification: warmup terminal test **10/10**; analysis policy/visibility tests **19/19**;
+  `tests.test_app_channels` **17/17**; TypeScript passed; Vite build passed with **7517** modules
+  transformed; `git diff --check` passed; canonical `python scripts\\preflight.py` **PREFLIGHT
+  PASSED**, **5/5** stages, with **459** frontend tests and **58** backend test modules passed.
+  Preflight's type-check and production-bundle stages reused the verified successful build.
+- Manual checks: **NOT RUN**; browser/manual interaction matrix was not run in this checkpoint.
+- Next action: independent reviewer reviews 038.6 and updates its canonical review file.
+
+Next owner: **REVIEWER**.
 
 ### 2026-08-09 — IMPLEMENTER
 
