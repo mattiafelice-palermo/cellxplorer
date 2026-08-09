@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.7
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: c17be850c7cd8a647f05026b0b0f226f96a28b74
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2
 LAST_REVIEW_SHA: 242464010762a794ba73a5f37fee79d7bb46cf15
-NEXT_ACTION: Reconcile 038.6 status metadata with its clean review, set 038.7 active, implement 038.7 only, run child-required verification and canonical preflight, commit/push, then hand TURN to REVIEWER.
+NEXT_ACTION: Review 038.7 against the parent/child spec and update its canonical review file.
 ```
 
 ## Protocol
@@ -242,3 +242,27 @@ Reviewed 038.6 implementation `c17be850c7cd8a647f05026b0b0f226f96a28b74` after v
 - Decision: **038.6 REVIEW_CLEAN — 038.7 may begin**.
 
 Next owner: **IMPLEMENTER**.
+
+### 2026-08-09 — IMPLEMENTER
+
+Implemented **038.7** in `51f58ddcf1c8786d62daf7b3cb9ffafa3b3fcbc2` and pushed the focused
+implementation checkpoint.
+
+- Extracted the portable estimate, saved-plot chooser/policy, source preflight/update, snapshot,
+  export, download/share, progress, prepared-share fallback, trigger controls, and both modals into
+  the locked `editor/portable/PortableReportFlow.tsx` module. `AnalysisPage.tsx` retains only typed
+  composition plus editor-owned persistence and normalization callbacks.
+- Preserved all four endpoint methods, paths, payload fields/order, query key, source-update cache
+  removals/invalidations, canonical artifact snapshot builder, draft exclusion, filename handling,
+  native-share fallback, error recovery, progress, and modal behavior. No backend, portable format,
+  scientific, dependency, cache, or version changes.
+- Verification: `tests.test_portable_analysis` **17/17**; `tests.test_app_channels` **17/17**;
+  analysis policy/visibility tests **19/19**; TypeScript passed; Vite passed with **7518** modules
+  transformed; `git diff --check` passed; canonical `python scripts\\preflight.py` **PREFLIGHT
+  PASSED**, **5/5** stages, with **459** frontend tests and **58** backend test modules passed.
+  Existing Vite dynamic-import and large-chunk warnings remain.
+- Manual checks: **NOT RUN**; browser/disposable-data portable round trips, source-state failures,
+  native share, focus, keyboard, and light/dark checks were not run in this checkpoint.
+- Next action: independent reviewer reviews 038.7 and updates its canonical review file.
+
+Next owner: **REVIEWER**.
