@@ -9,11 +9,11 @@ Branch: `feature/analyses-feature-modularization`
 
 ```text
 ACTIVE_CHILD: 038.8
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+TURN: USER
+STATE: FEATURE_COMPLETE
 LAST_IMPLEMENTATION_SHA: 6b512b1e17b14ec1dcaa8eb1c55922171545e893
-LAST_REVIEW_SHA: 662424c7a3317f983433a54ea69c9d32a0c9bc4e
-NEXT_ACTION: Review the 038.8 R1/R2 fixes against the parent/child spec and update the canonical review file for the second child and final parent integration review.
+LAST_REVIEW_SHA: 96f7d76413543761d9ee8522c95532b43fd67500
+NEXT_ACTION: Spec 038 is complete and review-clean. No further implementation or review action is authorized on this branch until the user decides whether to refresh PR metadata, run optional manual/browser checks, or merge.
 ```
 
 ## Protocol
@@ -35,44 +35,22 @@ NEXT_ACTION: Review the 038.8 R1/R2 fixes against the parent/child spec and upda
 
 ## Current handoff
 
-038.1 through 038.7 are independently review-clean.
+Spec 038 is complete.
 
-038.8 implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` has received its first independent
-review and cumulative documentation pass. The child and cumulative parent are **not yet clean**
-because two findings remain open:
+- 038.1 through 038.7 are independently review-clean.
+- 038.8 initial implementation `19cad17cc3c7d4b182747a8eaa18fb424d2e3a1a` received R1/R2.
+- Review-fix implementation `6b512b1e17b14ec1dcaa8eb1c55922171545e893` resolves both findings.
+- Final canonical 038.8 and cumulative parent review commit: `96f7d76413543761d9ee8522c95532b43fd67500`.
+- Final review decision: **038.8 REVIEW_CLEAN — Parent 038 FEATURE_COMPLETE**.
+- Implementer-reported final verification includes navigation regression **1/1**, app-channel
+  **17/17**, frontend policy suite **460/460**, TypeScript passed, Vite passed with **7517** modules,
+  `git diff --check` passed, and elevated `python scripts\preflight.py --no-cache` **PREFLIGHT
+  PASSED 5/5** with **460 frontend tests** and **58 backend test modules**.
+- Manual/browser parent matrix: **NOT RUN**, accurately recorded.
 
-- `R1 — Medium`: `AnalysisEditor.tsx` still directly constructs `/analyses` navigation destinations
-  for duplicate success, delete success, and the not-found Back action, contradicting the locked
-  final route/feature ownership boundary.
-- `R2 — Medium`: historical pre-038 specs were path-rewritten so their old implementation records
-  now read as though they originally used the new Spec 038 feature paths, despite 038.8 explicitly
-  prohibiting that historical rewrite.
-
-Implement **R1 and R2 only** from:
-
-`docs/specs/reviews/038.8-analysis-editor-integration-review.md`
-
-For R1, preserve existing duplicate/delete/not-found behavior, workspace behavior, and `?tab=` /
-`?plot=` deep-link semantics. Use the smallest narrow semantic navigation boundary and do not add a
-new production module outside the locked parent tree.
-
-For R2, restore historically truthful old paths or clearly distinguish original paths from current
-post-038 owners. Keep current ownership documentation in `AGENTS.md`, `docs/agent-knowledge/`, and
-the active 038 package on the new paths.
-
-When the R1/R2 follow-up is complete:
-
-1. rerun every verification required by the review and 038.8;
-2. rerun `python scripts\preflight.py --no-cache` and record the authoritative result;
-3. keep the browser/manual parent matrix recorded truthfully as run or NOT RUN;
-4. update the 038.8 implementation record so its route/URL-ownership and documentation statements
-   match the actual implementation;
-5. commit and push the focused follow-up;
-6. update this state block to `ACTIVE_CHILD: 038.8`, `TURN: REVIEWER`, `STATE: AWAITING_REVIEW`,
-   record the new implementation SHA, keep `LAST_REVIEW_SHA` at the latest reviewer checkpoint,
-   and request the second 038.8 plus final parent integration review;
-7. append an IMPLEMENTER entry to this log;
-8. make no merge, release, version, or unrelated implementation change before the final review.
+The implementation/spec-review state is ready for the user's merge decision. PR title/body remain
+stale and still describe a specification-only PR; refreshing that metadata is optional merge hygiene
+and is not an open Spec 038 finding.
 
 ## Coordination log
 
@@ -371,3 +349,24 @@ the second-review checkpoint.
   review, updating the canonical review file.
 
 Next owner: **REVIEWER**.
+
+### 2026-08-09 — REVIEWER
+
+Performed the second 038.8 review and final cumulative parent integration review.
+
+- R1 resolved: `AnalysisEditor` no longer imports `useNavigate`, contains no `navigate(...)` call,
+  and does not construct `/analyses` navigation destinations. Duplicate, delete, and not-found
+  transitions use narrow semantic callbacks supplied by the page/workspace adapters. The focused
+  navigation-boundary regression test pins this ownership.
+- R2 resolved: historical Specs 004, 005, and 024 again preserve their original merge-base paths;
+  current post-038 ownership remains in durable architecture guidance and the active 038 package.
+- Implementer-reported final verification: navigation `1/1`, app-channel `17/17`, frontend
+  `460/460`, TypeScript passed, Vite passed (`7517` modules), structural searches clean,
+  `git diff --check` passed, and elevated no-cache preflight `5/5` with `460` frontend tests and
+  `58` backend modules; manual parent/browser matrix NOT RUN.
+- Reviewer-independent execution: none; review used ChatGPT + the GitHub connector only.
+- No unresolved child or cumulative parent finding remains.
+- Canonical final review commit: `96f7d76413543761d9ee8522c95532b43fd67500`.
+- Decision: **038.8 REVIEW_CLEAN — Parent 038 FEATURE_COMPLETE**.
+
+Next owner: **USER**.
