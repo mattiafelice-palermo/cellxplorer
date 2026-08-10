@@ -280,6 +280,11 @@ export function plotSessionBelongsToTab(args: {
   return args.plotWorkspaceTouched && args.activeTab === args.tab;
 }
 
+/** Recap is an immediately readable summary; plot families still need a session. */
+export function analysisTabRequiresPlotSession(tab: AnalysisTabKey): boolean {
+  return tab !== "recap" && tab !== "settings";
+}
+
 /**
  * Live scientific queries belong to the visible plot workspace. Hidden
  * keep-mounted editors and empty family tabs must leave cache preparation to

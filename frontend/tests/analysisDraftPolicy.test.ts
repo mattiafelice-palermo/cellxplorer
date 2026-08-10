@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  analysisTabRequiresPlotSession,
   applyNormalWorkspace,
   buildCommitSavedPlotSpec,
   buildDiscardEditedSavedPlotSpec,
@@ -265,6 +266,17 @@ test("plot session belongs only to its own family tab", () => {
     }),
     false,
   );
+});
+
+test("only plot families require a plot session", () => {
+  assert.equal(analysisTabRequiresPlotSession("recap"), false);
+  assert.equal(analysisTabRequiresPlotSession("settings"), false);
+  assert.equal(analysisTabRequiresPlotSession("cycles"), true);
+  assert.equal(analysisTabRequiresPlotSession("time_capacity"), true);
+  assert.equal(analysisTabRequiresPlotSession("steps"), true);
+  assert.equal(analysisTabRequiresPlotSession("dcir"), true);
+  assert.equal(analysisTabRequiresPlotSession("chargeability"), true);
+  assert.equal(analysisTabRequiresPlotSession("crate"), true);
 });
 
 test("live plot compute requires a visible sample-bearing plot session", () => {

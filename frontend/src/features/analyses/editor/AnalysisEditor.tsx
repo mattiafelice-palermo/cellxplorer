@@ -116,6 +116,7 @@ import {
   captureNormalWorkspace,
   draftAsSavedPlot,
   draftPlotFromWorkspace,
+  analysisTabRequiresPlotSession,
   plotSessionBelongsToTab,
   resolveColdOpenWorkspace,
   savedPlotFromDraftSource,
@@ -2611,7 +2612,11 @@ function AnalysisEditorView({
   const sampleGroups = groupsQuery.data ?? currentAnalysis.selection_groups;
   const displaySubtitle = plotSubtitle(activeTab, displayResult, spec);
   const displayPlotName =
-    activePlot && activePlot.tab === activeTab ? activePlot.name : "Unsaved plot";
+    activePlot && activePlot.tab === activeTab
+      ? activePlot.name
+      : activeTab === "recap"
+        ? "Recap"
+        : "Unsaved plot";
   const folderOptions = flattenFolders(treeQuery.data);
   const plotUpdating = Boolean(compute.isFetching && rendered && activeTab === "cycles");
 
@@ -3389,6 +3394,7 @@ function AnalysisEditorView({
     if (policy.family && !policy.supported) {
       return <ProtocolMappingRequiredState policy={policy} />;
     }
+    if (!analysisTabRequiresPlotSession(tab)) return card;
     const sessionOnTab = plotSessionBelongsToTab({
       tab,
       activeTab,
