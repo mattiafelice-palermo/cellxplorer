@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: USER
-STATE: FEATURE_COMPLETE
+TURN: REVIEWER
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
 LAST_REVIEW_SHA: 8c55e4592d6d7b4bf93c93f882e54796b51468ba
-NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional remaining manual/package checks, PR metadata, merge and release.
+NEXT_ACTION: Reviewer reclaimed the final 039.4/Parent 039 review after a premature FEATURE_COMPLETE handoff. Implementer remains stopped until the complete corrected review is pushed.
 ```
 
 ## Protocol
@@ -200,11 +200,12 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.4 and the fresh cumulative Parent 039 review are clean at canonical review commit
-`8c55e4592d6d7b4bf93c93f882e54796b51468ba`. Parent 039 is implementation/review complete and
-control is returned to the user for optional remaining manual/package checks, PR metadata, merge
-and release decisions. The final 039.4 analysis/browser UI matrix remains truthfully NOT RUN and is
-an optional pre-release confidence check, not a blocking review finding.
+The earlier final-review checkpoint `8c55e4592d6d7b4bf93c93f882e54796b51468ba` and coordination
+handoff `e615bb2504fe6baf260dc3ee500ea7f849f80c2b` declared Parent 039 complete before the active
+`UNDER_REVIEW` pass had finished. Branch comparison confirmed that the intervening change was
+coordination/review documentation only; no implementation code landed. The active reviewer has
+therefore reclaimed 039.4 to finish the focused child review plus cumulative Parent 039 review and
+write the complete corrected finding set before releasing the implementer or user.
 
 ## Coordination log
 
@@ -292,7 +293,7 @@ an optional pre-release confidence check, not a blocking review finding.
 - Result: **CHANGES REQUIRED**.
 - Findings: R1 — High, missing `test`/declared-protocol metadata must degrade through explicit capabilities rather than collapse metadata inspection; R2 — Medium, step-summary timing must use the declared record interval or the 2-second fallback, not median observed gaps; R3 — Medium, required Excel timestamps must reject arbitrary numeric cells instead of accepting pandas nanosecond timestamps.
 - Canonical review commit: `f4d748c528162a8005b99058abcfff78152d43c4`.
-- Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
+- Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R1–R3, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
 - TURN: **IMPLEMENTER**.
 
@@ -420,7 +421,7 @@ an optional pre-release confidence check, not a blocking review finding.
 
 - Active child: 039.3.
 - Implementation SHA: `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`; verification-record checkpoint: `d2f52e2`.
-- Changes: centralized `.nda`/`.ndax`/structured `.xlsx` source policy; integrated bounded inspection, import selection, registration, preview/raw-data, scanner, source replacement, continuation, warmup, and Neware-specific UI wording; preserved full source headers and curated Cell metadata.
+- Changes: centralized `.nda`/`.ndax`/structured `.xlsx` source policy; integrated bounded inspection, import selection, registration, preview/raw-data, scanner/source replacement, continuation, warmup, and Neware-specific UI wording; preserved full source headers and curated Cell metadata.
 - Verification: focused backend import/source suite — **152 passed**; frontend policy tests — **461 passed**; TypeScript check — passed; Vite build — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; `git diff --check` — passed.
 - Real-workbook/manual/packaged checks: disposable browser/import matrix RUN (structured `.xlsx` listed, metadata/capacity preview, registration/background cache, raw-data endpoint, online/parsed source, unrelated-workbook rejection); native picker and HTML file-input checks NOT RUN; packaged `.xlsx` smoke NOT RUN.
 - Next action: stop implementation and await independent 039.3 review.
@@ -523,3 +524,14 @@ an optional pre-release confidence check, not a blocking review finding.
 - Result: **REVIEW CLEAN** — focused 039.4 and fresh cumulative Parent 039 review both clean; no actionable findings.
 - Verification ownership remains exactly as recorded in the canonical review: reviewer independently inspected the repository through the GitHub connector and did not independently rerun Python/frontend/preflight/packaging/private-workbook/installer/browser commands.
 - Final handoff: `TURN: USER / STATE: FEATURE_COMPLETE`; the user decides optional remaining manual/package checks, PR metadata, merge and release.
+
+### 2026-08-11 — REVIEWER RECONCILIATION (039.4 premature FEATURE_COMPLETE)
+
+- The prior final-review handoff changed coordination to `TURN: USER / STATE: FEATURE_COMPLETE`
+  before the active review under lock `d7192d99a22885f28184f50708d098c1a380a387` had completed.
+- Branch comparison confirmed no implementation code landed after the lock; the concurrent changes
+  were the canonical review file and coordination metadata only.
+- The active review identified a remaining locked 039.4 verification gap in the registered Excel
+  Rate Capability regression, so the premature clean/FEATURE_COMPLETE decision is superseded.
+- 039.4 is reclaimed as `TURN: REVIEWER / STATE: UNDER_REVIEW` until the corrected canonical review
+  with the complete finding set is pushed.
