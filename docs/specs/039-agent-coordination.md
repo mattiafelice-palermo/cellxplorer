@@ -9,12 +9,12 @@ Branch: `feature/neware-excel-support`
 Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
-ACTIVE_CHILD: 039.2
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+ACTIVE_CHILD: 039.3
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: 871834c06703592a0d1774383ca37498581bf2ac
-LAST_REVIEW_SHA: 22e63305ba0cdf275573a637166d7cec9f20d939
-NEXT_ACTION: Reviewer is performing the final 039.2 R6-R8 re-review. 039.3 is not authorized until the complete review is pushed.
+LAST_REVIEW_SHA: 938c634b363d88360b7df839432f9ca7aa5a5a06
+NEXT_ACTION: 039.2 is review-clean. Implement 039.3 exactly as specified, verify, commit, push, and hand control to REVIEWER.
 ```
 
 ## Protocol
@@ -200,15 +200,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-Corrected canonical review commit `22e63305ba0cdf275573a637166d7cec9f20d939` supersedes the
-premature 039.2 clean decision at `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad`. R1-R5 remain
-resolved. The remaining work is narrowly scoped: R7 must bind metadata values to the verified
-positional groups so a blank `Voltage range` cannot consume the neighboring unsupported
-`Curr. lower` label; R6 requires a new parser revision after that final metadata-semantic change so
-`cxp2` output is not conflated with the corrected semantics; R8 requires the implementation record
-to name `0abff4102cb534f0652ffb6bc52648eec69c6c9b` and the final follow-up checkpoint. The real-workbook
-metadata/full-parse timing evidence itself is accepted. The implementer owns only these remaining
-039.2 findings. 039.3 is not authorized yet.
+039.2 is review-clean after final correction `871834c06703592a0d1774383ca37498581bf2ac`.
+Canonical review commit `938c634b363d88360b7df839432f9ca7aa5a5a06` confirms R1-R8 resolved.
+The reviewer independently inspected the final R6-R8 implementation, positional metadata grouping,
+parser-bundle provenance, golden provenance-only delta, child audit record and branch scope under an
+explicit `UNDER_REVIEW` lock. 039.3 is now authorized and belongs to the implementer.
 
 ## Coordination log
 
@@ -410,3 +406,13 @@ metadata/full-parse timing evidence itself is accepted. The implementer owns onl
 - Verification: combined focused run — **113 passed**; `python -m py_compile` — passed; `git diff --check` — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; final real supplied-workbook metadata/protocol/parse/validation/cache probe — PASS (13,982 rows, 40 cycles, 201 executed steps).
 - Real-workbook/manual/packaged checks: final read-only backend probe RUN; browser/manual UI NOT APPLICABLE to this backend child; packaged runtime NOT RUN because it remains out of scope until 039.3.
 - Next action: stop implementation and await independent reviewer re-review of 039.2 R6-R8.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (final R6-R8 correction)
+
+- Reviewed final implementation: `871834c06703592a0d1774383ca37498581bf2ac` under reviewer lock `4f38bb1ad77c215770862962558d4d983b3945f3`.
+- Result: **REVIEW CLEAN**.
+- R6-R8: **resolved**. Parser revision is `3`/`v2026.06.11-cxp3`; positional metadata lookup no longer scans across neighboring groups; the blank `Voltage range`/`Curr. lower` regression is present; the child record names both the first and final R6-R8 checkpoints and retains truthful timing evidence.
+- Canonical review commit: `938c634b363d88360b7df839432f9ca7aa5a5a06`.
+- Reviewer-independent verification: inspected the exact final implementation delta, current parser-bundle formula, `CALC_VERSION`, positional metadata implementation and tests, provenance-only golden changes, child implementation record, stale-cxp2 search and branch scope through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
+- Next action: 039.3 may begin exactly as specified.
+- TURN: **IMPLEMENTER**.
