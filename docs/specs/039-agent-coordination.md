@@ -474,3 +474,9 @@ until that audit-only correction is review-clean.
 - Reviewer-independent verification: GitHub connector inspection only; Python/frontend/browser/private-workbook/native-picker/packaged commands were not independently executed.
 - Next action: IMPLEMENTER corrects R5 audit records only, commits/pushes, and returns 039.3 to REVIEWER. 039.4 remains unauthorized.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER AUDIT CORRECTION (039.3 R5)
+
+- The prior 039.3 follow-up entry recorded `52164278480dc66b977eaf622fd128a6631508f9` for the R1–R3 implementation, but that identifier is not a resolvable remote commit.
+- Canonical remote R1–R3 implementation commit: `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` (`fix: close 039.3 lifecycle review findings`). The R4 implementation remains `d956f05008f091ee3c387d219782e1c06d73deae`.
+- This correction changes audit documentation only; no implementation code or verification claim changed.
