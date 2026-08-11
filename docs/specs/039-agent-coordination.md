@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 0abff4102cb534f0652ffb6bc52648eec69c6c9b
-LAST_REVIEW_SHA: 08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad
-NEXT_ACTION: Reviewer is reconciling the premature 039.2 clean handoff after finding a concrete remaining R7 defect. 039.3 is not authorized; complete the corrected review before releasing IMPLEMENTER.
+LAST_REVIEW_SHA: 22e63305ba0cdf275573a637166d7cec9f20d939
+NEXT_ACTION: Implement only the remaining R6-R8 findings in the corrected canonical 039.2 review, verify, commit, push, and return to REVIEWER. 039.3 is not authorized yet.
 ```
 
 ## Protocol
@@ -200,16 +200,15 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-The R6-R8 implementation `0abff4102cb534f0652ffb6bc52648eec69c6c9b` was prematurely marked
-review-clean by review commit `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` while another reviewer
-pass was still under the `UNDER_REVIEW` lock. Before any 039.3 implementation code landed, the
-active reviewer identified a concrete R7 counterexample in the committed verified-layout fixture:
-`Voltage range` can still consume the neighboring unsupported `Curr. lower` label when its own value
-is blank. Because this requires one more normalized-metadata semantic fix after `cxp2` was already
-used, the final parser revision must advance again. R8 timing evidence is valid, but the child
-implementation record still needs the exact R6-R8/final follow-up checkpoint recorded. The reviewer
-has reclaimed 039.2; 039.3 is not authorized until the corrected canonical review is complete and
-these remaining findings are resolved.
+Corrected canonical review commit `22e63305ba0cdf275573a637166d7cec9f20d939` supersedes the
+premature 039.2 clean decision at `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad`. R1-R5 remain
+resolved. The remaining work is narrowly scoped: R7 must bind metadata values to the verified
+positional groups so a blank `Voltage range` cannot consume the neighboring unsupported
+`Curr. lower` label; R6 requires a new parser revision after that final metadata-semantic change so
+`cxp2` output is not conflated with the corrected semantics; R8 requires the implementation record
+to name `0abff4102cb534f0652ffb6bc52648eec69c6c9b` and the final follow-up checkpoint. The real-workbook
+metadata/full-parse timing evidence itself is accepted. The implementer owns only these remaining
+039.2 findings. 039.3 is not authorized yet.
 
 ## Coordination log
 
@@ -388,3 +387,17 @@ these remaining findings are resolved.
 - 039.2 was therefore safely reclaimed as `TURN: REVIEWER / STATE: UNDER_REVIEW` for correction.
 - 039.3 remains unauthorized until the corrected canonical review is pushed and the remaining
   findings are resolved.
+
+### 2026-08-11 — REVIEWER RECONCILIATION COMPLETE
+
+- Corrected canonical review commit: `22e63305ba0cdf275573a637166d7cec9f20d939`.
+- Result: **CHANGES REQUIRED**; the premature 039.2 clean decision is superseded.
+- R1-R5 remain resolved. Remaining work: final positional R7 fix, consequent new parser revision
+  under R6, and R8 implementation-record checkpoint correction. The existing timing evidence is
+  accepted.
+- Reviewer-independent verification: inspected the committed verified metadata fixture, production
+  grouping logic, parser/provenance/cache semantics, branch delta after the premature clean handoff,
+  and confirmed no 039.3 implementation code had landed before reclaiming 039.2. Python/preflight/
+  private-workbook commands were not independently executed.
+- Next action: IMPLEMENTER addresses only the remaining R6-R8 findings and returns 039.2 to REVIEWER.
+- TURN: **IMPLEMENTER**.
