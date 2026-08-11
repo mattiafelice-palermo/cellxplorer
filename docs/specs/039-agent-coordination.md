@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.4
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
 LAST_REVIEW_SHA: 60d1a53773d821c9134835bc9c48e87c81ef25b7
-NEXT_ACTION: Review 039.4 against Parent 039 and perform the required fresh cumulative Parent 039 review before setting FEATURE_COMPLETE.
+NEXT_ACTION: Reviewer is performing the focused 039.4 review plus the required fresh cumulative Parent 039 review. Implementer remains stopped until the complete review is pushed.
 ```
 
 ## Protocol
