@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 0abff4102cb534f0652ffb6bc52648eec69c6c9b
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 871834c06703592a0d1774383ca37498581bf2ac
 LAST_REVIEW_SHA: 22e63305ba0cdf275573a637166d7cec9f20d939
-NEXT_ACTION: Implement only the remaining R6-R8 findings in the corrected canonical 039.2 review, verify, commit, push, and return to REVIEWER. 039.3 is not authorized yet.
+NEXT_ACTION: Reviewer claims UNDER_REVIEW and inspects the final 039.2 R6-R8 correction. 039.3 is not authorized yet.
 ```
 
 ## Protocol
@@ -401,3 +401,12 @@ metadata/full-parse timing evidence itself is accepted. The implementer owns onl
   private-workbook commands were not independently executed.
 - Next action: IMPLEMENTER addresses only the remaining R6-R8 findings and returns 039.2 to REVIEWER.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (final R6-R8 correction)
+
+- Active child: 039.2.
+- Final implementation SHA: `871834c06703592a0d1774383ca37498581bf2ac`; implementation-record checkpoint: `d436c6c`.
+- R6 advances the Excel parser revision to `3`, producing `v2026.06.11-cxp3`; R7 binds metadata values to fixed verified label/value slots and adds the blank `Voltage range`/`Curr. lower` regression; R8 records both exact follow-up checkpoints and final timing evidence.
+- Verification: combined focused run — **113 passed**; `python -m py_compile` — passed; `git diff --check` — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; final real supplied-workbook metadata/protocol/parse/validation/cache probe — PASS (13,982 rows, 40 cycles, 201 executed steps).
+- Real-workbook/manual/packaged checks: final read-only backend probe RUN; browser/manual UI NOT APPLICABLE to this backend child; packaged runtime NOT RUN because it remains out of scope until 039.3.
+- Next action: stop implementation and await independent reviewer re-review of 039.2 R6-R8.
