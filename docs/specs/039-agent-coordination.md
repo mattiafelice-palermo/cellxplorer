@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.2
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 871834c06703592a0d1774383ca37498581bf2ac
 LAST_REVIEW_SHA: 22e63305ba0cdf275573a637166d7cec9f20d939
-NEXT_ACTION: Reviewer claims UNDER_REVIEW and inspects the final 039.2 R6-R8 correction. 039.3 is not authorized yet.
+NEXT_ACTION: Reviewer is performing the final 039.2 R6-R8 re-review. 039.3 is not authorized until the complete review is pushed.
 ```
 
 ## Protocol
