@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 4063999131e850b42cda00911dcf05c4367fdf27
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 696e4f967488a1fafd0360a4c8571c53db7ba0cc
 LAST_REVIEW_SHA: f4d748c528162a8005b99058abcfff78152d43c4
-NEXT_ACTION: Implement only R findings from the canonical 039.2 review, verify, commit, push, and return to REVIEWER.
+NEXT_ACTION: Review the 039.2 R1-R3 follow-up against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -294,3 +294,14 @@ only to address R1–R3. 039.3 is not authorized yet.
 - Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
 - Next action: IMPLEMENTER addresses only R1–R3, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (R1–R3)
+
+- Active child: 039.2; review findings addressed: R1, R2 and R3.
+- Follow-up implementation SHA: `696e4f967488a1fafd0360a4c8571c53db7ba0cc`.
+- R1 now keeps valid record-only workbooks parseable while explicitly setting
+  `DeclaredProtocol=false`; R2 uses the declared record interval or the exact two-second floor
+  for step-summary timing; R3 rejects bare numeric record, metadata and step-summary timestamps.
+- Verification: combined focused run `python -m unittest tests.test_neware_excel tests.test_protocol tests.test_calc_and_cache tests.test_parsing -v` — 100 passed; final elevated `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages; real supplied workbook probe RUN and passed; `py_compile` and `git diff --check` passed.
+- Real-workbook/manual/packaged checks: metadata/protocol/parse/validation/cache probe RUN; browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until 039.3.
+- Next action: stop implementation and await reviewer re-review of 039.2.
