@@ -340,6 +340,32 @@ class NewareExcelParserTests(unittest.TestCase):
         self.assertTrue(frame.attrs["neware_excel"]["step_summary_validated"])
         self.assertTrue(frame["step"].is_monotonic_increasing)
 
+    def test_time_reset_alone_starts_a_new_execution(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "time-reset-only.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            record_sheet = workbook["record"]
+            # Rows 3 and 4 are consecutive source records. Make the second
+            # one share every other boundary signal with the first while its
+            # step-relative time resets from one minute to zero.
+            record_sheet["C4"] = 1
+            record_sheet["D4"] = "Rest"
+            record_sheet["E4"] = 0.0
+            record_sheet["G4"] = 0.0
+            record_sheet["P4"] = 0.0
+            workbook.save(path)
+            frame = neware_excel.parse_timeseries(path)
+
+        reset_rows = frame.loc[frame["record_index"].isin([2, 3])]
+        self.assertEqual(reset_rows["cycle"].tolist(), [1, 1])
+        self.assertEqual(reset_rows["step_index"].tolist(), [1, 1])
+        self.assertEqual(reset_rows["status"].tolist(), ["Rest", "Rest"])
+        np.testing.assert_allclose(reset_rows["time_s"], [60.0, 0.0])
+        np.testing.assert_allclose(reset_rows["total_time_s"], [60.0, 60.0])
+        self.assertEqual(reset_rows["step"].tolist(), [1, 2])
+        self.assertTrue(frame["step"].is_monotonic_increasing)
+
     def test_energy_counters_reset_at_each_executed_step(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "synthetic.xlsx"
