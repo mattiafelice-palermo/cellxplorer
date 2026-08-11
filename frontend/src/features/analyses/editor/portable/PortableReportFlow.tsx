@@ -807,7 +807,7 @@ export function PortableReportFlow({
             checked={includePortableOriginals}
             onChange={(event) => setIncludePortableOriginals(event.currentTarget.checked)}
             disabled={portableExportBusy}
-            label="Include original .nda/.ndax files"
+            label="Include original Neware source files"
             description={
               portableEstimate.data
                 ? `${formatPortableBytes(portableEstimate.data.original_bytes)} before compression. Embedded sources are gzip-compressed and decoded only when extracted or imported.`
@@ -980,7 +980,7 @@ export function PortableReportFlow({
               disabled={updatePortableSources.isPending}
               onClick={continuePortableWithoutSources}
             >
-              Export without .nda/.ndax
+              Export without original source files
             </Button>
             <Button
               loading={updatePortableSources.isPending}

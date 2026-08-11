@@ -1,6 +1,6 @@
 """Background folder scanning & file registration.
 
-Scan a directory for .nda/.ndax files → hash → header parse → upsert
+Scan a directory for Neware .nda/.ndax/.xlsx files → hash → header parse → upsert
 SourceFile rows. Relinking is automatic: if a hash is already known but the
 path moved, the path attribute is updated (identity is the hash).
 
@@ -702,7 +702,7 @@ def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
     apply_background_thread_priority()
     try:
         paths = sorted(
-            p for p in Path(root).rglob("*") if p.suffix.lower() in (".nda", ".ndax") and p.is_file()
+            p for p in Path(root).rglob("*") if parsing.source_filename_allowed(p.name) and p.is_file()
         )
         _update(job_id, found=len(paths))
         db = SessionLocal()
@@ -743,6 +743,9 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
                 _bump(job_id, "relinked")
         return existing
 
+    meta = parsing.read_header_metadata(path)
+    parsing.ensure_supported_source_metadata(path, meta)
+
     # new content. If another row points at this same path, its content
     # changed on disk → badge it, never touch its caches.
     at_path = db.query(SourceFile).filter(SourceFile.path == str(path)).first()
@@ -751,7 +754,6 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
         if job_id is not None:
             _bump(job_id, "changed")
 
-    meta = parsing.read_header_metadata(path)
     observed_size, observed_mtime_ns = source_signature(path)
     sf = SourceFile(
         hash=file_hash,
@@ -834,6 +836,7 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
         raise ValueError("Another source file already has this content hash")
 
     meta = parsing.read_header_metadata(p)
+    parsing.ensure_supported_source_metadata(p, meta)
     sf.hash = new_hash
     sf.filename = p.name
     sf.size, sf.observed_mtime_ns = source_signature(p)
@@ -912,6 +915,7 @@ def update_source_from_path_if_stable(
         raise ValueError("Another source file already has this content hash")
 
     meta = parsing.read_header_metadata(p)
+    parsing.ensure_supported_source_metadata(p, meta)
     _require_signature(p, expected)
     info = cache.build(new_hash, p)
     _require_signature(p, expected)

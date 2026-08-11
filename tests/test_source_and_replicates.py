@@ -3,7 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 from fastapi import HTTPException
@@ -84,6 +84,98 @@ class SourceAndReplicateTests(unittest.TestCase):
             self.assertEqual(updated.cycle_count, 45)
             self.assertEqual(updated.remarks, "updated")
             remove_old.assert_called_once_with("oldhash")
+
+    def test_scanner_ingests_structured_xlsx_through_shared_source_policy(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cell.xlsx"
+            path.write_bytes(b"structured Neware workbook")
+            metadata = {
+                "raw": {"Excel.SourceFormat.Value": "neware_excel"},
+                "source_format": "Neware Excel",
+            }
+            with patch.object(parsing, "compute_hash", return_value="x" * 64), \
+                patch.object(parsing, "read_header_metadata", return_value=metadata):
+                source = scanner.ingest_path(db, path, parse_now=False)
+
+        self.assertEqual(source.ext, "xlsx")
+        self.assertEqual(source.filename, "cell.xlsx")
+        self.assertEqual(source.header_meta, metadata["raw"])
+
+    def test_scanner_discovers_xlsx_without_opening_workbooks_during_enumeration(self):
+        job_id = 902039
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            xlsx = root / "cell.xlsx"
+            nda = root / "binary.nda"
+            xlsx.write_bytes(b"xlsx")
+            nda.write_bytes(b"nda")
+            (root / "notes.csv").write_text("ignore", encoding="ascii")
+            scanner._jobs[job_id] = {
+                "id": job_id,
+                "status": "running",
+                "found": 0,
+                "done": 0,
+                "new": 0,
+                "relinked": 0,
+                "changed": 0,
+                "errors": [],
+            }
+            try:
+                mock_db = Mock()
+                with patch.object(scanner, "SessionLocal", return_value=mock_db), \
+                    patch.object(scanner, "ingest_path") as ingest:
+                    scanner._run_scan(job_id, str(root), parse_now=False)
+            finally:
+                scanner._jobs.pop(job_id, None)
+
+        self.assertEqual([call.args[1].name for call in ingest.call_args_list], ["binary.nda", "cell.xlsx"])
+        self.assertEqual(scanner.get_job(job_id), None)
+
+    def test_invalid_xlsx_scan_does_not_create_or_dirty_a_source(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "invalid.xlsx"
+            path.write_bytes(b"not a Neware workbook")
+            invalid_meta = {
+                "raw": {},
+                "error": "Not a recognized Neware Excel export: required record sheet is missing.",
+            }
+            with patch.object(parsing, "compute_hash", return_value="y" * 64), \
+                patch.object(parsing, "read_header_metadata", return_value=invalid_meta):
+                with self.assertRaisesRegex(ValueError, "Not a recognized Neware Excel export"):
+                    scanner.ingest_path(db, path, parse_now=False)
+
+        self.assertEqual(db.query(SourceFile).count(), 0)
+
+    def test_invalid_xlsx_replacement_preserves_existing_source_identity(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cell.xlsx"
+            path.write_bytes(b"invalid replacement")
+            source = SourceFile(
+                hash="a" * 64,
+                path=str(path),
+                filename=path.name,
+                size=1,
+                ext="xlsx",
+                location_status="changed",
+                parse_status="parsed",
+            )
+            db.add(source)
+            db.commit()
+            invalid_meta = {
+                "raw": {},
+                "error": "Not a recognized Neware Excel export: required record sheet is missing.",
+            }
+            with patch.object(parsing, "compute_hash", return_value="b" * 64), \
+                patch.object(parsing, "read_header_metadata", return_value=invalid_meta):
+                with self.assertRaisesRegex(ValueError, "Not a recognized Neware Excel export"):
+                    scanner.update_source_from_path(db, source)
+
+        self.assertEqual(source.hash, "a" * 64)
+        self.assertEqual(source.location_status, "changed")
+        self.assertEqual(source.parse_status, "parsed")
 
     def test_failed_source_update_preserves_previous_cache(self):
         db = self.make_session()

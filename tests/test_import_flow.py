@@ -2,12 +2,15 @@ import sys
 import tempfile
 import unittest
 import os
+import shutil
 from concurrent.futures import Future
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
 from fastapi import HTTPException
+from openpyxl import Workbook
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -21,9 +24,61 @@ from app.db import Base
 from app.models import Cell, CellMetadata, ImportSubmission, SourceFile, Test, TestFile
 from app.routers import files
 from app.routers import library
-from app.services import parsing
+from app.services import cache, parsing
 from app.services import background_jobs
 from app.services import import_inspection
+
+
+IMPORT_RECORD_HEADERS = [
+    "DataPoint",
+    "Cycle Index",
+    "Step Index",
+    "Step Type",
+    "Time(min)",
+    "Total Time(min)",
+    "Current(mA)",
+    "Voltage(V)",
+    "Chg. Cap.(mAh)",
+    "DChg. Cap.(mAh)",
+    "Date",
+    "Power(W)",
+]
+
+
+def _write_importable_neware_workbook(path: Path) -> None:
+    workbook = Workbook()
+    record = workbook.active
+    record.title = "record"
+    record.append(IMPORT_RECORD_HEADERS)
+    start = datetime(2026, 1, 1, 12, 0, 0)
+    rows = [
+        (1, 1, 1, "Rest", 0.0, 0.0, 0.0, 3.5, 0.0, 0.0),
+        (2, 1, 1, "Rest", 1.0, 1.0, 0.0, 3.5, 0.0, 0.0),
+        (3, 1, 2, "CC Chg", 0.0, 1.0, 1.0, 3.5, 0.0, 0.0),
+        (4, 1, 2, "CC Chg", 1.0, 2.0, 1.0, 3.7, 1.0, 0.0),
+        (5, 1, 3, "CC DChg", 0.0, 2.0, -1.0, 3.7, 0.0, 0.0),
+        (6, 1, 3, "CC DChg", 1.0, 3.0, -1.0, 3.0, 0.0, 1.0),
+        (7, 2, 1, "Rest", 0.0, 3.0, 0.0, 3.0, 0.0, 0.0),
+        (8, 2, 1, "Rest", 1.0, 4.0, 0.0, 3.0, 0.0, 0.0),
+    ]
+    for data_point, cycle, step_index, status, time_min, total_time_min, current, voltage, charge, discharge in rows:
+        record.append(
+            [
+                data_point,
+                cycle,
+                step_index,
+                status,
+                time_min,
+                total_time_min,
+                current,
+                voltage,
+                charge,
+                discharge,
+                start + timedelta(minutes=total_time_min),
+                voltage * current / 1000.0,
+            ]
+        )
+    workbook.save(path)
 
 
 class ImportFlowTests(unittest.TestCase):
@@ -39,8 +94,34 @@ class ImportFlowTests(unittest.TestCase):
     def test_import_filename_allows_only_neware_files(self):
         self.assertTrue(files.import_filename_allowed("formation.ndax"))
         self.assertTrue(files.import_filename_allowed("cycling.NDA"))
+        self.assertTrue(files.import_filename_allowed("formation.xlsx"))
+        self.assertTrue(files.import_filename_allowed("cycling.XLSX"))
         self.assertFalse(files.import_filename_allowed("notes.csv"))
+        self.assertFalse(files.import_filename_allowed("legacy.xls"))
+        self.assertFalse(files.import_filename_allowed("legacy.xlsm"))
         self.assertFalse(files.import_filename_allowed(""))
+
+    def test_xlsx_inspection_requires_the_neware_record_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "formation.xlsx"
+            _write_importable_neware_workbook(valid)
+            inspected = import_inspection.inspect_file(str(valid))
+
+            self.assertEqual(inspected.ext, "xlsx")
+            self.assertEqual(inspected.metadata["source_format"], "Neware Excel")
+            self.assertIsNotNone(
+                import_inspection.cached_header_metadata(
+                    inspected.hash,
+                    inspected.size,
+                    inspected.mtime_ns,
+                )
+            )
+
+            unrelated = root / "unrelated.xlsx"
+            Workbook().save(unrelated)
+            with self.assertRaisesRegex(ValueError, "Not a recognized Neware Excel export"):
+                import_inspection.inspect_file(str(unrelated))
 
     def test_folder_listing_is_recursive_and_filters_non_neware_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -48,6 +129,7 @@ class ImportFlowTests(unittest.TestCase):
             nested = root / "batch" / "nested"
             nested.mkdir(parents=True)
             (root / "root.nda").write_bytes(b"root")
+            (root / "export.xlsx").write_bytes(b"export")
             (nested / "cell.ndax").write_bytes(b"nested")
             (nested / "notes.csv").write_text("ignore", encoding="ascii")
 
@@ -55,7 +137,7 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [item["relative_path"] for item in result["files"]],
-            ["root.nda", "batch/nested/cell.ndax"],
+            ["export.xlsx", "root.nda", "batch/nested/cell.ndax"],
         )
         self.assertTrue(all(item["selection_root"]["kind"] == "folder" for item in result["files"]))
         self.assertEqual(result["files"][0]["selection_root"]["path"], str(root.resolve()))
@@ -69,6 +151,7 @@ class ImportFlowTests(unittest.TestCase):
             second.mkdir()
             loose = root / "loose.nda"
             loose.write_bytes(b"loose")
+            (first / "export.xlsx").write_bytes(b"export")
             (first / "one.ndax").write_bytes(b"one")
             (second / "two.nda").write_bytes(b"two")
 
@@ -79,11 +162,11 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [item["relative_path"] for item in result["files"]],
-            ["loose.nda", "one.ndax", "two.nda"],
+            ["loose.nda", "export.xlsx", "one.ndax", "two.nda"],
         )
         self.assertEqual(result["files"][0]["selection_root"]["label"], "Loose files")
         self.assertEqual(result["files"][1]["selection_root"]["path"], str(first.resolve()))
-        self.assertEqual(result["files"][2]["selection_root"]["path"], str(second.resolve()))
+        self.assertEqual(result["files"][3]["selection_root"]["path"], str(second.resolve()))
 
     def test_source_listing_job_reports_roots_without_inspection(self):
         background_jobs.clear_jobs()
@@ -777,6 +860,7 @@ class ImportFlowTests(unittest.TestCase):
             root = Path(tmp)
             (root / "nested").mkdir()
             (root / "cell.ndax").write_bytes(b"cell")
+            (root / "export.xlsx").write_bytes(b"export")
             (root / "older.nda").write_bytes(b"older")
             (root / "notes.csv").write_text("ignore", encoding="ascii")
 
@@ -785,7 +869,12 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(result["current_path"], str(root.resolve()))
         self.assertEqual(
             [(entry["name"], entry["kind"]) for entry in result["entries"]],
-            [("nested", "folder"), ("cell.ndax", "file"), ("older.nda", "file")],
+            [
+                ("nested", "folder"),
+                ("cell.ndax", "file"),
+                ("export.xlsx", "file"),
+                ("older.nda", "file"),
+            ],
         )
         self.assertEqual(result["parent_path"], str(root.resolve().parent))
 
@@ -838,6 +927,107 @@ class ImportFlowTests(unittest.TestCase):
                 "label": "Discharge capacity (mAh)",
             },
         )
+
+    def test_xlsx_capacity_preview_and_raw_table_use_normal_cache_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(cache, "CACHE_DIR", Path(tmp) / "cache"):
+                path = Path(tmp) / "preview.xlsx"
+                _write_importable_neware_workbook(path)
+                file_hash = parsing.compute_hash(path)
+                cache_dir = cache.raw_path(file_hash, parsing.PARSER_VERSION).parent
+                try:
+                    preview, error = files.build_capacity_preview(path, file_hash=file_hash)
+                    self.assertIsNone(error)
+                    self.assertIsNotNone(preview)
+                    self.assertEqual(preview["x"], [1, 2])
+                    self.assertEqual(preview["quantity"], "discharge_capacity_mah")
+
+                    cache.wait_for_pending(file_hash)
+                    raw = files.raw_import_file_data(
+                        files.ImportRawDataRequest(
+                            staged_name=path.name,
+                            source_path=str(path),
+                            limit=20,
+                        )
+                    )
+                finally:
+                    cache.wait_for_pending(file_hash)
+                    if cache_dir.exists():
+                        shutil.rmtree(cache_dir, ignore_errors=True)
+
+        self.assertEqual(raw["total_rows"], 8)
+        self.assertTrue(
+            {
+                "record_index",
+                "cycle",
+                "step",
+                "step_index",
+                "status",
+                "time_s",
+                "total_time_s",
+                "voltage_v",
+                "current_ma",
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+                "charge_energy_mwh",
+                "discharge_energy_mwh",
+                "timestamp",
+                "power_w",
+            }.issubset(raw["columns"])
+        )
+
+    def test_xlsx_registration_preserves_one_full_source_header_and_curated_cell_metadata(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "registered.xlsx"
+            _write_importable_neware_workbook(path)
+            request = files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        cell_name="Excel source",
+                        staged_name=path.name,
+                        source_path=str(path),
+                        filename=path.name,
+                    )
+                ]
+            )
+            with patch.object(files, "start_import_cache_jobs", return_value={}):
+                result = files._create_imported_cells_impl(request, db)
+
+        source = db.query(SourceFile).one()
+        header = source.header_meta or {}
+        cell_metadata = db.query(CellMetadata).all()
+        self.assertEqual(result["created"][0]["filename"], "registered.xlsx")
+        self.assertEqual(source.ext, "xlsx")
+        self.assertEqual(source.parse_status, "parsing")
+        self.assertTrue(header)
+        self.assertEqual(header["Excel.SourceFormat.Value"], "neware_excel")
+        self.assertLess(len(cell_metadata), 20)
+        self.assertTrue(all(not item.key.startswith("Excel.") for item in cell_metadata))
+
+    def test_structured_xlsx_continuation_uses_the_normal_source_chain_path(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "continuation.xlsx"
+            _write_importable_neware_workbook(path)
+            with patch.object(
+                files.continuations.cache,
+                "schedule_build",
+                return_value={"status": "scheduled", "error": None},
+            ):
+                source = files._continuation_staged_source(
+                    files.ContinuationInspectSourceRequest(
+                        staged_name=path.name,
+                        source_path=str(path),
+                    ),
+                    db,
+                    existing_test_id=None,
+                    input_order=0,
+                )
+
+        self.assertFalse(source["unsupported_extension"])
+        self.assertEqual(source["inspection_status"], "pending")
+        self.assertEqual(source["filename"], "continuation.xlsx")
 
     def test_preview_matching_fingerprint_reuses_inspected_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

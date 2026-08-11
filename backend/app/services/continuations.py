@@ -278,7 +278,9 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             severity="blocking",
             source_keys=[key],
             title="Unsupported file type",
-            message="Only .nda and .ndax Neware files can be used as continuations.",
+            message=(
+                "Only Neware .nda, .ndax, and structured .xlsx exports can be used as continuations."
+            ),
         )
     if source.get("missing"):
         _append_finding(

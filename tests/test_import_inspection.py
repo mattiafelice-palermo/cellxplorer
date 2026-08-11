@@ -83,6 +83,12 @@ class ImportInspectionTests(unittest.TestCase):
             [event["progress_percent"] for event in phases],
             sorted(event["progress_percent"] for event in phases),
         )
+        self.assertTrue(
+            all(
+                import_inspection.cached_header_metadata(str(index), index, index) == {}
+                for index in range(1, 26)
+            )
+        )
 
     def test_parallel_results_restore_input_order(self):
         paths = [f"file-{index}.ndax" for index in range(8)]
@@ -112,6 +118,22 @@ class ImportInspectionTests(unittest.TestCase):
             with patch.object(Path, "stat", side_effect=[first, second]):
                 with patch.object(import_inspection.parsing, "compute_hash", return_value="hash"), \
                     patch.object(import_inspection.parsing, "read_header_metadata", return_value={}):
+                    with self.assertRaisesRegex(ValueError, "changed during inspection"):
+                        import_inspection.inspect_file(str(path))
+
+    def test_xlsx_inspection_rejects_a_source_that_changes_during_metadata_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cell.xlsx"
+            path.write_bytes(b"data")
+            first = SimpleNamespace(st_mode=stat.S_IFREG, st_size=4, st_mtime_ns=1)
+            second = SimpleNamespace(st_mode=stat.S_IFREG, st_size=5, st_mtime_ns=1)
+            with patch.object(Path, "stat", side_effect=[first, second]):
+                with patch.object(import_inspection.parsing, "compute_hash", return_value="hash"), \
+                    patch.object(
+                        import_inspection.parsing,
+                        "read_header_metadata",
+                        return_value={"source_format": "Neware Excel"},
+                    ):
                     with self.assertRaisesRegex(ValueError, "changed during inspection"):
                         import_inspection.inspect_file(str(path))
 

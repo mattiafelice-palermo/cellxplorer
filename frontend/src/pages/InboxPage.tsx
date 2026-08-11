@@ -2421,7 +2421,7 @@ export function ImportCellsLauncher({
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No .nda or .ndax files were found.", color: "gray" });
+        notifications.show({ message: "No Neware .nda, .ndax, or structured .xlsx files were found.", color: "gray" });
         return;
       }
       setSourceAppend(append);
@@ -2634,7 +2634,7 @@ export function InboxPage() {
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No .nda or .ndax files were found.", color: "gray" });
+        notifications.show({ message: "No Neware .nda, .ndax, or structured .xlsx files were found.", color: "gray" });
         return;
       }
       setSourceAppend(append);
@@ -2681,7 +2681,7 @@ export function InboxPage() {
         <div>
           <Title order={3}>Import</Title>
           <Text size="sm" c="dimmed">
-            Load Neware files and choose separate or continued-cell import.
+            Load Neware .nda, .ndax, or structured Excel exports and choose separate or continued-cell import.
           </Text>
         </div>
         <Button
@@ -2737,7 +2737,7 @@ export function InboxPage() {
         <Group gap="lg" align="start">
           <IconFileImport size={34} color="var(--mantine-primary-color-6)" />
           <Stack gap={6}>
-            <Text fw={700}>Start from Neware files</Text>
+            <Text fw={700}>Start from Neware sources</Text>
             <Text size="sm" c="dimmed" maw={720}>
               Select a single file or a batch. The next step lets you review detected metadata and
               choose whether the sources become separate cells or one ordered continued cell.

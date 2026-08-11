@@ -357,7 +357,7 @@ export function ImportFilesystemPickerModal({
       closeDisabled={loading}
       title="Load cell files"
       step={1}
-      titleInfo="Select any combination of Neware files and folders. Click a folder row to open it; use its checkbox to select the folder recursively."
+      titleInfo="Select Neware .nda, .ndax, or structured Excel exports (.xlsx), plus folders. Click a folder row to open it; use its checkbox to select the folder recursively."
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       actions={
         <>

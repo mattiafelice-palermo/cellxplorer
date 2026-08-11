@@ -25,10 +25,27 @@ logger = logging.getLogger(__name__)
 NEWARE_NDA_VERSION: str = NewareNDA.version.__version__
 EXCEL_PARSER_REVISION: int = neware_excel.EXCEL_PARSER_REVISION
 PARSER_VERSION: str = f"{NEWARE_NDA_VERSION}-cxp{EXCEL_PARSER_REVISION}"
+SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset({".nda", ".ndax", ".xlsx"})
 
 
 class UnsupportedSourceFormatError(ValueError):
     """The parser boundary was given a source suffix CellXplorer cannot read."""
+
+
+def source_filename_allowed(filename: str | Path) -> bool:
+    """Return whether a filename can enter the Neware source inspection path."""
+
+    return Path(str(filename or "")).suffix.casefold() in SUPPORTED_NEWARE_SOURCE_EXTENSIONS
+
+
+def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
+    """Reject an Excel file whose bounded metadata read identified no Neware export."""
+
+    if Path(path).suffix.casefold() != ".xlsx":
+        return
+    error = metadata.get("error") if isinstance(metadata, dict) else None
+    if error:
+        raise UnsupportedSourceFormatError(str(error))
 
 # Vectorized fast paths for NewareNDA — verified output-identical (see
 # tests/test_fast_neware.py); the bundle version above still records both parser owners.
@@ -68,7 +85,7 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     suffix = source_path.suffix.casefold()
     if suffix == ".xlsx":
         return neware_excel.parse_timeseries(source_path)
-    if suffix not in {".nda", ".ndax"}:
+    if suffix not in SUPPORTED_NEWARE_SOURCE_EXTENSIONS - {".xlsx"}:
         raise UnsupportedSourceFormatError(
             f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
         )

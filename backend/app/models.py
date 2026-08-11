@@ -37,7 +37,7 @@ def utcnow() -> datetime:
 
 
 class SourceFile(Base):
-    """One Neware binary file. Identity = content hash; path is mutable."""
+    """One Neware source file. Identity = content hash; path is mutable."""
 
     __tablename__ = "source_files"
 
@@ -46,7 +46,7 @@ class SourceFile(Base):
     path: Mapped[str] = mapped_column(Text)  # current location (mutable attribute)
     filename: Mapped[str] = mapped_column(String(255))
     size: Mapped[int] = mapped_column(Integer)
-    ext: Mapped[str] = mapped_column(String(10))  # nda | ndax
+    ext: Mapped[str] = mapped_column(String(10))  # nda | ndax | xlsx
     observed_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     observed_mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_source_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

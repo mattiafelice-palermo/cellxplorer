@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 
 
 def import_filename_allowed(filename: str) -> bool:
-    return Path(filename or "").suffix.lower() in {".nda", ".ndax"}
+    return parsing.source_filename_allowed(filename)
 
 
 def _clean_filename(filename: str) -> str:
@@ -212,6 +212,7 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
         "protection_voltage_lower_v": meta.get("protection_voltage_lower_v"),
         "record_interval_s": meta.get("record_interval_s"),
         "nda_version": meta.get("nda_version"),
+        "source_format": meta.get("source_format"),
         "remarks": meta.get("remarks"),
     }
     return {k: str(v) for k, v in fields.items() if v not in (None, "")}
@@ -1349,7 +1350,10 @@ def list_import_sources(
         if not path.is_file():
             raise HTTPException(404, f"File is missing: {path}")
         if not import_filename_allowed(path.name):
-            raise HTTPException(400, f"Only .nda and .ndax files can be imported: {path.name}")
+            raise HTTPException(
+                400,
+                f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {path.name}",
+            )
         key = os.path.normcase(str(path))
         if key in seen:
             continue
@@ -1440,7 +1444,10 @@ async def inspect_import_files(files: list[UploadFile] = File(...), db: Session 
     for upload in files:
         original = _clean_filename(upload.filename or "")
         if not import_filename_allowed(original):
-            raise HTTPException(400, f"Only .nda and .ndax files can be imported: {original}")
+            raise HTTPException(
+                400,
+                f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {original}",
+            )
 
         staged_name = f"{uuid.uuid4().hex}_{original}"
         staged_path = resolve_import_staged_path(staged_name)
@@ -1603,6 +1610,10 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 progress_percent=100.0,
             )
         return {"files": previews}
+    except ValueError as exc:
+        if job_id is not None:
+            background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         if job_id is not None:
             background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))
@@ -1743,6 +1754,14 @@ def _continuation_staged_source(
         meta = hint.get("header_metadata") if (
             hint_is_valid and isinstance(hint, dict) and isinstance(hint.get("header_metadata"), dict)
         ) else parsing.read_header_metadata(source_path)
+    try:
+        parsing.ensure_supported_source_metadata(source_path, meta)
+    except ValueError as exc:
+        source["inspection_status"] = "error"
+        source["inspection_error"] = str(exc)
+        source["unreadable"] = True
+        source["unreadable_message"] = str(exc)
+        return source
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
     source["hash"] = file_hash
@@ -2050,6 +2069,7 @@ def _prepare_import_source_file(
     )
     if not isinstance(meta, dict):
         meta = parsing.read_header_metadata(source_path)
+    parsing.ensure_supported_source_metadata(source_path, meta)
 
     prepared = {
         "source_path": source_path,
@@ -2165,6 +2185,7 @@ def _register_or_refresh_source_file(
             and isinstance(inspection, dict)
             and isinstance(inspection.get("header_metadata"), dict)
         ) else parsing.read_header_metadata(source_path)
+    parsing.ensure_supported_source_metadata(source_path, meta)
     file_hash = _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash, previous_hash=file_hash)
     if existing is None:
         sf = SourceFile(
@@ -2347,7 +2368,8 @@ def pick_import_files(db: Session = Depends(get_db)):
         selected = filedialog.askopenfilenames(
             title="Select Neware cell files",
             filetypes=[
-                ("Neware files", "*.ndax *.nda"),
+                ("Neware files", "*.nda *.ndax *.xlsx"),
+                ("Neware Excel exports", "*.xlsx"),
                 ("NDAX files", "*.ndax"),
                 ("NDA files", "*.nda"),
                 ("All files", "*.*"),

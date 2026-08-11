@@ -217,10 +217,13 @@ def inspect_file(path_string: str) -> FileInspection:
     if not S_ISREG(initial.st_mode):
         raise ValueError(f"File is missing: {path}")
     filename = path.name
-    if path.suffix.lower() not in {".nda", ".ndax"}:
-        raise ValueError(f"Only .nda and .ndax files can be imported: {filename}")
+    if not parsing.source_filename_allowed(filename):
+        raise ValueError(
+            f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {filename}"
+        )
     file_hash = parsing.compute_hash(path)
     metadata = parsing.read_header_metadata(path)
+    parsing.ensure_supported_source_metadata(path, metadata)
     try:
         final = path.stat()
     except OSError as exc:
