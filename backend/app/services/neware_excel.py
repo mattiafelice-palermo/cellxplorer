@@ -11,6 +11,7 @@ import math
 import re
 import zipfile
 from contextlib import contextmanager
+from numbers import Number
 from pathlib import Path
 from typing import Any, Iterator
 from xml.etree import ElementTree
@@ -285,12 +286,23 @@ def _metadata_timestamp(value: object, *, label: str) -> str | None:
     if _is_blank(value):
         return None
     try:
-        timestamp = pd.Timestamp(value)
+        timestamp = _coerce_timestamp(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise InvalidNewareExcelError(f"Neware Excel {label} has an invalid timestamp.") from exc
-    if pd.isna(timestamp) or timestamp.tz is not None:
-        raise InvalidNewareExcelError(f"Neware Excel {label} has an invalid timestamp.")
     return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _coerce_timestamp(value: object) -> pd.Timestamp:
+    """Accept verified date-like values, but never bare Excel serial numbers."""
+
+    if isinstance(value, Number) or (
+        isinstance(value, str) and _PLAIN_NUMBER_RE.fullmatch(value.strip())
+    ):
+        raise ValueError("bare numeric timestamp")
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp) or timestamp.tz is not None:
+        raise ValueError("invalid timestamp")
+    return timestamp
 
 
 def _record_settings(value: object, *, label: str = "Record settings") -> dict[str, float | str] | None:
@@ -447,6 +459,23 @@ def _parse_test_information(
         "plan_headers": headers,
     }
     return info, marker_row, headers
+
+
+def _declared_record_interval_seconds(workbook: Any) -> float | None:
+    """Read the optional declared record cadence without making it required."""
+
+    test_sheet = _sheet_by_name(workbook, "test", required=False)
+    if test_sheet is None:
+        return None
+    try:
+        info, _header_row, _headers = _parse_test_information(_rows(test_sheet))
+    except NewareExcelError:
+        return None
+    settings = info.get("record_settings")
+    if not isinstance(settings, dict):
+        return None
+    interval_s = settings.get("interval_s")
+    return float(interval_s) if interval_s is not None else None
 
 
 def _parse_unit_original(sheet: Any | None) -> tuple[dict[str, object], str | None]:
@@ -751,11 +780,9 @@ def _timestamp(value: object, *, row_number: int, column: str) -> pd.Timestamp:
     if value is None or (isinstance(value, str) and not value.strip()):
         raise _invalid_record(row_number, column)
     try:
-        timestamp = pd.Timestamp(value)
+        timestamp = _coerce_timestamp(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise _invalid_record(row_number, column) from exc
-    if pd.isna(timestamp) or timestamp.tz is not None:
-        raise _invalid_record(row_number, column)
     return timestamp
 
 
@@ -978,15 +1005,11 @@ def _parse_step_summary(sheet: Any) -> list[dict[str, object]]:
 
         def summary_timestamp(source: str) -> pd.Timestamp:
             try:
-                timestamp = pd.Timestamp(value_for(source))
+                timestamp = _coerce_timestamp(value_for(source))
             except (TypeError, ValueError, OverflowError) as exc:
                 raise InvalidNewareExcelError(
                     f"Neware Excel step summary row {row_number} has an invalid {source} value."
                 ) from exc
-            if pd.isna(timestamp) or timestamp.tz is not None:
-                raise InvalidNewareExcelError(
-                    f"Neware Excel step summary row {row_number} has an invalid {source} value."
-                )
             return timestamp
 
         rows.append(
@@ -1051,25 +1074,18 @@ def _integrate_step_energy(group: pd.DataFrame) -> float:
     return energy
 
 
-def _step_time_tolerance_seconds(frame: pd.DataFrame) -> float:
-    """Return the bounded timing tolerance available from the raw record cadence.
+def _step_time_tolerance_seconds(record_interval_s: float | None) -> float:
+    """Return the locked declared-cadence timing tolerance."""
 
-    Neware's step summary rounds ``Step Time(min)`` independently from the raw
-    timestamps.  The export does not expose the declared record interval on the
-    ``record`` sheet, so use the median positive timestamp interval as the
-    record-cadence fallback.  This implements the spec's ``max(2 seconds,
-    known record interval)`` rule without hard-coding the common 60-second
-    setting, while still keeping a two-second floor for sparse/single-row
-    synthetic data.
-    """
-    intervals = frame["timestamp"].diff().dt.total_seconds().to_numpy(dtype="float64")
-    positive = intervals[np.isfinite(intervals) & (intervals > 0.0)]
-    if len(positive) == 0:
-        return 2.0
-    return max(2.0, float(np.median(positive)))
+    return max(2.0, float(record_interval_s)) if record_interval_s is not None else 2.0
 
 
-def _validate_step_summary(frame: pd.DataFrame, sheet: Any) -> None:
+def _validate_step_summary(
+    frame: pd.DataFrame,
+    sheet: Any,
+    *,
+    record_interval_s: float | None,
+) -> None:
     summary = _parse_step_summary(sheet)
     segments = _segment_groups(frame)
     if len(summary) != len(segments):
@@ -1098,7 +1114,7 @@ def _validate_step_summary(frame: pd.DataFrame, sheet: Any) -> None:
 
         onset = pd.Timestamp(segment["timestamp"].iloc[0])
         end = pd.Timestamp(segment["timestamp"].iloc[-1])
-        tolerance_s = _step_time_tolerance_seconds(frame)
+        tolerance_s = _step_time_tolerance_seconds(record_interval_s)
         if abs((onset - summary_row["onset"]).total_seconds()) > tolerance_s:
             raise InvalidNewareExcelError(
                 f"Neware Excel step summary onset does not match raw step {expected_step}."
@@ -1171,7 +1187,11 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
             frame = _frame_from_records(records)
             step_sheet = _sheet_by_name(workbook, "step", required=False)
             if step_sheet is not None:
-                _validate_step_summary(frame, step_sheet)
+                _validate_step_summary(
+                    frame,
+                    step_sheet,
+                    record_interval_s=_declared_record_interval_seconds(workbook),
+                )
     except NewareExcelError:
         raise
     except Exception as exc:
@@ -1205,12 +1225,16 @@ def read_metadata(path: str | Path) -> dict[str, object]:
 
     try:
         with _open(candidate) as workbook:
-            test_sheet = _sheet_by_name(workbook, "test", required=True)
-            test_rows = _rows(test_sheet)
-            info, header_row, headers = _parse_test_information(test_rows)
-            step_info, original_steps = _parse_programmed_plan(
-                test_rows, header_row, headers, info
-            )
+            test_sheet = _sheet_by_name(workbook, "test", required=False)
+            info: dict[str, object] = {"raw": {}}
+            step_info: dict[str, dict[str, str]] = {}
+            original_steps: dict[str, dict[str, object]] = {}
+            if test_sheet is not None:
+                test_rows = _rows(test_sheet)
+                info, header_row, headers = _parse_test_information(test_rows)
+                step_info, original_steps = _parse_programmed_plan(
+                    test_rows, header_row, headers, info
+                )
             unit_original, unit_workbook_name = _parse_unit_original(
                 _sheet_by_name(workbook, "unit", required=False)
             )
@@ -1304,7 +1328,7 @@ def read_metadata(path: str | Path) -> dict[str, object]:
             "Capabilities": {
                 "ExecutedStepSummary": {"Value": has_step_summary},
                 "CycleSummary": {"Value": has_cycle_summary},
-                "DeclaredProtocol": {"Value": True},
+                "DeclaredProtocol": {"Value": test_sheet is not None},
                 "ProtocolConditions": {"Value": False},
             },
             "Original": original,

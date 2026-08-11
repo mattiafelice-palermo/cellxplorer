@@ -253,6 +253,15 @@ def _write_metadata_workbook(path: Path, *, include_cycle: bool = False) -> None
         workbook.save(path)
 
 
+def _add_declared_record_settings(path: Path, interval_s: float) -> None:
+    workbook = load_workbook(path)
+    test = workbook.create_sheet("test")
+    test.append(["Record settings", None, f"{interval_s:g}s/0.01V/0mA"])
+    test.append(["Step plan"])
+    test.append(TEST_PLAN_HEADERS)
+    workbook.save(path)
+
+
 class NewareExcelParserTests(unittest.TestCase):
     def test_valid_workbook_is_recognized(self):
         with TemporaryDirectory() as temporary:
@@ -530,18 +539,30 @@ class NewareExcelParserTests(unittest.TestCase):
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
                 neware_excel.parse_timeseries(path)
 
-    def test_step_summary_rounding_uses_observed_record_cadence(self):
+    def test_step_summary_rounding_uses_declared_record_cadence(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "rounded-step-time.xlsx"
             _write_synthetic_workbook(path)
+            _add_declared_record_settings(path, 60.0)
             workbook = load_workbook(path)
             # The raw segment lasts 60 seconds; a rounded 63-second summary is
-            # accepted within the observed 60-second record cadence.
+            # accepted within the declared 60-second record cadence.
             workbook["step"]["E2"] = 1.05
             workbook.save(path)
             frame = neware_excel.parse_timeseries(path)
 
         self.assertTrue(frame.attrs["neware_excel"]["step_summary_validated"])
+
+    def test_step_summary_does_not_infer_tolerance_from_sparse_timestamps(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sparse-step-time.xlsx"
+            _write_synthetic_workbook(path)
+            _add_declared_record_settings(path, 5.0)
+            workbook = load_workbook(path)
+            workbook["step"]["E2"] = 1.2
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(path)
 
     def test_unknown_status_is_rejected(self):
         with TemporaryDirectory() as temporary:
@@ -588,6 +609,30 @@ class NewareExcelParserTests(unittest.TestCase):
         self.assertEqual(head["MultCap"]["Value"], "36000.0")
         self.assertEqual(metadata["Excel"]["Original"]["Test"]["StartTime"]["Value"], "2026-01-01 12:00:00")
 
+    def test_missing_test_sheet_degrades_protocol_capability_without_blocking_raw_parse(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record-without-test.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            unit = workbook.create_sheet("unit")
+            unit.append(["synthetic.xlsx"])
+            unit.append(["Start time", None, datetime(2026, 1, 1, 12, 0, 0)])
+            workbook.save(path)
+
+            raw = neware_excel.parse_timeseries(path)
+            metadata = neware_excel.read_metadata(path)
+            normalized = parsing.read_header_metadata(path)
+
+        self.assertEqual(len(raw), 25)
+        self.assertEqual(metadata["Step"]["Step_Info"], {})
+        self.assertFalse(metadata["Excel"]["Capabilities"]["DeclaredProtocol"]["Value"])
+        self.assertFalse(metadata["Excel"]["Capabilities"]["ProtocolConditions"]["Value"])
+        self.assertEqual(normalized["source_format"], "Neware Excel")
+        self.assertFalse(normalized["capabilities"]["DeclaredProtocol"])
+        self.assertIsNone(normalized["nominal_capacity_mah"])
+        self.assertEqual(normalized["start_time"], "2026-01-01 12:00:00")
+        self.assertTrue(any("protocol condition expressions" in warning for warning in normalized["protocol_warnings"]))
+
     def test_metadata_protocol_plan_maps_explicit_fields_and_controls(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "metadata.xlsx"
@@ -621,6 +666,28 @@ class NewareExcelParserTests(unittest.TestCase):
             workbook["test"]["C7"] = "10V"
             workbook.save(path)
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.read_metadata(path)
+
+    def test_numeric_record_date_is_rejected(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "numeric-record-date.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            workbook["record"]["O2"] = 123
+            workbook["record"]["O2"].number_format = "General"
+            workbook.save(path)
+            with self.assertRaisesRegex(neware_excel.InvalidNewareExcelError, "Date"):
+                neware_excel.parse_timeseries(path)
+
+    def test_numeric_metadata_start_time_is_rejected(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "numeric-metadata-start-time.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            workbook["test"]["F6"] = 123
+            workbook["test"]["F6"].number_format = "General"
+            workbook.save(path)
+            with self.assertRaisesRegex(neware_excel.InvalidNewareExcelError, "Start time"):
                 neware_excel.read_metadata(path)
 
     def test_shared_metadata_normalization_and_capabilities(self):
