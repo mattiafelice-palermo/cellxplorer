@@ -241,3 +241,56 @@ pre-release confidence check. The user decides PR metadata, merge and release.
 - Fresh cumulative Parent 039 review: **REVIEW CLEAN** against merge base `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
 - Reviewer-independent verification: inspected the R1 implementation/documentation commits, exact computed-result assertions, full cumulative changed-file scope, and confirmed no production code changed after the initial 039.4 implementation. Python/frontend/preflight/packaging/private-workbook/installer/browser commands were not independently rerun; implementer-reported verification remains recorded in the canonical review.
 - Final handoff: `TURN: USER / STATE: FEATURE_COMPLETE`. User decides optional manual UI checks, PR metadata, merge and release.
+
+## Recovered audit history after reviewer-log truncation
+
+Reviewer lock commit `6e55d93faf5d6d657108b44176a3de10f077bbf2` correctly claimed the final
+R1 review but accidentally removed earlier append-only coordination entries. The exact full
+pre-truncation text remains immutable at checkpoint
+`bfbac9defa5ab22fc52cd705642336531e4b1e55`. This recovery index restores the removed checkpoint
+sequence in the live file; canonical review files remain the authority for the detailed R findings.
+
+### 039.1 — parser implementation and review
+
+- Initial implementation: `7599715c78312ad9ced12c665ade3a5e46c28e95`; parser/fixture verification and real-workbook probe were reported passing.
+- Initial review: `a4e5e1b8cb427be36b3408559d5ea0144e7fb556`; R1 requested the missing time-reset-only execution-boundary regression.
+- R1 implementation: `949c9caad053faf090fd5cf9645342ef98db9d8d`.
+- Review-clean checkpoint: `a931a68a38d4fa20ee7a55925334359fbbde9f05`.
+
+### 039.2 — metadata, protocol and cache integration
+
+- Initial implementation: `024525e01b184583d443d672d4b93b91bedfbfc6`; implementation-record checkpoint `4063999131e850b42cda00911dcf05c4367fdf27`.
+- Initial review: `f4d748c528162a8005b99058abcfff78152d43c4`; R1-R3 covered missing declared-protocol degradation, step-summary timing and numeric timestamp rejection.
+- R1-R3 implementation: `696e4f967488a1fafd0360a4c8571c53db7ba0cc`; follow-up review `3eeeb170324d55e6acc08403b16263225ae1c5d2` resolved them and raised R4-R5.
+- R4-R5 implementation: `06b33641446e8592748ff56884d50303d02fdee7`; follow-up review `3b0a7668dd169f3078ce8823c8998bb3e1edd062` resolved them and raised R6-R8.
+- First R6-R8 implementation: `0abff4102cb534f0652ffb6bc52648eec69c6c9b`; premature clean review `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` was subsequently superseded after a remaining metadata-slot defect was identified before any 039.3 implementation landed.
+- Corrected review checkpoint: `22e63305ba0cdf275573a637166d7cec9f20d939`.
+- Final R6-R8 implementation: `871834c06703592a0d1774383ca37498581bf2ac`; final review-clean checkpoint: `938c634b363d88360b7df839432f9ca7aa5a5a06`.
+- Final accepted parser identity: Excel revision 3 / global parser bundle `...-cxp3`; `CALC_VERSION` remained `1.6.1`.
+
+### 039.3 — import and source lifecycle integration
+
+- Initial implementation: `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`; verification checkpoint `d2f52e2f9820312f50b6a7558646490e725fe33d`; implementer handoff `91050914d906518a8af7dc567a9cbeda6eec1627`.
+- First reviewer lock: `fdfc6537e005ad5ad0ef447170ad0edc40af2e9a`; initial review `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` raised R1-R3.
+- A concurrent premature release was reclaimed at `c45b040ab77a063f6261928e508a6febb43bc880`; corrected complete review `2bfedb9b0746db5100dfbfe0e6924b1926398869` added R4 before returning the implementer.
+- Actual remote R1-R3 implementation: `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87`; R4 implementation: `d956f05008f091ee3c387d219782e1c06d73deae`; verification checkpoint `2ccebf15ff02703e2b9aa8e90d52fad0a8d6e7df`.
+- Follow-up reviewer lock: `2e37488219cf8dd92909c7a41c1cb2ebbcf17118`; review `38e6769cd1fe15ae0b7d9ebe91798aafb5cad845` resolved R1-R4 and raised audit-only R5 because the earlier log named non-resolvable SHA `52164278480dc66b977eaf622fd128a6631508f9` instead of the actual R1-R3 commit.
+- Audit correction: `d8bc05716d92f80f0f87376a56504e49d073dc8f`; reviewer lock `b84063054b95201b06424dbf4aa4c5af39bdafbd`; final 039.3 review-clean checkpoint `60d1a53773d821c9134835bc9c48e87c81ef25b7`.
+- Coordination advance to 039.4: `417aa141d15cc7c067ca741e2bab1b3489c045d2`.
+
+### 039.4 — original closure review and R1 reconciliation
+
+- Initial 039.4 implementation: `805f318b60dc3815459792503073c1b1953d2ed1`; verification-record checkpoint `5284d97`; handoff `ae8ac6b8190eaf4f70ef7daf0a80ff40850b9672`.
+- Reviewer lock: `d7192d99a22885f28184f50708d098c1a380a387`.
+- Concurrent premature clean review `8c55e4592d6d7b4bf93c93f882e54796b51468ba` and coordination `e615bb2504fe6baf260dc3ee500ea7f849f80c2b` were superseded because the active locked review was not complete; no implementation code had landed in the race.
+- Reviewer reclaim: `e57e57799059563b32438eaf537237605fc6a2f7`.
+- Corrected review `fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e` raised one Medium R1: the registered/cache-backed Excel Rate Capability regression recognized the three-rate sweep but did not assert its known capacities.
+- Coordination returned R1 to the implementer at `3c80f26872159e2cf95cd683e97cb042263071ee`.
+- R1 implementation `b2db0c495787a7b547d8b256fbc7595ed774f2a5`, documentation checkpoint `2ecedf9a22b7ede89ca4ceb8bb60175e6c7aa14d`, and handoff `bfbac9defa5ab22fc52cd705642336531e4b1e55` closed the missing numeric regression.
+- Final reviewer lock `6e55d93faf5d6d657108b44176a3de10f077bbf2`; canonical final clean review `c314a1a2e573782c258721d60f8da1d38ab158e2`; FEATURE_COMPLETE coordination `6c5a08f39752d36fa7e5b2416b6538d40ff7ad17`.
+
+### 2026-08-11 — REVIEWER AUDIT RECOVERY
+
+- Restored the live coordination audit sequence after the accidental history truncation in reviewer lock `6e55d93faf5d6d657108b44176a3de10f077bbf2`.
+- Exact pre-truncation coordination text remains preserved at immutable checkpoint `bfbac9defa5ab22fc52cd705642336531e4b1e55`; the recovery index above preserves all removed implementation/review checkpoints and supersession events in the live coordination file.
+- No implementation code, scientific behavior, review decision, test claim or `FEATURE_COMPLETE` state changed during this audit repair.
