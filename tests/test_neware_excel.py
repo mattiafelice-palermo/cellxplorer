@@ -682,6 +682,35 @@ class NewareExcelParserTests(unittest.TestCase):
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
                 neware_excel.read_metadata(path)
 
+    def test_metadata_value_groups_do_not_bleed_into_neighboring_labels(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "missing-optional-values.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            workbook["test"]["C2"] = None
+            workbook["test"]["F6"] = None
+            workbook.remove(workbook["unit"])
+            workbook.save(path)
+            metadata = neware_excel.read_metadata(path)
+
+        head = metadata["Step"]["Head_Info"]
+        self.assertNotIn("Start_Step", head)
+        self.assertEqual(head["Protect"]["Main"]["Volt"]["Upper"]["Value"], "42000")
+        self.assertNotIn("StartTime", metadata["Excel"]["Original"]["Test"])
+
+    def test_unit_optional_times_do_not_bleed_into_neighboring_labels(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "missing-unit-start-time.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            workbook["unit"]["C3"] = None
+            workbook.save(path)
+            metadata = neware_excel.read_metadata(path)
+
+        unit = metadata["Excel"]["Original"]["Unit"]
+        self.assertNotIn("StartTime", unit)
+        self.assertEqual(unit["EndTime"]["Value"], "2026-01-02 12:00:00")
+
     def test_numeric_record_date_is_rejected(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "numeric-record-date.xlsx"
@@ -871,6 +900,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 2)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)

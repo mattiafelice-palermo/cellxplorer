@@ -22,7 +22,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 
-EXCEL_PARSER_REVISION = 1
+EXCEL_PARSER_REVISION = 2
 
 _TEST_METADATA_LABELS = {
     "start step id": "start_step_id",
@@ -40,6 +40,7 @@ _TEST_METADATA_LABELS = {
     "voltage range": "voltage_range",
     "current range": "current_range",
 }
+_VALUE_GROUP_LABELS = set(_TEST_METADATA_LABELS) | {"start time", "end time"}
 
 _PLAN_REQUIRED_HEADERS = ("Step Index", "Step Name")
 _PLAN_HEADERS = (
@@ -344,10 +345,20 @@ def _rows(sheet: Any) -> list[tuple[object, ...]]:
 def _find_labeled_value(rows: list[tuple[object, ...]], label: str) -> object | None:
     wanted = _normalize_label(label)
     for row in rows:
-        for index, value in enumerate(row):
-            if _normalize_label(value) != wanted:
+        label_indices = [
+            index
+            for index, value in enumerate(row)
+            if _normalize_label(value) in _VALUE_GROUP_LABELS
+        ]
+        for label_position, index in enumerate(label_indices):
+            if _normalize_label(row[index]) != wanted:
                 continue
-            for candidate in row[index + 1 :]:
+            next_label_index = (
+                label_indices[label_position + 1]
+                if label_position + 1 < len(label_indices)
+                else len(row)
+            )
+            for candidate in row[index + 1 : next_label_index]:
                 if not _is_blank(candidate):
                     return candidate
             return None
