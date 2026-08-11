@@ -1,0 +1,152 @@
+# Spec 040 Agent Coordination
+
+This file coordinates the implementing agent and independent reviewer for Parent 040. It is a turn-taking ledger, not a substitute for the parent/child specs or canonical review files.
+
+Repository: `mattiafelice-palermo/cellxplorer`  
+Branch: `feature/canonical-cycler-data-architecture`  
+Merge base: `main` at `1542ff3bed7be31b3b0e1f19282c92598dc0fc06`
+
+```text
+ACTIVE_CHILD: 040.1
+TURN: IMPLEMENTER
+STATE: READY
+LAST_IMPLEMENTATION_SHA: NONE
+LAST_REVIEW_SHA: NONE
+NEXT_ACTION: Implement only 040.1 exactly as specified, verify, commit, push, and return the branch to REVIEWER.
+```
+
+## Protocol
+
+1. The remote branch is authoritative once created.
+2. Parent 039 is complete/review-clean and merged; its historical branch may still exist remotely but is not an active implementation branch.
+3. Before every turn, fetch/pull and reread this file, Parent 040, active child and active review file.
+4. Only the role named by `TURN` acts.
+5. `TURN: IMPLEMENTER` permits only the active child/review-fix scope.
+6. `TURN: REVIEWER` stops implementation until review handoff is pushed.
+7. A child advances only after explicit `STATE: REVIEW_CLEAN`.
+8. Every implementation/review tranche is committed and pushed before handoff.
+9. Never force-push/amend/reset/squash away another agent's checkpoint.
+10. Canonical findings live in `docs/specs/reviews/040.x-*-review.md` using R1/R2/... with priority, files, Current, Target and Acceptance criteria.
+11. All five children share one branch; do not merge between children.
+12. Only the final 040.5 reviewer may set `FEATURE_COMPLETE` after both focused 040.5 and fresh cumulative Parent 040 review.
+13. User decides merge/release.
+
+## Locked parent decisions not to reopen silently
+
+- canonical model is intentionally Neware-like but CellXplorer-owned;
+- `step_index` = programmed step, `step` = executed occurrence;
+- `time_s` stays step-relative; `total_time_s` is source-elapsed when available;
+- `voltage_v` remains primary/default analysis voltage;
+- optional canonical electrode channels are `working_potential_v` and `counter_potential_v`;
+- parser/cache provenance becomes source-specific;
+- existing Neware numerical science is preserved;
+- no expected relational migration;
+- no expected `CALC_VERSION` bump;
+- bounded list/import architecture is preserved;
+- BioLogic `.mpr` is out of scope until Parent 041.
+
+If a locked decision is impossible or scientifically unsafe:
+
+```text
+TURN: USER
+STATE: BLOCKED
+NEXT_ACTION: Describe the exact repository evidence and the smallest parent decision that must change.
+```
+
+## Child sequence
+
+```text
+040.1 — Canonical cycling data contract and validation
+  ↓ review-clean
+040.2 — Source-format adapter dispatch
+  ↓ review-clean
+040.3 — Per-source parser cache, stitching and provenance
+  ↓ review-clean
+040.4 — Canonical multi-voltage path and Time/Capacity exposure
+  ↓ review-clean
+040.5 — Existing-format regression and architecture closure
+  ↓ focused review + fresh cumulative Parent 040 review
+FEATURE_COMPLETE
+```
+
+## Standard implementer handoff
+
+After a tranche:
+
+```text
+ACTIVE_CHILD: 040.S
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: <pushed SHA>
+LAST_REVIEW_SHA: <previous review SHA or NONE>
+NEXT_ACTION: Review 040.S against Parent 040 and the child spec.
+```
+
+Append a concise log entry with files/behavior, exact checks/results, manual/package checks run/not run, and next action. Stop work.
+
+## Standard reviewer handoff
+
+Reviewer first claims:
+
+```text
+TURN: REVIEWER
+STATE: UNDER_REVIEW
+```
+
+Then inspect exact SHA, merge base, cumulative branch scope and code. Push canonical review before returning turn.
+
+If findings:
+
+```text
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
+NEXT_ACTION: Implement only R findings from the active canonical review, verify, commit, push and return to REVIEWER.
+```
+
+If clean and not final:
+
+```text
+ACTIVE_CHILD: <next child>
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
+NEXT_ACTION: Previous child is review-clean. Implement the next child exactly as specified.
+```
+
+## Final-child rule
+
+040.5 reviewer performs:
+
+1. focused 040.5 review;
+2. fresh cumulative Parent 040 review against the locked merge base `1542ff3bed7be31b3b0e1f19282c92598dc0fc06`.
+
+Only when both are clean:
+
+```text
+ACTIVE_CHILD: 040.5
+TURN: USER
+STATE: FEATURE_COMPLETE
+LAST_IMPLEMENTATION_SHA: <final implementation SHA>
+LAST_REVIEW_SHA: <final review SHA>
+NEXT_ACTION: Parent 040 is implementation/review complete. User decides PR/merge/release and then Parent 041 may be based on the merged main.
+```
+
+## Review files
+
+```text
+docs/specs/reviews/040.1-canonical-cycling-data-contract-and-validation-review.md
+docs/specs/reviews/040.2-source-format-adapter-dispatch-review.md
+docs/specs/reviews/040.3-per-source-parser-cache-stitching-and-provenance-review.md
+docs/specs/reviews/040.4-canonical-multi-voltage-path-review.md
+docs/specs/reviews/040.5-existing-format-regression-and-architecture-closure-review.md
+```
+
+## Coordination log
+
+### 2026-08-11 — SPEC AUTHOR
+
+- Confirmed Parent 039 coordination state `FEATURE_COMPLETE` and final 039.4 cumulative review clean on current `main`.
+- Locked Parent 040 merge base to `1542ff3bed7be31b3b0e1f19282c92598dc0fc06` (`0.22.0-beta.1`).
+- Created shared branch `feature/canonical-cycler-data-architecture`.
+- Rebased the 040 parent/children onto the landed Spec 039 parser architecture, including `EXCEL_PARSER_REVISION = 3`, global bundle `2026.6.11-cxp3`, `CALC_VERSION = 1.6.1`, and the existing `SourceFile.parser_version String(30)` constraint.
+- Initial owner: **IMPLEMENTER**. Active child: **040.1**.
+- No implementation or verification is claimed by this authoring checkpoint.
