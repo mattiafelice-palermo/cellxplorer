@@ -71,7 +71,7 @@
       ]
     }
   ],
-  "parser_version": "v2026.06.11-cxp2",
+  "parser_version": "v2026.06.11-cxp3",
   "steps": {
     "mode": "union",
     "series": [

@@ -698,6 +698,18 @@ class NewareExcelParserTests(unittest.TestCase):
         self.assertEqual(head["Protect"]["Main"]["Volt"]["Upper"]["Value"], "42000")
         self.assertNotIn("StartTime", metadata["Excel"]["Original"]["Test"])
 
+    def test_metadata_blank_group_does_not_consume_unsupported_neighbor_label(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "blank-voltage-range.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            workbook["test"]["C5"] = None
+            workbook.save(path)
+            metadata = neware_excel.read_metadata(path)
+
+        original_test = metadata["Excel"]["Original"]["Test"]
+        self.assertNotIn("VoltageRange", original_test)
+
     def test_unit_optional_times_do_not_bleed_into_neighboring_labels(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "missing-unit-start-time.xlsx"
@@ -900,7 +912,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
-        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 2)
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 3)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)
