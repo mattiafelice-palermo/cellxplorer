@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: d956f05008f091ee3c387d219782e1c06d73deae
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: d8bc05716d92f80f0f87376a56504e49d073dc8f
 LAST_REVIEW_SHA: 38e6769cd1fe15ae0b7d9ebe91798aafb5cad845
-NEXT_ACTION: R1-R4 are resolved. Correct only R5 in the 039.3 audit record, commit/push, and return to REVIEWER. 039.4 is not authorized yet.
+NEXT_ACTION: Review the focused 039.3 R5 audit correction against the canonical review. R1-R4 are already resolved; 039.4 is not authorized yet.
 ```
 
 ## Protocol
