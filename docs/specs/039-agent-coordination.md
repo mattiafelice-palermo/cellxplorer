@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.2
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 06b33641446e8592748ff56884d50303d02fdee7
 LAST_REVIEW_SHA: 3eeeb170324d55e6acc08403b16263225ae1c5d2
-NEXT_ACTION: Review the 039.2 R4-R5 follow-up against Parent 039 and the active child specification.
+NEXT_ACTION: Reviewer has claimed the 039.2 R4-R5 follow-up. Complete the full review and write every finding before returning TURN to IMPLEMENTER or advancing the child.
 ```
 
 ## Protocol
