@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: b2db0c495787a7b547d8b256fbc7595ed774f2a5
 LAST_REVIEW_SHA: fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e
-NEXT_ACTION: Implement only R1 from the canonical 039.4 review: assert the known Excel Rate Capability capacities through the registered/cache-backed compute result, verify, commit/push, and return 039.4 to REVIEWER. Parent 039 is not yet merge-ready.
+NEXT_ACTION: Review the R1 correction and the cumulative Parent 039 closure. The registered/cache-backed Excel Rate Capability result now asserts 0.2C -> 10.2 mAh, 0.5C -> 10.5 mAh and 1.0C -> 11.0 mAh. Parent 039 is not merge-ready until reviewer confirmation.
 ```
 
 ## Protocol
@@ -544,3 +544,17 @@ return 039.4 to REVIEWER. Parent 039 remains not merge-ready until that follow-u
 - Reviewer-independent verification: inspected the implementation/handoff history, exact merge base and cumulative branch scope, parser/cache/import/scanner ownership, analysis services, Excel integration tests, binary golden scope, release/version/docs closure and the race with the premature clean handoff through the GitHub connector. Python/frontend/preflight/packaging/private-workbook/installer/browser commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R1, verifies, commits/pushes, and returns 039.4 to REVIEWER. Parent 039 remains not merge-ready.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER R1 CORRECTION (039.4)
+
+- Implemented only canonical finding R1 in `b2db0c495787a7b547d8b256fbc7595ed774f2a5`.
+- The registered/cache-backed Excel Rate Capability integration test now asserts the returned
+  charge-point capacities at 0.2C, 0.5C and 1.0C are 10.2, 10.5 and 11.0 mAh respectively,
+  with strict numeric tolerance; production scientific code was not changed.
+- Updated the 039.4 acceptance checklist and implementation record; documentation checkpoint:
+  `2ecedf9a22b7ede89ca4ceb8bb60175e6c7aa14d`.
+- Verification: focused Excel regression and all 8 `tests.test_rate_capability` tests passed;
+  elevated `python scripts\preflight.py --no-cache` passed all 5/5 stages, including all 59
+  backend modules, 461 frontend tests, TypeScript and Vite production bundle.
+- Next action: independent reviewer rechecks R1 and performs the fresh cumulative Parent 039 review.
+- TURN: **REVIEWER** / STATE: **AWAITING_REVIEW**.
