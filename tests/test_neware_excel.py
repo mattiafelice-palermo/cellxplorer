@@ -17,7 +17,7 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.config import CALC_VERSION
-from app.services import cache, calc, chargeability, neware_excel, parsing, protocol
+from app.services import cache, calc, chargeability, neware_excel, parsing, protocol, rate_capability
 
 
 RECORD_HEADERS = [
@@ -281,6 +281,20 @@ class NewareExcelParserTests(unittest.TestCase):
             self.assertFalse(neware_excel.is_supported_workbook(path))
             with self.assertRaises(neware_excel.UnsupportedNewareExcelError):
                 neware_excel.parse_timeseries(path)
+
+    def test_metadata_rejects_unrelated_xlsx_before_labeling_source_format(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "unrelated-metadata.xlsx"
+            workbook = Workbook()
+            workbook.save(path)
+
+            with self.assertRaises(neware_excel.UnsupportedNewareExcelError):
+                neware_excel.read_metadata(path)
+            normalized = parsing.read_header_metadata(path)
+
+        self.assertEqual(normalized["raw"], {})
+        self.assertIn("error", normalized)
+        self.assertNotIn("source_format", normalized)
 
     def test_missing_record_sheet_is_rejected(self):
         with TemporaryDirectory() as temporary:
@@ -730,6 +744,109 @@ class NewareExcelParserTests(unittest.TestCase):
         self.assertEqual(first_protocol["steps"][4]["conditions"], [])
         self.assertTrue(any("protocol condition expressions" in warning for warning in first_protocol["warnings"]))
         self.assertEqual(chargeability.detect_candidates(first_protocol), [])
+
+    def test_three_rate_excel_plan_reaches_rate_capability_pairing_seam(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "three-rate-metadata.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            test = workbook["test"]
+            test.delete_rows(11, test.max_row - 10)
+
+            def plan_row(
+                step_index: int,
+                name: str,
+                *,
+                step_time: object = None,
+                voltage: object = None,
+                rate: object = None,
+                current: object = None,
+                cutoff_voltage: object = None,
+                cutoff_rate: object = None,
+                cutoff_current: object = None,
+            ) -> list[object]:
+                row: list[object] = [None] * len(TEST_PLAN_HEADERS)
+                row[0] = step_index
+                row[1] = name
+                row[2] = step_time
+                row[3] = voltage
+                row[4] = rate
+                row[5] = current
+                row[6] = cutoff_voltage
+                row[7] = cutoff_rate
+                row[8] = cutoff_current
+                return row
+
+            rows: list[list[object]] = []
+            step_index = 1
+            for charge_rate in (0.2, 0.5, 1.0):
+                rows.append(plan_row(step_index, "Rest", step_time=1))
+                step_index += 1
+                rows.append(
+                    plan_row(
+                        step_index,
+                        "CC Chg",
+                        rate=charge_rate,
+                        current=charge_rate * 10.0,
+                        voltage=4.2,
+                    )
+                )
+                step_index += 1
+                rows.append(
+                    plan_row(
+                        step_index,
+                        "CV Chg",
+                        rate=charge_rate,
+                        current=charge_rate * 10.0,
+                        voltage=4.2,
+                        cutoff_current=0.5,
+                    )
+                )
+                step_index += 1
+                rows.append(
+                    plan_row(
+                        step_index,
+                        "CC DChg",
+                        rate=1.0,
+                        current=10.0,
+                        cutoff_voltage=2.5,
+                    )
+                )
+                step_index += 1
+            rows.append(plan_row(step_index, "End"))
+            for row in rows:
+                test.append(row)
+            workbook.save(path)
+
+            metadata = parsing.read_header_metadata(path)
+            reconstructed = protocol.reconstruct_protocol(
+                metadata["raw"], metadata["nominal_capacity_mah"]
+            )
+            pairs = rate_capability.build_rate_pairs(reconstructed)
+
+        self.assertEqual(len(pairs), 3)
+        self.assertEqual(
+            [pair["charge"]["measurement_step_index"] for pair in pairs],
+            [2, 6, 10],
+        )
+        self.assertEqual(
+            [round(pair["charge_rate_c"], 3) for pair in pairs],
+            [0.2, 0.5, 1.0],
+        )
+        self.assertEqual(
+            [pair["charge"]["direction"] for pair in pairs],
+            ["charge", "charge", "charge"],
+        )
+        self.assertEqual(
+            [pair["discharge"]["direction"] for pair in pairs],
+            ["discharge", "discharge", "discharge"],
+        )
+        self.assertEqual(
+            [pair["charge"]["step_indices"] for pair in pairs],
+            [[2, 3], [6, 7], [10, 11]],
+        )
+        self.assertEqual([pair["upper_voltage_v"] for pair in pairs], [4.2, 4.2, 4.2])
+        self.assertEqual([pair["lower_voltage_v"] for pair in pairs], [2.5, 2.5, 2.5])
 
     def test_metadata_read_does_not_parse_large_record_sheet(self):
         with TemporaryDirectory() as temporary:

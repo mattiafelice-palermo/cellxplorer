@@ -1213,7 +1213,7 @@ def read_metadata(path: str | Path) -> dict[str, object]:
     """Read bounded workbook metadata and the programmed plan.
 
     The metadata path intentionally opens only the small ``test``, ``unit`` and
-    sheet-name surfaces.  It never iterates the large ``record`` worksheet and
+    sheet/header surfaces.  It never iterates the large ``record`` worksheet and
     does not derive metadata from :func:`parse_timeseries`.
     """
 
@@ -1225,6 +1225,12 @@ def read_metadata(path: str | Path) -> dict[str, object]:
 
     try:
         with _open(candidate) as workbook:
+            record_sheet = _sheet_by_name(workbook, "record", required=True)
+            _require_columns(
+                _header_map(record_sheet),
+                REQUIRED_RECORD_HEADERS,
+                sheet_name="record",
+            )
             test_sheet = _sheet_by_name(workbook, "test", required=False)
             info: dict[str, object] = {"raw": {}}
             step_info: dict[str, dict[str, str]] = {}
