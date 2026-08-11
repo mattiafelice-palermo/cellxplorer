@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: USER
+STATE: FEATURE_COMPLETE
 LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
-LAST_REVIEW_SHA: 60d1a53773d821c9134835bc9c48e87c81ef25b7
-NEXT_ACTION: Reviewer is performing the focused 039.4 review plus the required fresh cumulative Parent 039 review. Implementer remains stopped until the complete review is pushed.
+LAST_REVIEW_SHA: 8c55e4592d6d7b4bf93c93f882e54796b51468ba
+NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional remaining manual/package checks, PR metadata, merge and release.
 ```
 
 ## Protocol
@@ -200,11 +200,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.3 is review-clean after R1-R5. Canonical review commit
-`60d1a53773d821c9134835bc9c48e87c81ef25b7` confirms the scanner/source-lifecycle fixes,
-continuation/source-monitor verification and final audit correction. The active feature now advances
-to 039.4. The implementer must complete the 039.4 child and then hand control to the reviewer for
-**both** the focused 039.4 review and a fresh cumulative Parent 039 review before FEATURE_COMPLETE.
+039.4 and the fresh cumulative Parent 039 review are clean at canonical review commit
+`8c55e4592d6d7b4bf93c93f882e54796b51468ba`. Parent 039 is implementation/review complete and
+control is returned to the user for optional remaining manual/package checks, PR metadata, merge
+and release decisions. The final 039.4 analysis/browser UI matrix remains truthfully NOT RUN and is
+an optional pre-release confidence check, not a blocking review finding.
 
 ## Coordination log
 
@@ -514,3 +514,12 @@ to 039.4. The implementer must complete the 039.4 child and then hand control to
 - Next action: stop implementation and await the focused 039.4 review plus fresh cumulative Parent
   039 review.
 - TURN: **REVIEWER**.
+
+### 2026-08-11 — REVIEWER FINAL (039.4 + Parent 039)
+
+- Review lock: `d7192d99a22885f28184f50708d098c1a380a387` held `TURN: REVIEWER / STATE: UNDER_REVIEW` until the final coordination handoff.
+- Reviewed implementation: `805f318b60dc3815459792503073c1b1953d2ed1`.
+- Canonical review commit: `8c55e4592d6d7b4bf93c93f882e54796b51468ba`.
+- Result: **REVIEW CLEAN** — focused 039.4 and fresh cumulative Parent 039 review both clean; no actionable findings.
+- Verification ownership remains exactly as recorded in the canonical review: reviewer independently inspected the repository through the GitHub connector and did not independently rerun Python/frontend/preflight/packaging/private-workbook/installer/browser commands.
+- Final handoff: `TURN: USER / STATE: FEATURE_COMPLETE`; the user decides optional remaining manual/package checks, PR metadata, merge and release.
