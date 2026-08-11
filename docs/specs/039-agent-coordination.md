@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.3
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: d8bc05716d92f80f0f87376a56504e49d073dc8f
 LAST_REVIEW_SHA: 38e6769cd1fe15ae0b7d9ebe91798aafb5cad845
-NEXT_ACTION: Review the focused 039.3 R5 audit correction against the canonical review. R1-R4 are already resolved; 039.4 is not authorized yet.
+NEXT_ACTION: Reviewer is verifying the focused 039.3 R5 audit correction. The implementer must remain stopped; 039.4 is not authorized until this review is complete.
 ```
 
 ## Protocol
@@ -200,13 +200,10 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.3 production findings R1-R4 are resolved by actual remote commits
-`eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` and
-`d956f05008f091ee3c387d219782e1c06d73deae`. Follow-up review
-`38e6769cd1fe15ae0b7d9ebe91798aafb5cad845` leaves only R5: correct the child audit record, which
-currently names non-resolvable SHA `52164278480dc66b977eaf622fd128a6631508f9` instead of canonical
-remote R1-R3 commit `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87`. 039.4 remains unauthorized
-until that audit-only correction is review-clean.
+039.3 R1-R4 are resolved. Audit-only R5 correction `d8bc05716d92f80f0f87376a56504e49d073dc8f`
+is under reviewer verification. The correction must establish canonical remote R1-R3 commit
+`eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` while preserving the prior mistaken identifier only as
+append-only history. 039.4 remains unauthorized until R5 is review-clean.
 
 ## Coordination log
 
