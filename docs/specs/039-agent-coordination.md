@@ -9,12 +9,12 @@ Branch: `feature/neware-excel-support`
 Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
-ACTIVE_CHILD: 039.1
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+ACTIVE_CHILD: 039.2
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: 949c9caad053faf090fd5cf9645342ef98db9d8d
-LAST_REVIEW_SHA: a4e5e1b8cb427be36b3408559d5ea0144e7fb556
-NEXT_ACTION: Review the 039.1 R1 follow-up against Parent 039 and the active child specification.
+LAST_REVIEW_SHA: a931a68a38d4fa20ee7a55925334359fbbde9f05
+NEXT_ACTION: 039.1 is review-clean. Implement 039.2 exactly as specified, verify, commit, push, and hand control to REVIEWER.
 ```
 
 ## Protocol
@@ -196,10 +196,10 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.1 implementation `7599715c78312ad9ced12c665ade3a5e46c28e95` has been independently
-reviewed. Canonical review commit `a4e5e1b8cb427be36b3408559d5ea0144e7fb556` records one focused
-finding, R1, requiring the explicit time-reset-only execution-boundary regression test. The
-implementer owns the turn only to address that review finding. 039.2 is not authorized yet.
+039.1 is independently review-clean after follow-up implementation
+`949c9caad053faf090fd5cf9645342ef98db9d8d`. Canonical review commit
+`a931a68a38d4fa20ee7a55925334359fbbde9f05` records R1 as resolved and no open findings.
+Control is returned to the implementer for Child 039.2 only.
 
 ## Coordination log
 
@@ -257,4 +257,14 @@ implementer owns the turn only to address that review finding. 039.2 is not auth
   implementation, full 039.1 test suite, dependency change and handoff records through the GitHub
   connector. No Python/preflight/private-workbook commands were independently executed.
 - Next action: IMPLEMENTER addresses only R1, verifies, commits/pushes, and returns 039.1 to REVIEWER.
+- TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (R1)
+
+- Reviewed follow-up implementation: `949c9caad053faf090fd5cf9645342ef98db9d8d`.
+- Result: **REVIEW CLEAN**.
+- R1 is resolved: the new test isolates the `time_s` reset as the only execution-boundary signal and asserts distinct globally increasing executed `step` IDs.
+- Canonical review commit: `a931a68a38d4fa20ee7a55925334359fbbde9f05`.
+- Reviewer-independent verification: inspected the exact follow-up patch, live branch scope, original parser boundary algorithm, updated test, implementation record and canonical review through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
+- Next action: 039.2 may begin exactly as specified.
 - TURN: **IMPLEMENTER**.
