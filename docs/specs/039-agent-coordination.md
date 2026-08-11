@@ -9,12 +9,12 @@ Branch: `feature/neware-excel-support`
 Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
-ACTIVE_CHILD: 039.2
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+ACTIVE_CHILD: 039.3
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: 0abff4102cb534f0652ffb6bc52648eec69c6c9b
-LAST_REVIEW_SHA: 3b0a7668dd169f3078ce8823c8998bb3e1edd062
-NEXT_ACTION: Reviewer has claimed the 039.2 R6-R8 follow-up. Complete the full R6-R8 review before returning TURN to IMPLEMENTER or advancing to 039.3.
+LAST_REVIEW_SHA: 08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad
+NEXT_ACTION: 039.2 is review-clean. Implement 039.3 exactly as specified; do not begin 039.4 until 039.3 is independently review-clean.
 ```
 
 ## Protocol
@@ -200,15 +200,10 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.2 R4-R5 follow-up implementation `06b33641446e8592748ff56884d50303d02fdee7` has been
-independently reviewed under the reviewer lock. Canonical review commit
-`3b0a7668dd169f3078ce8823c8998bb3e1edd062` confirms R1-R5 resolved and records three remaining
-actionable findings: R6 requires advancing the Excel parser revision so pre-fix `cxp1` caches and
-provenance cannot remain current after semantic parser/metadata changes; R7 requires bounded
-label/value pairing so a missing optional metadata value cannot bleed into the next A/C, D/F or G/I
-group; R8 requires the child-mandated metadata-only versus full-parse timing evidence and current
-follow-up SHA in the implementation record. The implementer owns the turn only to address R6-R8.
-039.3 is not authorized yet.
+039.2 R6-R8 follow-up implementation `0abff4102cb534f0652ffb6bc52648eec69c6c9b` and handoff
+`d260f9e54bbfba1fc8b58a8b66ea2eb4a107eda5` were independently reviewed under the reviewer lock.
+Canonical review commit `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` confirms R1-R8 resolved and marks 039.2 REVIEW CLEAN.
+039.3 is now authorized and owned by the implementer; 039.4 remains unauthorized until 039.3 is independently review-clean.
 
 ## Coordination log
 
@@ -362,3 +357,15 @@ follow-up SHA in the implementation record. The implementer owns the turn only t
   browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until
   039.3.
 - Next action: stop implementation and await independent reviewer re-review of 039.2 R6–R8.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (R6–R8)
+
+- Reviewed follow-up implementation: `0abff4102cb534f0652ffb6bc52648eec69c6c9b`; handoff checkpoint: `d260f9e54bbfba1fc8b58a8b66ea2eb4a107eda5`.
+- Result: **REVIEW CLEAN**.
+- R6 resolved: Excel parser revision advanced to `2`, producing `v2026.06.11-cxp2`; old `cxp1` cache/provenance identity is no longer current and `CALC_VERSION` remains `1.6.1`.
+- R7 resolved: optional metadata value lookup is bounded by recognized label-group boundaries, with focused regressions for both the `test` information block and optional `unit` timestamps.
+- R8 resolved: the implementation record includes the current follow-up SHA and real-workbook metadata/full-parse timing (`0.262049 s` vs `2.859019 s`, ~9.2%).
+- Canonical review commit: `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad`.
+- Reviewer-independent verification: inspected the exact R6-R8 implementation delta, bundle-version formula, focused metadata grouping tests, provenance-only golden changes, implementation record and handoff through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
+- Next action: 039.2 is review-clean; 039.3 may begin exactly as specified.
+- TURN: **IMPLEMENTER**.
