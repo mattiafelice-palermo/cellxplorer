@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 4063999131e850b42cda00911dcf05c4367fdf27
-LAST_REVIEW_SHA: a931a68a38d4fa20ee7a55925334359fbbde9f05
-NEXT_ACTION: Review 039.2 against Parent 039 and the active child specification.
+LAST_REVIEW_SHA: f4d748c528162a8005b99058abcfff78152d43c4
+NEXT_ACTION: Implement only R findings from the canonical 039.2 review, verify, commit, push, and return to REVIEWER.
 ```
 
 ## Protocol
@@ -196,10 +196,14 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.1 is independently review-clean after follow-up implementation
-`949c9caad053faf090fd5cf9645342ef98db9d8d`. Canonical review commit
-`a931a68a38d4fa20ee7a55925334359fbbde9f05` records R1 as resolved and no open findings.
-Control is returned to the implementer for Child 039.2 only.
+039.2 implementation commit `024525e01b184583d443d672d4b93b91bedfbfc6`, implementation-record
+checkpoint `4063999131e850b42cda00911dcf05c4367fdf27`, and handoff checkpoint
+`df5bc8f1b01db7d0895938f5428316f6ee9cbe7c` have been independently reviewed. Canonical review
+commit `f4d748c528162a8005b99058abcfff78152d43c4` records three actionable findings: R1 requires
+missing `test` metadata to degrade through explicit capability flags rather than an all-empty metadata
+failure; R2 restores the locked declared-record-interval/2-second step-summary timing tolerance; R3
+makes required Excel timestamps fail closed on arbitrary numeric cells. The implementer owns the turn
+only to address R1–R3. 039.3 is not authorized yet.
 
 ## Coordination log
 
@@ -280,3 +284,13 @@ Control is returned to the implementer for Child 039.2 only.
 - Verification: focused suite `96 passed`; final canonical `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages completed successfully; structural ownership checks passed; real supplied workbook probe RUN with 13,982 raw rows, 40 cycles, 201 executed steps, 26 plan rows, 20 executable rows, 19.21 mg active mass, 3.3 mAh nominal capacity, and start `2026-07-17 11:21:32`.
 - Real-workbook/manual/packaged checks: read-only metadata/protocol/parse/validation/cache probe RUN; browser/manual UI NOT APPLICABLE to this backend child; packaged runtime NOT RUN because it remains out of scope until 039.3.
 - Next action: stop implementation and await independent reviewer review of 039.2.
+
+### 2026-08-11 — REVIEWER
+
+- Reviewed 039.2 implementation commit `024525e01b184583d443d672d4b93b91bedfbfc6`, implementation-record checkpoint `4063999131e850b42cda00911dcf05c4367fdf27`, and handoff checkpoint `df5bc8f1b01db7d0895938f5428316f6ee9cbe7c`.
+- Result: **CHANGES REQUIRED**.
+- Findings: R1 — High, missing `test`/declared-protocol metadata must degrade through explicit capabilities rather than collapse metadata inspection; R2 — Medium, step-summary timing must use the declared record interval or the 2-second fallback, not median observed gaps; R3 — Medium, required Excel timestamps must reject arbitrary numeric cells instead of accepting pandas nanosecond timestamps.
+- Canonical review commit: `f4d748c528162a8005b99058abcfff78152d43c4`.
+- Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
+- Next action: IMPLEMENTER addresses only R1–R3, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
+- TURN: **IMPLEMENTER**.
