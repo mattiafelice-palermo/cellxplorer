@@ -1,0 +1,216 @@
+# Spec 039 Agent Coordination
+
+This file coordinates the implementing agent and the independent ChatGPT reviewer for the shared
+Spec 039 branch. It is a turn-taking state file, not a substitute for the parent/child specs or the
+canonical review files.
+
+Repository: `mattiafelice-palermo/cellxplorer`  
+Branch: `feature/neware-excel-support`  
+Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
+
+```text
+ACTIVE_CHILD: 039.1
+TURN: IMPLEMENTER
+STATE: IMPLEMENTING
+LAST_IMPLEMENTATION_SHA: NONE
+LAST_REVIEW_SHA: NONE
+NEXT_ACTION: Implement 039.1 exactly as specified, verify it, commit and push one focused checkpoint, then hand control to REVIEWER.
+```
+
+## Protocol
+
+1. The remote branch is authoritative. Before acting, fetch/pull the latest remote branch and reread
+   this file, Parent 039, the active child and the active review file if it exists.
+2. Only the role named by `TURN` may perform repository changes for its role.
+3. `TURN: IMPLEMENTER` permits implementation or review-fix work for `ACTIVE_CHILD` only.
+4. `TURN: REVIEWER` means the implementer stops modifying the branch until the reviewer has pushed
+   its review handoff.
+5. A child advances only after the reviewer explicitly records `STATE: REVIEW_CLEAN`.
+6. Every implementation/review-follow-up tranche must be committed and pushed before handoff.
+7. The coordination log is append-only. The state block above may be replaced on each handoff.
+8. Never force-push, amend, reset, squash away or otherwise rewrite the other agent's checkpoints.
+9. Canonical findings and acceptance criteria live in
+   `docs/specs/reviews/039.x-*-review.md`; this file summarizes current state/next action.
+10. The implementer must not pre-implement the next child while awaiting review.
+11. All four children use this one shared branch. Do not merge to `main` between children.
+12. The branch must not be merged until 039.4 and the fresh cumulative Parent 039 review are clean.
+13. Only the independent reviewer may set `STATE: FEATURE_COMPLETE` after the final cumulative
+    review. The user still makes the merge/release decision.
+
+## Parent decisions the coordination loop must not reopen silently
+
+The following are locked in Parent 039 and require an explicit user/parent amendment if they prove
+impossible:
+
+- support structured Neware `.xlsx`, not generic Excel;
+- `record` is the raw scientific source of truth;
+- `cycle`/`step` summaries validate but do not replace raw-derived scientific values;
+- `step_index` = programmed step, `step` = executed occurrence;
+- Steps analysis remains supported when reliable execution mapping exists;
+- downstream analyses remain format-neutral;
+- absent protocol conditions are never invented;
+- full source header stays once in `SourceFile.header_meta`;
+- bounded `import_inspection` architecture is preserved;
+- one global parser-bundle version is preserved;
+- no database migration is expected;
+- no `CALC_VERSION` bump is expected;
+- private supplied workbook is not committed without explicit approval.
+
+If implementation appears to require violating one of these, set:
+
+```text
+TURN: USER
+STATE: BLOCKED
+NEXT_ACTION: Describe the locked decision, the concrete repository evidence that prevents it, and the smallest decision required from the user.
+```
+
+## Child sequence
+
+```text
+039.1 — Neware Excel time-series parser
+  ↓ review-clean
+039.2 — Metadata, protocol and cache integration
+  ↓ review-clean
+039.3 — Import and source lifecycle integration
+  ↓ review-clean
+039.4 — Analysis regression and feature closure
+  ↓ child review + fresh cumulative Parent 039 review
+FEATURE_COMPLETE
+```
+
+## Implementer handoff format
+
+When an implementation/review-fix tranche is complete:
+
+1. update the active child implementation record;
+2. run the checks required by the active child/current repository guidance;
+3. commit and push;
+4. update the state block to:
+
+```text
+ACTIVE_CHILD: 039.S
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: <pushed implementation SHA>
+LAST_REVIEW_SHA: <previous review SHA or NONE>
+NEXT_ACTION: Review 039.S against Parent 039 and the active child specification.
+```
+
+5. append one concise IMPLEMENTER log entry containing:
+   - active child;
+   - implementation SHA;
+   - files/behavior changed;
+   - exact verification results;
+   - real-workbook/manual/packaged checks as RUN or NOT RUN;
+   - next action;
+6. stop implementation work.
+
+## Reviewer handoff format
+
+When `TURN: REVIEWER`:
+
+1. identify the exact implementation SHA and handoff checkpoint;
+2. confirm the merge base and cumulative branch scope;
+3. read actual code first;
+4. compare only the active child against Parent 039 + child locks;
+5. distinguish implementer-reported verification from reviewer-independent verification;
+6. create/update the canonical review file;
+7. push the review checkpoint;
+8. if findings exist, update state to:
+
+```text
+ACTIVE_CHILD: 039.S
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
+LAST_IMPLEMENTATION_SHA: <reviewed implementation SHA>
+LAST_REVIEW_SHA: <review SHA>
+NEXT_ACTION: Implement only R findings from the canonical 039.S review, verify, commit, push, and return to REVIEWER.
+```
+
+9. if clean and not final child, advance state to:
+
+```text
+ACTIVE_CHILD: 039.NEXT
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
+LAST_IMPLEMENTATION_SHA: <reviewed implementation SHA>
+LAST_REVIEW_SHA: <review SHA>
+NEXT_ACTION: 039.S is review-clean. Implement 039.NEXT exactly as specified.
+```
+
+The implementer then begins only the new active child.
+
+## Review-file format
+
+Use current project convention:
+
+```text
+docs/specs/reviews/039.1-neware-excel-timeseries-parser-review.md
+docs/specs/reviews/039.2-neware-excel-metadata-protocol-and-cache-review.md
+docs/specs/reviews/039.3-neware-excel-import-and-source-lifecycle-review.md
+docs/specs/reviews/039.4-neware-excel-analysis-regression-and-closure-review.md
+```
+
+Each actionable finding uses `R1`, `R2`, ... and contains:
+
+- priority;
+- affected files;
+- **Current**;
+- **Target**;
+- **Acceptance criteria**.
+
+Reviews should report concrete defects/spec deviations/regression risks/missing required
+verification only. Do not turn optional enhancements into blocking findings.
+
+## Final-child rule
+
+After the 039.4 implementation is handed to the reviewer, perform **two** checks before completion:
+
+1. focused 039.4 review;
+2. fresh cumulative Parent 039 review against merge base
+   `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
+
+The cumulative review must inspect:
+
+- complete branch scope;
+- final parser/import/cache/source architecture;
+- no format-specific scientific forks;
+- binary `.nda/.ndax` regression state;
+- real/synthetic Excel acceptance evidence;
+- no migration / no unexpected `CALC_VERSION` change;
+- no private source committed without approval;
+- final no-cache verification record;
+- packaged/manual checks truthfully recorded;
+- documentation/project-context/version/changelog closure.
+
+Only when both are clean may the reviewer set:
+
+```text
+ACTIVE_CHILD: 039.4
+TURN: USER
+STATE: FEATURE_COMPLETE
+LAST_IMPLEMENTATION_SHA: <final implementation SHA>
+LAST_REVIEW_SHA: <final review SHA>
+NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional remaining manual/package checks, PR metadata, merge and release.
+```
+
+## Current handoff
+
+Spec 039 has been authored from current `main` at
+`0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
+
+The shared branch contains the parent, four children and this coordination file. No implementation
+work is authorized beyond active Child 039.1 until its independent review is clean.
+
+## Coordination log
+
+### 2026-08-11 — SPEC AUTHOR
+
+- Created Parent 039 and sequential Children 039.1–039.4 on
+  `feature/neware-excel-support` from merge base
+  `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
+- Locked Neware Excel source-of-truth, programmed/executed-step, parser/cache, import-performance,
+  source-lifecycle, scientific regression and privacy decisions.
+- Initial owner: **IMPLEMENTER**.
+- Active child: **039.1**.
+- No implementation or verification is claimed by this authoring checkpoint.
