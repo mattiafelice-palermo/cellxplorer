@@ -743,17 +743,21 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
                 _bump(job_id, "relinked")
         return existing
 
-    meta = parsing.read_header_metadata(path)
-    parsing.ensure_supported_source_metadata(path, meta)
-
-    # new content. If another row points at this same path, its content
-    # changed on disk → badge it, never touch its caches.
+    # Mark an already-registered path as changed before validating the new
+    # header. Invalid replacement bytes must not leave the old identity falsely
+    # online, but the old SourceFile row and its cache remain recoverable.
     at_path = db.query(SourceFile).filter(SourceFile.path == str(path)).first()
     if at_path is not None:
         at_path.location_status = "changed"
         if job_id is not None:
             _bump(job_id, "changed")
+        db.commit()
 
+    meta = parsing.read_header_metadata(path)
+    parsing.ensure_supported_source_metadata(path, meta)
+
+    # New content is now safe to adopt; the prior same-path identity is kept
+    # in place (and already marked changed) so its caches remain untouched.
     observed_size, observed_mtime_ns = source_signature(path)
     sf = SourceFile(
         hash=file_hash,

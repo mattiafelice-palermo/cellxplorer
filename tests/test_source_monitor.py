@@ -5,8 +5,10 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
+from openpyxl import Workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -20,6 +22,59 @@ from app.models import AppSetting, Cell, SourceFile, Test, TestFile
 from app.routers import library
 from app.routers import settings as settings_router
 from app.services import analysis_engine, background_jobs, parsing, scanner, source_monitor
+
+
+NEWARE_RECORD_HEADERS = [
+    "DataPoint",
+    "Cycle Index",
+    "Step Index",
+    "Step Type",
+    "Time(min)",
+    "Total Time(min)",
+    "Current(mA)",
+    "Voltage(V)",
+    "Chg. Cap.(mAh)",
+    "DChg. Cap.(mAh)",
+    "Date",
+    "Power(W)",
+]
+
+
+def _write_structured_xlsx(path: Path, *, extra_rows: int = 0) -> None:
+    workbook = Workbook()
+    record = workbook.active
+    record.title = "record"
+    record.append(NEWARE_RECORD_HEADERS)
+    start = datetime(2026, 1, 1, 12, 0, 0)
+    rows = [
+        [1, 1, 1, "Rest", 0.0, 0.0, 0.0, 3.5, 0.0, 0.0],
+        [2, 1, 1, "Rest", 1.0, 1.0, 0.0, 3.5, 0.0, 0.0],
+    ]
+    rows.extend(
+        [
+            [3 + index, 1, 2, "CC Chg", 2.0 + index, 2.0 + index, 1.0, 3.6, 1.0, 0.0]
+            for index in range(extra_rows)
+        ]
+    )
+    for row in rows:
+        data_point, cycle, step, status, time_min, total_time_min, current, voltage, charge, discharge = row
+        record.append(
+            [
+                data_point,
+                cycle,
+                step,
+                status,
+                time_min,
+                total_time_min,
+                current,
+                voltage,
+                charge,
+                discharge,
+                start + timedelta(minutes=total_time_min),
+                voltage * current / 1000.0,
+            ]
+        )
+    workbook.save(path)
 
 
 class ImmediateThread:
@@ -49,6 +104,33 @@ class SourceMonitorTests(unittest.TestCase):
             library._source_check_jobs.clear()
             library._latest_source_check_job_id = None
             library._next_source_check_job_id = 1
+
+    def add_xlsx_cell_source(self, db, path: Path):
+        stat = path.stat()
+        source = SourceFile(
+            hash=parsing.compute_hash(path),
+            path=str(path),
+            filename=path.name,
+            size=stat.st_size,
+            ext="xlsx",
+            observed_size=stat.st_size,
+            observed_mtime_ns=stat.st_mtime_ns,
+            parser_version=parsing.PARSER_VERSION,
+            row_count=2,
+            cycle_count=1,
+            capacity_summary_status="ready",
+            location_status="online",
+            parse_status="parsed",
+        )
+        cell = Cell(name=f"Excel {path.stem}")
+        db.add_all([cell, source])
+        db.flush()
+        test = Test(cell_id=cell.id, name=cell.name)
+        db.add(test)
+        db.flush()
+        db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        db.commit()
+        return cell, source
 
     def test_metadata_scan_hashes_only_candidates_after_one_shared_wait(self):
         db, factory = self.make_session()
@@ -170,6 +252,178 @@ class SourceMonitorTests(unittest.TestCase):
 
             self.assertEqual(source.hash, "registered-hash")
             self.assertEqual(source.location_status, "changed")
+
+    def test_metadata_monitor_keeps_unchanged_xlsx_online_without_hashing(self):
+        db, factory = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unchanged.xlsx"
+            _write_structured_xlsx(path)
+            cell, source = self.add_xlsx_cell_source(db, path)
+            self.reset_jobs()
+            try:
+                with (
+                    patch.object(library, "SessionLocal", factory),
+                    patch.object(library, "_JobThread", ImmediateThread),
+                    patch.object(
+                        library.parsing,
+                        "compute_hash",
+                        side_effect=AssertionError("unchanged source was rehashed"),
+                    ),
+                ):
+                    job = library.start_source_check_job(
+                        db,
+                        cell_ids=[cell.id],
+                        scan_mode="metadata",
+                        batch_size=1,
+                        stability_seconds=0,
+                    )
+            finally:
+                self.reset_jobs()
+
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["online"], 1)
+        self.assertEqual(job["changed"], 0)
+        db.expire_all()
+        self.assertEqual(db.get(SourceFile, source.id).location_status, "online")
+
+    def test_metadata_monitor_marks_missing_xlsx_offline(self):
+        db, factory = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing.xlsx"
+            _write_structured_xlsx(path)
+            cell, source = self.add_xlsx_cell_source(db, path)
+            path.unlink()
+            self.reset_jobs()
+            try:
+                with (
+                    patch.object(library, "SessionLocal", factory),
+                    patch.object(library, "_JobThread", ImmediateThread),
+                ):
+                    job = library.start_source_check_job(
+                        db,
+                        cell_ids=[cell.id],
+                        scan_mode="metadata",
+                        batch_size=1,
+                        stability_seconds=0,
+                    )
+            finally:
+                self.reset_jobs()
+
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["offline"], 1)
+        db.expire_all()
+        refreshed = db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.ext, "xlsx")
+        self.assertEqual(refreshed.location_status, "offline")
+
+    def test_metadata_monitor_adopts_a_stable_changed_xlsx(self):
+        db, factory = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "changed.xlsx"
+            _write_structured_xlsx(path)
+            cell, source = self.add_xlsx_cell_source(db, path)
+            old_hash = source.hash
+            _write_structured_xlsx(path, extra_rows=1)
+            new_hash = parsing.compute_hash(path)
+            metadata = {
+                "raw": {"Excel.SourceFormat.Value": "neware_excel"},
+                "source_format": "Neware Excel",
+                "nominal_capacity_mah": 3.0,
+                "active_mass_mg": 10.0,
+            }
+            build_info = {
+                "parser_version": parsing.PARSER_VERSION,
+                "rows": 3,
+                "cycles": 1,
+                "total_charge_capacity_mah": 1.0,
+                "total_discharge_capacity_mah": 0.5,
+                "max_discharge_capacity_mah": 0.5,
+            }
+            self.reset_jobs()
+            try:
+                with (
+                    patch.object(library, "SessionLocal", factory),
+                    patch.object(library, "_JobThread", ImmediateThread),
+                    patch.object(library, "_sleep", return_value=None),
+                    patch.object(library.scanner.parsing, "read_header_metadata", return_value=metadata),
+                    patch.object(library.scanner.cache, "build", return_value=build_info),
+                    patch.object(library.scanner.cache, "remove_hash_cache") as remove_old,
+                ):
+                    job = library.start_source_check_job(
+                        db,
+                        cell_ids=[cell.id],
+                        scan_mode="metadata",
+                        batch_size=1,
+                        stability_seconds=0,
+                        update_after_check=True,
+                    )
+            finally:
+                self.reset_jobs()
+
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["changed"], 1)
+        self.assertEqual(job["updated"], 1)
+        db.expire_all()
+        refreshed = db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.hash, new_hash)
+        self.assertNotEqual(refreshed.hash, old_hash)
+        self.assertEqual(refreshed.ext, "xlsx")
+        self.assertEqual(refreshed.location_status, "online")
+        self.assertEqual(refreshed.parse_status, "parsed")
+        self.assertEqual(refreshed.row_count, 3)
+        self.assertEqual(refreshed.cycle_count, 1)
+        remove_old.assert_called_once_with(old_hash)
+
+    def test_metadata_monitor_defers_a_growing_xlsx_without_mutating_identity(self):
+        db, factory = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "growing.xlsx"
+            _write_structured_xlsx(path)
+            cell, source = self.add_xlsx_cell_source(db, path)
+            original_hash = source.hash
+            stat_results = iter(
+                [
+                    {
+                        "id": source.id,
+                        "location_status": "online",
+                        "size": source.observed_size + 1,
+                        "mtime_ns": source.observed_mtime_ns + 1,
+                    },
+                    {
+                        "id": source.id,
+                        "location_status": "online",
+                        "size": source.observed_size + 2,
+                        "mtime_ns": source.observed_mtime_ns + 2,
+                    },
+                ]
+            )
+            waits = []
+            self.reset_jobs()
+            try:
+                with (
+                    patch.object(library, "SessionLocal", factory),
+                    patch.object(library, "_JobThread", ImmediateThread),
+                    patch.object(library, "_source_stat_worker", lambda _: next(stat_results)),
+                    patch.object(library, "_sleep", waits.append),
+                ):
+                    job = library.start_source_check_job(
+                        db,
+                        cell_ids=[cell.id],
+                        scan_mode="metadata",
+                        batch_size=1,
+                        stability_seconds=5,
+                    )
+            finally:
+                self.reset_jobs()
+
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["deferred"], 1)
+        self.assertEqual(waits, [5])
+        db.expire_all()
+        refreshed = db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.ext, "xlsx")
+        self.assertEqual(refreshed.hash, original_hash)
+        self.assertEqual(refreshed.location_status, "changing")
 
     def test_deferred_source_is_retried_without_rescanning_other_files(self):
         db, factory = self.make_session()

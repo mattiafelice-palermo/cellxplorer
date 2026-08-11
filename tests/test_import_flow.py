@@ -4,8 +4,9 @@ import unittest
 import os
 import shutil
 from concurrent.futures import Future
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -1028,6 +1029,107 @@ class ImportFlowTests(unittest.TestCase):
         self.assertFalse(source["unsupported_extension"])
         self.assertEqual(source["inspection_status"], "pending")
         self.assertEqual(source["filename"], "continuation.xlsx")
+
+    def test_mixed_binary_and_xlsx_continuation_persists_one_ordered_internal_test(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary_path = root / "part-01.ndax"
+            excel_path = root / "part-02.xlsx"
+            binary_path.write_bytes(b"controlled binary-shaped Neware fixture")
+            _write_importable_neware_workbook(excel_path)
+
+            first = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+            second = first + timedelta(minutes=1)
+            third = second + timedelta(minutes=1)
+            hashes = {
+                parsing.compute_hash(binary_path): "binary",
+                parsing.compute_hash(excel_path): "excel",
+            }
+            raw_by_kind = {
+                "binary": pd.DataFrame({"timestamp": pd.to_datetime([first, second], utc=True)}),
+                "excel": pd.DataFrame({"timestamp": pd.to_datetime([second, third], utc=True)}),
+            }
+            cycles_by_kind = {
+                "binary": pd.DataFrame({"cycle": [1]}),
+                "excel": pd.DataFrame({"cycle": [2]}),
+            }
+            shared_header = {
+                "Protocol": "controlled-continuation",
+                "Excel.SourceFormat.Value": "neware_excel",
+            }
+
+            def metadata_for(path):
+                kind = "excel" if Path(path).suffix.casefold() == ".xlsx" else "binary"
+                return {
+                    "raw": shared_header,
+                    "source_format": "Neware Excel" if kind == "excel" else None,
+                    "start_time": first.isoformat() if kind == "binary" else second.isoformat(),
+                    "device_info": "NEWARE",
+                    "channel": "1-1",
+                    "barcode": "CELL-1",
+                    "remarks": None,
+                    "nominal_capacity_mah": 3.0,
+                    "active_mass_mg": 10.0,
+                }
+
+            request = files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        cell_name="Mixed source chain",
+                        sources=[
+                            files.ImportSourceDraft(
+                                staged_name=binary_path.name,
+                                source_path=str(binary_path),
+                                filename=binary_path.name,
+                            ),
+                            files.ImportSourceDraft(
+                                staged_name=excel_path.name,
+                                source_path=str(excel_path),
+                                filename=excel_path.name,
+                            ),
+                        ],
+                    )
+                ]
+            )
+            raw_path = SimpleNamespace(is_file=lambda: True)
+            with (
+                patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for),
+                patch.object(files.continuations.cache, "has_cycles", return_value=True),
+                patch.object(files.continuations.cache, "raw_path", return_value=raw_path),
+                patch.object(
+                    files.continuations.cache,
+                    "load_raw",
+                    side_effect=lambda file_hash, *_: raw_by_kind[hashes[file_hash]],
+                ),
+                patch.object(
+                    files.continuations.cache,
+                    "load_cycles",
+                    side_effect=lambda file_hash, *_: cycles_by_kind[hashes[file_hash]],
+                ),
+                patch.object(files, "start_import_cache_jobs", return_value={}),
+            ):
+                analysis = files._inspect_cell_draft_chain(request.cells[0], db)
+                files.continuations.ensure_submittable_chain(analysis, [])
+                result = files._create_imported_cells_impl(request, db)
+
+            cell = db.get(Cell, result["created"][0]["cell_id"])
+            tests = db.query(Test).filter(Test.cell_id == cell.id).all()
+            self.assertEqual(len(tests), 1)
+            links = sorted(tests[0].file_links, key=lambda link: link.position)
+            self.assertEqual([link.position for link in links], [0, 1])
+            self.assertEqual([link.file.ext for link in links], ["ndax", "xlsx"])
+            self.assertEqual([link.file.filename for link in links], [binary_path.name, excel_path.name])
+
+            duplicate_sources = [dict(source) for source in analysis["sources"]]
+            duplicate_sources[1]["hash"] = duplicate_sources[0]["hash"]
+            blocked = files.continuations.analyze_continuation_chain(
+                duplicate_sources,
+                staged_keys=[binary_path.name, excel_path.name],
+                proposed_staged_order=[binary_path.name, excel_path.name],
+            )
+            self.assertFalse(blocked["can_submit"])
+            self.assertIn("duplicate_hash", {finding["code"] for finding in blocked["findings"]})
 
     def test_preview_matching_fingerprint_reuses_inspected_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

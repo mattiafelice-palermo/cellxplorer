@@ -177,6 +177,48 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(source.location_status, "changed")
         self.assertEqual(source.parse_status, "parsed")
 
+    def test_invalid_xlsx_scan_replacement_marks_existing_source_changed_without_adopting(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cell.xlsx"
+            path.write_bytes(b"invalid replacement")
+            source = SourceFile(
+                hash="a" * 64,
+                path=str(path),
+                filename=path.name,
+                size=1,
+                ext="xlsx",
+                parser_version="parser-old",
+                row_count=8,
+                cycle_count=2,
+                location_status="online",
+                parse_status="parsed",
+                capacity_summary_status="ready",
+            )
+            db.add(source)
+            db.commit()
+
+            invalid_meta = {
+                "raw": {},
+                "error": "Not a recognized Neware Excel export: required record sheet is missing.",
+            }
+            with patch.object(parsing, "compute_hash", return_value="b" * 64), \
+                patch.object(parsing, "read_header_metadata", return_value=invalid_meta), \
+                patch.object(cache, "remove_hash_cache") as remove_old:
+                with self.assertRaisesRegex(ValueError, "Not a recognized Neware Excel export"):
+                    scanner.ingest_path(db, path, parse_now=False)
+
+            db.expire_all()
+            refreshed = db.query(SourceFile).one()
+            self.assertEqual(refreshed.hash, "a" * 64)
+            self.assertEqual(refreshed.parser_version, "parser-old")
+            self.assertEqual(refreshed.row_count, 8)
+            self.assertEqual(refreshed.cycle_count, 2)
+            self.assertEqual(refreshed.location_status, "changed")
+            self.assertEqual(refreshed.parse_status, "parsed")
+            self.assertEqual(db.query(SourceFile).count(), 1)
+            remove_old.assert_not_called()
+
     def test_failed_source_update_preserves_previous_cache(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
