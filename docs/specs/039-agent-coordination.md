@@ -9,12 +9,12 @@ Branch: `feature/neware-excel-support`
 Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
-ACTIVE_CHILD: 039.3
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+ACTIVE_CHILD: 039.4
+TURN: IMPLEMENTER
+STATE: REVIEW_CLEAN
 LAST_IMPLEMENTATION_SHA: d8bc05716d92f80f0f87376a56504e49d073dc8f
-LAST_REVIEW_SHA: 38e6769cd1fe15ae0b7d9ebe91798aafb5cad845
-NEXT_ACTION: Reviewer is verifying the focused 039.3 R5 audit correction. The implementer must remain stopped; 039.4 is not authorized until this review is complete.
+LAST_REVIEW_SHA: 60d1a53773d821c9134835bc9c48e87c81ef25b7
+NEXT_ACTION: 039.3 is review-clean. Implement 039.4 exactly as specified, including final analysis regression, packaging/manual evidence, documentation/version closure and handoff for the required focused plus cumulative Parent 039 review.
 ```
 
 ## Protocol
@@ -200,10 +200,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.3 R1-R4 are resolved. Audit-only R5 correction `d8bc05716d92f80f0f87376a56504e49d073dc8f`
-is under reviewer verification. The correction must establish canonical remote R1-R3 commit
-`eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` while preserving the prior mistaken identifier only as
-append-only history. 039.4 remains unauthorized until R5 is review-clean.
+039.3 is review-clean after R1-R5. Canonical review commit
+`60d1a53773d821c9134835bc9c48e87c81ef25b7` confirms the scanner/source-lifecycle fixes,
+continuation/source-monitor verification and final audit correction. The active feature now advances
+to 039.4. The implementer must complete the 039.4 child and then hand control to the reviewer for
+**both** the focused 039.4 review and a fresh cumulative Parent 039 review before FEATURE_COMPLETE.
 
 ## Coordination log
 
@@ -477,3 +478,14 @@ append-only history. 039.4 remains unauthorized until R5 is review-clean.
 - The prior 039.3 follow-up entry recorded `52164278480dc66b977eaf622fd128a6631508f9` for the R1–R3 implementation, but that identifier is not a resolvable remote commit.
 - Canonical remote R1–R3 implementation commit: `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` (`fix: close 039.3 lifecycle review findings`). The R4 implementation remains `d956f05008f091ee3c387d219782e1c06d73deae`.
 - This correction changes audit documentation only; no implementation code or verification claim changed.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (039.3 R5)
+
+- Reviewer lock: `b84063054b95201b06424dbf4aa4c5af39bdafbd` held `TURN: REVIEWER / STATE: UNDER_REVIEW` while the audit-only correction was inspected.
+- Reviewed correction: `d8bc05716d92f80f0f87376a56504e49d073dc8f`.
+- Result: **REVIEW CLEAN**. R1-R5 are resolved.
+- R5 resolved: the child implementation record now names canonical remote R1-R3 commit `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87`; the coordination log preserves the earlier mistaken identifier and appends the explicit correction.
+- Canonical review commit: `60d1a53773d821c9134835bc9c48e87c81ef25b7`.
+- Reviewer-independent verification: inspected the exact two-file documentation patch and remote commit history through the GitHub connector. No implementation/test command was independently rerun because R5 changed audit documentation only.
+- Next action: 039.3 is review-clean; implement 039.4 exactly as specified, then hand control to REVIEWER for focused 039.4 plus fresh cumulative Parent 039 review.
+- TURN: **IMPLEMENTER**.
