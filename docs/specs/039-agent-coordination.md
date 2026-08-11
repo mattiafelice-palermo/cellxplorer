@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.1
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 7599715c78312ad9ced12c665ade3a5e46c28e95
-LAST_REVIEW_SHA: NONE
-NEXT_ACTION: Review 039.1 against Parent 039 and the active child specification.
+LAST_REVIEW_SHA: a4e5e1b8cb427be36b3408559d5ea0144e7fb556
+NEXT_ACTION: Implement only R findings from the canonical 039.1 review, verify, commit, push, and return to REVIEWER.
 ```
 
 ## Protocol
@@ -196,11 +196,10 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-Spec 039 has been authored from current `main` at
-`0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
-
-The shared branch contains the parent, four children and this coordination file. No implementation
-work is authorized beyond active Child 039.1 until its independent review is clean.
+039.1 implementation `7599715c78312ad9ced12c665ade3a5e46c28e95` has been independently
+reviewed. Canonical review commit `a4e5e1b8cb427be36b3408559d5ea0144e7fb556` records one focused
+finding, R1, requiring the explicit time-reset-only execution-boundary regression test. The
+implementer owns the turn only to address that review finding. 039.2 is not authorized yet.
 
 ## Coordination log
 
@@ -230,3 +229,17 @@ work is authorized beyond active Child 039.1 until its independent review is cle
 - Real-workbook/manual/packaged checks: real read-only probe RUN; browser/manual UI check NOT
   APPLICABLE to 039.1; packaging check NOT RUN because packaging belongs to 039.3.
 - Next action: stop implementation and await independent reviewer review of 039.1.
+
+### 2026-08-11 — REVIEWER
+
+- Reviewed implementation: `7599715c78312ad9ced12c665ade3a5e46c28e95`.
+- Result: **CHANGES REQUIRED**.
+- Finding: R1 — Medium; the production boundary correctly handles a `time_s` reset, but the
+  committed synthetic suite does not isolate that rule because the repeated programmed step is
+  already separated by a different Rest step. Add the required time-reset-only regression.
+- Canonical review commit: `a4e5e1b8cb427be36b3408559d5ea0144e7fb556`.
+- Reviewer-independent verification: inspected the merge base, cumulative branch scope, full parser
+  implementation, full 039.1 test suite, dependency change and handoff records through the GitHub
+  connector. No Python/preflight/private-workbook commands were independently executed.
+- Next action: IMPLEMENTER addresses only R1, verifies, commits/pushes, and returns 039.1 to REVIEWER.
+- TURN: **IMPLEMENTER**.
