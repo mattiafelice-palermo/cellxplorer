@@ -270,7 +270,7 @@ class GoldenAnalysisCorpusTests(unittest.TestCase):
             sf = self.env.db.query(SourceFile).filter_by(hash=digest).one()
             raw = golden_analysis_support.cache.load_raw(
                 sf.hash,
-                sf.parser_version or "v2026.06.11",
+                sf.parser_version or golden_analysis_support.parsing.PARSER_VERSION,
             )
             self.assertIsNotNone(raw)
             golden_analysis_support.assert_raw_frame_schema(raw, source_key=source["key"])

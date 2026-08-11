@@ -136,6 +136,16 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(condition["global_user_id"], 71)
         self.assertEqual(condition["stores_as"], "User1")
 
+    def test_excel_condition_capability_warns_without_inventing_conditions(self):
+        header = synthetic_header()
+        header["Excel.Capabilities.ProtocolConditions.Value"] = "false"
+        result = protocol.reconstruct_protocol(header, nominal_capacity_mah=10)
+        baseline = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+
+        self.assertTrue(any("protocol condition expressions" in warning for warning in result["warnings"]))
+        self.assertEqual(result["signature"], baseline["signature"])
+        self.assertTrue(all(step["conditions"] == [] for step in result["steps"]))
+
 
 if __name__ == "__main__":
     unittest.main()

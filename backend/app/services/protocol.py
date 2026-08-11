@@ -570,6 +570,12 @@ def reconstruct_protocol(flat: dict[str, str] | None, nominal_capacity_mah: floa
     )
     record_intervals = _unique_numbers([step["record_interval_s"] for step in executable])
     warnings: list[str] = []
+    protocol_conditions = flat.get("Excel.Capabilities.ProtocolConditions.Value")
+    if protocol_conditions is not None and str(protocol_conditions).casefold() == "false":
+        warnings.append(
+            "This Neware Excel export does not contain protocol condition expressions; "
+            "automatic Chargeability recognition may be unavailable."
+        )
     if not steps:
         warnings.append("No Neware step definition was found in the stored header metadata.")
     if inferred_nominal and effective_nominal is not None:

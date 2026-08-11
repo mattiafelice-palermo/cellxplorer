@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.services import calc, neware_excel
+from app.config import CALC_VERSION
+from app.services import cache, calc, chargeability, neware_excel, parsing, protocol
 
 
 RECORD_HEADERS = [
@@ -162,6 +164,93 @@ def _write_synthetic_workbook(
             step_sheet.append(summary)
 
     workbook.save(path)
+
+
+TEST_PLAN_HEADERS = [
+    "Step Index",
+    "Step Name",
+    "Step Time(min)",
+    "Voltage(V)",
+    "C-rate(C)",
+    "Current(mA)",
+    "Cut-off voltage (V)",
+    "Cut-off C-rate(C)",
+    "Cut-off curr.(mA)",
+    "Energy(Wh)",
+    "-ΔV(V)",
+    "Power(W)",
+    "Resistance(mΩ)",
+    "Capacity(mAh)",
+    "Record settings",
+    "Aux.CH recording condition",
+    "Max Vi(V)",
+    "Min Vi(V)",
+    "Max Ti(℃)",
+    "Min Ti(℃)",
+    "Segment record1",
+    "Segment record2",
+    "Current range (mA)",
+]
+
+
+def _write_metadata_workbook(path: Path, *, include_cycle: bool = False) -> None:
+    _write_synthetic_workbook(path, include_step=False)
+    workbook = load_workbook(path)
+    test = workbook.create_sheet("test")
+    test.append(["Test information"])
+    test.append(["Start step ID", None, 1, "Volt. upper", None, "4.2V", "P/N", None, "PN-1"])
+    test.append(["Cycle count", None, 3, "Volt. lower", None, "2.5V", "Builder", None, "Builder-1"])
+    test.append(["Record settings", None, "5s/0.02V/0.1mA", None, None, None, "Remarks", None, "Remark-1"])
+    test.append(["Voltage range", None, "4.2V", "Curr. lower", None, "-", "-", None, "-"])
+    test.append(["Current range", None, "0-5mA", "Start time", None, datetime(2026, 1, 1, 12, 0, 0), "Barcode", None, "BAR-1"])
+    test.append(["Active material", None, "10mg", "Nominal capacity", None, "10mAh", "", None, None])
+    test.append([])
+    test.append(["Step plan"])
+    test.append(TEST_PLAN_HEADERS)
+    test.append([1, "Rest", 2, None, None, None, None, None, None, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([2, "CC Chg", 10, None, 0.5, 5.0, 4.2, None, None, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([3, "CV Chg", 1, 4.2, 0.5, 5.0, None, None, 0.5, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([4, "CC DChg", 10, None, 0.5, 5.0, 2.5, None, None, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([5, "Cycle", "Start step ID:2", "Cycle count:3"])
+    test.append([6, "CCCV DChg", None, None, 1.0, 10.0, 2.5, 0.05, 0.5, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([7, "CCCV Chg", 10, 4.2, 1.0, 10.0, None, 0.05, 0.5, None, None, None, None, None, "5s/0.02V/0.1mA"])
+    test.append([8, "End"])
+    unit = workbook.create_sheet("unit")
+    unit.append(["synthetic.xlsx"])
+    unit.append(["device", 1, 2, 3])
+    unit.append(["Start time", None, datetime(2026, 1, 1, 12, 0, 0), None, "End time", None, datetime(2026, 1, 2, 12, 0, 0)])
+    unit.append(["NDA file path", None, "C:/private/source.nda"])
+    unit.append(["List of unit plans"])
+    unit.append(["Time", "Current", "Voltage"])
+    unit.append(["min", "mA", "V"])
+    workbook.save(path)
+    if include_cycle:
+        raw = neware_excel.parse_timeseries(path)
+        cycles = calc.per_cycle(raw)
+        workbook = load_workbook(path)
+        cycle = workbook.create_sheet("cycle")
+        cycle.append([
+            "Cycle Index",
+            "Chg. Cap.(mAh)",
+            "DChg. Cap.(mAh)",
+            "Chg.-DChg. Eff(%)",
+            "Chg. Energy(Wh)",
+            "DChg. Energy(Wh)",
+            "Chg. Time(min)",
+            "DChg. Time(min)",
+        ])
+        for _, row in cycles.iterrows():
+            cycle.append([
+                int(row["cycle"]),
+                round(float(row["charge_capacity_mah"]), 3),
+                round(float(row["discharge_capacity_mah"]), 3),
+                round(float(row["coulombic_efficiency_pct"]), 2),
+                round(float(row["charge_energy_mwh"]) / 1000.0, 6),
+                round(float(row["discharge_energy_mwh"]) / 1000.0, 6),
+                round(float(row["charge_time_h"]) * 60.0, 3),
+                round(float(row["discharge_time_h"]) * 60.0, 3),
+            ])
+        workbook.save(path)
 
 
 class NewareExcelParserTests(unittest.TestCase):
@@ -483,6 +572,220 @@ class NewareExcelParserTests(unittest.TestCase):
             workbook.save(path)
             with self.assertRaises(neware_excel.InvalidNewareExcelError):
                 neware_excel.parse_timeseries(path)
+
+    def test_metadata_information_block_extracts_units_and_provenance(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metadata.xlsx"
+            _write_metadata_workbook(path)
+            metadata = neware_excel.read_metadata(path)
+
+        head = metadata["Step"]["Head_Info"]
+        self.assertEqual(head["Start_Step"]["Value"], "1")
+        self.assertEqual(head["PN"]["Value"], "PN-1")
+        self.assertEqual(head["Creator"]["Value"], "Builder-1")
+        self.assertEqual(head["Remark"]["Value"], "Remark-1")
+        self.assertEqual(head["SCQ"]["Value"], "10000.0")
+        self.assertEqual(head["MultCap"]["Value"], "36000.0")
+        self.assertEqual(metadata["Excel"]["Original"]["Test"]["StartTime"]["Value"], "2026-01-01 12:00:00")
+
+    def test_metadata_protocol_plan_maps_explicit_fields_and_controls(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metadata.xlsx"
+            _write_metadata_workbook(path)
+            metadata = neware_excel.read_metadata(path)
+
+        steps = metadata["Step"]["Step_Info"]
+        expected_types = [4, 1, 3, 2, 5, 20, 7, 6]
+        self.assertEqual([int(steps[f"Step{i}"]["Step_Type"]) for i in range(1, 9)], expected_types)
+        for index, type_id in enumerate(expected_types, start=1):
+            self.assertEqual(protocol.STEP_TYPES[type_id][0], protocol.STEP_TYPES[int(steps[f"Step{index}"]["Step_Type"])][0])
+
+        cc = steps["Step2"]
+        self.assertEqual(cc["Limit.Main.Curr.Value"], "5")
+        self.assertEqual(cc["Limit.Main.Rate.Value"], "0.5")
+        self.assertEqual(cc["Limit.Main.Stop_Volt.Value"], "42000")
+        self.assertEqual(cc["Limit.Main.Time.Value"], "600000")
+        self.assertEqual(cc["Record.Main.Time.Value"], "5000")
+        self.assertEqual(cc["Record.Main.Volt.Value"], "200")
+        self.assertEqual(cc["Protect.Main.Volt.Upper.Value"], "42000")
+        self.assertEqual(cc["Protect.Main.Volt.Lower.Value"], "25000")
+        self.assertEqual(steps["Step5"]["Limit.Other.Start_Step.Value"], "2")
+        self.assertEqual(steps["Step5"]["Limit.Other.Cycle_Count.Value"], "3")
+        self.assertEqual(steps["Step8"], {"Step_Type": "6"})
+
+    def test_metadata_units_are_not_silently_reinterpreted(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "wrong-unit.xlsx"
+            _write_metadata_workbook(path)
+            workbook = load_workbook(path)
+            workbook["test"]["C7"] = "10V"
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.read_metadata(path)
+
+    def test_shared_metadata_normalization_and_capabilities(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metadata.xlsx"
+            _write_metadata_workbook(path)
+            result = parsing.read_header_metadata(path)
+
+        self.assertEqual(result["source_format"], "Neware Excel")
+        self.assertEqual(result["start_time"], "2026-01-01 12:00:00")
+        self.assertEqual(result["active_mass_mg"], 10.0)
+        self.assertEqual(result["nominal_capacity_mah"], 10.0)
+        self.assertEqual(result["protection_voltage_upper_v"], 4.2)
+        self.assertEqual(result["protection_voltage_lower_v"], 2.5)
+        self.assertEqual(result["record_interval_s"], 5.0)
+        self.assertFalse(result["capabilities"]["ProtocolConditions"])
+
+    def test_protocol_reconstruction_and_signature_use_excel_flattened_plan(self):
+        with TemporaryDirectory() as temporary:
+            first = Path(temporary) / "first.xlsx"
+            second = Path(temporary) / "second.xlsx"
+            _write_metadata_workbook(first)
+            _write_metadata_workbook(second)
+            first_result = parsing.read_header_metadata(first)
+            second_result = parsing.read_header_metadata(second)
+            first_protocol = protocol.reconstruct_protocol(first_result["raw"], 10.0)
+            second_protocol = protocol.reconstruct_protocol(second_result["raw"], 10.0)
+
+            workbook = load_workbook(second)
+            workbook["test"]["G13"] = 4.1
+            workbook.save(second)
+            changed = parsing.read_header_metadata(second)
+            changed_protocol = protocol.reconstruct_protocol(changed["raw"], 10.0)
+
+        self.assertEqual(first_protocol["n_steps"], 8)
+        self.assertEqual(first_protocol["n_executable_steps"], 6)
+        self.assertEqual(first_protocol["signature"], second_protocol["signature"])
+        self.assertNotEqual(first_protocol["signature"], changed_protocol["signature"])
+        self.assertEqual(first_protocol["summary"]["protection_windows"], [{"lower_v": 2.5, "upper_v": 4.2}])
+        self.assertEqual(first_protocol["steps"][4]["conditions"], [])
+        self.assertTrue(any("protocol condition expressions" in warning for warning in first_protocol["warnings"]))
+        self.assertEqual(chargeability.detect_candidates(first_protocol), [])
+
+    def test_metadata_read_does_not_parse_large_record_sheet(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "metadata.xlsx"
+            _write_metadata_workbook(path)
+            with mock.patch.object(neware_excel, "_parse_records", side_effect=AssertionError("record scan")):
+                metadata = neware_excel.read_metadata(path)
+        self.assertTrue(metadata["Excel"]["Capabilities"]["DeclaredProtocol"]["Value"])
+
+    def test_parser_dispatch_preserves_binary_and_excel_boundaries(self):
+        binary_frame = pd.DataFrame({"Index": [1], "Cycle": [1], "Status": ["Rest"]})
+        with mock.patch.object(parsing.NewareNDA, "read", return_value=binary_frame) as binary_read:
+            result = parsing.parse_timeseries("source.nda")
+        binary_read.assert_called_once()
+        self.assertEqual(result.loc[0, "record_index"], 1)
+
+        with mock.patch.object(neware_excel, "parse_timeseries", return_value=pd.DataFrame({"cycle": [1]})) as excel_read:
+            result = parsing.parse_timeseries("source.xlsx")
+        excel_read.assert_called_once()
+        self.assertEqual(result.loc[0, "cycle"], 1)
+        with self.assertRaises(parsing.UnsupportedSourceFormatError):
+            parsing.parse_timeseries("source.csv")
+
+    def test_parser_bundle_version_is_deterministic_and_persistable(self):
+        self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
+        self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
+        self.assertLessEqual(len(parsing.PARSER_VERSION), 30)
+        self.assertEqual(parsing.PARSER_VERSION, f"{parsing.NEWARE_NDA_VERSION}-cxp{neware_excel.EXCEL_PARSER_REVISION}")
+        self.assertNotEqual(
+            parsing.PARSER_VERSION,
+            f"{parsing.NEWARE_NDA_VERSION}-cxp{neware_excel.EXCEL_PARSER_REVISION + 1}",
+        )
+        self.assertEqual(CALC_VERSION, "1.6.1")
+
+    def test_cycle_summary_validation_accepts_rounded_values(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cycle-summary.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            neware_excel.validate_cycles(path, raw, cycles)
+        self.assertTrue(raw.attrs["neware_excel"]["cycle_summary_validated"])
+
+    def test_cycle_summary_identity_capacity_energy_and_time_mismatches_fail(self):
+        mutations = {
+            "identity": ("A2", 99),
+            "capacity": ("B2", 999.0),
+            "energy": ("E2", 999.0),
+            "time": ("G2", 999.0),
+        }
+        for name, (cell, value) in mutations.items():
+            with self.subTest(name=name), TemporaryDirectory() as temporary:
+                path = Path(temporary) / f"cycle-{name}.xlsx"
+                _write_metadata_workbook(path, include_cycle=True)
+                workbook = load_workbook(path)
+                workbook["cycle"][cell] = value
+                workbook.save(path)
+                raw = neware_excel.parse_timeseries(path)
+                cycles = calc.per_cycle(raw)
+                with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                    neware_excel.validate_cycles(path, raw, cycles)
+
+    def test_missing_cycle_summary_is_explicitly_non_validating(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "without-cycle.xlsx"
+            _write_metadata_workbook(path)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            neware_excel.validate_cycles(path, raw, cycles)
+        self.assertFalse(raw.attrs["neware_excel"]["cycle_summary_available"])
+        self.assertFalse(raw.attrs["neware_excel"]["cycle_summary_validated"])
+
+    def test_cache_build_and_write_behind_validate_excel_before_publication(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cached.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            file_hash = parsing.compute_hash(path)
+            cache_directory = cache.raw_path(file_hash).parent
+            try:
+                with mock.patch.object(parsing, "validate_parsed_output", wraps=parsing.validate_parsed_output) as validate:
+                    cache.build(file_hash, path)
+                validate.assert_called_once()
+                self.assertIsNotNone(cache.load_raw(file_hash, parsing.PARSER_VERSION))
+                self.assertIsNotNone(cache.load_cycles(file_hash, parsing.PARSER_VERSION, cache.CALC_VERSION))
+            finally:
+                if cache_directory.exists():
+                    import shutil
+                    shutil.rmtree(cache_directory)
+
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "write-behind.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            file_hash = parsing.compute_hash(path)
+            cache_directory = cache.raw_path(file_hash).parent
+            try:
+                with mock.patch.object(parsing, "validate_parsed_output", wraps=parsing.validate_parsed_output) as validate:
+                    cache.build_write_behind(file_hash, path)
+                validate.assert_called_once()
+                cache.wait_for_pending(file_hash)
+                self.assertTrue(cache.raw_path(file_hash).exists())
+                self.assertTrue(cache.cycles_path(file_hash).exists())
+            finally:
+                if cache_directory.exists():
+                    import shutil
+                    shutil.rmtree(cache_directory)
+
+    def test_cycle_cache_derivation_from_existing_raw_does_not_reopen_excel(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "derive.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            file_hash = parsing.compute_hash(path)
+            cache_directory = cache.raw_path(file_hash).parent
+            try:
+                cache.build(file_hash, path)
+                cache.cycles_path(file_hash).unlink()
+                with mock.patch.object(parsing, "validate_parsed_output") as validate:
+                    cycles = cache.load_cycles(file_hash, parsing.PARSER_VERSION, cache.CALC_VERSION)
+                self.assertIsNotNone(cycles)
+                validate.assert_not_called()
+            finally:
+                if cache_directory.exists():
+                    import shutil
+                    shutil.rmtree(cache_directory)
 
 
 if __name__ == "__main__":

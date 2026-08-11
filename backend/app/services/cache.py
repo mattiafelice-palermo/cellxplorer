@@ -293,13 +293,17 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
             **totals,
         }
 
-    # A calculation-version bump does not require rereading the binary file:
+    # A calculation-version bump does not require rereading the source file:
     # reuse the parser-versioned raw cache and derive only the new cycle cache.
-    raw = pd.read_parquet(rp) if rp.exists() and not force else parsing.parse_timeseries(source_path)
+    parsed_from_source = not (rp.exists() and not force)
+    raw = pd.read_parquet(rp) if not parsed_from_source else parsing.parse_timeseries(source_path)
+    cycles = calc.per_cycle(raw)
+    if parsed_from_source:
+        parsing.validate_parsed_output(source_path, raw, cycles)
     d = _dir(file_hash)
     d.mkdir(parents=True, exist_ok=True)
-    _write_atomic(raw, rp)
-    cycles = calc.per_cycle(raw)
+    if parsed_from_source:
+        _write_atomic(raw, rp)
     _write_atomic(cycles, cp)
     return {
         "rows": len(raw),
@@ -325,6 +329,7 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
 
     raw = parsing.parse_timeseries(source_path)
     cycles = calc.per_cycle(raw)
+    parsing.validate_parsed_output(source_path, raw, cycles)
 
     def _write() -> None:
         from .process_priority import apply_background_thread_priority

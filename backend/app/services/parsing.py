@@ -18,14 +18,20 @@ from typing import Any
 import NewareNDA
 import pandas as pd
 
-from . import fast_neware
+from . import fast_neware, neware_excel
 
 logger = logging.getLogger(__name__)
 
-PARSER_VERSION: str = NewareNDA.version.__version__
+NEWARE_NDA_VERSION: str = NewareNDA.version.__version__
+EXCEL_PARSER_REVISION: int = neware_excel.EXCEL_PARSER_REVISION
+PARSER_VERSION: str = f"{NEWARE_NDA_VERSION}-cxp{EXCEL_PARSER_REVISION}"
+
+
+class UnsupportedSourceFormatError(ValueError):
+    """The parser boundary was given a source suffix CellXplorer cannot read."""
 
 # Vectorized fast paths for NewareNDA — verified output-identical (see
-# tests/test_fast_neware.py), so the cache parser version stays the same.
+# tests/test_fast_neware.py); the bundle version above still records both parser owners.
 if os.environ.get("CELLXPLORER_FAST_NDAX", "1") != "0":
     fast_neware.install()
 
@@ -58,7 +64,16 @@ def compute_hash(path: str | Path) -> str:
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
     """Full parse of a Neware file into a normalized DataFrame."""
-    df = NewareNDA.read(str(path), software_cycle_number=True, log_level="WARNING")
+    source_path = Path(path)
+    suffix = source_path.suffix.casefold()
+    if suffix == ".xlsx":
+        return neware_excel.parse_timeseries(source_path)
+    if suffix not in {".nda", ".ndax"}:
+        raise UnsupportedSourceFormatError(
+            f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
+        )
+
+    df = NewareNDA.read(str(source_path), software_cycle_number=True, log_level="WARNING")
     keep = {src: dst for src, dst in RAW_COLUMNS.items() if src in df.columns}
     df = df.rename(columns=keep)
     # keep any aux columns (temperature etc.) under their original names
@@ -67,6 +82,17 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     if "status" in df.columns:
         df["status"] = df["status"].astype(str)
     return df
+
+
+def validate_parsed_output(
+    path: str | Path,
+    raw: pd.DataFrame,
+    cycles: pd.DataFrame,
+) -> None:
+    """Run source-owned independent checks after raw/cycle derivation."""
+
+    if Path(path).suffix.casefold() == ".xlsx":
+        neware_excel.validate_cycles(path, raw, cycles)
 
 
 def _flatten(d: Any, prefix: str = "") -> dict[str, str]:
@@ -152,16 +178,24 @@ def read_header_metadata(path: str | Path) -> dict:
     start_time, active_mass_mg, nominal_capacity_mah, nda_version}.
     """
     path = Path(path)
+    suffix = path.suffix.casefold()
     try:
-        if path.suffix.lower() == ".ndax":
+        if suffix == ".xlsx":
+            meta = neware_excel.read_metadata(path)
+            flat = _flatten(meta)
+        elif suffix == ".ndax":
             try:
                 flat = _read_ndax_metadata_flat(path)
             except _NdaxXmlFallback:
                 meta = NewareNDA.read_metadata(str(path))
                 flat = _flatten(meta)
-        else:
+        elif suffix == ".nda":
             meta = NewareNDA.read_metadata(str(path))
             flat = _flatten(meta)
+        else:
+            raise UnsupportedSourceFormatError(
+                f"Unsupported cycling source format: {path.suffix or '<none>'}."
+            )
     except Exception as exc:  # corrupt/unsupported file: still importable
         logger.warning("metadata read failed for %s: %s", path, exc)
         return {"raw": {}, "error": str(exc)}
@@ -217,10 +251,13 @@ def read_header_metadata(path: str | Path) -> dict:
                 out.append(scaled_value)
         return out
 
-    result["barcode"] = find("barcode")
+    result["barcode"] = find("barcode") or find_path("barcode")
     result["remarks"] = find_path("head_info.remark.value") or find("remarks", "remark")
-    result["nda_version"] = find("nda_version", "bts_version", "version")
-    result["start_time"] = find("starttime", "start_time", "startime")
+    result["nda_version"] = None if suffix == ".xlsx" else find("nda_version", "bts_version", "version")
+    result["start_time"] = (
+        find("starttime", "start_time", "startime")
+        or find_path("starttime", "start_time", "startime")
+    )
     result["start_step_id"] = find_suffix("head_info.start_step.value")
     result["part_number"] = find_suffix("head_info.pn.value")
     result["builder"] = find_suffix("head_info.creator.value")
@@ -253,4 +290,12 @@ def read_header_metadata(path: str | Path) -> dict:
     result["discharge_cutoff_v"] = discharge_cutoffs[0]["voltage_v"] if discharge_cutoffs else None
     record_times = scaled_values(find_all_suffix("record.main.time.value"), 1000.0)
     result["record_interval_s"] = record_times[0] if record_times else None
+    if suffix == ".xlsx":
+        result["source_format"] = "Neware Excel"
+        result["capabilities"] = {
+            key.removeprefix("Excel.Capabilities.").removesuffix(".Value"): value.casefold() == "true"
+            for key, value in flat.items()
+            if key.startswith("Excel.Capabilities.") and key.endswith(".Value")
+        }
+        result["protocol_warnings"] = list(protocol["warnings"])
     return result
