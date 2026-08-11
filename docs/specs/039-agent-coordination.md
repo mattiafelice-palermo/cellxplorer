@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
-LAST_REVIEW_SHA: 7c30e14442f3c3d635c8376f2bfa19fe9cfe82de
-NEXT_ACTION: Reviewer reconciliation is completing the full 039.3 finding set under lock. The implementer must remain stopped; 039.4 is not authorized.
+LAST_REVIEW_SHA: 2bfedb9b0746db5100dfbfe0e6924b1926398869
+NEXT_ACTION: Implement only R1-R4 from the corrected canonical 039.3 review, verify, commit, push, and return to REVIEWER. 039.4 is not authorized yet.
 ```
 
 ## Protocol
@@ -202,11 +202,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 039.3 implementation `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`, verification record
 `d2f52e2f9820312f50b6a7558646490e725fe33d`, and handoff
-`91050914d906518a8af7dc567a9cbeda6eec1627` remain under reviewer reconciliation. Review commit
-`7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` recorded R1-R3 but released the implementer before a
-second reviewer pass under the active `UNDER_REVIEW` lock completed. No implementation code landed
-after that premature release. The reviewer has reclaimed the lock to complete the full finding set;
-039.4 remains unauthorized.
+`91050914d906518a8af7dc567a9cbeda6eec1627` have now completed the full independent review.
+Corrected canonical review commit `2bfedb9b0746db5100dfbfe0e6924b1926398869` supersedes the premature
+R1-R3-only release at `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` and records the complete
+R1-R4 finding set. R1 and R4 are scanner/source-provenance defects; R2 and R3 are required
+continuation/lifecycle verification gaps. The implementer owns only R1-R4. 039.4 is not authorized.
 
 ## Coordination log
 
@@ -357,8 +357,7 @@ after that premature release. The reviewer has reclaimed the lock to complete th
 - Real-workbook timing: metadata read `0.262049 s`; full `parse_timeseries` `2.859019 s`; metadata
   was approximately 9.2% of full parse time for 13,982 raw rows.
 - Real-workbook/manual/packaged checks: metadata/protocol/parse/validation/cache probe PASS;
-  browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until
-  039.3.
+  browser/manual UI NOT APPLICABLE; packaging NOT RUN.
 - Next action: stop implementation and await independent reviewer re-review of 039.2 R6–R8.
 
 ### 2026-08-11 — REVIEWER FOLLOW-UP (R6–R8)
@@ -443,5 +442,14 @@ after that premature release. The reviewer has reclaimed the lock to complete th
 
 - Review commit `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` returned control to the implementer before a second reviewer pass under the active `UNDER_REVIEW` lock had completed.
 - Branch comparison confirmed no implementation code landed after the premature release; only review/coordination documentation changed.
-- The reviewer reclaimed `TURN: REVIEWER / STATE: UNDER_REVIEW` to finish the full 039.3 finding set before any implementation follow-up starts.
-- R1-R3 remain active; the reviewer is checking an additional exact-hash scanner relink inconsistency before the corrected canonical review is released.
+- The reviewer reclaimed `TURN: REVIEWER / STATE: UNDER_REVIEW` at `c45b040ab77a063f6261928e508a6febb43bc880` to finish the full 039.3 finding set before any implementation follow-up starts.
+- R1-R3 remained active while an additional exact-hash scanner relink inconsistency was checked.
+
+### 2026-08-11 — REVIEWER RECONCILIATION COMPLETE (039.3)
+
+- Corrected canonical review commit: `2bfedb9b0746db5100dfbfe0e6924b1926398869`.
+- Result: **CHANGES REQUIRED**; the earlier R1-R3-only release is superseded.
+- Complete findings: R1 — same-path invalid Excel replacement can remain falsely online; R2 — mixed-format continuation/order/one-Test proof missing; R3 — Excel stable-update/source-monitor lifecycle proof incomplete; R4 — exact-hash scanner relink can bypass the Excel format contract and leave `ext` inconsistent with the relinked path.
+- Reviewer-independent verification: inspected the exact implementation delta, scanner hash/relink/update ordering, continuation/source-monitor seams, added tests, frontend/source-selection changes, warmup/dependency handling and branch state through the GitHub connector. Python/frontend/browser/private-workbook/native-picker/packaged commands were not independently executed.
+- Next action: IMPLEMENTER addresses only R1-R4, verifies, commits/pushes, and returns 039.3 to REVIEWER. 039.4 must not begin.
+- TURN: **IMPLEMENTER**.
