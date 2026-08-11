@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
-LAST_REVIEW_SHA: 938c634b363d88360b7df839432f9ca7aa5a5a06
-NEXT_ACTION: Reviewer is performing the complete 039.3 review. The implementer must remain stopped until the canonical review and final coordination handoff are pushed.
+LAST_REVIEW_SHA: 7c30e14442f3c3d635c8376f2bfa19fe9cfe82de
+NEXT_ACTION: Implement only R1-R3 from the canonical 039.3 review, verify, commit, push, and return to REVIEWER. 039.4 is not authorized yet.
 ```
 
 ## Protocol
@@ -200,11 +200,16 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.2 is review-clean after final correction `871834c06703592a0d1774383ca37498581bf2ac`.
-Canonical review commit `938c634b363d88360b7df839432f9ca7aa5a5a06` confirms R1-R8 resolved.
-The reviewer independently inspected the final R6-R8 implementation, positional metadata grouping,
-parser-bundle provenance, golden provenance-only delta, child audit record and branch scope under an
-explicit `UNDER_REVIEW` lock. 039.3 is now authorized and belongs to the implementer.
+039.3 implementation `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`, verification record
+`d2f52e2f9820312f50b6a7558646490e725fe33d`, and handoff
+`91050914d906518a8af7dc567a9cbeda6eec1627` have been independently reviewed under reviewer lock
+`fdfc6537e005ad5ad0ef447170ad0edc40af2e9a`. Canonical review commit
+`7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` records three actionable findings: R1 requires scanner
+same-path invalid Excel replacement to preserve old recoverability while truthfully marking the
+registered source changed; R2 requires the locked mixed binary/Excel continuation proof including
+ordering and the one-internal-Test invariant; R3 requires the remaining Excel-specific stable
+update/source-monitor lifecycle verification. The implementer owns only R1-R3. 039.4 is not
+authorized yet.
 
 ## Coordination log
 
@@ -425,3 +430,14 @@ explicit `UNDER_REVIEW` lock. 039.3 is now authorized and belongs to the impleme
 - Verification: focused backend import/source suite — **152 passed**; frontend policy tests — **461 passed**; TypeScript check — passed; Vite build — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; `git diff --check` — passed.
 - Real-workbook/manual/packaged checks: disposable browser/import matrix RUN (structured `.xlsx` listed, metadata/capacity preview, registration/background cache, raw-data endpoint, online/parsed source, unrelated-workbook rejection); native picker and HTML file-input checks NOT RUN; packaged `.xlsx` smoke NOT RUN.
 - Next action: stop implementation and await independent 039.3 review.
+
+### 2026-08-11 — REVIEWER (039.3)
+
+- Review lock: `fdfc6537e005ad5ad0ef447170ad0edc40af2e9a` kept `TURN: REVIEWER / STATE: UNDER_REVIEW` while the full review was performed.
+- Reviewed implementation: `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`; verification record: `d2f52e2f9820312f50b6a7558646490e725fe33d`; implementer handoff: `91050914d906518a8af7dc567a9cbeda6eec1627`.
+- Result: **CHANGES REQUIRED**.
+- Findings: R1 — High, recursive scanner ingestion can leave an existing same-path source falsely `online` when replacement `.xlsx` bytes are invalid; R2 — Medium, the required mixed binary/Excel continuation compatibility/order/one-Test proof is absent; R3 — Medium, required Excel-specific stable-update/source-monitor lifecycle verification is incomplete.
+- Canonical review commit: `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de`.
+- Reviewer-independent verification: inspected the exact implementation delta, merge base, import inspection/registration, shared extension policy, scanner/source replacement ordering, continuation contracts, source-monitor ownership, frontend wording and focused tests through the GitHub connector. Python/frontend/browser/private-workbook/packaged commands were not independently executed.
+- Next action: IMPLEMENTER addresses only R1-R3, verifies, commits/pushes, and returns 039.3 to REVIEWER. 039.4 must not begin.
+- TURN: **IMPLEMENTER**.
