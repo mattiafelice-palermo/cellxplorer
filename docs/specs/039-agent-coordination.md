@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: d956f05008f091ee3c387d219782e1c06d73deae
 LAST_REVIEW_SHA: 2bfedb9b0746db5100dfbfe0e6924b1926398869
-NEXT_ACTION: Implement only R1-R4 from the corrected canonical 039.3 review, verify, commit, push, and return to REVIEWER. 039.4 is not authorized yet.
+NEXT_ACTION: Review the corrected 039.3 R1-R4 follow-up against Parent 039 and Child 039.3. 039.4 is not authorized yet.
 ```
 
 ## Protocol
@@ -453,3 +453,12 @@ continuation/lifecycle verification gaps. The implementer owns only R1-R4. 039.4
 - Reviewer-independent verification: inspected the exact implementation delta, scanner hash/relink/update ordering, continuation/source-monitor seams, added tests, frontend/source-selection changes, warmup/dependency handling and branch state through the GitHub connector. Python/frontend/browser/private-workbook/native-picker/packaged commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R1-R4, verifies, commits/pushes, and returns 039.3 to REVIEWER. 039.4 must not begin.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (039.3 R1-R4)
+
+- Follow-up implementation commits: `52164278480dc66b977eaf622fd128a6631508f9` (R1-R3) and `d956f05008f091ee3c387d219782e1c06d73deae` (R4); verification-record checkpoint: `2ccebf1`.
+- R1 marks an existing same-path source `changed` before invalid replacement metadata validation and preserves the prior identity, counts and cache. R2 proves mixed binary/Excel continuation ordering, one internal Test and unchanged blocking rules. R3 adds generated Excel monitor coverage for unchanged, offline, stable adoption and growing/deferred states. R4 guards exact-hash relinking by parser family and updates `SourceFile.ext` on accepted same-family relinks.
+- Verification: focused backend follow-up — **233 passed**; frontend policy tests — **461 passed**; TypeScript — passed; Vite build — passed with existing warnings; final elevated preflight — **PREFLIGHT PASSED**, 5/5 stages, all 59 backend modules passed.
+- Manual/browser follow-up: NOT RERUN; no frontend code changed. Prior disposable import matrix remains recorded in the child implementation record. Packaged `.xlsx` smoke: NOT RUN.
+- Next action: stop implementation and await independent reviewer re-review of corrected 039.3 R1-R4.
+- TURN: **REVIEWER**.
