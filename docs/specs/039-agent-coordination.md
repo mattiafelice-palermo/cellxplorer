@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: USER
+STATE: FEATURE_COMPLETE
 LAST_IMPLEMENTATION_SHA: b2db0c495787a7b547d8b256fbc7595ed774f2a5
-LAST_REVIEW_SHA: fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e
-NEXT_ACTION: Reviewer is inspecting the 039.4 R1 correction and rerunning the required fresh cumulative Parent 039 review. Implementer remains stopped until the complete review is pushed.
+LAST_REVIEW_SHA: c314a1a2e573782c258721d60f8da1d38ab158e2
+NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional remaining manual/package checks, PR metadata, merge and release.
 ```
 
 ## Protocol
@@ -200,9 +200,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.4 R1 has been implemented and handed back for review. The reviewer must verify the exact
-registered/cache-backed Rate Capability capacity assertions and rerun the fresh cumulative Parent 039
-review before deciding whether the feature is complete.
+039.4 R1 is resolved at `b2db0c495787a7b547d8b256fbc7595ed774f2a5`. The canonical clean
+review at `c314a1a2e573782c258721d60f8da1d38ab158e2` confirms both the focused 039.4
+follow-up and fresh cumulative Parent 039 review are clean. Parent 039 is implementation/review
+complete. The final 039.4 analysis/browser UI matrix remains truthfully NOT RUN and is an optional
+pre-release confidence check. The user decides PR metadata, merge and release.
 
 ## Coordination log
 
@@ -228,6 +230,14 @@ review before deciding whether the feature is complete.
 
 ### 2026-08-11 — REVIEWER CLAIM (039.4 R1 + Parent 039)
 
-- Reviewer claimed the handoff as `TURN: REVIEWER / STATE: UNDER_REVIEW` before substantive inspection.
+- Reviewer lock: `6e55d93faf5d6d657108b44176a3de10f077bbf2`.
 - Reviewed implementation target: `b2db0c495787a7b547d8b256fbc7595ed774f2a5`.
-- The implementer remains stopped until both the focused R1 re-review and fresh cumulative Parent 039 review are complete.
+- The implementer remained stopped until both the focused R1 re-review and fresh cumulative Parent 039 review were complete.
+
+### 2026-08-11 — REVIEWER FINAL (039.4 R1 + Parent 039)
+
+- Canonical review commit: `c314a1a2e573782c258721d60f8da1d38ab158e2`.
+- R1: **RESOLVED**. The registered/cache-backed Rate Capability result now verifies 0.2C -> 10.2 mAh, 0.5C -> 10.5 mAh and 1.0C -> 11.0 mAh.
+- Fresh cumulative Parent 039 review: **REVIEW CLEAN** against merge base `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`.
+- Reviewer-independent verification: inspected the R1 implementation/documentation commits, exact computed-result assertions, full cumulative changed-file scope, and confirmed no production code changed after the initial 039.4 implementation. Python/frontend/preflight/packaging/private-workbook/installer/browser commands were not independently rerun; implementer-reported verification remains recorded in the canonical review.
+- Final handoff: `TURN: USER / STATE: FEATURE_COMPLETE`. User decides optional manual UI checks, PR metadata, merge and release.
