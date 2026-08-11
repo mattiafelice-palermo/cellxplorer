@@ -1408,6 +1408,22 @@ class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
         families = result["cells"][0]["families"]
         self.assertEqual(families["charge"]["status"], "matched")
         self.assertEqual(families["charge"]["point_count"], 3)
+        charge_points = [
+            point for point in result["points"] if point["family"] == "charge"
+        ]
+        self.assertEqual(len(charge_points), 3)
+        capacities_by_rate = {
+            round(float(point["rate_c"]), 3): float(point["capacity_mah"])
+            for point in charge_points
+        }
+        for rate, expected_capacity in (
+            (0.2, 10.2),
+            (0.5, 10.5),
+            (1.0, 11.0),
+        ):
+            self.assertAlmostEqual(
+                capacities_by_rate[rate], expected_capacity, places=6
+            )
         self.assertEqual(families["discharge"]["status"], "not_detected")
         self.assertEqual(result["sources"][0]["file_hashes"], [source.hash])
 
