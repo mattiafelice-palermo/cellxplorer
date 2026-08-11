@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.3
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: d956f05008f091ee3c387d219782e1c06d73deae
 LAST_REVIEW_SHA: 2bfedb9b0746db5100dfbfe0e6924b1926398869
-NEXT_ACTION: Review the corrected 039.3 R1-R4 follow-up against Parent 039 and Child 039.3. 039.4 is not authorized yet.
+NEXT_ACTION: Reviewer is re-reviewing the corrected 039.3 R1-R4 follow-up. The implementer must remain stopped; 039.4 is not authorized.
 ```
 
 ## Protocol
@@ -200,13 +200,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.3 implementation `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`, verification record
-`d2f52e2f9820312f50b6a7558646490e725fe33d`, and handoff
-`91050914d906518a8af7dc567a9cbeda6eec1627` have now completed the full independent review.
-Corrected canonical review commit `2bfedb9b0746db5100dfbfe0e6924b1926398869` supersedes the premature
-R1-R3-only release at `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` and records the complete
-R1-R4 finding set. R1 and R4 are scanner/source-provenance defects; R2 and R3 are required
-continuation/lifecycle verification gaps. The implementer owns only R1-R4. 039.4 is not authorized.
+Corrected 039.3 R1-R4 follow-up commits `52164278480dc66b977eaf622fd128a6631508f9` and
+`d956f05008f091ee3c387d219782e1c06d73deae` are under independent reviewer re-review. R1-R4 from
+canonical review `2bfedb9b0746db5100dfbfe0e6924b1926398869` are the only authorized correction scope.
+The reviewer has claimed `UNDER_REVIEW`; 039.4 remains unauthorized until this complete re-review is
+pushed.
 
 ## Coordination log
 
