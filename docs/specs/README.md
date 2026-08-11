@@ -16,7 +16,7 @@
   - [`039.4-neware-excel-analysis-regression-and-closure.md`](039.4-neware-excel-analysis-regression-and-closure.md)
     — Cycles/Time-Capacity/Steps/DCIR/Rate Capability/Chargeability regression, portable/source
     audit, real-workbook acceptance, docs/version/package closure, and final parent review.
-  **Plan; no child implemented.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
+  **Implementation complete; final child and cumulative review pending.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
 - [`038-analyses-feature-modularization.md`](038-analyses-feature-modularization.md)
   moves all frontend Analysis Database, workspace, editor-family, plotting, saved-artifact, warmup,
   and portable-report ownership into `features/analyses/` while leaving the two route pages as
@@ -602,7 +602,7 @@ Rules:
   - [039.4-neware-excel-analysis-regression-and-closure.md](039.4-neware-excel-analysis-regression-and-closure.md)
     — end-to-end analysis regression, format-neutral scientific verification, portable/source
     audit, real-workbook acceptance, release documentation, and final cumulative review.
-  **Plan; no child implemented.**
+  **039.1–039.3 implemented and review-clean; 039.4 implementation is complete and pending final child plus cumulative review.**
 
 ## Assets
 

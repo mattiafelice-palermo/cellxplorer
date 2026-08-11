@@ -725,7 +725,7 @@ def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
 
 
 def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | None = None) -> SourceFile:
-    """Hash + header-parse one file and upsert its SourceFile row."""
+    """Hash + header-parse one supported Neware source and upsert its SourceFile row."""
     file_hash = parsing.compute_hash(path)
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing:

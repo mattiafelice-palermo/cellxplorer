@@ -141,6 +141,16 @@ Original Neware files normally remain at their source paths. The database stores
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not
 delete the data directory. Destructive removal is an explicit, separately confirmed choice.
 
+Supported source dispatch is centralized in `backend/app/services/parsing.py`: `.nda` and `.ndax`
+use the shared NewareNDA boundary, while structured Neware `.xlsx` files use
+`backend/app/services/neware_excel.py`. Excel sources are normalized into the same canonical raw,
+protocol and versioned raw/cycle cache contracts, so scientific services remain format-neutral.
+The workbook's `record` sheet is the point-level source of truth; optional `step` and `cycle`
+summaries validate parser-derived execution and cycle projections rather than replacing them.
+Metadata inspection reads bounded workbook surfaces without scanning the large record sheet, and
+exports that omit semantic condition expressions remain explicitly non-applicable to
+Chargeability recognition.
+
 The import filesystem picker keeps navigation and recursive selection separate. Its quick-access
 standard locations come from `backend/app/services/windows_known_folders.py`, which calls the
 Unicode Windows Known Folder API for redirected Desktop/Documents/Downloads and falls back to

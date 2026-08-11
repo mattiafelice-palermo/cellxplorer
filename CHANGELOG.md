@@ -4,6 +4,14 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0 - 2026-08-11
+
+### New features
+
+- Import structured Neware .xlsx exports through the normal Cell, source, cache and analysis workflows.
+- Analyze Excel-derived canonical records with Cycles, Time/Capacity, Steps, DCIR and Rate Capability when the declared protocol supports those families.
+- Preserve .xlsx source provenance in portable reports and report missing condition expressions truthfully for Chargeability.
+
 ## 0.21.0-beta.1 - 2026-08-10
 
 - Reorganize analysis editor into modular features. Cycles and Time/Capacity plots are now separate components alongside Steps, DCIR, Chargeability, and Rate Capability. No behavioral changes.

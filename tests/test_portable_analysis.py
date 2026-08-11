@@ -381,6 +381,39 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(portable_analysis._sha256_file(Path(imported_source.path)), source_hash)
         self.assertFalse(any("Original Neware files were not included" in item for item in warnings))
 
+    def test_original_xlsx_source_is_embedded_with_normal_provenance(self):
+        db, analysis, source, source_path, source_hash = self.create_analysis()
+        xlsx_path = self.root / "cell.xlsx"
+        source_path.rename(xlsx_path)
+        source.path = str(xlsx_path)
+        source.filename = xlsx_path.name
+        source.ext = "xlsx"
+        source.size = xlsx_path.stat().st_size
+        db.commit()
+
+        destination = self.root / "xlsx-portable.html"
+        portable_analysis.export_analysis_html(
+            db,
+            analysis,
+            destination,
+            include_original_files=True,
+            strict_original_files=True,
+        )
+        manifest = portable_analysis.read_manifest(destination)
+        report = self.read_report(destination)
+        source_document = report["sources"][0]
+        original_payloads = [
+            payload
+            for payload in manifest["payloads"]
+            if payload["kind"] == "original_source"
+        ]
+
+        self.assertEqual(source_document["ext"], "xlsx")
+        self.assertEqual(source_document["filename"], "cell.xlsx")
+        self.assertEqual(source_document["hash"], source_hash)
+        self.assertEqual(len(original_payloads), 1)
+        self.assertEqual(original_payloads[0]["filename"], "cell.xlsx")
+
     def test_linked_import_marks_missing_source_offline(self):
         destination, source_hash = self.create_export(include_original_files=False)
         (self.root / "cell.ndax").unlink()

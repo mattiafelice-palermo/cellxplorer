@@ -3,9 +3,9 @@
 ## What this repository is
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
-inspect, and analyze Neware `.nda`/`.ndax` cycling data. The UI is React + Mantine, the API is
-FastAPI + SQLAlchemy, and the desktop installer is a Tauri shell that launches a bundled Python
-backend sidecar.
+inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data.
+The UI is React + Mantine, the API is FastAPI + SQLAlchemy, and the desktop installer is a Tauri
+shell that launches a bundled Python backend sidecar. Arbitrary Excel workbooks remain unsupported.
 
 Read `README.md` for the short overview, `spec.md` for the original domain model, and the files in
 `docs/` for parser and Windows packaging notes. The current code and tests take precedence where
@@ -142,7 +142,8 @@ production migrations. See `docs/database-migrations.md`.
 
 - `backend/app/models.py`: SQLAlchemy schema, including internal Test/TestFile compatibility storage
 - `backend/app/routers/`: `/api` endpoints
-- `backend/app/services/parsing.py`: the only direct NewareNDA integration
+- `backend/app/services/parsing.py`: shared source dispatch and the only direct NewareNDA integration
+- `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
 - `backend/app/services/analysis_engine.py`: analysis computation
@@ -235,7 +236,7 @@ Cellxplorer/
 │   ├── test_automation.py          Automation pause endpoint and source-monitor skip
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
-│   ├── test_neware_excel.py         Structured Neware Excel parser contract tests (Spec 039.1)
+│   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)

@@ -3,7 +3,9 @@
 Single-user, local web app for organizing, analyzing, comparing and
 revisiting Neware battery-cycling data. Built per [SPEC.md](spec.md) around
 the open-source **NewareNDA** parser (the same library embedded in the
-Neware Batch Converter found in this directory).
+Neware Batch Converter found in this directory). CellXplorer imports Neware
+`.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports through the same
+Cell/source/cache/analysis workflow; arbitrary Excel workbooks are not supported.
 
 ## Run on Windows
 

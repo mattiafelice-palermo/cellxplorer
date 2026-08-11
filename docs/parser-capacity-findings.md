@@ -22,6 +22,17 @@ Using the last discharge row is closer, but it can still differ from the maximum
 
 The parser exposes Neware capacity columns named `Charge_Capacity(mAh)` and `Discharge_Capacity(mAh)`. The app renames these to `charge_capacity_mah` and `discharge_capacity_mah` without applying another conversion. The preview label `mAh` matches the parser output.
 
+## Supported Neware source dispatch
+
+The supported source policy is `.nda`, `.ndax`, and structured Neware `.xlsx` only. The shared
+dispatch and parser-bundle identity live in `backend/app/services/parsing.py`; the Excel mapping
+itself lives in `backend/app/services/neware_excel.py` and produces the same canonical raw columns
+used by the binary parser. Excel metadata inspection is bounded to the workbook's metadata and
+protocol surfaces, while the `record` sheet remains the source of truth for point-level data.
+Optional `step` and `cycle` sheets are independent validation summaries. Some exports do not carry
+Neware semantic condition expressions, so protocol reconstruction must preserve that absence and
+Chargeability must report no applicable match rather than infer one from the curve.
+
 ## How `.ndax` Is Parsed
 
 The installed `NewareNDA` parser treats `.ndax` files as zip containers. It reads `data.ndc`, and for some formats also reads `data_runInfo.ndc` and `data_step.ndc`, then merges the resulting tables by `Index` or `Step`.

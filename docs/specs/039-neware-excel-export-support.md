@@ -1,6 +1,6 @@
 # 039 — Neware Excel export support
 
-**Status:** Plan — implement only through the sequential child specifications listed below  
+**Status:** Implementation complete; final cumulative review pending
 **Repository:** `mattiafelice-palermo/cellxplorer`  
 **Authoring baseline:** `main` and `origin/main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`  
 **Merge base:** `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`  

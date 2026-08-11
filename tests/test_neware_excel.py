@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import unittest
 from datetime import datetime, timedelta
@@ -11,13 +12,18 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook, load_workbook
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.config import CALC_VERSION
-from app.services import cache, calc, chargeability, neware_excel, parsing, protocol, rate_capability
+from app.db import Base
+from app.models import Cell, SourceFile, Test, TestFile
+from app.services import analysis_engine, cache, calc, chargeability, dcir, neware_excel, parsing, protocol, rate_capability
 
 
 RECORD_HEADERS = [
@@ -259,6 +265,107 @@ def _add_declared_record_settings(path: Path, interval_s: float) -> None:
     test.append(["Record settings", None, f"{interval_s:g}s/0.01V/0mA"])
     test.append(["Step plan"])
     test.append(TEST_PLAN_HEADERS)
+    workbook.save(path)
+
+
+def _plan_row(
+    step_index: int,
+    step_name: str,
+    *,
+    step_time: float | str | None = None,
+    voltage: float | None = None,
+    rate: float | None = None,
+    current: float | None = None,
+    cutoff_voltage: float | None = None,
+    cutoff_rate: float | None = None,
+    cutoff_current: float | None = None,
+) -> list[object]:
+    row: list[object] = [None] * len(TEST_PLAN_HEADERS)
+    values = {
+        "Step Index": step_index,
+        "Step Name": step_name,
+        "Step Time(min)": step_time,
+        "Voltage(V)": voltage,
+        "C-rate(C)": rate,
+        "Current(mA)": current,
+        "Cut-off voltage (V)": cutoff_voltage,
+        "Cut-off C-rate(C)": cutoff_rate,
+        "Cut-off curr.(mA)": cutoff_current,
+    }
+    for header, value in values.items():
+        row[TEST_PLAN_HEADERS.index(header)] = value
+    return row
+
+
+def _protocol_record(
+    data_point: int,
+    cycle: int,
+    step_index: int,
+    status: str,
+    time_min: float,
+    total_time_min: float,
+    current_ma: float,
+    voltage_v: float,
+    capacity_mah: float,
+    timestamp: datetime,
+) -> dict[str, object]:
+    charge = "Chg" in status and "DChg" not in status
+    discharge = "DChg" in status
+    return {
+        "DataPoint": data_point,
+        "Cycle Index": cycle,
+        "Step Index": step_index,
+        "Step Type": status,
+        "Time(min)": time_min,
+        "Total Time(min)": total_time_min,
+        "Current(mA)": current_ma,
+        "Voltage(V)": voltage_v,
+        "Capacity(mAh)": capacity_mah,
+        "Spec. Cap.(mAh/g)": capacity_mah / 0.1,
+        "Chg. Cap.(mAh)": capacity_mah if charge else 0.0,
+        "Chg. Spec. Cap.(mAh/g)": capacity_mah / 0.1 if charge else 0.0,
+        "DChg. Cap.(mAh)": capacity_mah if discharge else 0.0,
+        "DChg. Spec. Cap.(mAh/g)": capacity_mah / 0.1 if discharge else 0.0,
+        "Date": timestamp,
+        "Power(W)": voltage_v * current_ma / 1000.0,
+    }
+
+
+def _write_protocol_workbook(
+    path: Path,
+    *,
+    plan_rows: list[list[object]],
+    records: list[dict[str, object]],
+    nominal_capacity_mah: float = 50.0,
+    active_mass_mg: float = 100.0,
+) -> None:
+    """Write a deterministic Neware workbook for an analysis-family regression."""
+
+    workbook = Workbook()
+    record_sheet = workbook.active
+    record_sheet.title = "record"
+    record_sheet.append(RECORD_HEADERS)
+    for record in records:
+        record_sheet.append([record.get(header) for header in RECORD_HEADERS])
+
+    test = workbook.create_sheet("test")
+    test.append(["Test information"])
+    test.append(["Start step ID", None, 1, "Volt. upper", None, "4.2V", "P/N", None, "ANALYSIS-039"])
+    test.append(["Cycle count", None, len({int(row[0]) for row in plan_rows if row[0]}), "Volt. lower", None, "2.5V", "Builder", None, "CellXplorer"])
+    test.append(["Record settings", None, "1s/0.01V/0.1mA", None, None, None, "Remarks", None, "Synthetic 039.4 fixture"])
+    test.append(["Voltage range", None, "4.2V", "Curr. lower", None, "-", "-", None, "-"])
+    test.append(["Current range", None, "0-50mA", "Start time", None, datetime(2026, 1, 1, 12, 0, 0), "Barcode", None, "SYNTH-0394"])
+    test.append(["Active material", None, f"{active_mass_mg:g}mg", "Nominal capacity", None, f"{nominal_capacity_mah:g}mAh", "", None, None])
+    test.append([])
+    test.append(["Step plan"])
+    test.append(TEST_PLAN_HEADERS)
+    for row in plan_rows:
+        test.append(row)
+
+    unit = workbook.create_sheet("unit")
+    unit.append([path.name])
+    unit.append(["device", 1, 2, 3])
+    unit.append(["Start time", None, datetime(2026, 1, 1, 12, 0, 0)])
     workbook.save(path)
 
 
@@ -1012,6 +1119,315 @@ class NewareExcelParserTests(unittest.TestCase):
                 if cache_directory.exists():
                     import shutil
                     shutil.rmtree(cache_directory)
+
+
+class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
+    """Exercise registered Excel sources through the existing analysis services."""
+
+    def setUp(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        self.db = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+        self.cache_hashes: list[str] = []
+
+    def tearDown(self):
+        self.db.close()
+        for file_hash in self.cache_hashes:
+            shutil.rmtree(cache.raw_path(file_hash).parent, ignore_errors=True)
+
+    def _register(self, path: Path) -> tuple[Cell, SourceFile, dict, pd.DataFrame]:
+        metadata = parsing.read_header_metadata(path)
+        raw = neware_excel.parse_timeseries(path)
+        file_hash = parsing.compute_hash(path)
+        cache.build(file_hash, path)
+        self.cache_hashes.append(file_hash)
+
+        source = SourceFile(
+            hash=file_hash,
+            path=str(path),
+            filename=path.name,
+            size=path.stat().st_size,
+            ext=path.suffix.casefold().lstrip("."),
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            row_count=len(raw),
+            cycle_count=int(raw["cycle"].nunique()),
+            header_meta=metadata["raw"],
+            start_time=metadata.get("start_time"),
+            active_mass_mg=metadata.get("active_mass_mg"),
+            nominal_capacity_mah=metadata.get("nominal_capacity_mah"),
+            capacity_summary_status="ready",
+        )
+        cell = Cell(name=f"Excel integration {len(self.cache_hashes)}")
+        test = Test(cell=cell, name="internal source chain")
+        self.db.add_all([cell, source, test])
+        self.db.flush()
+        self.db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        self.db.commit()
+        return cell, source, metadata, raw
+
+    @staticmethod
+    def _spec(cell: Cell) -> dict:
+        spec = analysis_engine.default_spec("Excel integration")
+        spec["selection"]["entries"] = [{"kind": "cell", "ref_id": cell.id}]
+        return spec
+
+    def test_registered_excel_feeds_cycles_time_capacity_and_repeated_steps(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "analysis.xlsx"
+            _write_metadata_workbook(path)
+            cell, source, metadata, raw = self._register(path)
+            spec = self._spec(cell)
+
+            cycles = analysis_engine.compute(self.db, spec, None)
+            time_capacity = analysis_engine.compute_time_capacity(self.db, spec, None)
+
+            signature = protocol.reconstruct_protocol(
+                metadata["raw"], source.nominal_capacity_mah
+            )["signature"]
+            spec["protocol_segments"] = [
+                {
+                    "id": "repeated-charge",
+                    "name": "Repeated charge step",
+                    "targets": [
+                        {"protocol_signature": signature, "step_indices": [2]}
+                    ],
+                }
+            ]
+            spec["computation"]["steps"] = {
+                "series": [
+                    {
+                        "id": "repeated-charge-series",
+                        "cell_id": cell.id,
+                        "segment_id": "repeated-charge",
+                    }
+                ],
+                "mode": "union",
+            }
+            steps = analysis_engine.compute_steps(self.db, spec, None)
+
+        cycle_series = cycles["cell_series"][0]
+        self.assertEqual(source.ext, "xlsx")
+        self.assertEqual(cycle_series["x"], [1, 2])
+        np.testing.assert_allclose(
+            cycle_series["quantities"]["charge_capacity_mah"], [2.9, 1.8]
+        )
+        self.assertEqual(cycles["sources"][0]["file_hashes"], [source.hash])
+
+        trace = time_capacity["cell_traces"][0]
+        self.assertEqual(len(trace["time_s"]), len(raw))
+        self.assertEqual(set(trace["source_filename"]), {path.name})
+        times = [value for value in trace["time_s"] if value is not None]
+        self.assertTrue(all(second >= first for first, second in zip(times, times[1:])))
+
+        step_series = steps["cell_series"][0]
+        self.assertEqual(step_series["n_blocks"], 3)
+        self.assertEqual(step_series["x_cycle"][:2], [1, 1])
+        self.assertEqual(
+            [item["step_start"] for item in step_series["block_meta"][:2]], [2, 2]
+        )
+
+    def test_registered_excel_dcir_fixture_uses_current_detector_and_occurrences(self):
+        plan = [
+            _plan_row(1, "Rest", step_time=30),
+            _plan_row(
+                2,
+                "CC DChg",
+                step_time=0.5,
+                rate=1.0,
+                current=-50.0,
+                cutoff_voltage=3.4,
+            ),
+            _plan_row(3, "End"),
+        ]
+        records: list[dict[str, object]] = []
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        total_min = 0.0
+        data_point = 1
+        for cycle in range(1, 4):
+            for step_index, status, current, duration, voltages in (
+                (1, "Rest", 0.0, 30.0, (3.50, 3.50)),
+                (2, "CC DChg", -50.0, 0.5, (3.50, 3.40)),
+            ):
+                records.append(
+                    _protocol_record(
+                        data_point,
+                        cycle,
+                        step_index,
+                        status,
+                        0.0,
+                        total_min,
+                        current,
+                        voltages[0],
+                        0.0,
+                        base + timedelta(minutes=total_min),
+                    )
+                )
+                data_point += 1
+                records.append(
+                    _protocol_record(
+                        data_point,
+                        cycle,
+                        step_index,
+                        status,
+                        duration,
+                        total_min + duration,
+                        current,
+                        voltages[1],
+                        0.0,
+                        base + timedelta(minutes=total_min + duration),
+                    )
+                )
+                data_point += 1
+                total_min += duration
+
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "dcir.xlsx"
+            _write_protocol_workbook(path, plan_rows=plan, records=records)
+            cell, source, metadata, _raw = self._register(path)
+            reconstructed = protocol.reconstruct_protocol(
+                metadata["raw"], source.nominal_capacity_mah
+            )
+            candidates = chargeability.detect_candidates(reconstructed)
+            dcir_candidates = dcir.detect_candidates(reconstructed)
+            spec = self._spec(cell)
+            spec["dcir_segments"] = [
+                {
+                    "id": "discharge-pulse",
+                    "name": "Discharge pulse",
+                    "targets": [dcir_candidates[0]],
+                }
+            ]
+            spec["computation"]["dcir"] = {
+                "series": [
+                    {
+                        "id": "discharge-pulse-series",
+                        "cell_id": cell.id,
+                        "segment_id": "discharge-pulse",
+                    }
+                ]
+            }
+            result = analysis_engine.compute_dcir(self.db, spec, None)
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(len(dcir_candidates), 1)
+        series = result["cell_series"][0]
+        self.assertEqual(series["n_measurements"], 3)
+        self.assertEqual(series["direction"], "discharge")
+        np.testing.assert_allclose(series["quantities"]["dcir_mohm"], [2000.0] * 3)
+        self.assertEqual(result["sources"][0]["file_hashes"], [source.hash])
+
+    def test_registered_excel_rate_fixture_is_detected_and_extracted(self):
+        rates = (0.2, 0.5, 1.0)
+        plan: list[list[object]] = []
+        for index, rate in enumerate(rates):
+            charge_step = index * 2 + 1
+            discharge_step = charge_step + 1
+            plan.extend(
+                [
+                    _plan_row(
+                        charge_step,
+                        "CC Chg",
+                        step_time=1,
+                        voltage=4.2,
+                        rate=rate,
+                        current=rate * 50.0,
+                    ),
+                    _plan_row(
+                        discharge_step,
+                        "CC DChg",
+                        step_time=1,
+                        rate=1.0,
+                        current=-50.0,
+                        cutoff_voltage=2.5,
+                    ),
+                ]
+            )
+        plan.append(_plan_row(7, "End"))
+
+        records: list[dict[str, object]] = []
+        base = datetime(2026, 1, 1, 12, 0, 0)
+        total_min = 0.0
+        data_point = 1
+        for cycle, rate in enumerate(rates, start=1):
+            for step_index, status, current, capacity, voltages in (
+                (cycle * 2 - 1, "CC Chg", rate * 50.0, 10.0 + rate, (3.5, 4.2)),
+                (cycle * 2, "CC DChg", -50.0, 8.0 + rate, (3.5, 2.5)),
+            ):
+                records.append(
+                    _protocol_record(
+                        data_point,
+                        cycle,
+                        step_index,
+                        status,
+                        0.0,
+                        total_min,
+                        current,
+                        voltages[0],
+                        0.0,
+                        base + timedelta(minutes=total_min),
+                    )
+                )
+                data_point += 1
+                records.append(
+                    _protocol_record(
+                        data_point,
+                        cycle,
+                        step_index,
+                        status,
+                        1.0,
+                        total_min + 1.0,
+                        current,
+                        voltages[1],
+                        capacity,
+                        base + timedelta(minutes=total_min + 1.0),
+                    )
+                )
+                data_point += 1
+                total_min += 1.0
+
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rate-capability.xlsx"
+            _write_protocol_workbook(path, plan_rows=plan, records=records)
+            cell, source, metadata, _raw = self._register(path)
+            reconstructed = protocol.reconstruct_protocol(
+                metadata["raw"], source.nominal_capacity_mah
+            )
+            pairs = rate_capability.build_rate_pairs(reconstructed)
+            spec = self._spec(cell)
+            result = rate_capability.compute(self.db, spec, None)
+
+        self.assertEqual(len(pairs), 3)
+        self.assertEqual(
+            [round(pair["charge_rate_c"], 3) for pair in pairs], [0.2, 0.5, 1.0]
+        )
+        families = result["cells"][0]["families"]
+        self.assertEqual(families["charge"]["status"], "matched")
+        self.assertEqual(families["charge"]["point_count"], 3)
+        self.assertEqual(families["discharge"]["status"], "not_detected")
+        self.assertEqual(result["sources"][0]["file_hashes"], [source.hash])
+
+    def test_registered_excel_without_conditions_reports_chargeability_no_match(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "no-conditions.xlsx"
+            _write_metadata_workbook(path)
+            cell, source, metadata, _raw = self._register(path)
+            spec = self._spec(cell)
+            result = chargeability.compute(self.db, spec, None)
+
+        self.assertTrue(any("protocol condition expressions" in warning for warning in metadata["protocol_warnings"]))
+        self.assertEqual(result["cells"][0]["status"], "no_candidates")
+        self.assertEqual(result["cells"][0]["candidate_count"], 0)
+        self.assertEqual(result["cells"][0]["match_count"], 0)
+        self.assertIn(
+            "chargeability_no_candidates",
+            {badge["kind"] for badge in result["badges"]},
+        )
+        self.assertEqual(result["sources"][0]["file_hashes"], [source.hash])
 
 
 if __name__ == "__main__":
