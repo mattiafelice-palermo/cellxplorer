@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.1
-TURN: IMPLEMENTER
-STATE: IMPLEMENTING
-LAST_IMPLEMENTATION_SHA: NONE
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 7599715c78312ad9ced12c665ade3a5e46c28e95
 LAST_REVIEW_SHA: NONE
-NEXT_ACTION: Implement 039.1 exactly as specified, verify it, commit and push one focused checkpoint, then hand control to REVIEWER.
+NEXT_ACTION: Review 039.1 against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -214,3 +214,19 @@ work is authorized beyond active Child 039.1 until its independent review is cle
 - Initial owner: **IMPLEMENTER**.
 - Active child: **039.1**.
 - No implementation or verification is claimed by this authoring checkpoint.
+
+### 2026-08-11 — IMPLEMENTER
+
+- Active child: 039.1.
+- Implementation SHA: `7599715c78312ad9ced12c665ade3a5e46c28e95`.
+- Added the bounded structured Neware Excel raw parser, runtime synthetic workbook tests, the
+  `openpyxl` dependency, and the maintained agent/spec records. The parser preserves raw record
+  order by `DataPoint`, separates programmed `step_index` from executed `step`, reconstructs
+  per-executed-step energy counters, and validates the optional `step` summary.
+- Verification: `python -m unittest tests.test_neware_excel -v` — 21 passed; `python -m unittest
+  tests.test_calc_and_cache -v` — 36 passed; real supplied workbook probe — 13,982 rows, cycles
+  1–40, 201 executed steps, 40 `calc.per_cycle` rows, finite required fields; final elevated
+  `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages.
+- Real-workbook/manual/packaged checks: real read-only probe RUN; browser/manual UI check NOT
+  APPLICABLE to 039.1; packaging check NOT RUN because packaging belongs to 039.3.
+- Next action: stop implementation and await independent reviewer review of 039.1.
