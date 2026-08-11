@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: d8bc05716d92f80f0f87376a56504e49d073dc8f
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
 LAST_REVIEW_SHA: 60d1a53773d821c9134835bc9c48e87c81ef25b7
-NEXT_ACTION: 039.3 is review-clean. Implement 039.4 exactly as specified, including final analysis regression, packaging/manual evidence, documentation/version closure and handoff for the required focused plus cumulative Parent 039 review.
+NEXT_ACTION: Review 039.4 against Parent 039 and perform the required fresh cumulative Parent 039 review before setting FEATURE_COMPLETE.
 ```
 
 ## Protocol
@@ -489,3 +489,28 @@ to 039.4. The implementer must complete the 039.4 child and then hand control to
 - Reviewer-independent verification: inspected the exact two-file documentation patch and remote commit history through the GitHub connector. No implementation/test command was independently rerun because R5 changed audit documentation only.
 - Next action: 039.3 is review-clean; implement 039.4 exactly as specified, then hand control to REVIEWER for focused 039.4 plus fresh cumulative Parent 039 review.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 â€” IMPLEMENTER HANDOFF (039.4)
+
+- Active child: 039.4.
+- Implementation SHA: `805f318b60dc3815459792503073c1b1953d2ed1`; verification-record checkpoint:
+  `5284d97`.
+- Changes: added registered/cache-backed Excel analysis regressions for Cycles, Time/Capacity,
+  repeated Steps, DCIR, Rate Capability and truthful missing-condition Chargeability; added
+  portable original-`.xlsx` provenance coverage; completed format-neutral scientific audit,
+  real-workbook acceptance record, documentation/project-context closure, synchronized `0.22.0`
+  minor version and user-facing changelog.
+- Verification: parent backend matrix including golden modules â€” **375 passed**; frontend policy
+  tests â€” **461 passed**; `python scripts\check_versions.py --expected-version 0.22.0` â€” PASS;
+  final elevated `python scripts\preflight.py --no-cache` â€” **PREFLIGHT PASSED**, 5/5 stages,
+  all 59 backend modules passed; build-only stable packaging â€” PASS, NSIS artifact produced.
+- Real workbook: disposable read-only registered/cache-backed acceptance RUN (13,982 raw rows,
+  40 cycles, 201 executed steps, 26 programmed rows, 19.21 mg, 3.3 mAh, locked deviations within
+  tolerance); DCIR/rate/Chargeability recorded not applicable for the supplied protocol.
+- Packaged runtime: RUN with a generated privacy-safe workbook; sidecar health, metadata/full parse,
+  preview, raw data, normal registration, Cycles, Steps, exact restart and cache-hit checks passed.
+  Final 039.4 analysis/browser UI matrix: NOT RUN; earlier 039.3 import browser matrix remains
+  recorded separately. Private workbook was not committed.
+- Next action: stop implementation and await the focused 039.4 review plus fresh cumulative Parent
+  039 review.
+- TURN: **REVIEWER**.
