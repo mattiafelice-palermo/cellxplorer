@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
+TURN: REVIEWER
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
 LAST_REVIEW_SHA: 7c30e14442f3c3d635c8376f2bfa19fe9cfe82de
-NEXT_ACTION: Implement only R1-R3 from the canonical 039.3 review, verify, commit, push, and return to REVIEWER. 039.4 is not authorized yet.
+NEXT_ACTION: Reviewer reconciliation is completing the full 039.3 finding set under lock. The implementer must remain stopped; 039.4 is not authorized.
 ```
 
 ## Protocol
@@ -202,14 +202,11 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 039.3 implementation `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`, verification record
 `d2f52e2f9820312f50b6a7558646490e725fe33d`, and handoff
-`91050914d906518a8af7dc567a9cbeda6eec1627` have been independently reviewed under reviewer lock
-`fdfc6537e005ad5ad0ef447170ad0edc40af2e9a`. Canonical review commit
-`7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` records three actionable findings: R1 requires scanner
-same-path invalid Excel replacement to preserve old recoverability while truthfully marking the
-registered source changed; R2 requires the locked mixed binary/Excel continuation proof including
-ordering and the one-internal-Test invariant; R3 requires the remaining Excel-specific stable
-update/source-monitor lifecycle verification. The implementer owns only R1-R3. 039.4 is not
-authorized yet.
+`91050914d906518a8af7dc567a9cbeda6eec1627` remain under reviewer reconciliation. Review commit
+`7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` recorded R1-R3 but released the implementer before a
+second reviewer pass under the active `UNDER_REVIEW` lock completed. No implementation code landed
+after that premature release. The reviewer has reclaimed the lock to complete the full finding set;
+039.4 remains unauthorized.
 
 ## Coordination log
 
@@ -327,7 +324,7 @@ authorized yet.
 
 - Active child: 039.2; review findings addressed: R4 and R5.
 - Follow-up implementation SHA: `06b33641446e8592748ff56884d50303d02fdee7`.
-- R4 now validates the bounded required `record` header contract before metadata labels an
+- R4 now validates the bounded Neware `record` header before metadata labels an
   `.xlsx` source as Neware Excel; R1’s valid record-only/no-`test` degradation remains intact.
   R5 adds a three-rate Excel-derived protocol regression through the existing Rate Capability
   pairing seam, asserting programmed step numbers, directions, rates and voltage cutoffs.
@@ -441,3 +438,10 @@ authorized yet.
 - Reviewer-independent verification: inspected the exact implementation delta, merge base, import inspection/registration, shared extension policy, scanner/source replacement ordering, continuation contracts, source-monitor ownership, frontend wording and focused tests through the GitHub connector. Python/frontend/browser/private-workbook/packaged commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R1-R3, verifies, commits/pushes, and returns 039.3 to REVIEWER. 039.4 must not begin.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — REVIEWER RECONCILIATION (039.3 premature release)
+
+- Review commit `7c30e14442f3c3d635c8376f2bfa19fe9cfe82de` returned control to the implementer before a second reviewer pass under the active `UNDER_REVIEW` lock had completed.
+- Branch comparison confirmed no implementation code landed after the premature release; only review/coordination documentation changed.
+- The reviewer reclaimed `TURN: REVIEWER / STATE: UNDER_REVIEW` to finish the full 039.3 finding set before any implementation follow-up starts.
+- R1-R3 remain active; the reviewer is checking an additional exact-hash scanner relink inconsistency before the corrected canonical review is released.
