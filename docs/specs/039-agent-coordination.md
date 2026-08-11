@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 696e4f967488a1fafd0360a4c8571c53db7ba0cc
-LAST_REVIEW_SHA: f4d748c528162a8005b99058abcfff78152d43c4
-NEXT_ACTION: Reviewer has claimed the 039.2 R1-R3 follow-up. Complete the full review and write every finding before returning TURN to IMPLEMENTER or advancing the child.
+LAST_REVIEW_SHA: 3eeeb170324d55e6acc08403b16263225ae1c5d2
+NEXT_ACTION: Implement only R4-R5 from the canonical 039.2 review, verify, commit, push, and return to REVIEWER. 039.3 is not authorized yet.
 ```
 
 ## Protocol
@@ -200,14 +200,13 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.2 implementation commit `024525e01b184583d443d672d4b93b91bedfbfc6`, implementation-record
-checkpoint `4063999131e850b42cda00911dcf05c4367fdf27`, and handoff checkpoint
-`df5bc8f1b01db7d0895938f5428316f6ee9cbe7c` have been independently reviewed. Canonical review
-commit `f4d748c528162a8005b99058abcfff78152d43c4` records three actionable findings: R1 requires
-missing `test` metadata to degrade through explicit capability flags rather than an all-empty metadata
-failure; R2 restores the locked declared-record-interval/2-second step-summary timing tolerance; R3
-makes required Excel timestamps fail closed on arbitrary numeric cells. The implementer owns the turn
-only to address R1–R3. 039.3 is not authorized yet.
+039.2 review-fix implementation `696e4f967488a1fafd0360a4c8571c53db7ba0cc` and handoff
+`2193144907a454c0fe6b7135e10dd495c2914d8a` were independently re-reviewed. Canonical review
+commit `3eeeb170324d55e6acc08403b16263225ae1c5d2` confirms R1-R3 resolved and records two further
+actionable findings: R4 requires the metadata seam to reject unrelated `.xlsx` workbooks instead of
+labelling them Neware Excel, while preserving valid record-only capability degradation; R5 requires
+the explicit three-rate Excel-derived Rate Capability protocol regression locked by Child 039.2.
+The implementer owns the turn only to address R4-R5. 039.3 is not authorized yet.
 
 ## Coordination log
 
@@ -309,3 +308,14 @@ only to address R1–R3. 039.3 is not authorized yet.
 - Verification: combined focused run `python -m unittest tests.test_neware_excel tests.test_protocol tests.test_calc_and_cache tests.test_parsing -v` — 100 passed; final elevated `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages; real supplied workbook probe RUN and passed; `py_compile` and `git diff --check` passed.
 - Real-workbook/manual/packaged checks: metadata/protocol/parse/validation/cache probe RUN; browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until 039.3.
 - Next action: stop implementation and await reviewer re-review of 039.2.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (R1–R3)
+
+- Reviewed follow-up implementation: `696e4f967488a1fafd0360a4c8571c53db7ba0cc`; implementer handoff: `2193144907a454c0fe6b7135e10dd495c2914d8a`.
+- Result: **CHANGES REQUIRED**.
+- R1-R3: **resolved** after independent code/test inspection.
+- New findings: R4 — High, `read_metadata()` does not establish the required `record` contract before labelling an arbitrary `.xlsx` as Neware Excel; R5 — Medium, the child-required three-rate Excel-derived Rate Capability compatibility regression is absent.
+- Canonical review commit: `3eeeb170324d55e6acc08403b16263225ae1c5d2`.
+- Reviewer-independent verification: inspected the exact review-fix delta, cumulative branch/merge base, public metadata seam, recognition helper, 039.2 rate-compatibility requirement and focused tests through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
+- Next action: IMPLEMENTER addresses only R4-R5, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
+- TURN: **IMPLEMENTER**.
