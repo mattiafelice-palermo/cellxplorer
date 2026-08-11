@@ -1,5 +1,22 @@
 # Feature specs
 
+- [`039-neware-excel-export-support.md`](039-neware-excel-export-support.md)
+  adds support for structured Neware `.xlsx` exports by mapping them into the existing canonical
+  raw/protocol/cache model rather than creating an Excel-specific scientific path. Implement only
+  through four sequential children on the shared `feature/neware-excel-support` branch:
+  - [`039.1-neware-excel-timeseries-parser.md`](039.1-neware-excel-timeseries-parser.md)
+    — workbook recognition, canonical point-level mapping, executed-step reconstruction, status
+    normalization, energy counters, and independent `step`-summary validation.
+  - [`039.2-neware-excel-metadata-protocol-and-cache.md`](039.2-neware-excel-metadata-protocol-and-cache.md)
+    — metadata/test-plan reconstruction, parser dispatch/bundle versioning, cache integration, and
+    independent cycle-summary validation.
+  - [`039.3-neware-excel-import-and-source-lifecycle.md`](039.3-neware-excel-import-and-source-lifecycle.md)
+    — bounded inspection, file/folder selection, registration, scanner/source updates, frontend
+    format exposure, and packaged runtime integration.
+  - [`039.4-neware-excel-analysis-regression-and-closure.md`](039.4-neware-excel-analysis-regression-and-closure.md)
+    — Cycles/Time-Capacity/Steps/DCIR/Rate Capability/Chargeability regression, portable/source
+    audit, real-workbook acceptance, docs/version/package closure, and final parent review.
+  **Plan; no child implemented.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
 - [`038-analyses-feature-modularization.md`](038-analyses-feature-modularization.md)
   moves all frontend Analysis Database, workspace, editor-family, plotting, saved-artifact, warmup,
   and portable-report ownership into `features/analyses/` while leaving the two route pages as
@@ -568,6 +585,23 @@ Rules:
   - [038.8-analysis-editor-integration.md](038.8-analysis-editor-integration.md)
     — final editor extraction, thin route, compatibility removal, documentation, and integration
     verification.
+  **Parent 038 complete/review-clean; 038.1–038.8 implemented and review-clean.**
+- [039-neware-excel-export-support.md](039-neware-excel-export-support.md)
+  — parent plan for importing structured Neware Excel `.xlsx` exports into the existing canonical
+  raw/protocol/cache/source model. Implement only through these sequential children on
+  `feature/neware-excel-support`:
+  - [039.1-neware-excel-timeseries-parser.md](039.1-neware-excel-timeseries-parser.md)
+    — point-level record mapping, executed-step reconstruction, status normalization, energy
+    reconstruction, and step-summary validation.
+  - [039.2-neware-excel-metadata-protocol-and-cache.md](039.2-neware-excel-metadata-protocol-and-cache.md)
+    — metadata/test-plan reconstruction, parser dispatch/versioning, cache integration, and
+    cycle-summary validation.
+  - [039.3-neware-excel-import-and-source-lifecycle.md](039.3-neware-excel-import-and-source-lifecycle.md)
+    — bounded import inspection, selection/scanning, Cell/source registration, source updates,
+    frontend format exposure, and packaged runtime.
+  - [039.4-neware-excel-analysis-regression-and-closure.md](039.4-neware-excel-analysis-regression-and-closure.md)
+    — end-to-end analysis regression, format-neutral scientific verification, portable/source
+    audit, real-workbook acceptance, release documentation, and final cumulative review.
   **Plan; no child implemented.**
 
 ## Assets
