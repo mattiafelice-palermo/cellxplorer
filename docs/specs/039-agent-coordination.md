@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 06b33641446e8592748ff56884d50303d02fdee7
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 0abff4102cb534f0652ffb6bc52648eec69c6c9b
 LAST_REVIEW_SHA: 3b0a7668dd169f3078ce8823c8998bb3e1edd062
-NEXT_ACTION: Implement only R6-R8 from the canonical 039.2 review, verify, commit, push, and return to REVIEWER. 039.3 is not authorized yet.
+NEXT_ACTION: Reviewer claims UNDER_REVIEW, inspects only R6-R8, and returns an explicit state transition. 039.3 is not authorized yet.
 ```
 
 ## Protocol
@@ -344,3 +344,21 @@ follow-up SHA in the implementation record. The implementer owns the turn only t
 - Reviewer-independent verification: inspected the exact R4-R5 patch, cumulative branch/merge base, current parser/cache/provenance behavior, metadata grouping logic, Rate Capability seam, tests and 039.2 performance/version requirements through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R6-R8, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (R6–R8)
+
+- Active child: 039.2; review findings addressed: R6, R7 and R8.
+- Follow-up implementation SHA: `0abff4102cb534f0652ffb6bc52648eec69c6c9b`.
+- R6 advances the Excel parser revision to `2`, producing `v2026.06.11-cxp2` while leaving
+  `CALC_VERSION` at `1.6.1`; golden changes are provenance-only. R7 bounds optional metadata
+  values to their recognized label groups, including optional unit-sheet times. R8 records the
+  real-workbook metadata-only versus full-parse timing comparison.
+- Verification: combined focused run — `112 passed`; `python -m py_compile` — passed;
+  `git diff --check` — passed; final elevated `python scripts\preflight.py` — `PREFLIGHT PASSED`,
+  5/5 stages; real supplied workbook metadata/protocol/parse/validation/cache probe passed.
+- Real-workbook timing: metadata read `0.262049 s`; full `parse_timeseries` `2.859019 s`; metadata
+  was approximately 9.2% of full parse time for 13,982 raw rows.
+- Real-workbook/manual/packaged checks: metadata/protocol/parse/validation/cache probe PASS;
+  browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until
+  039.3.
+- Next action: stop implementation and await independent reviewer re-review of 039.2 R6–R8.
