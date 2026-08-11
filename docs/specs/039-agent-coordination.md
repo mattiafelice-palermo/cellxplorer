@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: d956f05008f091ee3c387d219782e1c06d73deae
-LAST_REVIEW_SHA: 2bfedb9b0746db5100dfbfe0e6924b1926398869
-NEXT_ACTION: Reviewer is re-reviewing the corrected 039.3 R1-R4 follow-up. The implementer must remain stopped; 039.4 is not authorized.
+LAST_REVIEW_SHA: 38e6769cd1fe15ae0b7d9ebe91798aafb5cad845
+NEXT_ACTION: R1-R4 are resolved. Correct only R5 in the 039.3 audit record, commit/push, and return to REVIEWER. 039.4 is not authorized yet.
 ```
 
 ## Protocol
@@ -200,11 +200,13 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-Corrected 039.3 R1-R4 follow-up commits `52164278480dc66b977eaf622fd128a6631508f9` and
-`d956f05008f091ee3c387d219782e1c06d73deae` are under independent reviewer re-review. R1-R4 from
-canonical review `2bfedb9b0746db5100dfbfe0e6924b1926398869` are the only authorized correction scope.
-The reviewer has claimed `UNDER_REVIEW`; 039.4 remains unauthorized until this complete re-review is
-pushed.
+039.3 production findings R1-R4 are resolved by actual remote commits
+`eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` and
+`d956f05008f091ee3c387d219782e1c06d73deae`. Follow-up review
+`38e6769cd1fe15ae0b7d9ebe91798aafb5cad845` leaves only R5: correct the child audit record, which
+currently names non-resolvable SHA `52164278480dc66b977eaf622fd128a6631508f9` instead of canonical
+remote R1-R3 commit `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87`. 039.4 remains unauthorized
+until that audit-only correction is review-clean.
 
 ## Coordination log
 
@@ -460,3 +462,15 @@ pushed.
 - Manual/browser follow-up: NOT RERUN; no frontend code changed. Prior disposable import matrix remains recorded in the child implementation record. Packaged `.xlsx` smoke: NOT RUN.
 - Next action: stop implementation and await independent reviewer re-review of corrected 039.3 R1-R4.
 - TURN: **REVIEWER**.
+
+### 2026-08-11 — REVIEWER FOLLOW-UP (039.3 R1-R4)
+
+- Reviewer lock: `2e37488219cf8dd92909c7a41c1cb2ebbcf17118` held `TURN: REVIEWER / STATE: UNDER_REVIEW` through the complete follow-up review.
+- Reviewed actual remote implementations: `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87` (R1-R3) and `d956f05008f091ee3c387d219782e1c06d73deae` (R4); verification record `2ccebf15ff02703e2b9aa8e90d52fad0a8d6e7df`.
+- Result: **CHANGES REQUIRED — R1-R4 RESOLVED; R5 ONLY**.
+- R1-R4 resolved after independent inspection of scanner ordering, parser-family relink guard, mixed-format continuation persistence/blocking tests, Excel source-monitor/stable-update tests and old-cache cleanup behavior.
+- R5 — Low: the implementation/audit record names non-resolvable SHA `52164278480dc66b977eaf622fd128a6631508f9`; the actual remote R1-R3 commit is `eb59fb02b9ebe16c7a1a2dfffb702beee1316c87`.
+- Canonical review commit: `38e6769cd1fe15ae0b7d9ebe91798aafb5cad845`.
+- Reviewer-independent verification: GitHub connector inspection only; Python/frontend/browser/private-workbook/native-picker/packaged commands were not independently executed.
+- Next action: IMPLEMENTER corrects R5 audit records only, commits/pushes, and returns 039.3 to REVIEWER. 039.4 remains unauthorized.
+- TURN: **IMPLEMENTER**.
