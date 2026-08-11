@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: 949c9caad053faf090fd5cf9645342ef98db9d8d
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 4063999131e850b42cda00911dcf05c4367fdf27
 LAST_REVIEW_SHA: a931a68a38d4fa20ee7a55925334359fbbde9f05
-NEXT_ACTION: 039.1 is review-clean. Implement 039.2 exactly as specified, verify, commit, push, and hand control to REVIEWER.
+NEXT_ACTION: Review 039.2 against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -268,3 +268,15 @@ Control is returned to the implementer for Child 039.2 only.
 - Reviewer-independent verification: inspected the exact follow-up patch, live branch scope, original parser boundary algorithm, updated test, implementation record and canonical review through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
 - Next action: 039.2 may begin exactly as specified.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER
+
+- Active child: 039.2.
+- Implementation checkpoint: `024525e` (`feat: integrate Neware Excel metadata and cache validation`); documentation checkpoint: `4063999131e850b42cda00911dcf05c4367fdf27`.
+- Added bounded Neware Excel metadata and programmed-plan reconstruction, explicit capability
+  metadata and protocol warning behavior, shared `.xlsx` parser dispatch and bundle provenance,
+  cycle-summary validation, cache build validation hooks, and focused protocol/cache/regression
+  coverage. No API, UI, scanner, migration, or `CALC_VERSION` changes were made.
+- Verification: focused suite `96 passed`; final canonical `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages completed successfully; structural ownership checks passed; real supplied workbook probe RUN with 13,982 raw rows, 40 cycles, 201 executed steps, 26 plan rows, 20 executable rows, 19.21 mg active mass, 3.3 mAh nominal capacity, and start `2026-07-17 11:21:32`.
+- Real-workbook/manual/packaged checks: read-only metadata/protocol/parse/validation/cache probe RUN; browser/manual UI NOT APPLICABLE to this backend child; packaged runtime NOT RUN because it remains out of scope until 039.3.
+- Next action: stop implementation and await independent reviewer review of 039.2.
