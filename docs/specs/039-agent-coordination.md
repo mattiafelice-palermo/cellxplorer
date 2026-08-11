@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.4
-TURN: REVIEWER
-STATE: UNDER_REVIEW
+TURN: IMPLEMENTER
+STATE: CHANGES_REQUESTED
 LAST_IMPLEMENTATION_SHA: 805f318b60dc3815459792503073c1b1953d2ed1
-LAST_REVIEW_SHA: 8c55e4592d6d7b4bf93c93f882e54796b51468ba
-NEXT_ACTION: Reviewer reclaimed the final 039.4/Parent 039 review after a premature FEATURE_COMPLETE handoff. Implementer remains stopped until the complete corrected review is pushed.
+LAST_REVIEW_SHA: fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e
+NEXT_ACTION: Implement only R1 from the canonical 039.4 review: assert the known Excel Rate Capability capacities through the registered/cache-backed compute result, verify, commit/push, and return 039.4 to REVIEWER. Parent 039 is not yet merge-ready.
 ```
 
 ## Protocol
@@ -200,12 +200,12 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-The earlier final-review checkpoint `8c55e4592d6d7b4bf93c93f882e54796b51468ba` and coordination
-handoff `e615bb2504fe6baf260dc3ee500ea7f849f80c2b` declared Parent 039 complete before the active
-`UNDER_REVIEW` pass had finished. Branch comparison confirmed that the intervening change was
-coordination/review documentation only; no implementation code landed. The active reviewer has
-therefore reclaimed 039.4 to finish the focused child review plus cumulative Parent 039 review and
-write the complete corrected finding set before releasing the implementer or user.
+The corrected canonical review at `fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e` supersedes the
+premature clean/FEATURE_COMPLETE handoff. Focused 039.4 and cumulative Parent 039 architecture are
+otherwise clean, but R1 remains: the registered Excel Rate Capability regression must assert the
+known output capacities `10.2`, `10.5`, and `11.0` mAh for the `0.2C`, `0.5C`, and `1.0C` charge
+points through the existing registered/cache-backed compute result. Implement only R1, verify, and
+return 039.4 to REVIEWER. Parent 039 remains not merge-ready until that follow-up is reviewed.
 
 ## Coordination log
 
@@ -293,7 +293,7 @@ write the complete corrected finding set before releasing the implementer or use
 - Result: **CHANGES REQUIRED**.
 - Findings: R1 — High, missing `test`/declared-protocol metadata must degrade through explicit capabilities rather than collapse metadata inspection; R2 — Medium, step-summary timing must use the declared record interval or the 2-second fallback, not median observed gaps; R3 — Medium, required Excel timestamps must reject arbitrary numeric cells instead of accepting pandas nanosecond timestamps.
 - Canonical review commit: `f4d748c528162a8005b99058abcfff78152d43c4`.
-- Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
+- Reviewer-independent verification: inspected the correct merge base, cumulative 039.2 scope, parser/metadata/protocol/cache implementation, focused tests, golden provenance-only changes, and underlying 039.1 parser behavior through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
 - Next action: IMPLEMENTER addresses only R1–R3, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
 - TURN: **IMPLEMENTER**.
 
@@ -421,7 +421,7 @@ write the complete corrected finding set before releasing the implementer or use
 
 - Active child: 039.3.
 - Implementation SHA: `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`; verification-record checkpoint: `d2f52e2`.
-- Changes: centralized `.nda`/`.ndax`/structured `.xlsx` source policy; integrated bounded inspection, import selection, registration, preview/raw-data, scanner/source replacement, continuation, warmup, and Neware-specific UI wording; preserved full source headers and curated Cell metadata.
+- Changes: centralized `.nda`/`.ndax`/structured `.xlsx` source policy; integrated bounded inspection, file/folder selection, registration, preview/raw-data, scanner/source replacement, continuation, warmup, and Neware-specific UI wording; preserved full source headers and curated Cell metadata.
 - Verification: focused backend import/source suite — **152 passed**; frontend policy tests — **461 passed**; TypeScript check — passed; Vite build — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; `git diff --check` — passed.
 - Real-workbook/manual/packaged checks: disposable browser/import matrix RUN (structured `.xlsx` listed, metadata/capacity preview, registration/background cache, raw-data endpoint, online/parsed source, unrelated-workbook rejection); native picker and HTML file-input checks NOT RUN; packaged `.xlsx` smoke NOT RUN.
 - Next action: stop implementation and await independent 039.3 review.
@@ -535,3 +535,12 @@ write the complete corrected finding set before releasing the implementer or use
   Rate Capability regression, so the premature clean/FEATURE_COMPLETE decision is superseded.
 - 039.4 is reclaimed as `TURN: REVIEWER / STATE: UNDER_REVIEW` until the corrected canonical review
   with the complete finding set is pushed.
+
+### 2026-08-11 — REVIEWER RECONCILIATION COMPLETE (039.4 + Parent 039)
+
+- Corrected canonical review commit: `fa3f2587c0f5f669e5fbe3ab2bb80489b519ee3e`.
+- Result: **CHANGES REQUIRED — R1 ONLY**. Focused 039.4 and cumulative Parent 039 architecture are otherwise clean.
+- R1 — Medium: the registered/cache-backed Excel Rate Capability integration regression recognizes the three-rate sweep but does not assert the known extracted capacities `10.2`, `10.5`, and `11.0` mAh required by the child spec.
+- Reviewer-independent verification: inspected the implementation/handoff history, exact merge base and cumulative branch scope, parser/cache/import/scanner ownership, analysis services, Excel integration tests, binary golden scope, release/version/docs closure and the race with the premature clean handoff through the GitHub connector. Python/frontend/preflight/packaging/private-workbook/installer/browser commands were not independently executed.
+- Next action: IMPLEMENTER addresses only R1, verifies, commits/pushes, and returns 039.4 to REVIEWER. Parent 039 remains not merge-ready.
+- TURN: **IMPLEMENTER**.
