@@ -9,12 +9,12 @@ Branch: `feature/neware-excel-support`
 Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
-ACTIVE_CHILD: 039.3
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
+ACTIVE_CHILD: 039.2
+TURN: REVIEWER
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 0abff4102cb534f0652ffb6bc52648eec69c6c9b
 LAST_REVIEW_SHA: 08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad
-NEXT_ACTION: 039.2 is review-clean. Implement 039.3 exactly as specified; do not begin 039.4 until 039.3 is independently review-clean.
+NEXT_ACTION: Reviewer is reconciling the premature 039.2 clean handoff after finding a concrete remaining R7 defect. 039.3 is not authorized; complete the corrected review before releasing IMPLEMENTER.
 ```
 
 ## Protocol
@@ -200,10 +200,16 @@ NEXT_ACTION: Parent 039 is implementation/review complete. User decides optional
 
 ## Current handoff
 
-039.2 R6-R8 follow-up implementation `0abff4102cb534f0652ffb6bc52648eec69c6c9b` and handoff
-`d260f9e54bbfba1fc8b58a8b66ea2eb4a107eda5` were independently reviewed under the reviewer lock.
-Canonical review commit `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` confirms R1-R8 resolved and marks 039.2 REVIEW CLEAN.
-039.3 is now authorized and owned by the implementer; 039.4 remains unauthorized until 039.3 is independently review-clean.
+The R6-R8 implementation `0abff4102cb534f0652ffb6bc52648eec69c6c9b` was prematurely marked
+review-clean by review commit `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` while another reviewer
+pass was still under the `UNDER_REVIEW` lock. Before any 039.3 implementation code landed, the
+active reviewer identified a concrete R7 counterexample in the committed verified-layout fixture:
+`Voltage range` can still consume the neighboring unsupported `Curr. lower` label when its own value
+is blank. Because this requires one more normalized-metadata semantic fix after `cxp2` was already
+used, the final parser revision must advance again. R8 timing evidence is valid, but the child
+implementation record still needs the exact R6-R8/final follow-up checkpoint recorded. The reviewer
+has reclaimed 039.2; 039.3 is not authorized until the corrected canonical review is complete and
+these remaining findings are resolved.
 
 ## Coordination log
 
@@ -369,3 +375,16 @@ Canonical review commit `08b5eaae375a8cdc02659fd794ac9d5ce4bf17ad` confirms R1-R
 - Reviewer-independent verification: inspected the exact R6-R8 implementation delta, bundle-version formula, focused metadata grouping tests, provenance-only golden changes, implementation record and handoff through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
 - Next action: 039.2 is review-clean; 039.3 may begin exactly as specified.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — REVIEWER RECONCILIATION (premature 039.2 clean handoff)
+
+- The prior R6-R8 reviewer handoff marked 039.2 clean before a second reviewer pass under the active
+  `UNDER_REVIEW` lock completed.
+- Before any 039.3 implementation code landed, branch comparison confirmed that only coordination
+  metadata had advanced beyond the premature clean commit; no 039.3 implementation files changed.
+- A concrete remaining R7 defect was identified in the committed verified-layout fixture: a blank
+  `Voltage range` value can still consume the neighboring unsupported `Curr. lower` label because
+  the grouping boundary recognizes only normalized labels.
+- 039.2 was therefore safely reclaimed as `TURN: REVIEWER / STATE: UNDER_REVIEW` for correction.
+- 039.3 remains unauthorized until the corrected canonical review is pushed and the remaining
+  findings are resolved.
