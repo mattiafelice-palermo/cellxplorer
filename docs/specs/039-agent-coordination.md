@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.2
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 696e4f967488a1fafd0360a4c8571c53db7ba0cc
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 06b33641446e8592748ff56884d50303d02fdee7
 LAST_REVIEW_SHA: 3eeeb170324d55e6acc08403b16263225ae1c5d2
-NEXT_ACTION: Implement only R4-R5 from the canonical 039.2 review, verify, commit, push, and return to REVIEWER. 039.3 is not authorized yet.
+NEXT_ACTION: Review the 039.2 R4-R5 follow-up against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -319,3 +319,15 @@ The implementer owns the turn only to address R4-R5. 039.3 is not authorized yet
 - Reviewer-independent verification: inspected the exact review-fix delta, cumulative branch/merge base, public metadata seam, recognition helper, 039.2 rate-compatibility requirement and focused tests through the GitHub connector. Python/preflight/private-workbook commands were not independently executed.
 - Next action: IMPLEMENTER addresses only R4-R5, verifies, commits/pushes, and returns 039.2 to REVIEWER. 039.3 must not begin.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (R4–R5)
+
+- Active child: 039.2; review findings addressed: R4 and R5.
+- Follow-up implementation SHA: `06b33641446e8592748ff56884d50303d02fdee7`.
+- R4 now validates the bounded required `record` header contract before metadata labels an
+  `.xlsx` source as Neware Excel; R1’s valid record-only/no-`test` degradation remains intact.
+  R5 adds a three-rate Excel-derived protocol regression through the existing Rate Capability
+  pairing seam, asserting programmed step numbers, directions, rates and voltage cutoffs.
+- Verification: combined focused run `python -m unittest tests.test_neware_excel tests.test_protocol tests.test_calc_and_cache tests.test_parsing tests.test_rate_capability -v` — 110 passed; final elevated `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages; real supplied workbook probe RUN and passed; `py_compile` and `git diff --check` passed.
+- Real-workbook/manual/packaged checks: metadata/protocol/parse/validation/cache probe RUN; browser/manual UI NOT APPLICABLE; packaged runtime NOT RUN because it remains out of scope until 039.3.
+- Next action: stop implementation and await reviewer re-review of 039.2.
