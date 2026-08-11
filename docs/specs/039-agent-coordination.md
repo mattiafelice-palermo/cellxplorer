@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.3
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
 LAST_REVIEW_SHA: 938c634b363d88360b7df839432f9ca7aa5a5a06
-NEXT_ACTION: Review 039.3 against Parent 039 and the active child specification.
+NEXT_ACTION: Reviewer is performing the complete 039.3 review. The implementer must remain stopped until the canonical review and final coordination handoff are pushed.
 ```
 
 ## Protocol
