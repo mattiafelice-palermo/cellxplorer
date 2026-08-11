@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.3
-TURN: IMPLEMENTER
-STATE: REVIEW_CLEAN
-LAST_IMPLEMENTATION_SHA: 871834c06703592a0d1774383ca37498581bf2ac
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: dca7a83440c79b1bd959f847d9b2c2c88b47a3c1
 LAST_REVIEW_SHA: 938c634b363d88360b7df839432f9ca7aa5a5a06
-NEXT_ACTION: 039.2 is review-clean. Implement 039.3 exactly as specified, verify, commit, push, and hand control to REVIEWER.
+NEXT_ACTION: Review 039.3 against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -416,3 +416,12 @@ explicit `UNDER_REVIEW` lock. 039.3 is now authorized and belongs to the impleme
 - Reviewer-independent verification: inspected the exact final implementation delta, current parser-bundle formula, `CALC_VERSION`, positional metadata implementation and tests, provenance-only golden changes, child implementation record, stale-cxp2 search and branch scope through the GitHub connector. Python/preflight/private-workbook checks were not independently executed.
 - Next action: 039.3 may begin exactly as specified.
 - TURN: **IMPLEMENTER**.
+
+### 2026-08-11 — IMPLEMENTER HANDOFF (039.3)
+
+- Active child: 039.3.
+- Implementation SHA: `dca7a83440c79b1bd959f847d9b2c2c88b47a3c1`; verification-record checkpoint: `d2f52e2`.
+- Changes: centralized `.nda`/`.ndax`/structured `.xlsx` source policy; integrated bounded inspection, import selection, registration, preview/raw-data, scanner, source replacement, continuation, warmup, and Neware-specific UI wording; preserved full source headers and curated Cell metadata.
+- Verification: focused backend import/source suite — **152 passed**; frontend policy tests — **461 passed**; TypeScript check — passed; Vite build — passed; final elevated `python scripts\preflight.py` — **PREFLIGHT PASSED**, 5/5 stages; `git diff --check` — passed.
+- Real-workbook/manual/packaged checks: disposable browser/import matrix RUN (structured `.xlsx` listed, metadata/capacity preview, registration/background cache, raw-data endpoint, online/parsed source, unrelated-workbook rejection); native picker and HTML file-input checks NOT RUN; packaged `.xlsx` smoke NOT RUN.
+- Next action: stop implementation and await independent 039.3 review.
