@@ -4,7 +4,7 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
-## 0.22.0 - 2026-08-11
+## 0.22.0-beta.1 - 2026-08-11
 
 ### New features
 
