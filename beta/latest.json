@@ -1,15 +1,15 @@
 {
-  "version": "0.21.0-beta.1",
-  "notes": "- Reorganize analysis editor into modular features. Cycles and Time/Capacity plots are now separate components alongside Steps, DCIR, Chargeability, and Rate Capability. No behavioral changes.",
-  "pub_date": "2026-08-09T22:37:30.652Z",
+  "version": "0.22.0-beta.1",
+  "notes": "### New features\n\n- Import structured Neware .xlsx exports through the normal Cell, source, cache and analysis workflows.\n- Analyze Excel-derived canonical records with Cycles, Time/Capacity, Steps, DCIR and Rate Capability when the declared protocol supports those families.\n- Preserve .xlsx source provenance in portable reports and report missing condition expressions truthfully for Chargeability.",
+  "pub_date": "2026-08-11T20:42:05.351Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFvdDFSbmdhZDgyQUxrWjdZN01YcTVsNHBSaTRuckIzSE9jQ3Q5Z1JMS1hzVnA0eHQ5a25xem04YjBxbVpPdzhZS3lrU0trWi9qZEE5WkFqbTRCREFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzE1MDQ2CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIxLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKT21Ha2dVQkdQNGVBSHJRNk42WWxGMm01K2VCRVVTVHJhTkFPaEJmSFJPcW80VGFNTTArMUlmOHVaMDY0cFhuU1ZsbGRxNFBPYStyUVpOMUN6SWdTRGc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/507978025"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVpFZzM0TUlXcE05ZmxwZjZPWHZyWnNUSGpJM3FIZ0oweXNSV0tLcU5DUWZJdEF4WHdaemJKKy9HeU0xM0paN2hTTTEydjRCUzduWFdHWlpKcDlYTFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NDgwOTIwCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKTVJ1aVZwUDRINml1N1FqbVVSYVJyTi9TTmgyZnZHdXI4WHZ3K3pHUWFGajRVdkQ1dThTbnFrUTMyYnpvZFNuWk0xZTcyM1BYQnVPL1dWNDdLUG5ERFE9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/510619651"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFvdDFSbmdhZDgyQUxrWjdZN01YcTVsNHBSaTRuckIzSE9jQ3Q5Z1JMS1hzVnA0eHQ5a25xem04YjBxbVpPdzhZS3lrU0trWi9qZEE5WkFqbTRCREFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2MzE1MDQ2CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIxLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKT21Ha2dVQkdQNGVBSHJRNk42WWxGMm01K2VCRVVTVHJhTkFPaEJmSFJPcW80VGFNTTArMUlmOHVaMDY0cFhuU1ZsbGRxNFBPYStyUVpOMUN6SWdTRGc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/507978025"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVpFZzM0TUlXcE05ZmxwZjZPWHZyWnNUSGpJM3FIZ0oweXNSV0tLcU5DUWZJdEF4WHdaemJKKy9HeU0xM0paN2hTTTEydjRCUzduWFdHWlpKcDlYTFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NDgwOTIwCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKTVJ1aVZwUDRINml1N1FqbVVSYVJyTi9TTmgyZnZHdXI4WHZ3K3pHUWFGajRVdkQ1dThTbnFrUTMyYnpvZFNuWk0xZTcyM1BYQnVPL1dWNDdLUG5ERFE9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/510619651"
     }
   }
 }
