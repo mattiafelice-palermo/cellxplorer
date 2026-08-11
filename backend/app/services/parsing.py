@@ -38,6 +38,20 @@ def source_filename_allowed(filename: str | Path) -> bool:
     return Path(str(filename or "")).suffix.casefold() in SUPPORTED_NEWARE_SOURCE_EXTENSIONS
 
 
+def source_parser_family(filename: str | Path) -> str | None:
+    """Return the parser family selected by a supported Neware suffix."""
+
+    value = str(filename or "")
+    suffix = Path(value).suffix.casefold()
+    if not suffix and value.casefold() in {"nda", "ndax", "xlsx"}:
+        suffix = f".{value.casefold()}"
+    if suffix == ".xlsx":
+        return "excel"
+    if suffix in {".nda", ".ndax"}:
+        return "binary"
+    return None
+
+
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
     """Reject an Excel file whose bounded metadata read identified no Neware export."""
 

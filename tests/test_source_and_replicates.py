@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 from fastapi import HTTPException
+from openpyxl import Workbook
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -101,6 +102,137 @@ class SourceAndReplicateTests(unittest.TestCase):
         self.assertEqual(source.ext, "xlsx")
         self.assertEqual(source.filename, "cell.xlsx")
         self.assertEqual(source.header_meta, metadata["raw"])
+
+    def test_scanner_rejects_exact_hash_cross_family_relink_without_mutating_source(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_path = Path(tmp) / "source.ndax"
+            renamed_path = Path(tmp) / "source.xlsx"
+            original_path.write_bytes(b"binary-shaped Neware source")
+            renamed_path.write_bytes(original_path.read_bytes())
+            stat = original_path.stat()
+            source = SourceFile(
+                hash="h" * 64,
+                path=str(original_path),
+                filename=original_path.name,
+                size=stat.st_size,
+                ext="ndax",
+                observed_size=stat.st_size,
+                observed_mtime_ns=stat.st_mtime_ns,
+                location_status="online",
+                parse_status="parsed",
+            )
+            db.add(source)
+            db.commit()
+
+            with patch.object(parsing, "compute_hash", return_value="h" * 64), \
+                patch.object(parsing, "read_header_metadata") as read_metadata:
+                with self.assertRaisesRegex(ValueError, "parser families"):
+                    scanner.ingest_path(db, renamed_path, parse_now=False)
+
+            db.expire_all()
+            refreshed = db.query(SourceFile).one()
+            self.assertEqual(refreshed.path, str(original_path))
+            self.assertEqual(refreshed.ext, "ndax")
+            self.assertEqual(refreshed.location_status, "online")
+            self.assertEqual(db.query(SourceFile).count(), 1)
+            read_metadata.assert_not_called()
+
+    def test_scanner_relinks_known_structured_xlsx_and_keeps_extension_coherent(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_path = Path(tmp) / "source.xlsx"
+            renamed_path = Path(tmp) / "renamed.xlsx"
+            workbook = Workbook()
+            record = workbook.active
+            record.title = "record"
+            record.append(
+                [
+                    "DataPoint",
+                    "Cycle Index",
+                    "Step Index",
+                    "Step Type",
+                    "Time(min)",
+                    "Total Time(min)",
+                    "Current(mA)",
+                    "Voltage(V)",
+                    "Chg. Cap.(mAh)",
+                    "DChg. Cap.(mAh)",
+                    "Date",
+                    "Power(W)",
+                ]
+            )
+            record.append(
+                [
+                    1,
+                    1,
+                    1,
+                    "Rest",
+                    0.0,
+                    0.0,
+                    0.0,
+                    3.5,
+                    0.0,
+                    0.0,
+                    "2026-01-01 12:00:00",
+                    0.0,
+                ]
+            )
+            workbook.save(original_path)
+            renamed_path.write_bytes(original_path.read_bytes())
+            stat = original_path.stat()
+            source_hash = parsing.compute_hash(original_path)
+            source = SourceFile(
+                hash=source_hash,
+                path=str(original_path),
+                filename=original_path.name,
+                size=stat.st_size,
+                ext="xlsx",
+                observed_size=stat.st_size,
+                observed_mtime_ns=stat.st_mtime_ns,
+                location_status="offline",
+                parse_status="parsed",
+            )
+            db.add(source)
+            db.commit()
+
+            relinked = scanner.ingest_path(db, renamed_path, parse_now=False)
+
+            self.assertIs(relinked, source)
+            self.assertEqual(relinked.path, str(renamed_path))
+            self.assertEqual(relinked.filename, renamed_path.name)
+            self.assertEqual(relinked.ext, "xlsx")
+            self.assertEqual(relinked.location_status, "online")
+            self.assertEqual(db.query(SourceFile).count(), 1)
+
+    def test_scanner_same_binary_family_relink_updates_extension(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_path = Path(tmp) / "source.nda"
+            renamed_path = Path(tmp) / "renamed.ndax"
+            original_path.write_bytes(b"binary-shaped Neware source")
+            renamed_path.write_bytes(original_path.read_bytes())
+            stat = original_path.stat()
+            source = SourceFile(
+                hash=parsing.compute_hash(original_path),
+                path=str(original_path),
+                filename=original_path.name,
+                size=stat.st_size,
+                ext="nda",
+                observed_size=stat.st_size,
+                observed_mtime_ns=stat.st_mtime_ns,
+                location_status="online",
+                parse_status="parsed",
+            )
+            db.add(source)
+            db.commit()
+
+            relinked = scanner.ingest_path(db, renamed_path, parse_now=False)
+
+            self.assertEqual(relinked.path, str(renamed_path))
+            self.assertEqual(relinked.ext, "ndax")
+            self.assertEqual(relinked.location_status, "online")
+            self.assertEqual(db.query(SourceFile).count(), 1)
 
     def test_scanner_discovers_xlsx_without_opening_workbooks_during_enumeration(self):
         job_id = 902039

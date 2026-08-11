@@ -729,10 +729,30 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
     file_hash = parsing.compute_hash(path)
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing:
+        target_ext = path.suffix.casefold().lstrip(".")
+        target_family = parsing.source_parser_family(path)
+        registered_family = parsing.source_parser_family(existing.path or existing.ext or "")
+        persisted_family = parsing.source_parser_family(existing.ext or existing.path or "")
+        if (
+            target_family is None
+            or registered_family is None
+            or persisted_family is None
+            or registered_family != persisted_family
+            or target_family != registered_family
+        ):
+            raise ValueError(
+                "A known Neware source cannot be relinked across parser families: "
+                f"{existing.filename} -> {path.name}"
+            )
         # same content seen again: relink path if it moved, mark online
-        if existing.path != str(path) or existing.location_status != "online":
+        if (
+            existing.path != str(path)
+            or existing.location_status != "online"
+            or existing.ext != target_ext
+        ):
             existing.path = str(path)
             existing.filename = path.name
+            existing.ext = target_ext
             existing.location_status = "online"
             try:
                 existing.observed_size, existing.observed_mtime_ns = source_signature(path)
