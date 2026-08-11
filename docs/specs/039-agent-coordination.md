@@ -10,11 +10,11 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 
 ```text
 ACTIVE_CHILD: 039.1
-TURN: IMPLEMENTER
-STATE: CHANGES_REQUESTED
-LAST_IMPLEMENTATION_SHA: 7599715c78312ad9ced12c665ade3a5e46c28e95
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: 949c9caad053faf090fd5cf9645342ef98db9d8d
 LAST_REVIEW_SHA: a4e5e1b8cb427be36b3408559d5ea0144e7fb556
-NEXT_ACTION: Implement only R findings from the canonical 039.1 review, verify, commit, push, and return to REVIEWER.
+NEXT_ACTION: Review the 039.1 R1 follow-up against Parent 039 and the active child specification.
 ```
 
 ## Protocol
@@ -229,6 +229,21 @@ implementer owns the turn only to address that review finding. 039.2 is not auth
 - Real-workbook/manual/packaged checks: real read-only probe RUN; browser/manual UI check NOT
   APPLICABLE to 039.1; packaging check NOT RUN because packaging belongs to 039.3.
 - Next action: stop implementation and await independent reviewer review of 039.1.
+
+### 2026-08-11 — IMPLEMENTER FOLLOW-UP (R1)
+
+- Active child: 039.1; review addressed: R1.
+- Follow-up implementation SHA: `949c9caad053faf090fd5cf9645342ef98db9d8d`.
+- Added a focused synthetic regression where consecutive records share cycle, programmed
+  `step_index`, and canonical status while only `Time(min)` resets; the test asserts distinct
+  globally increasing executed `step` IDs and monotonic `Total Time(min)`.
+- Verification: `python -m unittest tests.test_neware_excel -v` — 22 passed; `python -m unittest
+  tests.test_calc_and_cache -v` — 36 passed; `python -m py_compile backend\app\services\neware_excel.py
+  tests\test_neware_excel.py` — passed; `git diff --check` — passed; elevated
+  `python scripts\preflight.py` — `PREFLIGHT PASSED`, 5/5 stages.
+- Real-workbook/manual/packaged checks unchanged from the implementation checkpoint: real probe
+  RUN; browser/manual UI NOT APPLICABLE; packaging NOT RUN.
+- Next action: stop implementation and await reviewer re-review of R1.
 
 ### 2026-08-11 — REVIEWER
 
