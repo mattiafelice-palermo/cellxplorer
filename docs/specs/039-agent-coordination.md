@@ -11,10 +11,10 @@ Merge base: `main` at `0df1fb3e48dfc8a37ee2e9c2a07667ed09942a5b`
 ```text
 ACTIVE_CHILD: 039.2
 TURN: REVIEWER
-STATE: AWAITING_REVIEW
+STATE: UNDER_REVIEW
 LAST_IMPLEMENTATION_SHA: 696e4f967488a1fafd0360a4c8571c53db7ba0cc
 LAST_REVIEW_SHA: f4d748c528162a8005b99058abcfff78152d43c4
-NEXT_ACTION: Review the 039.2 R1-R3 follow-up against Parent 039 and the active child specification.
+NEXT_ACTION: Reviewer has claimed the 039.2 R1-R3 follow-up. Complete the full review and write every finding before returning TURN to IMPLEMENTER or advancing the child.
 ```
 
 ## Protocol
@@ -109,14 +109,18 @@ NEXT_ACTION: Review 039.S against Parent 039 and the active child specification.
 
 When `TURN: REVIEWER`:
 
-1. identify the exact implementation SHA and handoff checkpoint;
-2. confirm the merge base and cumulative branch scope;
-3. read actual code first;
-4. compare only the active child against Parent 039 + child locks;
-5. distinguish implementer-reported verification from reviewer-independent verification;
-6. create/update the canonical review file;
-7. push the review checkpoint;
-8. if findings exist, update state to:
+1. **Immediately claim the review before doing substantive inspection** by updating and pushing the
+   state block with `TURN: REVIEWER` and `STATE: UNDER_REVIEW`. Keep the implementer stopped while
+   the review is in progress. Do not return `TURN: IMPLEMENTER` until the full review is complete
+   and every actionable R finding is already written in the canonical review file.
+2. identify the exact implementation SHA and handoff checkpoint;
+3. confirm the merge base and cumulative branch scope;
+4. read actual code first;
+5. compare only the active child against Parent 039 + child locks;
+6. distinguish implementer-reported verification from reviewer-independent verification;
+7. create/update the canonical review file with the complete finding set;
+8. push the review checkpoint;
+9. if findings exist, update state to:
 
 ```text
 ACTIVE_CHILD: 039.S
@@ -127,7 +131,7 @@ LAST_REVIEW_SHA: <review SHA>
 NEXT_ACTION: Implement only R findings from the canonical 039.S review, verify, commit, push, and return to REVIEWER.
 ```
 
-9. if clean and not final child, advance state to:
+10. if clean and not final child, advance state to:
 
 ```text
 ACTIVE_CHILD: 039.NEXT
