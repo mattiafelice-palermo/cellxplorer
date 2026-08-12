@@ -1460,7 +1460,7 @@ async def inspect_import_files(files: list[UploadFile] = File(...), db: Session 
         previews.append(
             _inspect_import_path(staged_path, db, staged_name=staged_name, expose_source_path=False)
         )
-    return {"files": previews}
+    return {"files": previews, "failures": []}
 
 
 @router.post("/imports/inspect-paths")
@@ -1505,7 +1505,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 phase="completed",
                 progress_percent=100.0,
             )
-        return {"files": []}
+        return {"files": [], "failures": []}
     previews = []
     completed_bytes = 0
     completion_lock = threading.Lock()
@@ -1570,24 +1570,45 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 completed=len(inspections),
                 progress_percent=90.0,
             )
-        for index, inspected in enumerate(inspections):
-            path_string = inspected.path
-            path = Path(path_string)
-            preview = _inspect_import_path(
-                path,
-                db,
-                inspected=inspected,
-                match_snapshot=match_snapshot,
-            )
-            previews.append(preview)
-            completed_bytes += max(0, int(preview.get("size") or 0))
-            if job_id is not None:
-                background_jobs.update_item(
-                    job_id,
-                    path_string,
-                    status="ready",
-                    detail="Identity and Neware metadata ready",
+        failures: list[dict[str, str]] = []
+        for index, outcome in enumerate(inspections):
+            path_string = outcome.path
+            if outcome.inspection is None:
+                failure_path = Path(outcome.path)
+                error = outcome.error or f"Could not inspect {failure_path.name or outcome.path}."
+                failure = {
+                    "path": outcome.path,
+                    "filename": failure_path.name or outcome.path,
+                    "error": error,
+                }
+                failures.append(failure)
+                if job_id is not None:
+                    background_jobs.update_item(
+                        job_id,
+                        outcome.path,
+                        status="failed",
+                        detail="File was not readable and was excluded from this import review",
+                        error=error,
+                    )
+            else:
+                inspected = outcome.inspection
+                path = Path(path_string)
+                preview = _inspect_import_path(
+                    path,
+                    db,
+                    inspected=inspected,
+                    match_snapshot=match_snapshot,
                 )
+                previews.append(preview)
+                completed_bytes += max(0, int(preview.get("size") or 0))
+                if job_id is not None:
+                    background_jobs.update_item(
+                        job_id,
+                        path_string,
+                        status="ready",
+                        detail="Identity and Neware metadata ready",
+                    )
+            if job_id is not None:
                 background_jobs.update_job(
                     job_id,
                     completed_bytes=completed_bytes,
@@ -1596,7 +1617,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                     phase_total=len(inspections),
                     phase_detail="Matching inspected identity and building the import review",
                     current_item_id=path_string,
-                    current_item_label=path.name or path_string,
+                    current_item_label=Path(path_string).name or path_string,
                     progress_percent=90.0 + (9.0 * (index + 1) / max(1, len(inspections))),
                 )
         if job_id is not None:
@@ -1609,7 +1630,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                 phase_detail="Import review ready",
                 progress_percent=100.0,
             )
-        return {"files": previews}
+        return {"files": previews, "failures": failures}
     except ValueError as exc:
         if job_id is not None:
             background_jobs.update_job(job_id, status="failed", error=_import_job_error(exc))

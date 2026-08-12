@@ -250,6 +250,12 @@ export function ContinuationManagementPanel({
         paths = listed.files.map((file) => file.path).filter((path): path is string => Boolean(path));
       }
       const inspected = await post<ImportInspectResult>("/api/imports/inspect-paths", { paths });
+      if (inspected.failures.length > 0) {
+        const details = inspected.failures
+          .map((failure) => `${failure.filename}: ${failure.error}`)
+          .join("; ");
+        throw new Error(`Some continuation sources could not be inspected: ${details}`);
+      }
       setStagedSources(inspected.files);
       setPickerOpen(false);
       setMode("attach");

@@ -43,6 +43,15 @@ metadata so final registration can reuse the header only when the same fingerpri
 final checksum and transactional duplicate checks remain mandatory. Folder layout should not
 materially affect this boundary because it receives file paths after discovery.
 
+Inspection is a per-file terminal boundary: source-level parser, metadata, or filesystem errors are
+returned as failure outcomes for that path while other selected sources continue to the review
+modal. The endpoint returns readable previews in `files` and `{path, filename, error}` entries in
+`failures`, marks failed background-job items as excluded, and completes the inspection job after
+every outcome has been accounted for. The UI keeps failed rows searchable, marks them with the
+reported error, and removes them from selection and folder counts. Exceptions from the worker
+executor itself still fail the request because they indicate infrastructure failure rather than a
+bad source file.
+
 The final import editor keeps preview work lazy: each staged draft owns an explicit idle/loading/
 ready/error state, and only the active source may request a capacity preview. Preview requests carry
 the inspection hash plus size/`mtime_ns`; matching fingerprints reuse that verified hash, while a

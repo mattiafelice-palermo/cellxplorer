@@ -207,7 +207,15 @@ class ImportFlowTests(unittest.TestCase):
             metadata={},
         )
         with patch.object(files.import_inspection, "build_identity_snapshot", return_value=Mock()), \
-            patch.object(files.import_inspection, "inspect_files", return_value=[inspected]), \
+            patch.object(
+                files.import_inspection,
+                "inspect_files",
+                return_value=[import_inspection.FileInspectionOutcome(
+                    path=inspected.path,
+                    inspection=inspected,
+                    error=None,
+                )],
+            ), \
             patch.object(files, "_inspect_import_path", return_value=preview):
             result = files.inspect_import_paths(
                 files.ImportPathInspectRequest(
@@ -218,12 +226,52 @@ class ImportFlowTests(unittest.TestCase):
             )
         job = background_jobs.find_by_token("inspect-test")
         self.assertEqual(result["files"], [preview])
+        self.assertEqual(result["failures"], [])
         self.assertEqual(job["kind"], "import_inspect")
         self.assertEqual(job["completed"], 1)
         self.assertEqual(job["completed_bytes"], 12)
         self.assertEqual(job["phase"], "completed")
         self.assertEqual(job["progress_percent"], 100.0)
         self.assertIsNone(job["current_item_label"])
+        background_jobs.clear_jobs()
+
+    def test_inspection_job_returns_successes_and_failures_without_aborting_batch(self):
+        background_jobs.clear_jobs()
+        good = import_inspection.FileInspection(
+            path="C:/data/good.ndax",
+            filename="good.ndax",
+            size=12,
+            mtime_ns=1,
+            ext="ndax",
+            hash="hash",
+            metadata={},
+        )
+        outcomes = [
+            import_inspection.FileInspectionOutcome("C:/data/good.ndax", good, None),
+            import_inspection.FileInspectionOutcome("C:/data/broken.ndax", None, "Unreadable source"),
+        ]
+        preview = {"staged_name": "x", "size": 12, "filename": "good.ndax"}
+        with patch.object(files.import_inspection, "build_identity_snapshot", return_value=Mock()), \
+            patch.object(files.import_inspection, "inspect_files", return_value=outcomes), \
+            patch.object(files, "_inspect_import_path", return_value=preview):
+            result = files.inspect_import_paths(
+                files.ImportPathInspectRequest(
+                    paths=["C:/data/good.ndax", "C:/data/broken.ndax"],
+                    job_token="inspect-partial-test",
+                ),
+                db=Mock(),
+            )
+        job = background_jobs.find_by_token("inspect-partial-test")
+        self.assertEqual(result["files"], [preview])
+        self.assertEqual(result["failures"], [{
+            "path": "C:/data/broken.ndax",
+            "filename": "broken.ndax",
+            "error": "Unreadable source",
+        }])
+        failed_item = next(item for item in job["items"] if item["id"] == "C:/data/broken.ndax")
+        self.assertEqual(failed_item["status"], "failed")
+        self.assertEqual(failed_item["error"], "Unreadable source")
+        self.assertEqual(job["status"], "completed")
         background_jobs.clear_jobs()
 
     def test_registration_job_failure_is_failed_and_rolls_back(self):

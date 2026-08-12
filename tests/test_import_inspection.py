@@ -109,6 +109,54 @@ class ImportInspectionTests(unittest.TestCase):
         self.assertEqual([item.path for item in result], paths)
         self.assertCountEqual(completed, paths)
 
+    def test_inspection_returns_one_outcome_per_path_when_one_file_fails(self):
+        paths = ["good-0.ndax", "broken.ndax", "good-2.ndax"]
+
+        def fake_inspect(path: str):
+            if path == paths[1]:
+                raise ValueError("broken source")
+            index = int(Path(path).stem.split("-")[-1])
+            return import_inspection.FileInspection(
+                path,
+                Path(path).name,
+                index,
+                index,
+                "ndax",
+                str(index),
+                {},
+            )
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
+            result = import_inspection.inspect_files(paths)
+
+        self.assertEqual([item.path for item in result], paths)
+        self.assertEqual([item.inspection is not None for item in result], [True, False, True])
+        self.assertEqual(result[1].error, "broken source")
+
+    def test_parallel_inspection_keeps_later_files_after_failure(self):
+        paths = [f"file-{index}.ndax" for index in range(26)]
+
+        def fake_inspect(path: str):
+            if path == paths[9]:
+                raise ValueError("parallel failure")
+            index = int(Path(path).stem.split("-")[1])
+            return import_inspection.FileInspection(
+                path,
+                Path(path).name,
+                index,
+                index,
+                "ndax",
+                str(index),
+                {},
+            )
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
+            result = import_inspection.inspect_files(paths, executor_cls=ThreadPoolExecutor)
+
+        self.assertEqual(len(result), len(paths))
+        self.assertEqual(result[9].error, "parallel failure")
+        self.assertIsNotNone(result[25].inspection)
+
     def test_moving_file_is_rejected_between_stat_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cell.ndax"
