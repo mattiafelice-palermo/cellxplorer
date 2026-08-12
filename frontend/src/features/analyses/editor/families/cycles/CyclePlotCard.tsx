@@ -63,7 +63,6 @@ import {
   hoverLabelLayout,
   legendLayout,
   legendMargins,
-  shadowTraceFor,
   tickLayout,
 } from "../../plotting/plotLayout";
 import {
@@ -554,9 +553,6 @@ export function cycleTracesForResult(
         ),
       );
     }
-    if (aggResolved.shadow && !compact) {
-      out.push(shadowTraceFor(agg.x, q.mean, aggResolved));
-    }
     out.push({
       x: agg.x,
       y: q.mean,
@@ -669,9 +665,6 @@ export function cycleTracesForResult(
       sourcePosition[index] ?? "",
       shortSourceName(String(sourceFilename[index] ?? "")),
     ]);
-    if (resolved.shadow && !compact) {
-      out.push(shadowTraceFor(s.x, s.quantities[column] ?? [], resolved));
-    }
     out.push({
       x: s.x,
       y: s.quantities[column] ?? [],

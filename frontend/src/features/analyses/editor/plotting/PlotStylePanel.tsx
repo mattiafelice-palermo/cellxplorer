@@ -47,12 +47,14 @@ import {
 import { applyPlotStylePreset } from "./plotStylePresets";
 import {
   cyclesSeriesDescriptors,
+  seriesPaletteSlots,
   timeCapacitySeriesDescriptors,
   type SeriesDescriptor,
 } from "./seriesStyling";
 import { SeriesStyleModal, type SeriesPreviewBuilder } from "./SeriesStyleModal";
 import {
   PLOT_PALETTES,
+  applyPaletteToStyle,
   currentPlotStyle,
   writeScopedStyle,
   plotPalette,
@@ -183,10 +185,7 @@ export function PlotStylePanel({
     }),
     [style],
   );
-  const seriesKeyOrder = useMemo(
-    () => new Map(seriesDescriptors.map((item, index) => [item.key, index])),
-    [seriesDescriptors],
-  );
+  const seriesKeyOrder = useMemo(() => seriesPaletteSlots(seriesDescriptors), [seriesDescriptors]);
   const seriesBaseFor = useCallback(
     (descriptor: SeriesDescriptor) => {
       const index = seriesKeyOrder.get(descriptor.key) ?? 0;
@@ -1125,12 +1124,7 @@ export function PlotStylePanel({
           onBaseChange={setStyle}
           palettes={paletteQuery.data?.palettes ?? []}
           onApplyPalette={(colors, paletteId) =>
-            setStyle((next) => {
-              next.palette = paletteId ? "custom" : next.palette;
-              next.palette_id = paletteId;
-              next.palette_colors = [...colors];
-              next.custom_colors = {};
-            })
+            setStyle((next) => applyPaletteToStyle(next, colors, paletteId))
           }
           onSavePalette={(name, colors) => savePalette.mutate({ name, colors })}
           onOverwritePalette={(id, colors) => overwritePalette.mutate({ id, colors })}

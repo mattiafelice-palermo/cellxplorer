@@ -245,6 +245,61 @@ export function plotPalette(style: PlotStyle): string[] {
     : PLOT_PALETTES[style.palette] ?? PLOT_PALETTES.app;
 }
 
+/**
+ * Point a tab's whole style at a new palette, in place.
+ *
+ * "Apply palette" means every series takes its colour from the palette, so this
+ * also clears the per-series colour pins that outrank it during resolution:
+ * the `custom_colors`/`ce_custom_colors` maps and the `color` field of every
+ * per-series override. Clearing only `custom_colors` — which is what this used
+ * to do — left any series the user had recoloured by hand, plus any CE series
+ * with its own colour, stuck on the old palette while the rest moved.
+ *
+ * Everything else in an override (width, dash, markers, legend name, colour
+ * linking, visibility) is deliberately kept: those are not a palette's concern.
+ * Bulk `series_rules` are kept too — they are separately authored and visible
+ * in the Rules tab, so silently dropping their colours would be surprising.
+ */
+export function applyPaletteToStyle(
+  style: PlotStyle,
+  colors: string[],
+  paletteId: string | null,
+): void {
+  style.palette = paletteId ? "custom" : style.palette;
+  style.palette_id = paletteId;
+  style.palette_colors = [...colors];
+  style.custom_colors = {};
+  style.ce_custom_colors = {};
+  if (style.series_overrides) {
+    style.series_overrides = withoutSeriesColors(style.series_overrides);
+  }
+}
+
+/**
+ * Copy of `overrides` with every per-series `color` dropped.
+ *
+ * The series editor keeps its own draft of the overrides and only syncs it from
+ * the spec when the dialog opens, so applying a palette has to strip colours
+ * from that draft too. Otherwise the next edit in the dialog commits the stale
+ * draft and puts the old colours straight back.
+ */
+export function withoutSeriesColors(
+  overrides: NonNullable<PlotStyle["series_overrides"]>,
+): NonNullable<PlotStyle["series_overrides"]> {
+  const next: NonNullable<PlotStyle["series_overrides"]> = {};
+  for (const [key, override] of Object.entries(overrides)) {
+    const { color: _dropped, ...rest } = override;
+    // Drop entries that carried nothing but the colour, so a spec does not
+    // accumulate an empty `{}` per series. Mirrors `pruneOverrides`, inlined
+    // because this module deliberately has no value imports — it is unit
+    // tested directly by `node --test`, without a bundler to resolve them.
+    if (Object.values(rest).some((value) => value !== undefined && value !== null)) {
+      next[key] = rest;
+    }
+  }
+  return next;
+}
+
 export function cePalette(style: PlotStyle): string[] {
   return style.ce_palette_colors?.length ? style.ce_palette_colors : PLOT_PALETTES.app;
 }

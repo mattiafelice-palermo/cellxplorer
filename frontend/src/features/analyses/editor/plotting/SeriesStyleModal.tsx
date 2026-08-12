@@ -79,7 +79,6 @@ import type {
   SeriesStyleRule,
 } from "../../../../api";
 import {
-  DEFAULT_SHADOW,
   SERIES_RULE_FIELDS,
   SERIES_RULE_OPERATORS,
   emptySeriesRule,
@@ -93,7 +92,12 @@ import {
   type ResolvedSeriesStyle,
   type SeriesDescriptor,
 } from "./seriesStyling";
-import { PALETTE_OPTIONS, PLOT_PALETTES, plotPalette } from "./plotStyle";
+import {
+  PALETTE_OPTIONS,
+  PLOT_PALETTES,
+  plotPalette,
+  withoutSeriesColors,
+} from "./plotStyle";
 import {
   builtInPaletteSelection,
   customPaletteSelection,
@@ -494,6 +498,10 @@ export function SeriesStyleModal({
 
   const applyScratchPalette = () => {
     onApplyPalette?.(scratchColors, paletteSelection.palette_id);
+    // The parent drops per-series colours so the palette reaches every series.
+    // This draft is only synced from the spec on open, so mirror that here or
+    // the next edit would commit the stale colours back over the new palette.
+    setDraftOverrides((current) => withoutSeriesColors(current));
   };
 
   const flush = useCallback(() => {
@@ -1864,84 +1872,6 @@ export function SeriesStyleModal({
                     }
                   />
                 </Group>
-
-                <Divider label="Drop shadow" labelPosition="left" />
-                <Switch
-                  size="xs"
-                  label="Drop shadow"
-                  checked={activeResolved?.shadow ?? false}
-                  onChange={(event) =>
-                    setOverride(active.key, { shadow: event.currentTarget.checked })
-                  }
-                />
-                {activeResolved?.shadow && (
-                  <Box
-                    className="series-style-shadow-controls"
-                  >
-                    <ColorInput
-                      size="xs"
-                      label="Colour"
-                      format="hex"
-                      value={activeResolved.shadowColor ?? DEFAULT_SHADOW.color}
-                      onChange={(value) => setOverride(active.key, { shadow_color: value })}
-                    />
-                    <NumberInput
-                      size="xs"
-                      label="Opacity"
-                      min={0.02}
-                      max={1}
-                      step={0.05}
-                      decimalScale={2}
-                      value={activeResolved.shadowOpacity}
-                      onChange={(value) =>
-                        setOverride(active.key, {
-                          shadow_opacity: value === "" ? null : Number(value),
-                        })
-                      }
-                    />
-                    <NumberInput
-                      size="xs"
-                      label="Spread (px)"
-                      min={0}
-                      max={24}
-                      step={1}
-                      value={activeResolved.shadowSpread}
-                      onChange={(value) =>
-                        setOverride(active.key, {
-                          shadow_spread: value === "" ? null : Number(value),
-                        })
-                      }
-                    />
-                    <NumberInput
-                      size="xs"
-                      label="Offset X (% span)"
-                      min={-20}
-                      max={20}
-                      step={0.5}
-                      decimalScale={1}
-                      value={activeResolved.shadowOffsetX}
-                      onChange={(value) =>
-                        setOverride(active.key, {
-                          shadow_offset_x: value === "" ? null : Number(value),
-                        })
-                      }
-                    />
-                    <NumberInput
-                      size="xs"
-                      label="Offset Y (% span)"
-                      min={-20}
-                      max={20}
-                      step={0.5}
-                      decimalScale={1}
-                      value={activeResolved.shadowOffsetY}
-                      onChange={(value) =>
-                        setOverride(active.key, {
-                          shadow_offset_y: value === "" ? null : Number(value),
-                        })
-                      }
-                    />
-                  </Box>
-                )}
 
                 <Divider label="Legend" labelPosition="left" />
                 <Switch

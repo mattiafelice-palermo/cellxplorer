@@ -64,23 +64,6 @@ body {
   text-align: center;
 }
 
-.series-style-shadow-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--mantine-spacing-xs);
-  align-items: flex-start;
-  min-width: 0;
-}
-
-.series-style-shadow-controls > * {
-  flex: 1 1 132px;
-  min-width: 0;
-}
-
-.series-style-shadow-controls > :first-child {
-  flex-basis: 176px;
-}
-
 /* Palette editor swatch (SeriesStyleModal): the remove (×) button only
    appears on hover or keyboard focus, via CSS rather than JS
    mouseenter/mouseleave state, so it never lags or misses fast pointer

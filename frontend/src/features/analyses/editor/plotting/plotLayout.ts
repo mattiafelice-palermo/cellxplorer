@@ -1,9 +1,4 @@
 import type { AnalysisSpec, PlotStyle } from "../../../../api";
-import {
-  shadowOffsetValues,
-  shadowRgba,
-  type ResolvedSeriesStyle,
-} from "./seriesStyling";
 
 export function plotAxisStyle(
   style: PlotStyle,
@@ -159,34 +154,4 @@ export function hoverLabelLayout(style: PlotStyle) {
     align: "left" as const,
     namelength: 28,
   };
-}
-
-/**
- * The drop shadow: a wider, offset, semi-transparent copy drawn underneath.
- *
- * Plotly has no line shadow, so this is the only way to get one. Push it before
- * the real trace so it renders below, and keep it out of the legend and hover.
- */
-export function shadowTraceFor(
-  x: (number | null)[],
-  y: (number | null)[],
-  resolved: ResolvedSeriesStyle,
-  axes: { xaxis?: string; yaxis?: string } = {},
-): Plotly.Data {
-  return {
-    x: shadowOffsetValues(x, resolved.shadowOffsetX),
-    y: shadowOffsetValues(y, -resolved.shadowOffsetY),
-    type: "scatter",
-    mode: "lines",
-    hoverinfo: "skip",
-    showlegend: false,
-    connectgaps: false,
-    line: {
-      color: shadowRgba(resolved.shadowColor, resolved.shadowOpacity),
-      width: resolved.lineWidth + resolved.shadowSpread,
-      dash: resolved.lineDash,
-      shape: resolved.lineShape,
-    },
-    ...axes,
-  } as Plotly.Data;
 }
