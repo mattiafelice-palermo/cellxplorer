@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0-beta.4 - 2026-08-13
+
+- Speed up structured Neware Excel parsing and close completed import handoffs immediately.
+
 ## 0.22.0-beta.3 - 2026-08-12
 
 ### New features

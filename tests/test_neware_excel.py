@@ -1075,6 +1075,191 @@ class NewareExcelParserTests(unittest.TestCase):
             with self.assertRaisesRegex(neware_excel.InvalidNewareExcelError, "Date"):
                 neware_excel.parse_timeseries(path)
 
+    def test_numeric_record_date_string_is_rejected(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "numeric-record-date-string.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            workbook["record"]["O2"] = "20260101"
+            workbook.save(path)
+            with self.assertRaisesRegex(neware_excel.InvalidNewareExcelError, "Date"):
+                neware_excel.parse_timeseries(path)
+
+    def test_fast_and_reference_paths_match_exactly(self):
+        if neware_excel._fastexcel is None:
+            self.skipTest("fastexcel is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "parity.xlsx"
+            _write_synthetic_workbook(path)
+            fast = neware_excel.parse_timeseries(path)
+            fast_reader = neware_excel._fastexcel
+            calamine_reader = neware_excel._python_calamine
+            neware_excel._fastexcel = None
+            neware_excel._python_calamine = None
+            try:
+                reference = neware_excel.parse_timeseries(path)
+            finally:
+                neware_excel._fastexcel = fast_reader
+                neware_excel._python_calamine = calamine_reader
+
+        self.assertTrue(fast.equals(reference))
+        self.assertEqual(fast.attrs["neware_excel"], reference.attrs["neware_excel"])
+
+    def test_calamine_and_reference_paths_match_exactly(self):
+        if neware_excel._python_calamine is None:
+            self.skipTest("python-calamine is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "calamine-parity.xlsx"
+            _write_synthetic_workbook(path)
+            fast_reader = neware_excel._fastexcel
+            calamine_reader = neware_excel._python_calamine
+            neware_excel._fastexcel = None
+            try:
+                calamine = neware_excel.parse_timeseries(path)
+                neware_excel._python_calamine = None
+                reference = neware_excel.parse_timeseries(path)
+            finally:
+                neware_excel._fastexcel = fast_reader
+                neware_excel._python_calamine = calamine_reader
+
+        self.assertTrue(calamine.equals(reference))
+        self.assertEqual(calamine.attrs["neware_excel"], reference.attrs["neware_excel"])
+
+    def test_calamine_falls_back_when_unavailable(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "calamine-fallback.xlsx"
+            _write_synthetic_workbook(path)
+            original_fast = neware_excel._fastexcel
+            original_calamine = neware_excel._python_calamine
+            neware_excel._fastexcel = None
+            neware_excel._python_calamine = None
+            try:
+                frame = neware_excel.parse_timeseries(path)
+            finally:
+                neware_excel._fastexcel = original_fast
+                neware_excel._python_calamine = original_calamine
+
+        self.assertEqual(len(frame), 25)
+        self.assertTrue(frame.attrs["neware_excel"]["step_summary_validated"])
+
+    def test_calamine_native_duration_representation_falls_back_to_openpyxl(self):
+        if neware_excel._python_calamine is None:
+            self.skipTest("python-calamine is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "calamine-native-duration.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            record = workbook["record"]
+            indices = {cell.value: cell.column for cell in record[1]}
+            for row in range(2, record.max_row + 1):
+                time_cell = record.cell(row, indices["Time(min)"])
+                total_time_cell = record.cell(row, indices["Total Time(min)"])
+                power_cell = record.cell(row, indices["Power(W)"])
+                time_cell.value = timedelta(minutes=float(time_cell.value))
+                total_time_cell.value = timedelta(minutes=float(total_time_cell.value))
+                power_cell.value = float(power_cell.value) / 1000.0
+            record.cell(1, indices["Time(min)"]).value = "Time"
+            record.cell(1, indices["Total Time(min)"]).value = "Total Time"
+            record.cell(1, indices["Power(W)"]).value = "Power(kW)"
+            workbook.save(path)
+
+            original_fast = neware_excel._fastexcel
+            neware_excel._fastexcel = None
+            try:
+                self.assertIsNone(neware_excel._parse_calamine_timeseries(path))
+                with mock.patch.object(
+                    neware_excel,
+                    "_parse_records",
+                    wraps=neware_excel._parse_records,
+                ) as reference_parse:
+                    frame = neware_excel.parse_timeseries(path)
+            finally:
+                neware_excel._fastexcel = original_fast
+
+        self.assertTrue(reference_parse.called)
+        np.testing.assert_allclose(frame["time_s"].iloc[:6], [0.0, 60.0, 0.0, 60.0, 120.0, 0.0])
+
+    def test_calamine_open_failure_falls_back_to_openpyxl(self):
+        if neware_excel._python_calamine is None:
+            self.skipTest("python-calamine is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "calamine-open-failure.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            original_fast = neware_excel._fastexcel
+            neware_excel._fastexcel = None
+            try:
+                with mock.patch.object(
+                    neware_excel.pd,
+                    "ExcelFile",
+                    side_effect=ValueError("simulated calamine failure"),
+                ), mock.patch.object(
+                    neware_excel,
+                    "_parse_records",
+                    wraps=neware_excel._parse_records,
+                ) as reference_parse:
+                    frame = neware_excel.parse_timeseries(path)
+            finally:
+                neware_excel._fastexcel = original_fast
+
+        self.assertTrue(reference_parse.called)
+        self.assertEqual(len(frame), 25)
+
+    def test_fast_path_rejects_ambiguous_normalized_record_sheets(self):
+        if neware_excel._fastexcel is None:
+            self.skipTest("fastexcel is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "ambiguous-record-sheets.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            duplicate = workbook.copy_worksheet(workbook["record"])
+            duplicate.title = " record "
+            workbook.save(path)
+            with self.assertRaisesRegex(neware_excel.InvalidNewareExcelError, "ambiguous"):
+                neware_excel.parse_timeseries(path)
+
+    def test_fast_path_does_not_ignore_rows_populated_outside_projection(self):
+        if neware_excel._fastexcel is None:
+            self.skipTest("fastexcel is not installed")
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "malformed-extra-column.xlsx"
+            _write_synthetic_workbook(path, include_step=False)
+            workbook = load_workbook(path)
+            workbook["record"]["Q27"] = "unexpected"
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(path)
+
+    def test_fast_path_rejects_integer_identifier_overflow(self):
+        if neware_excel._fastexcel is None:
+            self.skipTest("fastexcel is not installed")
+        for column in ("A", "B", "C"):
+            for value in (1e20, 2**63 - 1, 2**63):
+                with self.subTest(column=column, value=value), TemporaryDirectory() as temporary:
+                    path = Path(temporary) / "identifier-overflow.xlsx"
+                    _write_synthetic_workbook(path, include_step=False)
+                    workbook = load_workbook(path)
+                    workbook["record"][f"{column}2"] = value
+                    workbook.save(path)
+
+                    fast_error = None
+                    try:
+                        neware_excel.parse_timeseries(path)
+                    except neware_excel.InvalidNewareExcelError as exc:
+                        fast_error = str(exc)
+                    self.assertIsNotNone(fast_error)
+
+                    fast_reader = neware_excel._fastexcel
+                    calamine_reader = neware_excel._python_calamine
+                    neware_excel._fastexcel = None
+                    neware_excel._python_calamine = None
+                    try:
+                        with self.assertRaises(neware_excel.InvalidNewareExcelError) as reference:
+                            neware_excel.parse_timeseries(path)
+                    finally:
+                        neware_excel._fastexcel = fast_reader
+                        neware_excel._python_calamine = calamine_reader
+                    self.assertEqual(fast_error, str(reference.exception))
+
     def test_numeric_metadata_start_time_is_rejected(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "numeric-metadata-start-time.xlsx"
@@ -1253,7 +1438,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
-        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 4)
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 6)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)

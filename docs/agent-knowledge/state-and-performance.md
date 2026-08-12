@@ -81,6 +81,17 @@ larger batch reopens the evicted files' headers at ~6 ms each. Do not try to poo
 header parsing is GIL-bound, and measurement puts a four-thread pool at 0.94x and a four-process
 pool at 0.57x of serial.
 
+Structured Neware Excel parsing uses a reader ladder in `backend/app/services/neware_excel.py`:
+`fastexcel` performs the primary full-width columnar read, pandas' `calamine` engine is the
+validated middle fallback, and the existing read-only openpyxl path is the compatibility fallback.
+All three paths resolve the same explicit header aliases, reject ambiguous or malformed rows, and
+produce the same canonical frame and step-summary validation; the parser revision must change when
+those semantics change. `backend/requirements.txt` pins both native readers so the packaged sidecar
+does not silently drift. Keep a synthetic exact-frame parity test for each available fallback and
+benchmark at least one representative large workbook when changing this ladder. On the supplied
+301k-row export, the measured calamine path was ~24 s versus ~85 s for openpyxl, while fastexcel is
+the faster primary path; this is still parsing work and belongs outside the registration transaction.
+
 Registration does **not** re-hash a submitted source. `_prepare_import_source_file` reuses the
 inspected hash whenever size and `mtime_ns` still match, and a real 200-file registration performs
 zero hash computations and zero header reads. The always-hashing

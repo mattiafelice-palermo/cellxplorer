@@ -1412,25 +1412,34 @@ function ImportModal({
     cachePreparationActive,
   );
 
-  const continueInBackground = useCallback(async () => {
+  const continueInBackground = useCallback(() => {
     if (handoffPending) return;
     setClosingBranch(registrationUi.showDone ? "done" : "continue");
     setHandoffPending(true);
-    try {
-      // The registration job exposes its commit boundary before the modal can
-      // be detached. Refresh active library queries here, after that boundary,
-      // so the Cell Database never renders the pre-registration empty result
-      // that the initial 202 response may have cached.
-      await Promise.all([
-        qc.refetchQueries({ queryKey: ["cells"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["files"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["tree"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["replicate-groups"], type: "active" }),
-      ]);
-      await onSaved();
-    } finally {
-      setHandoffPending(false);
-    }
+    // The registration job exposes its commit boundary before the modal can
+    // be detached. Start the active-library refreshes after that boundary, but
+    // do not make the modal wait for them: the query cache remains available
+    // after this editor unmounts and can finish refreshing in the background.
+    void Promise.all([
+      qc.refetchQueries({ queryKey: ["cells"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["files"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["tree"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["replicate-groups"], type: "active" }),
+    ]).catch((error: unknown) => {
+      addDebugEvent("import:handoffRefreshFailed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    // Schedule the close separately so a slow or failed refresh can never keep
+    // the user on Step 3. Promise.resolve().then() also captures a synchronous
+    // exception from an onSaved implementation without an unhandled rejection.
+    void Promise.resolve()
+      .then(() => onSaved())
+      .catch((error: unknown) => {
+        addDebugEvent("import:handoffCloseFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }, [handoffPending, qc, onSaved, registrationUi.showDone]);
 
   useEffect(() => {

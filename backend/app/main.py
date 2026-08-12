@@ -152,6 +152,8 @@ def _warm_scientific_services() -> None:
         import pandas  # noqa: F401
         import NewareNDA  # noqa: F401
         import pyarrow  # noqa: F401
+        import fastexcel  # noqa: F401
+        import python_calamine  # noqa: F401
         import openpyxl  # noqa: F401
 
         from .services import scanner

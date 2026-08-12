@@ -63013,7 +63013,7 @@
       ]
     }
   ],
-  "parser_version": "v2026.06.11-cxp4",
+  "parser_version": "v2026.06.11-cxp6",
   "rendering": {
     "compact": false,
     "configured_max_points_per_cell": 500000,
