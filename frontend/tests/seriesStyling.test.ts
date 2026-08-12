@@ -15,11 +15,10 @@ import {
   resolveAllSeriesStyles,
   resolveSeriesStyle,
   seriesMatchesRule,
+  seriesPaletteSlots,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   seriesRuleError,
-  shadowOffsetValues,
-  shadowRgba,
   shortSourceName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
@@ -252,38 +251,48 @@ test("a populated result never yields an empty series list", () => {
   assert.ok(timeCapacitySeriesDescriptors(cells).length > 0);
 });
 
-test("shadow settings resolve with sensible defaults and are overridable", () => {
-  const plain = resolveSeriesStyle(base, cell(), [], { c1: { shadow: true } });
-  assert.equal(plain.shadow, true);
-  assert.equal(plain.shadowColor, "#000000");
-  assert.equal(plain.shadowSpread, 4);
+// The trace builders colour per cell/replicate group, so a cell's primary and
+// its CE overlay share one palette slot. Numbering descriptors in order instead
+// gave the CE the next palette colour, and the swatch in the series list then
+// showed a colour the plot never drew.
+test("a secondary series shares its primary's palette slot", () => {
+  const ceKey = composeSeriesKey({ sourceKey: "c1", axis: "y2", measure: "coulombic_efficiency" });
+  const slots = seriesPaletteSlots([
+    cell({ key: "c1", sourceKey: "c1" }),
+    cell({ key: ceKey, sourceKey: "c1", axis: "y2", measure: "coulombic_efficiency" }),
+    cell({ key: "c2", sourceKey: "c2" }),
+  ]);
 
-  const tuned = resolveSeriesStyle(base, cell(), [], {
-    c1: { shadow: true, shadow_color: "#ff0000", shadow_opacity: 0.5, shadow_spread: 10 },
-  });
-  assert.equal(tuned.shadowColor, "#ff0000");
-  assert.equal(tuned.shadowOpacity, 0.5);
-  assert.equal(tuned.shadowSpread, 10);
+  assert.equal(slots.get("c1"), 0);
+  assert.equal(slots.get(ceKey), 0, "CE takes its primary's slot, not the next one");
+  assert.equal(slots.get("c2"), 1, "the next primary still gets the next slot");
 });
 
-test("shadow colour converts to rgba, and bad input degrades to black", () => {
-  assert.equal(shadowRgba("#ff0000", 0.5), "rgba(255,0,0,0.5)");
-  assert.equal(shadowRgba("#f00", 0.25), "rgba(255,0,0,0.25)");
-  assert.equal(shadowRgba("not-a-colour", 0.3), "rgba(0,0,0,0.3)");
+test("palette slots follow primary order regardless of where secondaries sit", () => {
+  const ce1 = composeSeriesKey({ sourceKey: "c1", axis: "y2", measure: "coulombic_efficiency" });
+  const ce2 = composeSeriesKey({ sourceKey: "c2", axis: "y2", measure: "coulombic_efficiency" });
+  const slots = seriesPaletteSlots([
+    cell({ key: "c1", sourceKey: "c1" }),
+    cell({ key: ce1, sourceKey: "c1", axis: "y2", measure: "coulombic_efficiency" }),
+    cell({ key: "c2", sourceKey: "c2" }),
+    cell({ key: ce2, sourceKey: "c2", axis: "y2", measure: "coulombic_efficiency" }),
+  ]);
+
+  assert.deepEqual(
+    [slots.get("c1"), slots.get(ce1), slots.get("c2"), slots.get(ce2)],
+    [0, 0, 1, 1],
+  );
 });
 
-test("shadow offset shifts by a percentage of the series span", () => {
-  const values = [0, 5, 10];
-  // 10% of a span of 10 is 1.
-  assert.deepEqual(shadowOffsetValues(values, 10), [1, 6, 11]);
-  assert.deepEqual(shadowOffsetValues(values, -10), [-1, 4, 9]);
-  // No offset returns the same reference, so no needless array work.
-  assert.equal(shadowOffsetValues(values, 0), values);
-  // Nulls are gaps and stay gaps.
-  assert.deepEqual(shadowOffsetValues([0, null, 10], 10), [1, null, 11]);
-  // A flat series has no span to scale by, so it is left alone.
-  const flat = [3, 3, 3];
-  assert.equal(shadowOffsetValues(flat, 10), flat);
+test("a secondary with no primary in the list gets a slot of its own", () => {
+  const orphan = composeSeriesKey({ sourceKey: "c9", axis: "y2", measure: "coulombic_efficiency" });
+  const slots = seriesPaletteSlots([
+    cell({ key: "c1", sourceKey: "c1" }),
+    cell({ key: orphan, sourceKey: "c9", axis: "y2", measure: "coulombic_efficiency" }),
+  ]);
+
+  assert.equal(slots.get("c1"), 0);
+  assert.equal(slots.get(orphan), 1, "an orphan must not borrow another series' colour");
 });
 
 test("long source filenames are truncated in the middle for hover labels", () => {

@@ -232,7 +232,6 @@ import {
   legendLayout,
   legendMargins,
   plotAxisStyle,
-  shadowTraceFor,
   tickLayout,
 } from "./plotting/plotLayout";
 import {

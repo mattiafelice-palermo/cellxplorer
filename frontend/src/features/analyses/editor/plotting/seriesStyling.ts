@@ -53,23 +53,9 @@ export interface ResolvedSeriesStyle {
   markerSize: number;
   markerOpen: boolean;
   opacity: number;
-  shadow: boolean;
-  shadowColor: string;
-  shadowOpacity: number;
-  shadowSpread: number;
-  shadowOffsetX: number;
-  shadowOffsetY: number;
   showInLegend: boolean;
   hidden: boolean;
 }
-
-export const DEFAULT_SHADOW = {
-  color: "#000000",
-  opacity: 0.25,
-  spread: 4,
-  offsetX: 0,
-  offsetY: 0,
-};
 
 /** The tab-wide defaults a series starts from. */
 export interface BaseSeriesStyle {
@@ -268,6 +254,35 @@ export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
   return typeof descriptor.measure === "string" && descriptor.measure.length > 0;
 }
 
+/**
+ * Which palette slot each series draws its default colour from.
+ *
+ * The trace builders hand out palette colours per cell/replicate group, so a
+ * cell's primary series and its secondary (the CE overlay) share one slot.
+ * Numbering every descriptor in order instead would give a CE series the *next*
+ * palette colour, and anything resolving colours from these slots — the swatch
+ * in the series list, the starting colour in the per-series editor — would then
+ * disagree with what is actually drawn on the plot.
+ *
+ * A secondary whose primary is not in the list still gets its own slot, so an
+ * orphan is never silently drawn in another series' colour.
+ */
+export function seriesPaletteSlots(descriptors: SeriesDescriptor[]): Map<string, number> {
+  const slots = new Map<string, number>();
+  let next = 0;
+  for (const descriptor of descriptors) {
+    if (isSecondarySeries(descriptor)) continue;
+    slots.set(descriptor.key, next++);
+  }
+  for (const descriptor of descriptors) {
+    if (!isSecondarySeries(descriptor)) continue;
+    const primaryKey = primarySeriesKeyFor(descriptor);
+    const primarySlot = primaryKey === null ? undefined : slots.get(primaryKey);
+    slots.set(descriptor.key, primarySlot ?? next++);
+  }
+  return slots;
+}
+
 export const SERIES_RULE_FIELDS: { value: SeriesRuleField; label: string }[] = [
   { value: "label", label: "Series name" },
   { value: "cell_name", label: "Cell name" },
@@ -382,12 +397,6 @@ function applyOverride(
     markerSize: assign(resolved.markerSize, override.marker_size),
     markerOpen: assign(resolved.markerOpen, override.marker_open),
     opacity: assign(resolved.opacity, override.opacity),
-    shadow: assign(resolved.shadow, override.shadow),
-    shadowColor: assign(resolved.shadowColor, override.shadow_color),
-    shadowOpacity: assign(resolved.shadowOpacity, override.shadow_opacity),
-    shadowSpread: assign(resolved.shadowSpread, override.shadow_spread),
-    shadowOffsetX: assign(resolved.shadowOffsetX, override.shadow_offset_x),
-    shadowOffsetY: assign(resolved.shadowOffsetY, override.shadow_offset_y),
     showInLegend: assign(resolved.showInLegend, override.show_in_legend),
     hidden: assign(resolved.hidden, override.hidden),
   };
@@ -416,12 +425,6 @@ export function resolveSeriesStyle(
     markerSize: base.markerSize,
     markerOpen: base.markerOpen,
     opacity: base.opacity,
-    shadow: false,
-    shadowColor: DEFAULT_SHADOW.color,
-    shadowOpacity: DEFAULT_SHADOW.opacity,
-    shadowSpread: DEFAULT_SHADOW.spread,
-    shadowOffsetX: DEFAULT_SHADOW.offsetX,
-    shadowOffsetY: DEFAULT_SHADOW.offsetY,
     showInLegend: true,
     hidden: false,
   };
@@ -519,42 +522,6 @@ export function shortSourceName(name: string, max = 34): string {
   const head = Math.ceil((max - 1) / 2);
   const tail = Math.floor((max - 1) / 2);
   return `${name.slice(0, head)}…${name.slice(name.length - tail)}`;
-}
-
-/** `#rrggbb` plus alpha as an `rgba()` string Plotly accepts. */
-export function shadowRgba(color: string, opacity: number): string {
-  const hex = color.replace("#", "");
-  const full = hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex;
-  const value = Number.parseInt(full, 16);
-  if (!Number.isFinite(value) || full.length !== 6) return `rgba(0,0,0,${opacity})`;
-  const r = (value >> 16) & 255;
-  const g = (value >> 8) & 255;
-  const b = value & 255;
-  return `rgba(${r},${g},${b},${opacity})`;
-}
-
-/**
- * Offset the shadow copy in data coordinates.
- *
- * Plotly has no line shadow, so it is a second, wider trace drawn underneath.
- * That trace lives in data space, so the offset is a percentage of the series'
- * own span rather than pixels — a pixel offset would drift on zoom.
- */
-export function shadowOffsetValues(
-  values: (number | null)[],
-  percent: number,
-): (number | null)[] {
-  if (!percent) return values;
-  let min = Infinity;
-  let max = -Infinity;
-  for (const value of values) {
-    if (value === null || !Number.isFinite(value)) continue;
-    if (value < min) min = value;
-    if (value > max) max = value;
-  }
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) return values;
-  const delta = ((max - min) * percent) / 100;
-  return values.map((value) => (value === null ? null : value + delta));
 }
 
 /** Points kept per preview trace. The preview is ~620 px wide; more is invisible. */

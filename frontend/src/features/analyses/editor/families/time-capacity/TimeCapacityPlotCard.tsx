@@ -53,7 +53,6 @@ import {
   hoverLabelLayout,
   legendLayout,
   legendMargins,
-  shadowTraceFor,
   tickLayout,
 } from "../../plotting/plotLayout";
 import {
@@ -371,7 +370,6 @@ export function timeCapacityTracesForResult(
           }
           const showlegend = !legendShown.has(seriesKey);
           legendShown.add(seriesKey);
-          if (resolved.shadow) out.push(shadowTraceFor(x, y, resolved));
           out.push({
             x,
             y,
@@ -430,7 +428,6 @@ export function timeCapacityTracesForResult(
         shortSourceName(String(segment.sourceFilename[index] ?? "")),
       ]);
       legendShown.add(seriesKey);
-      if (resolved.shadow) out.push(shadowTraceFor(segment.x, segment.voltage, resolved));
       out.push({
         x: segment.x,
         y: segment.voltage,
