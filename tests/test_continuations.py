@@ -629,31 +629,54 @@ class CacheBuildCoordinationTests(unittest.TestCase):
 
         failing_calls = []
 
-        def failing_build(*_args, **_kwargs):
-            failing_calls.append("build")
-            raise RuntimeError("broken source")
+        def make_failing_build(started_event, release_event):
+            def failing_build(*_args, **_kwargs):
+                failing_calls.append("build")
+                started_event.set()
+                release_event.wait(timeout=2)
+                raise RuntimeError("broken source")
+
+            return failing_build
+
+        first_failure_started = threading.Event()
+        first_failure_release = threading.Event()
 
         with (
             patch.object(cache, "raw_path", return_value=SimpleNamespace(is_file=lambda: False)),
             patch.object(cache, "cycles_path", return_value=SimpleNamespace(is_file=lambda: False)),
-            patch.object(cache, "build", side_effect=failing_build),
+            patch.object(
+                cache,
+                "build",
+                side_effect=make_failing_build(first_failure_started, first_failure_release),
+            ),
             patch.object(cache.time, "monotonic", return_value=0.0),
         ):
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
+            self.assertTrue(first_failure_started.wait(timeout=2))
             with cache._background_build_lock:
                 thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+            first_failure_release.set()
             thread.join(timeout=2)
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "failed")
+
+        retry_failure_started = threading.Event()
+        retry_failure_release = threading.Event()
 
         with (
             patch.object(cache, "raw_path", return_value=SimpleNamespace(is_file=lambda: False)),
             patch.object(cache, "cycles_path", return_value=SimpleNamespace(is_file=lambda: False)),
-            patch.object(cache, "build", side_effect=failing_build),
+            patch.object(
+                cache,
+                "build",
+                side_effect=make_failing_build(retry_failure_started, retry_failure_release),
+            ),
             patch.object(cache.time, "monotonic", return_value=cache.BACKGROUND_BUILD_RETRY_DELAY_SECONDS + 1),
         ):
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
+            self.assertTrue(retry_failure_started.wait(timeout=2))
             with cache._background_build_lock:
                 thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+            retry_failure_release.set()
             thread.join(timeout=2)
 
         self.assertEqual(failing_calls, ["build", "build"])
