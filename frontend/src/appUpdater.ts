@@ -141,6 +141,11 @@ export type ReleaseNoteLine = {
   level?: number;
 };
 
+export type ReleaseNoteBlock =
+  | { kind: "text"; text: string }
+  | { kind: "heading"; text: string; level: number }
+  | { kind: "bullets"; items: string[] };
+
 export type AppUpdateMenuState = {
   label: string;
   disabled: boolean;
@@ -397,6 +402,39 @@ export function parseReleaseNoteLines(notes: string | null | undefined): Release
       }
       return { kind: "text" as const, text: line };
     });
+}
+
+export function buildReleaseNoteBlocks(
+  notes: string | null | undefined,
+): ReleaseNoteBlock[] {
+  const lines = parseReleaseNoteLines(notes);
+  const blocks: ReleaseNoteBlock[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.kind === "heading") {
+      blocks.push({
+        kind: "heading",
+        text: line.text,
+        level: line.level ?? 2,
+      });
+      continue;
+    }
+    if (line.kind === "text") {
+      blocks.push({ kind: "text", text: line.text });
+      continue;
+    }
+    const items: string[] = [line.text];
+    let cursor = index + 1;
+    while (cursor < lines.length && lines[cursor].kind === "bullet") {
+      items.push(lines[cursor].text);
+      cursor += 1;
+    }
+    blocks.push({ kind: "bullets", items });
+    index = cursor - 1;
+  }
+
+  return blocks;
 }
 
 /** @deprecated Prefer parseReleaseNoteLines; kept for transitional call sites. */

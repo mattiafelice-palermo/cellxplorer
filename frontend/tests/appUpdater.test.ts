@@ -29,6 +29,7 @@ import {
   notificationActivationAction,
   parseDevUpdateMock,
   parseReleaseNoteLines,
+  buildReleaseNoteBlocks,
   failurePhaseForLocalUpdatePhase,
   explainUpdateCheckFailure,
   readLastUpdateCheckedAt,
@@ -279,6 +280,20 @@ test("release-note parsing recognizes markdown headings without visible hashes",
       { kind: "bullet", text: "Added project selection" },
       { kind: "heading", text: "Bug fixes", level: 2 },
       { kind: "bullet", text: "Fixed dark mode" },
+    ],
+  );
+});
+
+test("release-note blocks keep feature and bug-fix sections separate", () => {
+  assert.deepEqual(
+    buildReleaseNoteBlocks(
+      "### New features\n- Added project selection\n- Added saved views\n### Bug fixes\n- Fixed dark mode",
+    ),
+    [
+      { kind: "heading", text: "New features", level: 3 },
+      { kind: "bullets", items: ["Added project selection", "Added saved views"] },
+      { kind: "heading", text: "Bug fixes", level: 3 },
+      { kind: "bullets", items: ["Fixed dark mode"] },
     ],
   );
 });

@@ -4,9 +4,7 @@ import {
   Button,
   Group,
   Modal,
-  Paper,
   Progress,
-  ScrollArea,
   Stack,
   Text,
 } from "@mantine/core";
@@ -16,7 +14,8 @@ import {
   canDismissBetaInstallModal,
   type BetaInstallState,
 } from "../betaInstaller";
-import { computeDownloadProgress, parseReleaseNoteLines, type AppUpdateRelease } from "../appUpdater";
+import { computeDownloadProgress, type AppUpdateRelease } from "../appUpdater";
+import { ReleaseNotesBody } from "./ReleaseNotesBody";
 
 type BetaInstallModalProps = {
   opened: boolean;
@@ -26,29 +25,6 @@ type BetaInstallModalProps = {
   onRetry: () => void;
   onRetryCheck: () => void;
 };
-
-function ReleaseNotesBody({ release }: { release: AppUpdateRelease }) {
-  const lines = parseReleaseNoteLines(release.notes);
-  return (
-    <Paper withBorder radius="md" p="sm">
-      <ScrollArea.Autosize mah={220} type="auto">
-        <Stack gap={6}>
-          {lines.map((line, index) =>
-            line.kind === "bullet" ? (
-              <Text component="li" size="sm" key={`${index}:${line.text}`} ml="md">
-                {line.text}
-              </Text>
-            ) : (
-              <Text key={`${index}:${line.text}`} size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                {line.text}
-              </Text>
-            ),
-          )}
-        </Stack>
-      </ScrollArea.Autosize>
-    </Paper>
-  );
-}
 
 export function BetaInstallModal({
   opened,

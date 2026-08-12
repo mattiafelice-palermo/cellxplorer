@@ -92,6 +92,8 @@ import {
   type ProtocolSegmentSuggestion,
 } from "../../protocol/ProtocolSegmentsPanel";
 import { RecognitionProgress } from "../../recognition/RecognitionProgress.tsx";
+import { groupSuggestionsByFamily } from "../../protocol/suggestionGrouping";
+import { groupCellsByApplicability } from "./suggestionGrouping";
 
 interface DcirCandidate extends DcirSegmentTarget {
   id: string;
@@ -523,30 +525,40 @@ export function DcirSettings({
   );
   const suggestions = useMemo<ProtocolSegmentSuggestion[]>(
     () =>
-      (protocols.data?.candidates ?? []).map((candidate) => ({
-        id: candidate.id,
-        label: `${candidate.label} · steps ${candidate.rest_step_index} → ${candidate.pulse_step_index}`,
-        description:
-          `${formatDuration(candidate.rest_duration_s)} rest → ` +
-          `${formatDuration(candidate.pulse_duration_s)} pulse · ` +
-          `${candidate.rest_pulse_ratio.toFixed(1)}:1 · ` +
-          `${candidate.compatible_cell_ids.length} matching selected ` +
-          `cell${candidate.compatible_cell_ids.length === 1 ? "" : "s"}`,
-        segment: {
-          id: `suggested-${candidate.id}`,
-          name: candidate.label,
-          targets: [
-            {
-              protocol_signature: candidate.protocol_signature,
-              step_indices: [
-                candidate.rest_step_index,
-                candidate.pulse_step_index,
-              ],
-            },
-          ],
-        },
-      })),
-    [protocols.data?.candidates]
+      (protocols.data?.candidates ?? []).map((candidate) => {
+        // Find the protocol family to get cell names
+        const family = protocolFamilies.find(
+          (f) => f.signature === candidate.protocol_signature
+        );
+        const cellNames = family?.cell_names ?? candidate.compatible_cell_names ?? [];
+        return {
+          id: candidate.id,
+          label: `${candidate.label} · steps ${candidate.rest_step_index} → ${candidate.pulse_step_index}`,
+          pairLabel: candidate.label,
+          protocolSignature: candidate.protocol_signature,
+          cellNames,
+          description:
+            `${formatDuration(candidate.rest_duration_s)} rest → ` +
+            `${formatDuration(candidate.pulse_duration_s)} pulse · ` +
+            `${candidate.rest_pulse_ratio.toFixed(1)}:1 · ` +
+            `${candidate.compatible_cell_ids.length} matching selected ` +
+            `cell${candidate.compatible_cell_ids.length === 1 ? "" : "s"}`,
+          segment: {
+            id: `suggested-${candidate.id}`,
+            name: candidate.label,
+            targets: [
+              {
+                protocol_signature: candidate.protocol_signature,
+                step_indices: [
+                  candidate.rest_step_index,
+                  candidate.pulse_step_index,
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    [protocols.data?.candidates, protocolFamilies]
   );
 
   const patchView = (patch: Partial<DcirViewSpec>) =>
@@ -934,10 +946,25 @@ export function DcirSettings({
           <Select
             label="Cell"
             searchable
-            data={cells.map((cell) => ({
-              value: String(cell.id),
-              label: cell.name,
-            }))}
+            data={
+              // Before protocol data arrives (loading or failed), show flat list of all cells
+              // to avoid mis-grouping every cell as "Cells with no DCIR segment" while the
+              // query is in flight.
+              protocols.data
+                ? groupCellsByApplicability(
+                    cells,
+                    new Map(
+                      cells.map((cell) => [
+                        cell.id,
+                        applicableSegments(cell.id).length,
+                      ])
+                    )
+                  )
+                : cells.map((cell) => ({
+                    value: String(cell.id),
+                    label: cell.name,
+                  }))
+            }
             value={editor.cellId != null ? String(editor.cellId) : null}
             onChange={(value) =>
               setEditor((current) => {
