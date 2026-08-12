@@ -172,6 +172,105 @@ def _write_synthetic_workbook(
     workbook.save(path)
 
 
+def _duration_text(seconds: float) -> str:
+    milliseconds = int(round(float(seconds) * 1000.0))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
+
+
+def _convert_to_duration_dialect(path: Path) -> None:
+    """Convert the synthetic workbook to the observed ID/clock/kW dialect."""
+
+    workbook = load_workbook(path)
+    record = workbook["record"]
+    record_headers = [cell.value for cell in record[1]]
+    record_indices = {header: index + 1 for index, header in enumerate(record_headers)}
+    for row in range(2, record.max_row + 1):
+        time_cell = record.cell(row, record_indices["Time(min)"])
+        total_time_cell = record.cell(row, record_indices["Total Time(min)"])
+        power_cell = record.cell(row, record_indices["Power(W)"])
+        time_cell.value = _duration_text(float(time_cell.value) * 60.0)
+        total_time_cell.value = _duration_text(float(total_time_cell.value) * 60.0)
+        power_cell.value = float(power_cell.value) / 1000.0
+    for cell in record[1]:
+        cell.value = {
+            "Cycle Index": "Cycle ID",
+            "Step Index": "Step ID",
+            "Time(min)": "Time",
+            "Total Time(min)": "Total Time",
+            "Power(W)": "Power(kW)",
+        }.get(cell.value, cell.value)
+
+    step = workbook["step"]
+    step_headers = [cell.value for cell in step[1]]
+    step_indices = {header: index + 1 for index, header in enumerate(step_headers)}
+    for row in range(2, step.max_row + 1):
+        time_cell = step.cell(row, step_indices["Step Time(min)"])
+        energy_cell = step.cell(row, step_indices["Energy(Wh)"])
+        time_cell.value = _duration_text(float(time_cell.value) * 60.0)
+        energy_cell.value = float(energy_cell.value) / 1000.0
+    for cell in step[1]:
+        cell.value = {
+            "Cycle Index": "Cycle ID",
+            "Step Index": "Step ID",
+            "Step Time(min)": "Step Time",
+            "Energy(Wh)": "Energy(kWh)",
+        }.get(cell.value, cell.value)
+    workbook.save(path)
+
+
+def _add_duration_cycle_summary(path: Path, cycles: pd.DataFrame) -> None:
+    workbook = load_workbook(path)
+    cycle = workbook.create_sheet("cycle")
+    cycle.append([
+        "Cycle ID",
+        "Chg. Cap.(mAh)",
+        "DChg. Cap.(mAh)",
+        "Chg. Time",
+        "DChg. Time",
+    ])
+    for _, row in cycles.iterrows():
+        charge_time = 0.0 if pd.isna(row["charge_time_h"]) else float(row["charge_time_h"]) * 3600.0
+        discharge_time = 0.0 if pd.isna(row["discharge_time_h"]) else float(row["discharge_time_h"]) * 3600.0
+        cycle.append([
+            int(row["cycle"]),
+            round(float(row["charge_capacity_mah"]), 3),
+            round(float(row["discharge_capacity_mah"]), 3),
+            _duration_text(charge_time),
+            _duration_text(discharge_time),
+        ])
+    workbook.save(path)
+
+
+def _convert_plan_to_duration_dialect(path: Path) -> None:
+    workbook = load_workbook(path)
+    test = workbook["test"]
+    header_row = None
+    time_column = None
+    for row in test.iter_rows():
+        for cell in row:
+            if cell.value == "Step Time(min)":
+                header_row = cell.row
+                time_column = cell.column
+                cell.value = "Step Time(hh:mm:ss.ms)"
+                break
+        if header_row is not None:
+            break
+    assert header_row is not None and time_column is not None
+    for row in range(header_row + 1, test.max_row + 1):
+        value = test.cell(row, time_column).value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            test.cell(row, time_column).value = _duration_text(float(value) * 60.0)
+    for row in test.iter_rows():
+        for cell in row:
+            if cell.value == "Record settings":
+                test.cell(cell.row, cell.column + 2).value = "60000ms/0.02V/0.1mA"
+                break
+    workbook.save(path)
+
+
 TEST_PLAN_HEADERS = [
     "Step Index",
     "Step Name",
@@ -370,6 +469,141 @@ def _write_protocol_workbook(
 
 
 class NewareExcelParserTests(unittest.TestCase):
+    def test_unbounded_clock_duration_is_strict_and_unitless(self):
+        self.assertAlmostEqual(
+            neware_excel._clock_duration_seconds("1697:53:24.000"),
+            1697 * 3600 + 53 * 60 + 24,
+        )
+        self.assertAlmostEqual(
+            neware_excel._clock_duration_seconds("00:00:01.250"),
+            1.25,
+        )
+        with self.assertRaises(ValueError):
+            neware_excel._clock_duration_seconds("1:60:00")
+        with self.assertRaises(ValueError):
+            neware_excel._clock_duration_seconds("not-a-duration")
+
+    def test_duration_id_and_kw_kwh_aliases_are_normalized_per_sheet(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "duration-dialect.xlsx"
+            _write_synthetic_workbook(path)
+            _convert_to_duration_dialect(path)
+            self.assertTrue(neware_excel.is_supported_workbook(path))
+            frame = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(frame)
+            _add_duration_cycle_summary(path, cycles)
+            neware_excel.validate_cycles(path, frame, cycles)
+            with neware_excel._open(path) as workbook:
+                summary = neware_excel._parse_cycle_summary(
+                    neware_excel._sheet_by_name(workbook, "cycle", required=True)
+                )
+
+        np.testing.assert_allclose(frame["time_s"].iloc[:6], [0.0, 60.0, 0.0, 60.0, 120.0, 0.0])
+        np.testing.assert_allclose(
+            frame["total_time_s"].iloc[:6], [0.0, 60.0, 60.0, 120.0, 180.0, 180.0]
+        )
+        self.assertAlmostEqual(float(frame["power_w"].max()), 0.01)
+        self.assertTrue(frame.attrs["neware_excel"]["step_summary_validated"])
+        self.assertTrue(frame.attrs["neware_excel"]["step_summary_duration_validated"])
+        self.assertTrue(frame.attrs["neware_excel"]["cycle_summary_validated"])
+        self.assertIsNone(summary[0]["charge_energy_mwh"])
+        self.assertIsNotNone(summary[0]["coulombic_efficiency_pct"])
+
+    def test_duration_dialect_plan_and_millisecond_record_settings_are_read(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "duration-metadata.xlsx"
+            _write_metadata_workbook(path)
+            _convert_plan_to_duration_dialect(path)
+            metadata = neware_excel.read_metadata(path)
+
+        self.assertEqual(
+            metadata["Excel"]["Original"]["Test"]["RecordSettings"]["IntervalS"]["Value"],
+            "60",
+        )
+        self.assertEqual(len(metadata["Step"]["Step_Info"]), 8)
+        self.assertEqual(metadata["Step"]["Step_Info"]["Step1"]["Limit.Main.Time.Value"], "120000")
+        self.assertIn(
+            "StepTimeHhMmSsMs",
+            metadata["Excel"]["Original"]["StepPlan"]["Step1"],
+        )
+
+    def test_numeric_dialect_cycle_tolerance_remains_locked(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "strict-cycle.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["B2"] = float(workbook["cycle"]["B2"].value) + 0.1
+            workbook.save(path)
+            raw = neware_excel.parse_timeseries(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.validate_cycles(path, raw, calc.per_cycle(raw))
+
+    def test_unitless_numeric_duration_and_ambiguous_aliases_fail_closed(self):
+        with TemporaryDirectory() as temporary:
+            numeric_path = Path(temporary) / "numeric-duration.xlsx"
+            _write_synthetic_workbook(numeric_path)
+            _convert_to_duration_dialect(numeric_path)
+            workbook = load_workbook(numeric_path)
+            workbook["record"]["E2"] = 1.0
+            workbook.save(numeric_path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(numeric_path)
+
+            ambiguous_path = Path(temporary) / "ambiguous-alias.xlsx"
+            _write_synthetic_workbook(ambiguous_path)
+            workbook = load_workbook(ambiguous_path)
+            workbook["record"].cell(1, workbook["record"].max_column + 1).value = "Cycle ID"
+            workbook.save(ambiguous_path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(ambiguous_path)
+
+            unsupported_path = Path(temporary) / "unsupported-power-unit.xlsx"
+            _write_synthetic_workbook(unsupported_path)
+            workbook = load_workbook(unsupported_path)
+            workbook["record"]["P1"] = "Power(mW)"
+            workbook.save(unsupported_path)
+            with self.assertRaises(neware_excel.UnsupportedNewareExcelError):
+                neware_excel.parse_timeseries(unsupported_path)
+
+    def test_unitless_step_duration_is_reconciled(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "duration-mismatch.xlsx"
+            _write_synthetic_workbook(path)
+            _convert_to_duration_dialect(path)
+            workbook = load_workbook(path)
+            workbook["step"]["E2"] = "999:00:00.000"
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(path)
+
+    def test_numeric_step_duration_keeps_timestamp_span_validation(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "numeric-timestamp-duration-mismatch.xlsx"
+            _write_synthetic_workbook(path)
+            workbook = load_workbook(path)
+            first_record_end = workbook["record"]["O3"].value
+            workbook["record"]["O3"] = first_record_end + timedelta(minutes=3)
+            workbook["step"]["G2"] = workbook["record"]["O3"].value
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(path)
+
+    def test_numeric_time_with_kwh_summary_keeps_strict_energy_tolerance(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "numeric-time-kwh-energy.xlsx"
+            _write_synthetic_workbook(path)
+            workbook = load_workbook(path)
+            step = workbook["step"]
+            step["I1"] = "Energy(kWh)"
+            for row in range(2, step.max_row + 1):
+                value = step.cell(row, 9).value
+                if value is not None:
+                    step.cell(row, 9).value = 1.0
+            step["I2"] = 1.000003
+            workbook.save(path)
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.parse_timeseries(path)
+
     def test_valid_workbook_is_recognized(self):
         with TemporaryDirectory() as temporary:
             path = Path(temporary) / "synthetic.xlsx"
@@ -1019,7 +1253,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.parse_timeseries("source.csv")
 
     def test_parser_bundle_version_is_deterministic_and_persistable(self):
-        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 3)
+        self.assertEqual(neware_excel.EXCEL_PARSER_REVISION, 4)
         self.assertIn(parsing.NEWARE_NDA_VERSION, parsing.PARSER_VERSION)
         self.assertIn(f"cxp{neware_excel.EXCEL_PARSER_REVISION}", parsing.PARSER_VERSION)
         self.assertLessEqual(len(parsing.PARSER_VERSION), 30)
@@ -1038,6 +1272,32 @@ class NewareExcelParserTests(unittest.TestCase):
             cycles = calc.per_cycle(raw)
             neware_excel.validate_cycles(path, raw, cycles)
         self.assertTrue(raw.attrs["neware_excel"]["cycle_summary_validated"])
+
+    def test_cycle_summary_rejects_non_finite_calculated_values_even_at_zero(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cycle-non-finite.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["B2"] = 0.0
+            workbook.save(path)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            cycles.loc[0, "charge_capacity_mah"] = np.inf
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.validate_cycles(path, raw, cycles)
+
+    def test_cycle_summary_rejects_nan_calculated_capacity_even_at_zero(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cycle-nan.xlsx"
+            _write_metadata_workbook(path, include_cycle=True)
+            workbook = load_workbook(path)
+            workbook["cycle"]["B2"] = 0.0
+            workbook.save(path)
+            raw = neware_excel.parse_timeseries(path)
+            cycles = calc.per_cycle(raw)
+            cycles.loc[0, "charge_capacity_mah"] = np.nan
+            with self.assertRaises(neware_excel.InvalidNewareExcelError):
+                neware_excel.validate_cycles(path, raw, cycles)
 
     def test_cycle_summary_identity_capacity_energy_and_time_mismatches_fail(self):
         mutations = {

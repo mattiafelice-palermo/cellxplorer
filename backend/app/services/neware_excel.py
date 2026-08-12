@@ -11,6 +11,9 @@ import math
 import re
 import zipfile
 from contextlib import contextmanager
+from datetime import time as datetime_time
+from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from numbers import Number
 from pathlib import Path
 from typing import Any, Iterator
@@ -22,7 +25,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 
-EXCEL_PARSER_REVISION = 3
+EXCEL_PARSER_REVISION = 4
 
 _TEST_METADATA_LABELS = {
     "start step id": "start_step_id",
@@ -69,16 +72,53 @@ _PLAN_HEADERS = (
     "Current range (mA)",
 )
 
-_CYCLE_HEADERS = (
+_CYCLE_REQUIRED_HEADERS = (
     "Cycle Index",
     "Chg. Cap.(mAh)",
     "DChg. Cap.(mAh)",
-    "Chg.-DChg. Eff(%)",
-    "Chg. Energy(Wh)",
-    "DChg. Energy(Wh)",
     "Chg. Time(min)",
     "DChg. Time(min)",
 )
+_CYCLE_OPTIONAL_HEADERS = (
+    "Chg.-DChg. Eff(%)",
+    "Chg. Energy(Wh)",
+    "DChg. Energy(Wh)",
+)
+_CYCLE_HEADERS = _CYCLE_REQUIRED_HEADERS + _CYCLE_OPTIONAL_HEADERS
+
+# Neware changes labels and displayed units between export surfaces and
+# software versions.  These aliases are deliberately scoped to the worksheet
+# that owns the field: ``record`` may use Cycle ID while ``step`` uses Cycle
+# Index in the same workbook.  A resolver rejects a workbook that contains
+# both aliases for one semantic field instead of silently picking one.
+_HEADER_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
+    "record": {
+        "Cycle Index": ("Cycle Index", "Cycle ID"),
+        "Step Index": ("Step Index", "Step ID"),
+        "Time(min)": ("Time(min)", "Time"),
+        "Total Time(min)": ("Total Time(min)", "Total Time"),
+        "Power(W)": ("Power(W)", "Power(kW)"),
+    },
+    "step": {
+        "Cycle Index": ("Cycle Index", "Cycle ID"),
+        "Step Index": ("Step Index", "Step ID"),
+        "Step Time(min)": ("Step Time(min)", "Step Time"),
+        "Energy(Wh)": ("Energy(Wh)", "Energy(kWh)"),
+    },
+    "cycle": {
+        "Cycle Index": ("Cycle Index", "Cycle ID"),
+        "Chg. Time(min)": ("Chg. Time(min)", "Chg. Time"),
+        "DChg. Time(min)": ("DChg. Time(min)", "DChg. Time"),
+        "Chg. Energy(Wh)": ("Chg. Energy(Wh)", "Chg. Energy(kWh)"),
+        "DChg. Energy(Wh)": ("DChg. Energy(Wh)", "DChg. Energy(kWh)"),
+    },
+}
+
+_PLAN_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "Step Time(min)": ("Step Time(min)", "Step Time(hh:mm:ss.ms)", "Step Time"),
+    "Energy(Wh)": ("Energy(Wh)", "Energy(kWh)"),
+    "Power(W)": ("Power(W)", "Power(kW)"),
+}
 
 class NewareExcelError(ValueError):
     """Base class for bounded Neware Excel parser errors."""
@@ -207,6 +247,81 @@ _QUANTITY_RE = re.compile(
 _PLAIN_NUMBER_RE = re.compile(
     r"^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*$"
 )
+_DURATION_RE = re.compile(
+    r"^(?P<hours>\d+):(?P<minutes>[0-5]\d):(?P<seconds>[0-5]\d)"
+    r"(?:\.(?P<fraction>\d{1,6}))?$"
+)
+
+
+def _clock_duration_seconds(value: object) -> float:
+    """Parse Neware's unbounded ``H+:MM:SS[.ffffff]`` duration values.
+
+    Neware sometimes writes elapsed durations as strings and sometimes lets
+    openpyxl decode formatted Excel duration cells into ``timedelta`` or
+    ``time`` objects.  The first component is intentionally unbounded: it is
+    elapsed hours, not a clock hour that rolls over at 24.
+    """
+
+    if isinstance(value, timedelta):
+        seconds = value.total_seconds()
+        if math.isfinite(seconds) and seconds >= 0.0:
+            return float(seconds)
+        raise ValueError("negative or non-finite duration")
+    if isinstance(value, datetime_time):
+        return (
+            value.hour * 3600.0
+            + value.minute * 60.0
+            + value.second
+            + value.microsecond / 1_000_000.0
+        )
+    if isinstance(value, Number) and not isinstance(value, bool):
+        raise ValueError("numeric values are ambiguous under a unitless duration header")
+
+    text = str(value).strip() if value is not None else ""
+    match = _DURATION_RE.fullmatch(text)
+    if match is None:
+        raise ValueError("duration must use H+:MM:SS")
+    fraction = match.group("fraction") or ""
+    fraction_seconds = int(fraction.ljust(6, "0")) / 1_000_000.0 if fraction else 0.0
+    return (
+        int(match.group("hours")) * 3600.0
+        + int(match.group("minutes")) * 60.0
+        + int(match.group("seconds"))
+        + fraction_seconds
+    )
+
+
+def _unitless_or_minutes_seconds(
+    value: object,
+    *,
+    source_header: str,
+    canonical_header: str,
+) -> float:
+    """Convert a duration according to the exact resolved header alias."""
+
+    if _normalize_text(source_header) == _normalize_text(canonical_header):
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("duration is not numeric minutes") from exc
+        if not math.isfinite(number):
+            raise ValueError("duration is not finite")
+        return number * 60.0
+    return _clock_duration_seconds(value)
+
+
+def _is_clock_duration_source(source_header: str, canonical_header: str) -> bool:
+    """Return whether a resolved duration header contains an elapsed clock."""
+
+    return _normalize_text(source_header) != _normalize_text(canonical_header)
+
+
+def _power_to_watts_factor(source_header: str) -> float:
+    return 1000.0 if _normalize_text(source_header) == "power(kw)" else 1.0
+
+
+def _energy_to_mwh_factor(source_header: str) -> float:
+    return 1_000_000.0 if "(kwh)" in _normalize_text(source_header) else 1_000.0
 
 
 def _unit_name(value: str) -> str:
@@ -218,6 +333,8 @@ def _unit_name(value: str) -> str:
         "milliamphours": "mah",
         "millivolt": "mv",
         "millivolts": "mv",
+        "millisecond": "ms",
+        "milliseconds": "ms",
         "second": "s",
         "seconds": "s",
         "minute": "min",
@@ -318,12 +435,28 @@ def _record_settings(value: object, *, label: str = "Record settings") -> dict[s
     parsed: list[float] = []
     expected_units = ("s", "V", "mA")
     for part, expected in zip(parts, expected_units):
-        parsed_value = _quantity(
-            part,
-            label=label,
-            expected_unit=expected,
-            required_unit=True,
-        )
+        try:
+            parsed_value = _quantity(
+                part,
+                label=label,
+                expected_unit=expected,
+                required_unit=True,
+            )
+        except InvalidNewareExcelError:
+            if expected != "s":
+                raise
+            # Neware's export UI commonly writes the record interval as
+            # ``60000ms`` even though CellXplorer's protocol model stores
+            # seconds.  This is an explicit unit alias, not a first-number
+            # guess.
+            parsed_value = _quantity(
+                part,
+                label=label,
+                expected_unit="ms",
+                required_unit=True,
+            )
+            if parsed_value is not None:
+                parsed_value /= 1000.0
         if parsed_value is None:
             raise InvalidNewareExcelError(f"Neware Excel {label} contains an empty setting.")
         parsed.append(parsed_value)
@@ -365,7 +498,9 @@ def _find_labeled_value(rows: list[tuple[object, ...]], label: str) -> object | 
     return None
 
 
-def _find_step_plan(rows: list[tuple[object, ...]]) -> tuple[int, dict[str, int]]:
+def _find_step_plan(
+    rows: list[tuple[object, ...]],
+) -> tuple[int, dict[str, tuple[int, str]]]:
     marker_row: int | None = None
     for row_number, row in enumerate(rows):
         if any(_normalize_label(value) == "step plan" for value in row):
@@ -376,11 +511,17 @@ def _find_step_plan(rows: list[tuple[object, ...]]) -> tuple[int, dict[str, int]
 
     for row_number in range(marker_row + 1, len(rows)):
         row = rows[row_number]
-        headers: dict[str, int] = {}
+        headers: dict[str, tuple[int, str]] = {}
         for index, value in enumerate(row):
             normalized = _normalize_text(value)
             if normalized:
-                headers[normalized] = index
+                original = str(value).strip()
+                if normalized in headers:
+                    raise InvalidNewareExcelError(
+                        "Neware Excel test sheet has an ambiguous normalized Step plan header: "
+                        f"{original}."
+                    )
+                headers[normalized] = (index, original)
         if all(_normalize_text(header) in headers for header in _PLAN_REQUIRED_HEADERS):
             return row_number, headers
     raise InvalidNewareExcelError("Neware Excel test sheet has no Step plan header row.")
@@ -391,11 +532,42 @@ def _original_key(header: str) -> str:
     return "".join(word[:1].upper() + word[1:] for word in words) or "Value"
 
 
-def _plan_value(row: tuple[object, ...], headers: dict[str, int], header: str) -> object:
-    index = headers.get(_normalize_text(header))
-    if index is None or index >= len(row):
+def _plan_header_aliases(header: str) -> tuple[str, ...]:
+    return _PLAN_HEADER_ALIASES.get(header, (header,))
+
+
+def _plan_binding(
+    headers: dict[str, tuple[int, str]],
+    header: str,
+) -> tuple[int, str] | None:
+    matches = [
+        headers[_normalize_text(alias)]
+        for alias in _plan_header_aliases(header)
+        if _normalize_text(alias) in headers
+    ]
+    if len(matches) > 1:
+        raise InvalidNewareExcelError(
+            "Neware Excel test sheet has ambiguous Step plan aliases for "
+            f"{header}."
+        )
+    return matches[0] if matches else None
+
+
+def _plan_value(
+    row: tuple[object, ...],
+    headers: dict[str, tuple[int, str]],
+    header: str,
+) -> object:
+    binding = _plan_binding(headers, header)
+    if binding is None:
         return None
-    return row[index]
+    index, _source = binding
+    return row[index] if index < len(row) else None
+
+
+def _plan_source_header(headers: dict[str, tuple[int, str]], header: str) -> str:
+    binding = _plan_binding(headers, header)
+    return binding[1] if binding is not None else header
 
 
 def _step_type_id(step_name: object) -> int:
@@ -434,7 +606,7 @@ def _parse_loop_label(value: object, *, prefix: str, label: str) -> int:
 
 def _parse_test_information(
     rows: list[tuple[object, ...]],
-) -> tuple[dict[str, object], int, dict[str, int]]:
+) -> tuple[dict[str, object], int, dict[str, tuple[int, str]]]:
     marker_row, headers = _find_step_plan(rows)
 
     raw: dict[str, object] = {}
@@ -523,7 +695,7 @@ def _parse_unit_original(sheet: Any | None) -> tuple[dict[str, object], str | No
 def _parse_programmed_plan(
     rows: list[tuple[object, ...]],
     header_row: int,
-    headers: dict[str, int],
+    headers: dict[str, tuple[int, str]],
     info: dict[str, object],
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, object]]]:
     rows_by_index: dict[int, tuple[object, ...]] = {}
@@ -565,7 +737,8 @@ def _parse_programmed_plan(
         for header in _PLAN_HEADERS:
             value = _plan_value(row, headers, header)
             if not _is_blank(value):
-                source_values[_original_key(header)] = {"Value": _value_text(value)}
+                source_header = _plan_source_header(headers, header)
+                source_values[_original_key(source_header)] = {"Value": _value_text(value)}
 
         if type_id == 5:
             step["Limit.Other.Start_Step.Value"] = str(
@@ -616,11 +789,23 @@ def _parse_programmed_plan(
             nominal_capacity = info.get("nominal_capacity_mah")
             if stop_current is None and stop_rate is not None and nominal_capacity is not None:
                 stop_current = abs(stop_rate * float(nominal_capacity))
-            step_time_min = _plan_quantity(
-                _plan_value(row, headers, "Step Time(min)"),
-                label=f"Step {step_index} Step Time(min)",
-                unit="min",
-            )
+            step_time_value = _plan_value(row, headers, "Step Time(min)")
+            step_time_source = _plan_source_header(headers, "Step Time(min)")
+            if _normalize_text(step_time_source) == _normalize_text("Step Time(min)"):
+                step_time_min = _plan_quantity(
+                    step_time_value,
+                    label=f"Step {step_index} Step Time(min)",
+                    unit="min",
+                )
+            elif _is_blank(step_time_value):
+                step_time_min = None
+            else:
+                try:
+                    step_time_min = _clock_duration_seconds(step_time_value) / 60.0
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise InvalidNewareExcelError(
+                        f"Neware Excel Step {step_index} Step Time must use H+:MM:SS."
+                    ) from exc
             if current is not None:
                 step["Limit.Main.Curr.Value"] = _format_number(current)
             if rate is not None:
@@ -731,13 +916,43 @@ def _header_map(sheet: Any) -> dict[str, tuple[int, str]]:
     return result
 
 
+def _header_aliases(sheet_name: str, header: str) -> tuple[str, ...]:
+    return _HEADER_ALIASES.get(sheet_name, {}).get(header, (header,))
+
+
+def _resolve_header(
+    headers: dict[str, tuple[int, str]],
+    header: str,
+    *,
+    sheet_name: str,
+) -> tuple[int, str] | None:
+    matches = [
+        headers[_normalize_text(alias)]
+        for alias in _header_aliases(sheet_name, header)
+        if _normalize_text(alias) in headers
+    ]
+    if len(matches) > 1:
+        names = ", ".join(match[1] for match in matches)
+        raise InvalidNewareExcelError(
+            f"Neware Excel {sheet_name} sheet has ambiguous aliases for {header}: {names}."
+        )
+    return matches[0] if matches else None
+
+
 def _require_columns(
     headers: dict[str, tuple[int, str]],
     required: tuple[str, ...],
     *,
     sheet_name: str,
 ) -> dict[str, tuple[int, str]]:
-    missing = [name for name in required if _normalize_text(name) not in headers]
+    resolved: dict[str, tuple[int, str]] = {}
+    missing: list[str] = []
+    for name in required:
+        binding = _resolve_header(headers, name, sheet_name=sheet_name)
+        if binding is None:
+            missing.append(name)
+        else:
+            resolved[_normalize_text(name)] = binding
     if missing:
         if sheet_name == "record":
             raise UnsupportedNewareExcelError(
@@ -747,7 +962,21 @@ def _require_columns(
         raise InvalidNewareExcelError(
             f"Neware Excel {sheet_name} sheet is missing required column: {missing[0]}."
         )
-    return {_normalize_text(name): headers[_normalize_text(name)] for name in required}
+    return resolved
+
+
+def _optional_columns(
+    headers: dict[str, tuple[int, str]],
+    optional: tuple[str, ...],
+    *,
+    sheet_name: str,
+) -> dict[str, tuple[int, str]]:
+    resolved: dict[str, tuple[int, str]] = {}
+    for name in optional:
+        binding = _resolve_header(headers, name, sheet_name=sheet_name)
+        if binding is not None:
+            resolved[_normalize_text(name)] = binding
+    return resolved
 
 
 def _record_number(row_number: int) -> int:
@@ -806,12 +1035,21 @@ def _normalize_status(value: object, *, row_number: int, column: str = "Step Typ
 
 def _parse_records(sheet: Any, headers: dict[str, tuple[int, str]]) -> list[dict[str, object]]:
     required = _require_columns(headers, REQUIRED_RECORD_HEADERS, sheet_name="record")
+    optional_columns = _optional_columns(
+        headers,
+        tuple(OPTIONAL_RECORD_HEADERS),
+        sheet_name="record",
+    )
     optional = {
-        normalized: (headers[normalized][0], source, target)
+        normalized: (optional_columns[normalized][0], source, target)
         for source, target in OPTIONAL_RECORD_HEADERS.items()
         for normalized in [_normalize_text(source)]
-        if normalized in headers
+        if normalized in optional_columns
     }
+
+    time_source = required[_normalize_text("Time(min)")][1]
+    total_time_source = required[_normalize_text("Total Time(min)")][1]
+    power_source = required[_normalize_text("Power(W)")][1]
 
     records: list[dict[str, object]] = []
     for row_number, values in enumerate(
@@ -822,6 +1060,16 @@ def _parse_records(sheet: Any, headers: dict[str, tuple[int, str]]) -> list[dict
 
         def value_for(source: str) -> object:
             return values[required[_normalize_text(source)][0]]
+
+        def elapsed_seconds(source: str, source_header: str) -> float:
+            try:
+                return _unitless_or_minutes_seconds(
+                    value_for(source),
+                    source_header=source_header,
+                    canonical_header=source,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise _invalid_record(row_number, source_header) from exc
 
         record: dict[str, object] = {
             "record_index": _integer(
@@ -834,16 +1082,8 @@ def _parse_records(sheet: Any, headers: dict[str, tuple[int, str]]) -> list[dict
                 value_for("Step Index"), row_number=row_number, column="Step Index"
             ),
             "status": _normalize_status(value_for("Step Type"), row_number=row_number),
-            "time_s": _number(
-                value_for("Time(min)"), row_number=row_number, column="Time(min)"
-            )
-            * 60.0,
-            "total_time_s": _number(
-                value_for("Total Time(min)"),
-                row_number=row_number,
-                column="Total Time(min)",
-            )
-            * 60.0,
+            "time_s": elapsed_seconds("Time(min)", time_source),
+            "total_time_s": elapsed_seconds("Total Time(min)", total_time_source),
             "current_ma": _number(
                 value_for("Current(mA)"), row_number=row_number, column="Current(mA)"
             ),
@@ -864,8 +1104,9 @@ def _parse_records(sheet: Any, headers: dict[str, tuple[int, str]]) -> list[dict
                 value_for("Date"), row_number=row_number, column="Date"
             ),
             "power_w": _number(
-                value_for("Power(W)"), row_number=row_number, column="Power(W)"
-            ),
+                value_for("Power(W)"), row_number=row_number, column=power_source
+            )
+            * _power_to_watts_factor(power_source),
         }
         for normalized, (_index, source, target) in optional.items():
             record[target] = _optional_number(
@@ -978,6 +1219,8 @@ def _frame_from_records(records: list[dict[str, object]]) -> pd.DataFrame:
 def _parse_step_summary(sheet: Any) -> list[dict[str, object]]:
     headers = _header_map(sheet)
     required = _require_columns(headers, STEP_HEADERS, sheet_name="step")
+    step_time_source = required[_normalize_text("Step Time(min)")][1]
+    energy_source = required[_normalize_text("Energy(Wh)")][1]
     rows: list[dict[str, object]] = []
     for row_number, values in enumerate(
         sheet.iter_rows(min_row=2, values_only=True), start=2
@@ -1023,6 +1266,32 @@ def _parse_step_summary(sheet: Any) -> list[dict[str, object]]:
                 ) from exc
             return timestamp
 
+        def summary_elapsed(source: str, source_header: str) -> float:
+            value = value_for(source)
+            try:
+                return _unitless_or_minutes_seconds(
+                    value,
+                    source_header=source_header,
+                    canonical_header=source,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise InvalidNewareExcelError(
+                    f"Neware Excel step summary row {row_number} has an invalid {source_header} value."
+                ) from exc
+
+        energy_rounding_tolerance = 0.01
+
+        def summary_energy(source: str, source_header: str) -> float:
+            nonlocal energy_rounding_tolerance
+            source_number = summary_number(source)
+            factor = _energy_to_mwh_factor(source_header)
+            energy_rounding_tolerance = _display_rounding_tolerance(
+                source_number,
+                scale=factor,
+                minimum=0.01,
+            )
+            return source_number * factor
+
         rows.append(
             {
                 "cycle": summary_integer("Cycle Index"),
@@ -1031,11 +1300,12 @@ def _parse_step_summary(sheet: Any) -> list[dict[str, object]]:
                 "status": _normalize_status(
                     value_for("Step Type"), row_number=row_number, column="Step Type"
                 ),
-                "step_time_s": summary_number("Step Time(min)") * 60.0,
+                "step_time_s": summary_elapsed("Step Time(min)", step_time_source),
                 "onset": summary_timestamp("Oneset Date"),
                 "end": summary_timestamp("End Date"),
                 "capacity_mah": summary_number("Capacity(mAh)"),
-                "energy_mwh": summary_number("Energy(Wh)") * 1000.0,
+                "energy_mwh": summary_energy("Energy(Wh)", energy_source),
+                "energy_rounding_tolerance_mwh": energy_rounding_tolerance,
                 "onset_voltage_v": summary_number("Oneset Volt.(V)"),
                 "end_voltage_v": summary_number("End Voltage(V)"),
             }
@@ -1096,8 +1366,19 @@ def _validate_step_summary(
     sheet: Any,
     *,
     record_interval_s: float | None,
-) -> None:
+    record_clock_dialect: bool,
+) -> bool:
     summary = _parse_step_summary(sheet)
+    step_time_source = _require_columns(
+        _header_map(sheet),
+        STEP_HEADERS,
+        sheet_name="step",
+    )[_normalize_text("Step Time(min)")][1]
+    duration_is_clock = _is_clock_duration_source(
+        step_time_source,
+        "Step Time(min)",
+    )
+    relaxed_clock_dialect = duration_is_clock and record_clock_dialect
     segments = _segment_groups(frame)
     if len(summary) != len(segments):
         raise InvalidNewareExcelError(
@@ -1134,7 +1415,16 @@ def _validate_step_summary(
             raise InvalidNewareExcelError(
                 f"Neware Excel step summary end does not match raw step {expected_step}."
             )
-        duration_s = (end - onset).total_seconds()
+        if duration_is_clock:
+            elapsed_values = segment["time_s"].to_numpy(dtype="float64")
+            # The unitless clock dialect is an execution-relative duration.
+            # Its timestamp span can include a paused/restored gap, so compare
+            # the summary with the record's step-relative elapsed-time column.
+            duration_s = float(np.max(elapsed_values) - np.min(elapsed_values))
+        else:
+            # Preserve the original numeric-dialect contract: Step Time(min)
+            # is reconciled independently with the exported timestamps.
+            duration_s = (end - onset).total_seconds()
         if abs(duration_s - float(summary_row["step_time_s"])) > tolerance_s:
             raise InvalidNewareExcelError(
                 f"Neware Excel step summary duration does not match raw step {expected_step}."
@@ -1153,6 +1443,11 @@ def _validate_step_summary(
 
         expected_capacity = float(summary_row["capacity_mah"])
         capacity_tolerance = max(0.002, abs(expected_capacity) * 0.001)
+        if relaxed_clock_dialect:
+            capacity_tolerance = max(
+                capacity_tolerance,
+                _display_rounding_tolerance(expected_capacity, scale=1.0, minimum=0.0) * 2.5,
+            )
         if abs(_segment_capacity(segment) - expected_capacity) > capacity_tolerance:
             raise InvalidNewareExcelError(
                 f"Neware Excel step summary capacity does not match raw step {expected_step}."
@@ -1160,10 +1455,17 @@ def _validate_step_summary(
 
         expected_energy = float(summary_row["energy_mwh"])
         energy_tolerance = max(0.01, abs(expected_energy) * 0.001)
+        if relaxed_clock_dialect:
+            energy_tolerance = max(
+                energy_tolerance,
+                float(summary_row.get("energy_rounding_tolerance_mwh", 0.01)) * 2.5,
+                abs(expected_energy) * 0.005,
+            )
         if abs(_integrate_step_energy(segment) - expected_energy) > energy_tolerance:
             raise InvalidNewareExcelError(
                 f"Neware Excel step summary energy does not match raw step {expected_step}."
             )
+    return True
 
 
 def is_supported_workbook(path: str | Path) -> bool:
@@ -1194,14 +1496,31 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     try:
         with _open(candidate) as workbook:
             record_sheet = _sheet_by_name(workbook, "record", required=True)
-            records = _parse_records(record_sheet, _header_map(record_sheet))
+            record_headers = _header_map(record_sheet)
+            records = _parse_records(record_sheet, record_headers)
             frame = _frame_from_records(records)
+            record_time_source = _require_columns(
+                record_headers,
+                REQUIRED_RECORD_HEADERS,
+                sheet_name="record",
+            )[_normalize_text("Time(min)")][1]
+            record_total_time_source = _require_columns(
+                record_headers,
+                REQUIRED_RECORD_HEADERS,
+                sheet_name="record",
+            )[_normalize_text("Total Time(min)")][1]
+            record_clock_dialect = (
+                _is_clock_duration_source(record_time_source, "Time(min)")
+                and _is_clock_duration_source(record_total_time_source, "Total Time(min)")
+            )
             step_sheet = _sheet_by_name(workbook, "step", required=False)
+            step_duration_validated = False
             if step_sheet is not None:
-                _validate_step_summary(
+                step_duration_validated = _validate_step_summary(
                     frame,
                     step_sheet,
                     record_interval_s=_declared_record_interval_seconds(workbook),
+                    record_clock_dialect=record_clock_dialect,
                 )
     except NewareExcelError:
         raise
@@ -1214,6 +1533,8 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
         "record_sheet": "record",
         "step_summary_available": step_sheet is not None,
         "step_summary_validated": step_sheet is not None,
+        "step_summary_duration_validated": step_duration_validated,
+        "record_clock_dialect": record_clock_dialect,
         "record_count": int(len(frame)),
         "executed_step_count": int(frame["step"].nunique()),
     }
@@ -1369,48 +1690,124 @@ def _summary_number(value: object, *, row_number: int, column: str) -> float | N
     return number
 
 
+def _display_rounding_tolerance(value: float, *, scale: float, minimum: float) -> float:
+    """Account for the precision displayed by a Neware summary cell."""
+
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return minimum
+    exponent = decimal_value.as_tuple().exponent
+    if not isinstance(exponent, int) or exponent >= 0:
+        return minimum
+    return max(minimum, 0.5 * (10.0**exponent) * scale)
+
+
 def _parse_cycle_summary(sheet: Any) -> list[dict[str, float | int | None]]:
     headers = _header_map(sheet)
-    required = _require_columns(headers, _CYCLE_HEADERS, sheet_name="cycle")
-    parsed: list[dict[str, float | int | None]] = []
+    required = _require_columns(headers, _CYCLE_REQUIRED_HEADERS, sheet_name="cycle")
+    optional = _optional_columns(
+        headers,
+        _CYCLE_OPTIONAL_HEADERS,
+        sheet_name="cycle",
+    )
+    charge_time_source = required[_normalize_text("Chg. Time(min)")][1]
+    discharge_time_source = required[_normalize_text("DChg. Time(min)")][1]
+    charge_time_is_clock = _is_clock_duration_source(
+        charge_time_source,
+        "Chg. Time(min)",
+    )
+    discharge_time_is_clock = _is_clock_duration_source(
+        discharge_time_source,
+        "DChg. Time(min)",
+    )
+    parsed: list[dict[str, float | int | None | bool]] = []
     for row_number, values in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
         if not any(not _is_blank(value) for value in values):
             continue
 
         def value_for(header: str) -> object:
-            return values[required[_normalize_text(header)][0]]
+            binding = required.get(_normalize_text(header)) or optional.get(_normalize_text(header))
+            return None if binding is None else values[binding[0]]
 
-        def scaled_value(header: str, factor: float) -> float | None:
+        energy_rounding_tolerances: dict[str, float] = {}
+
+        def scaled_energy_value(header: str) -> float | None:
+            binding = optional.get(_normalize_text(header))
+            if binding is None:
+                return None
             number = _summary_number(value_for(header), row_number=row_number, column=header)
-            return None if number is None else number * factor
+            if number is None:
+                return None
+            factor = _energy_to_mwh_factor(binding[1])
+            energy_rounding_tolerances[header] = _display_rounding_tolerance(
+                number,
+                scale=factor,
+                minimum=0.0,
+            )
+            return number * factor
+
+        def elapsed_value(header: str, source_header: str) -> float | None:
+            value = value_for(header)
+            if _is_blank(value):
+                return None
+            try:
+                return _unitless_or_minutes_seconds(
+                    value,
+                    source_header=source_header,
+                    canonical_header=header,
+                )
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise InvalidNewareExcelError(
+                    f"Neware Excel cycle summary row {row_number} has an invalid {source_header} value."
+                ) from exc
 
         cycle = _integer_value(value_for("Cycle Index"), label="Cycle Index", required=True)
         if cycle is None or cycle <= 0:
             raise InvalidNewareExcelError(
                 f"Neware Excel cycle summary row {row_number} has an invalid Cycle Index."
             )
+        charge_capacity = _summary_number(
+            value_for("Chg. Cap.(mAh)"),
+            row_number=row_number,
+            column="Chg. Cap.(mAh)",
+        )
+        discharge_capacity = _summary_number(
+            value_for("DChg. Cap.(mAh)"),
+            row_number=row_number,
+            column="DChg. Cap.(mAh)",
+        )
+        efficiency = _summary_number(
+            value_for("Chg.-DChg. Eff(%)"),
+            row_number=row_number,
+            column="Chg.-DChg. Eff(%)",
+        )
+        if (
+            efficiency is None
+            and charge_capacity is not None
+            and discharge_capacity is not None
+            and not math.isclose(charge_capacity, 0.0, abs_tol=1e-12)
+        ):
+            efficiency = discharge_capacity / charge_capacity * 100.0
+
         parsed.append(
             {
                 "cycle": cycle,
-                "charge_capacity_mah": _summary_number(
-                    value_for("Chg. Cap.(mAh)"),
-                    row_number=row_number,
-                    column="Chg. Cap.(mAh)",
+                "charge_capacity_mah": charge_capacity,
+                "discharge_capacity_mah": discharge_capacity,
+                "coulombic_efficiency_pct": efficiency,
+                "charge_energy_mwh": scaled_energy_value("Chg. Energy(Wh)"),
+                "discharge_energy_mwh": scaled_energy_value("DChg. Energy(Wh)"),
+                "charge_energy_rounding_tolerance_mwh": energy_rounding_tolerances.get(
+                    "Chg. Energy(Wh)", 0.0
                 ),
-                "discharge_capacity_mah": _summary_number(
-                    value_for("DChg. Cap.(mAh)"),
-                    row_number=row_number,
-                    column="DChg. Cap.(mAh)",
+                "discharge_energy_rounding_tolerance_mwh": energy_rounding_tolerances.get(
+                    "DChg. Energy(Wh)", 0.0
                 ),
-                "coulombic_efficiency_pct": _summary_number(
-                    value_for("Chg.-DChg. Eff(%)"),
-                    row_number=row_number,
-                    column="Chg.-DChg. Eff(%)",
-                ),
-                "charge_energy_mwh": scaled_value("Chg. Energy(Wh)", 1000.0),
-                "discharge_energy_mwh": scaled_value("DChg. Energy(Wh)", 1000.0),
-                "charge_time_s": scaled_value("Chg. Time(min)", 60.0),
-                "discharge_time_s": scaled_value("DChg. Time(min)", 60.0),
+                "charge_time_is_clock": charge_time_is_clock,
+                "discharge_time_is_clock": discharge_time_is_clock,
+                "charge_time_s": elapsed_value("Chg. Time(min)", charge_time_source),
+                "discharge_time_s": elapsed_value("DChg. Time(min)", discharge_time_source),
             }
         )
 
@@ -1465,6 +1862,7 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
         )
 
     time_tolerance_s = max(2.0, interval_s if interval_s is not None else 2.0)
+    record_clock_dialect = bool(state.get("record_clock_dialect", False))
 
     def compare(
         cycle_id: int,
@@ -1475,14 +1873,45 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
     ) -> None:
         if expected_value is None:
             return
+        duration_quantity = quantity in {"charge time", "discharge time"}
         try:
             actual_number = float(actual_value)
             expected_number = float(expected_value)
         except (TypeError, ValueError) as exc:
+            try:
+                expected_number = float(expected_value)
+            except (TypeError, ValueError):
+                raise InvalidNewareExcelError(
+                    f"Neware Excel cycle {cycle_id} {quantity} cannot be compared."
+                ) from exc
+            # Neware omits a derived duration when a cycle has no matching
+            # phase, while its summary writes the corresponding value as 0.
+            # Treat that representation as the same zero rather than turning
+            # an otherwise valid final cycle into an import failure.
+            if duration_quantity and abs(expected_number) <= tolerance and (
+                actual_value is None or pd.isna(actual_value)
+            ):
+                return
             raise InvalidNewareExcelError(
                 f"Neware Excel cycle {cycle_id} {quantity} cannot be compared."
             ) from exc
-        if not math.isfinite(actual_number) or abs(actual_number - expected_number) > tolerance:
+        if not math.isfinite(expected_number):
+            raise InvalidNewareExcelError(
+                f"Neware Excel cycle {cycle_id} {quantity} has a non-finite summary value."
+            )
+        if math.isnan(actual_number):
+            if duration_quantity and abs(expected_number) <= tolerance:
+                return
+            raise InvalidNewareExcelError(
+                f"Neware Excel cycle {cycle_id} {quantity} mismatch: calculated {actual_number:g}, "
+                f"summary {expected_number:g}."
+            )
+        if not math.isfinite(actual_number):
+            raise InvalidNewareExcelError(
+                f"Neware Excel cycle {cycle_id} {quantity} mismatch: calculated {actual_number:g}, "
+                f"summary {expected_number:g}."
+            )
+        if abs(actual_number - expected_number) > tolerance:
             raise InvalidNewareExcelError(
                 f"Neware Excel cycle {cycle_id} {quantity} mismatch: "
                 f"calculated {actual_number:g}, summary {expected_number:g}."
@@ -1499,33 +1928,66 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
         discharge_time = row["discharge_time_s"]
         actual_charge_time = actual_row.get("charge_time_h")
         actual_discharge_time = actual_row.get("discharge_time_h")
+        relaxed_clock_dialect = bool(
+            record_clock_dialect
+            and row.get("charge_time_is_clock")
+            and row.get("discharge_time_is_clock")
+        )
+        capacity_tolerance = max(0.002, 0.001 * abs(float(charge_capacity))) if charge_capacity is not None else 0.0
+        if relaxed_clock_dialect:
+            capacity_tolerance = max(
+                capacity_tolerance,
+                _display_rounding_tolerance(float(charge_capacity), scale=1.0, minimum=0.0) * 2.5
+                if charge_capacity is not None else 0.0,
+            )
         compare(
             cycle_id,
             "charge capacity",
             actual_row.get("charge_capacity_mah"),
             charge_capacity,
-            max(0.002, 0.001 * abs(float(charge_capacity))) if charge_capacity is not None else 0.0,
+            capacity_tolerance,
         )
+        discharge_capacity_tolerance = max(0.002, 0.001 * abs(float(discharge_capacity))) if discharge_capacity is not None else 0.0
+        if relaxed_clock_dialect:
+            discharge_capacity_tolerance = max(
+                discharge_capacity_tolerance,
+                _display_rounding_tolerance(float(discharge_capacity), scale=1.0, minimum=0.0) * 2.5
+                if discharge_capacity is not None else 0.0,
+            )
         compare(
             cycle_id,
             "discharge capacity",
             actual_row.get("discharge_capacity_mah"),
             discharge_capacity,
-            max(0.002, 0.001 * abs(float(discharge_capacity))) if discharge_capacity is not None else 0.0,
+            discharge_capacity_tolerance,
         )
+        charge_energy_tolerance = max(0.01, 0.001 * abs(float(charge_energy))) if charge_energy is not None else 0.0
+        if relaxed_clock_dialect:
+            charge_energy_tolerance = max(
+                charge_energy_tolerance,
+                float(row.get("charge_energy_rounding_tolerance_mwh", 0.0)) * 2.5,
+                abs(float(charge_energy)) * 0.005 if charge_energy is not None else 0.0,
+            )
         compare(
             cycle_id,
             "charge energy",
             actual_row.get("charge_energy_mwh"),
             charge_energy,
-            max(0.01, 0.001 * abs(float(charge_energy))) if charge_energy is not None else 0.0,
+            charge_energy_tolerance,
         )
+        discharge_energy_tolerance = max(0.01, 0.001 * abs(float(discharge_energy))) if discharge_energy is not None else 0.0
+        if relaxed_clock_dialect:
+            discharge_energy_tolerance = max(
+                discharge_energy_tolerance,
+                float(row.get("discharge_energy_rounding_tolerance_mwh", 0.0)) * 2.5,
+                abs(float(discharge_energy)) * 0.005 if discharge_energy is not None else 0.0,
+            )
         compare(
             cycle_id,
             "discharge energy",
             actual_row.get("discharge_energy_mwh"),
             discharge_energy,
-            max(0.01, 0.001 * abs(float(discharge_energy))) if discharge_energy is not None else 0.0,
+            discharge_energy_tolerance,
         )
         if charge_time is not None:
             compare(
@@ -1547,11 +2009,14 @@ def validate_cycles(path: str | Path, raw: pd.DataFrame, cycles: pd.DataFrame) -
             row["coulombic_efficiency_pct"] is not None
             and pd.notna(actual_row.get("coulombic_efficiency_pct"))
         ):
+            efficiency_tolerance = 0.05
+            if relaxed_clock_dialect:
+                efficiency_tolerance = 0.5
             compare(
                 cycle_id,
                 "coulombic efficiency",
                 actual_row.get("coulombic_efficiency_pct"),
                 row["coulombic_efficiency_pct"],
-                0.05,
+                efficiency_tolerance,
             )
     state["cycle_summary_validated"] = True

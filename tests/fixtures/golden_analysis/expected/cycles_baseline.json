@@ -4540,7 +4540,7 @@
       ]
     }
   ],
-  "parser_version": "v2026.06.11-cxp3",
+  "parser_version": "v2026.06.11-cxp4",
   "quantities": [
     {
       "column": "discharge_capacity_mah",
