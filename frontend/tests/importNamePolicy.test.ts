@@ -35,23 +35,28 @@ test("trimmed duplicate Cell names identify every affected staged file", () => {
 });
 
 test("registration stays attached until relational rows are committed", () => {
-  assert.deepEqual(importRegistrationUiState(true, "failed"), {
+  assert.deepEqual(importRegistrationUiState(true, "failed", false, false, false), {
     showContinue: false,
+    showDone: false,
     editingLocked: false,
     closeLocked: false,
   });
-  assert.deepEqual(importRegistrationUiState(true, "running"), {
+  assert.deepEqual(importRegistrationUiState(true, "running", false, false, false), {
     showContinue: false,
+    showDone: false,
     editingLocked: true,
     closeLocked: true,
   });
-  assert.deepEqual(importRegistrationUiState(true, "completed"), {
+  // When status="completed" with registrationCommitted, show Continue if cache is still running
+  assert.deepEqual(importRegistrationUiState(true, "completed", false, true, true), {
     showContinue: true,
+    showDone: false,
     editingLocked: true,
     closeLocked: false,
   });
-  assert.deepEqual(importRegistrationUiState(true, undefined), {
+  assert.deepEqual(importRegistrationUiState(true, undefined, false, false, false), {
     showContinue: false,
+    showDone: false,
     editingLocked: true,
     closeLocked: true,
   });

@@ -31,7 +31,7 @@ import {
   IconLoader2,
   IconSettings,
 } from "@tabler/icons-react";
-import { Component, useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -66,6 +66,11 @@ import {
   importProgressCount,
   importProgressPercent,
 } from "./importProgress";
+import {
+  readAcknowledgedFailedJobId,
+  writeAcknowledgedFailedJobId,
+  shouldShowActivityFailed,
+} from "./activityAcknowledgement";
 
 class RouteErrorBoundary extends Component<{ children: ReactNode; routeKey: string }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -108,6 +113,9 @@ export default function App({
   const [activityOpen, setActivityOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navbarCollapsed, setNavbarCollapsed] = useState(false);
+  const [acknowledgedFailedJobId, setAcknowledgedFailedJobId] = useState<number | null>(
+    () => readAcknowledgedFailedJobId(window.localStorage),
+  );
   const handledSourceCheckJob = useRef<number | null>(null);
   const handledSourceChangingState = useRef("");
   const backgroundJobSnapshots = useRef(new Map<number, string>());
@@ -300,6 +308,26 @@ export default function App({
       refresh([["cells"], ["files"], ["activity"], ["background-jobs"]]);
     }
   }, [backgroundJobs.data, queryClient]);
+
+  // Extract failed job IDs once for use in multiple places
+  const failedJobIds = useMemo(
+    () =>
+      (backgroundJobs.data ?? [])
+        .filter((job) => job.status === "failed")
+        .map((job) => job.id),
+    [backgroundJobs.data]
+  );
+
+  // Acknowledge failed jobs when the activity drawer opens, but only if there's a new high-water mark
+  useEffect(() => {
+    if (!activityOpen || failedJobIds.length === 0) return;
+    const highestFailedId = Math.max(...failedJobIds);
+    // Only write to storage if this is a higher ID than what we've already acknowledged
+    if (highestFailedId > (acknowledgedFailedJobId ?? -1)) {
+      writeAcknowledgedFailedJobId(window.localStorage, highestFailedId);
+      setAcknowledgedFailedJobId(highestFailedId);
+    }
+  }, [activityOpen, failedJobIds, acknowledgedFailedJobId]);
   const sourceCheckJob = useQuery({
     queryKey: ["source-check-job"],
     queryFn: () => get<SourceCheckJob | null>("/api/source-check-jobs/latest"),
@@ -562,7 +590,11 @@ export default function App({
               className="background-activity-button"
               size="compact-sm"
               variant="subtle"
-              color={backgroundJobs.data?.some((job) => job.status === "failed") ? "red" : APP_BRANDING.primaryColor}
+              color={
+                shouldShowActivityFailed(failedJobIds, acknowledgedFailedJobId)
+                  ? "red"
+                  : APP_BRANDING.primaryColor
+              }
               leftSection={
                 activeJob ? (
                   <IconLoader2 size={14} className="source-check-spin" />

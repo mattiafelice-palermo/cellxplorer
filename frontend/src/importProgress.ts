@@ -35,14 +35,27 @@ export function importRegistrationUiState(
   status: BackgroundJob["status"] | undefined,
   savePending = false,
   registrationCommitted = false,
-): { showContinue: boolean; editingLocked: boolean; closeLocked: boolean } {
-  const registrationFinished = registrationCommitted || status === "completed";
+  cachePreparationActive = false,
+): { showContinue: boolean; showDone: boolean; editingLocked: boolean; closeLocked: boolean } {
   const registrationFailed = status === "failed";
+  const registrationFinished = registrationCommitted || status === "completed";
+
+  // showDone only when registration is finished AND cache preparation is no longer running.
+  // Note: registrationCommitted and status="completed" both become true in the SAME instant
+  // for every successful import (small or large). The registration job finishing does NOT mean
+  // the import is complete — a separate import_cache background job handles scientific data
+  // preparation and can take much longer. Only show Done when that cache job is no longer active.
+  const showDone = accepted && !registrationFailed && registrationFinished && !cachePreparationActive;
+
+  // showContinue: when registration is finished but either cache prep is still running or Done hasn't triggered yet.
+  const showContinue = accepted && !registrationFailed && registrationFinished && !showDone;
+
   return {
+    showContinue,
+    showDone,
+    editingLocked: savePending || (accepted && !registrationFailed),
     // Detaching is safe only after the relational registration transaction has
     // committed. Cache generation is the work that may continue after detach.
-    showContinue: accepted && !registrationFailed && registrationFinished,
-    editingLocked: savePending || (accepted && !registrationFailed),
     closeLocked: savePending || (accepted && !registrationFailed && !registrationFinished),
   };
 }
