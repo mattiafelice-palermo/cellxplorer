@@ -4,6 +4,19 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0-beta.2 - 2026-08-12
+
+### New features
+
+- Apply a selected plot palette across every series while preserving non-colour series settings.
+- Start DCIR setup from an empty plot, show protocol provenance, and choose the protocol before its DCIR pair.
+
+### Bug fixes
+
+- Close the import modal when registration and cache preparation finish, and clear stale Activity failure indicators.
+- Fix the DCIR cell selector crash when non-applicable cells are grouped.
+- Remove obsolete series drop-shadow styling and keep palette application from leaving stale per-series colour pins.
+
 ## 0.22.0-beta.1 - 2026-08-11
 
 ### New features
