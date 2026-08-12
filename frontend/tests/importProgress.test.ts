@@ -171,13 +171,46 @@ test("the first post-commit cache job appearance refreshes Cell rows", () => {
 });
 
 test("registration controls unlock from the explicit commit marker before cache completion", () => {
+  // When registration is committed but cache is still running, show Continue in background
   assert.deepEqual(
-    importRegistrationUiState(true, "running", false, true),
-    { showContinue: true, editingLocked: true, closeLocked: false },
+    importRegistrationUiState(true, "running", false, true, true),
+    { showContinue: true, showDone: false, editingLocked: true, closeLocked: false },
   );
   assert.deepEqual(
-    importRegistrationUiState(true, "failed", false, true),
-    { showContinue: false, editingLocked: false, closeLocked: false },
+    importRegistrationUiState(true, "failed", false, true, false),
+    { showContinue: false, showDone: false, editingLocked: false, closeLocked: false },
+  );
+});
+
+test("Done shows when registration finished AND cache preparation is idle", () => {
+  // Cache preparation is a separate job that continues after registration commits.
+  // Only show Done when BOTH registration is finished AND cache is not running.
+  assert.deepEqual(
+    importRegistrationUiState(true, "completed", false, true, false),
+    { showContinue: false, showDone: true, editingLocked: true, closeLocked: false },
+  );
+});
+
+test("Continue shows when registration finished BUT cache preparation is still active", () => {
+  // Even though registration is done, cache preparation is still running.
+  // Show Continue to avoid closing the modal while work continues.
+  assert.deepEqual(
+    importRegistrationUiState(true, "completed", false, true, true),
+    { showContinue: true, showDone: false, editingLocked: true, closeLocked: false },
+  );
+});
+
+test("neither button shows if registration failed", () => {
+  assert.deepEqual(
+    importRegistrationUiState(true, "failed", false, true, false),
+    { showContinue: false, showDone: false, editingLocked: false, closeLocked: false },
+  );
+});
+
+test("neither button shows if registration still running", () => {
+  assert.deepEqual(
+    importRegistrationUiState(true, "running", false, false, false),
+    { showContinue: false, showDone: false, editingLocked: true, closeLocked: true },
   );
 });
 

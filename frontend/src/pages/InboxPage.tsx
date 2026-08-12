@@ -66,6 +66,7 @@ import {
   ImportPreview,
   ImportPreviewResult,
   ImportRawDataResult,
+  BackgroundJob,
   get,
   post,
   Tree,
@@ -880,6 +881,7 @@ function appendUniqueDrafts(current: ImportDraft[], files: ImportPreview[]): Imp
 }
 
 const RAW_PAGE_SIZE = 100;
+const AUTO_CLOSE_SECONDS = 3;
 
 function combinedMetadata(draft: ImportDraft) {
   return {
@@ -955,6 +957,9 @@ function ImportModal({
   const [registerToken, setRegisterToken] = useState<string | null>(null);
   const [registrationAccepted, setRegistrationAccepted] = useState(false);
   const [handoffPending, setHandoffPending] = useState(false);
+  const [closingBranch, setClosingBranch] = useState<"done" | "continue" | null>(null);
+  const [doneCountdown, setDoneCountdown] = useState<number | null>(null);
+  const autoCloseFired = useRef(false);
   const [loadedFilesScrollTop, setLoadedFilesScrollTop] = useState(0);
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
@@ -969,6 +974,10 @@ function ImportModal({
     queryKey: ["active-material-presets"],
     queryFn: () =>
       get<ActiveMaterialPresetSettings>("/api/settings/active-material-presets"),
+  });
+  const backgroundJobs = useQuery({
+    queryKey: ["background-jobs"],
+    queryFn: () => get<BackgroundJob[]>("/api/background-jobs?limit=20"),
   });
   const folderSelectData = useMemo(() => folderOptions(treeQuery.data?.folders ?? []), [treeQuery.data]);
   const areaPresetData = useMemo(
@@ -1000,6 +1009,9 @@ function ImportModal({
       setRegistrationAccepted(false);
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
+      setDoneCountdown(null);
+      autoCloseFired.current = false;
+      setClosingBranch(null);
     } else {
       rawRequestVersion.current += 1;
       rawController.current?.abort();
@@ -1010,6 +1022,9 @@ function ImportModal({
       setRawError(null);
       setRegistrationAccepted(false);
       setRegisterToken(null);
+      setDoneCountdown(null);
+      autoCloseFired.current = false;
+      setClosingBranch(null);
     }
   }, [opened, targetFolderId]);
 
@@ -1300,8 +1315,21 @@ function ImportModal({
   });
   const registerProgress = useImportJobProgress(registerToken, Boolean(registerToken));
 
-  const continueInBackground = async () => {
+  const registrationStatus = registerProgress.data?.status;
+  const cachePreparationActive = (backgroundJobs.data ?? []).some(
+    (job) => job.kind === "import_cache" && (job.status === "running" || job.status === "paused"),
+  );
+  const registrationUi = importRegistrationUiState(
+    registrationAccepted,
+    registrationStatus,
+    save.isPending,
+    Boolean(registerProgress.data?.registration_committed),
+    cachePreparationActive,
+  );
+
+  const continueInBackground = useCallback(async () => {
     if (handoffPending) return;
+    setClosingBranch(registrationUi.showDone ? "done" : "continue");
     setHandoffPending(true);
     try {
       // The registration job exposes its commit boundary before the modal can
@@ -1318,7 +1346,7 @@ function ImportModal({
     } finally {
       setHandoffPending(false);
     }
-  };
+  }, [handoffPending, qc, onSaved, registrationUi.showDone]);
 
   useEffect(() => {
     if (!registrationAccepted || !registerProgress.data) return;
@@ -1331,6 +1359,33 @@ function ImportModal({
       void qc.invalidateQueries({ queryKey: ["activity"] });
     }
   }, [qc, registerProgress.data, registrationAccepted]);
+
+  // onSaved() resets the draft state while the modal is still mounted, so without latching
+  // the footer and button would flash the pre-save review state for a moment before closing.
+  const shouldShowDone = registrationUi.showDone || closingBranch === "done";
+  const shouldShowContinue =
+    !shouldShowDone && (registrationUi.showContinue || closingBranch === "continue");
+
+  // Start/cancel the countdown purely from the policy flag (registrationUi.showDone).
+  useEffect(() => {
+    if (!registrationUi.showDone) {
+      setDoneCountdown(null);
+      autoCloseFired.current = false;
+      return;
+    }
+    setDoneCountdown(AUTO_CLOSE_SECONDS);
+    const id = setInterval(() => {
+      setDoneCountdown((prev) => (prev === null ? null : Math.max(0, prev - 1)));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [registrationUi.showDone]);
+
+  // Fire the handoff exactly once, when the countdown reaches zero.
+  useEffect(() => {
+    if (doneCountdown !== 0 || autoCloseFired.current) return;
+    autoCloseFired.current = true;
+    void continueInBackground();
+  }, [doneCountdown, continueInBackground]);
 
   const groupNames = replicateGroups.map((group) => group.name.trim()).filter(Boolean);
   const duplicateGroupName = new Set(groupNames).size !== groupNames.length;
@@ -1355,13 +1410,6 @@ function ImportModal({
     !hasCellNameConflicts &&
     !duplicateGroupName &&
     invalidGroups.length === 0;
-  const registrationStatus = registerProgress.data?.status;
-  const registrationUi = importRegistrationUiState(
-    registrationAccepted,
-    registrationStatus,
-    save.isPending,
-    Boolean(registerProgress.data?.registration_committed),
-  );
   const rawRangeStart = rawData && rawData.total_rows > 0 ? rawData.offset + 1 : 0;
   const rawRangeEnd = rawData
     ? Math.min(rawData.offset + rawData.rows.length, rawData.total_rows)
@@ -1443,15 +1491,25 @@ function ImportModal({
         actions={
           <>
             <Text size="sm" c="dimmed">
-              {registrationUi.showContinue
-                ? "Registration is committed. Scientific data preparation continues in the background."
-                : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
+              {shouldShowDone
+                ? "Import complete. Cells are ready."
+                : shouldShowContinue
+                  ? "Registration is committed. Scientific data preparation continues in the background."
+                  : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
             </Text>
             <ImportModalPrimaryActions>
-              {registrationUi.showContinue ? (
+              {shouldShowDone ? (
                 <Button
-                  loading={handoffPending}
-                  disabled={handoffPending}
+                  loading={handoffPending || closingBranch !== null}
+                  disabled={handoffPending || closingBranch !== null}
+                  onClick={() => void continueInBackground()}
+                >
+                  Done{doneCountdown !== null && doneCountdown > 0 ? ` (${doneCountdown})` : ""}
+                </Button>
+              ) : shouldShowContinue ? (
+                <Button
+                  loading={handoffPending || closingBranch !== null}
+                  disabled={handoffPending || closingBranch !== null}
                   onClick={() => void continueInBackground()}
                 >
                   Continue in background
