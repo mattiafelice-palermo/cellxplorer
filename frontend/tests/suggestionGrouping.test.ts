@@ -3,6 +3,42 @@ import { strict as assert } from "node:assert";
 import { groupSuggestionsByFamily } from "../src/features/analyses/editor/protocol/suggestionGrouping.ts";
 import { groupCellsByApplicability } from "../src/features/analyses/editor/families/dcir/suggestionGrouping.ts";
 
+type CellSelectItem = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+};
+
+type CellSelectGroup = {
+  group: string;
+  items: CellSelectItem[];
+};
+
+function itemAt(data: ReadonlyArray<unknown>, index: number): CellSelectItem {
+  const item = data[index];
+  assert.ok(
+    item &&
+      typeof item === "object" &&
+      "value" in item &&
+      "label" in item,
+    `expected item at index ${index}`
+  );
+  return item as CellSelectItem;
+}
+
+function groupAt(data: ReadonlyArray<unknown>, index: number): CellSelectGroup {
+  const item = data[index];
+  assert.ok(
+    item &&
+      typeof item === "object" &&
+      "group" in item &&
+      "items" in item &&
+      Array.isArray(item.items),
+    `expected group at index ${index}`
+  );
+  return item as CellSelectGroup;
+}
+
 describe("suggestionGrouping", () => {
   describe("groupSuggestionsByFamily", () => {
     it("groups suggestions by signature and protocol number", () => {
@@ -146,28 +182,34 @@ describe("suggestionGrouping", () => {
 
       const result = groupCellsByApplicability(cells, applicableCounts);
 
-      // Should have 3 items: 2 applicable (ungrouped), 1 non-applicable (grouped)
+      // Should have 3 options: 2 applicable items and one non-applicable group.
       assert.equal(result.length, 3);
 
       // First two should be applicable (no group)
-      assert.equal(result[0].value, "1");
-      assert.equal(result[0].label, "Cell_A");
-      assert.equal(result[0].group, undefined);
-      assert.equal(result[0].disabled, undefined);
+      const first = itemAt(result, 0);
+      assert.equal(first.value, "1");
+      assert.equal(first.label, "Cell_A");
+      assert.equal("group" in first, false);
+      assert.equal(first.disabled, undefined);
 
-      assert.equal(result[1].value, "3");
-      assert.equal(result[1].label, "Cell_C");
-      assert.equal(result[1].group, undefined);
+      const second = itemAt(result, 1);
+      assert.equal(second.value, "3");
+      assert.equal(second.label, "Cell_C");
+      assert.equal("group" in second, false);
 
-      // Last should be non-applicable (grouped)
-      assert.equal(result[2].value, "2");
-      assert.equal(result[2].label, "Cell_B");
+      // Last should be a Mantine group containing the non-applicable option.
+      const nonApplicableGroup = groupAt(result, 2);
       assert.equal(
-        result[2].group,
+        nonApplicableGroup.group,
         "Cells with no DCIR segment",
-        "non-applicable cell should be grouped"
+        "non-applicable cells should be grouped"
       );
-      assert.equal(result[2].disabled, true, "non-applicable cell should be disabled");
+      assert.equal("value" in nonApplicableGroup, false);
+      assert.equal(nonApplicableGroup.items.length, 1);
+      const nonApplicable = nonApplicableGroup.items[0];
+      assert.equal(nonApplicable.value, "2");
+      assert.equal(nonApplicable.label, "Cell_B");
+      assert.equal(nonApplicable.disabled, true, "non-applicable cell should be disabled");
     });
 
     it("handles all cells applicable", () => {
@@ -183,8 +225,8 @@ describe("suggestionGrouping", () => {
       const result = groupCellsByApplicability(cells, applicableCounts);
 
       assert.equal(result.length, 2);
-      assert.equal(result[0].group, undefined);
-      assert.equal(result[1].group, undefined);
+      assert.equal("group" in itemAt(result, 0), false);
+      assert.equal("group" in itemAt(result, 1), false);
     });
 
     it("handles no cells applicable", () => {
@@ -196,12 +238,12 @@ describe("suggestionGrouping", () => {
 
       const result = groupCellsByApplicability(cells, applicableCounts);
 
-      assert.equal(result.length, 2);
-      // Both should be in the non-applicable group
-      assert.equal(result[0].group, "Cells with no DCIR segment");
-      assert.equal(result[1].group, "Cells with no DCIR segment");
-      assert.equal(result[0].disabled, true);
-      assert.equal(result[1].disabled, true);
+      assert.equal(result.length, 1);
+      const group = groupAt(result, 0);
+      assert.equal(group.group, "Cells with no DCIR segment");
+      assert.equal(group.items.length, 2);
+      assert.equal(group.items[0].disabled, true);
+      assert.equal(group.items[1].disabled, true);
     });
 
     it("handles empty cells list", () => {
