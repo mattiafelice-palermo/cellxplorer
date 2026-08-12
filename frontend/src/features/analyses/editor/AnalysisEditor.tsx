@@ -1830,8 +1830,40 @@ function PlotWorkspaceEmpty({
   hasSamples: boolean;
   onNewPlot: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+
+  const handleClick = () => {
+    if (hasSamples) {
+      onNewPlot();
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if ((event.key === "Enter" || event.key === " ") && hasSamples) {
+      event.preventDefault();
+      onNewPlot();
+    }
+  };
+
   return (
-    <Paper p="sm" withBorder style={{ minHeight: 420 }}>
+    <Paper
+      p="sm"
+      withBorder
+      style={{
+        minHeight: 420,
+        cursor: hasSamples ? "pointer" : "default",
+        transition: "background-color 160ms ease",
+        backgroundColor:
+          hasSamples && hovered ? "var(--mantine-color-gray-0)" : undefined,
+      }}
+      role={hasSamples ? "button" : undefined}
+      tabIndex={hasSamples ? 0 : undefined}
+      aria-label={hasSamples ? "Start a new plot for this tab" : undefined}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      onMouseEnter={() => hasSamples && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <Group justify="flex-end" mb="md">
         <Button
           size="xs"
@@ -1839,7 +1871,10 @@ function PlotWorkspaceEmpty({
           variant={hasSamples ? "filled" : "light"}
           leftSection={<IconPlus size={14} />}
           disabled={!hasSamples}
-          onClick={onNewPlot}
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewPlot();
+          }}
         >
           New
         </Button>
@@ -1849,7 +1884,7 @@ function PlotWorkspaceEmpty({
           <Text fw={700}>No plot yet</Text>
           <Text size="sm" c="dimmed" ta="center">
             {hasSamples
-              ? "Click New to start a draft for this tab."
+              ? "Click anywhere here, or the New button, to start a draft."
               : "Add cells or replicates to this analysis, then click New."}
           </Text>
         </Stack>
