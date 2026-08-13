@@ -141,10 +141,49 @@ Original Neware files normally remain at their source paths. The database stores
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not
 delete the data directory. Destructive removal is an explicit, separately confirmed choice.
 
-Supported source dispatch is centralized in `backend/app/services/parsing.py`: `.nda` and `.ndax`
-use the shared NewareNDA boundary, while structured Neware `.xlsx` files use
-`backend/app/services/neware_excel.py`. Excel sources are normalized into the same canonical raw,
-protocol and versioned raw/cycle cache contracts, so scientific services remain format-neutral.
+Supported source dispatch is centralized in `backend/app/services/parsing.py` (Spec 040.2): a small
+static registry of `SourceFormatDescriptor`s (`FORMAT_NEWARE_BINARY` = `.nda`/`.ndax`,
+`FORMAT_NEWARE_EXCEL` = `.xlsx`) drives one shared extension -> format_id decision table that both
+`parse_timeseries` and `read_header_metadata` dispatch through. `.nda`/`.ndax` use the shared
+NewareNDA boundary, while structured Neware `.xlsx` files use `backend/app/services/neware_excel.py`.
+`parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
+requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
+recognized by extension alone); `parsing.source_parser_descriptor(path)` exposes each format's
+`adapter_revision` and `canonical_raw_version`. Since Spec 040.3, `parsing.parser_identity(path)`
+builds a compact per-source identity from that descriptor
+(`<prefix>:<adapter_revision>:r<canonical_raw_version>`, e.g. `nb:v2026.06.11:r1` /
+`nx:6:r1`, both well inside `SourceFile.parser_version`'s 30-character bound), and
+`parsing.current_parser_identity_for_extension(ext)` answers the same question with no file I/O from
+a stored extension alone — the mechanism every list/current-cache-status check uses. Cache build
+(`cache.build`, `cache.build_write_behind`, `cache.schedule_build`), current-cache checks
+(`scanner._has_current_scientific_cache`, `routers/library.py:source_file_needs_cache`), stitching
+(`stitch.CachedSourceRef`, one hash+identity pair per ordered source), and analysis
+provenance/cache-key resolution (`analysis_engine.resolve_source_parser_versions`, reused by
+`analysis_cache.result_key`) all key on this per-source identity rather than one process-global
+bundle, so two formats' cache/provenance never collide or cross-invalidate merely because they
+happen to be registered at the same time. `parsing.PARSER_VERSION` remains only as a legacy
+compatibility fallback for a source that predates 040.3 and has no stored `parser_version`. This is a
+static registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
+hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
+cache contracts, so scientific services remain format-neutral.
+
+A Cell's ordered sources may legitimately carry different parser identities (a binary source
+continued by a structured Excel export is the reference case, proven end to end by
+`tests/test_mixed_parser_integration.py`, Spec 040.5). `analysis_engine.display_parser_version`
+renders the human-facing summary in every compute result and saved provenance record: the shared
+identity when every contributing source used one, or the literal string `"mixed"` when they differ —
+never one source's value silently standing in for the others. Per-source truth always remains in
+`sources[].files[]` (`{hash, position, parser_version}`). The frontend's Analysis settings-tab
+Provenance panel (`AnalysisEditor.tsx`) renders that per-source breakdown as a tooltip on the "mixed"
+text via the pure `parserSourceBreakdown` helper in
+`frontend/src/features/analyses/editor/policies/parserProvenancePolicy.ts` (`frontend/tests/parserProvenancePolicy.test.ts`)
+rather than showing a bare, unexplained "mixed" — it joins `sources[].files[]` against the same
+entry's `source_descriptors` for a human-readable filename per source. This reads the analysis'
+*saved* provenance (`Analysis.provenance`, populated once by `engine.build_provenance` from the
+Cycles-family compute, which always carries `sources[]`); the live per-tab `displayResult` used by
+the "Rendering at parser ..." line below it is not extended the same way because `TimeCapacityResult`
+does not carry a `sources[]` field today — a live-render breakdown for that line would need a
+backend/type change and is deferred.
 The workbook's `record` sheet is the point-level source of truth; optional `step` and `cycle`
 summaries validate parser-derived execution and cycle projections rather than replacing them.
 Metadata inspection reads bounded workbook surfaces without scanning the large record sheet, and

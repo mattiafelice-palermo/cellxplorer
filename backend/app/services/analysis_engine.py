@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinl
 
 from ..config import CALC_VERSION
 from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
-from . import cache, calc, parsing, protocol, stitch
+from . import cache, calc, canonical_cycling, parsing, protocol, stitch
 
 SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
@@ -300,6 +300,118 @@ def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[Source
     return hashes, files
 
 
+# --------------------------------------------------- per-source parser identity
+
+
+def current_parser_identity(source_file: SourceFile) -> str:
+    """Cheap current expected parser identity for one registered source.
+
+    Resolved from the source's stored extension alone — no file I/O, no
+    parser import (see `parsing.current_parser_identity_for_extension`).
+    Falls back to the legacy transitional bundle only for an extension the
+    format registry does not recognize, which should not happen for a
+    successfully registered source.
+    """
+    return parsing.current_parser_identity_for_extension(source_file.ext) or parsing.PARSER_VERSION
+
+
+def resolve_source_parser_versions(
+    files: list[SourceFile],
+    provenance: dict | None,
+    cell_id: int,
+    use_current_versions: bool,
+) -> dict[str, str]:
+    """Effective parser identity to render each of a cell's ordered sources at.
+
+    New-shape provenance (Spec 040.3) pins an identity per contributing
+    source: ``provenance["sources"]`` entries carry a ``files`` array of
+    ``{"hash", "position", "parser_version"}``. Legacy provenance (pre-040.3)
+    pinned a single scalar ``provenance["parser_version"]`` for the whole
+    analysis; this is normalized here by applying that one historical value
+    to every source the legacy entry's ``file_hashes`` covered — the only
+    truthful historical information available; it is never invented, and it
+    is never applied to a source the legacy provenance did not cover.
+
+    A source with no pinned identity — a fresh compute
+    (``use_current_versions=True``), an analysis with no provenance yet, or
+    a source attached to the cell since the analysis was last computed —
+    resolves to the CURRENT identity for its own extension/format, never
+    another source's pinned identity. This is what makes a mixed-format
+    Cell chain resolve correctly: each source's identity is independent.
+    """
+    pinned: dict[str, str] = {}
+    if provenance and not use_current_versions:
+        legacy_value = provenance.get("parser_version")
+        for source_entry in provenance.get("sources") or []:
+            if not isinstance(source_entry, dict) or source_entry.get("cell_id") != cell_id:
+                continue
+            entry_files = source_entry.get("files")
+            if isinstance(entry_files, list) and entry_files:
+                for file_entry in entry_files:
+                    if not isinstance(file_entry, dict):
+                        continue
+                    file_hash = file_entry.get("hash")
+                    identity = file_entry.get("parser_version")
+                    if file_hash and identity:
+                        pinned[file_hash] = identity
+            elif legacy_value:
+                for file_hash in source_entry.get("file_hashes") or []:
+                    pinned.setdefault(file_hash, legacy_value)
+    return {f.hash: pinned.get(f.hash) or current_parser_identity(f) for f in files}
+
+
+def cell_source_refs(
+    files: list[SourceFile],
+    provenance: dict | None,
+    cell_id: int,
+    use_current_versions: bool,
+) -> list["stitch.CachedSourceRef"]:
+    """Ordered `stitch.CachedSourceRef`s for one cell, at their resolved identities."""
+    versions = resolve_source_parser_versions(files, provenance, cell_id, use_current_versions)
+    return [stitch.CachedSourceRef(f.hash, versions[f.hash]) for f in files]
+
+
+def current_source_refs(files: list[SourceFile]) -> list["stitch.CachedSourceRef"]:
+    """Ordered `stitch.CachedSourceRef`s at each source's CURRENT identity.
+
+    For callers that always render "as of now" with no pinned provenance
+    (e.g. the Cell Database's live cycle preview) rather than a saved
+    analysis render.
+    """
+    return [stitch.CachedSourceRef(f.hash, current_parser_identity(f)) for f in files]
+
+
+def source_file_entries(
+    files: list[SourceFile], versions: dict[str, str]
+) -> list[dict[str, str | int]]:
+    """Per-source provenance entries: ``{hash, position, parser_version}``.
+
+    ``position`` is 1-based to match the source-descriptor/UI convention
+    used elsewhere in this module.
+    """
+    return [
+        {"hash": f.hash, "position": index, "parser_version": versions[f.hash]}
+        for index, f in enumerate(files, start=1)
+    ]
+
+
+def display_parser_version(identities: set[str] | list[str]) -> str:
+    """One human-facing string summarizing a set of per-source identities.
+
+    Different contributing sources may legitimately carry different parser
+    identities (Spec 040.3), so a single scalar can misrepresent the render.
+    When every source shares one identity, show it plainly (the common
+    case today); otherwise show an explicit "mixed" sentinel rather than
+    picking one source's value and implying it describes them all.
+    """
+    unique = {value for value in identities if value}
+    if not unique:
+        return parsing.PARSER_VERSION
+    if len(unique) == 1:
+        return next(iter(unique))
+    return "mixed"
+
+
 PROTOCOL_DERIVED_FAMILIES = frozenset(
     {"steps", "dcir", "chargeability", "rate_capability"}
 )
@@ -569,7 +681,7 @@ def _append_unmatched_protocol_badges(context: dict, badges: list[dict]) -> None
 def _protocol_cycle_sets(
     files: list[SourceFile],
     stitched_segments: list[dict],
-    parser_version: str,
+    source_versions: dict[str, str],
     targets: dict[int, dict[str, set[int]]],
     context: dict,
     badges: list[dict],
@@ -581,6 +693,7 @@ def _protocol_cycle_sets(
         modes = targets.get(segment_index)
         if not modes or not any(modes.values()):
             continue
+        parser_version = source_versions[source_file.hash]
         raw = cache.load_raw_columns(source_file.hash, parser_version, ["cycle", "step_index"])
         step_column = "step_index"
         if raw is None and cache.raw_path(source_file.hash, parser_version).exists():
@@ -998,6 +1111,11 @@ def time_capacity_settings(computation: dict) -> dict:
     current_options = {"current_ma", "current_density", "c_rate"}
     current_left = cfg.get("current_left") if cfg.get("current_left") in current_options else "current_ma"
     current_right = cfg.get("current_right") if cfg.get("current_right") in current_options | {"none"} else "none"
+    voltage_channel = (
+        cfg.get("voltage_channel")
+        if cfg.get("voltage_channel") in canonical_cycling.VOLTAGE_QUANTITIES
+        else canonical_cycling.DEFAULT_VOLTAGE_QUANTITY
+    )
     return {
         "cycle_start": cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
         "cycle_end": cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
@@ -1015,6 +1133,13 @@ def time_capacity_settings(computation: dict) -> dict:
         "derivative_absolute_discharge": bool(cfg.get("derivative_absolute_discharge", True)),
         "smoothing_window": max(1, min(101, int(cfg.get("smoothing_window") or 7))),
         "max_points_per_cell": int(cfg.get("max_points_per_cell") or 4000),
+        # Spec 040.4: stable internal quantity ID selecting which canonical
+        # voltage column populates the trace's "voltage_v" array — see
+        # `canonical_cycling.VOLTAGE_QUANTITIES`. Derivative views (dQ/dV,
+        # dV/dQ) intentionally ignore this and always read `voltage_v`
+        # (`_derivative_curve` below); this setting only changes the
+        # voltage/current plot.
+        "voltage_channel": voltage_channel,
     }
 
 
@@ -1486,10 +1611,8 @@ def compute(
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
 ) -> dict:
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
 
     computation = spec.get("computation", {})
@@ -1504,10 +1627,12 @@ def compute(
     cell_series: list[dict] = []
     sources: list[dict] = []
     badges: list[dict] = list(protocol_badges)
+    all_pinned_versions: list[str] = []
+    all_current_versions: list[str] = []
 
     from . import scanner  # local import to avoid a module cycle
 
-    at_current = (parser_version == parsing.PARSER_VERSION and calc_version == CALC_VERSION)
+    calc_at_current = calc_version == CALC_VERSION
 
     total_units = len(units)
     for unit_index, unit in enumerate(units, start=1):
@@ -1515,20 +1640,49 @@ def compute(
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading cached cycle data")
         hashes, files = cell_ordered_hashes(db, cell)
-        # caches are regenerable from source at any time — but only at the
-        # CURRENT versions; renders pinned to old versions use what exists
+        source_versions = resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
+        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
+        all_pinned_versions.extend(source_versions[f.hash] for f in files)
+        all_current_versions.extend(current_parser_identity(f) for f in files)
+        # stale/newer-parser detection compares source-by-source (Spec
+        # 040.3): a newer adapter revision for ONE format must not report as
+        # "newer available" for a cell whose sources are a different format
+        # already at their own current identity.
+        for f in files:
+            current_identity = current_parser_identity(f)
+            if source_versions[f.hash] != current_identity:
+                badges.append(
+                    {
+                        "kind": "newer_parser",
+                        "cell_id": cell.id,
+                        "cell_name": cell.name,
+                        "file": f.filename,
+                        "detail": (
+                            f"{f.filename} computed with parser {source_versions[f.hash]}; "
+                            f"{current_identity} available — recompute?"
+                        ),
+                    }
+                )
+        # caches are regenerable from source at any time — but only for a
+        # source whose pinned identity IS its current identity; a render
+        # pinned to an older identity uses whatever cache exists at that
+        # identity and never reparses the current source under it (Spec
+        # 040.3: pinned historical caches must not be silently relabeled).
         reparsed = False
-        if at_current:
-            for f in files:
+        if calc_at_current:
+            for f, ref in zip(files, refs):
                 if (
-                    not cache.has_cycles(f.hash, parser_version, calc_version)
-                    and not cache.raw_path(f.hash, parser_version).exists()
+                    ref.parser_version == current_parser_identity(f)
+                    and not cache.has_cycles(f.hash, ref.parser_version, calc_version)
+                    and not cache.raw_path(f.hash, ref.parser_version).exists()
                     and Path(f.path).exists()
                 ):
                     scanner.parse_file(db, f)
                     reparsed = True
 
-        stitched, segments, missing = stitch.stitch_cycles(hashes, parser_version, calc_version)
+        stitched, segments, missing = stitch.stitch_cycles(refs, calc_version)
         descriptors = source_descriptors(files, segments, missing, stitched)
         complete = stitch.stitch_metadata(stitched)["complete"]
         if complete:
@@ -1536,7 +1690,7 @@ def compute(
             protocol_cycles = _protocol_cycle_sets(
                 files,
                 segments,
-                parser_version,
+                source_versions,
                 step_targets,
                 protocol_context,
                 badges,
@@ -1577,9 +1731,10 @@ def compute(
                      "detail": "Source data changed since computed. Showing cached result — "
                      "recompute explicitly to update."})
         for h in missing:
+            missing_identity = source_versions.get(h, "unknown")
             badges.append(
                 {"kind": "cache_missing", "cell_id": cell.id, "cell_name": cell.name,
-                 "detail": f"No cache at parser {parser_version} / calc {calc_version} for "
+                 "detail": f"No cache at parser {missing_identity} / calc {calc_version} for "
                  f"file {h[:12]}…; recompute to regenerate."})
         if cell.archived:
             badges.append(
@@ -1630,7 +1785,12 @@ def compute(
              "segments": segments, "source_descriptors": descriptors,
              **source_values})
         sources.append(
-            {"cell_id": cell.id, "file_hashes": hashes, "source_descriptors": descriptors}
+            {
+                "cell_id": cell.id,
+                "file_hashes": hashes,
+                "source_descriptors": descriptors,
+                "files": source_file_entries(files, source_versions),
+            }
         )
         if progress:
             progress(
@@ -1646,10 +1806,10 @@ def compute(
         badges.append({"kind": "missing_reference",
                        "detail": f"Selection references {miss['kind']} #{miss['ref_id']}, which no longer exists."})
 
-    # version badges — reactive information, never silent mutation
-    if parser_version != parsing.PARSER_VERSION:
-        badges.append({"kind": "newer_parser",
-                       "detail": f"Computed with parser {parser_version}; {parsing.PARSER_VERSION} available — recompute?"})
+    # version badges — reactive information, never silent mutation. Per-source
+    # newer_parser badges are appended inside the per-unit loop above; only
+    # calc_version stays a single scalar (it applies uniformly to the whole
+    # scientific computation, not per contributing source).
     if calc_version != CALC_VERSION:
         badges.append({"kind": "newer_calc",
                        "detail": f"Computed with calc {calc_version}; {CALC_VERSION} available — recompute?"})
@@ -1701,9 +1861,9 @@ def compute(
     return {
         "computed_at": now_iso(),
         "type": spec.get("type", "cycling"),
-        "parser_version": parser_version,
+        "parser_version": display_parser_version(all_pinned_versions),
         "calc_version": calc_version,
-        "current_parser_version": parsing.PARSER_VERSION,
+        "current_parser_version": display_parser_version(all_current_versions),
         "current_calc_version": CALC_VERSION,
         "quantities": [
             {"key": key, "column": col, "label": label}
@@ -1781,11 +1941,11 @@ def compute_steps(
     from . import protocol as protocol_service
     from . import step_blocks
 
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
+    all_pinned_versions: list[str] = []
+    all_current_versions: list[str] = []
 
     steps_cfg = (spec.get("computation", {}) or {}).get("steps", {}) or {}
     mode = (
@@ -1835,6 +1995,12 @@ def compute_steps(
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading step data")
         hashes, files = cell_ordered_hashes(db, cell)
+        source_versions = resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
+        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
+        all_pinned_versions.extend(source_versions[f.hash] for f in files)
+        all_current_versions.extend(current_parser_identity(f) for f in files)
         nominal = cell_nominal_capacity_mah(cell)
         targets = {
             str(target.get("protocol_signature")): {
@@ -1849,7 +2015,7 @@ def compute_steps(
         x_time: list[float | None] = []
         quantities: dict[str, list] = {c: [] for c in quantity_cols}
         block_meta: list[dict] = []
-        raw, _raw_segments, _missing = stitch.stitch_raw(hashes, parser_version)
+        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
         block_frames: list[pd.DataFrame] = []
         if segment and not raw.empty:
             raw_timestamps = (
@@ -1942,6 +2108,7 @@ def compute_steps(
             {
                 "cell_id": cell.id,
                 "file_hashes": hashes,
+                "files": source_file_entries(files, source_versions),
             },
         )
         if progress:
@@ -1958,9 +2125,9 @@ def compute_steps(
     return {
         "computed_at": now_iso(),
         "type": "steps",
-        "parser_version": parser_version,
+        "parser_version": display_parser_version(all_pinned_versions),
         "calc_version": calc_version,
-        "current_parser_version": parsing.PARSER_VERSION,
+        "current_parser_version": display_parser_version(all_current_versions),
         "current_calc_version": CALC_VERSION,
         "steps": {"series": configured_series, "mode": mode},
         "cell_series": cell_series,
@@ -2010,11 +2177,11 @@ def compute_dcir(
     from . import dcir
     from . import protocol as protocol_service
 
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
+    all_pinned_versions: list[str] = []
+    all_current_versions: list[str] = []
 
     units, missing_refs = resolve_selection(db, spec)
     cell_by_id = {unit["cell"].id: unit["cell"] for unit in units}
@@ -2046,13 +2213,19 @@ def compute_dcir(
                 "Reading DCIR pulse data",
             )
         hashes, files = cell_ordered_hashes(db, cell)
+        source_versions = resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
+        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
+        all_pinned_versions.extend(source_versions[f.hash] for f in files)
+        all_current_versions.extend(current_parser_identity(f) for f in files)
         nominal = cell_nominal_capacity_mah(cell)
         targets = {
             str(target.get("protocol_signature")): target
             for target in ((segment or {}).get("targets") or [])
             if isinstance(target, dict) and target.get("protocol_signature")
         }
-        raw, _raw_segments, _missing = stitch.stitch_raw(hashes, parser_version)
+        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
         raw_timestamps = (
             pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
             if not raw.empty and "timestamp" in raw.columns
@@ -2168,6 +2341,7 @@ def compute_dcir(
             {
                 "cell_id": cell.id,
                 "file_hashes": hashes,
+                "files": source_file_entries(files, source_versions),
             },
         )
         if progress:
@@ -2191,9 +2365,9 @@ def compute_dcir(
     return {
         "computed_at": now_iso(),
         "type": "dcir",
-        "parser_version": parser_version,
+        "parser_version": display_parser_version(all_pinned_versions),
         "calc_version": calc_version,
-        "current_parser_version": parsing.PARSER_VERSION,
+        "current_parser_version": display_parser_version(all_current_versions),
         "current_calc_version": CALC_VERSION,
         "dcir": {"series": configured_series},
         "cell_series": cell_series,
@@ -2213,11 +2387,11 @@ def compute_time_capacity(
     compact: bool = False,
     progress: ProgressCallback | None = None,
 ) -> dict:
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
+    all_pinned_versions: list[str] = []
+    all_current_versions: list[str] = []
 
     computation = spec.get("computation", {})
     settings = time_capacity_settings(computation)
@@ -2229,7 +2403,6 @@ def compute_time_capacity(
 
     from . import scanner
 
-    at_current = parser_version == parsing.PARSER_VERSION
     traces: list[dict] = []
     badges: list[dict] = list(protocol_badges)
 
@@ -2237,29 +2410,55 @@ def compute_time_capacity(
     width = max(320, min(6000, int(viewport_width or 1200)))
     total_units = len(units)
     total_returned_points = 0
+    # Spec 040.4: which voltage quantities have real (non-fabricated) data
+    # anywhere in the current selection, independent of the currently chosen
+    # `voltage_channel` — this is what lets the frontend offer working/counter
+    # potential as options at all without advertising a channel no selected
+    # source actually has. True two-electrode sources never populate the
+    # aux columns, so this stays {"voltage": True, "working_potential":
+    # False, "counter_potential": False} for every source format that exists
+    # today; only a future adapter with real electrode-potential data changes
+    # that. Checked against the full stitched raw frame (before cycle-range
+    # filtering) so the offered options do not flicker as filters change.
+    channel_availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
 
     for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading raw cache")
         hashes, files = cell_ordered_hashes(db, cell)
+        source_versions = resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
+        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
+        all_pinned_versions.extend(source_versions[f.hash] for f in files)
+        all_current_versions.extend(current_parser_identity(f) for f in files)
         reparsed = False
-        if at_current:
-            for f in files:
-                if not cache.raw_path(f.hash, parser_version).exists() and Path(f.path).exists():
-                    scanner.parse_file(db, f)
-                    reparsed = True
+        for f, ref in zip(files, refs):
+            if (
+                ref.parser_version == current_parser_identity(f)
+                and not cache.raw_path(f.hash, ref.parser_version).exists()
+                and Path(f.path).exists()
+            ):
+                scanner.parse_file(db, f)
+                reparsed = True
 
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
-        raw, segments, missing = stitch.stitch_raw(hashes, parser_version)
+        raw, segments, missing = stitch.stitch_raw(refs)
+        for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+            if channel_availability[quantity] or column not in raw.columns:
+                continue
+            if np.isfinite(pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")).any():
+                channel_availability[quantity] = True
         descriptors = source_descriptors(files, segments, missing, raw)
         for h in missing:
+            missing_identity = source_versions.get(h, "unknown")
             badges.append(
                 {
                     "kind": "cache_missing",
                     "cell_id": cell.id,
                     "cell_name": cell.name,
-                    "detail": f"No raw cache at parser {parser_version} for file {h[:12]}...",
+                    "detail": f"No raw cache at parser {missing_identity} for file {h[:12]}...",
                 }
             )
         complete = stitch.stitch_metadata(raw)["complete"]
@@ -2370,9 +2569,10 @@ def compute_time_capacity(
         else:
             plot_mask = np.zeros(len(raw), dtype=bool)
 
+        voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
         voltage = (
-            raw["voltage_v"].to_numpy(dtype="float64").copy()
-            if "voltage_v" in raw.columns
+            raw[voltage_column].to_numpy(dtype="float64").copy()
+            if voltage_column in raw.columns
             else np.full(len(raw), np.nan)
         )
         current = (
@@ -2496,16 +2696,34 @@ def compute_time_capacity(
             }
         )
 
+    voltage_channels = {
+        quantity: {
+            "available": channel_availability[quantity],
+            "label": canonical_cycling.voltage_quantity_label(quantity),
+            "role": {
+                "voltage": "cell",
+                "working_potential": "working_vs_reference",
+                "counter_potential": "counter_vs_reference",
+            }[quantity],
+        }
+        for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+
     return {
         "computed_at": now_iso(),
         "type": spec.get("type", "cycling"),
-        "parser_version": parser_version,
+        "parser_version": display_parser_version(all_pinned_versions),
         "calc_version": calc_version,
-        "current_parser_version": parsing.PARSER_VERSION,
+        "current_parser_version": display_parser_version(all_current_versions),
         "current_calc_version": CALC_VERSION,
         "settings": settings,
         "cell_traces": traces,
         "badges": badges,
+        # Spec 040.4: data-driven, per-selection availability — never a
+        # static per-format declaration — so the frontend can offer exactly
+        # the electrode potentials that actually have data for the samples
+        # currently selected, and nothing else.
+        "voltage_channels": voltage_channels,
         "rendering": {
             "viewport_width": width,
             "configured_max_points_per_cell": configured_max,

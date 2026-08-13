@@ -48,19 +48,22 @@ class StitchServiceTests(unittest.TestCase):
     PARSER = "test-parser"
     CALC = "1.6.1"
 
+    def _refs(self, ordered: list[str]) -> list[stitch.CachedSourceRef]:
+        return [stitch.CachedSourceRef(file_hash, self.PARSER) for file_hash in ordered]
+
     def _stitch_cycles(self, ordered: list[str], frames: dict[str, pd.DataFrame | None]):
         with patch(
             "app.services.stitch.cache.load_cycles",
             side_effect=lambda h, _p, _c: frames.get(h),
         ):
-            return stitch.stitch_cycles(ordered, self.PARSER, self.CALC)
+            return stitch.stitch_cycles(self._refs(ordered), self.CALC)
 
     def _stitch_raw(self, ordered: list[str], frames: dict[str, pd.DataFrame | None]):
         with patch(
             "app.services.stitch.cache.load_raw",
             side_effect=lambda h, _p: frames.get(h),
         ):
-            return stitch.stitch_raw(ordered, self.PARSER)
+            return stitch.stitch_raw(self._refs(ordered))
 
     def test_two_sources_map_to_dense_global_cycles(self):
         hash_a = _hash("a")
@@ -353,6 +356,140 @@ class StitchServiceTests(unittest.TestCase):
         self.assertFalse(meta["complete"])
         self.assertEqual(meta["missing_positions"], [0])
         self.assertEqual(meta["skipped_segments"], [])
+
+
+class MixedParserIdentityStitchTests(unittest.TestCase):
+    """Spec 040.3 cases 7-9: ordered sources may carry different parser
+    identities and each is loaded at its OWN pinned identity."""
+
+    def test_cycles_stitch_loads_each_source_at_its_own_identity(self):
+        hash_a, hash_b = _hash("a"), _hash("b")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+        ]
+        frames = {hash_a: _cycle_frame([1, 2]), hash_b: _cycle_frame([1])}
+        requested: list[tuple[str, str, str]] = []
+
+        def _load(file_hash, parser_version, calc_version):
+            requested.append((file_hash, parser_version, calc_version))
+            return frames.get(file_hash)
+
+        with patch("app.services.stitch.cache.load_cycles", side_effect=_load):
+            result, segments, missing = stitch.stitch_cycles(refs, "1.6.1")
+
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            requested,
+            [
+                (hash_a, "nb:v2026.06.11:r1", "1.6.1"),
+                (hash_b, "nx:6:r1", "1.6.1"),
+            ],
+        )
+        self.assertEqual(result["cycle"].tolist(), [1, 2, 3])
+        self.assertEqual(len(segments), 2)
+
+    def test_raw_stitch_loads_each_source_at_its_own_identity(self):
+        hash_a, hash_b = _hash("a"), _hash("b")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+        ]
+        frames = {hash_a: _raw_frame([1]), hash_b: _raw_frame([1])}
+        requested: list[tuple[str, str]] = []
+
+        def _load(file_hash, parser_version):
+            requested.append((file_hash, parser_version))
+            return frames.get(file_hash)
+
+        with patch("app.services.stitch.cache.load_raw", side_effect=_load):
+            result, segments, missing = stitch.stitch_raw(refs)
+
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            requested,
+            [(hash_a, "nb:v2026.06.11:r1"), (hash_b, "nx:6:r1")],
+        )
+        self.assertEqual(len(segments), 2)
+
+    def test_missing_cache_at_middle_source_own_identity_blocks_later_segments(self):
+        """One source-specific cache missing still fails closed for later
+        sources, exactly like the single-identity case (spec case 10)."""
+        hash_a, hash_b, hash_c = _hash("a"), _hash("b"), _hash("c")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+            stitch.CachedSourceRef(hash_c, "nb:v2026.06.11:r1"),
+        ]
+        frames = {hash_a: _cycle_frame([1]), hash_b: None, hash_c: _cycle_frame([1])}
+        with patch(
+            "app.services.stitch.cache.load_cycles",
+            side_effect=lambda h, _p, _c: frames.get(h),
+        ):
+            result, segments, missing = stitch.stitch_cycles(refs, "1.6.1")
+
+        self.assertEqual(missing, [hash_b])
+        self.assertEqual(result.attrs["missing_positions"], [1])
+        self.assertEqual(result.attrs["skipped_segments"], [2])
+        # only source A's cycle made it in; C was skipped after the gap
+        self.assertEqual(result["cycle"].tolist(), [1])
+        self.assertEqual(result["source_hash"].tolist(), [hash_a])
+
+
+class MultiVoltageStitchTests(unittest.TestCase):
+    """Spec 040.4: stitch_raw preserves optional working/counter potential
+    columns across source concatenation, using NaN — never a fabricated
+    value — for a source that lacks them."""
+
+    PARSER = "test-parser"
+
+    def _refs(self, ordered: list[str]) -> list[stitch.CachedSourceRef]:
+        return [stitch.CachedSourceRef(file_hash, self.PARSER) for file_hash in ordered]
+
+    def test_aux_voltage_columns_preserved_and_nan_filled_for_missing_source(self):
+        hash_three_electrode = _hash("t")
+        hash_two_electrode = _hash("d")
+        three_electrode = pd.DataFrame(
+            {
+                "record_index": [1, 2],
+                "cycle": [1, 2],
+                "status": ["CC_Chg", "CC_Chg"],
+                "voltage_v": [0.5, 0.6],
+                "working_potential_v": [3.0, 3.1],
+                "counter_potential_v": [2.5, 2.5],
+            }
+        )
+        two_electrode = pd.DataFrame(
+            {
+                "record_index": [1],
+                "cycle": [1],
+                "status": ["CC_Chg"],
+                "voltage_v": [3.4],
+            }
+        )
+        frames = {hash_three_electrode: three_electrode, hash_two_electrode: two_electrode}
+        with patch(
+            "app.services.stitch.cache.load_raw",
+            side_effect=lambda h, _p: frames.get(h),
+        ):
+            result, segments, missing = stitch.stitch_raw(
+                self._refs([hash_three_electrode, hash_two_electrode])
+            )
+
+        self.assertEqual(missing, [])
+        self.assertIn("working_potential_v", result.columns)
+        self.assertIn("counter_potential_v", result.columns)
+        # Source A's two rows keep their real values...
+        three_electrode_rows = result[result["source_hash"] == hash_three_electrode]
+        self.assertEqual(three_electrode_rows["working_potential_v"].tolist(), [3.0, 3.1])
+        self.assertEqual(three_electrode_rows["counter_potential_v"].tolist(), [2.5, 2.5])
+        # ...source B's row is NaN, never fabricated as 0 or copied from A.
+        two_electrode_rows = result[result["source_hash"] == hash_two_electrode]
+        self.assertEqual(len(two_electrode_rows), 1)
+        self.assertTrue(pd.isna(two_electrode_rows["working_potential_v"].iloc[0]))
+        self.assertTrue(pd.isna(two_electrode_rows["counter_potential_v"].iloc[0]))
+        # voltage_v (the primary/compatibility channel) is unaffected either way.
+        self.assertEqual(result["voltage_v"].tolist(), [0.5, 0.6, 3.4])
 
 
 if __name__ == "__main__":

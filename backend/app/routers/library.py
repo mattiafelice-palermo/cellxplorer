@@ -109,7 +109,8 @@ _JobThread = threading.Thread
 def source_file_needs_cache(sf: SourceFile) -> bool:
     if sf.parse_status != "parsed":
         return True
-    if sf.parser_version != parsing.PARSER_VERSION:
+    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    if sf.parser_version != expected:
         return True
     if sf.cycle_count is None or sf.row_count is None:
         return True
@@ -1029,7 +1030,9 @@ def get_cell_source_header(cell_id: int, source_file_id: int, db: Session = Depe
 
 
 def _observed_steps_for_source(source_file: SourceFile) -> list[dict]:
-    parser_version = source_file.parser_version or parsing.PARSER_VERSION
+    parser_version = source_file.parser_version or (
+        parsing.current_parser_identity_for_extension(source_file.ext) or parsing.PARSER_VERSION
+    )
     raw = cache.load_raw_columns(
         source_file.hash,
         parser_version,
@@ -2734,7 +2737,8 @@ def cell_cycles(cell_id: int, db: Session = Depends(get_db)):
     for f in files:
         if f.parse_status in ("unparsed", "error") and Path(f.path).exists():
             scanner.parse_file(db, f)
-    stitched, segments, missing = stitch.stitch_cycles(hashes, parsing.PARSER_VERSION, CALC_VERSION)
+    refs = analysis_svc.current_source_refs(files)
+    stitched, segments, missing = stitch.stitch_cycles(refs, CALC_VERSION)
     if stitched.empty:
         return {"columns": [], "rows": [], "segments": segments, "missing": missing}
     stitched = stitched.replace({np.nan: None}).drop(columns=["start_timestamp"], errors="ignore")

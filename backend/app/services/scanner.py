@@ -64,9 +64,16 @@ def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
 
 
 def _has_current_scientific_cache(sf: SourceFile) -> bool:
-    return cache.raw_path(sf.hash, parsing.PARSER_VERSION).is_file() and cache.has_cycles(
+    """Cheap "is this source's cache at its current expected identity" check.
+
+    Resolves the expected parser identity from the source's stored extension
+    alone (Spec 040.3) — no file I/O, no parser import — so this stays safe
+    to call from list/backfill paths for many sources at once.
+    """
+    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    return cache.raw_path(sf.hash, expected).is_file() and cache.has_cycles(
         sf.hash,
-        parsing.PARSER_VERSION,
+        expected,
         cache.CALC_VERSION,
     )
 
@@ -262,6 +269,7 @@ def _capacity_source_job(
         "path": sf.path,
         "size": sf.size,
         "filename": sf.filename,
+        "ext": sf.ext,
         "summary_was_ready": sf.capacity_summary_status == "ready",
         "prepare_all_missing": prepare_all_missing,
     }
@@ -271,12 +279,16 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
     """Build one source cache without touching SQLite or process-local job state."""
     location_status: str | None = None
     try:
+        expected = (
+            parsing.current_parser_identity_for_extension(job.get("ext"))
+            or parsing.PARSER_VERSION
+        )
         cycles = cache.load_cycles(
             job["hash"],
-            parsing.PARSER_VERSION,
+            expected,
             cache.CALC_VERSION,
         )
-        raw_ready = cache.raw_path(job["hash"], parsing.PARSER_VERSION).is_file()
+        raw_ready = cache.raw_path(job["hash"], expected).is_file()
         if cycles is None or (job["prepare_all_missing"] and not raw_ready):
             source_path = Path(job["path"])
             if not source_path.exists():

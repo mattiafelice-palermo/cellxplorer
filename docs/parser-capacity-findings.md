@@ -25,13 +25,19 @@ The parser exposes Neware capacity columns named `Charge_Capacity(mAh)` and `Dis
 ## Supported Neware source dispatch
 
 The supported source policy is `.nda`, `.ndax`, and structured Neware `.xlsx` only. The shared
-dispatch and parser-bundle identity live in `backend/app/services/parsing.py`; the Excel mapping
+format-neutral dispatch lives in `backend/app/services/parsing.py` (Spec 040.2); the Excel mapping
 itself lives in `backend/app/services/neware_excel.py` and produces the same canonical raw columns
-used by the binary parser. Excel metadata inspection is bounded to the workbook's metadata and
-protocol surfaces, while the `record` sheet remains the source of truth for point-level data.
-Optional `step` and `cycle` sheets are independent validation summaries. Some exports do not carry
-Neware semantic condition expressions, so protocol reconstruction must preserve that absence and
-Chargeability must report no applicable match rather than infer one from the curve.
+used by the binary parser. Since Spec 040.3, parser/cache identity is resolved **per source**
+(`parsing.parser_identity`), not from one global parser-bundle constant — a binary source and an
+Excel source registered in the same Cell chain carry their own independent identities and never
+cross-invalidate each other's cache. `parsing.PARSER_VERSION` remains only as a legacy fallback for
+a source registered before that change. See `docs/agent-knowledge/canonical-cycling-data.md` and
+`docs/agent-knowledge/architecture.md` for the current contract and identity model. Excel metadata
+inspection is bounded to the workbook's metadata and protocol surfaces, while the `record` sheet
+remains the source of truth for point-level data. Optional `step` and `cycle` sheets are independent
+validation summaries. Some exports do not carry Neware semantic condition expressions, so protocol
+reconstruction must preserve that absence and Chargeability must report no applicable match rather
+than infer one from the curve.
 
 ## How `.ndax` Is Parsed
 

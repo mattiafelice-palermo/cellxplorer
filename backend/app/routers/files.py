@@ -1988,11 +1988,16 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
         if not cell.archived:
             raise HTTPException(409, f"{prepared['filename']} is already registered")
 
+    expected_parser_version = (
+        parsing.current_parser_identity_for_extension(existing.ext)
+        if existing is not None
+        else None
+    ) or parsing.PARSER_VERSION
     prepared["existing_source_file_id"] = existing.id if existing is not None else None
     prepared["cache_ready"] = bool(
         existing is not None
         and existing.parse_status == "parsed"
-        and existing.parser_version == parsing.PARSER_VERSION
+        and existing.parser_version == expected_parser_version
         and existing.row_count is not None
         and existing.cycle_count is not None
         and existing.capacity_summary_status == "ready"
@@ -2481,8 +2486,8 @@ def raw_import_file_data(req: ImportRawDataRequest):
         # served from the hash-keyed raw cache; the parse happens at most
         # once per file content, not once per page view
         file_hash = parsing.compute_hash(source_path)
-        cache.build(file_hash, source_path)
-        raw = cache.load_raw(file_hash, parsing.PARSER_VERSION)
+        info = cache.build(file_hash, source_path)
+        raw = cache.load_raw(file_hash, info["parser_version"])
         if raw is None:
             raise RuntimeError("raw cache could not be built")
     except HTTPException:
@@ -3241,7 +3246,9 @@ def preview_file(file_id: int, kind: str = "cycles", db: Session = Depends(get_d
         if sf.parse_status == "error":
             raise HTTPException(422, f"Parse failed: {sf.parse_error}")
 
-    pv = sf.parser_version or parsing.PARSER_VERSION
+    pv = sf.parser_version or (
+        parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    )
     if kind == "raw":
         df = cache.load_raw(sf.hash, pv)
         if df is None:

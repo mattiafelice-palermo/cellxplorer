@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,8 +19,9 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.db import Base
 from app.models import Cell, CellMetadata, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
 from app.routers.library import get_cell_protocol
+from app.services import analysis_cache
 from app.services import analysis_engine as engine
-from app.services import cache, parsing, protocol
+from app.services import cache, calc, parsing, protocol
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -130,7 +132,10 @@ class AnalysisEngineTests(unittest.TestCase):
             d = cache.raw_path(h).parent
             if d.exists():
                 shutil.rmtree(d)
-            cache.build(h, h)  # path stem == hash → fake_parse resolves it
+            # ".ndax" gives `cache.build` a recognizable extension for
+            # per-source parser identity (Spec 040.3); `fake_parse` still
+            # resolves by stem, which strips exactly that one extension.
+            cache.build(h, f"{h}.ndax")
 
     @classmethod
     def tearDownClass(cls):
@@ -383,7 +388,7 @@ class AnalysisEngineTests(unittest.TestCase):
             self.db.flush()
             cache_dir = cache.raw_path(self.HASHES["c1"]).parent
             shutil.rmtree(cache_dir, ignore_errors=True)
-            cache.build(self.HASHES["c1"], self.HASHES["c1"])
+            cache.build(self.HASHES["c1"], f"{self.HASHES['c1']}.ndax")
             signature = protocol.reconstruct_protocol(
                 dcir_protocol_header(), nominal_capacity_mah=2.0
             )["signature"]
@@ -458,7 +463,7 @@ class AnalysisEngineTests(unittest.TestCase):
             self.db.flush()
             cache_dir = cache.raw_path(self.HASHES["c1"]).parent
             shutil.rmtree(cache_dir, ignore_errors=True)
-            cache.build(self.HASHES["c1"], self.HASHES["c1"])
+            cache.build(self.HASHES["c1"], f"{self.HASHES['c1']}.ndax")
 
     def test_time_protocol_filters_emit_null_gaps_without_dropping_rows(self):
         expected_non_null = {"excluded": 150, "hidden": 150, "only": 50}
@@ -639,6 +644,49 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("current_ma", trace)
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
+
+    def test_time_capacity_two_electrode_fixture_exposes_only_voltage_channel(self):
+        # Spec 040.4 case 8: an ordinary two-electrode source must not gain
+        # a working/counter potential option, and the default channel must
+        # be "voltage" with unchanged values (no voltage_channel set at all,
+        # exactly like an old saved spec).
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(res["settings"]["voltage_channel"], "voltage")
+        self.assertEqual(
+            res["voltage_channels"],
+            {
+                "voltage": {"available": True, "label": "Cell voltage (V)", "role": "cell"},
+                "working_potential": {
+                    "available": False,
+                    "label": "Working potential vs ref (V)",
+                    "role": "working_vs_reference",
+                },
+                "counter_potential": {
+                    "available": False,
+                    "label": "Counter potential vs ref (V)",
+                    "role": "counter_vs_reference",
+                },
+            },
+        )
+        trace = res["cell_traces"][0]
+        self.assertTrue(any(value is not None for value in trace["voltage_v"]))
+
+    def test_time_capacity_unavailable_channel_omits_trace_without_fallback(self):
+        # Requesting working_potential against a source that never populated
+        # it must yield an empty/all-None trace, never a silent substitution
+        # of voltage_v under the "working potential" label.
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        self.assertTrue(len(trace["voltage_v"]) > 0)
+        self.assertTrue(all(value is None for value in trace["voltage_v"]))
+        self.assertFalse(res["voltage_channels"]["working_potential"]["available"])
 
     def test_downsample_extrema_keep_immediate_neighbours(self):
         values = np.zeros(1000, dtype="float64")
@@ -909,6 +957,197 @@ class AnalysisEngineTests(unittest.TestCase):
         kinds = {b["kind"] for b in res2["badges"]}
         self.assertIn("newer_calc", kinds)
 
+    def _make_pinned_cell(self, file_hash: str, filename: str = "legacy.ndax") -> Cell:
+        cell = Cell(name=f"pinned-{file_hash[:6]}")
+        self.db.add(cell)
+        self.db.flush()
+        sf = SourceFile(
+            hash=file_hash,
+            path=file_hash,
+            filename=filename,
+            size=1,
+            ext="ndax",
+            parse_status="parsed",
+            parser_version=parsing.PARSER_VERSION,
+            header_meta=analysis_protocol_header(),
+            nominal_capacity_mah=2.0,
+        )
+        self.db.add(sf)
+        test = Test(cell_id=cell.id, name="t")
+        self.db.add(test)
+        self.db.flush()
+        self.db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
+        self.db.commit()
+        return cell
+
+    def test_new_compute_pins_parser_identity_per_source(self):
+        """Case 12: a fresh compute records each contributing source's own
+        resolved identity in the new provenance shape."""
+        cell = self.cells["c1"]
+        result = engine.compute(
+            self.db, self.spec_with([{"kind": "cell", "ref_id": cell.id}]), None
+        )
+        source_entry = result["sources"][0]
+        self.assertEqual(len(source_entry["files"]), 1)
+        file_entry = source_entry["files"][0]
+        self.assertEqual(file_entry["hash"], self.HASHES["c1"])
+        self.assertEqual(file_entry["position"], 1)
+        self.assertEqual(file_entry["parser_version"], parsing.parser_identity("x.ndax"))
+
+    def test_legacy_pinned_analysis_renders_from_pinned_cache_without_reparsing(self):
+        """Cases 15-17: legacy single-scalar provenance normalizes to the one
+        historical identity it covered; a saved analysis pinned to that
+        identity renders from ITS cache, and the source is never silently
+        reparsed under the current identity and relabeled as the pinned one
+        — the exact silent-recompute bug this child must prevent."""
+        file_hash = "9a" * 32
+        cell = self._make_pinned_cell(file_hash)
+        old_identity = "nb:vOLD.00.00:r1"
+
+        raw = synth_raw(3, 2.0, 0.005)
+        cycles = calc.per_cycle(raw)
+        cache.raw_path(file_hash, old_identity).parent.mkdir(parents=True, exist_ok=True)
+        cache._write_atomic(raw, cache.raw_path(file_hash, old_identity))
+        cache._write_atomic(cycles, cache.cycles_path(file_hash, old_identity))
+        try:
+            # Legacy shape: one scalar `parser_version`, no per-source
+            # `files` array — exactly what a pre-040.3 saved analysis has.
+            legacy_provenance = {
+                "calc_version": cache.CALC_VERSION,
+                "parser_version": old_identity,
+                "sources": [{"cell_id": cell.id, "file_hashes": [file_hash]}],
+            }
+            spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+
+            with patch(
+                "app.services.scanner.parse_file",
+                side_effect=AssertionError("must not reparse a pinned historical source"),
+            ):
+                result = engine.compute(self.db, spec, legacy_provenance)
+
+            self.assertEqual(result["cell_series"][0]["x"], [1, 2, 3])
+            pinned_files = result["sources"][0]["files"]
+            self.assertEqual(pinned_files[0]["parser_version"], old_identity)
+            self.assertNotEqual(old_identity, parsing.parser_identity(f"{file_hash}.ndax"))
+            kinds = {b["kind"] for b in result["badges"]}
+            self.assertIn("newer_parser", kinds)
+        finally:
+            shutil.rmtree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
+
+    def test_missing_legacy_cache_is_not_relabeled_as_current(self):
+        """Case 17: when the pinned identity's cache does not exist, the
+        result must show the source as missing — never silently reparse the
+        current source and pretend the result is the old pinned identity."""
+        file_hash = "9b" * 32
+        cell = self._make_pinned_cell(file_hash)
+        missing_identity = "nb:vNEVERBUILT:r1"
+        legacy_provenance = {
+            "calc_version": cache.CALC_VERSION,
+            "parser_version": missing_identity,
+            "sources": [{"cell_id": cell.id, "file_hashes": [file_hash]}],
+        }
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+
+        with patch(
+            "app.services.scanner.parse_file",
+            side_effect=AssertionError("must not reparse under a mismatched identity"),
+        ):
+            result = engine.compute(self.db, spec, legacy_provenance)
+
+        self.assertEqual(result["cell_series"][0]["x"], [])
+        kinds = {b["kind"] for b in result["badges"]}
+        self.assertIn("cache_missing", kinds)
+        missing_badge = next(b for b in result["badges"] if b["kind"] == "cache_missing")
+        self.assertIn(missing_identity, missing_badge["detail"])
+
+    def test_recompute_under_current_versions_persists_new_provenance_shape(self):
+        """Case 18: recomputing with use_current_versions=True must produce
+        (and, once saved via build_provenance, persist) the new per-source
+        shape at the CURRENT identity, not the stale pinned one."""
+        file_hash = "9c" * 32
+        cell = self._make_pinned_cell(file_hash)
+        self.FRAMES[file_hash] = synth_raw(2, 2.0, 0.004)
+        cache.build(file_hash, f"{file_hash}.ndax")
+        try:
+            legacy_provenance = {
+                "calc_version": cache.CALC_VERSION,
+                "parser_version": "nb:vOLD.00.00:r1",
+                "sources": [{"cell_id": cell.id, "file_hashes": [file_hash]}],
+            }
+            spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+            result = engine.compute(
+                self.db, spec, legacy_provenance, use_current_versions=True
+            )
+            provenance = engine.build_provenance(result)
+            file_entry = provenance["sources"][0]["files"][0]
+            self.assertEqual(file_entry["parser_version"], parsing.parser_identity(f"{file_hash}.ndax"))
+            self.assertNotEqual(file_entry["parser_version"], "nb:vOLD.00.00:r1")
+        finally:
+            shutil.rmtree(cache.raw_path(file_hash, parsing.parser_identity(f"{file_hash}.ndax")).parent, ignore_errors=True)
+
+    def test_result_key_changes_when_pinned_source_identity_changes(self):
+        """Case 13: a cache key must vary when a contributing source's
+        pinned parser identity changes, even with everything else fixed."""
+        cell = self.cells["c1"]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        provenance_a = {
+            "calc_version": cache.CALC_VERSION,
+            "sources": [
+                {
+                    "cell_id": cell.id,
+                    "file_hashes": [self.HASHES["c1"]],
+                    "files": [
+                        {"hash": self.HASHES["c1"], "position": 1, "parser_version": "nb:vA:r1"}
+                    ],
+                }
+            ],
+        }
+        provenance_b = deepcopy(provenance_a)
+        provenance_b["sources"][0]["files"][0]["parser_version"] = "nb:vB:r1"
+
+        key_a = analysis_cache.result_key(
+            self.db, "cycles", spec, provenance_a, use_current_versions=False
+        )
+        key_b = analysis_cache.result_key(
+            self.db, "cycles", spec, provenance_b, use_current_versions=False
+        )
+        self.assertNotEqual(key_a, key_b)
+
+    def test_result_key_unaffected_by_an_unrelated_cells_source_identity(self):
+        """Case 14: a parser-identity change for a source belonging to a cell
+        NOT in this spec's selection must not change the cache key."""
+        cell1, cell2 = self.cells["c1"], self.cells["c2"]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell1.id}])
+        base_provenance = {
+            "calc_version": cache.CALC_VERSION,
+            "sources": [
+                {
+                    "cell_id": cell1.id,
+                    "file_hashes": [self.HASHES["c1"]],
+                    "files": [
+                        {"hash": self.HASHES["c1"], "position": 1, "parser_version": "nb:vFixed:r1"}
+                    ],
+                },
+                {
+                    "cell_id": cell2.id,
+                    "file_hashes": [self.HASHES["c2"]],
+                    "files": [
+                        {"hash": self.HASHES["c2"], "position": 1, "parser_version": "nb:vA:r1"}
+                    ],
+                },
+            ],
+        }
+        changed_provenance = deepcopy(base_provenance)
+        changed_provenance["sources"][1]["files"][0]["parser_version"] = "nb:vDifferent:r1"
+
+        key_before = analysis_cache.result_key(
+            self.db, "cycles", spec, base_provenance, use_current_versions=False
+        )
+        key_after = analysis_cache.result_key(
+            self.db, "cycles", spec, changed_provenance, use_current_versions=False
+        )
+        self.assertEqual(key_before, key_after)
+
     def test_multi_source_cycle_compute_uses_shared_dense_stitch(self):
         hash_a = "d1" * 32
         hash_b = "e2" * 32
@@ -918,7 +1157,7 @@ class AnalysisEngineTests(unittest.TestCase):
                 import shutil
 
                 shutil.rmtree(cache.raw_path(h).parent)
-            cache.build(h, h)
+            cache.build(h, f"{h}.ndax")
 
         cell = Cell(name="multi")
         self.db.add(cell)
@@ -1017,6 +1256,220 @@ class AnalysisEngineTests(unittest.TestCase):
 
     def test_analysis_engine_uses_shared_raw_stitch_service(self):
         self.assertFalse(hasattr(engine, "_stitch_raw"))
+
+
+def synth_three_electrode_raw(n_cycles: int, cap0: float, fade: float) -> pd.DataFrame:
+    """Deterministic synthetic three-electrode canonical frame (Spec 040.4):
+    known working/counter potentials with voltage_v = working - counter, so
+    the multi-voltage path can be proven end to end without a real BioLogic
+    parser. Otherwise identical in shape to `synth_raw` above."""
+    rows, idx, t = [], 0, 0.0
+    for cyc in range(1, n_cycles + 1):
+        cap = cap0 * (1 - fade) ** (cyc - 1)
+        for status, sign in (("CC_Chg", 1), ("CC_DChg", -1)):
+            for frac in (0.5, 1.0):
+                idx += 1
+                t += 1800
+                working = 3.5 + sign * 0.2
+                counter = 0.1
+                rows.append({
+                    "record_index": idx, "cycle": cyc, "step": cyc * 2 + (0 if sign > 0 else 1),
+                    "step_index": (1 if cyc % 2 else 3) if sign > 0 else 2,
+                    "status": status, "time_s": 1800.0 * frac,
+                    "voltage_v": working - counter,
+                    "working_potential_v": working,
+                    "counter_potential_v": counter,
+                    "current_ma": sign * 1000.0,
+                    "charge_capacity_mah": cap * frac if sign > 0 else cap,
+                    "discharge_capacity_mah": 0.0 if sign > 0 else cap * frac * 0.99,
+                    "charge_energy_mwh": cap * frac * 3.5 if sign > 0 else cap * 3.5,
+                    "discharge_energy_mwh": 0.0 if sign > 0 else cap * frac * 3.2,
+                    "timestamp": pd.Timestamp("2026-01-01") + pd.Timedelta(seconds=t),
+                })
+    return pd.DataFrame(rows)
+
+
+class TimeCapacitySettingsVoltageChannelTests(unittest.TestCase):
+    """Spec 040.4 case 9: old saved specs (no voltage_channel key at all)
+    normalize to the default primary voltage; an invalid/unknown value is
+    also rejected back to the default rather than passed through."""
+
+    def test_missing_key_defaults_to_voltage(self):
+        settings = engine.time_capacity_settings({"time_capacity": {}})
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+    def test_no_time_capacity_block_at_all_defaults_to_voltage(self):
+        settings = engine.time_capacity_settings({})
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+    def test_explicit_electrode_channel_round_trips(self):
+        for channel in ("working_potential", "counter_potential"):
+            settings = engine.time_capacity_settings(
+                {"time_capacity": {"voltage_channel": channel}}
+            )
+            self.assertEqual(settings["voltage_channel"], channel)
+
+    def test_unrecognized_value_falls_back_to_voltage(self):
+        settings = engine.time_capacity_settings(
+            {"time_capacity": {"voltage_channel": "not-a-real-channel"}}
+        )
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+
+class MultiVoltageTimeCapacityTests(unittest.TestCase):
+    """Spec 040.4: Time/Capacity working/counter potential selection,
+    end to end through cache -> stitch -> compute_time_capacity, using a
+    synthetic three-electrode source (no real BioLogic parser exists yet)."""
+
+    HASHES = {"three": "3e" * 32, "two": "2e" * 32}
+    FRAMES = {}
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig_parse = parsing.parse_timeseries
+        cls.FRAMES = {
+            cls.HASHES["three"]: synth_three_electrode_raw(5, 2.0, 0.005),
+            cls.HASHES["two"]: synth_raw(5, 2.0, 0.005),
+        }
+
+        def fake_parse(path):
+            return cls.FRAMES[Path(str(path)).stem]
+
+        parsing.parse_timeseries = fake_parse
+        for h in cls.HASHES.values():
+            d = cache.raw_path(h).parent
+            if d.exists():
+                shutil.rmtree(d)
+            cache.build(h, f"{h}.ndax")
+
+    @classmethod
+    def tearDownClass(cls):
+        parsing.parse_timeseries = cls._orig_parse
+        for h in cls.HASHES.values():
+            shutil.rmtree(cache.raw_path(h).parent, ignore_errors=True)
+
+    def setUp(self):
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                            poolclass=StaticPool)
+        Base.metadata.create_all(eng)
+        self.db = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)()
+        self.cells = {}
+        for name, h in self.HASHES.items():
+            cell = Cell(name=name)
+            self.db.add(cell)
+            self.db.flush()
+            sf = SourceFile(hash=h, path=h, filename=f"{name}.ndax", size=1, ext="ndax",
+                            parse_status="parsed", parser_version=parsing.PARSER_VERSION)
+            self.db.add(sf)
+            test = Test(cell_id=cell.id, name="t")
+            self.db.add(test)
+            self.db.flush()
+            self.db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
+            self.cells[name] = cell
+        self.db.commit()
+
+    def spec_with(self, entries, **comp):
+        spec = engine.default_spec("t")
+        spec["selection"]["entries"] = entries
+        spec["computation"].update(comp)
+        return spec
+
+    def test_working_potential_request_returns_correct_values_and_availability(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        # working_potential_v is always exactly 3.5 +/- 0.2 in the fixture,
+        # never voltage_v (working - counter = 3.4/3.6 - 0.1).
+        for value in values:
+            self.assertIn(round(value, 1), (3.3, 3.7))
+        self.assertTrue(res["voltage_channels"]["working_potential"]["available"])
+
+    def test_counter_potential_request_returns_correct_values(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "counter_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        for value in values:
+            self.assertAlmostEqual(value, 0.1, places=6)
+        self.assertTrue(res["voltage_channels"]["counter_potential"]["available"])
+
+    def test_primary_voltage_request_is_unaffected_by_aux_columns(self):
+        # voltage_v on the three-electrode fixture is working - counter
+        # (3.2 or 3.6), distinct from either electrode potential alone —
+        # proving the default channel is not silently substituted.
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        for value in values:
+            self.assertIn(round(value, 1), (3.2, 3.6))
+        self.assertEqual(res["settings"]["voltage_channel"], "voltage")
+
+    def test_mixed_selection_omits_per_cell_rather_than_disabling_whole_quantity(self):
+        """The locked mixed-sample availability rule (Spec 040.4): when one
+        selected sample has the requested channel and another does not, the
+        sample without it gets an omitted (all-None) trace — exactly how
+        this architecture already treats any other missing-column case —
+        rather than the whole quantity being marked unavailable for the
+        entire selection."""
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["three"].id},
+                {"kind": "cell", "ref_id": self.cells["two"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        by_cell = {trace["cell_id"]: trace for trace in res["cell_traces"]}
+        three_trace = by_cell[self.cells["three"].id]
+        two_trace = by_cell[self.cells["two"].id]
+        self.assertTrue(any(value is not None for value in three_trace["voltage_v"]))
+        self.assertTrue(len(two_trace["voltage_v"]) > 0)
+        self.assertTrue(all(value is None for value in two_trace["voltage_v"]))
+        # Available at the selection level (at least one sample has data) —
+        # the frontend selector may still offer the option.
+        self.assertTrue(res["voltage_channels"]["working_potential"]["available"])
+
+    def test_derivative_view_stays_restricted_to_primary_voltage(self):
+        """`_derivative_curve` reads `voltage_v` directly regardless of the
+        selected voltage_channel — dQ/dV and dV/dQ are scoped to primary
+        voltage only for this child (locked decision), proven by showing the
+        derivative trace is identical whether voltage_channel is left at its
+        default or pointed at an electrode potential."""
+        base_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        base_spec["computation"]["time_capacity"] = {
+            "view": "dvdq",
+            "voltage_channel": "voltage",
+            "cycles": [1],
+        }
+        aux_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        aux_spec["computation"]["time_capacity"] = {
+            "view": "dvdq",
+            "voltage_channel": "working_potential",
+            "cycles": [1],
+        }
+
+        base_res = engine.compute_time_capacity(self.db, base_spec, None)
+        aux_res = engine.compute_time_capacity(self.db, aux_spec, None)
+
+        self.assertEqual(
+            base_res["cell_traces"][0]["derivative_y"],
+            aux_res["cell_traces"][0]["derivative_y"],
+        )
 
 
 if __name__ == "__main__":

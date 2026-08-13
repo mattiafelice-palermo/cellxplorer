@@ -1151,6 +1151,15 @@ export interface AnalysisSpec {
       cycle_end: number | null;
       cycles: number[];
       max_points_per_cell: number;
+      /**
+       * Stable internal quantity ID for the plotted/exported voltage
+       * channel (Spec 040.4). Old saved specs lack this field and resolve
+       * to "voltage" (the primary/cell voltage, unchanged default) through
+       * the same `{ ...DEFAULT_TIME_CAPACITY, ... }` merge every other
+       * field already uses. Only applies to the voltage/current plot;
+       * derivative views (dQ/dV, dV/dQ) always use the primary voltage.
+       */
+      voltage_channel: "voltage" | "working_potential" | "counter_potential";
     };
     steps?: {
       series: StepsSeriesSpec[];
@@ -1415,14 +1424,27 @@ export interface PortableAnalysisInspection {
   requires_resolution: boolean;
 }
 
+export interface ProvenanceSourceFile {
+  hash: string;
+  position: number;
+  parser_version: string;
+}
+
 export interface Provenance {
   computed_at: string;
+  /**
+   * Human-facing summary: the shared parser identity when every
+   * contributing source used the same one, or "mixed" when they differ
+   * (Spec 040.3 — sources may legitimately carry distinct identities).
+   * Per-source pinned identity lives in `sources[].files[]`.
+   */
   parser_version: string;
   calc_version: string;
   sources: {
     cell_id: number;
     file_hashes: string[];
     source_descriptors?: SourceDescriptor[];
+    files?: ProvenanceSourceFile[];
   }[];
 }
 
@@ -1586,6 +1608,17 @@ export interface TimeCapacityResult {
   cell_traces: TimeCapacityTrace[];
   badges: Badge[];
   cache_status?: "hit" | "miss";
+  /**
+   * Data-driven per-selection availability for each voltage quantity (Spec
+   * 040.4) — never fabricated, and never a static per-source-format
+   * declaration. Absent on a stale pre-040.4 cached payload; treat as "no
+   * electrode-potential data available" (equivalent to every key being
+   * unavailable except "voltage") when missing.
+   */
+  voltage_channels?: Record<
+    "voltage" | "working_potential" | "counter_potential",
+    { available: boolean; label: string; role: string }
+  >;
   rendering?: {
     viewport_width: number;
     configured_max_points_per_cell: number;

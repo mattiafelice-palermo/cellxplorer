@@ -54,10 +54,18 @@ class MultiSourceRegressionTests(unittest.TestCase):
             }[source_hash],
         ):
             ordered, _segments, missing = stitch.stitch_cycles(
-                [first, second], "parser", "calc"
+                [
+                    stitch.CachedSourceRef(first, "parser"),
+                    stitch.CachedSourceRef(second, "parser"),
+                ],
+                "calc",
             )
             reversed_result, _reversed_segments, reversed_missing = stitch.stitch_cycles(
-                [second, first], "parser", "calc"
+                [
+                    stitch.CachedSourceRef(second, "parser"),
+                    stitch.CachedSourceRef(first, "parser"),
+                ],
+                "calc",
             )
         self.assertEqual(missing, [])
         self.assertEqual(reversed_missing, [])

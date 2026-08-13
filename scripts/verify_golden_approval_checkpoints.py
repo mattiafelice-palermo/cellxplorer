@@ -46,7 +46,11 @@ def _raw_for_key(env: GoldenFixtureEnvironment, source_key: str) -> pd.DataFrame
     from golden_analysis_support import cache
 
     env.ensure_sources_parsed()
-    return pd.read_parquet(cache.raw_path(source["sha256"]))
+    # Spec 040.3: the raw cache is keyed by this source's own effective
+    # parser identity, not the transitional global bundle — read the
+    # identity `scanner.parse_file` actually persisted for it.
+    record = _source_record(env, source_key)
+    return pd.read_parquet(cache.raw_path(source["sha256"], record.parser_version))
 
 
 def _source_record(env: GoldenFixtureEnvironment, source_key: str):

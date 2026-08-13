@@ -96,6 +96,7 @@ import {
   SavedAnalysisPlot,
   SelectionEntry,
   PlotStylePresetSettings,
+  TimeCapacityResult,
   Tree,
 } from "../../../api";
 import {
@@ -154,6 +155,8 @@ import {
   timeCapacityLayout,
   timeCapacityTracesForResult,
 } from "./families/time-capacity/TimeCapacityPlotCard";
+import { voltageChannelShortLabel } from "./policies/voltageChannelPolicy";
+import { parserSourceBreakdown } from "./policies/parserProvenancePolicy";
 import {
   CellHoverCard,
   RelatedAnalysesPopover,
@@ -526,7 +529,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : cfg.x_axis === "capacity_mah"
         ? "capacity (mAh)"
         : `time (${cfg.time_unit})`;
-    return `Voltage${cfg.stacked ? " and current" : ""} vs ${axis}`;
+    return `${voltageChannelShortLabel(cfg.voltage_channel)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
   if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
   if (tab === "dcir") {
@@ -2047,6 +2050,8 @@ function AnalysisEditorView({
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const [initialComputeReady, setInitialComputeReady] = useState(false);
   const [timeCapacityReady, setTimeCapacityReady] = useState(false);
+  const [timeCapacityVoltageChannels, setTimeCapacityVoltageChannels] =
+    useState<TimeCapacityResult["voltage_channels"]>(undefined);
   const [chargeabilityReady, setChargeabilityReady] = useState(false);
   const [rateCapabilityReady, setRateCapabilityReady] = useState(false);
   const autosaveSignature = useMemo(
@@ -3361,6 +3366,7 @@ function AnalysisEditorView({
           spec={spec}
           update={update}
           resetAxis={(s, axis) => resetManualAxis(s, "time_capacity", axis)}
+          voltageChannels={timeCapacityVoltageChannels}
         />
       )}
       {activeTab === "cycles" && (
@@ -3702,6 +3708,7 @@ function AnalysisEditorView({
                     spec={spec}
                     update={update}
                     onReadyChange={setTimeCapacityReady}
+                    onVoltageChannelsChange={setTimeCapacityVoltageChannels}
                     edited={activePlotDirty && activePlot?.tab === "time_capacity"}
                     {...newPlotHeaderProps}
                   />,
@@ -3745,7 +3752,13 @@ function AnalysisEditorView({
               folderOptions={folderOptions}
               setFiling={setFiling}
             />
-            {displayResult && (
+            {displayResult && (() => {
+              const savedParserVersion = currentAnalysis.provenance?.parser_version;
+              const mixedSources =
+                savedParserVersion === "mixed"
+                  ? parserSourceBreakdown(currentAnalysis.provenance?.sources)
+                  : [];
+              return (
               <Paper p="sm" withBorder>
                 <Group justify="space-between">
                   <div>
@@ -3753,9 +3766,35 @@ function AnalysisEditorView({
                       Provenance
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {currentAnalysis.provenance
-                        ? `Last saved: ${new Date(currentAnalysis.provenance.computed_at).toLocaleString()} - parser ${currentAnalysis.provenance.parser_version} - calc ${currentAnalysis.provenance.calc_version} - ${currentAnalysis.provenance.sources.length} cell(s)`
-                        : "Never saved. Save to pin versions and file hashes."}
+                      {currentAnalysis.provenance ? (
+                        <>
+                          {`Last saved: ${new Date(currentAnalysis.provenance.computed_at).toLocaleString()} - parser `}
+                          {mixedSources.length > 0 ? (
+                            <Tooltip
+                              multiline
+                              w={260}
+                              label={
+                                <Stack gap={2}>
+                                  {mixedSources.map((entry) => (
+                                    <Text key={`${entry.position}-${entry.parserVersion}`} size="xs">
+                                      {`#${entry.position} ${entry.filename ?? "source"}: ${entry.parserVersion}`}
+                                    </Text>
+                                  ))}
+                                </Stack>
+                              }
+                            >
+                              <Text component="span" td="underline" style={{ cursor: "help" }}>
+                                mixed
+                              </Text>
+                            </Tooltip>
+                          ) : (
+                            savedParserVersion
+                          )}
+                          {` - calc ${currentAnalysis.provenance.calc_version} - ${currentAnalysis.provenance.sources.length} cell(s)`}
+                        </>
+                      ) : (
+                        "Never saved. Save to pin versions and file hashes."
+                      )}
                     </Text>
                     <Text size="xs" c="dimmed">
                       Rendering at parser {displayResult.parser_version} / calc {displayResult.calc_version}
@@ -3778,7 +3817,8 @@ function AnalysisEditorView({
                   </Tooltip>
                 </Group>
               </Paper>
-            )}
+              );
+            })()}
           </Stack>
         </Tabs.Panel>
       </Tabs>

@@ -30,6 +30,13 @@ import {
   type TimeCapacityTrace,
 } from "../../../../../api";
 import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
+import {
+  shouldShowVoltageChannelSelector,
+  voltageChannelLabel,
+  voltageChannelSelectorOptions,
+  voltageChannelShortLabel,
+  type VoltageChannel,
+} from "../../policies/voltageChannelPolicy";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
@@ -83,6 +90,7 @@ import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
+export type TimeCapacityVoltageChannel = VoltageChannel;
 
 const CURRENT_AXIS_OPTIONS: { value: TimeCapacityCurrentQuantity; label: string }[] = [
   { value: "current_ma", label: "Current (mA)" },
@@ -112,6 +120,7 @@ export const DEFAULT_TIME_CAPACITY: TimeCapacityConfig = {
   cycle_end: 3,
   cycles: [],
   max_points_per_cell: 4000,
+  voltage_channel: "voltage",
 };
 
 
@@ -672,7 +681,7 @@ export function timeCapacityLayout(
     yaxis: {
       ...baseAxis(style.y_axis),
       title: {
-        text: style.y_title ?? "Voltage (V)",
+        text: style.y_title ?? voltageChannelLabel(cfg.voltage_channel, result?.voltage_channels),
         font: titleFont,
         standoff: style.y_axis.title_standoff,
       },
@@ -755,13 +764,26 @@ export function TimeCapacitySettings({
   spec,
   update,
   resetAxis,
+  voltageChannels,
 }: {
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
   resetAxis: (spec: AnalysisSpec, axis: "x_axis" | "y_axis") => void;
+  /** Live per-selection availability from the current Time/Capacity result. */
+  voltageChannels?: TimeCapacityResult["voltage_channels"];
 }) {
   const cfg = timeCapacityConfig(spec);
   const cyclesText = (cfg.cycles ?? []).join(", ");
+  // Only offer electrode potentials that actually have data for the current
+  // selection — never a disabled/greyed entry that merely advertises a
+  // feature no selected source has (spec 040.4). An ordinary two-electrode
+  // selection therefore renders no extra option and this control does not
+  // appear at all, matching pre-040.4 behavior exactly. The decision itself
+  // is a pure, independently-tested function (voltageChannelPolicy.ts) —
+  // see frontend/tests/voltageChannelPolicy.test.ts — rather than logic
+  // that lives only in this component.
+  const voltageChannelOptions = voltageChannelSelectorOptions(cfg.voltage_channel, voltageChannels);
+  const showVoltageChannelSelector = shouldShowVoltageChannelSelector(voltageChannelOptions);
   const needsArea = cfg.current_left === "current_density" || cfg.current_right === "current_density";
   const updateTime = (fn: (cfg: TimeCapacityConfig) => void) =>
     update((s) => {
@@ -811,6 +833,19 @@ export function TimeCapacitySettings({
               />
               {cfg.view === "voltage_current" ? (
                 <>
+              {showVoltageChannelSelector && (
+                <Select
+                  label="Voltage quantity"
+                  data={voltageChannelOptions}
+                  value={cfg.voltage_channel}
+                  onChange={(value) =>
+                    value &&
+                    updateTime(
+                      (next) => void (next.voltage_channel = value as TimeCapacityVoltageChannel)
+                    )
+                  }
+                />
+              )}
               <Select
                 label="X axis"
                 data={[
@@ -1030,6 +1065,7 @@ function TimeCapacityPlotCardView({
   spec,
   update,
   onReadyChange,
+  onVoltageChannelsChange,
   edited = false,
   onNewPlot,
   newPlotEnabled = false,
@@ -1044,6 +1080,10 @@ function TimeCapacityPlotCardView({
   spec: AnalysisSpec;
   update: (fn: (s: AnalysisSpec) => void) => void;
   onReadyChange?: (ready: boolean) => void;
+  /** Bubbles the live result's per-selection voltage-channel availability up
+   * so the sample-panel settings (rendered as a sibling, not a child) can
+   * show the same options the plot itself just computed. */
+  onVoltageChannelsChange?: (channels: TimeCapacityResult["voltage_channels"]) => void;
   edited?: boolean;
   onNewPlot?: () => void;
   newPlotEnabled?: boolean;
@@ -1082,6 +1122,7 @@ function TimeCapacityPlotCardView({
         timeUnit: cfg.time_unit,
         displayMode: cfg.display_mode,
         electrodeArea: cfg.electrode_area_cm2,
+        voltageChannel: cfg.voltage_channel,
         viewportWidth,
         derivative: cfg.view === "voltage_current" ? null : {
           view: cfg.view,
@@ -1104,6 +1145,7 @@ function TimeCapacityPlotCardView({
       cfg.time_unit,
       cfg.display_mode,
       cfg.electrode_area_cm2,
+      cfg.voltage_channel,
       cfg.view,
       cfg.derivative_phase,
       cfg.derivative_specific,
@@ -1152,6 +1194,9 @@ function TimeCapacityPlotCardView({
   useEffect(() => {
     onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching);
   }, [onReadyChange, timeResult.isFetching, timeResult.isLoading]);
+  useEffect(() => {
+    onVoltageChannelsChange?.(timeResult.data?.voltage_channels);
+  }, [onVoltageChannelsChange, timeResult.data?.voltage_channels]);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -1333,7 +1378,7 @@ function TimeCapacityPlotCardView({
           subtitle={subtitle}
           quantityName={
             cfg.view === "voltage_current"
-              ? "Voltage and current"
+              ? `${voltageChannelShortLabel(cfg.voltage_channel)} and current`
               : cfg.view === "dqdv"
                 ? "dQ/dV"
                 : "dV/dQ"
@@ -1427,7 +1472,7 @@ function TimeCapacityPlotCardView({
         axisScope="time_capacity"
         buildSeriesPreview={buildSeriesPreview}
         timeCapacityStacked={cfg.stacked}
-        yTitlePlaceholder="Voltage (V)"
+        yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, timeResult.data?.voltage_channels)}
       />
     </Group>
   );

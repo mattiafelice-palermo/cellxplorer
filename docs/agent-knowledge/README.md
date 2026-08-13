@@ -22,6 +22,10 @@ that matches the change, then follow its links to the authoritative implementati
   recognition, CC-only capacity, cutoff validation, pattern rules, axes, and cache/UI ownership.
 - [`scientific-regression-testing.md`](scientific-regression-testing.md): golden analysis corpus,
   synthetic vs full-source regression layers, and golden update workflow.
+- [`canonical-cycling-data.md`](canonical-cycling-data.md): the canonical raw cycling-data
+  contract (Spec 040.1) — programmed vs. executed step identity, `time_s` vs. `total_time_s`,
+  the verified current sign convention, capacity/energy reset semantics, and the
+  validator/adapter ownership boundary.
 
 Existing specialist references:
 

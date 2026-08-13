@@ -466,9 +466,8 @@ def cell_cycle_frame(db: Session, cell: Cell) -> pd.DataFrame:
     for sf in files:
         if sf.parse_status in ("unparsed", "error") and Path(sf.path).exists():
             scanner.parse_file(db, sf)
-    stitched, _segments, _missing = stitch.stitch_cycles(
-        hashes, parsing.PARSER_VERSION, CALC_VERSION
-    )
+    refs = analysis_svc.current_source_refs(files)
+    stitched, _segments, _missing = stitch.stitch_cycles(refs, CALC_VERSION)
     return stitched.replace({np.nan: None}).drop(columns=["start_timestamp"], errors="ignore")
 
 
