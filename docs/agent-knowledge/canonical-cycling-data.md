@@ -212,6 +212,20 @@ keeping `time_s` step-relative in both — i.e. the workbook dialect is an
 *adapter-internal* detail that never leaks into the canonical meaning of a
 column.
 
+Since Spec 040.2, a new adapter also needs a stable format identifier: add a
+`SourceFormatDescriptor` (`format_id`, `extensions`, `adapter_revision`) and
+an extension entry in `parsing._EXTENSION_FORMAT_ID` alongside
+`FORMAT_NEWARE_BINARY`/`FORMAT_NEWARE_EXCEL`, and extend
+`parsing.recognize_source`/`parsing.parse_timeseries`/
+`parsing.read_header_metadata` dispatch — this is a small static registry
+addition, not a plugin system. It does not yet change cache filenames,
+`SourceFile.parser_version`, or analysis provenance; Spec 040.3 owns wiring
+`parsing.source_parser_descriptor()`'s per-format `adapter_revision` into a
+per-source parser identity. Until then, `parsing.PARSER_VERSION` stays the
+one global bundle every current cache/provenance consumer reads, so a new
+format's `adapter_revision` must not silently change that bundle's value for
+existing Neware sources.
+
 ## Status vocabulary actually verified in current code
 
 Do not trust an illustrative list from a spec without reverifying it — the

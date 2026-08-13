@@ -141,10 +141,20 @@ Original Neware files normally remain at their source paths. The database stores
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not
 delete the data directory. Destructive removal is an explicit, separately confirmed choice.
 
-Supported source dispatch is centralized in `backend/app/services/parsing.py`: `.nda` and `.ndax`
-use the shared NewareNDA boundary, while structured Neware `.xlsx` files use
-`backend/app/services/neware_excel.py`. Excel sources are normalized into the same canonical raw,
-protocol and versioned raw/cycle cache contracts, so scientific services remain format-neutral.
+Supported source dispatch is centralized in `backend/app/services/parsing.py` (Spec 040.2): a small
+static registry of `SourceFormatDescriptor`s (`FORMAT_NEWARE_BINARY` = `.nda`/`.ndax`,
+`FORMAT_NEWARE_EXCEL` = `.xlsx`) drives one shared extension -> format_id decision table that both
+`parse_timeseries` and `read_header_metadata` dispatch through. `.nda`/`.ndax` use the shared
+NewareNDA boundary, while structured Neware `.xlsx` files use `backend/app/services/neware_excel.py`.
+`parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
+requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
+recognized by extension alone); `parsing.source_parser_descriptor(path)` exposes each format's
+`adapter_revision` and `canonical_raw_version` for Spec 040.3's future per-source parser identity —
+nothing persists it yet. `parsing.PARSER_VERSION` remains the transitional global parser-bundle
+identity every current cache/provenance consumer reads until that child lands. This is a static
+registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
+hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
+cache contracts, so scientific services remain format-neutral.
 The workbook's `record` sheet is the point-level source of truth; optional `step` and `cycle`
 summaries validate parser-derived execution and cycle projections rather than replacing them.
 Metadata inspection reads bounded workbook surfaces without scanning the large record sheet, and

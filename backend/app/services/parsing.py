@@ -1,7 +1,48 @@
-"""Parsing service — the ONLY place NewareNDA is imported.
+"""Parsing service — format-neutral source dispatch facade (Spec 040.2).
 
-Route handlers never call the Neware library directly; they go through
-here (usually indirectly via the cache service).
+This module is the ONLY place NewareNDA is imported and the single dispatch
+point every supported source format funnels through. Route handlers never
+call NewareNDA or `neware_excel` directly; they go through here (usually
+indirectly via `cache.py`).
+
+It owns:
+
+- stable format identifiers (`FORMAT_NEWARE_BINARY`, `FORMAT_NEWARE_EXCEL`)
+  and a narrow static descriptor per format (`SourceFormatDescriptor`) —
+  a frozen dataclass registry, not a plugin framework: no dynamic loading,
+  no importlib discovery, no base-class hierarchy;
+- format recognition (`recognize_source`) and the one shared
+  extension -> format_id decision table (`_EXTENSION_FORMAT_ID`) that both
+  `parse_timeseries` and `read_header_metadata` dispatch through, so a
+  suffix cannot be routed to a different format by one than the other;
+- the direct NewareNDA integration for `.nda`/`.ndax`: `RAW_COLUMNS`, the
+  vectorized fast-path installation (`fast_neware.install()`), and the
+  direct NDAX XML metadata optimization (`_read_ndax_metadata_flat`);
+- the format-neutral curated metadata contract returned by
+  `read_header_metadata` for every supported format, built from whichever
+  format's flattened header map it received.
+
+Error taxonomy (Spec 040.2's "small format-neutral error layer"):
+`UnsupportedSourceFormatError` (this module) covers both a wholly unknown
+extension and a recognized extension whose content fails its format's own
+structural check (e.g. a generic `.xlsx` workbook) — `ensure_supported_source_metadata`
+translates the latter case so callers see one consistent unsupported-format
+error regardless of which case applied. `neware_excel.NewareExcelError` and
+its `UnsupportedNewareExcelError`/`InvalidNewareExcelError` subclasses carry
+Excel-specific diagnostic detail without being erased — they are chained
+(`from exc`) or surfaced verbatim through `read_header_metadata`'s `error`
+field rather than being flattened into a generic message.
+`canonical_cycling.CanonicalCyclingError` remains a separate, later boundary
+(`cache.build`/`cache.build_write_behind`): a source can be recognized and
+fully parsed by this facade and still fail canonical validation afterward.
+
+Spec 040.2 scope note: this facade does not yet own per-source parser
+identity in caches/provenance (Spec 040.3). `PARSER_VERSION` remains the
+transitional global parser-bundle identity that every current cache/
+provenance consumer reads (see the constant's own comment below);
+`source_parser_descriptor()` exposes the new per-format adapter identity for
+a future child to adopt, but nothing persists or reads it from a cache or
+provenance boundary yet.
 """
 from __future__ import annotations
 
@@ -12,24 +53,85 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import NewareNDA
 import pandas as pd
 
-from . import fast_neware, neware_excel
+from . import canonical_cycling, fast_neware, neware_excel
 
 logger = logging.getLogger(__name__)
 
 NEWARE_NDA_VERSION: str = NewareNDA.version.__version__
 EXCEL_PARSER_REVISION: int = neware_excel.EXCEL_PARSER_REVISION
 PARSER_VERSION: str = f"{NEWARE_NDA_VERSION}-cxp{EXCEL_PARSER_REVISION}"
-SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset({".nda", ".ndax", ".xlsx"})
+# ^ Transitional global parser-bundle identity (Spec 039), NOT a per-source
+# parser identity. Every current cache/provenance consumer — cache.py,
+# scanner.py, continuations.py, analysis_engine.py, analysis_cache.py,
+# chargeability.py, rate_capability.py, portable_analysis.py,
+# routers/library.py, routers/replicates.py, routers/files.py, main.py —
+# still keys on this single value regardless of which format actually
+# produced a given source. Spec 040.3 replaces this with per-source parser
+# identity built from `source_parser_descriptor()` below; until that child
+# lands, this stays the one compatibility bundle every one of those call
+# sites depends on, so it must keep matching both adapter revisions it is
+# built from.
+
+
+@dataclass(frozen=True)
+class SourceFormatDescriptor:
+    """Narrow, static identity for one recognized source format.
+
+    This — plus the two module-level instances and the `_EXTENSION_FORMAT_ID`
+    lookup built from them below — is the complete "adapter registry" this
+    facade needs. It is deliberately not a plugin interface: no dynamic
+    loading, no importlib discovery, no abstract base class hierarchy.
+    `adapter_revision` is per-format identity information reserved for Spec
+    040.3's future per-source parser identity; nothing reads it from a cache
+    or provenance boundary in this child.
+    """
+
+    format_id: str
+    extensions: frozenset[str]
+    adapter_revision: str
+
+
+FORMAT_NEWARE_BINARY = "neware_binary"
+FORMAT_NEWARE_EXCEL = "neware_excel"
+
+_NEWARE_BINARY_FORMAT = SourceFormatDescriptor(
+    format_id=FORMAT_NEWARE_BINARY,
+    extensions=frozenset({".nda", ".ndax"}),
+    adapter_revision=NEWARE_NDA_VERSION,
+)
+_NEWARE_EXCEL_FORMAT = SourceFormatDescriptor(
+    format_id=FORMAT_NEWARE_EXCEL,
+    extensions=frozenset({".xlsx"}),
+    adapter_revision=str(EXCEL_PARSER_REVISION),
+)
+_FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
+    _NEWARE_BINARY_FORMAT.format_id: _NEWARE_BINARY_FORMAT,
+    _NEWARE_EXCEL_FORMAT.format_id: _NEWARE_EXCEL_FORMAT,
+}
+# The one shared extension -> format_id decision table. `parse_timeseries`
+# and `read_header_metadata` both dispatch through this exact mapping so
+# recognition is deterministic and cannot drift between the two functions.
+_EXTENSION_FORMAT_ID: dict[str, str] = {
+    **{ext: _NEWARE_BINARY_FORMAT.format_id for ext in _NEWARE_BINARY_FORMAT.extensions},
+    **{ext: _NEWARE_EXCEL_FORMAT.format_id for ext in _NEWARE_EXCEL_FORMAT.extensions},
+}
+SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
 
 
 class UnsupportedSourceFormatError(ValueError):
-    """The parser boundary was given a source suffix CellXplorer cannot read."""
+    """The parser boundary was given a source CellXplorer cannot recognize.
+
+    Raised for both a wholly unknown extension and a recognized extension
+    whose content fails its format's own structural check (e.g. a generic
+    `.xlsx` workbook) — see the module docstring's error taxonomy note.
+    """
 
 
 def source_filename_allowed(filename: str | Path) -> bool:
@@ -39,7 +141,18 @@ def source_filename_allowed(filename: str | Path) -> bool:
 
 
 def source_parser_family(filename: str | Path) -> str | None:
-    """Return the parser family selected by a supported Neware suffix."""
+    """Return the parser family selected by a supported Neware suffix.
+
+    Deliberately filename/suffix-only, never content-based: `scanner.py`
+    calls this on a bare filename (sometimes for a source it has not
+    necessarily re-read) to guard against exact-hash relinking silently
+    crossing the binary/Excel family boundary. `recognize_source` below is
+    the content-aware counterpart used when an actual readable path is
+    available; the two must not be conflated. Return values stay the
+    pre-existing short "binary"/"excel" strings rather than the new
+    `format_id` spelling — this is a stability-critical safety guard, not
+    new dispatch surface, and changing its return values is out of scope.
+    """
 
     value = str(filename or "")
     suffix = Path(value).suffix.casefold()
@@ -50,6 +163,57 @@ def source_parser_family(filename: str | Path) -> str | None:
     if suffix in {".nda", ".ndax"}:
         return "binary"
     return None
+
+
+def recognize_source(path: str | Path) -> str | None:
+    """Return the recognized `format_id` for `path`, or `None` if unrecognized.
+
+    Binary recognition is extension-only: NewareNDA performs the real
+    format validation during header/full read, so a separate content sniff
+    here would mean opening the file twice for no safety benefit (see the
+    spec's "Recognition policy" section). Excel recognition additionally
+    requires `neware_excel.is_supported_workbook`'s bounded record-sheet
+    header check, so a generic `.xlsx` workbook is never recognized by
+    extension alone — this preserves Parent 039's structural contract.
+    Both checks are cheap: reading a workbook's header row, never its full
+    `record` sheet or cycling data.
+    """
+
+    suffix = Path(str(path or "")).suffix.casefold()
+    format_id = _EXTENSION_FORMAT_ID.get(suffix)
+    if format_id is None:
+        return None
+    if format_id == FORMAT_NEWARE_EXCEL:
+        return format_id if neware_excel.is_supported_workbook(path) else None
+    return format_id
+
+
+def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
+    """Return the format-neutral adapter identity for `path`.
+
+    Exposes `format_id`, `adapter_revision`, and `canonical_raw_version`
+    (Spec 040.1) for Spec 040.3's future per-source parser identity.
+    Nothing in this child persists or reads this value from a cache or
+    provenance boundary; `PARSER_VERSION` remains the identity every
+    current consumer reads.
+
+    Raises:
+        UnsupportedSourceFormatError: `path` is not a recognized source —
+            same "one clear unsupported-format result" contract as
+            `parse_timeseries`/`read_header_metadata`.
+    """
+
+    format_id = recognize_source(path)
+    if format_id is None:
+        raise UnsupportedSourceFormatError(
+            f"Unsupported cycling source format: {Path(str(path)).suffix or '<none>'}."
+        )
+    descriptor = _FORMAT_DESCRIPTORS[format_id]
+    return {
+        "format_id": descriptor.format_id,
+        "adapter_revision": descriptor.adapter_revision,
+        "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
+    }
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
@@ -94,7 +258,7 @@ def compute_hash(path: str | Path) -> str:
 
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
-    """Full parse of a Neware file into a normalized DataFrame.
+    """Full parse of a supported cycling source into a normalized DataFrame.
 
     This is the shared dispatch point for both binary and Excel sources, but
     it deliberately does NOT enforce the canonical raw contract (Spec 040.1)
@@ -103,15 +267,27 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     full contract. Canonical validation instead runs at the full-parse /
     cache-build boundary in `cache.build` / `cache.build_write_behind`, the
     only production callers of this function.
+
+    Dispatch is deterministic and suffix-based, through the same
+    `_EXTENSION_FORMAT_ID` table `read_header_metadata` uses. It does not
+    call `recognize_source` (which additionally sniffs Excel content) —
+    `neware_excel.parse_timeseries` performs that same structural check
+    itself as a side effect of actually parsing, so a second check here
+    would open the workbook header twice for no benefit.
     """
     source_path = Path(path)
-    suffix = source_path.suffix.casefold()
-    if suffix == ".xlsx":
+    format_id = _EXTENSION_FORMAT_ID.get(source_path.suffix.casefold())
+    if format_id == FORMAT_NEWARE_EXCEL:
         return neware_excel.parse_timeseries(source_path)
-    if suffix not in SUPPORTED_NEWARE_SOURCE_EXTENSIONS - {".xlsx"}:
-        raise UnsupportedSourceFormatError(
-            f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
-        )
+    if format_id == FORMAT_NEWARE_BINARY:
+        return _parse_neware_binary_timeseries(source_path)
+    raise UnsupportedSourceFormatError(
+        f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
+    )
+
+
+def _parse_neware_binary_timeseries(source_path: Path) -> pd.DataFrame:
+    """Neware `.nda`/`.ndax` full parse — the only `NewareNDA.read()` call site."""
 
     df = NewareNDA.read(str(source_path), software_cycle_number=True, log_level="WARNING")
     keep = {src: dst for src, dst in RAW_COLUMNS.items() if src in df.columns}
@@ -211,27 +387,43 @@ def _read_ndax_metadata_flat(path: str | Path) -> dict[str, str]:
     return flat
 
 
+def _read_neware_binary_header_flat(path: Path) -> dict[str, str]:
+    """Flattened header for `.nda`/`.ndax`, preferring the direct XML fast path.
+
+    `.ndax` tries the direct-XML flattener first and falls back to
+    `NewareNDA.read_metadata` only when that reader hits a feature it
+    cannot preserve (`_NdaxXmlFallback`); `.nda` has no XML fast path and
+    always uses the library reader. Any other exception propagates to the
+    caller's broad `except Exception` in `read_header_metadata` unchanged.
+    """
+
+    if path.suffix.casefold() == ".ndax":
+        try:
+            return _read_ndax_metadata_flat(path)
+        except _NdaxXmlFallback:
+            pass
+    return _flatten(NewareNDA.read_metadata(str(path)))
+
+
 def read_header_metadata(path: str | Path) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
     Returns {raw: <flattened dict>, barcode, remarks, device_info, channel,
     start_time, active_mass_mg, nominal_capacity_mah, nda_version}.
+
+    Dispatch uses the same `_EXTENSION_FORMAT_ID` table `parse_timeseries`
+    uses, so both functions make the same format decision for a given
+    suffix.
     """
     path = Path(path)
     suffix = path.suffix.casefold()
+    format_id = _EXTENSION_FORMAT_ID.get(suffix)
     try:
-        if suffix == ".xlsx":
+        if format_id == FORMAT_NEWARE_EXCEL:
             meta = neware_excel.read_metadata(path)
             flat = _flatten(meta)
-        elif suffix == ".ndax":
-            try:
-                flat = _read_ndax_metadata_flat(path)
-            except _NdaxXmlFallback:
-                meta = NewareNDA.read_metadata(str(path))
-                flat = _flatten(meta)
-        elif suffix == ".nda":
-            meta = NewareNDA.read_metadata(str(path))
-            flat = _flatten(meta)
+        elif format_id == FORMAT_NEWARE_BINARY:
+            flat = _read_neware_binary_header_flat(path)
         else:
             raise UnsupportedSourceFormatError(
                 f"Unsupported cycling source format: {path.suffix or '<none>'}."
@@ -293,7 +485,7 @@ def read_header_metadata(path: str | Path) -> dict:
 
     result["barcode"] = find("barcode") or find_path("barcode")
     result["remarks"] = find_path("head_info.remark.value") or find("remarks", "remark")
-    result["nda_version"] = None if suffix == ".xlsx" else find("nda_version", "bts_version", "version")
+    result["nda_version"] = None if format_id == FORMAT_NEWARE_EXCEL else find("nda_version", "bts_version", "version")
     result["start_time"] = (
         find("starttime", "start_time", "startime")
         or find_path("starttime", "start_time", "startime")
@@ -330,7 +522,7 @@ def read_header_metadata(path: str | Path) -> dict:
     result["discharge_cutoff_v"] = discharge_cutoffs[0]["voltage_v"] if discharge_cutoffs else None
     record_times = scaled_values(find_all_suffix("record.main.time.value"), 1000.0)
     result["record_interval_s"] = record_times[0] if record_times else None
-    if suffix == ".xlsx":
+    if format_id == FORMAT_NEWARE_EXCEL:
         result["source_format"] = "Neware Excel"
         result["capabilities"] = {
             key.removeprefix("Excel.Capabilities.").removesuffix(".Value"): value.casefold() == "true"
