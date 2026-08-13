@@ -1,5 +1,22 @@
 # Feature specs
 
+- [`040-canonical-cycler-data-architecture.md`](040-canonical-cycler-data-architecture.md)
+  formalizes the existing Neware-like raw representation as a CellXplorer-owned canonical cycling
+  contract, introduces source-format adapters and per-source parser/cache provenance, and adds an
+  optional multi-voltage path without changing existing Neware science. Implement only through five
+  sequential children on `feature/spec-040-canonical-cycler-data-architecture`:
+  - [`040.1-canonical-cycling-data-contract-and-validation.md`](040.1-canonical-cycling-data-contract-and-validation.md)
+    — canonical raw field/capability contract and validation.
+  - [`040.2-source-format-adapter-dispatch.md`](040.2-source-format-adapter-dispatch.md)
+    — format-neutral dispatch and explicit Neware binary/Excel adapter identities.
+  - [`040.3-per-source-parser-cache-stitching-and-provenance.md`](040.3-per-source-parser-cache-stitching-and-provenance.md)
+    — per-source parser identities across caches, stitching, analysis keys and provenance.
+  - [`040.4-canonical-multi-voltage-path.md`](040.4-canonical-multi-voltage-path.md)
+    — optional working/counter potentials through canonical raw/cache/stitch and Time/Capacity.
+  - [`040.5-existing-format-regression-and-architecture-closure.md`](040.5-existing-format-regression-and-architecture-closure.md)
+    — binary/Excel regression, legacy provenance, performance/docs and final cumulative review.
+  **Plan; branch created; 040.1 is the active child.**
+  Coordination: [`040-agent-coordination.md`](040-agent-coordination.md).
 - [`039-neware-excel-export-support.md`](039-neware-excel-export-support.md)
   adds support for structured Neware `.xlsx` exports by mapping them into the existing canonical
   raw/protocol/cache model rather than creating an Excel-specific scientific path. Implement only
@@ -16,7 +33,7 @@
   - [`039.4-neware-excel-analysis-regression-and-closure.md`](039.4-neware-excel-analysis-regression-and-closure.md)
     — Cycles/Time-Capacity/Steps/DCIR/Rate Capability/Chargeability regression, portable/source
     audit, real-workbook acceptance, docs/version/package closure, and final parent review.
-  **Implementation complete; final child and cumulative review pending.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
+  **Parent 039 complete/review-clean; 039.1–039.4 implemented and review-clean, with final cumulative review complete.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
 - [`038-analyses-feature-modularization.md`](038-analyses-feature-modularization.md)
   moves all frontend Analysis Database, workspace, editor-family, plotting, saved-artifact, warmup,
   and portable-report ownership into `features/analyses/` while leaving the two route pages as
@@ -602,7 +619,23 @@ Rules:
   - [039.4-neware-excel-analysis-regression-and-closure.md](039.4-neware-excel-analysis-regression-and-closure.md)
     — end-to-end analysis regression, format-neutral scientific verification, portable/source
     audit, real-workbook acceptance, release documentation, and final cumulative review.
-  **039.1–039.3 implemented and review-clean; 039.4 implementation is complete and pending final child plus cumulative review.**
+  **Parent 039 complete/review-clean; 039.1–039.4 implemented and review-clean, with final cumulative review complete.**
+- [040-canonical-cycler-data-architecture.md](040-canonical-cycler-data-architecture.md)
+  — parent plan for making the current Neware-like raw representation an explicit CellXplorer
+  canonical cycling contract, adding format-neutral adapters, source-specific parser/cache
+  provenance and an optional multi-voltage path. Implement only through five sequential children
+  on `feature/spec-040-canonical-cycler-data-architecture`:
+  - [040.1-canonical-cycling-data-contract-and-validation.md](040.1-canonical-cycling-data-contract-and-validation.md)
+    — canonical raw field/capability contract and validation.
+  - [040.2-source-format-adapter-dispatch.md](040.2-source-format-adapter-dispatch.md)
+    — source-format dispatch and explicit adapter identities.
+  - [040.3-per-source-parser-cache-stitching-and-provenance.md](040.3-per-source-parser-cache-stitching-and-provenance.md)
+    — per-source parser identities through caches, stitching and analysis provenance.
+  - [040.4-canonical-multi-voltage-path.md](040.4-canonical-multi-voltage-path.md)
+    — optional working/counter potentials through raw/cache/stitch and Time/Capacity.
+  - [040.5-existing-format-regression-and-architecture-closure.md](040.5-existing-format-regression-and-architecture-closure.md)
+    — existing-format regression, legacy provenance, performance/docs and final cumulative review.
+  **Plan; branch created; 040.1 is the active child.**
 
 ## Assets
 
