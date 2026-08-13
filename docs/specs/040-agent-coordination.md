@@ -259,3 +259,28 @@ not restated here as current fact.
 - Reviewer verification: `python scripts\preflight.py` exit 0, 5/5; `npx tsc -b --force` exit 0, run
   explicitly because preflight self-skipped its frontend stages while `frontend/src/api.ts` changed.
 - Active child advances to **040.4**.
+
+### 2026-08-13 — 040.4 REVIEW-CLEAN
+
+- 040.4 implemented (`796fc9b`, `d36c465`), one finding raised, fixed (`5440053`, `7b5ca55`),
+  re-reviewed and approved. Canonical review: `reviews/040.4-canonical-multi-voltage-path-review.md`.
+- Scientific output again proven unchanged: the reviewer's pre-040.3 baseline re-run against this
+  child returned ALL IDENTICAL for all four golden `.ndax` sources.
+- Golden refresh: two Time/Capacity fixtures moved. **The implementer reported before refreshing**,
+  per the rule recorded after 040.3. Changes are additive metadata only (`settings.voltage_channel`,
+  `voltage_channels`); no numeric drift.
+- No silent fallback: an unavailable channel yields NaN, never a `voltage_v` substitution under an
+  electrode-potential label. Locked by a test asserting every trace value is `None`.
+- The two decisions the spec left open are evidence-based and test-locked: mixed-sample availability
+  omits per cell (matching existing missing-column behavior), and derivatives stay primary-voltage
+  only (`_derivative_curve` reads `voltage_v` unconditionally).
+- No leakage into other families: `step_blocks.BLOCK_COLUMNS` is a static list, and no aux-channel
+  reference exists in `calc.py`, `dcir.py`, `chargeability.py` or `rate_capability.py`.
+- R1: the two-electrode "no new controls" guarantee rested on one inline expression with no frontend
+  test and manual checks NOT RUN. Resolved by extracting `voltageChannelPolicy.ts` as pure functions
+  with 7 tests following the repo's existing `node:test` policy convention.
+- `CALC_VERSION` unchanged, `models.py` untouched, no migration.
+- Recorded for 040.5: `RESULT_SCHEMA_VERSIONS["time_capacity"]` 2→3 is a **second** cache
+  invalidation this release, narrower than 040.3's (per-kind, Time/Capacity only). Both should be
+  named together in release notes. Manual browser matrix remains NOT RUN by anyone.
+- Active child advances to **040.5**.
