@@ -239,6 +239,28 @@ export function writeScopedStyle(
   };
 }
 
+/**
+ * Apply an "All series" base-style edit to both primary and CE traces.
+ *
+ * The CE overlay has its own render fields so that it can be styled
+ * independently when needed, but the series editor's All series entry is
+ * explicitly the common fallback for every descriptor. Keep the shared line
+ * and marker controls in sync when that fallback is edited.
+ */
+export function applyAllSeriesStylePatch(
+  current: PlotStyle,
+  patch: Partial<PlotStyle>,
+): PlotStyle {
+  const next = { ...current, ...patch };
+  if (patch.line_width !== undefined) next.ce_line_width = patch.line_width;
+  if (patch.line_dash !== undefined) next.ce_line_dash = patch.line_dash;
+  if (patch.marker_mode !== undefined) next.ce_marker_mode = patch.marker_mode;
+  if (patch.marker_size !== undefined) next.ce_marker_size = patch.marker_size;
+  if (patch.marker_symbol !== undefined) next.ce_marker_symbol = patch.marker_symbol;
+  if (patch.marker_open !== undefined) next.ce_marker_open = patch.marker_open;
+  return next;
+}
+
 export function plotPalette(style: PlotStyle): string[] {
   return style.palette_colors?.length
     ? style.palette_colors

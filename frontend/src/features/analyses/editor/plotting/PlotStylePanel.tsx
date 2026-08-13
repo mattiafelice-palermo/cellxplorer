@@ -182,6 +182,13 @@ export function PlotStylePanel({
       markerSymbol: style.marker_symbol,
       markerSize: style.marker_size,
       markerOpen: style.marker_open,
+      ceLineWidth: style.ce_line_width,
+      ceLineDash: style.ce_line_dash,
+      ceMarkerMode: style.ce_marker_mode,
+      ceMarkerSymbol: style.ce_marker_symbol,
+      ceMarkerSize: style.ce_marker_size,
+      ceMarkerOpen: style.ce_marker_open,
+      ceOpacity: style.ce_opacity,
     }),
     [style],
   );
@@ -190,15 +197,16 @@ export function PlotStylePanel({
     (descriptor: SeriesDescriptor) => {
       const index = seriesKeyOrder.get(descriptor.key) ?? 0;
       const { palette, paletteOverflow } = seriesBaseDefaults;
+      const isCe = descriptor.measure === "coulombic_efficiency";
       return {
         color: seriesBaseDefaults.customColors[descriptor.key] ?? paletteColorAt(palette, index, paletteOverflow),
-        lineWidth: seriesBaseDefaults.lineWidth,
-        lineDash: seriesBaseDefaults.lineDash,
-        markerMode: seriesBaseDefaults.markerMode,
-        markerSymbol: seriesBaseDefaults.markerSymbol,
-        markerSize: seriesBaseDefaults.markerSize,
-        markerOpen: seriesBaseDefaults.markerOpen,
-        opacity: 1,
+        lineWidth: isCe ? seriesBaseDefaults.ceLineWidth : seriesBaseDefaults.lineWidth,
+        lineDash: isCe ? seriesBaseDefaults.ceLineDash : seriesBaseDefaults.lineDash,
+        markerMode: isCe ? seriesBaseDefaults.ceMarkerMode : seriesBaseDefaults.markerMode,
+        markerSymbol: isCe ? seriesBaseDefaults.ceMarkerSymbol : seriesBaseDefaults.markerSymbol,
+        markerSize: isCe ? seriesBaseDefaults.ceMarkerSize : seriesBaseDefaults.markerSize,
+        markerOpen: isCe ? seriesBaseDefaults.ceMarkerOpen : seriesBaseDefaults.markerOpen,
+        opacity: isCe ? seriesBaseDefaults.ceOpacity : 1,
       };
     },
     [seriesKeyOrder, seriesBaseDefaults],
