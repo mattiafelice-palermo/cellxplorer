@@ -122,14 +122,6 @@ def _ordered_cell_source_files(cell: Cell) -> list[SourceFile]:
     return [link.file for link in analysis_svc.ordered_cell_source_links(cell)]
 
 
-def ensure_cell_caches(db: Session, cell: Cell) -> None:
-    for sf in _ordered_cell_source_files(cell):
-        if sf.parse_status == "parsing":
-            continue
-        if source_file_needs_cache(sf) and Path(sf.path).exists():
-            scanner.parse_file(db, sf)
-
-
 def delete_empty_replicate_groups(db: Session) -> list[int]:
     """Remove replicate groups that no longer reference any cell.
 

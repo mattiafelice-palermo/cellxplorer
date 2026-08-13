@@ -78,6 +78,48 @@ def _has_current_scientific_cache(sf: SourceFile) -> bool:
     )
 
 
+def _needs_identity_bring_forward(sf: SourceFile) -> bool:
+    """True when an upgrade — not a deliberate cache clean — left this
+    source's own registration behind its format's current parser identity.
+
+    Spec 042. `cache_maintenance.py` never writes `SourceFile.parser_version`
+    (verified: no reference to it anywhere in that module), so the two
+    situations Spec 040.3's on-demand gate deliberately leaves unresolved are
+    separable relationally, with no file I/O and no cache-existence check:
+
+    - the user deliberately cleaned this source's cache: `parser_version`
+      still equals the current expected identity, cache files are simply
+      absent — this function returns False, and the startup backfill's
+      other criteria (which key on `capacity_summary_status`, not on cache
+      presence for an already-current source) correctly leave it alone;
+    - an application upgrade changed the expected identity for this source's
+      format: `parser_version` no longer matches — this function returns
+      True, and the source belongs in the startup preparation work set so
+      the library recovers without the user discovering Settings > Cache.
+
+    This only brings the SourceFile's OWN registration forward to a fresh
+    build at the current identity. It has nothing to do with — and must
+    never be confused with — 040.3's `analysis_engine` reparse gate, which
+    protects a saved analysis pinned to an older identity from ever being
+    silently recomputed under a newer one. Both caches (old pinned, new
+    current) coexist on disk under different identity-keyed filenames
+    (`cache.raw_path`/`cache.cycles_path`); rebuilding the source's own
+    current-identity cache here neither deletes nor relabels the pinned one.
+
+    `location_status` excludes sources already proven unreachable or changed
+    (by this backfill's own failed attempts, by `analysis_engine`, or by
+    scan/monitor activity) so a permanently offline source is retried once —
+    the failed attempt sets `location_status`, per `_apply_capacity_source_result`
+    — and then skipped on every later startup without repeated retry churn.
+    """
+    if sf.location_status != "online":
+        return False
+    if sf.parser_version is None:
+        return False
+    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    return sf.parser_version != expected
+
+
 def scientific_preparation_worker_count(
     n_jobs: int,
     *,
@@ -154,11 +196,22 @@ def start_capacity_summary_backfill(
             .filter(SourceFile.parse_status == "parsed")
             .all()
         )
+        # Spec 042: bring an identity-mismatched source's own registration
+        # forward unconditionally — independent of `prepare_missing` — so an
+        # upgrade that changes the expected parser identity self-heals on the
+        # next normal startup rather than requiring the user to find
+        # Settings > Cache > Prepare missing. This never widens to sources
+        # that are merely missing a cache at their still-current identity
+        # (a deliberate clean); see `_needs_identity_bring_forward`.
+        identity_bring_forward_ids = {
+            sf.id for sf in parsed_sources if _needs_identity_bring_forward(sf)
+        }
         sources = [
             sf
             for sf in parsed_sources
             if sf.capacity_summary_status != "ready"
             or (prepare_all_missing and not _has_current_scientific_cache(sf))
+            or sf.id in identity_bring_forward_ids
         ]
 
         if not sources:
@@ -179,6 +232,20 @@ def start_capacity_summary_backfill(
                 _capacity_backfill_background_requested.clear()
             return {"id": None, "status": "completed", "total": 0, "completed": 0}
 
+        # A source pulled in only because it needs its identity brought
+        # forward keeps its "ready" summary untouched here rather than being
+        # flipped to "pending" and possibly back to "error" on a permanently
+        # unreachable source: `cell_capacity_totals` withholds ALL of a
+        # cell's totals while any one source is not "ready", and this
+        # source's already-computed numbers remain truthful throughout the
+        # rebuild (only its per-cycle preview cache is being refreshed at
+        # the new identity, not its capacity totals). Downgrading a working
+        # "ready" summary to "error" purely because a permanently offline
+        # source cannot be reparsed would blank a cell's totals that were
+        # correctly showing a moment before the upgrade. `location_status`
+        # already carries the truthful "source unreachable" signal for that
+        # source; `capacity_summary_status` is deliberately left alone.
+        prepare_effective = prepare_all_missing or bool(identity_bring_forward_ids)
         for sf in sources:
             if sf.capacity_summary_status != "ready":
                 sf.capacity_summary_status = "pending"
@@ -186,16 +253,16 @@ def start_capacity_summary_backfill(
             "Preparing copied library"
             if scientific_preparation.is_pending(preparation_state)
             else "Preparing scientific data"
-            if prepare_all_missing
+            if prepare_effective
             else "Capacity totals"
         )
         description = (
             f"Preparing scientific data for {len(sources)} source files"
-            if prepare_all_missing
+            if prepare_effective
             else f"Calculating cached capacity totals for {len(sources)} cells"
         )
         job_id = background_jobs.create_job(
-            kind="scientific_preparation" if prepare_all_missing else "capacity_summary",
+            kind="scientific_preparation" if prepare_effective else "capacity_summary",
             title=title,
             description=description,
             total=len(sources),

@@ -17,6 +17,12 @@
     — binary/Excel regression, legacy provenance, performance/docs and final cumulative review.
   **Parent 040 complete/review-clean; 040.1–040.5 implemented and review-clean, with the fresh cumulative parent review complete. The user's manual browser pass is the one outstanding item.**
   Coordination: [`040-agent-coordination.md`](040-agent-coordination.md).
+- [`042-parser-identity-upgrade-preparation.md`](042-parser-identity-upgrade-preparation.md)
+  — extends the existing startup capacity-summary backfill so a parsed source whose stored
+  `parser_version` is behind its extension's current identity (an upgrade, never a deliberate cache
+  clean — cache cleanup never writes that field) is prepared automatically, without recreating a
+  cache the user deliberately cleared and without touching the 040.3 pinned-cache reparse gate.
+  **Implemented.** Branch `feature/spec-042-parser-identity-upgrade-preparation`.
 - [`039-neware-excel-export-support.md`](039-neware-excel-export-support.md)
   adds support for structured Neware `.xlsx` exports by mapping them into the existing canonical
   raw/protocol/cache model rather than creating an Excel-specific scientific path. Implement only
@@ -641,6 +647,14 @@ Rules:
   - [040.5-existing-format-regression-and-architecture-closure.md](040.5-existing-format-regression-and-architecture-closure.md)
     — existing-format regression, legacy provenance, performance/docs and final cumulative review.
   **Parent 040 complete/review-clean; 040.1–040.5 implemented and review-clean, with the fresh cumulative parent review complete. The user's manual browser pass is the one outstanding item.**
+- [042-parser-identity-upgrade-preparation.md](042-parser-identity-upgrade-preparation.md)
+  — a per-source parser-identity change (as Spec 040.3 introduced, and any future one will
+  reintroduce) left every previously registered source's own `SourceFile.parser_version` behind its
+  format's current identity, silently blanking Cell Database previews with no automatic recovery.
+  The startup backfill now brings an identity-mismatched, reachable source's own registration
+  forward, distinguishing that from a deliberately cleaned cache purely relationally (`parser_version`
+  equality, never cache-file presence) and never touching the `analysis_engine` pinned-cache reparse
+  gate. **Implemented.** Branch `feature/spec-042-parser-identity-upgrade-preparation`.
 
 ## Assets
 

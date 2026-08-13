@@ -1897,33 +1897,6 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(library.get_cell_source_header(cell.id, source.id, db=db)["header"], {})
 
-    def test_ensure_cell_caches_does_not_parse_files_already_parsing(self):
-        db = self.make_session()
-        cell = Cell(name="Parsing cell")
-        source = SourceFile(
-            hash="hash-parsing",
-            path=str(ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax"),
-            filename="AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax",
-            size=10,
-            ext="ndax",
-            location_status="online",
-            parse_status="parsing",
-        )
-        test = Test(cell=cell, name="Imported file")
-        test.file_links = [TestFile(file=source, position=0)]
-        db.add(cell)
-        db.flush()
-
-        calls = []
-        original_parse = library.scanner.parse_file
-        library.scanner.parse_file = lambda *_: calls.append("parse")
-        try:
-            library.ensure_cell_caches(db, cell)
-        finally:
-            library.scanner.parse_file = original_parse
-
-        self.assertEqual(calls, [])
-
     def test_cell_dict_reports_parsing_sources(self):
         db = self.make_session()
         cell = Cell(name="Parsing cell")

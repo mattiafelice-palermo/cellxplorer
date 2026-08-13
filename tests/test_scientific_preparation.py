@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import SourceFile
-from app.services import background_jobs, scanner, scientific_preparation
+from app.services import background_jobs, parsing, scanner, scientific_preparation
 
 
 class ScientificPreparationTests(unittest.TestCase):
@@ -52,7 +52,15 @@ class ScientificPreparationTests(unittest.TestCase):
         background_jobs.clear_jobs()
         self.engine.dispose()
 
-    def _source(self, db, path: Path, *, summary_status: str = "pending") -> SourceFile:
+    def _source(
+        self,
+        db,
+        path: Path,
+        *,
+        summary_status: str = "pending",
+        parser_version: str = "1",
+        location_status: str = "online",
+    ) -> SourceFile:
         payload = path.read_bytes()
         source = SourceFile(
             hash=hashlib.sha256(payload).hexdigest(),
@@ -61,8 +69,9 @@ class ScientificPreparationTests(unittest.TestCase):
             size=len(payload),
             ext="ndax",
             parse_status="parsed",
-            parser_version="1",
+            parser_version=parser_version,
             capacity_summary_status=summary_status,
+            location_status=location_status,
         )
         db.add(source)
         db.commit()
@@ -121,11 +130,26 @@ class ScientificPreparationTests(unittest.TestCase):
             verify.close()
 
     def test_normal_startup_does_not_recreate_cleaned_ready_cache(self):
+        """Spec 042 test 2: a source already at the expected identity with a
+        deliberately deleted cache is not rebuilt. `parser_version` is set to
+        the REAL current identity for `.ndax` — not an arbitrary placeholder
+        — because that equality is exactly the relational signal Spec 042
+        uses to distinguish this case from an upgrade-caused mismatch; a
+        placeholder value would accidentally exercise the wrong branch."""
         with tempfile.TemporaryDirectory() as folder:
             source_path = Path(folder) / "cell.ndax"
             source_path.write_bytes(b"source")
+            current_identity = (
+                parsing.current_parser_identity_for_extension("ndax")
+                or parsing.PARSER_VERSION
+            )
             db = self.factory()
-            self._source(db, source_path, summary_status="ready")
+            self._source(
+                db,
+                source_path,
+                summary_status="ready",
+                parser_version=current_identity,
+            )
             db.close()
 
             with (
@@ -136,6 +160,124 @@ class ScientificPreparationTests(unittest.TestCase):
 
             self.assertEqual(result["total"], 0)
             self.assertFalse(scanner._capacity_backfill_running)
+
+    def test_identity_mismatched_reachable_source_is_prepared_at_startup(self):
+        """Spec 042 test 1: an ordinary startup (no prepare_missing, no
+        copied-library marker) includes a parsed source whose stored
+        `parser_version` is behind the current identity for its extension,
+        as long as its file is reachable."""
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "stale.ndax"
+            source_path.write_bytes(b"stale identity source")
+            db = self.factory()
+            source = self._source(
+                db,
+                source_path,
+                summary_status="ready",
+                parser_version="nb:vOLD.00.00:r1",
+            )
+            db.close()
+
+            with (
+                patch.object(scanner, "SessionLocal", self.factory),
+                patch.object(scanner.threading, "Thread") as thread,
+            ):
+                result = scanner.start_capacity_summary_backfill()
+
+            self.assertEqual(result["total"], 1)
+            thread.return_value.start.assert_called_once_with()
+            job = background_jobs.get_job(result["id"])
+            self.assertEqual(job["kind"], "scientific_preparation")
+            self.assertEqual(job["items"][0]["id"], str(source.id))
+            # Left "ready" (not flipped to "pending"): its already-computed
+            # totals stay truthful while only its preview cache rebuilds.
+            verify = self.factory()
+            refreshed = verify.get(SourceFile, source.id)
+            self.assertEqual(refreshed.capacity_summary_status, "ready")
+            verify.close()
+
+    def test_unreachable_identity_mismatched_source_is_skipped_without_retry_churn(self):
+        """Spec 042 test 3: a source at an older identity whose file is
+        missing is skipped, and skipped again on the next startup — the
+        first failed attempt records `location_status="offline"`, which then
+        excludes it from every later startup's candidate set."""
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "stale-and-gone.ndax"
+            source_path.write_bytes(b"about to disappear like the real world's 12")
+            db = self.factory()
+            source = self._source(
+                db,
+                source_path,
+                summary_status="ready",
+                parser_version="nb:vOLD.00.00:r1",
+            )
+            db.close()
+            source_path.unlink()  # now genuinely unreachable, like the real 12
+
+            with (
+                patch.object(scanner, "SessionLocal", self.factory),
+                patch.object(scanner.threading, "Thread"),
+            ):
+                first = scanner.start_capacity_summary_backfill()
+                self.assertEqual(first["total"], 1)
+                scanner._run_capacity_summary_backfill(
+                    [source.id], first["id"], False, False
+                )
+
+            verify = self.factory()
+            refreshed = verify.get(SourceFile, source.id)
+            self.assertEqual(refreshed.location_status, "offline")
+            # The totals it had before the upgrade remain displayed truthfully.
+            self.assertEqual(refreshed.capacity_summary_status, "ready")
+            verify.close()
+
+            scanner._capacity_backfill_running = False
+            scanner._capacity_backfill_job_id = None
+            with patch.object(scanner, "SessionLocal", self.factory):
+                second = scanner.start_capacity_summary_backfill()
+            self.assertEqual(second["total"], 0)
+
+    def test_identity_mismatch_selection_is_resumable_across_a_restart(self):
+        """Spec 042 test 9: an interrupted preparation pass resumes rather
+        than restarting from zero. Only the source actually rebuilt drops
+        out of the next startup's candidate set; the untouched one remains."""
+        with tempfile.TemporaryDirectory() as folder:
+            done_path = Path(folder) / "done.ndax"
+            done_path.write_bytes(b"already migrated by the interrupted pass")
+            remaining_path = Path(folder) / "remaining.ndax"
+            remaining_path.write_bytes(b"not yet migrated")
+
+            current_identity = (
+                parsing.current_parser_identity_for_extension("ndax")
+                or parsing.PARSER_VERSION
+            )
+            db = self.factory()
+            done = self._source(
+                db,
+                done_path,
+                summary_status="ready",
+                # Simulates a source the interrupted pass already finished:
+                # its own registration was already brought forward.
+                parser_version=current_identity,
+            )
+            remaining = self._source(
+                db,
+                remaining_path,
+                summary_status="ready",
+                parser_version="nb:vOLD.00.00:r1",
+            )
+            db.close()
+
+            with (
+                patch.object(scanner, "SessionLocal", self.factory),
+                patch.object(scanner.threading, "Thread") as thread,
+            ):
+                result = scanner.start_capacity_summary_backfill()
+
+            self.assertEqual(result["total"], 1)
+            item_ids = {item["id"] for item in background_jobs.get_job(result["id"])["items"]}
+            self.assertEqual(item_ids, {str(remaining.id)})
+            self.assertNotIn(str(done.id), item_ids)
 
     def test_pending_copy_includes_ready_sources_with_missing_cache(self):
         with tempfile.TemporaryDirectory() as folder:

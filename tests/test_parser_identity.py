@@ -300,6 +300,51 @@ class ListEndpointNoIOTests(unittest.TestCase):
             # (nonexistent, unreadable) source path
             self.assertFalse(scanner._has_current_scientific_cache(sf))
 
+    def test_needs_identity_bring_forward_uses_extension_and_db_fields_only(self):
+        """Spec 042 test 8: the startup-preparation work-set decision must be
+        pure relational lookup — extension and stored fields only, no file
+        I/O — because it runs over every parsed source on every startup."""
+        current = parsing.current_parser_identity_for_extension("ndax")
+        stale = SourceFile(
+            hash="h" * 64,
+            path="C:/does/not/exist/stale.ndax",
+            filename="stale.ndax",
+            size=1,
+            ext="ndax",
+            parser_version="nb:vOLD.00.00:r1",
+            parse_status="parsed",
+            location_status="online",
+        )
+        already_current = SourceFile(
+            hash="i" * 64,
+            path="C:/does/not/exist/current.ndax",
+            filename="current.ndax",
+            size=1,
+            ext="ndax",
+            parser_version=current,
+            parse_status="parsed",
+            location_status="online",
+        )
+        offline_stale = SourceFile(
+            hash="j" * 64,
+            path="C:/does/not/exist/offline.ndax",
+            filename="offline.ndax",
+            size=1,
+            ext="ndax",
+            parser_version="nb:vOLD.00.00:r1",
+            parse_status="parsed",
+            location_status="offline",
+        )
+        with patch("builtins.open", side_effect=AssertionError("must not open files")):
+            self.assertTrue(scanner._needs_identity_bring_forward(stale))
+            # deliberately-cleaned-but-still-current is left alone (Spec 042
+            # test 2's distinguishing fact): equal `parser_version` alone
+            # decides it, never cache-file presence.
+            self.assertFalse(scanner._needs_identity_bring_forward(already_current))
+            # unreachable/changed sources are excluded so they are not
+            # retried on every startup (Spec 042 test 3).
+            self.assertFalse(scanner._needs_identity_bring_forward(offline_stale))
+
 
 if __name__ == "__main__":
     unittest.main()
