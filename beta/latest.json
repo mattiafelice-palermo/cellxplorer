@@ -1,15 +1,15 @@
 {
-  "version": "0.22.0-beta.4",
-  "notes": "- Speed up structured Neware Excel parsing and close completed import handoffs immediately.",
-  "pub_date": "2026-08-13T06:48:40.323Z",
+  "version": "0.22.0-beta.5",
+  "notes": "### New features\n\n- Recognize additional structured Neware Excel header and unit dialects while preserving canonical internal units.\n\n### Bug fixes\n\n- Inspect every selected import source independently, exclude unreadable files in the second modal, and let the remaining files continue through import.\n- Speed up structured Neware Excel parsing and close completed import handoffs immediately.",
+  "pub_date": "2026-08-13T07:07:55.872Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVNERnVldUV6UHVHdUs4SHl0QXRPcysvYUtJVWF4K21aWGJUc1lxZnpSYVl5Q1ZJSlUzd0txM1NudDRobkJmYWJQc0pCODkxTnRCVnZTYk0weGZ3TWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjAzNzE1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS40X3g2NC1zZXR1cC5leGUKQ3VkZ09RS2lqdTNXb3YyOXp3VWNPdWRtTm1RMnlSMU9aT2tHZFJxSFhjbzVSdXYvOG9RK3prTll6bjF2ZjVnSjBLbW9lWVhGdVJSYnU3U1NreXZJRHc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512616542"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZMY0pmcjlnWXlOZkR2N01ZOGNYbjQvZ1RxdE9QdlUvd2UxdERNY2Zrcmp0Q0liaGlGa0pIRHh2UndLdkJzMGxIbmhPNTBLMU5TS2VlY29EaEUxeGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjA0ODcxCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS41X3g2NC1zZXR1cC5leGUKTTNXampLOG50YmNpQkdUSDUrWEtuMmdabi82Y2czbnR6VDRXeDRPVWJ5Q1FLcGRnZzZMbEVKWEF1NnpTeEl3cDZLRGJuTUYxQUcybTVWY09MWW05QWc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512635141"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVNERnVldUV6UHVHdUs4SHl0QXRPcysvYUtJVWF4K21aWGJUc1lxZnpSYVl5Q1ZJSlUzd0txM1NudDRobkJmYWJQc0pCODkxTnRCVnZTYk0weGZ3TWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjAzNzE1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS40X3g2NC1zZXR1cC5leGUKQ3VkZ09RS2lqdTNXb3YyOXp3VWNPdWRtTm1RMnlSMU9aT2tHZFJxSFhjbzVSdXYvOG9RK3prTll6bjF2ZjVnSjBLbW9lWVhGdVJSYnU3U1NreXZJRHc9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512616542"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWZMY0pmcjlnWXlOZkR2N01ZOGNYbjQvZ1RxdE9QdlUvd2UxdERNY2Zrcmp0Q0liaGlGa0pIRHh2UndLdkJzMGxIbmhPNTBLMU5TS2VlY29EaEUxeGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjA0ODcxCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS41X3g2NC1zZXR1cC5leGUKTTNXampLOG50YmNpQkdUSDUrWEtuMmdabi82Y2czbnR6VDRXeDRPVWJ5Q1FLcGRnZzZMbEVKWEF1NnpTeEl3cDZLRGJuTUYxQUcybTVWY09MWW05QWc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512635141"
     }
   }
 }
