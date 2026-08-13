@@ -22,19 +22,37 @@ It owns:
   `read_header_metadata` for every supported format, built from whichever
   format's flattened header map it received.
 
-Error taxonomy (Spec 040.2's "small format-neutral error layer"):
-`UnsupportedSourceFormatError` (this module) covers both a wholly unknown
-extension and a recognized extension whose content fails its format's own
-structural check (e.g. a generic `.xlsx` workbook) — `ensure_supported_source_metadata`
-translates the latter case so callers see one consistent unsupported-format
-error regardless of which case applied. `neware_excel.NewareExcelError` and
-its `UnsupportedNewareExcelError`/`InvalidNewareExcelError` subclasses carry
-Excel-specific diagnostic detail without being erased — they are chained
-(`from exc`) or surfaced verbatim through `read_header_metadata`'s `error`
-field rather than being flattened into a generic message.
+Error taxonomy (Spec 040.2's "small format-neutral error layer", completed by
+the 040.2 follow-up): `source_format_errors.py` defines the format-neutral
+base `SourceFormatError(ValueError)` and its two neutral subclasses
+`UnsupportedSourceFormatError`/`InvalidSourceFormatError`. `parsing` and
+`neware_excel` both import from that module rather than from each other
+(`parsing` imports `neware_excel`, so the reverse would be circular); this
+module re-exports `UnsupportedSourceFormatError` (and the other two neutral
+types) rather than redefining them, so there is exactly one class of each
+name. `UnsupportedSourceFormatError` is raised directly by this module for
+both a wholly unknown extension and a recognized extension whose content
+fails its format's own structural check (e.g. a generic `.xlsx` workbook) —
+`ensure_supported_source_metadata` translates the latter case so callers see
+one consistent unsupported-format error regardless of which case applied.
+`neware_excel.NewareExcelError` and its `UnsupportedNewareExcelError`/
+`InvalidNewareExcelError` subclasses carry Excel-specific diagnostic detail
+without being erased — they are chained (`from exc`) or surfaced verbatim
+through `read_header_metadata`'s `error` field rather than being flattened
+into a generic message — and additionally inherit from the matching neutral
+type (`UnsupportedNewareExcelError` <- `UnsupportedSourceFormatError`,
+`InvalidNewareExcelError` <- `InvalidSourceFormatError`), so a caller can
+catch either `NewareExcelError` for Excel-specific detail or the neutral
+`SourceFormatError` to reject any adapter's bad source uniformly, without
+either catch also swallowing a genuine adapter bug. `ValueError` remains in
+every one of these types' MRO, so existing `except ValueError` call sites
+(e.g. `scanner.py`'s `except (OSError, ValueError)`) are unaffected.
 `canonical_cycling.CanonicalCyclingError` remains a separate, later boundary
-(`cache.build`/`cache.build_write_behind`): a source can be recognized and
-fully parsed by this facade and still fail canonical validation afterward.
+(`cache.build`/`cache.build_write_behind`) and is deliberately *not* part of
+this hierarchy: a source can be recognized and fully parsed by this facade
+and still fail canonical validation afterward, and that failure means an
+adapter produced an invalid canonical frame — an adapter bug, not a bad
+source file — so it must not be catchable by `except SourceFormatError`.
 
 Spec 040.2 scope note: this facade does not yet own per-source parser
 identity in caches/provenance (Spec 040.3). `PARSER_VERSION` remains the
@@ -61,6 +79,11 @@ import NewareNDA
 import pandas as pd
 
 from . import canonical_cycling, fast_neware, neware_excel
+from .source_format_errors import (
+    InvalidSourceFormatError,
+    SourceFormatError,
+    UnsupportedSourceFormatError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +148,14 @@ _EXTENSION_FORMAT_ID: dict[str, str] = {
 SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
 
 
-class UnsupportedSourceFormatError(ValueError):
-    """The parser boundary was given a source CellXplorer cannot recognize.
-
-    Raised for both a wholly unknown extension and a recognized extension
-    whose content fails its format's own structural check (e.g. a generic
-    `.xlsx` workbook) — see the module docstring's error taxonomy note.
-    """
+# `UnsupportedSourceFormatError` (raised below for both a wholly unknown
+# extension and a recognized extension whose content fails its format's own
+# structural check, e.g. a generic `.xlsx` workbook) is re-exported here, not
+# redefined: `source_format_errors` is the one place this class — and its
+# neutral siblings `SourceFormatError`/`InvalidSourceFormatError` — are
+# defined, so there is exactly one `UnsupportedSourceFormatError` class
+# regardless of which module imports it. See that module's docstring and
+# this module's own docstring "Error taxonomy" note for the full hierarchy.
 
 
 def source_filename_allowed(filename: str | Path) -> bool:

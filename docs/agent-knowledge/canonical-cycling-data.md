@@ -201,7 +201,41 @@ A new adapter (e.g. a future BioLogic `.mpr` adapter, Parent 041) must:
    inherits validation automatically only because every production caller of
    `parse_timeseries` is `cache.build`/`cache.build_write_behind`; an adapter
    that is invoked some other way must call `validate_raw_timeseries` itself
-   at its own full-parse boundary.
+   at its own full-parse boundary;
+6. raise the right error type. Since the Spec 040.2 follow-up,
+   `backend/app/services/source_format_errors.py` defines the one
+   format-neutral base every adapter's source-rejection errors should
+   ultimately derive from:
+
+   ```text
+   SourceFormatError(ValueError)              # neutral base
+   ├── UnsupportedSourceFormatError           # not a recognized source of this format
+   └── InvalidSourceFormatError               # recognized, but structurally broken
+   ```
+
+   `neware_excel.py` is the reference example: it keeps its own
+   `NewareExcelError(ValueError)` base (so `except NewareExcelError` still
+   gets Excel-specific detail) and multiply-inherits each subclass from the
+   matching neutral type — `UnsupportedNewareExcelError(NewareExcelError,
+   UnsupportedSourceFormatError)`, `InvalidNewareExcelError(NewareExcelError,
+   InvalidSourceFormatError)`. A future `.mpr` adapter should follow the same
+   pattern: keep (or add) an adapter-specific error base for its own
+   diagnostic detail, and additionally inherit its "this isn't a `.mpr` file
+   at all" error from `UnsupportedSourceFormatError` and its "this is a
+   `.mpr` file but structurally broken" error from `InvalidSourceFormatError`
+   — both from `source_format_errors`, imported directly, never via `parsing`
+   or `neware_excel` (that module must not import either, to avoid a
+   circular import with `parsing`, which imports every adapter). Doing this
+   means both `except <YourAdapterError>` and `except SourceFormatError`
+   correctly catch your adapter's rejections, and `except ValueError` still
+   catches everything, without inventing a fourth unrelated exception tree
+   that would force every multi-format caller down to `except Exception`.
+
+   Do **not** derive from `canonical_cycling.CanonicalCyclingError` and do
+   not make your adapter's errors a base of it either — that error means an
+   adapter was recognized and ran, and still produced a structurally invalid
+   canonical frame. That is an adapter bug, not a bad source file, and must
+   not be catchable by a caller's `except SourceFormatError`.
 
 A worked example of an adapter doing this today, imperfectly parallel to a
 future format, is `neware_excel.py`: it reconstructs `step` from

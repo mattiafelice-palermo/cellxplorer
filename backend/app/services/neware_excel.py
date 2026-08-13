@@ -39,6 +39,8 @@ except (ImportError, OSError):  # pragma: no cover - minimal source installs
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
+from .source_format_errors import InvalidSourceFormatError, UnsupportedSourceFormatError
+
 
 EXCEL_PARSER_REVISION = 6
 
@@ -165,14 +167,21 @@ _PLAN_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 class NewareExcelError(ValueError):
-    """Base class for bounded Neware Excel parser errors."""
+    """Base class for bounded Neware Excel parser errors.
+
+    Kept as the adapter-specific base so every existing `except
+    NewareExcelError` call site keeps working unchanged. Each subclass below
+    additionally inherits from the matching format-neutral type in
+    `source_format_errors` so `except SourceFormatError` also catches it (see
+    that module's docstring for the full taxonomy and MRO reasoning).
+    """
 
 
-class UnsupportedNewareExcelError(NewareExcelError):
+class UnsupportedNewareExcelError(NewareExcelError, UnsupportedSourceFormatError):
     """The workbook is not the supported structured Neware export."""
 
 
-class InvalidNewareExcelError(NewareExcelError):
+class InvalidNewareExcelError(NewareExcelError, InvalidSourceFormatError):
     """The workbook resembles the supported export but is unsafe to map."""
 
 
