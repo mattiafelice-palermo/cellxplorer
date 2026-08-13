@@ -219,6 +219,24 @@ class StepResetCapacityTests(unittest.TestCase):
         self.assertGreater(out.loc[0, "cv_charge_capacity_mah"], 0)
 
 
+def _canonical_cache_test_frame():
+    """`raw_frame()` plus the canonical columns (Spec 040.1) it omits.
+
+    `raw_frame()` intentionally exercises only the columns `calc.per_cycle`
+    reads; the cache-build boundary tests below go through
+    `canonical_cycling.validate_raw_timeseries` and need the full required
+    shape, without changing the underlying cycle/capacity values those tests
+    assert on.
+    """
+    frame = raw_frame()
+    frame["record_index"] = range(len(frame))
+    frame["step_index"] = [1, 1, 2, 1, 2]
+    frame["step"] = [1, 1, 2, 3, 4]
+    frame["time_s"] = [0.0, 1.0, 0.0, 0.0, 0.0]
+    frame["current_ma"] = [100.0, 100.0, -100.0, 100.0, -100.0]
+    return frame
+
+
 class CacheBuildIdempotencyTests(unittest.TestCase):
     HASH = "deadbeef" + "0" * 56
 
@@ -238,7 +256,7 @@ class CacheBuildIdempotencyTests(unittest.TestCase):
 
     def _counting_parse(self, path):
         self.calls += 1
-        return raw_frame()
+        return _canonical_cache_test_frame()
 
     def test_build_skips_parse_when_cached(self):
         info1 = cache.build(self.HASH, "unused.ndax")
@@ -276,7 +294,7 @@ class WriteBehindTests(unittest.TestCase):
 
     def _counting_parse(self, path):
         self.calls += 1
-        return raw_frame()
+        return _canonical_cache_test_frame()
 
     def test_returns_cycles_immediately_and_writes_behind(self):
         cycles = cache.build_write_behind(self.HASH, "unused.ndax")

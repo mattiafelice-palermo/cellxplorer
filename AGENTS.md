@@ -143,6 +143,8 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/models.py`: SQLAlchemy schema, including internal Test/TestFile compatibility storage
 - `backend/app/routers/`: `/api` endpoints
 - `backend/app/services/parsing.py`: shared source dispatch and the only direct NewareNDA integration
+- `backend/app/services/canonical_cycling.py`: canonical raw cycling-data contract and validation
+  (Spec 040.1); see `docs/agent-knowledge/canonical-cycling-data.md`
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
@@ -180,6 +182,7 @@ Cellxplorer/
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
+│           ├── canonical_cycling.py Canonical raw cycling-data contract/validation (Spec 040.1)
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
@@ -237,6 +240,7 @@ Cellxplorer/
 │   ├── test_chargeability.py       Formula matching and raw-curve scientific tests
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
+│   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)

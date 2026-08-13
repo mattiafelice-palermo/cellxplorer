@@ -23,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..config import CACHE_DIR, CALC_VERSION
-from . import calc, parsing
+from . import calc, canonical_cycling, parsing
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,14 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     # A calculation-version bump does not require rereading the source file:
     # reuse the parser-versioned raw cache and derive only the new cycle cache.
     parsed_from_source = not (rp.exists() and not force)
-    raw = pd.read_parquet(rp) if not parsed_from_source else parsing.parse_timeseries(source_path)
+    if parsed_from_source:
+        raw = parsing.parse_timeseries(source_path)
+        # Full-parse / cache-build boundary (Spec 040.1): a frame already on
+        # disk was validated when it was first written, so this only runs on
+        # an actual new parse, never on every cache read.
+        canonical_cycling.validate_raw_timeseries(raw)
+    else:
+        raw = pd.read_parquet(rp)
     cycles = calc.per_cycle(raw)
     if parsed_from_source:
         parsing.validate_parsed_output(source_path, raw, cycles)
@@ -328,6 +335,7 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
         return load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
 
     raw = parsing.parse_timeseries(source_path)
+    canonical_cycling.validate_raw_timeseries(raw)
     cycles = calc.per_cycle(raw)
     parsing.validate_parsed_output(source_path, raw, cycles)
 

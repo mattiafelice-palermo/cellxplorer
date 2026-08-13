@@ -94,7 +94,16 @@ def compute_hash(path: str | Path) -> str:
 
 
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
-    """Full parse of a Neware file into a normalized DataFrame."""
+    """Full parse of a Neware file into a normalized DataFrame.
+
+    This is the shared dispatch point for both binary and Excel sources, but
+    it deliberately does NOT enforce the canonical raw contract (Spec 040.1)
+    itself: existing dispatch-mechanics tests call this function directly
+    with deliberately minimal/mocked frames that are not meant to satisfy the
+    full contract. Canonical validation instead runs at the full-parse /
+    cache-build boundary in `cache.build` / `cache.build_write_behind`, the
+    only production callers of this function.
+    """
     source_path = Path(path)
     suffix = source_path.suffix.casefold()
     if suffix == ".xlsx":

@@ -1,0 +1,277 @@
+# Canonical cycling data contract (Spec 040.1)
+
+CellXplorer's raw cycling representation was, until Spec 040, an implicit
+Neware-shaped structure owned by whichever parser happened to produce it. This
+document is the durable, plain-language half of that contract; the
+enforceable half is `backend/app/services/canonical_cycling.py`
+(`REQUIRED_CYCLING_COLUMNS`, `STANDARD_OPTIONAL_COLUMNS`,
+`validate_raw_timeseries`). Read both together — this file explains *why*,
+the module enforces *what*.
+
+Scope note: this child (040.1) only writes the contract, documentation, and a
+structural validator. It does not touch parser dispatch (040.2), per-source
+cache/provenance identity (040.3), or actual multi-voltage data flow (040.4).
+
+## 1. Why the model is intentionally Neware-like
+
+CellXplorer's existing Neware-derived representation — cycle, programmed
+step, executed step, status, step-relative time, signed current, voltage,
+capacity/energy counters, timestamp — is already a sound, well-understood
+model of battery cycling. Parent 040's locked design principle is that new
+source formats *adapt into* this model; CellXplorer does not become a union
+of every vendor's native schema. The goal of this child is narrower than a
+redesign: give the existing meanings an explicit name and a testable
+boundary, without changing what any of them mean or how any existing source
+is parsed.
+
+## 2. Programmed `step_index` versus executed `step`
+
+- `step_index` is the **programmed protocol step identity** — which declared
+  operation/sequence a row belongs to. A looped protocol (e.g. "repeat steps
+  2-4 ten times") reuses the same `step_index` on every pass.
+- `step` is the **executed step occurrence identity** — one concrete
+  execution block. Each pass through a looped `step_index` gets its own,
+  distinct `step` value.
+
+The relationship is one-directional: many `step` values may legitimately
+share one `step_index` (normal looping), but one `step` value must never map
+to more than one `step_index` — that would mean two different programmed
+operations were merged into a single execution block, which is not
+representable under the current model. The validator enforces exactly this
+one-directional constraint and nothing more; it does not reconstruct
+execution boundaries itself. That reconstruction is each adapter's job (see
+`neware_excel.py`'s boundary detection in `_frame_from_fast_columns`/
+`_parse_records`, keyed on cycle/step_index/status/time_s discontinuities),
+because doing it generically in the validator would require the validator to
+understand vendor-specific execution semantics it deliberately does not own.
+
+`step_blocks.py` builds on both identities: it groups by `step_index` (or
+falls back to `step`) to isolate "every occurrence of this programmed
+segment" for its per-block aggregation.
+
+## 3. `time_s` versus `total_time_s`
+
+- `time_s` is **seconds elapsed since the current executed `step` began**. It
+  resets to (approximately) zero at every `step` boundary. `calc.per_cycle`
+  and `step_blocks.py` both rely on this: they take `max(time_s)` per
+  `(cycle, step)` and sum across steps, which only produces a correct
+  duration because `time_s` is step-relative, not whole-source elapsed time.
+- `total_time_s` is **seconds elapsed since source acquisition began** — an
+  auxiliary, standard-optional column. It is monotonically non-decreasing
+  (within tiny floating-point tolerance) in normal acquisition order. No
+  current scientific calculation reads it; it exists for provenance/display
+  and so that a future consumer has a whole-source elapsed axis without
+  reconstructing it from per-step `time_s` and step boundaries.
+
+Neither column is redefined by this child. The Excel parser's "record clock"
+dialect (see `docs/neware-excel-variant-findings.md` and point 8 below) only
+changes *how* `time_s`/`total_time_s` are computed from the source workbook,
+never *what they mean*: `time_s` stays step-relative in both dialects.
+
+The binary Neware parser currently never emits `total_time_s` at all — it is
+not in `parsing.RAW_COLUMNS`. This is expected: `total_time_s` is
+standard-optional, and the validator only checks it when present.
+
+## 4. Current sign convention (verified from current data/tests)
+
+**Positive `current_ma` means charge; negative means discharge.** This was
+measured, not assumed, against real production output:
+
+```text
+$ python parsing.parse_timeseries(".../cycles_time_steps.ndax") ; groupby(status)["current_ma"]
+status                          mean       min          max
+CCCV_Chg                  19.248884     2.486   146.210007
+CC_Chg                     3.681311     2.496    75.903000
+CC_DChg                  -15.918737   -75.903    -2.498000
+Rest                        0.000000     0.000     0.000000
+```
+
+Source: `tests/fixtures/golden_analysis/sources/cycles_time_steps.ndax`,
+parsed through the real production path
+(`backend/app/services/parsing.parse_timeseries` → binary Neware /
+`NewareNDA.read`). Every `Chg`-phase status is positive, every `DChg`-phase
+status is negative, `Rest` is zero. The same convention was independently
+confirmed against a synthetic structured-Excel workbook parsed through
+`neware_excel.parse_timeseries` (`CC_Chg` → `+1.0 mA`, `CC_DChg` → `-1.0
+mA`), and matches the sign convention already assumed by
+`tests/test_calc_and_cache.py`'s existing CV-detection fixtures (e.g.
+`test_a_cycle_with_no_cv_at_all_is_zero`, which uses `current_ma: [100.0,
+-100.0]` for `["CC_Chg", "CC_DChg"]`).
+
+This convention is now locked for every future adapter: an adapter whose
+vendor-native sign convention differs must normalize to CellXplorer's
+positive-is-charge convention before its output reaches canonical validation
+or scientific code. `validate_raw_timeseries` deliberately does **not**
+enforce this sign/phase relationship — checking it would require inferring
+charge/discharge from current, which the spec's validation boundary
+explicitly forbids the validator from doing. The convention is documented and
+tested here, and left to `status`-phase classification (`calc.py`'s
+`is_chg`/`is_dchg` masks) rather than being re-derived from `current_ma`.
+
+## 5. Primary voltage and reserved auxiliary electrode potentials
+
+`voltage_v` is the primary, compatibility voltage used by every existing
+CellXplorer analysis (Cycles, Time/Capacity, DCIR, Chargeability, Rate
+Capability) unless a future reviewed feature explicitly opts into another
+channel. For ordinary two-electrode data, `voltage_v` is simply the measured
+cell voltage.
+
+`working_potential_v` and `counter_potential_v` are **reserved names only**
+in this child. No adapter populates them, no cache/stitch/API path carries
+them, and no calculation reads them yet — that is Spec 040.4's job. Reserving
+the names now means a later child does not have to invent them under time
+pressure or risk a different, incompatible name landing first.
+`validate_raw_timeseries` already applies the same numeric-column contract to
+them as `voltage_v` (finite, non-malformed) if a future source happens to
+populate them early, but their presence changes nothing about existing
+two-electrode analyses.
+
+## 6. Capacity/energy reset semantics
+
+`charge_capacity_mah`, `discharge_capacity_mah`, `charge_energy_mwh`, and
+`discharge_energy_mwh` are accumulated counters that **may legitimately reset
+to zero at every executed `step` boundary** (this is how Neware's own
+counters behave, and `neware_excel.py`'s reconstructed energy counters follow
+the same convention deliberately). `calc.per_cycle` and `step_blocks.py`
+already handle this correctly by summing each step's own `(max - min)` delta
+rather than taking a per-cycle maximum — see the `phase_total`/
+`_sum_step_capacity` docstrings in `calc.py`/`step_blocks.py` for the
+regression this fixed (Spec 003).
+
+Because of this, `validate_raw_timeseries` intentionally does **not** require
+these columns to be monotonic across a whole cycle — that would reject
+perfectly valid data. It only checks that present values are numeric, finite,
+and non-negative (a capacity/energy counter can never sensibly go below
+zero). It never sums, integrates, or reconstructs these values itself.
+
+## 7. Adapter versus downstream scientific ownership
+
+The boundary is deliberately narrow:
+
+- **Adapters** (`neware_excel.py`, binary dispatch in `parsing.py`, and any
+  future format adapter) own: recognizing the source format, reconstructing
+  `step`/`cycle`/`status` from vendor-native fields, normalizing vendor
+  status strings into CellXplorer's status vocabulary (point 3 below still
+  applies — no arbitrary vendor string reaches downstream code), and
+  normalizing sign conventions to point 4 above.
+- **`canonical_cycling.validate_raw_timeseries`** owns: asserting that
+  whatever the adapter produced is structurally safe — required columns
+  present, identifiers unique/numeric/finite, no scientifically impossible
+  values (negative elapsed time, negative capacity counter, a `step` that
+  spans two `step_index` values). It never mutates the frame, never
+  reorders it, never fills in missing values, and performs no file I/O.
+- **`calc.py`/`step_blocks.py`/`stitch.py`** own: the actual scientific
+  aggregation (per-cycle/per-block totals, dense cycle-label stitching
+  across sources). They consume validated canonical data; they do not
+  re-validate it.
+
+If a check would require inferring, reconstructing, or computing a value
+(charge/discharge from current sign, executed-step boundaries, integrated
+capacity, a fabricated timestamp), it belongs to the adapter or to scientific
+code — never to the validator.
+
+## 8. How a future source format should map into the contract
+
+A new adapter (e.g. a future BioLogic `.mpr` adapter, Parent 041) must:
+
+1. produce a `pandas.DataFrame` with every column in
+   `canonical_cycling.REQUIRED_CYCLING_COLUMNS` (`record_index`, `cycle`,
+   `step_index`, `step`, `status`, `time_s`, `voltage_v`, `current_ma`,
+   `charge_capacity_mah`, `discharge_capacity_mah`) if it claims normal
+   cycling capability;
+2. translate vendor-native operation modes into CellXplorer's existing
+   status vocabulary (point 3) rather than passing vendor strings through —
+   an unrecognized operation should become a clearly non-recognized status or
+   fail a format-specific capability check, not silently teach downstream
+   code a new vendor string;
+3. normalize its native current sign convention to point 4 above
+   (positive = charge);
+4. populate `STANDARD_OPTIONAL_COLUMNS` (`total_time_s`,
+   `charge_energy_mwh`, `discharge_energy_mwh`, `timestamp`,
+   `working_potential_v`, `counter_potential_v`) only where the source
+   actually supports them — absence is a capability fact, never a reason to
+   fabricate a value (in particular: never derive a timestamp from file
+   modified time, never invent a missing cycle label);
+5. call `canonical_cycling.validate_raw_timeseries(df)` at its own full-parse
+   boundary (or rely on the shared boundary in `parsing.parse_timeseries` if
+   the adapter is dispatched from there) before the frame reaches cache
+   or scientific code.
+
+A worked example of an adapter doing this today, imperfectly parallel to a
+future format, is `neware_excel.py`: it reconstructs `step` from
+`(cycle, step_index, status, time_s)` discontinuities (`_frame_from_records`
+et al.), normalizes vendor step-type strings through `_STATUS_ALIASES`, and
+handles two workbook dialects (`docs/neware-excel-variant-findings.md`) while
+keeping `time_s` step-relative in both — i.e. the workbook dialect is an
+*adapter-internal* detail that never leaks into the canonical meaning of a
+column.
+
+## Status vocabulary actually verified in current code
+
+Do not trust an illustrative list from a spec without reverifying it — the
+Spec 040 parent's own illustrative table includes `CV_DChg`, which does
+**not** currently exist anywhere in production code. The verified vocabulary,
+checked against `neware_excel._STATUS_ALIASES` and the normalized `status`
+values actually observed across all four golden-corpus binary sources
+(`chargeability_source.ndax`, `cycles_time_steps.ndax`, `dcir_source.ndax`,
+`rate_capability_source.ndax`), is exactly:
+
+```text
+Rest
+CC_Chg
+CC_DChg
+CV_Chg
+CCCV_Chg
+CCCV_DChg
+```
+
+`CV_DChg` is absent from both `neware_excel._STATUS_ALIASES` and every
+observed binary status set. If a future source genuinely needs it, add it to
+`neware_excel._STATUS_ALIASES` (or the binary equivalent) and this list
+together, with a fixture proving it is real — do not add it speculatively.
+
+This list (`canonical_cycling.KNOWN_STATUS_VALUES`) is documentation only.
+`validate_raw_timeseries` never rejects an unrecognized status string; that
+would conflict with the parent's rule that unknown vendor operations may be
+preserved as a "clearly non-recognized canonical status" rather than
+validated away.
+
+## Reserved capability vocabulary
+
+`canonical_cycling.CANONICAL_CAPABILITIES` reserves the following meanings
+for a future bounded capability representation (Spec 040.4, extending Parent
+039's existing `Excel.Capabilities.*` fields in `neware_excel.py` /
+`parsing.read_header_metadata` rather than creating a competing schema):
+
+```text
+cycling_rows          — the source can produce normal per-record cycling data
+absolute_timestamps   — real calendar timestamps are reconstructable
+declared_protocol     — a programmed test plan/protocol is available
+primary_voltage       — voltage_v is populated
+working_potential     — working_potential_v is populated
+counter_potential      — counter_potential_v is populated
+```
+
+This child only names and documents these meanings; it does not compute or
+expose them anywhere.
+
+## Where validation runs
+
+`canonical_cycling.validate_raw_timeseries` is called once, inside
+`parsing.parse_timeseries` — the single dispatch point both binary Neware and
+structured Excel parsing already funnel through
+(`backend/app/services/parsing.py`). Both cache-build entry points
+(`cache.build`, `cache.build_write_behind`) call `parsing.parse_timeseries`,
+so validation runs exactly once per real parse with no duplication.
+
+It deliberately does **not** run on:
+
+- `parsing.read_header_metadata` — a bounded metadata-only read that never
+  calls `parse_timeseries`;
+- `import_inspection.py` — calls `parsing.read_header_metadata` only;
+- `scanner.py`'s non-cache-build paths that also read metadata only.
+
+Direct unit tests that call `neware_excel.parse_timeseries` (bypassing
+`parsing.parse_timeseries`) intentionally do not trigger this validation —
+they exercise the Excel adapter's own contract in isolation, which is a
+narrower and stricter set of checks than the canonical validator applies.
