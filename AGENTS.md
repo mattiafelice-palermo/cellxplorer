@@ -241,6 +241,7 @@ Cellxplorer/
 │   ├── test_rate_capability.py     Sweep, CC-only, and common-rate normalization tests
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
+│   ├── test_parser_identity.py     Per-source parser identity grammar and cache-invalidation tests (Spec 040.3)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)

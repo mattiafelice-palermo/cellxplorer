@@ -396,7 +396,7 @@ class CacheBuildBoundaryWiringTests(unittest.TestCase):
         parsing.parse_timeseries = lambda path: _minimal_frame()
         info = cache.build(self.HASH, "unused.ndax")
         self.assertFalse(info["cached"])
-        self.assertTrue(cache.raw_path(self.HASH).exists())
+        self.assertTrue(cache.raw_path(self.HASH, info["parser_version"]).exists())
 
 
 if __name__ == "__main__":

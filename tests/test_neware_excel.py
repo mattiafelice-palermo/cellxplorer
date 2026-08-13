@@ -1518,13 +1518,14 @@ class NewareExcelParserTests(unittest.TestCase):
             path = Path(temporary) / "cached.xlsx"
             _write_metadata_workbook(path, include_cycle=True)
             file_hash = parsing.compute_hash(path)
-            cache_directory = cache.raw_path(file_hash).parent
+            identity = parsing.parser_identity(path)
+            cache_directory = cache.raw_path(file_hash, identity).parent
             try:
                 with mock.patch.object(parsing, "validate_parsed_output", wraps=parsing.validate_parsed_output) as validate:
                     cache.build(file_hash, path)
                 validate.assert_called_once()
-                self.assertIsNotNone(cache.load_raw(file_hash, parsing.PARSER_VERSION))
-                self.assertIsNotNone(cache.load_cycles(file_hash, parsing.PARSER_VERSION, cache.CALC_VERSION))
+                self.assertIsNotNone(cache.load_raw(file_hash, identity))
+                self.assertIsNotNone(cache.load_cycles(file_hash, identity, cache.CALC_VERSION))
             finally:
                 if cache_directory.exists():
                     import shutil
@@ -1534,14 +1535,15 @@ class NewareExcelParserTests(unittest.TestCase):
             path = Path(temporary) / "write-behind.xlsx"
             _write_metadata_workbook(path, include_cycle=True)
             file_hash = parsing.compute_hash(path)
-            cache_directory = cache.raw_path(file_hash).parent
+            identity = parsing.parser_identity(path)
+            cache_directory = cache.raw_path(file_hash, identity).parent
             try:
                 with mock.patch.object(parsing, "validate_parsed_output", wraps=parsing.validate_parsed_output) as validate:
                     cache.build_write_behind(file_hash, path)
                 validate.assert_called_once()
                 cache.wait_for_pending(file_hash)
-                self.assertTrue(cache.raw_path(file_hash).exists())
-                self.assertTrue(cache.cycles_path(file_hash).exists())
+                self.assertTrue(cache.raw_path(file_hash, identity).exists())
+                self.assertTrue(cache.cycles_path(file_hash, identity).exists())
             finally:
                 if cache_directory.exists():
                     import shutil
@@ -1552,12 +1554,13 @@ class NewareExcelParserTests(unittest.TestCase):
             path = Path(temporary) / "derive.xlsx"
             _write_metadata_workbook(path, include_cycle=True)
             file_hash = parsing.compute_hash(path)
-            cache_directory = cache.raw_path(file_hash).parent
+            identity = parsing.parser_identity(path)
+            cache_directory = cache.raw_path(file_hash, identity).parent
             try:
                 cache.build(file_hash, path)
-                cache.cycles_path(file_hash).unlink()
+                cache.cycles_path(file_hash, identity).unlink()
                 with mock.patch.object(parsing, "validate_parsed_output") as validate:
-                    cycles = cache.load_cycles(file_hash, parsing.PARSER_VERSION, cache.CALC_VERSION)
+                    cycles = cache.load_cycles(file_hash, identity, cache.CALC_VERSION)
                 self.assertIsNotNone(cycles)
                 validate.assert_not_called()
             finally:
@@ -1588,7 +1591,7 @@ class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
         metadata = parsing.read_header_metadata(path)
         raw = neware_excel.parse_timeseries(path)
         file_hash = parsing.compute_hash(path)
-        cache.build(file_hash, path)
+        build_info = cache.build(file_hash, path)
         self.cache_hashes.append(file_hash)
 
         source = SourceFile(
@@ -1598,7 +1601,7 @@ class NewareExcelAnalysisIntegrationTests(unittest.TestCase):
             size=path.stat().st_size,
             ext=path.suffix.casefold().lstrip("."),
             parse_status="parsed",
-            parser_version=parsing.PARSER_VERSION,
+            parser_version=build_info["parser_version"],
             row_count=len(raw),
             cycle_count=int(raw["cycle"].nunique()),
             header_meta=metadata["raw"],

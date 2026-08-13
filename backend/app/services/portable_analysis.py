@@ -2210,9 +2210,18 @@ def import_analysis_html(
                 _decode_payload(html_path, descriptor, decoded, bounds)
                 os.replace(decoded, target)
 
+            # Spec 040.3: "current" is per-source now, resolved from this
+            # source's own extension — a global bundle default here would
+            # look at the wrong content-addressed path and trigger a
+            # needless rebuild (or miss a genuinely stale cache) once raw/
+            # cycle caches are keyed by per-source identity.
+            expected_identity = (
+                parsing.current_parser_identity_for_extension(existing.ext)
+                or parsing.PARSER_VERSION
+            )
             has_current_cache = (
-                cache.raw_path(effective_hash).exists()
-                and cache.cycles_path(effective_hash).exists()
+                cache.raw_path(effective_hash, expected_identity).exists()
+                and cache.cycles_path(effective_hash, expected_identity).exists()
             )
             if available_path is not None and not has_current_cache:
                 existing.parse_status = "parsing"
@@ -2354,6 +2363,21 @@ def import_analysis_html(
                     imported_hash_to_effective_hash.get(str(file_hash), str(file_hash))
                     for file_hash in source.get("file_hashes", [])
                 ]
+                # Spec 040.3: per-source pinned identity entries key on hash
+                # too, so they must be remapped exactly like `file_hashes`
+                # above — otherwise a reused-but-different-hash import would
+                # silently lose its pinned parser identity (falling back to
+                # current-identity resolution) instead of carrying it over.
+                entry_files = source.get("files")
+                if isinstance(entry_files, list):
+                    for file_entry in entry_files:
+                        if not isinstance(file_entry, dict):
+                            continue
+                        old_hash = file_entry.get("hash")
+                        if old_hash is not None:
+                            file_entry["hash"] = imported_hash_to_effective_hash.get(
+                                str(old_hash), str(old_hash)
+                            )
         analysis = Analysis(
             id=next_analysis_id(db),
             title=imported_title,

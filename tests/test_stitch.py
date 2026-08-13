@@ -48,19 +48,22 @@ class StitchServiceTests(unittest.TestCase):
     PARSER = "test-parser"
     CALC = "1.6.1"
 
+    def _refs(self, ordered: list[str]) -> list[stitch.CachedSourceRef]:
+        return [stitch.CachedSourceRef(file_hash, self.PARSER) for file_hash in ordered]
+
     def _stitch_cycles(self, ordered: list[str], frames: dict[str, pd.DataFrame | None]):
         with patch(
             "app.services.stitch.cache.load_cycles",
             side_effect=lambda h, _p, _c: frames.get(h),
         ):
-            return stitch.stitch_cycles(ordered, self.PARSER, self.CALC)
+            return stitch.stitch_cycles(self._refs(ordered), self.CALC)
 
     def _stitch_raw(self, ordered: list[str], frames: dict[str, pd.DataFrame | None]):
         with patch(
             "app.services.stitch.cache.load_raw",
             side_effect=lambda h, _p: frames.get(h),
         ):
-            return stitch.stitch_raw(ordered, self.PARSER)
+            return stitch.stitch_raw(self._refs(ordered))
 
     def test_two_sources_map_to_dense_global_cycles(self):
         hash_a = _hash("a")
@@ -353,6 +356,84 @@ class StitchServiceTests(unittest.TestCase):
         self.assertFalse(meta["complete"])
         self.assertEqual(meta["missing_positions"], [0])
         self.assertEqual(meta["skipped_segments"], [])
+
+
+class MixedParserIdentityStitchTests(unittest.TestCase):
+    """Spec 040.3 cases 7-9: ordered sources may carry different parser
+    identities and each is loaded at its OWN pinned identity."""
+
+    def test_cycles_stitch_loads_each_source_at_its_own_identity(self):
+        hash_a, hash_b = _hash("a"), _hash("b")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+        ]
+        frames = {hash_a: _cycle_frame([1, 2]), hash_b: _cycle_frame([1])}
+        requested: list[tuple[str, str, str]] = []
+
+        def _load(file_hash, parser_version, calc_version):
+            requested.append((file_hash, parser_version, calc_version))
+            return frames.get(file_hash)
+
+        with patch("app.services.stitch.cache.load_cycles", side_effect=_load):
+            result, segments, missing = stitch.stitch_cycles(refs, "1.6.1")
+
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            requested,
+            [
+                (hash_a, "nb:v2026.06.11:r1", "1.6.1"),
+                (hash_b, "nx:6:r1", "1.6.1"),
+            ],
+        )
+        self.assertEqual(result["cycle"].tolist(), [1, 2, 3])
+        self.assertEqual(len(segments), 2)
+
+    def test_raw_stitch_loads_each_source_at_its_own_identity(self):
+        hash_a, hash_b = _hash("a"), _hash("b")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+        ]
+        frames = {hash_a: _raw_frame([1]), hash_b: _raw_frame([1])}
+        requested: list[tuple[str, str]] = []
+
+        def _load(file_hash, parser_version):
+            requested.append((file_hash, parser_version))
+            return frames.get(file_hash)
+
+        with patch("app.services.stitch.cache.load_raw", side_effect=_load):
+            result, segments, missing = stitch.stitch_raw(refs)
+
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            requested,
+            [(hash_a, "nb:v2026.06.11:r1"), (hash_b, "nx:6:r1")],
+        )
+        self.assertEqual(len(segments), 2)
+
+    def test_missing_cache_at_middle_source_own_identity_blocks_later_segments(self):
+        """One source-specific cache missing still fails closed for later
+        sources, exactly like the single-identity case (spec case 10)."""
+        hash_a, hash_b, hash_c = _hash("a"), _hash("b"), _hash("c")
+        refs = [
+            stitch.CachedSourceRef(hash_a, "nb:v2026.06.11:r1"),
+            stitch.CachedSourceRef(hash_b, "nx:6:r1"),
+            stitch.CachedSourceRef(hash_c, "nb:v2026.06.11:r1"),
+        ]
+        frames = {hash_a: _cycle_frame([1]), hash_b: None, hash_c: _cycle_frame([1])}
+        with patch(
+            "app.services.stitch.cache.load_cycles",
+            side_effect=lambda h, _p, _c: frames.get(h),
+        ):
+            result, segments, missing = stitch.stitch_cycles(refs, "1.6.1")
+
+        self.assertEqual(missing, [hash_b])
+        self.assertEqual(result.attrs["missing_positions"], [1])
+        self.assertEqual(result.attrs["skipped_segments"], [2])
+        # only source A's cycle made it in; C was skipped after the gap
+        self.assertEqual(result["cycle"].tolist(), [1])
+        self.assertEqual(result["source_hash"].tolist(), [hash_a])
 
 
 if __name__ == "__main__":

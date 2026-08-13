@@ -1415,14 +1415,27 @@ export interface PortableAnalysisInspection {
   requires_resolution: boolean;
 }
 
+export interface ProvenanceSourceFile {
+  hash: string;
+  position: number;
+  parser_version: string;
+}
+
 export interface Provenance {
   computed_at: string;
+  /**
+   * Human-facing summary: the shared parser identity when every
+   * contributing source used the same one, or "mixed" when they differ
+   * (Spec 040.3 — sources may legitimately carry distinct identities).
+   * Per-source pinned identity lives in `sources[].files[]`.
+   */
   parser_version: string;
   calc_version: string;
   sources: {
     cell_id: number;
     file_hashes: string[];
     source_descriptors?: SourceDescriptor[];
+    files?: ProvenanceSourceFile[];
   }[];
 }
 

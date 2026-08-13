@@ -102,10 +102,24 @@ def schedule_build(file_hash: str, source_path: str | Path) -> dict[str, str | N
     The result status is ``ready``, ``building``, ``started``, or ``failed``.
     Failed builds are retryable after a short cooldown so a repeated inspection
     cannot create a tight retry loop.
+
+    Deduplication (Spec 040.3) keys on this SOURCE's own effective parser
+    identity, not the transitional global bundle: two different formats that
+    happen to share a content hash (astronomically unlikely, but not
+    forbidden) must not collide on one dedup slot merely because a single
+    global version used to be assumed.
     """
-    key = (file_hash, parsing.PARSER_VERSION, CALC_VERSION)
-    if raw_path(file_hash, parsing.PARSER_VERSION).is_file() and cycles_path(
-        file_hash, parsing.PARSER_VERSION, CALC_VERSION
+    try:
+        parser_identity = parsing.parser_identity(source_path)
+    except Exception:
+        # Unrecognized/unreadable source: fall back to the legacy bundle for
+        # the dedup key so behavior degrades to "attempt exactly one build",
+        # matching pre-040.3 behavior. `build()` below still raises the real
+        # error for the caller.
+        parser_identity = parsing.PARSER_VERSION
+    key = (file_hash, parser_identity, CALC_VERSION)
+    if raw_path(file_hash, parser_identity).is_file() and cycles_path(
+        file_hash, parser_identity, CALC_VERSION
     ).is_file():
         return {"status": "ready", "error": None}
 
@@ -266,15 +280,21 @@ def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
 
 
 def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
-    """Parse source file and (re)build raw + cycles caches at the CURRENT
-    parser/calc versions. Returns {rows, cycles, parser_version, calc_version}.
+    """Parse source file and (re)build raw + cycles caches at that SOURCE's
+    own current effective parser identity (Spec 040.3) and the current calc
+    version. Returns {rows, cycles, parser_version, calc_version}.
+
+    ``parser_version`` in the return value is this source's own identity
+    (`parsing.parser_identity(source_path)`), not a process-global bundle —
+    callers persist it verbatim into `SourceFile.parser_version`.
 
     Idempotent: identical content (hash) at identical versions yields
     identical caches, so if both files already exist the parse is skipped
     (row/cycle counts come from Parquet metadata). Pass force=True to
     rebuild regardless, e.g. if a cache file is suspected corrupt."""
     _wait_for_pending(file_hash)
-    rp, cp = raw_path(file_hash), cycles_path(file_hash)
+    parser_identity = parsing.parser_identity(source_path)
+    rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
     if not force and rp.exists() and cp.exists():
         import pyarrow.parquet as pq
 
@@ -287,14 +307,15 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
         return {
             "rows": pq.read_metadata(rp).num_rows,
             "cycles": pq.read_metadata(cp).num_rows,
-            "parser_version": parsing.PARSER_VERSION,
+            "parser_version": parser_identity,
             "calc_version": CALC_VERSION,
             "cached": True,
             **totals,
         }
 
     # A calculation-version bump does not require rereading the source file:
-    # reuse the parser-versioned raw cache and derive only the new cycle cache.
+    # reuse the parser-identity-versioned raw cache and derive only the new
+    # cycle cache.
     parsed_from_source = not (rp.exists() and not force)
     if parsed_from_source:
         raw = parsing.parse_timeseries(source_path)
@@ -315,7 +336,7 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     return {
         "rows": len(raw),
         "cycles": len(cycles),
-        "parser_version": parsing.PARSER_VERSION,
+        "parser_version": parser_identity,
         "calc_version": CALC_VERSION,
         "cached": False,
         **capacity_totals(cycles),
@@ -331,8 +352,11 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
     later build()/load for the same hash joins the in-flight write first,
     so the caches are always complete before they are read."""
     _wait_for_pending(file_hash)
-    if raw_path(file_hash).exists() and cycles_path(file_hash).exists():
-        return load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
+    parser_identity = parsing.parser_identity(source_path)
+    if raw_path(file_hash, parser_identity).exists() and cycles_path(
+        file_hash, parser_identity
+    ).exists():
+        return load_cycles(file_hash, parser_identity, CALC_VERSION)
 
     raw = parsing.parse_timeseries(source_path)
     canonical_cycling.validate_raw_timeseries(raw)
@@ -345,8 +369,8 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
         apply_background_thread_priority()
         try:
             _dir(file_hash).mkdir(parents=True, exist_ok=True)
-            _write_atomic(raw, raw_path(file_hash))
-            _write_atomic(cycles, cycles_path(file_hash))
+            _write_atomic(raw, raw_path(file_hash, parser_identity))
+            _write_atomic(cycles, cycles_path(file_hash, parser_identity))
         except Exception:
             logger.exception("background cache write failed for %s", file_hash)
         finally:

@@ -5,16 +5,33 @@ Observed source-local cycle labels map densely to global cycles in stable
 numeric order. Missing local labels are never invented. A missing ordered
 source cache stops continuation mapping for later sources so consumers can
 fail closed instead of treating a partial chain as complete.
+
+Spec 040.3: ordered sources are described by :class:`CachedSourceRef`
+(hash + that source's own effective parser identity) rather than one
+hash list plus a single parser version shared by the whole chain. A Cell's
+ordered sources may legitimately carry different parser identities (mixed
+formats, or one source rebuilt at a newer identity than another) without
+losing continuation semantics — each source is loaded at its own pinned
+identity.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from . import cache
+
+
+@dataclass(frozen=True)
+class CachedSourceRef:
+    """One ordered source's cache identity: content hash + parser identity."""
+
+    file_hash: str
+    parser_version: str
 
 
 def stitch_metadata(frame: pd.DataFrame) -> dict[str, Any]:
@@ -113,8 +130,8 @@ def _segment_metadata(
 
 
 def _stitch_ordered(
-    ordered_hashes: list[str],
-    load_fn: Callable[[str], pd.DataFrame | None],
+    ordered_sources: list[CachedSourceRef],
+    load_fn: Callable[[CachedSourceRef], pd.DataFrame | None],
     *,
     sort_output: bool,
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
@@ -126,8 +143,9 @@ def _stitch_ordered(
     global_next = 1
     continuation_blocked = False
 
-    for segment, file_hash in enumerate(ordered_hashes):
-        loaded = load_fn(file_hash)
+    for segment, source_ref in enumerate(ordered_sources):
+        file_hash = source_ref.file_hash
+        loaded = load_fn(source_ref)
         if loaded is None:
             missing.append(file_hash)
             missing_positions.append(segment)
@@ -182,20 +200,22 @@ def _stitch_ordered(
 
 
 def stitch_cycles(
-    ordered_hashes: list[str], parser_version: str, calc_version: str
+    ordered_sources: list[CachedSourceRef], calc_version: str
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """Stitch per-cycle caches, each source loaded at its own pinned identity."""
     return _stitch_ordered(
-        ordered_hashes,
-        lambda file_hash: cache.load_cycles(file_hash, parser_version, calc_version),
+        ordered_sources,
+        lambda ref: cache.load_cycles(ref.file_hash, ref.parser_version, calc_version),
         sort_output=True,
     )
 
 
 def stitch_raw(
-    ordered_hashes: list[str], parser_version: str
+    ordered_sources: list[CachedSourceRef],
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """Stitch raw caches, each source loaded at its own pinned identity."""
     return _stitch_ordered(
-        ordered_hashes,
-        lambda file_hash: cache.load_raw(file_hash, parser_version),
+        ordered_sources,
+        lambda ref: cache.load_raw(ref.file_hash, ref.parser_version),
         sort_output=False,
     )

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION
 from ..models import Cell, SourceFile
-from . import cache, parsing, protocol
+from . import cache, protocol
 
 ProgressCallback = Callable[[int, int, str, str], None]
 
@@ -473,12 +473,11 @@ def compute(
     from . import analysis_engine as engine
     from . import scanner
 
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
-    current_parser = parser_version == parsing.PARSER_VERSION
+    all_pinned_versions: list[str] = []
+    all_current_versions: list[str] = []
     filters = _filters(spec)
     units, missing_refs = engine.resolve_selection(db, spec)
     cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
@@ -503,13 +502,19 @@ def compute(
         active_mass = engine.cell_active_mass_mg(cell, metadata)
         area = engine.cell_electrode_area_cm2(cell, metadata)
         hashes, files = engine.cell_ordered_hashes(db, cell)
+        source_versions = engine.resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
+        all_pinned_versions.extend(source_versions[f.hash] for f in files)
+        all_current_versions.extend(engine.current_parser_identity(f) for f in files)
         cell_matches: list[dict] = []
         cell_candidates: list[dict] = []
         if progress:
             progress(base + 1, total_units, cell.name, "Matching chargeability protocol")
         for source in files:
+            parser_version = source_versions[source.hash]
             if (
-                current_parser
+                parser_version == engine.current_parser_identity(source)
                 and not cache.raw_path(source.hash, parser_version).exists()
                 and Path(source.path).exists()
             ):
@@ -584,6 +589,7 @@ def compute(
             {
                 "cell_id": cell.id,
                 "file_hashes": hashes,
+                "files": engine.source_file_entries(files, source_versions),
             }
         )
         if progress:
@@ -616,9 +622,9 @@ def compute(
     return {
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "type": "chargeability",
-        "parser_version": parser_version,
+        "parser_version": engine.display_parser_version(all_pinned_versions),
         "calc_version": calc_version,
-        "current_parser_version": parsing.PARSER_VERSION,
+        "current_parser_version": engine.display_parser_version(all_current_versions),
         "current_calc_version": CALC_VERSION,
         "filters": filters,
         "available_filters": {

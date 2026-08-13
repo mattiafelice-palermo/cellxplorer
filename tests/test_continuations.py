@@ -621,7 +621,9 @@ class CacheBuildCoordinationTests(unittest.TestCase):
             self.assertTrue(started.wait(timeout=2))
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "building")
             with cache._background_build_lock:
-                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+                thread = cache._background_builds[
+                    (file_hash, cache.parsing.parser_identity(source_path), cache.CALC_VERSION)
+                ]
             release.set()
             thread.join(timeout=2)
 
@@ -654,7 +656,9 @@ class CacheBuildCoordinationTests(unittest.TestCase):
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
             self.assertTrue(first_failure_started.wait(timeout=2))
             with cache._background_build_lock:
-                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+                thread = cache._background_builds[
+                    (file_hash, cache.parsing.parser_identity(source_path), cache.CALC_VERSION)
+                ]
             first_failure_release.set()
             thread.join(timeout=2)
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "failed")
@@ -675,7 +679,9 @@ class CacheBuildCoordinationTests(unittest.TestCase):
             self.assertEqual(cache.schedule_build(file_hash, source_path)["status"], "started")
             self.assertTrue(retry_failure_started.wait(timeout=2))
             with cache._background_build_lock:
-                thread = cache._background_builds[(file_hash, cache.parsing.PARSER_VERSION, cache.CALC_VERSION)]
+                thread = cache._background_builds[
+                    (file_hash, cache.parsing.parser_identity(source_path), cache.CALC_VERSION)
+                ]
             retry_failure_release.set()
             thread.join(timeout=2)
 

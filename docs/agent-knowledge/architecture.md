@@ -149,10 +149,21 @@ NewareNDA boundary, while structured Neware `.xlsx` files use `backend/app/servi
 `parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
 requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
 recognized by extension alone); `parsing.source_parser_descriptor(path)` exposes each format's
-`adapter_revision` and `canonical_raw_version` for Spec 040.3's future per-source parser identity —
-nothing persists it yet. `parsing.PARSER_VERSION` remains the transitional global parser-bundle
-identity every current cache/provenance consumer reads until that child lands. This is a static
-registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
+`adapter_revision` and `canonical_raw_version`. Since Spec 040.3, `parsing.parser_identity(path)`
+builds a compact per-source identity from that descriptor
+(`<prefix>:<adapter_revision>:r<canonical_raw_version>`, e.g. `nb:v2026.06.11:r1` /
+`nx:6:r1`, both well inside `SourceFile.parser_version`'s 30-character bound), and
+`parsing.current_parser_identity_for_extension(ext)` answers the same question with no file I/O from
+a stored extension alone — the mechanism every list/current-cache-status check uses. Cache build
+(`cache.build`, `cache.build_write_behind`, `cache.schedule_build`), current-cache checks
+(`scanner._has_current_scientific_cache`, `routers/library.py:source_file_needs_cache`), stitching
+(`stitch.CachedSourceRef`, one hash+identity pair per ordered source), and analysis
+provenance/cache-key resolution (`analysis_engine.resolve_source_parser_versions`, reused by
+`analysis_cache.result_key`) all key on this per-source identity rather than one process-global
+bundle, so two formats' cache/provenance never collide or cross-invalidate merely because they
+happen to be registered at the same time. `parsing.PARSER_VERSION` remains only as a legacy
+compatibility fallback for a source that predates 040.3 and has no stored `parser_version`. This is a
+static registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
 hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
 cache contracts, so scientific services remain format-neutral.
 The workbook's `record` sheet is the point-level source of truth; optional `step` and `cycle`

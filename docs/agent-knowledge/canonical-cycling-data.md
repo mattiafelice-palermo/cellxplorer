@@ -252,13 +252,19 @@ an extension entry in `parsing._EXTENSION_FORMAT_ID` alongside
 `FORMAT_NEWARE_BINARY`/`FORMAT_NEWARE_EXCEL`, and extend
 `parsing.recognize_source`/`parsing.parse_timeseries`/
 `parsing.read_header_metadata` dispatch — this is a small static registry
-addition, not a plugin system. It does not yet change cache filenames,
-`SourceFile.parser_version`, or analysis provenance; Spec 040.3 owns wiring
-`parsing.source_parser_descriptor()`'s per-format `adapter_revision` into a
-per-source parser identity. Until then, `parsing.PARSER_VERSION` stays the
-one global bundle every current cache/provenance consumer reads, so a new
-format's `adapter_revision` must not silently change that bundle's value for
-existing Neware sources.
+addition, not a plugin system. Add its identity prefix to
+`parsing._FORMAT_IDENTITY_PREFIX` (Spec 040.3) so `parsing.parser_identity()`
+covers it too; the identity is `<prefix>:<adapter_revision>:r<canonical_raw_version>`
+and must stay within `SourceFile.parser_version`'s 30-character bound
+(`parsing._MAX_PARSER_IDENTITY_LENGTH` asserts this at construction time
+rather than trusting it by eye). A new format's `adapter_revision` changes
+only that format's own cache/provenance identity — `cache.build`,
+`scanner._has_current_scientific_cache`, and `analysis_engine`'s per-source
+resolver all key on `parsing.current_parser_identity_for_extension()` /
+`parsing.parser_identity()` per source, never on one shared bundle, so a new
+adapter cannot silently invalidate or relabel an existing Neware source's
+cache. `parsing.PARSER_VERSION` remains only as a legacy fallback for a
+source that predates 040.3 and has no stored `parser_version`.
 
 ## Status vocabulary actually verified in current code
 

@@ -54,13 +54,16 @@ and still fail canonical validation afterward, and that failure means an
 adapter produced an invalid canonical frame — an adapter bug, not a bad
 source file — so it must not be catchable by `except SourceFormatError`.
 
-Spec 040.2 scope note: this facade does not yet own per-source parser
-identity in caches/provenance (Spec 040.3). `PARSER_VERSION` remains the
-transitional global parser-bundle identity that every current cache/
-provenance consumer reads (see the constant's own comment below);
-`source_parser_descriptor()` exposes the new per-format adapter identity for
-a future child to adopt, but nothing persists or reads it from a cache or
-provenance boundary yet.
+Spec 040.3 note: `parser_identity()` (content-aware, built on
+`source_parser_descriptor()`) and `current_parser_identity_for_extension()`
+(cheap, no I/O) are the per-source parser identity this module now exposes.
+`PARSER_VERSION` remains a legacy transitional constant — some remaining
+call sites still read it as a fallback for a source that predates 040.3 and
+has no stored `parser_version`, and test fixtures use it as a stand-in
+version string — but it is no longer the identity any cache build, cache
+lookup, or analysis provenance keys on. See `docs/agent-knowledge/
+canonical-cycling-data.md` and `docs/specs/040.3-per-source-parser-cache-
+stitching-and-provenance.md` for the full per-source identity design.
 """
 from __future__ import annotations
 
@@ -238,6 +241,87 @@ def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
         "adapter_revision": descriptor.adapter_revision,
         "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
     }
+
+
+# Per-source parser identity (Spec 040.3). One compact, documented grammar:
+#
+#   <prefix>:<adapter_revision>:r<canonical_raw_version>
+#
+# `<prefix>` is a short per-format token (not `format_id` itself, which is
+# longer than the 30-character `SourceFile.parser_version` budget allows for
+# some formats once the adapter revision and raw-version suffix are added).
+# Measured against the real values 040.2 exposes:
+#   nb:v2026.06.11:r1   (Neware binary; 17 characters)
+#   nx:6:r1             (Neware Excel; 7 characters)
+# both comfortably inside the 30-character bound. `_MAX_PARSER_IDENTITY_LENGTH`
+# below is asserted at construction time rather than trusted by eye, so a
+# future longer upstream version string fails loudly instead of silently
+# producing a value `SourceFile.parser_version` cannot store.
+_FORMAT_IDENTITY_PREFIX: dict[str, str] = {
+    FORMAT_NEWARE_BINARY: "nb",
+    FORMAT_NEWARE_EXCEL: "nx",
+}
+_MAX_PARSER_IDENTITY_LENGTH = 30  # SourceFile.parser_version = String(30)
+
+
+def _identity_for_format(format_id: str) -> str:
+    descriptor = _FORMAT_DESCRIPTORS[format_id]
+    prefix = _FORMAT_IDENTITY_PREFIX[format_id]
+    identity = f"{prefix}:{descriptor.adapter_revision}:r{canonical_cycling.CANONICAL_RAW_VERSION}"
+    if len(identity) > _MAX_PARSER_IDENTITY_LENGTH:
+        raise ValueError(
+            f"Parser identity {identity!r} ({len(identity)} chars) exceeds the "
+            f"{_MAX_PARSER_IDENTITY_LENGTH}-character SourceFile.parser_version "
+            "budget. Shorten the identity grammar rather than adding a migration."
+        )
+    return identity
+
+
+def current_parser_identity_for_extension(ext: str | None) -> str | None:
+    """Cheap, no-I/O "what identity would building this extension produce now".
+
+    Derived purely from the static format registry — never opens the source
+    file. This is what list/current-cache-status checks must use (per the
+    spec's "no file I/O, no parser imports... to answer 'is this source's
+    cache current'" performance requirement): it answers "current" from a
+    stored `SourceFile.ext` alone. It intentionally cannot distinguish a
+    genuine Neware Excel export from an arbitrary `.xlsx` (that requires
+    content sniffing, which `parser_identity()` below performs) — a
+    `SourceFile` only reaches this path after already being accepted at
+    registration time, so that distinction is not this function's job.
+
+    Returns ``None`` when the extension is not a recognized suffix for any
+    registered format.
+    """
+
+    suffix = str(ext or "")
+    if suffix and not suffix.startswith("."):
+        suffix = f".{suffix}"
+    format_id = _EXTENSION_FORMAT_ID.get(suffix.casefold())
+    if format_id is None:
+        return None
+    return _identity_for_format(format_id)
+
+
+def parser_identity(path: str | Path) -> str:
+    """Content-aware effective parser identity for an actual source file.
+
+    Use this at real build/parse time, when `path` is available and
+    readable — it calls `recognize_source`, which for Excel additionally
+    sniffs the workbook header. For a cheap "is the stored identity still
+    current" check with no file I/O, use
+    `current_parser_identity_for_extension` instead.
+
+    Raises:
+        UnsupportedSourceFormatError: `path` is not a recognized source.
+    """
+
+    format_id = recognize_source(path)
+    if format_id is None:
+        raise UnsupportedSourceFormatError(
+            f"Unsupported cycling source format: {Path(str(path)).suffix or '<none>'}."
+        )
+    return _identity_for_format(format_id)
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:

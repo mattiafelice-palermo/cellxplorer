@@ -363,7 +363,10 @@ class AnalysisCacheTests(unittest.TestCase):
             steps_before = analysis_cache.result_key(
                 db, "steps", spec, None, use_current_versions=True
             )
-            with patch.dict(analysis_cache.RESULT_SCHEMA_VERSIONS, {"steps": 3}):
+            with patch.dict(
+                analysis_cache.RESULT_SCHEMA_VERSIONS,
+                {"steps": analysis_cache.RESULT_SCHEMA_VERSIONS["steps"] + 1},
+            ):
                 cycles_after = analysis_cache.result_key(
                     db, "cycles", spec, None, use_current_versions=True
                 )

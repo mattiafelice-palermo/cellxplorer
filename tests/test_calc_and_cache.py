@@ -276,19 +276,24 @@ class CacheBuildIdempotencyTests(unittest.TestCase):
 
 class WriteBehindTests(unittest.TestCase):
     HASH = "cafebabe" + "1" * 56
+    # "unused.ndax" is never actually opened (parse_timeseries is
+    # monkeypatched below), but its extension IS used for per-source parser
+    # identity resolution (Spec 040.3), which is extension-only for binary
+    # Neware and therefore needs no real file on disk.
+    PARSER_IDENTITY = parsing.parser_identity("unused.ndax")
 
     def setUp(self):
         self.calls = 0
         self._orig = parsing.parse_timeseries
         parsing.parse_timeseries = self._counting_parse
-        d = cache.raw_path(self.HASH).parent
+        d = cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent
         if d.exists():
             shutil.rmtree(d)
 
     def tearDown(self):
         cache.wait_for_pending(self.HASH)
         parsing.parse_timeseries = self._orig
-        d = cache.raw_path(self.HASH).parent
+        d = cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent
         if d.exists():
             shutil.rmtree(d)
 
@@ -305,10 +310,11 @@ class WriteBehindTests(unittest.TestCase):
         info = cache.build(self.HASH, "unused.ndax")
         self.assertTrue(info["cached"])
         self.assertEqual(self.calls, 1)
-        self.assertTrue(cache.raw_path(self.HASH).exists())
-        self.assertTrue(cache.cycles_path(self.HASH).exists())
+        self.assertEqual(info["parser_version"], self.PARSER_IDENTITY)
+        self.assertTrue(cache.raw_path(self.HASH, self.PARSER_IDENTITY).exists())
+        self.assertTrue(cache.cycles_path(self.HASH, self.PARSER_IDENTITY).exists())
         # no stray temp files
-        leftovers = list(cache.raw_path(self.HASH).parent.glob("*.tmp-*"))
+        leftovers = list(cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent.glob("*.tmp-*"))
         self.assertEqual(leftovers, [])
 
     def test_second_call_uses_existing_cache(self):

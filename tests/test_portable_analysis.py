@@ -107,10 +107,14 @@ class PortableAnalysisTests(unittest.TestCase):
         source_path = self.root / "cell.ndax"
         source_path.write_bytes(b"portable-neware-source")
         source_hash = portable_analysis._sha256_file(source_path)
+        # Spec 040.3: caches are keyed by this source's own effective parser
+        # identity (extension-only recognition for binary Neware, so no real
+        # file content is needed), not the transitional global bundle.
+        identity = parsing.parser_identity(source_path)
         raw = raw_frame()
-        cache.raw_path(source_hash).parent.mkdir(parents=True, exist_ok=True)
-        cache._write_atomic(raw, cache.raw_path(source_hash))
-        cache._write_atomic(calc.per_cycle(raw), cache.cycles_path(source_hash))
+        cache.raw_path(source_hash, identity).parent.mkdir(parents=True, exist_ok=True)
+        cache._write_atomic(raw, cache.raw_path(source_hash, identity))
+        cache._write_atomic(calc.per_cycle(raw), cache.cycles_path(source_hash, identity))
 
         cell = Cell(name="Portable cell", description="Round-trip test")
         db.add(cell)
@@ -122,7 +126,7 @@ class PortableAnalysisTests(unittest.TestCase):
             size=source_path.stat().st_size,
             ext="ndax",
             parse_status="parsed",
-            parser_version=parsing.PARSER_VERSION,
+            parser_version=identity,
             row_count=len(raw),
             cycle_count=1,
             capacity_summary_status="ready",
@@ -200,15 +204,21 @@ class PortableAnalysisTests(unittest.TestCase):
             portable_analysis._write_html(destination, manifest, payload_paths)
 
     def fake_cache_build(self, source_hash, source_path):
+        # Spec 040.3: mirror what the real `cache.build` does — write/report
+        # at THIS source's own effective parser identity, not the
+        # transitional global bundle. Using the real path's extension keeps
+        # this fake consistent with whatever `analysis_engine.compute()`
+        # (unmocked at export time) already pinned into provenance.
+        identity = parsing.parser_identity(source_path)
         raw = raw_frame()
         cycles = calc.per_cycle(raw)
-        cache.raw_path(source_hash).parent.mkdir(parents=True, exist_ok=True)
-        cache._write_atomic(raw, cache.raw_path(source_hash))
-        cache._write_atomic(cycles, cache.cycles_path(source_hash))
+        cache.raw_path(source_hash, identity).parent.mkdir(parents=True, exist_ok=True)
+        cache._write_atomic(raw, cache.raw_path(source_hash, identity))
+        cache._write_atomic(cycles, cache.cycles_path(source_hash, identity))
         return {
             "rows": len(raw),
             "cycles": len(cycles),
-            "parser_version": parsing.PARSER_VERSION,
+            "parser_version": identity,
             "calc_version": portable_analysis.CALC_VERSION,
             "total_charge_capacity_mah": 1.0,
             "total_discharge_capacity_mah": 0.95,
@@ -311,11 +321,84 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(imported.title, "Portable study")
         self.assertEqual(imported_cell.name, "Portable cell")
         self.assertEqual(imported_source.location_status, "online")
-        self.assertTrue(cache.raw_path(source_hash).exists())
-        self.assertTrue(cache.cycles_path(source_hash).exists())
+        self.assertTrue(cache.raw_path(source_hash, imported_source.parser_version).exists())
+        self.assertTrue(cache.cycles_path(source_hash, imported_source.parser_version).exists())
         self.assertFalse(any("offline" in warning.lower() for warning in warnings))
         result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
         self.assertEqual(result["cell_series"][0]["x"], [1])
+
+    def test_portable_provenance_preserves_per_source_parser_identity_and_remaps_hash(self):
+        """Case 20: exported provenance carries the new per-source
+        `files[]` shape, and import remaps each entry's `hash` to the
+        effective imported hash exactly like `file_hashes` — otherwise a
+        reused-but-different-hash import would silently lose its pinned
+        identity instead of carrying it forward."""
+        db, analysis, cell_source, source_path, source_hash = self.create_analysis()
+        spec = analysis.spec
+        computed = analysis_engine.compute(db, spec, None)
+        analysis.provenance = analysis_engine.build_provenance(computed)
+        db.commit()
+
+        pinned_identity = analysis.provenance["sources"][0]["files"][0]["parser_version"]
+        self.assertEqual(analysis.provenance["sources"][0]["files"][0]["hash"], source_hash)
+
+        destination = self.root / "provenance-portable.html"
+        portable_analysis.export_analysis_html(
+            db, analysis, destination, include_original_files=False
+        )
+        report = self.read_report(destination)
+        exported_files = report["analysis"]["provenance"]["sources"][0]["files"]
+        self.assertEqual(exported_files[0]["hash"], source_hash)
+        self.assertEqual(exported_files[0]["parser_version"], pinned_identity)
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
+            imported, _ = portable_analysis.import_analysis_html(imported_db, destination)
+        imported_source = imported_db.query(SourceFile).one()
+
+        # Exact-hash reuse is the common case: the effective imported hash
+        # equals the original, so the remap is a no-op here, but it proves
+        # the pinned entry survives the round trip and stays consistent
+        # with `file_hashes`.
+        imported_files = imported.provenance["sources"][0]["files"]
+        self.assertEqual(imported_files[0]["hash"], imported_source.hash)
+        self.assertEqual(
+            imported.provenance["sources"][0]["file_hashes"], [imported_source.hash]
+        )
+
+    def test_legacy_single_scalar_provenance_shape_is_still_importable(self):
+        """Case 20: a portable package exported before Spec 040.3 carries a
+        legacy provenance shape (one scalar `parser_version`, no per-source
+        `files[]`). Import must accept it rather than requiring the new
+        shape."""
+        destination, source_hash = self.create_export(include_original_files=False)
+        legacy_report = self.read_report(destination)
+        legacy_report["analysis"]["provenance"] = {
+            "computed_at": "2026-01-01T00:00:00+00:00",
+            "parser_version": "v2026.06.11-cxp6",
+            "calc_version": cache.CALC_VERSION,
+            "sources": [
+                {
+                    "cell_id": legacy_report["analysis"]["provenance"]["sources"][0]["cell_id"]
+                    if legacy_report["analysis"]["provenance"]
+                    else 1,
+                    "file_hashes": [source_hash],
+                }
+            ],
+        }
+        rewritten = self.root / "legacy-provenance-portable.html"
+        self.rewrite_report(destination, legacy_report, rewritten)
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis.cache, "build", self.fake_cache_build):
+            imported, warnings = portable_analysis.import_analysis_html(imported_db, rewritten)
+
+        self.assertEqual(imported.provenance["parser_version"], "v2026.06.11-cxp6")
+        self.assertNotIn("files", imported.provenance["sources"][0])
+        # legacy-shape provenance still resolves through
+        # resolve_source_parser_versions' normalization path without raising
+        result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
+        self.assertIsInstance(result["cell_series"], list)
 
     def test_export_uses_beta_deep_link_scheme_when_channel_is_beta(self):
         db, analysis, _, _, _ = self.create_analysis()
@@ -458,10 +541,13 @@ class PortableAnalysisTests(unittest.TestCase):
         second_path.write_bytes(b"second-source")
         first_hash = portable_analysis._sha256_file(first_path)
         second_hash = portable_analysis._sha256_file(second_path)
+        # Both sources are ".ndax", so they share one identity (extension-only
+        # recognition for binary Neware; Spec 040.3).
+        identity = parsing.parser_identity(first_path)
         for source_hash in (first_hash, second_hash):
-            cache.raw_path(source_hash).parent.mkdir(parents=True, exist_ok=True)
-            cache._write_atomic(raw_frame(), cache.raw_path(source_hash))
-            cache._write_atomic(calc.per_cycle(raw_frame()), cache.cycles_path(source_hash))
+            cache.raw_path(source_hash, identity).parent.mkdir(parents=True, exist_ok=True)
+            cache._write_atomic(raw_frame(), cache.raw_path(source_hash, identity))
+            cache._write_atomic(calc.per_cycle(raw_frame()), cache.cycles_path(source_hash, identity))
 
         cell = Cell(name="Continued portable cell")
         db.add(cell)
@@ -475,7 +561,7 @@ class PortableAnalysisTests(unittest.TestCase):
             size=second_path.stat().st_size,
             ext="ndax",
             parse_status="parsed",
-            parser_version=parsing.PARSER_VERSION,
+            parser_version=identity,
             row_count=len(raw_frame()),
             cycle_count=1,
             capacity_summary_status="ready",
@@ -487,7 +573,7 @@ class PortableAnalysisTests(unittest.TestCase):
             size=first_path.stat().st_size,
             ext="ndax",
             parse_status="parsed",
-            parser_version=parsing.PARSER_VERSION,
+            parser_version=identity,
             row_count=len(raw_frame()),
             cycle_count=1,
             capacity_summary_status="ready",

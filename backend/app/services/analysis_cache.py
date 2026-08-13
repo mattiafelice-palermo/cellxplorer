@@ -19,16 +19,28 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..config import CACHE_DIR, CALC_VERSION
-from . import parsing
 
-ANALYSIS_CACHE_VERSION = 4
+ANALYSIS_CACHE_VERSION = 5
+# ^ Spec 040.3: result_key() now fingerprints each contributing source's OWN
+# resolved parser identity per cell (`source_parser_versions`) instead of one
+# process-global `parser_version` scalar shared by the whole key. This is a
+# key-COMPUTATION change that applies uniformly to every analysis kind, so it
+# bumps the shared version rather than one entry in RESULT_SCHEMA_VERSIONS
+# below (which is reserved for per-kind RESPONSE payload shape changes). The
+# digest would already differ without this bump — the JSON structure fed to
+# the digest changed — but bumping documents the generation change explicitly
+# per this module's own guidance ("changes that genuinely affect every
+# analysis result family").
 RESULT_SCHEMA_VERSIONS = {
-    "cycles": 2,
+    # Spec 040.3: each kind's persisted "sources" entries gained a "files"
+    # array (per-source {hash, position, parser_version}), so a legacy
+    # cached payload missing that array must not be served as if it had it.
+    "cycles": 3,
     "time_capacity": 2,
-    "steps": 2,
-    "dcir": 1,
-    "chargeability": 1,
-    "rate_capability": 3,
+    "steps": 3,
+    "dcir": 2,
+    "chargeability": 2,
+    "rate_capability": 4,
 }
 PLOT_ARTIFACT_CACHE_VERSION = 2
 THUMBNAIL_CACHE_VERSION = 5
@@ -146,10 +158,8 @@ def result_key(
     # Local import avoids analysis_engine -> cache -> analysis_cache cycles.
     from . import analysis_engine as engine
 
-    parser_version = parsing.PARSER_VERSION
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
-        parser_version = provenance.get("parser_version") or parser_version
         calc_version = provenance.get("calc_version") or calc_version
 
     units, missing = engine.resolve_selection(db, spec)
@@ -162,6 +172,15 @@ def result_key(
     for unit in units:
         cell = unit["cell"]
         hashes, files = engine.cell_ordered_hashes(db, cell)
+        # Spec 040.3: per-source parser identity, resolved with the EXACT
+        # same function `compute()` uses so the cache key always matches
+        # what would actually be rendered. A pinned identity for one source
+        # changes only the units whose cells contain that source; an
+        # unrelated format's adapter revision changing does not touch this
+        # cell's fingerprint at all (case 13/14).
+        source_versions = engine.resolve_source_parser_versions(
+            files, provenance, cell.id, use_current_versions
+        )
         unit_fingerprints.append(
             {
                 "entry_kind": unit["entry_kind"],
@@ -179,6 +198,7 @@ def result_key(
                 # or an in-progress cycling file cannot invalidate every
                 # cached result for the cell.
                 "hashes": hashes,
+                "source_parser_versions": [source_versions[h] for h in hashes],
                 "active_mass_mg": engine.cell_active_mass_mg(cell, scalar_metadata.get(cell.id)),
                 "nominal_capacity_mah": engine.cell_nominal_capacity_mah(cell, scalar_metadata.get(cell.id)),
                 "electrode_area_cm2": engine.cell_electrode_area_cm2(cell, scalar_metadata.get(cell.id)),
@@ -190,7 +210,6 @@ def result_key(
             "cache_version": ANALYSIS_CACHE_VERSION,
             "result_schema_version": RESULT_SCHEMA_VERSIONS.get(kind, 1),
             "kind": kind,
-            "parser_version": parser_version,
             "calc_version": calc_version,
             "spec": _scientific_spec(spec),
             "units": unit_fingerprints,

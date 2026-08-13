@@ -15,7 +15,7 @@
     — optional working/counter potentials through canonical raw/cache/stitch and Time/Capacity.
   - [`040.5-existing-format-regression-and-architecture-closure.md`](040.5-existing-format-regression-and-architecture-closure.md)
     — binary/Excel regression, legacy provenance, performance/docs and final cumulative review.
-  **Plan; branch created; 040.1 is the active child.**
+  **040.1 and 040.2 implemented and review-clean. 040.3 implemented; review pending.**
   Coordination: [`040-agent-coordination.md`](040-agent-coordination.md).
 - [`039-neware-excel-export-support.md`](039-neware-excel-export-support.md)
   adds support for structured Neware `.xlsx` exports by mapping them into the existing canonical
@@ -637,7 +637,7 @@ Rules:
     — optional working/counter potentials through raw/cache/stitch and Time/Capacity.
   - [040.5-existing-format-regression-and-architecture-closure.md](040.5-existing-format-regression-and-architecture-closure.md)
     — existing-format regression, legacy provenance, performance/docs and final cumulative review.
-  **Plan; branch created; 040.1 is the active child.**
+  **040.1 and 040.2 implemented and review-clean. 040.3 implemented; review pending.**
 
 ## Assets
 

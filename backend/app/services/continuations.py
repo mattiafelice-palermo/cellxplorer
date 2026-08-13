@@ -769,19 +769,30 @@ def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[st
         source.setdefault("inspection_error", "Missing content hash")
         return source
 
-    cycles_ready = cache.has_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
-    raw_ready = cache.raw_path(file_hash, parsing.PARSER_VERSION).is_file()
+    # Spec 040.3: expected identity resolved cheaply from this source's own
+    # extension/filename, not the transitional global bundle — a Neware
+    # Excel source must not be checked against the binary identity, and
+    # vice versa.
+    filename = source.get("filename") or ""
+    expected_identity = (
+        parsing.current_parser_identity_for_extension(
+            filename.rsplit(".", 1)[-1] if "." in filename else None
+        )
+        or parsing.PARSER_VERSION
+    )
+    cycles_ready = cache.has_cycles(file_hash, expected_identity, CALC_VERSION)
+    raw_ready = cache.raw_path(file_hash, expected_identity).is_file()
     cycles_frame = None
     raw_frame = None
 
     if raw_ready:
-        raw_frame = cache.load_raw(file_hash, parsing.PARSER_VERSION)
+        raw_frame = cache.load_raw(file_hash, expected_identity)
         raw_ready = raw_frame is not None
 
     # A raw-only cache can derive the current cycle cache without rereading the
     # source. The result is still incomplete if that derivation is unavailable.
     if cycles_ready or raw_ready:
-        cycles_frame = cache.load_cycles(file_hash, parsing.PARSER_VERSION, CALC_VERSION)
+        cycles_frame = cache.load_cycles(file_hash, expected_identity, CALC_VERSION)
         cycles_ready = cycles_frame is not None
 
     if cycles_ready:
