@@ -213,3 +213,21 @@ not restated here as current fact.
 - Spec correction during review: the real NewareNDA version is `v2026.06.11`, not `2026.6.11` (see
   the rebaseline entry above). Corrected in the parent, 040.2 and 040.3.
 - Active child advances to **040.3**.
+
+### 2026-08-13 — 040.2 error-taxonomy follow-up
+
+- Reopened after approval: the initial review accepted the implementer's "unused, so skipped"
+  argument for `InvalidSourceFormatError`, which is valid with one adapter family and wrong with
+  three. This was a reviewer error, not an implementation failure. Surfaced by a user question about
+  where a non-conforming `.xlsx` error is thrown.
+- Implemented in `8262f01`: new `backend/app/services/source_format_errors.py` defines
+  `SourceFormatError(ValueError)` with `UnsupportedSourceFormatError` / `InvalidSourceFormatError`.
+  `neware_excel` keeps `NewareExcelError` as its adapter base and multiply-inherits each subclass
+  from the matching neutral type. `parsing` re-exports rather than redefines.
+- Confirmed already correct and unchanged: the structural check runs before canonical mapping, and
+  rejection errors originate in the adapter with adapter-specific messages.
+- Reviewer measured the MRO and the full catchability matrix directly, confirmed
+  `except (OSError, ValueError)` at `scanner.py:843` still catches every type, confirmed
+  `CanonicalCyclingError` stays outside the hierarchy, and confirmed the generic `.xlsx` failure is
+  byte-identical in type name and message. `python scripts\preflight.py`: exit 0, 5/5.
+- Active child remains **040.3**.
