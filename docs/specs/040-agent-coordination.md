@@ -10,8 +10,7 @@ Merge base: `main` at `562c2edff1277fef71789244c95e3b17abc586fa` (`0.22.0-beta.5
 ACTIVE_CHILD: 040.5
 TURN: REVIEWER
 STATE: AWAITING_REVIEW
-LAST_IMPLEMENTATION_SHA: <see 040.5 implementation record for the exact commit; recorded there in a
-  follow-up commit per the 040.2/040.3 precedent>
+LAST_IMPLEMENTATION_SHA: 6f4e87f
 LAST_REVIEW_SHA: 7b5ca55
 NEXT_ACTION: Perform the focused 040.5 review AND the fresh cumulative Parent 040 review against the
   locked merge base 562c2edff1277fef71789244c95e3b17abc586fa, per the Final-child rule below.
