@@ -95,6 +95,7 @@ import {
 import {
   PALETTE_OPTIONS,
   PLOT_PALETTES,
+  applyAllSeriesStylePatch,
   plotPalette,
   withoutSeriesColors,
 } from "./plotStyle";
@@ -561,7 +562,7 @@ export function SeriesStyleModal({
   }, []);
 
   const patchBaseStyle = (patch: Partial<PlotStyle>) =>
-    commitBaseStyle({ ...draftBaseStyle, ...patch });
+    commitBaseStyle(applyAllSeriesStylePatch(draftBaseStyle, patch));
 
   const handleClose = () => {
     flush();
