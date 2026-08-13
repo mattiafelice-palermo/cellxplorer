@@ -154,8 +154,8 @@ import {
   timeCapacityConfig,
   timeCapacityLayout,
   timeCapacityTracesForResult,
-  voltageChannelShortLabel,
 } from "./families/time-capacity/TimeCapacityPlotCard";
+import { voltageChannelShortLabel } from "./policies/voltageChannelPolicy";
 import {
   CellHoverCard,
   RelatedAnalysesPopover,

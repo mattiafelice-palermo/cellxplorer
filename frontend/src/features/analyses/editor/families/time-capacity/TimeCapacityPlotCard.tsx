@@ -30,6 +30,13 @@ import {
   type TimeCapacityTrace,
 } from "../../../../../api";
 import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
+import {
+  shouldShowVoltageChannelSelector,
+  voltageChannelLabel,
+  voltageChannelSelectorOptions,
+  voltageChannelShortLabel,
+  type VoltageChannel,
+} from "../../policies/voltageChannelPolicy";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
@@ -83,45 +90,7 @@ import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
 type TimeCapacityCurrentAxis = TimeCapacityConfig["current_right"];
-export type TimeCapacityVoltageChannel = TimeCapacityConfig["voltage_channel"];
-
-/** Ordered so a channel selector's option list is always presented primary-first. */
-const VOLTAGE_CHANNEL_ORDER: TimeCapacityVoltageChannel[] = [
-  "voltage",
-  "working_potential",
-  "counter_potential",
-];
-
-/**
- * Fallback labels used before a result has loaded (or for a stale/legacy
- * cached result lacking `voltage_channels`). The backend's own
- * `voltage_channels[...].label` — sourced from
- * `canonical_cycling.voltage_quantity_label` — is authoritative once
- * available; these defaults describe the same today because no current
- * source declares a different voltage role.
- */
-const DEFAULT_VOLTAGE_CHANNEL_LABELS: Record<TimeCapacityVoltageChannel, string> = {
-  voltage: "Cell voltage (V)",
-  working_potential: "Working potential vs ref (V)",
-  counter_potential: "Counter potential vs ref (V)",
-};
-
-const VOLTAGE_CHANNEL_SHORT_LABELS: Record<TimeCapacityVoltageChannel, string> = {
-  voltage: "Cell voltage",
-  working_potential: "Working potential",
-  counter_potential: "Counter potential",
-};
-
-export function voltageChannelLabel(
-  channel: TimeCapacityVoltageChannel,
-  voltageChannels?: TimeCapacityResult["voltage_channels"]
-): string {
-  return voltageChannels?.[channel]?.label ?? DEFAULT_VOLTAGE_CHANNEL_LABELS[channel];
-}
-
-export function voltageChannelShortLabel(channel: TimeCapacityVoltageChannel): string {
-  return VOLTAGE_CHANNEL_SHORT_LABELS[channel];
-}
+export type TimeCapacityVoltageChannel = VoltageChannel;
 
 const CURRENT_AXIS_OPTIONS: { value: TimeCapacityCurrentQuantity; label: string }[] = [
   { value: "current_ma", label: "Current (mA)" },
@@ -809,16 +778,12 @@ export function TimeCapacitySettings({
   // selection — never a disabled/greyed entry that merely advertises a
   // feature no selected source has (spec 040.4). An ordinary two-electrode
   // selection therefore renders no extra option and this control does not
-  // appear at all, matching pre-040.4 behavior exactly.
-  const availableExtraChannels = voltageChannels
-    ? VOLTAGE_CHANNEL_ORDER.filter(
-        (channel) => channel !== "voltage" && voltageChannels[channel]?.available
-      )
-    : [];
-  const voltageChannelOptions = VOLTAGE_CHANNEL_ORDER.filter(
-    (channel) => channel === "voltage" || availableExtraChannels.includes(channel) || channel === cfg.voltage_channel
-  ).map((channel) => ({ value: channel, label: voltageChannelLabel(channel, voltageChannels) }));
-  const showVoltageChannelSelector = voltageChannelOptions.length > 1;
+  // appear at all, matching pre-040.4 behavior exactly. The decision itself
+  // is a pure, independently-tested function (voltageChannelPolicy.ts) —
+  // see frontend/tests/voltageChannelPolicy.test.ts — rather than logic
+  // that lives only in this component.
+  const voltageChannelOptions = voltageChannelSelectorOptions(cfg.voltage_channel, voltageChannels);
+  const showVoltageChannelSelector = shouldShowVoltageChannelSelector(voltageChannelOptions);
   const needsArea = cfg.current_left === "current_density" || cfg.current_right === "current_density";
   const updateTime = (fn: (cfg: TimeCapacityConfig) => void) =>
     update((s) => {
