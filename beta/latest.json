@@ -1,15 +1,15 @@
 {
-  "version": "0.22.0-beta.6",
-  "notes": "### Bug fixes\n\n- Make All series line and marker styling apply to CE overlay traces.",
-  "pub_date": "2026-08-13T10:16:23.883Z",
+  "version": "0.22.0-beta.7",
+  "notes": "### New features\n\n- Add the canonical cycling data architecture: source-format adapters, per-source parser identity, and an optional multi-voltage data path for sources that provide multi-voltage channel data. No existing Neware .nda, .ndax, or .xlsx result changes.\n\n### Bug fixes\n\n- Analyses and cached cycling data are rebuilt once after this update. This is a one-time recomputation caused by internal parser and analysis-cache version changes; no scientific results change.",
+  "pub_date": "2026-08-13T21:45:35.891Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVZsSWZINk9RZ1BYN2RucUpuL3JFUXNVSTEzVWxZdWc2cWN1eThzSFdjblVpVUdvQ1ZuaDc5Tm04UEpJbVdpa0psZDRkRitPaGRKdHMyeS9YOUw2eXdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjE2MTc4CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS42X3g2NC1zZXR1cC5leGUKYVRSY3NPaUFaaVRINDZMK05hYnpUVSsrMzZxSFVlWDR3dFpZaCttQm5pNXd5aG16cFAwYlgvcDl5b2dDVFVOd1lYM3hsZ25QR1lndXI5cFg3dzhRQlE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512831685"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFrU2cvcnMzZ2xDSElEQTh6ZDZja25FTTJwZ29Nb3pBWHRQYmdncFNJWmhyakFrak9FQ0pFSDU1RGxwd05sNDF1QlVpVnV4OWVXUy8wb1lMN3F1c3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjU3NTMxCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS43X3g2NC1zZXR1cC5leGUKTW81c0xOMVd2QWRPdkovbTBCNVlvNjVOZWJTU3dOc01RSlh4Y2VFVlpTcWlJTFRwRXR4U09IdTRoQ3V3N2k4Zi9jamEzQWNVZFFxU2JBVnVXN3FpRGc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/513547905"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVZsSWZINk9RZ1BYN2RucUpuL3JFUXNVSTEzVWxZdWc2cWN1eThzSFdjblVpVUdvQ1ZuaDc5Tm04UEpJbVdpa0psZDRkRitPaGRKdHMyeS9YOUw2eXdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjE2MTc4CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS42X3g2NC1zZXR1cC5leGUKYVRSY3NPaUFaaVRINDZMK05hYnpUVSsrMzZxSFVlWDR3dFpZaCttQm5pNXd5aG16cFAwYlgvcDl5b2dDVFVOd1lYM3hsZ25QR1lndXI5cFg3dzhRQlE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512831685"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWFrU2cvcnMzZ2xDSElEQTh6ZDZja25FTTJwZ29Nb3pBWHRQYmdncFNJWmhyakFrak9FQ0pFSDU1RGxwd05sNDF1QlVpVnV4OWVXUy8wb1lMN3F1c3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjU3NTMxCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS43X3g2NC1zZXR1cC5leGUKTW81c0xOMVd2QWRPdkovbTBCNVlvNjVOZWJTU3dOc01RSlh4Y2VFVlpTcWlJTFRwRXR4U09IdTRoQ3V3N2k4Zi9jamEzQWNVZFFxU2JBVnVXN3FpRGc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/513547905"
     }
   }
 }
