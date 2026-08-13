@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0-beta.8 - 2026-08-13
+
+### Bug fixes
+
+- Bring a source's own registration forward automatically when a parser-identity upgrade leaves it stale, so Cell Database previews recover without a manual Settings > Cache > Prepare missing step.
+
 ## 0.22.0-beta.7 - 2026-08-13
 
 ### New features

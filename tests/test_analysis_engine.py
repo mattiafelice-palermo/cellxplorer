@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import sys
@@ -21,7 +22,7 @@ from app.models import Cell, CellMetadata, ReplicateGroup, ReplicateGroupCell, S
 from app.routers.library import get_cell_protocol
 from app.services import analysis_cache
 from app.services import analysis_engine as engine
-from app.services import cache, calc, parsing, protocol
+from app.services import cache, calc, parsing, protocol, scanner
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -1084,6 +1085,96 @@ class AnalysisEngineTests(unittest.TestCase):
             self.assertNotEqual(file_entry["parser_version"], "nb:vOLD.00.00:r1")
         finally:
             shutil.rmtree(cache.raw_path(file_hash, parsing.parser_identity(f"{file_hash}.ndax")).parent, ignore_errors=True)
+
+    def test_startup_preparation_rebuild_does_not_disturb_pinned_analysis(self):
+        """Spec 042, tests 4-6 — the highest-risk property in that spec: a
+        saved analysis pinned to an older identity must keep rendering from
+        ITS OWN cache, unrecomputed and unrelabeled, after a startup
+        preparation pass brings the underlying SourceFile's own registration
+        forward to a fresh build at the CURRENT identity. Both caches must
+        coexist; neither is deleted or relabeled; the "newer parser
+        available" badge stays truthful throughout.
+
+        `cache.build` and the `SourceFile.parser_version` assignment used
+        here are the exact same calls Spec 042's startup preparation path
+        (`scanner._prepare_capacity_source_worker` /
+        `_apply_capacity_source_result`) makes; scheduling that call from
+        the right work set is covered separately by
+        `tests/test_scientific_preparation.py`."""
+        old_identity = "nb:vOLD.00.00:r1"
+        content = b"spec-042 bring-forward fixture bytes"
+        file_hash = hashlib.sha256(content).hexdigest()
+        current_identity = parsing.parser_identity(f"{file_hash}.ndax")
+        self.assertNotEqual(old_identity, current_identity)
+
+        cell = self._make_pinned_cell(file_hash)
+        sf = self.db.query(SourceFile).filter(SourceFile.hash == file_hash).one()
+        sf.parser_version = old_identity
+        sf.location_status = "online"
+        sf.capacity_summary_status = "ready"
+        self.db.commit()
+        self.assertTrue(scanner._needs_identity_bring_forward(sf))
+
+        # The historical cache at the OLD identity — what the saved analysis
+        # below pins to, exactly like a real pre-upgrade parsed source.
+        old_raw = synth_raw(2, 2.0, 0.01)
+        old_cycles = calc.per_cycle(old_raw)
+        cache.raw_path(file_hash, old_identity).parent.mkdir(parents=True, exist_ok=True)
+        cache._write_atomic(old_raw, cache.raw_path(file_hash, old_identity))
+        cache._write_atomic(old_cycles, cache.cycles_path(file_hash, old_identity))
+
+        # The frame the "upgraded" parser produces — deliberately a
+        # different cycle count so a mixed-up render is unmistakable.
+        self.FRAMES[file_hash] = synth_raw(5, 3.0, 0.02)
+        try:
+            # This is the real rebuild call Spec 042's startup preparation
+            # makes for an identity-mismatched, reachable source.
+            build_info = cache.build(file_hash, f"{file_hash}.ndax")
+            sf.parser_version = build_info["parser_version"]
+            self.db.commit()
+            self.assertEqual(sf.parser_version, current_identity)
+
+            # Both caches coexist — neither deleted, neither relabeled.
+            self.assertTrue(cache.raw_path(file_hash, old_identity).exists())
+            self.assertTrue(cache.raw_path(file_hash, current_identity).exists())
+            self.assertTrue(
+                cache.has_cycles(file_hash, old_identity, cache.CALC_VERSION)
+            )
+            self.assertTrue(
+                cache.has_cycles(file_hash, current_identity, cache.CALC_VERSION)
+            )
+
+            legacy_provenance = {
+                "calc_version": cache.CALC_VERSION,
+                "parser_version": old_identity,
+                "sources": [{"cell_id": cell.id, "file_hashes": [file_hash]}],
+            }
+            spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+
+            with patch(
+                "app.services.scanner.parse_file",
+                side_effect=AssertionError(
+                    "must not reparse a pinned historical source after a "
+                    "preparation pass rebuilt it at the current identity"
+                ),
+            ):
+                pinned_result = engine.compute(self.db, spec, legacy_provenance)
+
+            # Still the OLD 2-cycle data, not the NEW 5-cycle data.
+            self.assertEqual(pinned_result["cell_series"][0]["x"], [1, 2])
+            pinned_files = pinned_result["sources"][0]["files"]
+            self.assertEqual(pinned_files[0]["parser_version"], old_identity)
+            kinds = {b["kind"] for b in pinned_result["badges"]}
+            self.assertIn("newer_parser", kinds)
+
+            # A fresh compute (no pinned provenance) now sees the brought-
+            # forward current-identity cache -- proving the rebuild actually
+            # took effect for future analyses without touching the old one.
+            fresh_result = engine.compute(self.db, spec, None)
+            self.assertEqual(fresh_result["cell_series"][0]["x"], [1, 2, 3, 4, 5])
+        finally:
+            del self.FRAMES[file_hash]
+            shutil.rmtree(cache.raw_path(file_hash, old_identity).parent, ignore_errors=True)
 
     def test_result_key_changes_when_pinned_source_identity_changes(self):
         """Case 13: a cache key must vary when a contributing source's

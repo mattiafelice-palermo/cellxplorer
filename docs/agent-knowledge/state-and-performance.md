@@ -329,6 +329,26 @@ An interrupted `pending` or `running` marker is resumable and gates the next lau
 Ordinary later startups repair incomplete summaries only; they do not recreate a ready cache that
 the user intentionally cleaned.
 
+Since Spec 042, the same ordinary startup backfill also brings forward any parsed source whose
+stored `SourceFile.parser_version` is behind `parsing.current_parser_identity_for_extension(sf.ext)`
+— unconditionally, independent of `prepare_missing` — because `cache_maintenance.py` never writes
+`parser_version`, so a mismatch can only mean an application upgrade changed the expected identity
+(039's bundle change and 040.3's per-source identity both did this to the whole library at once),
+never a deliberate clean (which leaves `parser_version` at the still-current identity with the
+cache files simply absent). `scanner._needs_identity_bring_forward` is the relational, no-file-I/O
+predicate; a source already excluded by `location_status != "online"` (proven unreachable/changed by
+this backfill's own failed attempt, by `analysis_engine`, or by scan/monitor activity) is left alone
+rather than retried every startup. A source pulled in only for this reason keeps its "ready"
+`capacity_summary_status` rather than being flipped to "pending": its already-computed totals stay
+truthful while only its preview cache rebuilds, and flipping it risked landing on "error" (blanking
+a cell's totals) for a permanently unreachable source purely because the rebuild attempt failed.
+This only brings a source's own registration forward to a fresh current-identity build; it is
+unrelated to — and must never be confused with — the `analysis_engine` reparse gate below, which
+protects a saved analysis pinned to an older identity. Both caches coexist under different
+identity-keyed filenames (`cache.raw_path`/`cache.cycles_path` never touch another identity's file),
+so a preparation pass rebuilding a source's current-identity cache cannot disturb a pinned analysis
+still rendering from its own older-identity cache.
+
 Settings exposes category actions with different safety boundaries:
 
 - **Clean eligible** scientific data removes only orphaned or currently regenerable caches and
