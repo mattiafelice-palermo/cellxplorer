@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0-beta.7 - 2026-08-13
+
+### New features
+
+- Add the canonical cycling data architecture: source-format adapters, per-source parser identity, and an optional multi-voltage data path for sources that provide multi-voltage channel data. No existing Neware .nda, .ndax, or .xlsx result changes.
+
+### Bug fixes
+
+- Analyses and cached cycling data are rebuilt once after this update. This is a one-time recomputation caused by internal parser and analysis-cache version changes; no scientific results change.
+
 ## 0.22.0-beta.6 - 2026-08-13
 
 ### Bug fixes
