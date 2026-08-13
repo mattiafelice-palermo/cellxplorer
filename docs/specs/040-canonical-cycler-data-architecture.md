@@ -104,7 +104,10 @@ A source that claims normal cycling capability must be able to produce the follo
 | `current_ma` | Signed cell current in mA under one documented CellXplorer sign convention. Existing Neware behavior remains the baseline and all adapters must normalize to it. |
 | `charge_capacity_mah` | Canonical charge-side accumulated capacity counter in mAh, with reset/carry behavior described by adapter metadata and normalized sufficiently for existing per-step delta semantics. |
 | `discharge_capacity_mah` | Canonical discharge-side accumulated capacity counter in mAh, with the same rules as above. |
-| `timestamp` | Absolute timestamp for each record when the source contains enough information to reconstruct it; otherwise null/NaT with explicit capability metadata. |
+
+> **Amended 2026-08-13 (user-ratified).** `timestamp` was originally listed here as a required core
+> column. It is now a canonical optional-but-standard column; see below. Its *meaning* is unchanged —
+> only its required/optional status moved.
 
 ### Canonical optional-but-standard columns
 
@@ -114,9 +117,22 @@ The following are first-class canonical fields when the source can provide them:
 total_time_s
 charge_energy_mwh
 discharge_energy_mwh
+timestamp
 working_potential_v
 counter_potential_v
 ```
+
+`timestamp` means the absolute timestamp for each record when the source contains enough information
+to reconstruct it. It is optional rather than required because two independent places in current
+production code already treat the column as possibly absent: `parsing.parse_timeseries` only
+normalizes it `if "timestamp" in df.columns`, and `calc.per_cycle` guards its cycle start/duration
+derivation the same way. Requiring it at the canonical boundary would let validation reject a source
+CellXplorer supports today, which 040.1's acceptance criteria forbid.
+
+Absence remains a capability fact, never a licence to fabricate: an adapter must not infer a
+timestamp from file modified time. Once 040.4 lands the capability metadata, a source that cannot
+produce absolute timestamps should say so through `absolute_timestamps: false` rather than by
+silently omitting the column.
 
 `total_time_s` means source-elapsed acquisition time and must not silently replace the existing step-relative `time_s` meaning.
 

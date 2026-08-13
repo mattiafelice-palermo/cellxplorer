@@ -394,6 +394,7 @@ Rules:
 - [035.8-duplicate-cell-names-and-failed-import-review.md](reviews/035.8-duplicate-cell-names-and-failed-import-review.md)
 - [035.8-background-import-progress-and-visibility-review.md](reviews/035.8-background-import-progress-and-visibility-review.md)
 - [035.8-metadata-storage-and-early-visibility-review.md](reviews/035.8-metadata-storage-and-early-visibility-review.md)
+- [040.1-canonical-cycling-data-contract-and-validation-review.md](reviews/040.1-canonical-cycling-data-contract-and-validation-review.md)
 
 ## Index
 

@@ -174,3 +174,20 @@ not restated here as current fact.
   `docs/neware-excel-variant-findings.md` is now required reading for 040.1.
 - Owner remains **IMPLEMENTER**. Active child remains **040.1**.
 - No implementation, test run or verification is claimed by this rebaseline checkpoint.
+
+### 2026-08-13 — 040.1 REVIEW-CLEAN + parent amendment
+
+- 040.1 implemented (`39cacc3`), reviewed, two findings raised, fixed (`bbffa2b`), re-reviewed and
+  approved. Canonical review: `reviews/040.1-canonical-cycling-data-contract-and-validation-review.md`.
+- Reviewer independently reproduced the current-sign measurement, the status vocabulary, the
+  `parse_timeseries` caller set and `python scripts\preflight.py` (exit 0, 5/5) rather than accepting
+  the implementer's report.
+- **Parent amendment, ratified by the user:** `timestamp` moves from the required core columns table
+  to the canonical optional-but-standard set. Meaning unchanged; only required/optional status moved.
+  Evidence: `parsing.parse_timeseries` normalizes it only `if "timestamp" in df.columns`, and
+  `calc.per_cycle` guards its use identically, so requiring it could reject a currently supported
+  source.
+- Verified absent from the branch, as 040.1 requires: parser dispatch/adapter identities (040.2),
+  per-source parser identity and cache/stitch/provenance changes (040.3), populated multi-voltage
+  columns (040.4), `CALC_VERSION` bump, relational migration.
+- Active child advances to **040.2**.
