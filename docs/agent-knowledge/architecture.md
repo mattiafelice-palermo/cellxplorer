@@ -166,6 +166,24 @@ compatibility fallback for a source that predates 040.3 and has no stored `parse
 static registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
 hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
 cache contracts, so scientific services remain format-neutral.
+
+A Cell's ordered sources may legitimately carry different parser identities (a binary source
+continued by a structured Excel export is the reference case, proven end to end by
+`tests/test_mixed_parser_integration.py`, Spec 040.5). `analysis_engine.display_parser_version`
+renders the human-facing summary in every compute result and saved provenance record: the shared
+identity when every contributing source used one, or the literal string `"mixed"` when they differ —
+never one source's value silently standing in for the others. Per-source truth always remains in
+`sources[].files[]` (`{hash, position, parser_version}`). The frontend's Analysis settings-tab
+Provenance panel (`AnalysisEditor.tsx`) renders that per-source breakdown as a tooltip on the "mixed"
+text via the pure `parserSourceBreakdown` helper in
+`frontend/src/features/analyses/editor/policies/parserProvenancePolicy.ts` (`frontend/tests/parserProvenancePolicy.test.ts`)
+rather than showing a bare, unexplained "mixed" — it joins `sources[].files[]` against the same
+entry's `source_descriptors` for a human-readable filename per source. This reads the analysis'
+*saved* provenance (`Analysis.provenance`, populated once by `engine.build_provenance` from the
+Cycles-family compute, which always carries `sources[]`); the live per-tab `displayResult` used by
+the "Rendering at parser ..." line below it is not extended the same way because `TimeCapacityResult`
+does not carry a `sources[]` field today — a live-render breakdown for that line would need a
+backend/type change and is deferred.
 The workbook's `record` sheet is the point-level source of truth; optional `step` and `cycle`
 summaries validate parser-derived execution and cycle projections rather than replacing them.
 Metadata inspection reads bounded workbook surfaces without scanning the large record sheet, and

@@ -156,6 +156,7 @@ import {
   timeCapacityTracesForResult,
 } from "./families/time-capacity/TimeCapacityPlotCard";
 import { voltageChannelShortLabel } from "./policies/voltageChannelPolicy";
+import { parserSourceBreakdown } from "./policies/parserProvenancePolicy";
 import {
   CellHoverCard,
   RelatedAnalysesPopover,
@@ -3751,7 +3752,13 @@ function AnalysisEditorView({
               folderOptions={folderOptions}
               setFiling={setFiling}
             />
-            {displayResult && (
+            {displayResult && (() => {
+              const savedParserVersion = currentAnalysis.provenance?.parser_version;
+              const mixedSources =
+                savedParserVersion === "mixed"
+                  ? parserSourceBreakdown(currentAnalysis.provenance?.sources)
+                  : [];
+              return (
               <Paper p="sm" withBorder>
                 <Group justify="space-between">
                   <div>
@@ -3759,9 +3766,35 @@ function AnalysisEditorView({
                       Provenance
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {currentAnalysis.provenance
-                        ? `Last saved: ${new Date(currentAnalysis.provenance.computed_at).toLocaleString()} - parser ${currentAnalysis.provenance.parser_version} - calc ${currentAnalysis.provenance.calc_version} - ${currentAnalysis.provenance.sources.length} cell(s)`
-                        : "Never saved. Save to pin versions and file hashes."}
+                      {currentAnalysis.provenance ? (
+                        <>
+                          {`Last saved: ${new Date(currentAnalysis.provenance.computed_at).toLocaleString()} - parser `}
+                          {mixedSources.length > 0 ? (
+                            <Tooltip
+                              multiline
+                              w={260}
+                              label={
+                                <Stack gap={2}>
+                                  {mixedSources.map((entry) => (
+                                    <Text key={`${entry.position}-${entry.parserVersion}`} size="xs">
+                                      {`#${entry.position} ${entry.filename ?? "source"}: ${entry.parserVersion}`}
+                                    </Text>
+                                  ))}
+                                </Stack>
+                              }
+                            >
+                              <Text component="span" td="underline" style={{ cursor: "help" }}>
+                                mixed
+                              </Text>
+                            </Tooltip>
+                          ) : (
+                            savedParserVersion
+                          )}
+                          {` - calc ${currentAnalysis.provenance.calc_version} - ${currentAnalysis.provenance.sources.length} cell(s)`}
+                        </>
+                      ) : (
+                        "Never saved. Save to pin versions and file hashes."
+                      )}
                     </Text>
                     <Text size="xs" c="dimmed">
                       Rendering at parser {displayResult.parser_version} / calc {displayResult.calc_version}
@@ -3784,7 +3817,8 @@ function AnalysisEditorView({
                   </Tooltip>
                 </Group>
               </Paper>
-            )}
+              );
+            })()}
           </Stack>
         </Tabs.Panel>
       </Tabs>

@@ -8,7 +8,9 @@ The current identifiers are:
 - Application version: `APP_VERSION` in `backend/app/config.py`
 - Database schema revision: `CURRENT_SCHEMA_REVISION` in
   `backend/app/migrations/registry.py`
-- Parser version: `PARSER_VERSION` in `backend/app/services/parsing.py`
+- Parser identity: per-source, resolved by `backend/app/services/parsing.py`'s
+  `parser_identity`/`current_parser_identity_for_extension` (Spec 040.3); `PARSER_VERSION` remains
+  only as the legacy fallback bundle for a source registered before that change
 - Derived-data version: `CALC_VERSION` in `backend/app/config.py`
 
 ## Startup behavior

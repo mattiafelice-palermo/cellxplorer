@@ -7,13 +7,20 @@ Branch: `feature/spec-040-canonical-cycler-data-architecture`
 Merge base: `main` at `562c2edff1277fef71789244c95e3b17abc586fa` (`0.22.0-beta.5`)
 
 ```text
-ACTIVE_CHILD: 040.1
-TURN: IMPLEMENTER
-STATE: READY
-LAST_IMPLEMENTATION_SHA: NONE
-LAST_REVIEW_SHA: NONE
-NEXT_ACTION: Implement only 040.1 exactly as specified, verify, commit, push, and return the branch to REVIEWER.
+ACTIVE_CHILD: 040.5
+TURN: REVIEWER
+STATE: AWAITING_REVIEW
+LAST_IMPLEMENTATION_SHA: <see 040.5 implementation record for the exact commit; recorded there in a
+  follow-up commit per the 040.2/040.3 precedent>
+LAST_REVIEW_SHA: 7b5ca55
+NEXT_ACTION: Perform the focused 040.5 review AND the fresh cumulative Parent 040 review against the
+  locked merge base 562c2edff1277fef71789244c95e3b17abc586fa, per the Final-child rule below.
 ```
+
+(This block was left at its original 040.1-creation-time value through 040.2–040.4 — only the
+template sections further down in this file were edited by those children, not this live state
+block. 040.5 updates it for the first time to match the file's own "Standard implementer handoff"
+format.)
 
 ## Protocol
 
@@ -284,3 +291,62 @@ not restated here as current fact.
   invalidation this release, narrower than 040.3's (per-kind, Time/Capacity only). Both should be
   named together in release notes. Manual browser matrix remains NOT RUN by anyone.
 - Active child advances to **040.5**.
+
+### 2026-08-13 — 040.5 IMPLEMENTED, AWAITING REVIEW
+
+- 040.5 implemented per the full implementation record in
+  `040.5-existing-format-regression-and-architecture-closure.md`. No scientific code changed; one
+  focused frontend fix, two new test files, one dev-only tool, documentation closure.
+- **Numerical invariance reconfirmed independently**: a fresh `git worktree` at the locked merge base
+  `562c2edff1277fef71789244c95e3b17abc586fa` re-derived the full-precision `calc.per_cycle`
+  projection for all four golden `.ndax` sources; byte-identical to the current tree on all four,
+  matching the hashes already recorded in the 040.3/040.4 reviews.
+- **Format-neutral audit**: zero format/extension branches found in any scientific calculation
+  module; every hit anywhere in the codebase is dispatch, adapter, error-taxonomy, or user-facing
+  messaging/file-picker code.
+- **New mixed-parser integration test** (`tests/test_mixed_parser_integration.py`, 7 tests): a real
+  Cell chaining the golden binary fixture with a generated Excel continuation, registered through the
+  genuine `scanner.ingest_path`/`cache.build` path (no mocked cache). Proves per-source cache
+  addressing, ordered Cycles/Time-Capacity stitching, `"mixed"` provenance naming both identities,
+  Parent 034's guard still failing closed for this Cell on all four protocol-derived families while
+  Cycles/Time-Capacity remain unguarded, and that changing either source's pinned identity changes
+  the analysis cache key without the two single-source changes colliding.
+- **UI finding resolved**: the `display_parser_version` `"mixed"` sentinel (flagged by the 040.3
+  review as needing 040.5 confirmation) rendered as a bare, unexplained "mixed" with no route to
+  per-source detail. Fixed with a tested pure helper
+  (`frontend/src/features/analyses/editor/policies/parserProvenancePolicy.ts`, 5 tests) and a tooltip
+  in `AnalysisEditor.tsx`'s Provenance panel, following the `voltageChannelPolicy.ts` pattern from
+  040.4's own R1 fix.
+- **Multi-voltage closure roundtrip**: the backend half (canonical frame → Parquet → stitch →
+  Time/Capacity API) is proven by the existing (re-run) `MultiVoltageTimeCapacityTests`. The frontend
+  half (figure → data export → saved artifact → portable figure) is confirmed by reading to be a
+  generic, channel-agnostic pass-through with no backend-side per-channel logic that could drop a
+  channel — but genuinely needs a browser to see rendered, which remains the user's to run. New:
+  `scripts/dev_seed_synthetic_three_electrode.py`, a guarded dev-only tool that seeds one synthetic
+  three-electrode Cell into an isolated throwaway `CELLXPLORER_DATA` root so the selector is
+  checkable today rather than "unverifiable until Parent 041." Manually exercised end-to-end
+  (seed → `compute_time_capacity`) in this session; not run through an actual browser.
+- **Cache invalidation / performance / migration / `CALC_VERSION` audits**: all re-verified by reading
+  plus re-running the relevant existing tests (040.1–040.4 already added the exact coverage the spec
+  asks for). No migration, `CALC_VERSION` unchanged at `1.6.1`.
+- **No golden fixture moved.** `scripts/build_golden_analysis_corpus.py`'s digest check reports
+  `SAME` for all eight committed expected-output files.
+- **Versioning decision**: no CHANGELOG entry or version bump in this child. `AGENTS.md`'s release
+  workflow bumps versions on merge-to-`main` / release, not per intermediate child — the Parent 038
+  precedent in this same file (eight children, one `CHANGELOG.md` entry) and this branch's own
+  040.1–040.4 history (zero version-file changes so far) both confirm this. Exact release-note
+  language naming both 040.3's and 040.4's cache invalidations together is recorded in the 040.5
+  implementation record for whoever bumps the version when Parent 040 actually ships.
+- **Manual browser checklist produced**, not run. Six ordered items with PASS/FAIL criteria in the
+  040.5 implementation record, covering the two-electrode "no selector" regression check, existing
+  saved-plot/analysis rendering, the one-time post-upgrade recompute, light/dark mode, the
+  three-electrode selector (via the new dev-seeding script), and the "mixed" tooltip.
+- **Project-context drift found, not applied**: `CELLXPLORER_CONTEXT_MAINTENANCE.md` and its sibling
+  files exist only in the user's Downloads, not the repository. Its own text forbids creating
+  `docs/project-context/` without explicit user approval. Real drift was found and reported (in the
+  040.5 implementation record) for the user to action, rather than silently applied.
+- `python -m unittest discover tests`: 971 tests, OK. `node --test frontend/tests/*.test.ts`:
+  507/507. `npx tsc -b --force`: exit 0. `python scripts\preflight.py --no-cache`: PREFLIGHT PASSED,
+  5/5 stages, zero `SKIP:` lines.
+- Active child remains **040.5**; turn returns to REVIEWER for the focused 040.5 review and the fresh
+  cumulative Parent 040 review, per the Final-child rule.
