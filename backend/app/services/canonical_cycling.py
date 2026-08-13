@@ -1,9 +1,13 @@
-"""CellXplorer canonical cycling data contract and validation (Spec 040.1).
+"""CellXplorer canonical cycling data contract and validation (Spec 040.1,
+extended by Spec 040.4 for multi-voltage capability).
 
 This module is the single, narrow owner of the canonical raw cycling-data
 *contract*: the column names/meanings every source adapter must produce, and a
 small structural validator that asserts a parsed frame is safe for downstream
-scientific code to consume.
+scientific code to consume. It also owns the bounded voltage-role capability
+representation (`voltage_capabilities`, `VOLTAGE_QUANTITIES`) that
+`parsing.read_header_metadata` and `analysis_engine.compute_time_capacity`
+build on (Spec 040.4).
 
 It deliberately owns nothing else:
 
@@ -25,6 +29,7 @@ column changed, independent of which adapter produced it.
 from __future__ import annotations
 
 import warnings
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -56,8 +61,10 @@ REQUIRED_CYCLING_COLUMNS: tuple[str, ...] = (
 )
 
 # First-class canonical fields a source may provide without being required
-# to. `working_potential_v` / `counter_potential_v` are reserved names only:
-# no adapter or downstream code populates them yet (Spec 040.4).
+# to. `working_potential_v` / `counter_potential_v` flow end to end as of
+# Spec 040.4 (cache/stitch/Time-Capacity API/UI/export/saved-plot/portable),
+# but no shipped adapter (binary or Excel Neware) populates them yet — that
+# needs a three-electrode-capable parser (Parent 041).
 STANDARD_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "total_time_s",
     "charge_energy_mwh",
@@ -84,12 +91,15 @@ KNOWN_STATUS_VALUES: tuple[str, ...] = (
     "CCCV_DChg",
 )
 
-# Bounded vocabulary for capability facts a future adapter may expose about a
-# source. Spec 040.1 only reserves these meanings in documentation/constants;
-# it does not build the metadata plumbing that would compute or expose them
-# (that is Spec 040.4, extending Parent 039's existing
-# `Excel.Capabilities.*` representation in `neware_excel.py` /
-# `parsing.read_header_metadata`, not a new competing schema).
+# Bounded vocabulary for capability facts a source may expose. Spec 040.1
+# reserved these meanings in documentation/constants only. Spec 040.4 built
+# the metadata plumbing for the three voltage-role names — see
+# `voltage_capabilities()` below, wired into `parsing.read_header_metadata`
+# (extending Parent 039's existing `Excel.Capabilities.*` representation in
+# `neware_excel.py`, not a new competing schema) and into
+# `analysis_engine.compute_time_capacity`'s data-driven `voltage_channels`.
+# `cycling_rows`, `absolute_timestamps` and `declared_protocol` remain
+# reserved-only; no consumer computes them yet.
 CANONICAL_CAPABILITIES: tuple[str, ...] = (
     "cycling_rows",
     "absolute_timestamps",
@@ -98,6 +108,96 @@ CANONICAL_CAPABILITIES: tuple[str, ...] = (
     "working_potential",
     "counter_potential",
 )
+
+# Spec 040.4: stable internal quantity IDs used by the Time/Capacity API and
+# saved-plot settings, mapped to the canonical raw column each one reads.
+# `voltage` is the default/compatibility quantity and stays that way
+# everywhere a caller does not explicitly request an electrode potential.
+VOLTAGE_QUANTITIES: dict[str, str] = {
+    "voltage": "voltage_v",
+    "working_potential": "working_potential_v",
+    "counter_potential": "counter_potential_v",
+}
+DEFAULT_VOLTAGE_QUANTITY = "voltage"
+
+# Default, source-neutral role/label vocabulary for `voltage_capabilities()`
+# below. No current adapter (binary or Excel Neware) populates
+# `working_potential_v`/`counter_potential_v` or declares a `voltage_v` role
+# other than "cell", so every real source today reports the same bounded,
+# truthful two-electrode capability; a future adapter (Parent 041) is the
+# first caller that can pass non-default arguments.
+_DEFAULT_VOLTAGE_ROLE_LABELS: dict[str, str] = {
+    "cell": "Cell voltage (V)",
+    "working_vs_reference": "Working potential vs ref (V)",
+    "counter_vs_reference": "Counter potential vs ref (V)",
+}
+
+
+def voltage_capabilities(
+    *,
+    working_potential_available: bool = False,
+    counter_potential_available: bool = False,
+    voltage_role: str = "cell",
+    reference_electrode: str | None = None,
+    voltage_derived: bool = False,
+) -> dict[str, Any]:
+    """Bounded voltage-role capability representation (Spec 040.4 parent).
+
+    A pure, source-neutral computation — it never reads a file or a cache; a
+    caller (an adapter's header-metadata read, or a Time/Capacity data-driven
+    availability check) supplies the facts it already knows. Returns exactly
+    the conceptual shape documented in
+    ``docs/specs/040.4-canonical-multi-voltage-path.md`` and
+    ``docs/agent-knowledge/canonical-cycling-data.md``:
+
+    - ``capabilities``: which of the three canonical voltage columns this
+      source/selection actually has;
+    - ``voltage_roles``: what each present voltage column means. Only
+      channels marked available get an entry — this function never invents a
+      role for a column that is not there;
+    - ``reference_electrode``: explicit source-declared text only, never
+      fabricated (``None`` when the source did not say);
+    - ``voltage_v_derived``: whether ``voltage_v`` was computed by the
+      adapter from the two electrode potentials rather than measured
+      directly (Parent 040's ``voltage_v = working_potential_v -
+      counter_potential_v`` case). Always ``False`` today because no adapter
+      performs that derivation yet.
+    """
+    roles: dict[str, str] = {"voltage_v": voltage_role}
+    if working_potential_available:
+        roles["working_potential_v"] = "working_vs_reference"
+    if counter_potential_available:
+        roles["counter_potential_v"] = "counter_vs_reference"
+    return {
+        "capabilities": {
+            "primary_voltage": True,
+            "working_potential": working_potential_available,
+            "counter_potential": counter_potential_available,
+        },
+        "voltage_roles": roles,
+        "reference_electrode": reference_electrode,
+        "voltage_v_derived": voltage_derived,
+    }
+
+
+def voltage_quantity_label(quantity: str, *, role: str | None = None) -> str:
+    """Default truthful label for a stable voltage quantity ID.
+
+    ``role`` lets a caller with real capability metadata (e.g. a future
+    adapter's declared ``voltage_roles``) select the matching label instead
+    of the default; unrecognized roles fall back to the quantity's own
+    default label rather than raising, since a label is presentation, not a
+    contract.
+    """
+    default_role = {
+        "voltage": "cell",
+        "working_potential": "working_vs_reference",
+        "counter_potential": "counter_vs_reference",
+    }.get(quantity)
+    chosen_role = role or default_role
+    if chosen_role and chosen_role in _DEFAULT_VOLTAGE_ROLE_LABELS:
+        return _DEFAULT_VOLTAGE_ROLE_LABELS[chosen_role]
+    return _DEFAULT_VOLTAGE_ROLE_LABELS.get(default_role or "", quantity)
 
 # "Tiny floating-point tolerance" per the spec's `total_time_s` monotonicity
 # rule. Matches the tolerance `neware_excel.py` already uses internally

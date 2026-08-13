@@ -36,7 +36,11 @@ RESULT_SCHEMA_VERSIONS = {
     # array (per-source {hash, position, parser_version}), so a legacy
     # cached payload missing that array must not be served as if it had it.
     "cycles": 3,
-    "time_capacity": 2,
+    # Spec 040.4: the payload gained a top-level "voltage_channels"
+    # availability map and "settings" gained "voltage_channel"; a legacy
+    # cached payload from before this child does not carry either, so it
+    # must not be served as if the new selector/availability data existed.
+    "time_capacity": 3,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,

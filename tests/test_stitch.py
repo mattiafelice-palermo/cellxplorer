@@ -436,5 +436,61 @@ class MixedParserIdentityStitchTests(unittest.TestCase):
         self.assertEqual(result["source_hash"].tolist(), [hash_a])
 
 
+class MultiVoltageStitchTests(unittest.TestCase):
+    """Spec 040.4: stitch_raw preserves optional working/counter potential
+    columns across source concatenation, using NaN — never a fabricated
+    value — for a source that lacks them."""
+
+    PARSER = "test-parser"
+
+    def _refs(self, ordered: list[str]) -> list[stitch.CachedSourceRef]:
+        return [stitch.CachedSourceRef(file_hash, self.PARSER) for file_hash in ordered]
+
+    def test_aux_voltage_columns_preserved_and_nan_filled_for_missing_source(self):
+        hash_three_electrode = _hash("t")
+        hash_two_electrode = _hash("d")
+        three_electrode = pd.DataFrame(
+            {
+                "record_index": [1, 2],
+                "cycle": [1, 2],
+                "status": ["CC_Chg", "CC_Chg"],
+                "voltage_v": [0.5, 0.6],
+                "working_potential_v": [3.0, 3.1],
+                "counter_potential_v": [2.5, 2.5],
+            }
+        )
+        two_electrode = pd.DataFrame(
+            {
+                "record_index": [1],
+                "cycle": [1],
+                "status": ["CC_Chg"],
+                "voltage_v": [3.4],
+            }
+        )
+        frames = {hash_three_electrode: three_electrode, hash_two_electrode: two_electrode}
+        with patch(
+            "app.services.stitch.cache.load_raw",
+            side_effect=lambda h, _p: frames.get(h),
+        ):
+            result, segments, missing = stitch.stitch_raw(
+                self._refs([hash_three_electrode, hash_two_electrode])
+            )
+
+        self.assertEqual(missing, [])
+        self.assertIn("working_potential_v", result.columns)
+        self.assertIn("counter_potential_v", result.columns)
+        # Source A's two rows keep their real values...
+        three_electrode_rows = result[result["source_hash"] == hash_three_electrode]
+        self.assertEqual(three_electrode_rows["working_potential_v"].tolist(), [3.0, 3.1])
+        self.assertEqual(three_electrode_rows["counter_potential_v"].tolist(), [2.5, 2.5])
+        # ...source B's row is NaN, never fabricated as 0 or copied from A.
+        two_electrode_rows = result[result["source_hash"] == hash_two_electrode]
+        self.assertEqual(len(two_electrode_rows), 1)
+        self.assertTrue(pd.isna(two_electrode_rows["working_potential_v"].iloc[0]))
+        self.assertTrue(pd.isna(two_electrode_rows["counter_potential_v"].iloc[0]))
+        # voltage_v (the primary/compatibility channel) is unaffected either way.
+        self.assertEqual(result["voltage_v"].tolist(), [0.5, 0.6, 3.4])
+
+
 if __name__ == "__main__":
     unittest.main()

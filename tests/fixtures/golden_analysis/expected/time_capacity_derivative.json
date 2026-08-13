@@ -63038,7 +63038,25 @@
     "stacked": false,
     "time_unit": "min",
     "view": "dqdv",
+    "voltage_channel": "voltage",
     "x_axis": "time"
   },
-  "type": "cycling"
+  "type": "cycling",
+  "voltage_channels": {
+    "counter_potential": {
+      "available": false,
+      "label": "Counter potential vs ref (V)",
+      "role": "counter_vs_reference"
+    },
+    "voltage": {
+      "available": true,
+      "label": "Cell voltage (V)",
+      "role": "cell"
+    },
+    "working_potential": {
+      "available": false,
+      "label": "Working potential vs ref (V)",
+      "role": "working_vs_reference"
+    }
+  }
 }

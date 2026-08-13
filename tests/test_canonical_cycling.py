@@ -176,6 +176,71 @@ class OptionalColumnTests(unittest.TestCase):
         self.assertIn("timestamp", str(ctx.exception))
 
 
+class VoltageCapabilitiesTests(unittest.TestCase):
+    """Spec 040.4: the bounded voltage-role capability representation."""
+
+    def test_default_is_two_electrode_and_bounded(self):
+        result = canonical_cycling.voltage_capabilities()
+        self.assertEqual(
+            result["capabilities"],
+            {"primary_voltage": True, "working_potential": False, "counter_potential": False},
+        )
+        self.assertEqual(result["voltage_roles"], {"voltage_v": "cell"})
+        self.assertIsNone(result["reference_electrode"])
+        self.assertFalse(result["voltage_v_derived"])
+
+    def test_three_electrode_capability_only_names_present_channels(self):
+        result = canonical_cycling.voltage_capabilities(
+            working_potential_available=True,
+            counter_potential_available=True,
+            reference_electrode="Li/Li+",
+            voltage_derived=True,
+        )
+        self.assertEqual(
+            result["capabilities"],
+            {"primary_voltage": True, "working_potential": True, "counter_potential": True},
+        )
+        self.assertEqual(
+            result["voltage_roles"],
+            {
+                "voltage_v": "cell",
+                "working_potential_v": "working_vs_reference",
+                "counter_potential_v": "counter_vs_reference",
+            },
+        )
+        self.assertEqual(result["reference_electrode"], "Li/Li+")
+        self.assertTrue(result["voltage_v_derived"])
+
+    def test_one_electrode_available_does_not_invent_the_other(self):
+        result = canonical_cycling.voltage_capabilities(working_potential_available=True)
+        self.assertTrue(result["capabilities"]["working_potential"])
+        self.assertFalse(result["capabilities"]["counter_potential"])
+        self.assertIn("working_potential_v", result["voltage_roles"])
+        self.assertNotIn("counter_potential_v", result["voltage_roles"])
+
+    def test_voltage_quantities_map_to_locked_canonical_names(self):
+        self.assertEqual(
+            canonical_cycling.VOLTAGE_QUANTITIES,
+            {
+                "voltage": "voltage_v",
+                "working_potential": "working_potential_v",
+                "counter_potential": "counter_potential_v",
+            },
+        )
+        self.assertEqual(canonical_cycling.DEFAULT_VOLTAGE_QUANTITY, "voltage")
+
+    def test_quantity_label_defaults_and_role_override(self):
+        self.assertEqual(canonical_cycling.voltage_quantity_label("voltage"), "Cell voltage (V)")
+        self.assertEqual(
+            canonical_cycling.voltage_quantity_label("working_potential"),
+            "Working potential vs ref (V)",
+        )
+        self.assertEqual(
+            canonical_cycling.voltage_quantity_label("counter_potential"),
+            "Counter potential vs ref (V)",
+        )
+
+
 class MalformedValueTests(unittest.TestCase):
     """Case 9: malformed/non-numeric capacity/current/voltage values fail
     clearly."""
@@ -397,6 +462,86 @@ class CacheBuildBoundaryWiringTests(unittest.TestCase):
         info = cache.build(self.HASH, "unused.ndax")
         self.assertFalse(info["cached"])
         self.assertTrue(cache.raw_path(self.HASH, info["parser_version"]).exists())
+
+
+def _three_electrode_frame() -> pd.DataFrame:
+    """A synthetic three-electrode canonical frame (Spec 040.4): known
+    working/counter potentials with voltage_v = working - counter, proving
+    the multi-voltage path end to end without a real BioLogic parser."""
+    working = pd.Series([3.10, 3.20, 3.15, 3.05])
+    counter = pd.Series([0.10, 0.10, 0.12, 0.11])
+    return _minimal_frame(
+        working_potential_v=working.tolist(),
+        counter_potential_v=counter.tolist(),
+        voltage_v=(working - counter).tolist(),
+    )
+
+
+class MultiVoltagePathCacheTests(unittest.TestCase):
+    """Spec 040.4 cases 1-3: a synthetic canonical raw cache preserves both
+    auxiliary potentials exactly, a selective raw-column load returns them,
+    and cache identity is unaffected by whether they are present."""
+
+    HASH = "c0ffee00" + "4" * 56
+    TWO_ELECTRODE_HASH = "c0ffee00" + "5" * 56
+
+    def setUp(self):
+        self._orig = parsing.parse_timeseries
+        for file_hash in (self.HASH, self.TWO_ELECTRODE_HASH):
+            directory = cache.raw_path(file_hash).parent
+            if directory.exists():
+                shutil.rmtree(directory)
+
+    def tearDown(self):
+        parsing.parse_timeseries = self._orig
+        for file_hash in (self.HASH, self.TWO_ELECTRODE_HASH):
+            cache.wait_for_pending(file_hash)
+            directory = cache.raw_path(file_hash).parent
+            if directory.exists():
+                shutil.rmtree(directory)
+
+    def test_three_electrode_frame_passes_validation(self):
+        validate_raw_timeseries(_three_electrode_frame())  # must not raise
+
+    def test_cache_build_preserves_aux_voltage_columns_exactly(self):
+        frame = _three_electrode_frame()
+        parsing.parse_timeseries = lambda path: frame
+        info = cache.build(self.HASH, "unused.ndax")
+
+        loaded = cache.load_raw(self.HASH, info["parser_version"])
+        self.assertIsNotNone(loaded)
+        pd.testing.assert_series_equal(
+            loaded["working_potential_v"], frame["working_potential_v"], check_names=False
+        )
+        pd.testing.assert_series_equal(
+            loaded["counter_potential_v"], frame["counter_potential_v"], check_names=False
+        )
+        pd.testing.assert_series_equal(loaded["voltage_v"], frame["voltage_v"], check_names=False)
+
+    def test_selective_raw_column_load_returns_aux_voltage_columns(self):
+        parsing.parse_timeseries = lambda path: _three_electrode_frame()
+        info = cache.build(self.HASH, "unused.ndax")
+
+        selected = cache.load_raw_columns(
+            self.HASH, info["parser_version"], ["working_potential_v", "counter_potential_v"]
+        )
+        self.assertIsNotNone(selected)
+        self.assertEqual(set(selected.columns), {"working_potential_v", "counter_potential_v"})
+        self.assertEqual(len(selected), 4)
+
+    def test_cache_identity_unaffected_by_optional_column_presence(self):
+        """A source with the aux columns and a source without them, both
+        recognized as the same format/extension, must resolve to the exact
+        same parser identity — the identity is a static per-format fact
+        (Spec 040.3), never a function of which optional columns a
+        particular parse happened to produce."""
+        parsing.parse_timeseries = lambda path: _three_electrode_frame()
+        three_electrode_info = cache.build(self.HASH, "three.ndax")
+
+        parsing.parse_timeseries = lambda path: _minimal_frame()
+        two_electrode_info = cache.build(self.TWO_ELECTRODE_HASH, "two.ndax")
+
+        self.assertEqual(three_electrode_info["parser_version"], two_electrode_info["parser_version"])
 
 
 if __name__ == "__main__":

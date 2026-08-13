@@ -645,6 +645,49 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
 
+    def test_time_capacity_two_electrode_fixture_exposes_only_voltage_channel(self):
+        # Spec 040.4 case 8: an ordinary two-electrode source must not gain
+        # a working/counter potential option, and the default channel must
+        # be "voltage" with unchanged values (no voltage_channel set at all,
+        # exactly like an old saved spec).
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(res["settings"]["voltage_channel"], "voltage")
+        self.assertEqual(
+            res["voltage_channels"],
+            {
+                "voltage": {"available": True, "label": "Cell voltage (V)", "role": "cell"},
+                "working_potential": {
+                    "available": False,
+                    "label": "Working potential vs ref (V)",
+                    "role": "working_vs_reference",
+                },
+                "counter_potential": {
+                    "available": False,
+                    "label": "Counter potential vs ref (V)",
+                    "role": "counter_vs_reference",
+                },
+            },
+        )
+        trace = res["cell_traces"][0]
+        self.assertTrue(any(value is not None for value in trace["voltage_v"]))
+
+    def test_time_capacity_unavailable_channel_omits_trace_without_fallback(self):
+        # Requesting working_potential against a source that never populated
+        # it must yield an empty/all-None trace, never a silent substitution
+        # of voltage_v under the "working potential" label.
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        self.assertTrue(len(trace["voltage_v"]) > 0)
+        self.assertTrue(all(value is None for value in trace["voltage_v"]))
+        self.assertFalse(res["voltage_channels"]["working_potential"]["available"])
+
     def test_downsample_extrema_keep_immediate_neighbours(self):
         values = np.zeros(1000, dtype="float64")
         values[500] = 10.0
@@ -1213,6 +1256,220 @@ class AnalysisEngineTests(unittest.TestCase):
 
     def test_analysis_engine_uses_shared_raw_stitch_service(self):
         self.assertFalse(hasattr(engine, "_stitch_raw"))
+
+
+def synth_three_electrode_raw(n_cycles: int, cap0: float, fade: float) -> pd.DataFrame:
+    """Deterministic synthetic three-electrode canonical frame (Spec 040.4):
+    known working/counter potentials with voltage_v = working - counter, so
+    the multi-voltage path can be proven end to end without a real BioLogic
+    parser. Otherwise identical in shape to `synth_raw` above."""
+    rows, idx, t = [], 0, 0.0
+    for cyc in range(1, n_cycles + 1):
+        cap = cap0 * (1 - fade) ** (cyc - 1)
+        for status, sign in (("CC_Chg", 1), ("CC_DChg", -1)):
+            for frac in (0.5, 1.0):
+                idx += 1
+                t += 1800
+                working = 3.5 + sign * 0.2
+                counter = 0.1
+                rows.append({
+                    "record_index": idx, "cycle": cyc, "step": cyc * 2 + (0 if sign > 0 else 1),
+                    "step_index": (1 if cyc % 2 else 3) if sign > 0 else 2,
+                    "status": status, "time_s": 1800.0 * frac,
+                    "voltage_v": working - counter,
+                    "working_potential_v": working,
+                    "counter_potential_v": counter,
+                    "current_ma": sign * 1000.0,
+                    "charge_capacity_mah": cap * frac if sign > 0 else cap,
+                    "discharge_capacity_mah": 0.0 if sign > 0 else cap * frac * 0.99,
+                    "charge_energy_mwh": cap * frac * 3.5 if sign > 0 else cap * 3.5,
+                    "discharge_energy_mwh": 0.0 if sign > 0 else cap * frac * 3.2,
+                    "timestamp": pd.Timestamp("2026-01-01") + pd.Timedelta(seconds=t),
+                })
+    return pd.DataFrame(rows)
+
+
+class TimeCapacitySettingsVoltageChannelTests(unittest.TestCase):
+    """Spec 040.4 case 9: old saved specs (no voltage_channel key at all)
+    normalize to the default primary voltage; an invalid/unknown value is
+    also rejected back to the default rather than passed through."""
+
+    def test_missing_key_defaults_to_voltage(self):
+        settings = engine.time_capacity_settings({"time_capacity": {}})
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+    def test_no_time_capacity_block_at_all_defaults_to_voltage(self):
+        settings = engine.time_capacity_settings({})
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+    def test_explicit_electrode_channel_round_trips(self):
+        for channel in ("working_potential", "counter_potential"):
+            settings = engine.time_capacity_settings(
+                {"time_capacity": {"voltage_channel": channel}}
+            )
+            self.assertEqual(settings["voltage_channel"], channel)
+
+    def test_unrecognized_value_falls_back_to_voltage(self):
+        settings = engine.time_capacity_settings(
+            {"time_capacity": {"voltage_channel": "not-a-real-channel"}}
+        )
+        self.assertEqual(settings["voltage_channel"], "voltage")
+
+
+class MultiVoltageTimeCapacityTests(unittest.TestCase):
+    """Spec 040.4: Time/Capacity working/counter potential selection,
+    end to end through cache -> stitch -> compute_time_capacity, using a
+    synthetic three-electrode source (no real BioLogic parser exists yet)."""
+
+    HASHES = {"three": "3e" * 32, "two": "2e" * 32}
+    FRAMES = {}
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig_parse = parsing.parse_timeseries
+        cls.FRAMES = {
+            cls.HASHES["three"]: synth_three_electrode_raw(5, 2.0, 0.005),
+            cls.HASHES["two"]: synth_raw(5, 2.0, 0.005),
+        }
+
+        def fake_parse(path):
+            return cls.FRAMES[Path(str(path)).stem]
+
+        parsing.parse_timeseries = fake_parse
+        for h in cls.HASHES.values():
+            d = cache.raw_path(h).parent
+            if d.exists():
+                shutil.rmtree(d)
+            cache.build(h, f"{h}.ndax")
+
+    @classmethod
+    def tearDownClass(cls):
+        parsing.parse_timeseries = cls._orig_parse
+        for h in cls.HASHES.values():
+            shutil.rmtree(cache.raw_path(h).parent, ignore_errors=True)
+
+    def setUp(self):
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                            poolclass=StaticPool)
+        Base.metadata.create_all(eng)
+        self.db = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)()
+        self.cells = {}
+        for name, h in self.HASHES.items():
+            cell = Cell(name=name)
+            self.db.add(cell)
+            self.db.flush()
+            sf = SourceFile(hash=h, path=h, filename=f"{name}.ndax", size=1, ext="ndax",
+                            parse_status="parsed", parser_version=parsing.PARSER_VERSION)
+            self.db.add(sf)
+            test = Test(cell_id=cell.id, name="t")
+            self.db.add(test)
+            self.db.flush()
+            self.db.add(TestFile(test_id=test.id, file_id=sf.id, position=0))
+            self.cells[name] = cell
+        self.db.commit()
+
+    def spec_with(self, entries, **comp):
+        spec = engine.default_spec("t")
+        spec["selection"]["entries"] = entries
+        spec["computation"].update(comp)
+        return spec
+
+    def test_working_potential_request_returns_correct_values_and_availability(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        # working_potential_v is always exactly 3.5 +/- 0.2 in the fixture,
+        # never voltage_v (working - counter = 3.4/3.6 - 0.1).
+        for value in values:
+            self.assertIn(round(value, 1), (3.3, 3.7))
+        self.assertTrue(res["voltage_channels"]["working_potential"]["available"])
+
+    def test_counter_potential_request_returns_correct_values(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "counter_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        for value in values:
+            self.assertAlmostEqual(value, 0.1, places=6)
+        self.assertTrue(res["voltage_channels"]["counter_potential"]["available"])
+
+    def test_primary_voltage_request_is_unaffected_by_aux_columns(self):
+        # voltage_v on the three-electrode fixture is working - counter
+        # (3.2 or 3.6), distinct from either electrode potential alone —
+        # proving the default channel is not silently substituted.
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        trace = res["cell_traces"][0]
+        values = [value for value in trace["voltage_v"] if value is not None]
+        self.assertGreater(len(values), 0)
+        for value in values:
+            self.assertIn(round(value, 1), (3.2, 3.6))
+        self.assertEqual(res["settings"]["voltage_channel"], "voltage")
+
+    def test_mixed_selection_omits_per_cell_rather_than_disabling_whole_quantity(self):
+        """The locked mixed-sample availability rule (Spec 040.4): when one
+        selected sample has the requested channel and another does not, the
+        sample without it gets an omitted (all-None) trace — exactly how
+        this architecture already treats any other missing-column case —
+        rather than the whole quantity being marked unavailable for the
+        entire selection."""
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["three"].id},
+                {"kind": "cell", "ref_id": self.cells["two"].id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        res = engine.compute_time_capacity(self.db, spec, None)
+
+        by_cell = {trace["cell_id"]: trace for trace in res["cell_traces"]}
+        three_trace = by_cell[self.cells["three"].id]
+        two_trace = by_cell[self.cells["two"].id]
+        self.assertTrue(any(value is not None for value in three_trace["voltage_v"]))
+        self.assertTrue(len(two_trace["voltage_v"]) > 0)
+        self.assertTrue(all(value is None for value in two_trace["voltage_v"]))
+        # Available at the selection level (at least one sample has data) —
+        # the frontend selector may still offer the option.
+        self.assertTrue(res["voltage_channels"]["working_potential"]["available"])
+
+    def test_derivative_view_stays_restricted_to_primary_voltage(self):
+        """`_derivative_curve` reads `voltage_v` directly regardless of the
+        selected voltage_channel — dQ/dV and dV/dQ are scoped to primary
+        voltage only for this child (locked decision), proven by showing the
+        derivative trace is identical whether voltage_channel is left at its
+        default or pointed at an electrode potential."""
+        base_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        base_spec["computation"]["time_capacity"] = {
+            "view": "dvdq",
+            "voltage_channel": "voltage",
+            "cycles": [1],
+        }
+        aux_spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        aux_spec["computation"]["time_capacity"] = {
+            "view": "dvdq",
+            "voltage_channel": "working_potential",
+            "cycles": [1],
+        }
+
+        base_res = engine.compute_time_capacity(self.db, base_spec, None)
+        aux_res = engine.compute_time_capacity(self.db, aux_spec, None)
+
+        self.assertEqual(
+            base_res["cell_traces"][0]["derivative_y"],
+            aux_res["cell_traces"][0]["derivative_y"],
+        )
 
 
 if __name__ == "__main__":

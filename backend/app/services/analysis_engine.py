@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinl
 
 from ..config import CALC_VERSION
 from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
-from . import cache, calc, parsing, protocol, stitch
+from . import cache, calc, canonical_cycling, parsing, protocol, stitch
 
 SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
@@ -1111,6 +1111,11 @@ def time_capacity_settings(computation: dict) -> dict:
     current_options = {"current_ma", "current_density", "c_rate"}
     current_left = cfg.get("current_left") if cfg.get("current_left") in current_options else "current_ma"
     current_right = cfg.get("current_right") if cfg.get("current_right") in current_options | {"none"} else "none"
+    voltage_channel = (
+        cfg.get("voltage_channel")
+        if cfg.get("voltage_channel") in canonical_cycling.VOLTAGE_QUANTITIES
+        else canonical_cycling.DEFAULT_VOLTAGE_QUANTITY
+    )
     return {
         "cycle_start": cfg.get("cycle_start", computation.get("cycle_range", {}).get("start", 1)),
         "cycle_end": cfg.get("cycle_end", computation.get("cycle_range", {}).get("end")),
@@ -1128,6 +1133,13 @@ def time_capacity_settings(computation: dict) -> dict:
         "derivative_absolute_discharge": bool(cfg.get("derivative_absolute_discharge", True)),
         "smoothing_window": max(1, min(101, int(cfg.get("smoothing_window") or 7))),
         "max_points_per_cell": int(cfg.get("max_points_per_cell") or 4000),
+        # Spec 040.4: stable internal quantity ID selecting which canonical
+        # voltage column populates the trace's "voltage_v" array — see
+        # `canonical_cycling.VOLTAGE_QUANTITIES`. Derivative views (dQ/dV,
+        # dV/dQ) intentionally ignore this and always read `voltage_v`
+        # (`_derivative_curve` below); this setting only changes the
+        # voltage/current plot.
+        "voltage_channel": voltage_channel,
     }
 
 
@@ -2398,6 +2410,17 @@ def compute_time_capacity(
     width = max(320, min(6000, int(viewport_width or 1200)))
     total_units = len(units)
     total_returned_points = 0
+    # Spec 040.4: which voltage quantities have real (non-fabricated) data
+    # anywhere in the current selection, independent of the currently chosen
+    # `voltage_channel` — this is what lets the frontend offer working/counter
+    # potential as options at all without advertising a channel no selected
+    # source actually has. True two-electrode sources never populate the
+    # aux columns, so this stays {"voltage": True, "working_potential":
+    # False, "counter_potential": False} for every source format that exists
+    # today; only a future adapter with real electrode-potential data changes
+    # that. Checked against the full stitched raw frame (before cycle-range
+    # filtering) so the offered options do not flicker as filters change.
+    channel_availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
 
     for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
@@ -2422,6 +2445,11 @@ def compute_time_capacity(
 
         step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
         raw, segments, missing = stitch.stitch_raw(refs)
+        for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+            if channel_availability[quantity] or column not in raw.columns:
+                continue
+            if np.isfinite(pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")).any():
+                channel_availability[quantity] = True
         descriptors = source_descriptors(files, segments, missing, raw)
         for h in missing:
             missing_identity = source_versions.get(h, "unknown")
@@ -2541,9 +2569,10 @@ def compute_time_capacity(
         else:
             plot_mask = np.zeros(len(raw), dtype=bool)
 
+        voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
         voltage = (
-            raw["voltage_v"].to_numpy(dtype="float64").copy()
-            if "voltage_v" in raw.columns
+            raw[voltage_column].to_numpy(dtype="float64").copy()
+            if voltage_column in raw.columns
             else np.full(len(raw), np.nan)
         )
         current = (
@@ -2667,6 +2696,19 @@ def compute_time_capacity(
             }
         )
 
+    voltage_channels = {
+        quantity: {
+            "available": channel_availability[quantity],
+            "label": canonical_cycling.voltage_quantity_label(quantity),
+            "role": {
+                "voltage": "cell",
+                "working_potential": "working_vs_reference",
+                "counter_potential": "counter_vs_reference",
+            }[quantity],
+        }
+        for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+
     return {
         "computed_at": now_iso(),
         "type": spec.get("type", "cycling"),
@@ -2677,6 +2719,11 @@ def compute_time_capacity(
         "settings": settings,
         "cell_traces": traces,
         "badges": badges,
+        # Spec 040.4: data-driven, per-selection availability — never a
+        # static per-format declaration — so the frontend can offer exactly
+        # the electrode potentials that actually have data for the samples
+        # currently selected, and nothing else.
+        "voltage_channels": voltage_channels,
         "rendering": {
             "viewport_width": width,
             "configured_max_points_per_cell": configured_max,

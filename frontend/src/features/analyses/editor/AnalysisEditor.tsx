@@ -96,6 +96,7 @@ import {
   SavedAnalysisPlot,
   SelectionEntry,
   PlotStylePresetSettings,
+  TimeCapacityResult,
   Tree,
 } from "../../../api";
 import {
@@ -153,6 +154,7 @@ import {
   timeCapacityConfig,
   timeCapacityLayout,
   timeCapacityTracesForResult,
+  voltageChannelShortLabel,
 } from "./families/time-capacity/TimeCapacityPlotCard";
 import {
   CellHoverCard,
@@ -526,7 +528,7 @@ function plotSubtitle(tab: AnalysisTabKey, result: ComputeResult | undefined, sp
         : cfg.x_axis === "capacity_mah"
         ? "capacity (mAh)"
         : `time (${cfg.time_unit})`;
-    return `Voltage${cfg.stacked ? " and current" : ""} vs ${axis}`;
+    return `${voltageChannelShortLabel(cfg.voltage_channel)}${cfg.stacked ? " and current" : ""} vs ${axis}`;
   }
   if (tab === "cycles") return `${cycleQuantityLabel(result, spec)} vs cycle`;
   if (tab === "dcir") {
@@ -2047,6 +2049,8 @@ function AnalysisEditorView({
   const [autosaveStatus, setAutosaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const [initialComputeReady, setInitialComputeReady] = useState(false);
   const [timeCapacityReady, setTimeCapacityReady] = useState(false);
+  const [timeCapacityVoltageChannels, setTimeCapacityVoltageChannels] =
+    useState<TimeCapacityResult["voltage_channels"]>(undefined);
   const [chargeabilityReady, setChargeabilityReady] = useState(false);
   const [rateCapabilityReady, setRateCapabilityReady] = useState(false);
   const autosaveSignature = useMemo(
@@ -3361,6 +3365,7 @@ function AnalysisEditorView({
           spec={spec}
           update={update}
           resetAxis={(s, axis) => resetManualAxis(s, "time_capacity", axis)}
+          voltageChannels={timeCapacityVoltageChannels}
         />
       )}
       {activeTab === "cycles" && (
@@ -3702,6 +3707,7 @@ function AnalysisEditorView({
                     spec={spec}
                     update={update}
                     onReadyChange={setTimeCapacityReady}
+                    onVoltageChannelsChange={setTimeCapacityVoltageChannels}
                     edited={activePlotDirty && activePlot?.tab === "time_capacity"}
                     {...newPlotHeaderProps}
                   />,

@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from openpyxl import Workbook
 
-from app.services import import_inspection, neware_excel, parsing
+from app.services import canonical_cycling, import_inspection, neware_excel, parsing
 from app.services.canonical_cycling import CANONICAL_RAW_VERSION, validate_raw_timeseries
 
 _GOLDEN_SOURCES_DIR = ROOT / "tests" / "fixtures" / "golden_analysis" / "sources"
@@ -252,6 +252,13 @@ class HeaderMetadataDispatchParityTests(unittest.TestCase):
         self.assertIsNotNone(meta["nda_version"])
         self.assertNotIn("source_format", meta)
         self.assertGreater(len(meta["raw"]), 0)
+        # Spec 040.4: every recognized source, binary included, gets the
+        # bounded voltage-role capability block — never just Excel's own
+        # unrelated `Excel.Capabilities.*` legacy block.
+        self.assertEqual(
+            meta["voltage_capabilities"],
+            canonical_cycling.voltage_capabilities(),
+        )
 
     def test_excel_metadata_is_curated(self):
         with TemporaryDirectory() as tmp:
@@ -262,6 +269,13 @@ class HeaderMetadataDispatchParityTests(unittest.TestCase):
         self.assertIsNone(meta["nda_version"])
         self.assertEqual(meta["source_format"], "Neware Excel")
         self.assertIn("capabilities", meta)
+        # Neither current adapter populates working/counter potential, so
+        # this stays the default two-electrode capability for every real
+        # source today (Spec 040.4).
+        self.assertEqual(
+            meta["voltage_capabilities"],
+            canonical_cycling.voltage_capabilities(),
+        )
 
 
 class MetadataDoesNotFullyParseTests(unittest.TestCase):

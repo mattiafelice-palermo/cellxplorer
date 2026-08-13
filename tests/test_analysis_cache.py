@@ -244,6 +244,69 @@ class AnalysisCacheTests(unittest.TestCase):
             analysis_cache._scientific_spec(changed_mode),
         )
 
+    def test_time_capacity_voltage_channel_changes_scientific_cache_spec(self):
+        # Spec 040.4: the artifact/query key must distinguish a channel
+        # selection so an old cached artifact for primary voltage is never
+        # served for a newly selected electrode potential.
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {"time_capacity": {"voltage_channel": "voltage"}},
+            "aggregation": {},
+            "protocol_segments": [],
+            "presentation": {},
+        }
+        working = deepcopy(base)
+        working["computation"]["time_capacity"]["voltage_channel"] = "working_potential"
+        counter = deepcopy(base)
+        counter["computation"]["time_capacity"]["voltage_channel"] = "counter_potential"
+        legacy = deepcopy(base)
+        del legacy["computation"]["time_capacity"]["voltage_channel"]
+
+        specs = analysis_cache._scientific_spec(base)
+        specs_working = analysis_cache._scientific_spec(working)
+        specs_counter = analysis_cache._scientific_spec(counter)
+        specs_legacy = analysis_cache._scientific_spec(legacy)
+
+        self.assertNotEqual(specs, specs_working)
+        self.assertNotEqual(specs, specs_counter)
+        self.assertNotEqual(specs_working, specs_counter)
+        # An old spec with no voltage_channel key at all is a distinct
+        # (but harmless — see engine.time_capacity_settings) raw JSON shape.
+        self.assertNotEqual(specs, specs_legacy)
+
+    def test_time_capacity_result_schema_version_only_invalidates_time_capacity_results(self):
+        spec = {
+            "selection": {"units": []},
+            "computation": {},
+            "aggregation": {},
+            "presentation": {},
+        }
+        db = object()
+        with (
+            patch.object(analysis_engine, "resolve_selection", return_value=([], [])),
+            patch.object(analysis_engine, "preload_cell_sources"),
+            patch.object(analysis_engine, "load_scalar_metadata", return_value={}),
+        ):
+            cycles_before = analysis_cache.result_key(
+                db, "cycles", spec, None, use_current_versions=True
+            )
+            time_capacity_before = analysis_cache.result_key(
+                db, "time_capacity", spec, None, use_current_versions=True
+            )
+            with patch.dict(
+                analysis_cache.RESULT_SCHEMA_VERSIONS,
+                {"time_capacity": analysis_cache.RESULT_SCHEMA_VERSIONS["time_capacity"] + 1},
+            ):
+                cycles_after = analysis_cache.result_key(
+                    db, "cycles", spec, None, use_current_versions=True
+                )
+                time_capacity_after = analysis_cache.result_key(
+                    db, "time_capacity", spec, None, use_current_versions=True
+                )
+
+        self.assertEqual(cycles_before, cycles_after)
+        self.assertNotEqual(time_capacity_before, time_capacity_after)
+
     def test_dcir_view_does_not_change_scientific_cache_spec(self):
         base = {
             "selection": {"units": [{"kind": "cell", "ref_id": 7}]},

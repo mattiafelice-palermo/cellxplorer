@@ -108,23 +108,85 @@ explicitly forbids the validator from doing. The convention is documented and
 tested here, and left to `status`-phase classification (`calc.py`'s
 `is_chg`/`is_dchg` masks) rather than being re-derived from `current_ma`.
 
-## 5. Primary voltage and reserved auxiliary electrode potentials
+## 5. Primary voltage and multi-voltage electrode potentials (Spec 040.4)
 
 `voltage_v` is the primary, compatibility voltage used by every existing
 CellXplorer analysis (Cycles, Time/Capacity, DCIR, Chargeability, Rate
 Capability) unless a future reviewed feature explicitly opts into another
 channel. For ordinary two-electrode data, `voltage_v` is simply the measured
-cell voltage.
+cell voltage. This does not change with 040.4: every existing analysis still
+reads `voltage_v` and only `voltage_v`, and the default Time/Capacity voltage
+quantity is still `voltage_v`.
 
-`working_potential_v` and `counter_potential_v` are **reserved names only**
-in this child. No adapter populates them, no cache/stitch/API path carries
-them, and no calculation reads them yet — that is Spec 040.4's job. Reserving
-the names now means a later child does not have to invent them under time
-pressure or risk a different, incompatible name landing first.
-`validate_raw_timeseries` already applies the same numeric-column contract to
-them as `voltage_v` (finite, non-malformed) if a future source happens to
-populate them early, but their presence changes nothing about existing
-two-electrode analyses.
+`working_potential_v` and `counter_potential_v` are the canonical names for a
+source's synchronized electrode potentials versus a reference. As of 040.4
+they flow end to end — canonical raw frame → Parquet cache → selective raw
+load → `stitch_raw` → Time/Capacity API/UI/export/saved-plot/portable path —
+but **no adapter shipped in Parent 040 populates them**: there is still no
+BioLogic (or other three-electrode) parser. Every real source today therefore
+reports `working_potential`/`counter_potential` capability as `False` and
+every Time/Capacity trace for those channels is empty. The path was built and
+proven with a synthetic canonical frame (`tests/test_analysis_engine.py`'s
+`synth_three_electrode_raw`, `tests/test_canonical_cycling.py`'s
+`_three_electrode_frame`) precisely so a future adapter (Parent 041) does not
+have to build or review this plumbing under time pressure.
+
+`validate_raw_timeseries` applies the same numeric-column contract to them as
+`voltage_v` (finite, non-malformed) if a source happens to populate them —
+this was already true before 040.4 and is unchanged.
+
+### Voltage-role capability vocabulary
+
+`canonical_cycling.voltage_capabilities(...)` (Spec 040.4) is the one bounded,
+pure representation of what a source says about its voltage channels:
+
+```python
+{
+  "capabilities": {"primary_voltage": True, "working_potential": bool, "counter_potential": bool},
+  "voltage_roles": {"voltage_v": "cell", ...only-present channels...},
+  "reference_electrode": str | None,   # never fabricated
+  "voltage_v_derived": bool,           # True only if an adapter computed voltage_v = working - counter
+}
+```
+
+`parsing.read_header_metadata` calls it with no arguments for both current
+formats (binary and Excel), so every recognized source's metadata carries the
+default two-electrode shape today — this is a static, format-level fact (no
+header inspection can tell you a column that adapter never produces), not a
+per-file probe. `canonical_cycling.VOLTAGE_QUANTITIES` (`"voltage"`,
+`"working_potential"`, `"counter_potential"` → `voltage_v`,
+`working_potential_v`, `counter_potential_v`) is the stable internal quantity
+ID vocabulary the Time/Capacity API and saved-plot settings use;
+`DEFAULT_VOLTAGE_QUANTITY` is `"voltage"`.
+
+### Time/Capacity availability rule (locked by 040.4)
+
+`analysis_engine.compute_time_capacity` reports **per-selection, data-driven**
+availability (`result["voltage_channels"][quantity]["available"]`) — computed
+from whether the requested column actually has any finite value anywhere in
+the current selection's stitched raw frame, never from a static per-format
+declaration. The mixed-sample rule this child chose and locked with tests
+(`tests/test_analysis_engine.py::MultiVoltageTimeCapacityTests
+::test_mixed_selection_omits_per_cell_rather_than_disabling_whole_quantity`):
+when some selected cells have the requested channel and others do not, the
+cells without it get an **omitted (all-`None`) trace** — exactly how this
+architecture already treats any other cell whose raw frame is missing a
+requested column — rather than the whole quantity being marked unavailable
+for the entire selection. A cell requesting a channel it does not have never
+receives a fabricated value or a silent substitution of `voltage_v`.
+
+### Derivatives stay primary-voltage only
+
+`_derivative_curve` (dQ/dV, dV/dQ) reads `frame["voltage_v"]` directly and
+unconditionally — it was never routed through the selected Y channel, so
+040.4 made no change to it. The Time/Capacity `voltage_channel` setting only
+affects the voltage/current plot; derivative views always compute from
+primary voltage regardless of the selected channel
+(`tests/test_analysis_engine.py::MultiVoltageTimeCapacityTests
+::test_derivative_view_stays_restricted_to_primary_voltage` proves this by
+showing the derivative trace is identical between the default channel and an
+electrode-potential selection). The frontend only exposes the voltage-channel
+selector inside the voltage/current plot mode for the same reason.
 
 ## 6. Capacity/energy reset semantics
 
@@ -298,10 +360,10 @@ validated away.
 
 ## Reserved capability vocabulary
 
-`canonical_cycling.CANONICAL_CAPABILITIES` reserves the following meanings
-for a future bounded capability representation (Spec 040.4, extending Parent
-039's existing `Excel.Capabilities.*` fields in `neware_excel.py` /
-`parsing.read_header_metadata` rather than creating a competing schema):
+`canonical_cycling.CANONICAL_CAPABILITIES` names the following meanings,
+extending Parent 039's existing `Excel.Capabilities.*` fields in
+`neware_excel.py` / `parsing.read_header_metadata` rather than creating a
+competing schema:
 
 ```text
 cycling_rows          — the source can produce normal per-record cycling data
@@ -312,8 +374,16 @@ working_potential     — working_potential_v is populated
 counter_potential      — counter_potential_v is populated
 ```
 
-This child only names and documents these meanings; it does not compute or
-expose them anywhere.
+As of Spec 040.4, `primary_voltage`/`working_potential`/`counter_potential`
+are computed and exposed two ways (see "Voltage-role capability vocabulary"
+and "Time/Capacity availability rule" above): a static, source-format-level
+declaration in `parsing.read_header_metadata`'s `voltage_capabilities` block
+(always the two-electrode default today, no adapter varies it), and a
+data-driven per-selection availability in
+`compute_time_capacity`'s `voltage_channels` response field, which is what
+actually drives the frontend selector. `cycling_rows`,
+`absolute_timestamps` and `declared_protocol` remain documentation-only
+reserved names; no consumer computes them yet.
 
 ## Where validation runs
 

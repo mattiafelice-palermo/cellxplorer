@@ -227,6 +227,16 @@ axis title produces a convincing but scientifically wrong stale plot. Areal capa
 cell's `electrode_area_cm2` metadata unless the analysis supplies a positive override; keep both
 the metadata value and override in the scientific/cache inputs.
 
+Since Spec 040.4, the compact response's `voltage_v` array (still that key regardless of the
+selected channel — see `docs/agent-knowledge/canonical-cycling-data.md`) holds whichever canonical
+voltage column `computation.time_capacity.voltage_channel` selects
+(`voltage`/`working_potential`/`counter_potential`). This is a scientific input exactly like
+`x_axis`, so `voltage_channel` must be in the frontend query signature too — omitting it would
+reuse a cached primary-voltage response after the user switched to an electrode potential.
+`analysis_cache._scientific_spec` already hashes the whole `computation` object, so the backend
+cache key needs no separate wiring for a new field like this; only the frontend's own React Query
+key (`TimeCapacityPlotCard.tsx`'s `dataSignature`) has to list it explicitly.
+
 ## Analysis workspace tabs
 
 - The process-level mounted-analysis registry can outlive the `/analyses/*` route, but its React
