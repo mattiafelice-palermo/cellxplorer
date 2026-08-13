@@ -216,7 +216,7 @@ The persisted identity must be **30 characters or fewer** because `SourceFile.pa
 Examples are illustrative but intentionally fit the bound:
 
 ```text
-nb:2026.6.11:r1
+nb:v2026.06.11:r1
 nx:3:r1
 ```
 
@@ -297,7 +297,7 @@ PARSER_VERSION = f"{NEWARE_NDA_VERSION}-cxp{EXCEL_PARSER_REVISION}"
 SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset({".nda", ".ndax", ".xlsx"})
 ```
 
-At this baseline the effective bundle is `2026.6.11-cxp6`.
+At this baseline the effective bundle is `v2026.06.11-cxp6`.
 
 Important anchors:
 

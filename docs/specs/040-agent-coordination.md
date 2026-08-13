@@ -165,6 +165,10 @@ not restated here as current fact.
   dialect / import-resilience follow-up plus DCIR and release fixes.
 - Anchor drift corrected in the parent and five children: `EXCEL_PARSER_REVISION` `3` → `6`, global
   bundle `2026.6.11-cxp3` → `2026.6.11-cxp6`.
+  - **Corrected 2026-08-13 during 040.2 review:** the base version string was wrong in the original
+    specs and this rebaseline propagated it. `parsing.NEWARE_NDA_VERSION` is actually `v2026.06.11`
+    (leading `v`, zero-padded month), so the real bundle is `v2026.06.11-cxp6`, not `2026.6.11-cxp6`.
+    Corrected in the parent, 040.2 and 040.3, and 040.3 now records the measured identity lengths.
 - Anchors reverified as unchanged and still accurate as written: `CALC_VERSION = 1.6.1`;
   `analysis_engine.SPEC_VERSION = 9`; `analysis_cache.ANALYSIS_CACHE_VERSION = 4`;
   `SourceFile.parser_version = String(30)`; `stitch_cycles`/`stitch_raw` single-parser-version
@@ -191,3 +195,21 @@ not restated here as current fact.
   per-source parser identity and cache/stitch/provenance changes (040.3), populated multi-voltage
   columns (040.4), `CALC_VERSION` bump, relational migration.
 - Active child advances to **040.2**.
+
+### 2026-08-13 — 040.2 REVIEW-CLEAN
+
+- 040.2 implemented (`0d9531d`, plus `a75e44e` correcting a self-referential SHA note in its own
+  implementation record), reviewed, approved with no findings. Canonical review:
+  `reviews/040.2-source-format-adapter-dispatch-review.md`.
+- Reviewer proved output parity independently rather than accepting the pinned hashes: a worktree at
+  the pre-refactor commit `4b78b00` reproduced the golden `.ndax` content hash
+  `0ca93bae…5fb5010a` exactly, confirming the constants were captured before the refactor.
+  `python scripts\preflight.py` re-run by the reviewer: exit 0, 5/5.
+- Production change is confined to `parsing.py`. `neware_excel.py`, `cache.py`, `stitch.py`,
+  `analysis_*.py` and `models.py` are untouched, so no 040.3 work was pre-implemented.
+- `parsing.PARSER_VERSION` preserved as the transitional bundle; `source_parser_family` preserved
+  suffix-only as the exact-hash relinking guard; `source_parser_descriptor()` exposed for 040.3 with
+  no production consumer yet.
+- Spec correction during review: the real NewareNDA version is `v2026.06.11`, not `2026.6.11` (see
+  the rebaseline entry above). Corrected in the parent, 040.2 and 040.3.
+- Active child advances to **040.3**.
