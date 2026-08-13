@@ -8,12 +8,14 @@ Merge base: `main` at `562c2edff1277fef71789244c95e3b17abc586fa` (`0.22.0-beta.5
 
 ```text
 ACTIVE_CHILD: 040.5
-TURN: REVIEWER
-STATE: AWAITING_REVIEW
+TURN: USER
+STATE: FEATURE_COMPLETE
 LAST_IMPLEMENTATION_SHA: 6f4e87f
-LAST_REVIEW_SHA: 7b5ca55
-NEXT_ACTION: Perform the focused 040.5 review AND the fresh cumulative Parent 040 review against the
-  locked merge base 562c2edff1277fef71789244c95e3b17abc586fa, per the Final-child rule below.
+LAST_REVIEW_SHA: (this commit)
+NEXT_ACTION: Parent 040 is implementation/review complete. The focused 040.5 review and the fresh
+  cumulative Parent 040 review are both clean. One item remains outstanding and is the user's: the
+  manual browser checklist in the 040.5 implementation record. After that, the user decides
+  PR/merge/release, and Parent 041 (BioLogic .mpr) may be based on the merged main.
 ```
 
 (This block was left at its original 040.1-creation-time value through 040.2–040.4 — only the
@@ -290,6 +292,31 @@ not restated here as current fact.
   invalidation this release, narrower than 040.3's (per-kind, Time/Capacity only). Both should be
   named together in release notes. Manual browser matrix remains NOT RUN by anyone.
 - Active child advances to **040.5**.
+
+### 2026-08-13 — 040.5 REVIEW-CLEAN — PARENT 040 FEATURE_COMPLETE
+
+- 040.5 implemented (`6f4e87f`, `0d673ff`), reviewed, approved with no findings. Canonical review
+  (which also contains the fresh cumulative Parent 040 review):
+  `reviews/040.5-existing-format-regression-and-architecture-closure-review.md`.
+- Final scientific check: the reviewer's baseline returned ALL IDENTICAL for all four golden `.ndax`
+  sources against the merge base. No golden moved in this child.
+- Reviewer re-ran the format-neutral audit independently: no genuine format reference exists in
+  `calc.py`, `dcir.py`, `chargeability.py`, `rate_capability.py`, `step_blocks.py`, `stitch.py` or
+  `protocol.py`. Parent acceptance criterion 10 satisfied.
+- `tests/test_mixed_parser_integration.py` verified mock-free: both sources registered through real
+  `scanner.ingest_path(..., parse_now=True)`.
+- The dev seed script's three safety guards were tested empirically, not read: it refuses an unset
+  `CELLXPLORER_DATA`, a `.cellxplorer`/`.cellxplorer-beta` target, and any directory already holding
+  `cellxplorer.db`. The real library is unreachable by it.
+- 040.3's deferred `"mixed"` sentinel item was closed here with a tested policy helper and tooltip.
+- `python scripts\preflight.py --no-cache`: 5/5, zero SKIP lines. `CALC_VERSION` unchanged,
+  `models.py` untouched, no migration anywhere in the parent.
+- **Outstanding and owned by the user:** the manual browser checklist. Not run by implementer or
+  reviewer. The two-electrode "no selector" regression is checkable today; the three-electrode half
+  needs the dev seed script and stays unverified against real data until Parent 041.
+- Project-context drift in `~/Downloads/CELLXPLORER_ARCHITECTURE.md` reported, deliberately not
+  applied — those files live outside the repository and their own maintenance rules require explicit
+  user approval.
 
 ### 2026-08-13 — 040.5 IMPLEMENTED, AWAITING REVIEW
 
