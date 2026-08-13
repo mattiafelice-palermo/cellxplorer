@@ -371,5 +371,5 @@ PyInstaller collection-list change, no new dependency).
 - **`ensure_cell_caches`** — deleted rather than wired; see dedicated section above.
 - **Stable→Beta marker** — kept; see dedicated section above.
 
-**Implementation SHA:** recorded after commit below.
+**Implementation SHA:** `4dc7e9e1133a5164e668e42fa1371290dd95272a`.
 **Review:** pending.
