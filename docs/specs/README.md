@@ -6,6 +6,24 @@
   Part B reclaims cache directories whose hash the database no longer knows (779 dirs / 1.64 GB
   measured on a real library) plus superseded parser-identity generations, without ever deleting a
   cache pinned by a saved analysis or belonging to an offline source. **Plan.**
+- [`041-biologic-mpr-gcpl-support.md`](041-biologic-mpr-gcpl-support.md)
+  adds independently authored BioLogic EC-Lab `.mpr` support for the verified GCPL/GCPL6 family,
+  mapping into the canonical cycling, protocol, per-source cache/provenance, import, packaged-runtime,
+  and generic three-electrode Time/Capacity paths. Implement only through six sequential children on
+  `feature/biologic-mpr-gcpl-support`:
+  - [`041.1-independent-mpr-container-and-data-reader.md`](041.1-independent-mpr-container-and-data-reader.md)
+    — independent modular-container, VMP data-block, NumPy bulk decode, and fail-closed reader.
+  - [`041.2-gcpl-canonical-timeseries-mapping.md`](041.2-gcpl-canonical-timeseries-mapping.md)
+    — deterministic GCPL cycle/step/status/time/current/capacity/energy mapping into canonical raw data.
+  - [`041.3-gcpl-settings-protocol-and-three-electrode-semantics.md`](041.3-gcpl-settings-protocol-and-three-electrode-semantics.md)
+    — settings/log metadata, declared protocol, capabilities, and Ewe/Ece/Ecell semantics.
+  - [`041.4-mpr-import-source-lifecycle-and-packaging.md`](041.4-mpr-import-source-lifecycle-and-packaging.md)
+    — bounded inspection, import/source lifecycle, picker policy, scanner, and packaged runtime.
+  - [`041.5-biologic-three-electrode-time-capacity-ux.md`](041.5-biologic-three-electrode-time-capacity-ux.md)
+    — generic Cell/Working/Counter potential selection and truthful source presentation.
+  - [`041.6-scientific-regression-real-file-parity-and-closure.md`](041.6-scientific-regression-real-file-parity-and-closure.md)
+    — MPR regression, analysis-family checks, performance/licensing audit, documentation, and final review.
+  **Plan.** Implementer/reviewer coordination is tracked in the active Codex task; no repository ledger is required.
 - [`040-canonical-cycler-data-architecture.md`](040-canonical-cycler-data-architecture.md)
   formalizes the existing Neware-like raw representation as a CellXplorer-owned canonical cycling
   contract, introduces source-format adapters and per-source parser/cache provenance, and adds an
