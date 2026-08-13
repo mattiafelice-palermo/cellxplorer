@@ -116,6 +116,13 @@ import {
   type ImportPreviewDraftState,
   type ImportPreviewState,
 } from "../importPreviewPolicy";
+import {
+  importInspectionCandidateMatchesSearch,
+  importInspectionFailurePathSet,
+  importSelectableInspectionPaths,
+  mergeImportInspectionFailures,
+  type ImportInspectionFailure,
+} from "../importInspectionPolicy";
 
 export type ImportDraft = ImportPreview & {
   cell_name: string;
@@ -332,6 +339,7 @@ function FolderImportSelectionModal({
   opened,
   rootName,
   candidates,
+  failures,
   loading,
   progress,
   onBack,
@@ -341,6 +349,7 @@ function FolderImportSelectionModal({
   opened: boolean;
   rootName: string;
   candidates: FolderImportCandidate[];
+  failures: ImportInspectionFailure[];
   loading: boolean;
   progress?: ReactNode;
   onBack: () => void;
@@ -353,8 +362,24 @@ function FolderImportSelectionModal({
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [rootsExpanded, setRootsExpanded] = useState(false);
   const [treeScrollTop, setTreeScrollTop] = useState(0);
+  const selectionSession = useRef<{
+    opened: boolean;
+    candidates: FolderImportCandidate[] | null;
+  }>({ opened: false, candidates: null });
+  const failedPathSet = useMemo(
+    () => importInspectionFailurePathSet(failures),
+    [failures],
+  );
+  const failureByPath = useMemo(
+    () => new Map(failures.map((failure) => [failure.path.toLocaleLowerCase(), failure])),
+    [failures],
+  );
+  const isFailed = useCallback(
+    (candidate: FolderImportCandidate) => failedPathSet.has((candidate.path ?? "").toLocaleLowerCase()),
+    [failedPathSet],
+  );
   const tree = useMemo(() => buildImportFolderTree(rootName, candidates), [rootName, candidates]);
-  const descendantKeysByNode = useMemo(() => {
+  const allDescendantKeysByNode = useMemo(() => {
     const result = new Map<string, string[]>();
     const visit = (node: FolderImportNode): string[] => {
       const keys = [
@@ -367,11 +392,24 @@ function FolderImportSelectionModal({
     visit(tree);
     return result;
   }, [tree]);
+  const descendantKeysByNode = useMemo(() => {
+    const result = new Map<string, string[]>();
+    const visit = (node: FolderImportNode): string[] => {
+      const keys = [
+        ...node.files.filter((candidate) => !isFailed(candidate)).map(folderCandidateKey),
+        ...node.children.flatMap(visit),
+      ];
+      result.set(node.key, keys);
+      return keys;
+    };
+    visit(tree);
+    return result;
+  }, [isFailed, tree]);
   const selectedCountsByNode = useMemo(() => {
     const result = new Map<string, number>();
     const visit = (node: FolderImportNode): number => {
       const selectedFiles = node.files.reduce(
-        (count, candidate) => count + (selected.has(folderCandidateKey(candidate)) ? 1 : 0),
+        (count, candidate) => count + (!isFailed(candidate) && selected.has(folderCandidateKey(candidate)) ? 1 : 0),
         0,
       );
       const selectedChildren = node.children.reduce((count, child) => count + visit(child), 0);
@@ -381,7 +419,7 @@ function FolderImportSelectionModal({
     };
     visit(tree);
     return result;
-  }, [selected, tree]);
+  }, [isFailed, selected, tree]);
   const focusedCandidate =
     candidates.find((candidate) => folderCandidateKey(candidate) === focusedKey) ?? null;
   const previewQuery = useQuery({
@@ -396,15 +434,30 @@ function FolderImportSelectionModal({
   });
 
   useEffect(() => {
-    if (opened) {
-      setSelected(new Set(candidates.map(folderCandidateKey)));
-      setSearch("");
-      setLastSelected(null);
-      setFocusedKey(null);
-      setRootsExpanded(false);
-      setTreeScrollTop(0);
-    }
-  }, [opened, candidates]);
+    const newSelectionSession = opened && (
+      !selectionSession.current.opened
+      || selectionSession.current.candidates !== candidates
+    );
+    selectionSession.current = {
+      opened,
+      candidates: opened ? candidates : null,
+    };
+    if (!newSelectionSession) return;
+    setSelected(new Set(candidates.filter((candidate) => !isFailed(candidate)).map(folderCandidateKey)));
+    setSearch("");
+    setLastSelected(null);
+    setFocusedKey(null);
+    setRootsExpanded(false);
+    setTreeScrollTop(0);
+  }, [candidates, isFailed, opened]);
+
+  useEffect(() => {
+    if (failures.length === 0) return;
+    setSelected((current) => {
+      const next = new Set(importSelectableInspectionPaths([...current], failures));
+      return next.size === current.size ? current : next;
+    });
+  }, [failures]);
 
   useEffect(() => {
     setTreeScrollTop(0);
@@ -418,7 +471,9 @@ function FolderImportSelectionModal({
       const folderMatched = parentMatched || node.name.toLocaleLowerCase().includes(query);
       const files = folderMatched
         ? node.files
-        : node.files.filter((candidate) => candidate.relative_path.toLocaleLowerCase().includes(query));
+        : node.files.filter((candidate) =>
+          importInspectionCandidateMatchesSearch(candidate.filename, candidate.relative_path, query),
+        );
       return [
         ...node.children.flatMap((child) => collect(child, folderMatched)),
         ...files,
@@ -426,19 +481,26 @@ function FolderImportSelectionModal({
     };
     return collect(tree, false);
   }, [tree, search]);
-  const visibleKeys = useMemo(() => visibleCandidates.map(folderCandidateKey), [visibleCandidates]);
+  const visibleAllKeys = useMemo(
+    () => visibleCandidates.map(folderCandidateKey),
+    [visibleCandidates],
+  );
+  const visibleSelectableKeys = useMemo(
+    () => visibleCandidates.filter((candidate) => !isFailed(candidate)).map(folderCandidateKey),
+    [isFailed, visibleCandidates],
+  );
 
   const toggleFile = (candidate: FolderImportCandidate, shiftKey: boolean, ctrlKey: boolean) => {
     const key = folderCandidateKey(candidate);
     setSelected((current) => {
       const next = new Set(current);
       if (shiftKey && lastSelected) {
-        const from = visibleKeys.indexOf(lastSelected);
-        const to = visibleKeys.indexOf(key);
+        const from = visibleSelectableKeys.indexOf(lastSelected);
+        const to = visibleSelectableKeys.indexOf(key);
         if (from >= 0 && to >= 0) {
           const [start, end] = from < to ? [from, to] : [to, from];
           const shouldSelect = !next.has(key);
-          visibleKeys.slice(start, end + 1).forEach((item) =>
+          visibleSelectableKeys.slice(start, end + 1).forEach((item) =>
             shouldSelect ? next.add(item) : next.delete(item)
           );
           return next;
@@ -468,7 +530,7 @@ function FolderImportSelectionModal({
 
   const visibleRows = useMemo<FolderImportTreeRow[]>(() => {
     const query = search.trim();
-    const visibleKeySet = query ? new Set(visibleKeys) : null;
+    const visibleKeySet = query ? new Set(visibleAllKeys) : null;
     const rows: FolderImportTreeRow[] = [];
     const append = (node: FolderImportNode, depth: number) => {
       const filteredFiles = visibleKeySet
@@ -476,7 +538,7 @@ function FolderImportSelectionModal({
         : node.files;
       const filteredChildren = visibleKeySet
         ? node.children.filter((child) =>
-            (descendantKeysByNode.get(child.key) ?? []).some((key) => visibleKeySet.has(key)),
+            (allDescendantKeysByNode.get(child.key) ?? []).some((key) => visibleKeySet.has(key)),
           )
         : node.children;
       if (visibleKeySet && filteredFiles.length === 0 && filteredChildren.length === 0) return;
@@ -486,7 +548,7 @@ function FolderImportSelectionModal({
     };
     append(tree, 0);
     return rows;
-  }, [descendantKeysByNode, search, tree, visibleKeys]);
+  }, [allDescendantKeysByNode, descendantKeysByNode, search, tree, visibleAllKeys]);
   const firstRenderedRow = Math.max(
     0,
     Math.floor(treeScrollTop / FOLDER_IMPORT_ROW_HEIGHT) - FOLDER_IMPORT_ROW_OVERSCAN,
@@ -499,10 +561,12 @@ function FolderImportSelectionModal({
   const leadingSpacerHeight = firstRenderedRow * FOLDER_IMPORT_ROW_HEIGHT;
   const trailingSpacerHeight = (visibleRows.length - lastRenderedRow) * FOLDER_IMPORT_ROW_HEIGHT;
 
-  const selectedCandidates = candidates.filter((candidate) => selected.has(folderCandidateKey(candidate)));
+  const selectedCandidates = candidates.filter(
+    (candidate) => !isFailed(candidate) && selected.has(folderCandidateKey(candidate)),
+  );
   const selectionSummary = useMemo(
-    () => summarizeImportSelection(candidates, selected),
-    [candidates, selected],
+    () => summarizeImportSelection(candidates.filter((candidate) => !isFailed(candidate)), selected),
+    [candidates, isFailed, selected],
   );
   const timingEstimate = useMemo(
     () => estimateImportTiming(
@@ -521,6 +585,13 @@ function FolderImportSelectionModal({
       title="Choose files to import"
       step={2}
       titleInfo="Selected folders are expanded recursively. Use checkboxes to choose files and Preview to inspect them."
+      notice={failures.length > 0 ? (
+        <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Some files were excluded">
+          <Text size="sm">
+            {failures.length} file{failures.length === 1 ? " was" : "s were"} not readable and {failures.length === 1 ? "has" : "have"} been deselected. You can continue with the remaining {selectedCandidates.length} file{selectedCandidates.length === 1 ? "" : "s"}.
+          </Text>
+        </Alert>
+      ) : null}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       actions={
         <>
@@ -559,7 +630,10 @@ function FolderImportSelectionModal({
           <Button
             variant="default"
             onClick={() =>
-              setSelected((current) => new Set([...current, ...visibleCandidates.map(folderCandidateKey)]))
+              setSelected((current) => new Set([
+                ...current,
+                ...visibleCandidates.filter((candidate) => !isFailed(candidate)).map(folderCandidateKey),
+              ]))
             }
           >
             Select all
@@ -569,7 +643,9 @@ function FolderImportSelectionModal({
             onClick={() =>
               setSelected((current) => {
                 const next = new Set(current);
-                visibleCandidates.forEach((candidate) => next.delete(folderCandidateKey(candidate)));
+                visibleCandidates
+                  .filter((candidate) => !isFailed(candidate))
+                  .forEach((candidate) => next.delete(folderCandidateKey(candidate)));
                 return next;
               })
             }
@@ -667,6 +743,8 @@ function FolderImportSelectionModal({
                   }
                   const candidate = row.candidate;
                   const key = folderCandidateKey(candidate);
+                  const failed = isFailed(candidate);
+                  const failure = failureByPath.get((candidate.path ?? "").toLocaleLowerCase());
                   return (
                     <Group
                       key={key}
@@ -675,26 +753,27 @@ function FolderImportSelectionModal({
                       py={4}
                       px="xs"
                       ml={row.depth * 18}
-                      bg={selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
+                      bg={failed ? "light-dark(var(--mantine-color-orange-0), var(--mantine-color-dark-6))" : selected.has(key) ? "light-dark(var(--mantine-primary-color-0), var(--mantine-primary-color-9))" : undefined}
                       style={{
-                        cursor: "pointer",
+                        cursor: failed ? "not-allowed" : "pointer",
                         borderRadius: 4,
                         height: FOLDER_IMPORT_ROW_HEIGHT,
                         boxSizing: "border-box",
                         outline:
                           focusedKey === key ? "1px solid var(--mantine-primary-color-4)" : undefined,
                       }}
-                      onClick={(event) =>
-                        toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey)
-                      }
+                      onClick={(event) => {
+                        if (!failed) toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
+                      }}
                     >
                       <Checkbox
                         checked={selected.has(key)}
+                        disabled={failed}
                         readOnly
                         styles={{ input: { cursor: "pointer" } }}
                         onClick={(event) => {
                           event.stopPropagation();
-                          toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
+                          if (!failed) toggleFile(candidate, event.shiftKey, event.ctrlKey || event.metaKey);
                         }}
                       />
                       <IconFile size={16} color="var(--mantine-color-dimmed)" />
@@ -708,6 +787,11 @@ function FolderImportSelectionModal({
                       >
                         {candidate.filename}
                       </Text>
+                      {failed && (
+                        <Tooltip label={failure?.error ?? "This file could not be inspected."} multiline w={320} withArrow>
+                          <Badge color="red" variant="light" size="sm">Excluded</Badge>
+                        </Tooltip>
+                      )}
                       <Text size="xs" c="dimmed">
                         {formatBytes(candidate.size)}
                       </Text>
@@ -720,6 +804,7 @@ function FolderImportSelectionModal({
                           event.stopPropagation();
                           setFocusedKey(key);
                         }}
+                        disabled={failed}
                       >
                         {focusedKey === key ? "Previewing" : "Preview"}
                       </Button>
@@ -1327,25 +1412,34 @@ function ImportModal({
     cachePreparationActive,
   );
 
-  const continueInBackground = useCallback(async () => {
+  const continueInBackground = useCallback(() => {
     if (handoffPending) return;
     setClosingBranch(registrationUi.showDone ? "done" : "continue");
     setHandoffPending(true);
-    try {
-      // The registration job exposes its commit boundary before the modal can
-      // be detached. Refresh active library queries here, after that boundary,
-      // so the Cell Database never renders the pre-registration empty result
-      // that the initial 202 response may have cached.
-      await Promise.all([
-        qc.refetchQueries({ queryKey: ["cells"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["files"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["tree"], type: "active" }),
-        qc.refetchQueries({ queryKey: ["replicate-groups"], type: "active" }),
-      ]);
-      await onSaved();
-    } finally {
-      setHandoffPending(false);
-    }
+    // The registration job exposes its commit boundary before the modal can
+    // be detached. Start the active-library refreshes after that boundary, but
+    // do not make the modal wait for them: the query cache remains available
+    // after this editor unmounts and can finish refreshing in the background.
+    void Promise.all([
+      qc.refetchQueries({ queryKey: ["cells"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["files"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["tree"], type: "active" }),
+      qc.refetchQueries({ queryKey: ["replicate-groups"], type: "active" }),
+    ]).catch((error: unknown) => {
+      addDebugEvent("import:handoffRefreshFailed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    // Schedule the close separately so a slow or failed refresh can never keep
+    // the user on Step 3. Promise.resolve().then() also captures a synchronous
+    // exception from an onSaved implementation without an unhandled rejection.
+    void Promise.resolve()
+      .then(() => onSaved())
+      .catch((error: unknown) => {
+        addDebugEvent("import:handoffCloseFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }, [handoffPending, qc, onSaved, registrationUi.showDone]);
 
   useEffect(() => {
@@ -2413,6 +2507,7 @@ export function ImportCellsLauncher({
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
   const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
@@ -2425,6 +2520,7 @@ export function ImportCellsLauncher({
     setModalOpen(false);
     setDrafts([]);
     setActive(0);
+    setInspectionFailures([]);
   };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
@@ -2451,8 +2547,17 @@ export function ImportCellsLauncher({
       ));
       setProgressStage(null);
       setProgressToken(null);
-      setFolderModalOpen(false);
-      hydrateInspection(result, append);
+      const accumulatedFailures = mergeImportInspectionFailures(
+        inspectionFailures,
+        result.failures,
+      );
+      setInspectionFailures(accumulatedFailures);
+      if (result.failures.length > 0) {
+        setFolderModalOpen(true);
+      } else {
+        setFolderModalOpen(false);
+        hydrateInspection(result, append);
+      }
     },
     onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
   });
@@ -2483,6 +2588,7 @@ export function ImportCellsLauncher({
         return;
       }
       setSourceAppend(append);
+      setInspectionFailures([]);
       setFolderRootName("Selected sources");
       setFolderCandidates(candidates);
       setSourcePickerOpen(false);
@@ -2493,6 +2599,7 @@ export function ImportCellsLauncher({
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setInspectionFailures([]);
     setProgressStage(null);
     setProgressToken(null);
     if (!append) {
@@ -2544,6 +2651,7 @@ export function ImportCellsLauncher({
         opened={folderModalOpen}
         rootName={folderRootName}
         candidates={folderCandidates}
+        failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
           <ImportProgressPanel
@@ -2554,9 +2662,13 @@ export function ImportCellsLauncher({
         ) : undefined}
         onBack={() => {
           setFolderModalOpen(false);
+          setInspectionFailures([]);
           setSourcePickerOpen(true);
         }}
-        onClose={() => setFolderModalOpen(false)}
+        onClose={() => {
+          setFolderModalOpen(false);
+          setInspectionFailures([]);
+        }}
         onConfirm={confirmFolderSelection}
       />
       <ImportModal
@@ -2613,6 +2725,7 @@ export function InboxPage() {
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
   const [folderCandidates, setFolderCandidates] = useState<FolderImportCandidate[]>([]);
+  const [inspectionFailures, setInspectionFailures] = useState<ImportInspectionFailure[]>([]);
   const [progressStage, setProgressStage] = useState<ImportProgressStage | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
   const [blockingInspectionSeconds, setBlockingInspectionSeconds] = useState(0);
@@ -2638,6 +2751,7 @@ export function InboxPage() {
     setModalOpen(false);
     setDrafts([]);
     setActive(0);
+    setInspectionFailures([]);
   };
 
   const hydrateInspection = (result: ImportInspectResult, append: boolean) => {
@@ -2664,8 +2778,17 @@ export function InboxPage() {
       ));
       setProgressStage(null);
       setProgressToken(null);
-      setFolderModalOpen(false);
-      hydrateInspection(result, append);
+      const accumulatedFailures = mergeImportInspectionFailures(
+        inspectionFailures,
+        result.failures,
+      );
+      setInspectionFailures(accumulatedFailures);
+      if (result.failures.length > 0) {
+        setFolderModalOpen(true);
+      } else {
+        setFolderModalOpen(false);
+        hydrateInspection(result, append);
+      }
     },
     onError: (e: Error) => notifications.show({ message: e.message, color: "red" }),
   });
@@ -2706,6 +2829,7 @@ export function InboxPage() {
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setInspectionFailures([]);
     setProgressStage(null);
     setProgressToken(null);
     if (!append) {
@@ -2768,6 +2892,7 @@ export function InboxPage() {
         opened={folderModalOpen}
         rootName={folderRootName}
         candidates={folderCandidates}
+        failures={inspectionFailures}
         loading={inspectPaths.isPending}
         progress={progressStage === "inspect" ? (
           <ImportProgressPanel
@@ -2778,9 +2903,13 @@ export function InboxPage() {
         ) : undefined}
         onBack={() => {
           setFolderModalOpen(false);
+          setInspectionFailures([]);
           setSourcePickerOpen(true);
         }}
-        onClose={() => setFolderModalOpen(false)}
+        onClose={() => {
+          setFolderModalOpen(false);
+          setInspectionFailures([]);
+        }}
         onConfirm={confirmFolderSelection}
       />
 

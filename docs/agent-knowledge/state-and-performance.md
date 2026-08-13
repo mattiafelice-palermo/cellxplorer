@@ -43,6 +43,15 @@ metadata so final registration can reuse the header only when the same fingerpri
 final checksum and transactional duplicate checks remain mandatory. Folder layout should not
 materially affect this boundary because it receives file paths after discovery.
 
+Inspection is a per-file terminal boundary: source-level parser, metadata, or filesystem errors are
+returned as failure outcomes for that path while other selected sources continue to the review
+modal. The endpoint returns readable previews in `files` and `{path, filename, error}` entries in
+`failures`, marks failed background-job items as excluded, and completes the inspection job after
+every outcome has been accounted for. The UI keeps failed rows searchable, marks them with the
+reported error, and removes them from selection and folder counts. Exceptions from the worker
+executor itself still fail the request because they indicate infrastructure failure rather than a
+bad source file.
+
 The final import editor keeps preview work lazy: each staged draft owns an explicit idle/loading/
 ready/error state, and only the active source may request a capacity preview. Preview requests carry
 the inspection hash plus size/`mtime_ns`; matching fingerprints reuse that verified hash, while a
@@ -71,6 +80,17 @@ opened before the upgrade keeps working. That cache is bounded at `_HEADER_CACHE
 larger batch reopens the evicted files' headers at ~6 ms each. Do not try to pool that fallback:
 header parsing is GIL-bound, and measurement puts a four-thread pool at 0.94x and a four-process
 pool at 0.57x of serial.
+
+Structured Neware Excel parsing uses a reader ladder in `backend/app/services/neware_excel.py`:
+`fastexcel` performs the primary full-width columnar read, pandas' `calamine` engine is the
+validated middle fallback, and the existing read-only openpyxl path is the compatibility fallback.
+All three paths resolve the same explicit header aliases, reject ambiguous or malformed rows, and
+produce the same canonical frame and step-summary validation; the parser revision must change when
+those semantics change. `backend/requirements.txt` pins both native readers so the packaged sidecar
+does not silently drift. Keep a synthetic exact-frame parity test for each available fallback and
+benchmark at least one representative large workbook when changing this ladder. On the supplied
+301k-row export, the measured calamine path was ~24 s versus ~85 s for openpyxl, while fastexcel is
+the faster primary path; this is still parsing work and belongs outside the registration transaction.
 
 Registration does **not** re-hash a submitted source. `_prepare_import_source_file` reuses the
 inspected hash whenever size and `mtime_ns` still match, and a real 200-file registration performs

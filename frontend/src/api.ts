@@ -1786,6 +1786,11 @@ export interface ImportPreview {
 
 export interface ImportInspectResult {
   files: ImportPreview[];
+  failures: {
+    path: string;
+    filename: string;
+    error: string;
+  }[];
 }
 
 export interface ImportFolderFile {

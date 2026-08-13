@@ -115,6 +115,15 @@ class FileInspection:
     metadata: dict
 
 
+@dataclass(frozen=True)
+class FileInspectionOutcome:
+    """The terminal result for one selected source inspection."""
+
+    path: str
+    inspection: FileInspection | None
+    error: str | None
+
+
 def build_identity_snapshot(db: Session) -> ImportIdentitySnapshot:
     """Load all identity data once, with relationships eager-loaded."""
     rows = (
@@ -242,25 +251,44 @@ def inspect_file(path_string: str) -> FileInspection:
     )
 
 
+def _inspect_file_outcome(path_string: str) -> FileInspectionOutcome:
+    """Convert source-level inspection errors into a picklable batch outcome."""
+
+    try:
+        return FileInspectionOutcome(
+            path=path_string,
+            inspection=inspect_file(path_string),
+            error=None,
+        )
+    except Exception as exc:
+        message = str(exc).strip() or f"Could not inspect {Path(path_string).name or path_string}."
+        return FileInspectionOutcome(
+            path=path_string,
+            inspection=None,
+            error=message,
+        )
+
+
 def inspect_files(
     paths: list[str],
     *,
     on_completed: Callable[[str], None] | None = None,
     on_phase: Callable[[dict], None] | None = None,
     executor_cls: type | None = None,
-) -> list[FileInspection]:
+) -> list[FileInspectionOutcome]:
     """Inspect paths with an adaptive strategy, restoring input order before returning.
 
     One source is inspected in the caller's worker first. Its result is retained, so the sample
     both calibrates the user-facing estimate and becomes the first batch result. Small batches then
     continue serially; larger batches pay the process-pool startup cost only when there is enough
-    remaining work to amortize it.
+    remaining work to amortize it. Every path receives an outcome, so one unreadable source does
+    not prevent the remaining files from reaching the import review.
     """
     if not paths:
         return []
 
     total = len(paths)
-    results: list[FileInspection | None] = [None] * len(paths)
+    results: list[FileInspectionOutcome | None] = [None] * len(paths)
     strategy = inspection_strategy(total)
     worker_count = inspection_worker_count(total) if strategy == "multiprocessing" else 1
 
@@ -286,7 +314,7 @@ def inspect_files(
         progress_percent=0.0,
     )
     sample_started = perf_counter()
-    sampled = inspect_file(paths[0])
+    sampled = _inspect_file_outcome(paths[0])
     sample_seconds = perf_counter() - sample_started
     results[0] = sampled
     if on_completed is not None:
@@ -367,16 +395,18 @@ def inspect_files(
         estimate_scope="total",
     )
 
-    def store_result(index: int, inspected: FileInspection) -> None:
+    def store_result(index: int, outcome: FileInspectionOutcome) -> None:
         # Process workers have independent in-memory caches. Keep the parent cache authoritative
         # for the registration step and for subsequent requests in this backend process.
-        remember_header_metadata(
-            inspected.hash,
-            inspected.size,
-            inspected.mtime_ns,
-            inspected.metadata,
-        )
-        results[index] = inspected
+        if outcome.inspection is not None:
+            inspected = outcome.inspection
+            remember_header_metadata(
+                inspected.hash,
+                inspected.size,
+                inspected.mtime_ns,
+                inspected.metadata,
+            )
+        results[index] = outcome
         if on_completed is not None:
             on_completed(paths[index])
         completed = sum(result is not None for result in results)
@@ -397,7 +427,7 @@ def inspect_files(
 
     if strategy == "serial" and executor_cls is None:
         for index, path in enumerate(remaining, start=1):
-            store_result(index, inspect_file(path))
+            store_result(index, _inspect_file_outcome(path))
     else:
         executor = (
             process_pool_executor(worker_count)
@@ -405,13 +435,18 @@ def inspect_files(
             else executor_cls(max_workers=worker_count)
         )
         with executor:
-            futures: dict[Future[FileInspection], int] = {
-                executor.submit(inspect_file, path): index
+            futures: dict[Future[FileInspectionOutcome], int] = {
+                executor.submit(_inspect_file_outcome, path): index
                 for index, path in enumerate(remaining, start=1)
             }
             try:
                 for future in as_completed(futures):
-                    store_result(futures[future], future.result())
+                    index = futures[future]
+                    # Source-level errors are converted by the top-level
+                    # wrapper. Exceptions from the executor itself (for
+                    # example a broken process pool) must propagate so the
+                    # job is not falsely reported as a successful inspection.
+                    store_result(index, future.result())
             except Exception:
                 for future in futures:
                     future.cancel()
