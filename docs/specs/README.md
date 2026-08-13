@@ -405,6 +405,7 @@ Rules:
 - [040.3-per-source-parser-cache-stitching-and-provenance-review.md](reviews/040.3-per-source-parser-cache-stitching-and-provenance-review.md)
 - [040.4-canonical-multi-voltage-path-review.md](reviews/040.4-canonical-multi-voltage-path-review.md)
 - [040.5-existing-format-regression-and-architecture-closure-review.md](reviews/040.5-existing-format-regression-and-architecture-closure-review.md)
+- [042-parser-identity-upgrade-preparation-review.md](reviews/042-parser-identity-upgrade-preparation-review.md)
 
 ## Index
 
