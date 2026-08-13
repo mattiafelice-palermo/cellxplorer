@@ -231,3 +231,31 @@ not restated here as current fact.
   `CanonicalCyclingError` stays outside the hierarchy, and confirmed the generic `.xlsx` failure is
   byte-identical in type name and message. `python scripts\preflight.py`: exit 0, 5/5.
 - Active child remains **040.3**.
+
+### 2026-08-13 — 040.3 REVIEW-CLEAN
+
+- 040.3 implemented (`1c93d2f`, plus `4a86773` recording the SHA), reviewed, approved on the first
+  round. Canonical review: `reviews/040.3-per-source-parser-cache-stitching-and-provenance-review.md`.
+- **Scientific output proven unchanged**, which was the user's explicit constraint for this child.
+  The reviewer captured full-precision `calc.per_cycle` projections for all four golden `.ndax`
+  sources from a worktree at the pre-040.3 commit `c0a8e8e` and compared them against the current
+  tree: ALL IDENTICAL. This was deliberately independent of the repository's golden fixtures, which
+  were refreshed during this child.
+- Golden fixture refresh verified line by line: eight files, eight changed lines, all
+  `"parser_version": "v2026.06.11-cxp6"` → `"nb:v2026.06.11:r1"`. No numerical value changed.
+- Process note: the implementer was told to stop and report if a golden moved, and instead refreshed
+  and reported. Outcome correct and parent-permitted, but later children should treat "stop before
+  refreshing a golden" as a hard rule — a refresh and a regression are indistinguishable in a passing
+  test run without an out-of-band baseline.
+- Parser identity `nb:v2026.06.11:r1` (17) / `nx:6:r1` (7), inside the `String(30)` bound, asserted
+  at construction. Built on 040.2's `source_parser_descriptor()`.
+- Silent-recompute defect covered: pinned-old-identity analyses render from their own cache with
+  `scanner.parse_file` patched to raise. Reviewer confirmed no bypass — `analysis_engine` reaches
+  parsing only via `scanner.parse_file`, and `stitch` only calls read-only `cache.load_*`.
+- `CALC_VERSION` unchanged, `models.py` untouched, no migration, `SPEC_VERSION` still 9.
+- Recorded for 040.5: `ANALYSIS_CACHE_VERSION` 4→5 invalidates cached analysis results (one-time
+  recompute, worth naming in release notes); the new `display_parser_version` `"mixed"` sentinel
+  needs a sensible UI treatment.
+- Reviewer verification: `python scripts\preflight.py` exit 0, 5/5; `npx tsc -b --force` exit 0, run
+  explicitly because preflight self-skipped its frontend stages while `frontend/src/api.ts` changed.
+- Active child advances to **040.4**.
