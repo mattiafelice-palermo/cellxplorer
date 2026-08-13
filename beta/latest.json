@@ -1,15 +1,15 @@
 {
-  "version": "0.22.0-beta.2",
-  "notes": "### New features\n\n- Apply a selected plot palette across every series while preserving non-colour series settings.\n- Start DCIR setup from an empty plot, show protocol provenance, and choose the protocol before its DCIR pair.\n\n### Bug fixes\n\n- Close the import modal when registration and cache preparation finish, and clear stale Activity failure indicators.\n- Fix the DCIR cell selector crash when non-applicable cells are grouped.\n- Remove obsolete series drop-shadow styling and keep palette application from leaving stale per-series colour pins.",
-  "pub_date": "2026-08-12T10:48:24.626Z",
+  "version": "0.22.0-beta.4",
+  "notes": "- Speed up structured Neware Excel parsing and close completed import handoffs immediately.",
+  "pub_date": "2026-08-13T06:48:40.323Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVF2NE1sM2ZRL2hqZmREaHdBVkdFek5hWXJ4MndhK1Zrd2o4L2J4OGNVcDI5OHJxU3J3b0oya3VoOCtLV1B4aGxsazl1TVhNYVU0cU45aUlMWkU0TGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTMxNjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS4yX3g2NC1zZXR1cC5leGUKa2N3S3FkOGNYK2RJMklaMEgvdjBwMlhqQ3NoN2FGRm1kQVR2S2gzcExrSlAxQk95bE9pclNCZmNBYVNoZmh3MGVpdjRWTGlxdlY1UmRVbHpvbldPQlE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/511448086"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVNERnVldUV6UHVHdUs4SHl0QXRPcysvYUtJVWF4K21aWGJUc1lxZnpSYVl5Q1ZJSlUzd0txM1NudDRobkJmYWJQc0pCODkxTnRCVnZTYk0weGZ3TWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjAzNzE1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS40X3g2NC1zZXR1cC5leGUKQ3VkZ09RS2lqdTNXb3YyOXp3VWNPdWRtTm1RMnlSMU9aT2tHZFJxSFhjbzVSdXYvOG9RK3prTll6bjF2ZjVnSjBLbW9lWVhGdVJSYnU3U1NreXZJRHc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512616542"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVF2NE1sM2ZRL2hqZmREaHdBVkdFek5hWXJ4MndhK1Zrd2o4L2J4OGNVcDI5OHJxU3J3b0oya3VoOCtLV1B4aGxsazl1TVhNYVU0cU45aUlMWkU0TGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTMxNjk5CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS4yX3g2NC1zZXR1cC5leGUKa2N3S3FkOGNYK2RJMklaMEgvdjBwMlhqQ3NoN2FGRm1kQVR2S2gzcExrSlAxQk95bE9pclNCZmNBYVNoZmh3MGVpdjRWTGlxdlY1UmRVbHpvbldPQlE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/511448086"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSVNERnVldUV6UHVHdUs4SHl0QXRPcysvYUtJVWF4K21aWGJUc1lxZnpSYVl5Q1ZJSlUzd0txM1NudDRobkJmYWJQc0pCODkxTnRCVnZTYk0weGZ3TWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjAzNzE1CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIyLjAtYmV0YS40X3g2NC1zZXR1cC5leGUKQ3VkZ09RS2lqdTNXb3YyOXp3VWNPdWRtTm1RMnlSMU9aT2tHZFJxSFhjbzVSdXYvOG9RK3prTll6bjF2ZjVnSjBLbW9lWVhGdVJSYnU3U1NreXZJRHc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/512616542"
     }
   }
 }
