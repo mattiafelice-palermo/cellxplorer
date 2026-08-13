@@ -1,12 +1,11 @@
 # Feature specs
 
-- [`044-orphaned-and-superseded-cache-reclamation.md`](044-orphaned-and-superseded-cache-reclamation.md)
-  reclaims cache directories whose hash the database no longer knows (779 dirs / 1.64 GB measured on
-  a real library) and superseded parser-identity generations, without ever deleting a cache pinned by
-  a saved analysis or belonging to an offline source. **Plan.**
-- [`043-project-context-synchronization.md`](043-project-context-synchronization.md)
-  folds Parent 040 into the project-context architecture file now that 040 is merged, and closes the
-  process gap that let those files drift 405 commits. **Plan.**
+- [`043-context-sync-and-cache-reclamation.md`](043-context-sync-and-cache-reclamation.md)
+  two independent maintenance parts, to be done in separate sessions. Part A folds Parent 040 into the
+  project-context architecture file and closes the process gap that let those files drift 405 commits.
+  Part B reclaims cache directories whose hash the database no longer knows (779 dirs / 1.64 GB
+  measured on a real library) plus superseded parser-identity generations, without ever deleting a
+  cache pinned by a saved analysis or belonging to an offline source. **Plan.**
 - [`040-canonical-cycler-data-architecture.md`](040-canonical-cycler-data-architecture.md)
   formalizes the existing Neware-like raw representation as a CellXplorer-owned canonical cycling
   contract, introduces source-format adapters and per-source parser/cache provenance, and adds an
