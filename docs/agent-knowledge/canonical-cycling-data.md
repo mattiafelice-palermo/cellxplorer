@@ -192,10 +192,16 @@ A new adapter (e.g. a future BioLogic `.mpr` adapter, Parent 041) must:
    actually supports them — absence is a capability fact, never a reason to
    fabricate a value (in particular: never derive a timestamp from file
    modified time, never invent a missing cycle label);
-5. call `canonical_cycling.validate_raw_timeseries(df)` at its own full-parse
-   boundary (or rely on the shared boundary in `parsing.parse_timeseries` if
-   the adapter is dispatched from there) before the frame reaches cache
-   or scientific code.
+5. get validated by `canonical_cycling.validate_raw_timeseries(df)` before the
+   frame reaches scientific code. Today that happens in `cache.build` /
+   `cache.build_write_behind` (see "Where validation runs" below) — being
+   dispatched from `parsing.parse_timeseries` does **not** get an adapter
+   validation for free, because `parse_timeseries` itself deliberately does
+   not call the validator. A new adapter added under `parsing.parse_timeseries`
+   inherits validation automatically only because every production caller of
+   `parse_timeseries` is `cache.build`/`cache.build_write_behind`; an adapter
+   that is invoked some other way must call `validate_raw_timeseries` itself
+   at its own full-parse boundary.
 
 A worked example of an adapter doing this today, imperfectly parallel to a
 future format, is `neware_excel.py`: it reconstructs `step` from
@@ -257,12 +263,33 @@ expose them anywhere.
 
 ## Where validation runs
 
-`canonical_cycling.validate_raw_timeseries` is called once, inside
-`parsing.parse_timeseries` — the single dispatch point both binary Neware and
-structured Excel parsing already funnel through
-(`backend/app/services/parsing.py`). Both cache-build entry points
-(`cache.build`, `cache.build_write_behind`) call `parsing.parse_timeseries`,
-so validation runs exactly once per real parse with no duplication.
+`canonical_cycling.validate_raw_timeseries` is called in `cache.py`, in both
+`build()` and `build_write_behind()`, immediately after each calls
+`parsing.parse_timeseries(source_path)` and before the result reaches
+`calc.per_cycle`. `build()` only validates when it actually parsed from
+source (`parsed_from_source`); a raw frame reloaded from an existing Parquet
+cache was already validated when it was first written, so it is not
+re-coerced/re-checked on every read. `cache.build`/`cache.build_write_behind`
+are the only production callers of `parsing.parse_timeseries`, so this is
+still a single, non-duplicated boundary — it is just one level below the
+dispatch point rather than inside it.
+
+Validation is deliberately **not** inside `parsing.parse_timeseries` itself
+(`backend/app/services/parsing.py`), even though that is the single dispatch
+point both binary Neware and structured Excel parsing funnel through.
+`tests/test_neware_excel.py`'s
+`test_parser_dispatch_preserves_binary_and_excel_boundaries` calls
+`parsing.parse_timeseries` directly with deliberately minimal/mocked frames
+to test dispatch mechanics in isolation, not the canonical contract;
+validating inside `parse_timeseries` would reject those frames and break that
+test. `parse_timeseries`'s own docstring records this explicitly.
+
+**Practical consequence for a future adapter**: being dispatched from
+`parsing.parse_timeseries` does not, by itself, get an adapter validated.
+Today's binary/Excel adapters only end up validated because their one
+production path to a cache is `cache.build`/`cache.build_write_behind`. A
+future adapter invoked through any other path (a new cache entry point, a
+standalone import tool, etc.) must call `validate_raw_timeseries` itself.
 
 It deliberately does **not** run on:
 
@@ -271,7 +298,8 @@ It deliberately does **not** run on:
 - `import_inspection.py` — calls `parsing.read_header_metadata` only;
 - `scanner.py`'s non-cache-build paths that also read metadata only.
 
-Direct unit tests that call `neware_excel.parse_timeseries` (bypassing
-`parsing.parse_timeseries`) intentionally do not trigger this validation —
-they exercise the Excel adapter's own contract in isolation, which is a
-narrower and stricter set of checks than the canonical validator applies.
+Any direct call to `parsing.parse_timeseries` or `neware_excel.parse_timeseries`
+that bypasses `cache.build`/`cache.build_write_behind` — including the
+dispatch-mechanics test above and direct Excel-parser unit tests — does not
+trigger canonical validation. Excel-parser unit tests exercise the adapter's
+own (narrower, stricter) contract in isolation instead.

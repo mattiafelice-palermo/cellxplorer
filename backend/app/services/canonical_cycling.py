@@ -149,10 +149,18 @@ def _check_numeric_column(
     column: str,
     *,
     allow_negative: bool = True,
+    numeric: pd.Series | None = None,
 ) -> None:
+    """Check finiteness/sign of ``column``.
+
+    ``numeric`` lets a caller that already ran `_numeric_with_malformed_check`
+    (e.g. to also run `_check_integer_like`) pass the coerced series down
+    instead of coercing the same column twice.
+    """
     if column not in df.columns:
         return
-    numeric = _numeric_with_malformed_check(df, column)
+    if numeric is None:
+        numeric = _numeric_with_malformed_check(df, column)
     present = numeric.notna().to_numpy()
     values = numeric.to_numpy(dtype="float64")
 
@@ -171,10 +179,16 @@ def _check_numeric_column(
             )
 
 
-def _check_integer_like(df: pd.DataFrame, column: str) -> None:
+def _check_integer_like(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    numeric: pd.Series | None = None,
+) -> None:
     if column not in df.columns:
         return
-    numeric = _numeric_with_malformed_check(df, column)
+    if numeric is None:
+        numeric = _numeric_with_malformed_check(df, column)
     present = numeric.notna().to_numpy()
     if not present.any():
         return
@@ -197,8 +211,9 @@ def _check_record_index(df: pd.DataFrame) -> None:
         raise CanonicalCyclingError(
             "canonical column 'record_index' must not contain missing values"
         )
-    _check_numeric_column(df, column)
-    _check_integer_like(df, column)
+    numeric = _numeric_with_malformed_check(df, column)
+    _check_numeric_column(df, column, numeric=numeric)
+    _check_integer_like(df, column, numeric=numeric)
     if bool(series.duplicated().any()):
         raise CanonicalCyclingError(
             "canonical column 'record_index' must be unique within one source"
@@ -209,18 +224,27 @@ def _check_cycle(df: pd.DataFrame) -> None:
     column = "cycle"
     if column not in df.columns:
         return
-    _check_numeric_column(df, column)
-    _check_integer_like(df, column)
+    numeric = _numeric_with_malformed_check(df, column)
+    _check_numeric_column(df, column, numeric=numeric)
+    _check_integer_like(df, column, numeric=numeric)
 
 
 def _check_step_index(df: pd.DataFrame) -> None:
-    _check_numeric_column(df, "step_index")
-    _check_integer_like(df, "step_index")
+    column = "step_index"
+    if column not in df.columns:
+        return
+    numeric = _numeric_with_malformed_check(df, column)
+    _check_numeric_column(df, column, numeric=numeric)
+    _check_integer_like(df, column, numeric=numeric)
 
 
 def _check_step(df: pd.DataFrame) -> None:
-    _check_numeric_column(df, "step")
-    _check_integer_like(df, "step")
+    column = "step"
+    if column not in df.columns:
+        return
+    numeric = _numeric_with_malformed_check(df, column)
+    _check_numeric_column(df, column, numeric=numeric)
+    _check_integer_like(df, column, numeric=numeric)
 
 
 def _check_step_identity_consistency(df: pd.DataFrame) -> None:
@@ -253,8 +277,9 @@ def _check_total_time_s(df: pd.DataFrame) -> None:
     column = "total_time_s"
     if column not in df.columns:
         return
-    _check_numeric_column(df, column, allow_negative=False)
-    numeric = _numeric_with_malformed_check(df, column).to_numpy(dtype="float64")
+    numeric_series = _numeric_with_malformed_check(df, column)
+    _check_numeric_column(df, column, allow_negative=False, numeric=numeric_series)
+    numeric = numeric_series.to_numpy(dtype="float64")
     if len(numeric) < 2:
         return
     diffs = np.diff(numeric)
