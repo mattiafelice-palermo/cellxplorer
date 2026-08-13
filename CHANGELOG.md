@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.22.0-beta.6 - 2026-08-13
+
+### Bug fixes
+
+- Make All series line and marker styling apply to CE overlay traces.
+
 ## 0.22.0-beta.5 - 2026-08-13
 
 ### New features
