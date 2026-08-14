@@ -36,6 +36,7 @@ def _row(
     voltage_v: float | None = None,
     measured_current_ma: float | None = None,
     ns_changed: bool = False,
+    counter_incremented: bool = False,
 ) -> dict[str, object]:
     return {
         "total_time_s": time_s,
@@ -50,6 +51,7 @@ def _row(
         "voltage_v": ewe_v - ece_v if voltage_v is None else voltage_v,
         "measured_current_ma": control if measured_current_ma is None else measured_current_ma,
         "ns_changed": ns_changed,
+        "counter_incremented": counter_incremented,
     }
 
 
@@ -60,7 +62,7 @@ def _structured_records(
     direct_voltage: bool = True,
     step_time: bool = False,
 ) -> np.ndarray:
-    """Build semantic test records with independently verified optional fields."""
+    """Build byte-backed records plus test-only semantic fields at the mapper boundary."""
 
     extra = []
     if direct_voltage:
@@ -210,7 +212,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, ns_changed=True),
             _row(1.0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
+        with self.assertRaises(InvalidBiologicGcplError):
             _map_rows(rows)
 
     def test_zero_current_active_block_fails_closed(self) -> None:
@@ -218,7 +220,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, control=0.0, ns_changed=True),
             _row(1.0, control=0.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
+        with self.assertRaises(InvalidBiologicGcplError):
             _map_rows(rows)
 
     def test_capacity_transfer_during_rest_fails_closed(self) -> None:
@@ -226,15 +228,99 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
             _row(1.0, mode=MPR_MODE_REST, control=0.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
+        with self.assertRaises(InvalidBiologicGcplError):
             _map_rows(rows)
+
+    def test_nonzero_dedicated_current_during_rest_is_invalid(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                mode=MPR_MODE_REST,
+                control=0.0,
+                measured_current_ma=1.0,
+                ns_changed=True,
+            ),
+            _row(
+                1.0,
+                mode=MPR_MODE_REST,
+                control=0.0,
+                measured_current_ma=1.0,
+            ),
+        ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows, dedicated_current=True)
 
     def test_current_capacity_and_incremental_signs_must_agree(self) -> None:
         rows = [
             _row(0.0, control=3600.0, ns_changed=True),
             _row(1.0, control=3600.0, q_mAh=1.0, dq_mAh=-1.0),
         ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
+
+    def test_reversed_cv_to_cc_control_history_fails_closed(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                mode=MPR_MODE_POTENTIOSTATIC,
+                control=3.7,
+                measured_current_ma=3600.0,
+                ns_changed=True,
+            ),
+            _row(
+                1.0,
+                mode=MPR_MODE_POTENTIOSTATIC,
+                control=3.7,
+                measured_current_ma=3600.0,
+                q_mAh=1.0,
+                dq_mAh=1.0,
+            ),
+            _row(2.0, control=3600.0, q_mAh=2.0, dq_mAh=1.0, measured_current_ma=3600.0),
+        ]
         with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows, dedicated_current=True)
+
+    def test_reentering_cc_after_cv_control_history_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, control=3600.0, measured_current_ma=3600.0, ns_changed=True),
+            _row(1.0, control=3600.0, measured_current_ma=3600.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(
+                2.0,
+                mode=MPR_MODE_POTENTIOSTATIC,
+                control=3.7,
+                measured_current_ma=3600.0,
+                q_mAh=2.0,
+                dq_mAh=1.0,
+            ),
+            _row(3.0, control=3600.0, q_mAh=3.0, dq_mAh=1.0, measured_current_ma=3600.0),
+        ]
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows, dedicated_current=True)
+
+    def test_capacity_counter_decrease_within_step_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True),
+            _row(1.0, q_mAh=2.0, dq_mAh=2.0),
+            _row(2.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
+
+    def test_capacity_counter_reset_to_baseline_within_step_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True),
+            _row(1.0, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, q_mAh=0.0, dq_mAh=1.0),
+        ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
+
+    def test_counter_increment_flag_is_not_assumed_irrelevant_to_cycle(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True, counter_incremented=True),
+            _row(1.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "counter-increment"):
             _map_rows(rows)
 
     def test_dedicated_current_is_preserved_instead_of_using_control_setpoint(self) -> None:

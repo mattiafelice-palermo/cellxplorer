@@ -139,26 +139,30 @@ once. Canonical status/step semantics built from these acquisition flags belong 
 
 ## GCPL canonical mapping (Spec 041.2)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` accepts this exact record layout and
-returns the Parent 040 canonical raw columns. Acquisition order is preserved; `record_index` is
-the one-based ordinal `1..n`. The ID-131 value (`raw_sample_index` in the low-level reader) is the
-BioLogic `Ns` programmed-sequence identity and is copied without renumbering into `step_index`.
-The supported contract is one-based (`Ns >= 1`).
+The direct adapter in `backend/app/services/biologic_gcpl.py` accepts this exact record layout as
+its low-level input. It returns Parent 040 canonical raw columns only when every required semantic
+role is independently resolved; the real supplied GCPL6 file currently fails closed before
+canonical publication because its full-cell voltage role is deferred to 041.3. Acquisition order
+is preserved; `record_index` is the one-based ordinal `1..n`. The ID-131 value (`raw_sample_index`
+in the low-level reader) is the observed BioLogic `Ns` programmed-sequence identity and is copied
+without renumbering into `step_index`. The supported contract is one-based (`Ns >= 1`).
 
 The supplied private sample contains only a constant-zero ID-468 half-cycle value. Because no MPT
 was available to establish the starting value, direction, progression, or formation behavior of a
 non-zero counter, the production adapter accepts only that observed constant-zero contract and
-emits `cycle = 1`. Any non-zero, regressing, or resetting half-cycle sequence fails closed until a
-paired MPR/MPT corpus is available. Synthetic tests cover the rejection; they do not define a
-production cycle formula.
+uses one adapter-local source group, `cycle = 1`; this is not asserted to be the vendor's final
+full-cycle number. Any non-zero, regressing, or resetting half-cycle sequence, or any set
+counter-increment flag, fails closed until a paired MPR/MPT corpus is available. Synthetic tests
+cover the rejection; they do not define a production cycle formula.
 
 An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
-change, a half-cycle change, a verified `Ns changes` flag, an explicit decoded step-time reset, or
-entry/exit from the supported rest mode. A galvanostatic-to-potentiostatic transition inside one
-active occurrence stays one step and is classified as `CCCV_Chg` or `CCCV_DChg`. Pure current and
-pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV discharge is rejected
-because the current canonical vocabulary has no `CV_DChg` status. Mixed charge/discharge
-direction in one occurrence is rejected.
+change, a half-cycle change, the decoded `Ns changes` flag, an explicit decoded step-time reset,
+or entry/exit from the supported rest mode. A chronological galvanostatic-to-potentiostatic
+transition inside one active occurrence stays one step and is classified as `CCCV_Chg` or
+`CCCV_DChg`; reversed or re-entering control histories fail closed. Pure current and pure voltage
+blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV discharge is rejected because the
+current canonical vocabulary has no `CV_DChg` status. Mixed charge/discharge direction in one
+occurrence is rejected.
 
 The adapter keeps the accepted BioLogic sign factor explicit as `+1` (`current_ma > 0` is charge
 and `current_ma < 0` is discharge), but the required paired MPT semantic parity is still pending.

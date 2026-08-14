@@ -221,7 +221,7 @@ def _raw_current_ma(
             (mode == MPR_MODE_REST)
             & (np.abs(raw_current) > _CURRENT_TOLERANCE_MA)
         ):
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 "dedicated GCPL current is non-zero during a rest block"
             )
     else:
@@ -240,7 +240,7 @@ def _raw_current_ma(
         raise UnsupportedBiologicGcplError(
             "supported GCPL records do not contain a usable current value for every row"
         )
-    # BioLogic's GCPL sign in the verified contract already agrees with
+    # The accepted BioLogic GCPL sign convention agrees with
     # CellXplorer: positive is charge and negative is discharge.  Keep the
     # explicit factor visible so a later adapter revision cannot silently
     # change the global convention.
@@ -302,7 +302,7 @@ def _direction_for_block(
     positive = bool(np.any(current > _CURRENT_TOLERANCE_MA))
     negative = bool(np.any(current < -_CURRENT_TOLERANCE_MA))
     if positive and negative:
-        raise UnsupportedBiologicGcplError(
+        raise InvalidBiologicGcplError(
             f"GCPL executed block {start + 1}:{end} mixes charge and discharge direction"
         )
     if positive:
@@ -315,17 +315,17 @@ def _direction_for_block(
     if direction:
         capacity_delta = raw_capacity[end - 1] - raw_capacity[start]
         if end - start > 1 and abs(capacity_delta) <= _CAPACITY_TOLERANCE_MAH:
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 f"GCPL active block {start + 1}:{end} has no capacity transfer"
             )
         if direction * capacity_delta < -_CAPACITY_TOLERANCE_MAH:
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 f"GCPL current and capacity directions disagree in block {start + 1}:{end}"
             )
         increments = raw_dq_mAh[start:end]
         nonzero = np.abs(increments) > _CAPACITY_TOLERANCE_MAH
         if np.any(direction * increments[nonzero] < -_CAPACITY_TOLERANCE_MAH):
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 f"GCPL current and incremental-capacity directions disagree in block "
                 f"{start + 1}:{end}"
             )
@@ -335,47 +335,54 @@ def _direction_for_block(
         if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH or np.any(
             np.abs(raw_dq_mAh[start:end]) > _CAPACITY_TOLERANCE_MAH
         ):
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 f"GCPL rest block {start + 1}:{end} transfers capacity"
             )
         return 0
-    raise UnsupportedBiologicGcplError(
+    raise InvalidBiologicGcplError(
         f"GCPL active block {start + 1}:{end} has no independently resolvable current direction"
     )
 
 
 def _classify_block(mode: np.ndarray, direction: int, start: int, end: int) -> str:
-    block_modes = np.unique(mode[start:end])
-    if np.all(block_modes == MPR_MODE_REST):
+    block_mode = mode[start:end]
+    mode_changes = np.r_[True, block_mode[1:] != block_mode[:-1]]
+    history = block_mode[mode_changes]
+    unsupported = history[~np.isin(history, tuple(_SUPPORTED_MODES))]
+    if len(unsupported):
+        values = np.unique(unsupported).astype(np.int64).tolist()
+        raise UnsupportedBiologicGcplError(
+            f"GCPL block {start + 1}:{end} uses unsupported control mode(s): {values}"
+        )
+    if np.all(history == MPR_MODE_REST):
         return "Rest"
     if direction == 0:
-        raise UnsupportedBiologicGcplError(
+        raise InvalidBiologicGcplError(
             f"GCPL active block {start + 1}:{end} has no resolvable current direction"
         )
-    known_modes = np.isin(block_modes, tuple(_SUPPORTED_MODES))
-    if not bool(np.all(known_modes)):
+    if np.any(history == MPR_MODE_REST):
         raise UnsupportedBiologicGcplError(
-            f"GCPL block {start + 1}:{end} uses unsupported control mode(s): "
-            f"{block_modes[~known_modes].tolist()}"
+            f"GCPL block {start + 1}:{end} mixes rest and active control modes"
         )
-    has_cc = bool(np.any(block_modes == MPR_MODE_GALVANOSTATIC))
-    has_cv = bool(np.any(block_modes == MPR_MODE_POTENTIOSTATIC))
-    if not (has_cc or has_cv):
-        raise UnsupportedBiologicGcplError(
-            f"GCPL block {start + 1}:{end} has no supported active control mode"
-        )
-    if has_cc and has_cv:
-        return "CCCV_Chg" if direction > 0 else "CCCV_DChg"
-    if has_cc:
+    if len(history) == 1 and history[0] == MPR_MODE_GALVANOSTATIC:
         return "CC_Chg" if direction > 0 else "CC_DChg"
-    if direction < 0:
-        # The canonical vocabulary has no standalone CV discharge status.
-        # Do not invent a new status or mislabel it as CC discharge.
-        raise UnsupportedBiologicGcplError(
-            "standalone BioLogic CV discharge is not represented by the current "
-            "CellXplorer canonical status vocabulary"
-        )
-    return "CV_Chg"
+    if len(history) == 1 and history[0] == MPR_MODE_POTENTIOSTATIC:
+        if direction < 0:
+            # The canonical vocabulary has no standalone CV discharge status.
+            # Do not invent a new status or mislabel it as CC discharge.
+            raise UnsupportedBiologicGcplError(
+                "standalone BioLogic CV discharge is not represented by the current "
+                "CellXplorer canonical status vocabulary"
+            )
+        return "CV_Chg"
+    if len(history) == 2 and np.array_equal(
+        history, np.array([MPR_MODE_GALVANOSTATIC, MPR_MODE_POTENTIOSTATIC])
+    ):
+        return "CCCV_Chg" if direction > 0 else "CCCV_DChg"
+    raise UnsupportedBiologicGcplError(
+        f"GCPL block {start + 1}:{end} has unsupported control-mode chronology "
+        f"{history.astype(np.int64).tolist()}"
+    )
 
 
 def _capacity_columns(
@@ -388,7 +395,7 @@ def _capacity_columns(
     for direction, (start, end) in zip(directions, ranges):
         if direction == 0:
             if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH:
-                raise UnsupportedBiologicGcplError(
+                raise InvalidBiologicGcplError(
                     f"GCPL rest block {start + 1}:{end} has a changing capacity counter"
                 )
             continue
@@ -396,8 +403,14 @@ def _capacity_columns(
         baseline = source[0]
         transferred = direction * (source - baseline)
         if np.any(transferred < -_CAPACITY_TOLERANCE_MAH):
-            raise UnsupportedBiologicGcplError(
+            raise InvalidBiologicGcplError(
                 f"GCPL capacity counter reverses within executed block {start + 1}:{end}"
+            )
+        if len(transferred) > 1 and np.any(
+            np.diff(transferred) < -_CAPACITY_TOLERANCE_MAH
+        ):
+            raise InvalidBiologicGcplError(
+                f"GCPL capacity counter decreases within executed block {start + 1}:{end}"
             )
         transferred = np.maximum(transferred, 0.0)
         if direction > 0:
@@ -485,6 +498,11 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         raise InvalidBiologicGcplError(
             "GCPL data contains a row with the BioLogic error flag set"
         )
+    if np.any(_flag_column(records, flags, "counter_incremented")):
+        raise UnsupportedBiologicGcplError(
+            "GCPL counter-increment flag semantics are not independently validated; "
+            "paired MPT evidence is required before cycle mapping can proceed"
+        )
     current_ma = _raw_current_ma(records, mode, control)
     voltage_v, voltage_v_derived = _primary_voltage(records)
 
@@ -548,8 +566,8 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": 0,
-        "cycle_source": "validated constant-zero half-cycle contract",
-        "cycle_formula": "cycle = 1; non-zero progression deferred pending paired MPT",
+        "cycle_source": "adapter-local single group from observed constant-zero half-cycle",
+        "cycle_formula": "cycle = 1 for this unsegmented source; vendor progression deferred pending paired MPT",
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": False,
