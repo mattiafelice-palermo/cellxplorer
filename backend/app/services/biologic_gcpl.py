@@ -273,6 +273,21 @@ def _step_time_column(records: np.ndarray) -> np.ndarray | None:
     return step_time
 
 
+def _validate_step_time_boundaries(
+    step_time: np.ndarray | None,
+    boundaries: np.ndarray,
+) -> None:
+    """Require explicit step time to reset at every executed-step boundary."""
+
+    if step_time is None:
+        return
+    starts = np.flatnonzero(boundaries)[1:]
+    if len(starts) and np.any(np.abs(step_time[starts]) > _TIME_TOLERANCE_S):
+        raise InvalidBiologicGcplError(
+            "decoded GCPL step time does not reset at every executed-step boundary"
+        )
+
+
 def _raw_current_ma(
     records: np.ndarray,
     mode: np.ndarray,
@@ -588,6 +603,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         mode=mode,
         step_time=step_time,
     )
+    _validate_step_time_boundaries(step_time, boundaries)
     _validate_capacity_boundaries(raw_capacity, raw_dq_mAh, boundaries)
     ranges = _block_ranges(boundaries)
     directions = [

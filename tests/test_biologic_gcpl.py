@@ -529,6 +529,15 @@ class BiologicGcplMappingTests(unittest.TestCase):
         np.testing.assert_allclose(frame["time_s"], [5.0, 6.0, 0.0])
         self.assertEqual(frame["step"].tolist(), [1, 1, 2])
 
+    def test_explicit_step_time_must_reset_at_non_time_step_boundary(self) -> None:
+        rows = [
+            {**_row(0.0, ns=1, ns_changed=True), "step_time_s": 0.0},
+            {**_row(1.0, ns=1, q_mAh=1.0, dq_mAh=1.0), "step_time_s": 1.0},
+            {**_row(2.0, ns=2, q_mAh=1.0, ns_changed=True), "step_time_s": 2.0},
+        ]
+        with self.assertRaisesRegex(InvalidBiologicGcplError, "does not reset"):
+            _map_rows(rows, step_time=True)
+
     def test_invalid_single_row_step_time_is_rejected(self) -> None:
         records = _structured_records(
             [_row(0.0, ns_changed=True)],

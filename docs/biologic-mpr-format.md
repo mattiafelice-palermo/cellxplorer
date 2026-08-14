@@ -168,6 +168,11 @@ closed. Pure current and pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_C
 discharge is rejected because the current canonical vocabulary has no `CV_DChg` status. Mixed
 charge/discharge direction in one occurrence is rejected.
 
+When an explicitly decoded step-time field is present, it is published directly as canonical
+`time_s` and must reset to approximately zero at every executed-step boundary, including boundaries
+created by `Ns`, cycle, half-cycle, Rest, or other verified signals. A contradictory clock fails
+closed. When the field is absent, `time_s` is derived from validated whole-test elapsed time.
+
 The adapter keeps the accepted BioLogic sign factor explicit as `+1` (`current_ma > 0` is charge
 and `current_ma < 0` is discharge), but the required paired MPT semantic parity is still pending.
 In galvanostatic rows the ID-5 control value is used only for the supported current-control mode.
