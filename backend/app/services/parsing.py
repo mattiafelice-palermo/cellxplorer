@@ -81,7 +81,7 @@ from typing import Any
 import NewareNDA
 import pandas as pd
 
-from . import canonical_cycling, fast_neware, neware_excel
+from . import biologic_gcpl, canonical_cycling, fast_neware, neware_excel
 from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
@@ -126,6 +126,7 @@ class SourceFormatDescriptor:
 
 FORMAT_NEWARE_BINARY = "neware_binary"
 FORMAT_NEWARE_EXCEL = "neware_excel"
+FORMAT_BIOLOGIC_MPR = "biologic_mpr"
 
 _NEWARE_BINARY_FORMAT = SourceFormatDescriptor(
     format_id=FORMAT_NEWARE_BINARY,
@@ -137,18 +138,30 @@ _NEWARE_EXCEL_FORMAT = SourceFormatDescriptor(
     extensions=frozenset({".xlsx"}),
     adapter_revision=str(EXCEL_PARSER_REVISION),
 )
+_BIOLOGIC_MPR_FORMAT = SourceFormatDescriptor(
+    format_id=FORMAT_BIOLOGIC_MPR,
+    extensions=frozenset({".mpr"}),
+    adapter_revision=biologic_gcpl.BIOLOGIC_GCPL_ADAPTER_REVISION,
+)
 _FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
     _NEWARE_BINARY_FORMAT.format_id: _NEWARE_BINARY_FORMAT,
     _NEWARE_EXCEL_FORMAT.format_id: _NEWARE_EXCEL_FORMAT,
+    _BIOLOGIC_MPR_FORMAT.format_id: _BIOLOGIC_MPR_FORMAT,
 }
-# The one shared extension -> format_id decision table. `parse_timeseries`
-# and `read_header_metadata` both dispatch through this exact mapping so
-# recognition is deterministic and cannot drift between the two functions.
+# The existing Neware extension table remains the user-facing import,
+# inspection, and scanner policy until Spec 041.4.  Direct parser support for
+# `.mpr` uses the separate registry below so backend tests/services can map a
+# BioLogic source without accidentally admitting it to import UI flows.
 _EXTENSION_FORMAT_ID: dict[str, str] = {
     **{ext: _NEWARE_BINARY_FORMAT.format_id for ext in _NEWARE_BINARY_FORMAT.extensions},
     **{ext: _NEWARE_EXCEL_FORMAT.format_id for ext in _NEWARE_EXCEL_FORMAT.extensions},
 }
 SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
+_DIRECT_EXTENSION_FORMAT_ID: dict[str, str] = {
+    **_EXTENSION_FORMAT_ID,
+    **{ext: _BIOLOGIC_MPR_FORMAT.format_id for ext in _BIOLOGIC_MPR_FORMAT.extensions},
+}
+SUPPORTED_DIRECT_SOURCE_EXTENSIONS = frozenset(_DIRECT_EXTENSION_FORMAT_ID)
 
 
 # `UnsupportedSourceFormatError` (raised below for both a wholly unknown
@@ -207,7 +220,7 @@ def recognize_source(path: str | Path) -> str | None:
     """
 
     suffix = Path(str(path or "")).suffix.casefold()
-    format_id = _EXTENSION_FORMAT_ID.get(suffix)
+    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix)
     if format_id is None:
         return None
     if format_id == FORMAT_NEWARE_EXCEL:
@@ -260,6 +273,7 @@ def source_parser_descriptor(path: str | Path) -> dict[str, Any]:
 _FORMAT_IDENTITY_PREFIX: dict[str, str] = {
     FORMAT_NEWARE_BINARY: "nb",
     FORMAT_NEWARE_EXCEL: "nx",
+    FORMAT_BIOLOGIC_MPR: "bm",
 }
 _MAX_PARSER_IDENTITY_LENGTH = 30  # SourceFile.parser_version = String(30)
 
@@ -297,7 +311,7 @@ def current_parser_identity_for_extension(ext: str | None) -> str | None:
     suffix = str(ext or "")
     if suffix and not suffix.startswith("."):
         suffix = f".{suffix}"
-    format_id = _EXTENSION_FORMAT_ID.get(suffix.casefold())
+    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix.casefold())
     if format_id is None:
         return None
     return _identity_for_format(format_id)
@@ -376,19 +390,23 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     cache-build boundary in `cache.build` / `cache.build_write_behind`, the
     only production callers of this function.
 
-    Dispatch is deterministic and suffix-based, through the same
-    `_EXTENSION_FORMAT_ID` table `read_header_metadata` uses. It does not
+    Dispatch is deterministic and suffix-based, through the direct parser
+    registry. Neware metadata/import policy continues to use
+    `_EXTENSION_FORMAT_ID`; the direct registry additionally contains `.mpr`
+    until the later import-lifecycle child owns that extension. It does not
     call `recognize_source` (which additionally sniffs Excel content) —
     `neware_excel.parse_timeseries` performs that same structural check
     itself as a side effect of actually parsing, so a second check here
     would open the workbook header twice for no benefit.
     """
     source_path = Path(path)
-    format_id = _EXTENSION_FORMAT_ID.get(source_path.suffix.casefold())
+    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(source_path.suffix.casefold())
     if format_id == FORMAT_NEWARE_EXCEL:
         return neware_excel.parse_timeseries(source_path)
     if format_id == FORMAT_NEWARE_BINARY:
         return _parse_neware_binary_timeseries(source_path)
+    if format_id == FORMAT_BIOLOGIC_MPR:
+        return biologic_gcpl.parse_timeseries(source_path)
     raise UnsupportedSourceFormatError(
         f"Unsupported cycling source format: {source_path.suffix or '<none>'}."
     )

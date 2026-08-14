@@ -148,6 +148,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/source_format_errors.py`: format-neutral source-rejection error taxonomy
   every adapter's errors derive from (Spec 040.2)
 - `backend/app/services/biologic_mpr.py`: independent BioLogic MPR container and typed VMP data reader
+- `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
   (Spec 041.1)
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
@@ -189,6 +190,7 @@ Cellxplorer/
 │           ├── canonical_cycling.py Canonical raw cycling-data contract/validation (Spec 040.1)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
+│           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
@@ -248,6 +250,7 @@ Cellxplorer/
 │   ├── test_neware_excel.py         Structured Neware Excel parser and analysis integration tests (Specs 039.1/039.4)
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
+│   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
 │   ├── test_parser_dispatch.py     Format-neutral dispatch and adapter-identity tests (Spec 040.2)
 │   ├── test_source_format_errors.py Format-neutral source-rejection error-taxonomy tests (Spec 040.2)
 │   ├── test_parser_identity.py     Per-source parser identity grammar and cache-invalidation tests (Spec 040.3)

@@ -132,6 +132,48 @@ once. Canonical status/step semantics built from these acquisition flags belong 
 | `31` | `ns_changed` | `0x20` | 5 | boolean |
 | `65` | `counter_incremented` | `0x80` | 7 | boolean |
 
+## GCPL canonical mapping (Spec 041.2)
+
+The direct adapter in `backend/app/services/biologic_gcpl.py` accepts this exact record layout and
+returns the Parent 040 canonical raw columns. Acquisition order is preserved; `record_index` is
+the one-based ordinal `1..n`. The ID-131 value (`raw_sample_index` in the low-level reader) is the
+BioLogic `Ns` programmed-sequence identity and is copied without renumbering into `step_index`.
+The supported contract is one-based (`Ns >= 1`).
+
+The ID-468 half-cycle value is mapped with the documented provisional rule:
+
+```text
+cycle = floor(raw_half_cycle_index / 2) + 1
+```
+
+This treats a source half-cycle value of zero as the first logical cycle. The rule is deterministic
+and covered by synthetic tests; real `.mpr`/`.mpt` semantic parity remains pending because no MPT
+was available for this implementation.
+
+An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
+change, a half-cycle change, a verified `Ns changes` flag, an explicit decoded step-time reset, or
+entry/exit from the supported rest mode. A galvanostatic-to-potentiostatic transition inside one
+active occurrence stays one step and is classified as `CCCV_Chg` or `CCCV_DChg`. Pure current and
+pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV discharge is rejected
+because the current canonical vocabulary has no `CV_DChg` status. Mixed charge/discharge
+direction in one occurrence is rejected.
+
+BioLogic's verified GCPL sign already matches CellXplorer (`current_ma > 0` is charge and
+`current_ma < 0` is discharge), so the adapter's explicit current sign factor is `+1`. In
+galvanostatic rows the ID-5 control value is the current; in potentiostatic rows current is derived
+from the required incremental ID-7 charge field and whole-test elapsed time. The required signed
+ID-211 quantity is converted into a non-negative phase-specific capacity counter relative to the
+first row of each executed step. The adapter also exposes a diagnostic trapezoidal current
+integration helper, but never substitutes that diagnostic for the vendor counter.
+
+The supported GCPL6 layout does not expose a verified vendor energy counter, so the adapter chooses
+Policy C: canonical energy columns are absent and downstream energy quantities remain unavailable.
+Absolute timestamps are also deferred to 041.3 because the low-level reader has not yet established
+a minimal log timestamp decoder. Until 041.3 adds first-class electrode channels, the primary
+`voltage_v` is the adapter-private common-reference derivation `raw_ewe_v - raw_ece_v`; the
+result is marked `voltage_v_derived` in the frame attributes and no vendor field names leak into
+the canonical frame.
+
 The physical dtype contains the packed byte once; the six named arrays are NumPy results owned by the
 data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics
 are intentionally deferred to Spec 041.2.
