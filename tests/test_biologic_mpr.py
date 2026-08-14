@@ -9,10 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import backend.app.services.biologic_mpr as biologic_mpr
 
 from backend.app.services.biologic_mpr import (
     InvalidMprError,
-    MPR_LAYOUT_DESCRIPTOR_IDS,
     MPR_COLUMN_DEFINITIONS,
     MPR_MAGIC,
     MPR_MAGIC_PREFIX,
@@ -20,6 +20,9 @@ from backend.app.services.biologic_mpr import (
     MPR_MAX_FILE_SIZE,
     MPR_MAX_MODULE_COUNT,
     MPR_MODULE_HEADER_SIZE,
+    MPR_LAYOUT_ALIAS_IDS,
+    MPR_PHYSICAL_COLUMN_IDS,
+    MPR_FLAG_DEFINITIONS,
     MPR_RECORD_DTYPE,
     SUPPORTED_GCPL_COLUMN_IDS,
     UnsupportedMprColumn,
@@ -40,11 +43,12 @@ def _module(
     version: int,
     old_version: int = 0,
     date: bytes = b"07/10/26",
-    short_name: bytes = b"MODULEVMP ",
+    short_name: bytes = b"VMP data  ",
 ) -> bytes:
     header = (
-        short_name
-        + long_name.ljust(31, b" ")[:31]
+        b"MODULE"
+        + short_name.ljust(10, b" ")[:10]
+        + long_name.ljust(25, b" ")[:25]
         + struct.pack("<IIII", 0xFFFFFFFF, len(payload), old_version, version)
         + date
     )
@@ -142,16 +146,17 @@ def _write_fixture(
     payload = data_payload if data_payload is not None else _data_payload()
     modules = [
         _module(
-            b"Set   VMP settings",
+            b"VMP settings",
             b"settings",
             version=set_version,
             old_version=set_old_version,
+            short_name=b"VMP Set   ",
         ),
     ]
     if include_data:
         modules.append(
             _module(
-                b"data  VMP data",
+                b"VMP data",
                 payload,
                 version=data_version,
                 old_version=data_old_version,
@@ -160,10 +165,11 @@ def _write_fixture(
     if include_log:
         modules.append(
             _module(
-                b"LOG   VMP LOG",
+                b"VMP LOG",
                 b"log",
                 version=log_version,
                 old_version=log_old_version,
+                short_name=b"VMP LOG   ",
             )
         )
     for index in range(unknown_modules):
@@ -172,7 +178,7 @@ def _write_fixture(
                 f"optional {index}".encode("ascii"),
                 b"optional",
                 version=1,
-                short_name=b"MODULEEXT ",
+                short_name=b"EXT       ",
             )
         )
     path = directory / "fixture.mpr"
@@ -181,7 +187,7 @@ def _write_fixture(
 
 
 class BiologicMprReaderTests(unittest.TestCase):
-    def test_reads_declared_modules_and_zero_copy_raw_records(self) -> None:
+    def test_reads_declared_modules_and_owns_typed_records(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             with read_mpr(path) as document:
@@ -200,7 +206,11 @@ class BiologicMprReaderTests(unittest.TestCase):
                     MPR_RECORD_DTYPE.names,
                 )
                 self.assertIsNone(document.vmp_data.records.base)
-                self.assertEqual(document.vmp_data.flags["raw_bit_0"].shape, (2,))
+                self.assertEqual(document.vmp_data.flags["mode"].shape, (2,))
+                self.assertEqual(document.vmp_set.short_name, "VMP Set")
+                self.assertEqual(document.vmp_set.long_name, "VMP settings")
+                self.assertEqual(document.vmp_data.module.short_name, "VMP data")
+                self.assertEqual(document.vmp_data.module.long_name, "VMP data")
 
     def test_log_module_is_optional_at_low_level(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -285,14 +295,43 @@ class BiologicMprReaderTests(unittest.TestCase):
             tuple(
                 column_id
                 for column_id in SUPPORTED_GCPL_COLUMN_IDS
-                if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "layout_descriptor"
+                if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "record_alias"
             ),
-            MPR_LAYOUT_DESCRIPTOR_IDS,
+            MPR_LAYOUT_ALIAS_IDS,
         )
         self.assertEqual(
             MPR_COLUMN_DEFINITIONS[1].flag_names,
-            tuple(f"raw_bit_{bit}" for bit in range(8)),
+            ("mode", "oxidation_reduction", "error", "control_changed", "ns_changed", "counter_incremented"),
         )
+        for column_id in SUPPORTED_GCPL_COLUMN_IDS:
+            definition = MPR_COLUMN_DEFINITIONS[column_id]
+            physical = MPR_COLUMN_DEFINITIONS[definition.physical_id]
+            self.assertEqual(definition.field_name, physical.field_name)
+            self.assertEqual(definition.record_offset, physical.record_offset)
+            self.assertEqual(definition.dtype, physical.dtype)
+        for column_id in MPR_PHYSICAL_COLUMN_IDS:
+            definition = MPR_COLUMN_DEFINITIONS[column_id]
+            self.assertEqual(
+                biologic_mpr.MPR_RECORD_DTYPE.fields[definition.field_name][1],
+                definition.record_offset,
+            )
+        self.assertEqual(
+            [(definition.name, definition.mask, definition.shift, definition.boolean) for definition in MPR_FLAG_DEFINITIONS],
+            [
+                ("mode", 0x03, 0, False),
+                ("oxidation_reduction", 0x04, 2, True),
+                ("error", 0x08, 3, True),
+                ("control_changed", 0x10, 4, True),
+                ("ns_changed", 0x20, 5, True),
+                ("counter_incremented", 0x80, 7, True),
+            ],
+        )
+
+    def test_public_exports_are_defined_and_star_importable(self) -> None:
+        self.assertTrue(all(hasattr(biologic_mpr, name) for name in biologic_mpr.__all__))
+        namespace: dict[str, object] = {}
+        exec("from backend.app.services.biologic_mpr import *", namespace)
+        self.assertIn("MPR_RECORD_DTYPE", namespace)
 
     def test_rejects_unknown_column_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -313,7 +352,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
-            contents[52 + 10 : 52 + 10 + 31] = b"settings extension".ljust(31, b" ")
+            contents[52 + 16 : 52 + 16 + 25] = b"settings extension".ljust(25, b" ")
             path.write_bytes(contents)
             with self.assertRaises(UnsupportedMprError):
                 read_mpr(path)
@@ -323,7 +362,7 @@ class BiologicMprReaderTests(unittest.TestCase):
             path = _write_fixture(Path(temp))
             contents = bytearray(path.read_bytes())
             data_offset = 52 + MPR_MODULE_HEADER_SIZE + 8
-            contents[data_offset + 10 : data_offset + 10 + 31] = b"database extension".ljust(31, b" ")
+            contents[data_offset + 16 : data_offset + 16 + 25] = b"database extension".ljust(25, b" ")
             path.write_bytes(contents)
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
@@ -340,9 +379,9 @@ class BiologicMprReaderTests(unittest.TestCase):
             path = Path(temp) / "duplicate.mpr"
             path.write_bytes(
                 _MAGIC_HEADER
-                + _module(b"Set   VMP settings", b"settings", version=10)
-                + _module(b"data  VMP data", payload, version=11)
-                + _module(b"data  VMP data", payload, version=11)
+                + _module(b"VMP settings", b"settings", version=10, short_name=b"VMP Set   ")
+                + _module(b"VMP data", payload, version=11)
+                + _module(b"VMP data", payload, version=11)
             )
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
@@ -428,8 +467,12 @@ class BiologicMprReaderTests(unittest.TestCase):
             for field_name, expected_values in expected.items():
                 np.testing.assert_allclose(actual[field_name], expected_values)
             expected_flags = {
-                f"raw_bit_{bit}": [bool(0xB5 & (1 << bit)), bool(0x08 & (1 << bit))]
-                for bit in range(8)
+                "mode": [1, 0],
+                "oxidation_reduction": [True, False],
+                "error": [False, True],
+                "control_changed": [True, False],
+                "ns_changed": [True, False],
+                "counter_incremented": [True, False],
             }
             self.assertEqual(actual_flags.keys(), expected_flags.keys())
             for name, expected_values in expected_flags.items():
@@ -443,6 +486,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
+                include_log=False,
                 data_payload=_data_payload(
                     n_datapoints=n_datapoints,
                     record_itemsize=MPR_RECORD_DTYPE.itemsize,
@@ -488,6 +532,46 @@ class BiologicMprReaderTests(unittest.TestCase):
                     raise ValueError("body failure")
             payload.release()
             document.close()
+
+    def test_decode_flags_failure_preserves_original_error_and_closes_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with patch(
+                "backend.app.services.biologic_mpr._decode_flags",
+                side_effect=RuntimeError("flag sentinel"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "flag sentinel"):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-flag-failure.mpr")
+            path.rename(renamed)
+
+    def test_frombuffer_failure_preserves_original_error_and_closes_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with patch(
+                "backend.app.services.biologic_mpr.np.frombuffer",
+                side_effect=RuntimeError("frombuffer sentinel"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "frombuffer sentinel"):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-frombuffer-failure.mpr")
+            path.rename(renamed)
+
+    def test_record_copy_failure_preserves_original_error_and_closes_file(self) -> None:
+        class CopyBomb:
+            def copy(self):
+                raise RuntimeError("copy sentinel")
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with patch(
+                "backend.app.services.biologic_mpr.np.frombuffer",
+                return_value=CopyBomb(),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "copy sentinel"):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-copy-failure.mpr")
+            path.rename(renamed)
 
     def test_production_reader_has_no_gpl_parser_dependency(self) -> None:
         source = Path("backend/app/services/biologic_mpr.py").read_text(encoding="utf-8").lower()

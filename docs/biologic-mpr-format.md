@@ -24,8 +24,9 @@ header is 65 bytes:
 
 | Relative offset | Size | Encoding | Meaning |
 | ---: | ---: | --- | --- |
-| 0 | 10 | ASCII | fixed short name, including the `MODULE` marker |
-| 10 | 31 | ASCII | long module name |
+| 0 | 6 | ASCII | fixed `MODULE` marker |
+| 6 | 10 | ASCII | short module name |
+| 16 | 25 | ASCII | long module name |
 | 41 | 4 | little-endian uint32 | maximum module size; sample uses `0xffffffff` |
 | 45 | 4 | little-endian uint32 | payload length |
 | 49 | 4 | little-endian uint32 | old module version; sample uses `0` |
@@ -41,9 +42,9 @@ The supplied sample has exactly these modules:
 
 | Absolute offset | Short name | Long name | Version | Payload length | End offset |
 | ---: | --- | --- | ---: | ---: | ---: |
-| 52 | `MODULEVMP` | `Set   VMP settings` | 10 | 6,953 | 7,070 |
-| 7,070 | `MODULEVMP` | `data  VMP data` | 11 | 291,606 | 298,741 |
-| 298,741 | `MODULEVMP` | `LOG   VMP LOG` | 10 | 8,309 | 307,115 |
+| 52 | `VMP Set` | `VMP settings` | 10 | 6,953 | 7,070 |
+| 7,070 | `VMP data` | `VMP data` | 11 | 291,606 | 298,741 |
+| 298,741 | `VMP LOG` | `VMP LOG` | 10 | 8,309 | 307,115 |
 
 Unknown optional modules may be retained as structural descriptors but are not interpreted by the
 reader. The supported GCPL layout requires exactly one VMP Set module and one VMP data module. The
@@ -70,9 +71,10 @@ The sample's encoded column identifiers, in order, are:
 The reader accepts only this exact supported identifier ordering and record layout. It validates the
 record-area multiplication and uses one NumPy structured dtype from the memory-mapped payload; it
 does not decode records with a Python per-row loop. The 16 logical IDs form the exact accepted GCPL
-layout signature. IDs `5`, `6`, `9`, `39`, and `211` are retained as validated auxiliary IDs: the
-observed 53-byte physical record has no separate byte range for them, so the reader does not invent
-numeric fields for them. Their protocol meaning is deferred to Spec 041.2/041.3.
+layout signature. Five IDs are encoded aliases of physical fields already present in the same
+record: `5 -> 65` (control), `6 -> 131` (Ewe-labeled potential), `9 -> 4` (Ece-labeled potential),
+`39 -> 7` (current range), and `211 -> 13` (charge/discharge quantity). The aliases are validated
+and represented once in the 53-byte dtype; they do not create synthetic duplicate byte ranges.
 
 ## Typed 53-byte record
 
@@ -95,6 +97,24 @@ The physical record dtype is little-endian where applicable and has `itemsize ==
 The full encoded ID `468` is required for the final field. It is not normalized with `% 256` and is
 not silently replaced with the low-byte value `212`.
 
+The first private-sample record begins at absolute offset `8,142` (`7,070 + 65 + 1,007`). The
+privacy-safe direct-byte observation below records the exact raw slices used to establish the
+partition:
+
+| Field | Relative offset | Hex bytes | Decoded value |
+| --- | ---: | --- | ---: |
+| `raw_flags` | 0 | `31` | 49 |
+| `raw_sample_index` | 1 | `0100` | 1 |
+| `elapsed_time_s` | 3 | `00884cfaf31eae40` | 3855.476519004442 |
+| `raw_dq_mAh` | 11 | `0000000000000000` | 0.0 |
+| `raw_q_minus_q0_mAh` | 19 | `0000000000000000` | 0.0 |
+| `raw_control_v_or_mA` | 27 | `7b14f6c0` | -7.690000057220459 |
+| `raw_ewe_v` | 31 | `29eab73f` | 1.4368335008621216 |
+| `raw_ece_v` | 35 | `3ab41db9` | -0.00015039826394058764 |
+| `raw_current_range_code` | 39 | `0a00` | 10 |
+| `raw_q_charge_discharge_mAh` | 41 | `0000000000000000` | 0.0 |
+| `raw_half_cycle_index` | 49 | `00000000` | 0 |
+
 ## Packed flags
 
 The single physical `raw_flags` byte is unpacked into eight neutral raw-bit NumPy arrays with
@@ -103,18 +123,16 @@ control change, or counter change; those mappings belong to 041.2/041.3.
 
 | Name | Mask | Shift | Result |
 | --- | ---: | ---: | --- |
-| `raw_bit_0` | `0x01` | 0 | boolean |
-| `raw_bit_1` | `0x02` | 0 | boolean |
-| `raw_bit_2` | `0x04` | 0 | boolean |
-| `raw_bit_3` | `0x08` | 0 | boolean |
-| `raw_bit_4` | `0x10` | 0 | boolean |
-| `raw_bit_5` | `0x20` | 0 | boolean |
-| `raw_bit_6` | `0x40` | 0 | boolean |
-| `raw_bit_7` | `0x80` | 0 | boolean |
+| `mode` | `0x03` | 0 | uint8 code |
+| `oxidation_reduction` | `0x04` | 2 | boolean |
+| `error` | `0x08` | 3 | boolean |
+| `control_changed` | `0x10` | 4 | boolean |
+| `ns_changed` | `0x20` | 5 | boolean |
+| `counter_incremented` | `0x80` | 7 | boolean |
 
 The physical dtype contains the packed byte once; the derived arrays are NumPy results owned by the
-data block and are cleared with it. Canonical status/step semantics are intentionally deferred to
-Spec 041.2.
+data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics
+are intentionally deferred to Spec 041.2.
 
 ## Bounds and ownership
 
@@ -142,12 +160,18 @@ signature but a truncated/corrupt header is classified as invalid.
 
 The implementation is independently authored. The physical offsets and dtypes were rederived from
 project-owned bytes: the observed record-area boundary is offset 1,007, the exact module remainder
-is `5,483 * 53`, and the field partition is recorded in the table above. Raw names are descriptive
-labels authored for this reader, not copied vendor names; flag exposure is neutral bit decomposition.
-Literal `struct.pack_into` fixture bytes independently test every field offset and endian choice.
+is `5,483 * 53`, and a direct-byte probe records the 53-byte partition, little-endian encodings, and
+the first-record values listed below. The alias groups are recorded as logical IDs sharing those
+physical fields; no duplicate byte ranges are invented. Raw field names are descriptive labels
+authored for this reader, not canonical CellXplorer semantics. Literal `struct.pack_into` fixture
+bytes independently test every field offset and endian choice.
 
-A separate external GPL runtime was run only after that direct-byte definition as an output-only
-comparison oracle. It was not used as implementation input, and no package, source, comments, dtype
-table, mapping table, or private sample entered the repository or runtime. Static tests audit the
-reader, requirements, and production entry-point files for prohibited parser dependencies. No MPT
-file was available, so no MPT-derived claim is made here.
+The direct-byte probe used for the notebook reads only the private sample's data-module header and
+record area, computes `record_start = data_module_offset + 65 + 1007`, slices each documented field,
+and decodes it with the documented `struct` format. It also emits the packed-flag masks as
+`(flags & mask) >> shift`; no source or mapping table is read. A separate external GPL runtime was
+run only after that direct-byte definition as an output-only comparison oracle. It was not used as
+implementation input, and no package, source, comments, dtype table, mapping table, or private
+sample entered the repository or runtime. Static tests audit the reader, requirements, and
+production entry-point files for prohibited parser dependencies. No MPT file was available, so no
+MPT-derived claim is made here.
