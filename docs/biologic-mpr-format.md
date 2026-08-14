@@ -142,27 +142,29 @@ once. Canonical status/step semantics built from these acquisition flags belong 
 The direct adapter in `backend/app/services/biologic_gcpl.py` accepts this exact record layout as
 its low-level input. It returns Parent 040 canonical raw columns only when every required semantic
 role is independently resolved; the real supplied GCPL6 file currently fails closed before
-canonical publication because its full-cell voltage role is deferred to 041.3. Acquisition order
-is preserved; `record_index` is the one-based ordinal `1..n`. The ID-131 value (`raw_sample_index`
-in the low-level reader) is the observed BioLogic `Ns` programmed-sequence identity and is copied
-without renumbering into `step_index`. The supported contract is one-based (`Ns >= 1`).
+canonical publication because its logical cycle and full-cell voltage roles are not yet resolved.
+Acquisition order is preserved; `record_index` is the one-based ordinal `1..n`. The ID-131 value
+(`raw_sample_index` in the low-level reader) is the observed BioLogic `Ns` programmed-sequence
+identity and is copied without renumbering into `step_index`. The supported contract is one-based
+(`Ns >= 1`).
 
 The supplied private sample contains only a constant-zero ID-468 half-cycle value. Because no MPT
 was available to establish the starting value, direction, progression, or formation behavior of a
-non-zero counter, the production adapter accepts only that observed constant-zero contract and
-uses one adapter-local source group, `cycle = 1`; this is not asserted to be the vendor's final
-full-cycle number. Any non-zero, regressing, or resetting half-cycle sequence, or any set
-counter-increment flag, fails closed until a paired MPR/MPT corpus is available. Synthetic tests
-cover the rejection; they do not define a production cycle formula.
+non-zero counter, the production adapter does not publish a cycle label from the constant-zero
+observation. Any non-zero, regressing, or resetting half-cycle sequence, or any set
+counter-increment flag, fails closed until a paired MPR/MPT corpus is available. Synthetic semantic
+records provide an explicit `raw_cycle_index` solely to exercise the downstream canonical mapper;
+they do not define a production cycle formula or amend Parent 041.
 
 An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
-change, a half-cycle change, the decoded `Ns changes` flag, an explicit decoded step-time reset,
-or entry/exit from the supported rest mode. A chronological galvanostatic-to-potentiostatic
-transition inside one active occurrence stays one step and is classified as `CCCV_Chg` or
-`CCCV_DChg`; reversed or re-entering control histories fail closed. Pure current and pure voltage
-blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV discharge is rejected because the
-current canonical vocabulary has no `CV_DChg` status. Mixed charge/discharge direction in one
-occurrence is rejected.
+change, a half-cycle change, an explicit decoded step-time reset, or entry/exit from the supported
+rest mode. The decoded `Ns changes` flag is accepted only as a redundant signal on a real `Ns`
+transition; an unexplained midstream flag fails closed pending independent settings/MPT evidence.
+A chronological galvanostatic-to-potentiostatic transition inside one active occurrence stays one
+step and is classified as `CCCV_Chg` or `CCCV_DChg`; reversed or re-entering control histories fail
+closed. Pure current and pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV
+discharge is rejected because the current canonical vocabulary has no `CV_DChg` status. Mixed
+charge/discharge direction in one occurrence is rejected.
 
 The adapter keeps the accepted BioLogic sign factor explicit as `+1` (`current_ma > 0` is charge
 and `current_ma < 0` is discharge), but the required paired MPT semantic parity is still pending.
@@ -170,9 +172,18 @@ In galvanostatic rows the ID-5 control value is used only for the supported curr
 A potentiostatic block requires a separately decoded measured-current field; unverified interval
 `dq/time` reconstruction is rejected. The required signed ID-211 quantity is converted into a
 non-negative phase-specific capacity counter relative to the first row of each executed step, and
-its sign must agree with current and incremental ID-7 charge. The adapter also exposes a diagnostic
-trapezoidal current integration helper, but never substitutes that diagnostic for the vendor
-counter.
+its sign must agree with current and incremental ID-7 charge. Capacity counters must be monotonic
+within each executed step. A boundary row is accepted only when both its incremental ID-7 value
+and cumulative ID-211 change are zero; otherwise interval ownership is ambiguous and the source
+fails closed. The adapter also exposes a diagnostic trapezoidal current integration helper, but
+never substitutes that diagnostic for the vendor counter.
+
+An independent privacy-safe probe of the supplied sample's 5,473 active rows observed constant
+`-7.6900000572 mA` over `45.5999868295 h`; trapezoidal integration was `-350.6639013279 mA.h`,
+while the ID-211 endpoint delta and summed ID-7 increments were both `-350.6214261625 mA.h`.
+The absolute discrepancy was `0.0424751654 mA.h` (`0.0121143%`). This supports the adapter's
+observed sign convention and is recorded as diagnostic evidence only; it is not an MPT parity
+result or a general production acceptance tolerance.
 
 The supported GCPL6 layout does not expose a verified vendor energy counter, so the adapter chooses
 Policy C: canonical energy columns are absent and downstream energy quantities remain unavailable.

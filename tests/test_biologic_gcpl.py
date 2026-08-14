@@ -18,13 +18,14 @@ from backend.app.services.biologic_gcpl import (
     integrate_capacity_by_step,
     map_gcpl_to_canonical,
 )
-from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE, read_mpr
+from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE
 from tests.biologic_mpr_fixture import encode_gcpl_records, write_gcpl_mpr
 
 
 def _row(
     time_s: float,
     *,
+    cycle: int = 1,
     mode: int = MPR_MODE_GALVANOSTATIC,
     ns: int = 1,
     half_cycle: int = 0,
@@ -40,6 +41,7 @@ def _row(
 ) -> dict[str, object]:
     return {
         "total_time_s": time_s,
+        "cycle": cycle,
         "mode": mode,
         "ns": ns,
         "half_cycle": half_cycle,
@@ -64,7 +66,7 @@ def _structured_records(
 ) -> np.ndarray:
     """Build byte-backed records plus test-only semantic fields at the mapper boundary."""
 
-    extra = []
+    extra = [("raw_cycle_index", "<i8")]
     if direct_voltage:
         extra.append(("raw_voltage_v", "<f8"))
     if dedicated_current:
@@ -76,6 +78,7 @@ def _structured_records(
     records = np.zeros(len(rows), dtype=dtype)
     for name in MPR_RECORD_DTYPE.names or ():
         records[name] = base[name]
+    records["raw_cycle_index"] = [int(row.get("cycle", 1)) for row in rows]
     if direct_voltage:
         records["raw_voltage_v"] = [
             float(row.get("voltage_v", row.get("ewe_v", 3.5))) for row in rows
@@ -120,7 +123,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl1:r1")
         self.assertFalse(parsing.source_filename_allowed("source.mpr"))
 
-    def test_direct_mpr_dispatch_defers_unresolved_three_electrode_voltage(self) -> None:
+    def test_direct_mpr_dispatch_defers_unresolved_cycle_and_three_electrode_voltage(self) -> None:
         rows = [
             _row(0.0, ns_changed=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
@@ -138,7 +141,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "fixture.mpr", rows)
-            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "primary full-cell voltage"):
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "cycle identity"):
                 parsing.parse_timeseries(path)
 
         frame = _map_rows(rows)
@@ -178,14 +181,22 @@ class BiologicGcplMappingTests(unittest.TestCase):
     def test_programmed_sequence_is_preserved_and_repeated_execution_gets_new_step(self) -> None:
         rows = [
             _row(0.0, ns=1, ns_changed=True),
-            _row(1.0, ns=2, half_cycle=0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0, ns_changed=True),
-            _row(2.0, ns=1, half_cycle=0, q_mAh=0.0, ns_changed=True),
+            _row(1.0, ns=2, half_cycle=0, control=-3600.0, ns_changed=True),
+            _row(2.0, ns=1, half_cycle=0, ns_changed=True),
         ]
         frame = _map_rows(rows)
 
         self.assertEqual(frame["step_index"].tolist(), [1, 2, 1])
         self.assertEqual(frame["step"].tolist(), [1, 2, 3])
         self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
+
+    def test_explicit_cycle_field_is_copied_without_invention(self) -> None:
+        rows = [
+            _row(0.0, cycle=4, ns_changed=True),
+            _row(1.0, cycle=4, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        frame = _map_rows(rows)
+        self.assertEqual(frame["cycle"].tolist(), [4, 4])
 
     def test_cc_cv_transition_stays_one_executed_step_and_maps_cccv(self) -> None:
         rows = [
@@ -257,6 +268,32 @@ class BiologicGcplMappingTests(unittest.TestCase):
         ]
         with self.assertRaises(InvalidBiologicGcplError):
             _map_rows(rows)
+
+    def test_capacity_transfer_at_step_boundary_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns=1, ns_changed=True),
+            _row(1.0, ns=2, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
+
+    def test_unexplained_ns_changed_flag_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns=1, ns_changed=True),
+            _row(1.0, ns=1, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "Ns-change flag"):
+            _map_rows(rows)
+
+    def test_nonfinite_dedicated_current_is_invalid_source_data(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True),
+            _row(1.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        records = _structured_records(rows, dedicated_current=True)
+        records["raw_current_ma"][1] = np.nan
+        with self.assertRaises(InvalidBiologicGcplError):
+            map_gcpl_to_canonical(records)
 
     def test_reversed_cv_to_cc_control_history_fails_closed(self) -> None:
         rows = [
@@ -441,18 +478,23 @@ class BiologicGcplMappingTests(unittest.TestCase):
     def test_explicit_step_time_reset_is_a_boundary_when_available(self) -> None:
         dtype = np.dtype(
             MPR_RECORD_DTYPE.descr
-            + [("raw_voltage_v", "<f8"), ("raw_step_time_s", "<f8")]
+            + [
+                ("raw_cycle_index", "<i8"),
+                ("raw_voltage_v", "<f8"),
+                ("raw_step_time_s", "<f8"),
+            ]
         )
         records = np.zeros(3, dtype=dtype)
+        records["raw_cycle_index"] = [1, 1, 1]
         records["raw_flags"] = [0x21, 0x01, 0x01]
         records["raw_sample_index"] = [1, 1, 1]
         records["elapsed_time_s"] = [10.0, 11.0, 12.0]
-        records["raw_dq_mAh"] = [0.0, 1.0, 1.0]
+        records["raw_dq_mAh"] = [0.0, 1.0, 0.0]
         records["raw_control_v_or_mA"] = [3600.0, 3600.0, 3600.0]
         records["raw_ewe_v"] = [3.5, 3.5, 3.5]
         records["raw_ece_v"] = [0.0, 0.0, 0.0]
         records["raw_voltage_v"] = [3.5, 3.5, 3.5]
-        records["raw_q_charge_discharge_mAh"] = [0.0, 1.0, 2.0]
+        records["raw_q_charge_discharge_mAh"] = [0.0, 1.0, 1.0]
         records["raw_half_cycle_index"] = [0, 0, 0]
         records["raw_step_time_s"] = [0.0, 1.0, 0.0]
         frame = map_gcpl_to_canonical(records)

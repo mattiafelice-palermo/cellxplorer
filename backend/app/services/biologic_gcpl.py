@@ -199,6 +199,64 @@ def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
     return None
 
 
+def _cycle_column(records: np.ndarray) -> np.ndarray:
+    """Return an explicitly decoded full-cycle field or fail closed.
+
+    The exact 041.1 GCPL layout has no verified logical-cycle field, and its
+    half-cycle counter has no paired MPT semantics yet. A semantic test record
+    may provide ``raw_cycle_index`` to exercise the canonical adapter; the
+    production MPR path must not invent a cycle label.
+    """
+
+    direct = _optional_column(records, "raw_cycle_index")
+    if direct is None:
+        raise UnsupportedBiologicGcplError(
+            "GCPL logical cycle identity is not independently resolved; paired MPT evidence "
+            "or an explicitly decoded full-cycle field is required"
+        )
+    return _validate_integer_column(direct, "cycle", positive=True)
+
+
+def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
+    """Reject an Ns-change flag that is not redundant with an Ns transition."""
+
+    if len(ns) <= 1:
+        return
+    unexplained = np.asarray(ns_changed[1:], dtype=bool) & (ns[1:] == ns[:-1])
+    if np.any(unexplained):
+        raise UnsupportedBiologicGcplError(
+            "GCPL Ns-change flag semantics are not independently validated for a repeated Ns; "
+            "paired settings/MPT evidence is required"
+        )
+
+
+def _validate_capacity_boundaries(
+    raw_capacity: np.ndarray,
+    raw_dq_mAh: np.ndarray,
+    boundaries: np.ndarray,
+) -> None:
+    """Reject ambiguous capacity ownership at an executed-step boundary.
+
+    The source counters are cumulative, but the canonical columns reset at
+    each executed step. Without paired evidence for whether a boundary row's
+    interval belongs to the preceding or following operation, only a boundary
+    with no incremental transfer and no cumulative counter jump is safe.
+    """
+
+    starts = np.flatnonzero(boundaries)[1:]
+    if len(starts) == 0:
+        return
+    boundary_dq = raw_dq_mAh[starts]
+    q_delta = raw_capacity[starts] - raw_capacity[starts - 1]
+    if np.any(np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) or np.any(
+        np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH
+    ):
+        raise InvalidBiologicGcplError(
+            "GCPL capacity transfer is ambiguous at an executed-step boundary; "
+            "boundary rows must have zero incremental and cumulative transfer"
+        )
+
+
 def _raw_current_ma(
     records: np.ndarray,
     mode: np.ndarray,
@@ -237,6 +295,10 @@ def _raw_current_ma(
         raw_current[mode == MPR_MODE_REST] = 0.0
 
     if not np.isfinite(raw_current).all():
+        if dedicated is not None:
+            raise InvalidBiologicGcplError(
+                "dedicated GCPL measured-current field contains non-finite values"
+            )
         raise UnsupportedBiologicGcplError(
             "supported GCPL records do not contain a usable current value for every row"
         )
@@ -252,8 +314,6 @@ def _step_boundaries(
     ns: np.ndarray,
     half_cycle: np.ndarray,
     mode: np.ndarray,
-    ns_changed: np.ndarray,
-    total_time_s: np.ndarray,
     records: np.ndarray,
 ) -> np.ndarray:
     boundaries = np.zeros(len(ns), dtype=bool)
@@ -264,10 +324,10 @@ def _step_boundaries(
 
     boundaries[1:] |= ns[1:] != ns[:-1]
     boundaries[1:] |= half_cycle[1:] != half_cycle[:-1]
-    boundaries[1:] |= np.asarray(ns_changed[1:], dtype=bool)
     # A transition into or out of a true rest operation is an executed-step
-    # boundary.  CC -> CV and CV -> CC stay in one occurrence, allowing the
-    # block classifier to produce CCCV status without inventing a step.
+    # boundary. CC -> CV stays in one occurrence, allowing the block classifier
+    # to produce CCCV status; unsupported reverse chronology fails in the
+    # classifier without inventing a step.
     boundaries[1:] |= active[1:] != active[:-1]
 
     # 041.1 currently exposes whole-test time only.  Accept a future
@@ -489,6 +549,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     if np.any(half_cycle < 0):
         raise InvalidBiologicGcplError("GCPL half-cycle values cannot be negative")
     _validate_supported_half_cycle(half_cycle)
+    cycle = _cycle_column(records)
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
     raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
@@ -507,14 +568,14 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     voltage_v, voltage_v_derived = _primary_voltage(records)
 
     ns_changed = _flag_column(records, flags, "ns_changed")
+    _validate_ns_changed_flags(ns, ns_changed)
     boundaries = _step_boundaries(
         ns=ns,
         half_cycle=half_cycle,
         mode=mode,
-        ns_changed=ns_changed,
-        total_time_s=total_time_s,
         records=records,
     )
+    _validate_capacity_boundaries(raw_capacity, raw_dq_mAh, boundaries)
     ranges = _block_ranges(boundaries)
     directions = [
         _direction_for_block(
@@ -549,7 +610,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     frame = pd.DataFrame(
         {
             "record_index": np.arange(1, len(records) + 1, dtype=np.int64),
-            "cycle": np.ones(len(records), dtype=np.int64),
+            "cycle": cycle,
             "step": step,
             "step_index": ns,
             "status": pd.Series(status, dtype="string"),
@@ -566,8 +627,8 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": 0,
-        "cycle_source": "adapter-local single group from observed constant-zero half-cycle",
-        "cycle_formula": "cycle = 1 for this unsegmented source; vendor progression deferred pending paired MPT",
+        "cycle_source": "explicit full-cycle field",
+        "cycle_formula": "copied from independently decoded raw_cycle_index",
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": False,
