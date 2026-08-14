@@ -157,8 +157,10 @@ records provide an explicit `raw_cycle_index` solely to exercise the downstream 
 they do not define a production cycle formula or amend Parent 041.
 
 An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
-change, a half-cycle change, an explicit decoded step-time reset, or entry/exit from the supported
-rest mode. The decoded `Ns changes` flag is accepted only as a redundant signal on a real `Ns`
+change, a verified cycle transition, a half-cycle change, an explicit decoded step-time reset, or
+entry/exit from the supported rest mode. Explicit cycle values must not regress; a cycle transition
+itself is an executed-step boundary. The decoded `Ns changes` flag is accepted only as a redundant
+signal on a real `Ns`
 transition; an unexplained midstream flag fails closed pending independent settings/MPT evidence.
 A chronological galvanostatic-to-potentiostatic transition inside one active occurrence stays one
 step and is classified as `CCCV_Chg` or `CCCV_DChg`; reversed or re-entering control histories fail

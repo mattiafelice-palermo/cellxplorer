@@ -262,6 +262,17 @@ def _validate_capacity_boundaries(
         )
 
 
+def _step_time_column(records: np.ndarray) -> np.ndarray | None:
+    """Return a decoded step-time field after validating every row."""
+
+    step_time = _optional_column(records, "raw_step_time_s", "step_time_s")
+    if step_time is not None and (
+        not np.isfinite(step_time).all() or np.any(step_time < 0)
+    ):
+        raise InvalidBiologicGcplError("GCPL step time contains invalid values")
+    return step_time
+
+
 def _raw_current_ma(
     records: np.ndarray,
     mode: np.ndarray,
@@ -320,7 +331,7 @@ def _step_boundaries(
     half_cycle: np.ndarray,
     cycle: np.ndarray,
     mode: np.ndarray,
-    records: np.ndarray,
+    step_time: np.ndarray | None,
 ) -> np.ndarray:
     boundaries = np.zeros(len(ns), dtype=bool)
     boundaries[0] = True
@@ -337,14 +348,7 @@ def _step_boundaries(
     # classifier without inventing a step.
     boundaries[1:] |= active[1:] != active[:-1]
 
-    # 041.1 currently exposes whole-test time only.  Accept a future
-    # independently decoded step-time field without making up one from a
-    # cycle-relative counter.  A reset is a boundary only when that field is
-    # explicitly present.
-    step_time = _optional_column(records, "raw_step_time_s", "step_time_s")
     if step_time is not None:
-        if not np.isfinite(step_time).all() or np.any(step_time < 0):
-            raise InvalidBiologicGcplError("GCPL step time contains invalid values")
         boundaries[1:] |= np.diff(step_time) < -_TIME_TOLERANCE_S
 
     return boundaries
@@ -559,6 +563,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     cycle = _cycle_column(records)
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
+    step_time = _step_time_column(records)
     raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
     raw_capacity = _require_float_column(records, "raw_q_charge_discharge_mAh")
     control = _require_float_column(records, "raw_control_v_or_mA")
@@ -581,7 +586,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         half_cycle=half_cycle,
         cycle=cycle,
         mode=mode,
-        records=records,
+        step_time=step_time,
     )
     _validate_capacity_boundaries(raw_capacity, raw_dq_mAh, boundaries)
     ranges = _block_ranges(boundaries)
@@ -606,14 +611,19 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
 
     step = np.empty(len(records), dtype=np.int64)
     status = np.empty(len(records), dtype=object)
-    time_s = np.empty(len(records), dtype=np.float64)
+    time_s = (
+        step_time.copy()
+        if step_time is not None
+        else np.empty(len(records), dtype=np.float64)
+    )
     for step_number, ((start, end), block_status) in enumerate(zip(ranges, statuses), start=1):
         step[start:end] = step_number
         status[start:end] = block_status
-        time_s[start:end] = total_time_s[start:end] - total_time_s[start]
-        # Avoid carrying a sub-microsecond negative caused by a source clock
-        # representation at a boundary, while preserving real elapsed time.
-        time_s[start:end] = np.maximum(time_s[start:end], 0.0)
+        if step_time is None:
+            time_s[start:end] = total_time_s[start:end] - total_time_s[start]
+            # Avoid carrying a sub-microsecond negative caused by a source clock
+            # representation at a boundary, while preserving real elapsed time.
+            time_s[start:end] = np.maximum(time_s[start:end], 0.0)
 
     frame = pd.DataFrame(
         {

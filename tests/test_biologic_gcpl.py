@@ -519,6 +519,25 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(frame["step"].tolist(), [1, 1, 2])
         self.assertEqual(frame["step_index"].tolist(), [1, 1, 1])
 
+    def test_explicit_step_time_is_published_instead_of_rederived(self) -> None:
+        rows = [
+            {**_row(10.0, ns_changed=True), "step_time_s": 5.0},
+            {**_row(20.0, q_mAh=1.0, dq_mAh=1.0), "step_time_s": 6.0},
+            {**_row(30.0, q_mAh=1.0), "step_time_s": 0.0},
+        ]
+        frame = _map_rows(rows, step_time=True)
+        np.testing.assert_allclose(frame["time_s"], [5.0, 6.0, 0.0])
+        self.assertEqual(frame["step"].tolist(), [1, 1, 2])
+
+    def test_invalid_single_row_step_time_is_rejected(self) -> None:
+        records = _structured_records(
+            [_row(0.0, ns_changed=True)],
+            step_time=True,
+        )
+        records["raw_step_time_s"][0] = -1.0
+        with self.assertRaises(InvalidBiologicGcplError):
+            map_gcpl_to_canonical(records)
+
     def test_invalid_total_time_is_rejected_before_canonical_validation(self) -> None:
         rows = [_row(0.0, ns_changed=True), _row(-1.0)]
         with self.assertRaises(InvalidBiologicGcplError):
