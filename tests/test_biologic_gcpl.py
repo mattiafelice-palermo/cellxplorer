@@ -198,6 +198,24 @@ class BiologicGcplMappingTests(unittest.TestCase):
         frame = _map_rows(rows)
         self.assertEqual(frame["cycle"].tolist(), [4, 4])
 
+    def test_cycle_regression_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, cycle=2, ns_changed=True),
+            _row(1.0, cycle=1, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "regresses or resets"):
+            _map_rows(rows)
+
+    def test_cycle_transition_starts_a_new_executed_step(self) -> None:
+        rows = [
+            _row(0.0, cycle=1, ns_changed=True),
+            _row(1.0, cycle=1, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, cycle=2, q_mAh=1.0),
+        ]
+        frame = _map_rows(rows)
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 2])
+        self.assertEqual(frame["step"].tolist(), [1, 1, 2])
+
     def test_cc_cv_transition_stays_one_executed_step_and_maps_cccv(self) -> None:
         rows = [
             _row(0.0, ns_changed=True),
@@ -274,7 +292,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, ns=1, ns_changed=True),
             _row(1.0, ns=2, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with self.assertRaises(InvalidBiologicGcplError):
+        with self.assertRaises(UnsupportedBiologicGcplError):
             _map_rows(rows)
 
     def test_unexplained_ns_changed_flag_fails_closed(self) -> None:

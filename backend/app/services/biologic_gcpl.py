@@ -214,7 +214,12 @@ def _cycle_column(records: np.ndarray) -> np.ndarray:
             "GCPL logical cycle identity is not independently resolved; paired MPT evidence "
             "or an explicitly decoded full-cycle field is required"
         )
-    return _validate_integer_column(direct, "cycle", positive=True)
+    cycle = _validate_integer_column(direct, "cycle", positive=True)
+    if len(cycle) > 1 and np.any(np.diff(cycle) < 0):
+        raise UnsupportedBiologicGcplError(
+            "GCPL logical cycle identity regresses or resets in acquisition order"
+        )
+    return cycle
 
 
 def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
@@ -251,7 +256,7 @@ def _validate_capacity_boundaries(
     if np.any(np.abs(boundary_dq) > _CAPACITY_TOLERANCE_MAH) or np.any(
         np.abs(q_delta) > _CAPACITY_TOLERANCE_MAH
     ):
-        raise InvalidBiologicGcplError(
+        raise UnsupportedBiologicGcplError(
             "GCPL capacity transfer is ambiguous at an executed-step boundary; "
             "boundary rows must have zero incremental and cumulative transfer"
         )
@@ -313,6 +318,7 @@ def _step_boundaries(
     *,
     ns: np.ndarray,
     half_cycle: np.ndarray,
+    cycle: np.ndarray,
     mode: np.ndarray,
     records: np.ndarray,
 ) -> np.ndarray:
@@ -324,6 +330,7 @@ def _step_boundaries(
 
     boundaries[1:] |= ns[1:] != ns[:-1]
     boundaries[1:] |= half_cycle[1:] != half_cycle[:-1]
+    boundaries[1:] |= cycle[1:] != cycle[:-1]
     # A transition into or out of a true rest operation is an executed-step
     # boundary. CC -> CV stays in one occurrence, allowing the block classifier
     # to produce CCCV status; unsupported reverse chronology fails in the
@@ -572,6 +579,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     boundaries = _step_boundaries(
         ns=ns,
         half_cycle=half_cycle,
+        cycle=cycle,
         mode=mode,
         records=records,
     )
