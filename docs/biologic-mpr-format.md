@@ -68,20 +68,24 @@ The sample's encoded column identifiers, in order, are:
 1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468
 ```
 
-The reader accepts only this exact supported identifier ordering and record layout. It validates the
-record-area multiplication and uses one NumPy structured dtype from the memory-mapped payload; it
-does not decode records with a Python per-row loop. The 16 logical IDs form the exact accepted GCPL
-layout signature. The first six IDs, `1, 2, 3, 21, 31, 65`, are logical flags sharing the one
-physical byte at offset 0. The remaining physical fields follow as `131` (sample sequence), `4`
-(elapsed time), `7` (incremental charge), `13` (charge relative to origin), `5` (control), `6`
-(Ewe-labeled potential), `9` (Ece-labeled potential), `39` (current range), `211`
-(charge/discharge quantity), and `468` (half-cycle index). The five flag IDs after the physical
-byte are validated as packed-flag aliases; they do not create synthetic duplicate byte ranges.
+The reader accepts this exact identifier ordering and record layout, or a bounded order-preserving
+subset with the required GCPL fields. The supported two-electrode subset may omit only the Ece
+channel (`9`), yielding a compact 49-byte record; it still requires the mode/flags, Ns, elapsed
+time, incremental/cumulative capacity, control, Ewe/primary voltage, and half-cycle fields. Unknown
+IDs, reordered fields, duplicate physical fields, and other omissions fail closed. The reader
+validates the record-area multiplication and uses one NumPy structured dtype from the memory-mapped
+payload; it does not decode records with a Python per-row loop. The first six IDs, `1, 2, 3, 21, 31,
+65`, are logical flags sharing the one physical byte at offset 0. The remaining physical fields
+follow as `131` (sample sequence), `4` (elapsed time), `7` (incremental charge), `13` (charge
+relative to origin), `5` (control), `6` (Ewe-labeled potential), optional `9` (Ece-labeled
+potential), `39` (current range), `211` (charge/discharge quantity), and `468` (half-cycle index).
+The five flag IDs after the physical byte are validated as packed-flag aliases; they do not create
+synthetic duplicate byte ranges.
 
-The names `Ns`, `Ewe`, and `Ece` below are source-label interpretations recorded from the observed
-GCPL layout, not an official three-electrode capability claim. The 041.2 adapter uses only the
-independently established raw fields and a directly supplied full-cell field; official protocol and
-electrode-role semantics are intentionally resolved in 041.3 rather than inferred from these labels.
+The names `Ns`, `Ewe`, and `Ece` are source-label interpretations at the low-level boundary. The
+GCPL adapter in 041.3 assigns the canonical roles only after the source configuration is resolved:
+Ewe/Ece together are a synchronized three-electrode pair; Ewe without Ece is the measured primary
+two-electrode voltage.
 
 ## Typed 53-byte record
 
@@ -137,95 +141,146 @@ once. Canonical status/step semantics built from these acquisition flags belong 
 | `31` | `ns_changed` | `0x20` | 5 | boolean |
 | `65` | `counter_incremented` | `0x80` | 7 | boolean |
 
-## GCPL canonical mapping (Spec 041.2)
+## GCPL settings layout (Spec 041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` accepts this exact record layout as
-its low-level input. It returns Parent 040 canonical raw columns only when every required semantic
-role is independently resolved; the real supplied GCPL6 file currently fails closed before
-canonical publication because its logical cycle and full-cell voltage roles are not yet resolved.
-Acquisition order is preserved; `record_index` is the one-based ordinal `1..n`. The ID-131 value
-(`raw_sample_index` in the low-level reader) is the observed BioLogic `Ns` programmed-sequence
-identity and is copied without renumbering into `step_index`. The supported contract is one-based
-(`Ns >= 1`).
+The supplied EC-Lab 11.60 sample independently identifies the supported modern GCPL settings
+contract with all of the following discriminators:
 
-The supplied private sample contains only a constant-zero ID-468 half-cycle value. Because no MPT
-was available to establish the starting value, direction, progression, or formation behavior of a
-non-zero counter, the production adapter does not publish a cycle label from the constant-zero
-observation. Any non-zero, regressing, or resetting half-cycle sequence, or any set
-counter-increment flag, fails closed until a paired MPR/MPT corpus is available. Synthetic semantic
-records provide an explicit `raw_cycle_index` solely to exercise the downstream canonical mapper;
-they do not define a production cycle formula or amend Parent 041.
+| Fact | Observed value |
+| --- | ---: |
+| VMP Set module version / old version | `10 / 0` |
+| technique discriminator | `0x77` (GCPL) |
+| parameter header offset | `0x1847` |
+| sequence count | `3` in the sample |
+| parameter count | `33` |
+| parameter item size | `108` bytes |
 
-An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
-change, a verified cycle transition, a half-cycle change, an explicit decoded step-time reset, or
-entry/exit from the supported rest mode. Explicit cycle values must not regress; a cycle transition
-itself is an executed-step boundary. The decoded `Ns changes` flag is accepted only as a redundant
-signal on a real `Ns`
-transition; an unexplained midstream flag fails closed pending independent settings/MPT evidence.
-A chronological galvanostatic-to-potentiostatic transition inside one active occurrence stays one
-step and is classified as `CCCV_Chg` or `CCCV_DChg`; reversed or re-entering control histories fail
-closed. Pure current and pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV
-discharge is rejected because the current canonical vocabulary has no `CV_DChg` status. Mixed
-charge/discharge direction in one occurrence is rejected.
+The parameter block begins at `0x1847 + 4`; the first sequence's fixed fields are decoded from the
+independently observed record offsets for `Set I/C`, `Is`, current units, `N`, sign, `t1`, `EM`,
+`tM`, `Im`, `dq`, `dtq`, `dQM`, `tR`, rest record settings, `EL`, `goto Ns`, and `nc cycles`.
+Current and capacity units are normalized to mA and mA.h using the source unit codes. Explicit C-rate
+settings are retained only when the sequence selects C/C×N control; a C-rate is never inferred from
+active mass.
 
-When an explicitly decoded step-time field is present, it is published directly as canonical
-`time_s` and must reset to approximately zero at every executed-step boundary, including boundaries
-created by `Ns`, cycle, half-cycle, Rest, or other verified signals. A contradictory clock fails
-closed. When the field is absent, `time_s` is derived from validated whole-test elapsed time.
+The normalized protocol uses the existing CellXplorer step schema. A voltage limit with no hold
+duration is CC until an operational cutoff. A verified voltage target plus hold duration is CCCV,
+with the CV portion retained as a nested substep. A zero-current sequence with `tM` but no `EM`
+target is the verified open-circuit/rest representation used by the supplied sample. `goto Ns` and
+`nc cycles` are retained as loop structure when they are valid; malformed forward or zero repeats are
+preserved in raw settings and excluded from structural groups. Instrument protection limits are not
+fabricated from the GCPL operating range.
 
-The adapter keeps the accepted BioLogic sign factor explicit as `+1` (`current_ma > 0` is charge
-and `current_ma < 0` is discharge), but the required paired MPT semantic parity is still pending.
-In galvanostatic rows the ID-5 control value is used only for the supported current-control mode.
-A potentiostatic block requires a separately decoded measured-current field; unverified interval
-`dq/time` reconstruction is rejected. The required signed ID-211 quantity is converted into a
-non-negative phase-specific capacity counter relative to the first row of each executed step, and
-its sign must agree with current and incremental ID-7 charge. Capacity counters must be monotonic
-within each executed step. A boundary row is accepted only when both its incremental ID-7 value
-and cumulative ID-211 change are zero; otherwise interval ownership is ambiguous and the source
-fails closed. The adapter also exposes a diagnostic trapezoidal current integration helper, but
-never substitutes that diagnostic for the vendor counter.
+The declared protocol exposes explicit capability facts for protocol availability, explicit rates,
+operational cutoffs/limits, loop structure, and semantic condition grammar. BioLogic does not carry
+the Neware formula grammar used by the current Chargeability matcher, so
+`semantic_conditions_available` is false and the limitation is included in protocol warnings.
 
-An independent privacy-safe probe of the supplied sample's 5,473 active rows observed constant
-`-7.6900000572 mA` over `45.5999868295 h`; trapezoidal integration was `-350.6639013279 mA.h`,
-while the ID-211 endpoint delta and summed ID-7 increments were both `-350.6214261625 mA.h`.
-The absolute discrepancy was `0.0424751654 mA.h` (`0.0121143%`). This supports the adapter's
-observed sign convention and is recorded as diagnostic evidence only; it is not an MPT parity
-result or a general production acceptance tolerance.
+## VMP LOG layout (Spec 041.3)
 
-The supported GCPL6 layout does not expose a verified vendor energy counter, so the adapter chooses
-Policy C: canonical energy columns are absent and downstream energy quantities remain unavailable.
-Absolute timestamps are also deferred to 041.3 because the low-level reader has not yet established
-a minimal log timestamp decoder. The exact GCPL6 layout exposes Ewe/Ece-labelled fields but no
-independently decoded full-cell role in 041.2, so the production adapter does not derive or publish
-`voltage_v` from them. A synthetic/direct full-cell field remains testable; the real three-electrode
-path is intentionally deferred to 041.3. Rows carrying the decoded error flag are rejected.
+Only the verified identity/timing fields are decoded from the optional VMP LOG version `10` module:
 
-The physical dtype contains the packed byte once; the six named arrays are NumPy results owned by the
-data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics
-are owned by Spec 041.2, while electrode roles, timestamps, and three-electrode capability exposure
-remain deferred to Spec 041.3.
+| Payload offset | Meaning |
+| ---: | --- |
+| `0x0009` | zero-based channel number |
+| `0x00AB` | channel serial (`uint16`) |
+| `0x0249` | acquisition start as an OLE date (`float64`) |
+| `0x0251` | original filename |
+| `0x0351` | host |
+| `0x0384` | instrument address |
+| `0x03B7` / `0x03BE` / `0x03C5` | EC-Lab / server / interpreter versions |
+| `0x03CF` | device serial |
+
+The OLE date is exposed as a naive local wall-clock timestamp because the log carries no verified
+timezone offset. Canonical timestamps are `acquisition_start + total_time_s`. A missing, truncated,
+non-finite, or out-of-range OLE date leaves `absolute_timestamps` false and every canonical timestamp
+as `NaT`; file modification time is never used.
+
+## GCPL canonical mapping (Specs 041.2/041.3)
+
+The direct adapter in `backend/app/services/biologic_gcpl.py` maps the verified records into the
+Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
+`1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
+is copied without renumbering into `step_index`. The supported contract is one-based (`Ns >= 1`).
+
+The adapter keeps the accepted BioLogic sign factor explicit as `+1`: positive canonical current is
+charge and negative canonical current is discharge. ID-211 is converted into non-negative,
+phase-specific capacity counters relative to each executed step, and its sign must agree with ID-7
+and the current direction. Capacity counters must remain monotonic; ambiguous boundary ownership,
+error flags, unvalidated counter-increment flags, and unsupported control histories fail closed.
+Energy follows Policy C for this layout: no verified vendor energy counter is present, so canonical
+energy columns remain unavailable rather than being fabricated.
+
+The supplied sample's ID-468 half-cycle is constant zero, so it does not by itself establish a
+multi-cycle identity. The current direct parser therefore remains intentionally fail-closed for
+that real-file canonical mapping until an independent cycle ground truth is available; this is not
+a claim of MPR/MPT parity. Synthetic mapper tests exercise explicit cycle fields and do not silently
+promote that evidence to the private file.
+
+### Electrode roles and primary voltage
+
+For the verified three-electrode data header, ID 6 is Ewe (working versus reference) and ID 9 is Ece
+(counter versus reference). The canonical adapter publishes both auxiliary columns and computes the
+signed primary cell voltage as:
+
+```text
+voltage_v = working_potential_v - counter_potential_v
+```
+
+The subtraction order is tested with positive and negative counter potentials and is never replaced
+with an absolute difference. Metadata records `voltage_v` as the `cell` role,
+`voltage_v_origin = derived_working_minus_counter`, and the auxiliary roles as
+`working_vs_reference` and `counter_vs_reference`. An explicit source reference-electrode string is
+preserved; no battery chemistry is used to invent one.
+
+For the bounded two-electrode layout, Ece is absent and the Ewe-labelled channel is used once as the
+measured primary `voltage_v`; auxiliary working/counter columns and capabilities are not fabricated.
+
+### Timestamps and execution time
+
+When the verified VMP LOG OLE timestamp is present, canonical `timestamp` is
+`acquisition_start + total_time_s`. The timestamp is a naive local wall-clock value because the log
+does not contain a verified timezone offset. If the log is absent or unreliable, the column is
+present with `NaT` values and `absolute_timestamps` is false. File modification time is never used.
+
+An executed `step` is a one-based source-local occurrence. Occurrence boundaries are established by
+validated Ns/cycle/half-cycle changes, explicit step-time resets, and entry/exit from Rest. A
+galvanostatic-to-potentiostatic transition within one occurrence stays one step and is classified as
+CCCV when the canonical vocabulary supports it. Current, voltage, capacity, rest, loop, and timestamp
+settings are retained in the normalized protocol metadata; unsupported Neware condition expressions
+are reported through `semantic_conditions_available = false`.
 
 ## Bounds and ownership
 
 The reader rejects files above 8 GiB, walks at most 32 declared modules, and rejects data headers
-above 64 columns before decoding. It validates declared module ends, exact record-area size, and
-the `n_datapoints * 53` multiplication before calling `np.frombuffer`. An unknown optional module
-is preserved as a descriptor and skipped by its declared length.
+above 64 columns before decoding. It validates declared module ends, exact record-area size, and the
+`n_datapoints * verified_record_itemsize` multiplication before calling `np.frombuffer`. An unknown
+optional module is preserved as a descriptor and skipped by its declared length.
 
 `read_mpr()` owns a read-only memory map. `MprDocument`/`MprDataBlock` are context managers. Typed
 records are copied into an owning NumPy array before return, so ordinary record consumption remains
 valid after the context closes. Module payloads remain zero-copy views and must be released before
 closing the document; a retained view causes close to fail explicitly and can be released before a
-retry.
+retry. `read_mpr_header()` walks and validates the same container/data-column bounds but leaves
+`records=None`, so normalized metadata does not construct a record-sized NumPy array.
 
 ## Fail-closed rules
 
 The reader rejects a source when the complete magic header, module marker, declared length, next
-boundary, required module count, old/current module versions, column identifiers, record offset, or
-record-area size is not verified. It also rejects duplicate VMP data/Set/LOG modules and repeated
-column identifiers. It does not silently truncate unknown identifiers, infer record widths, or accept
-a partial final record. An unrelated file is classified as unsupported; a file with the full MPR
-signature but a truncated/corrupt header is classified as invalid.
+boundary, required module count, old/current module versions, column identifiers, required GCPL
+fields, source order, record offset, or record-area size is not verified. It also rejects duplicate
+VMP data/Set/LOG modules and repeated column identifiers. It does not silently truncate unknown
+identifiers, infer unknown record widths, or accept a partial final record. An unrelated file is
+classified as unsupported; a file with the full MPR signature but a truncated/corrupt header is
+classified as invalid.
+
+## Header-only performance evidence
+
+On the private 307,115-byte sample, `read_mpr_header()` validated the three modules and 5,483-row
+data header without constructing records; `read_mpr()` returned the owning `(5483,)` structured array.
+The measured single-run wall times on the development machine were `0.000488 s` and `0.000924 s`,
+respectively. The absolute values are machine-specific; the relevant invariant is that the header
+path does not call the record `np.frombuffer` operation. The focused test patches that operation to
+fail if the header path attempts a full decode.
 
 ## Provenance and licensing
 

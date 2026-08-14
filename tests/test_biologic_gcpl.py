@@ -116,11 +116,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl1",
+                "adapter_revision": "gcpl2",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl1:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl2:r1")
         self.assertFalse(parsing.source_filename_allowed("source.mpr"))
 
     def test_direct_mpr_dispatch_defers_unresolved_cycle_and_three_electrode_voltage(self) -> None:
@@ -160,6 +160,9 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 "current_ma",
                 "charge_capacity_mah",
                 "discharge_capacity_mah",
+                "working_potential_v",
+                "counter_potential_v",
+                "timestamp",
             ],
         )
         canonical_cycling.validate_raw_timeseries(frame)
@@ -176,7 +179,73 @@ class BiologicGcplMappingTests(unittest.TestCase):
         np.testing.assert_allclose(frame["voltage_v"], 3.5)
         np.testing.assert_allclose(frame["charge_capacity_mah"], [0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
         np.testing.assert_allclose(frame["discharge_capacity_mah"], [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+        np.testing.assert_allclose(frame["working_potential_v"], 3.5)
+        np.testing.assert_allclose(frame["counter_potential_v"], 0.0)
         self.assertFalse(frame.attrs["biologic_gcpl"]["voltage_v_derived"])
+
+    def test_synchronized_ewe_ece_are_subtracted_with_the_verified_sign(self) -> None:
+        rows = [
+            _row(0.0, ewe_v=1.2, ece_v=0.2, ns_changed=True),
+            _row(1.0, ewe_v=1.0, ece_v=-0.5, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        frame = _map_rows(rows, direct_voltage=False)
+        np.testing.assert_allclose(frame["working_potential_v"], [1.2, 1.0])
+        np.testing.assert_allclose(frame["counter_potential_v"], [0.2, -0.5])
+        np.testing.assert_allclose(frame["voltage_v"], [1.0, 1.5])
+        self.assertTrue(frame.attrs["biologic_gcpl"]["voltage_v_derived"])
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["voltage_v_origin"],
+            "derived_working_minus_counter",
+        )
+
+    def test_absolute_timestamps_are_acquisition_start_plus_total_time(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True),
+            _row(2.5, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        frame = map_gcpl_to_canonical(
+            _structured_records(rows),
+            acquisition_start="2026-07-10T14:41:20.744000",
+        )
+        self.assertEqual(
+            frame["timestamp"].astype(str).tolist(),
+            ["2026-07-10 14:41:20.744", "2026-07-10 14:41:23.244"],
+        )
+        self.assertTrue(frame.attrs["biologic_gcpl"]["absolute_timestamps"])
+
+    def test_two_electrode_direct_voltage_does_not_require_auxiliary_fields(self) -> None:
+        full = _structured_records(
+            [_row(0.0, ns_changed=True), _row(1.0, q_mAh=1.0, dq_mAh=1.0)]
+        )
+        keep = [
+            name
+            for name in full.dtype.names or ()
+            if name not in {"raw_ewe_v", "raw_ece_v"}
+        ]
+        two_dtype = np.dtype([(name, full.dtype.fields[name][0]) for name in keep])
+        two = np.zeros(len(full), dtype=two_dtype)
+        for name in keep:
+            two[name] = full[name]
+        frame = map_gcpl_to_canonical(two)
+        self.assertNotIn("working_potential_v", frame.columns)
+        self.assertNotIn("counter_potential_v", frame.columns)
+        np.testing.assert_allclose(frame["voltage_v"], 3.5)
+
+    def test_two_electrode_ewe_primary_voltage_does_not_publish_fake_auxiliary_fields(self) -> None:
+        full = _structured_records(
+            [_row(0.0, ns_changed=True), _row(1.0, q_mAh=1.0, dq_mAh=1.0)],
+            direct_voltage=False,
+        )
+        keep = [name for name in full.dtype.names or () if name != "raw_ece_v"]
+        two_dtype = np.dtype([(name, full.dtype.fields[name][0]) for name in keep])
+        two = np.zeros(len(full), dtype=two_dtype)
+        for name in keep:
+            two[name] = full[name]
+        frame = map_gcpl_to_canonical(two)
+        self.assertNotIn("working_potential_v", frame.columns)
+        self.assertNotIn("counter_potential_v", frame.columns)
+        np.testing.assert_allclose(frame["voltage_v"], 3.5)
+        self.assertEqual(frame.attrs["biologic_gcpl"]["voltage_v_origin"], "measured")
 
     def test_programmed_sequence_is_preserved_and_repeated_execution_gets_new_step(self) -> None:
         rows = [

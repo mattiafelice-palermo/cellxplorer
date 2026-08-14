@@ -5,8 +5,11 @@ boundary.  GCPL semantics, protocol reconstruction, and user-facing source
 recognition belong to later Spec 041 children.
 
 The supported layout is the one independently observed in the supplied
-GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``.  Unknown data
-layouts fail closed instead of being decoded by positional guesswork.
+GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``.  A bounded
+order-preserving subset of that layout is also accepted when an optional
+electrode channel is absent, so ordinary two-electrode GCPL does not require
+an invented auxiliary potential. Unknown data layouts fail closed instead of
+being decoded by positional guesswork.
 """
 
 from __future__ import annotations
@@ -69,6 +72,20 @@ SUPPORTED_GCPL_COLUMN_IDS = (
     211,
     468,
 )
+SUPPORTED_GCPL_COLUMN_ID_SET = frozenset(SUPPORTED_GCPL_COLUMN_IDS)
+# These fields are needed by the canonical GCPL adapter.  Ece (ID 9) is
+# intentionally optional: its absence is the verified bounded discriminator
+# for a two-electrode primary Ewe/cell channel in this reader revision.
+REQUIRED_GCPL_COLUMN_IDS = (
+    1,
+    131,
+    4,
+    7,
+    5,
+    6,
+    211,
+    468,
+)
 MPR_PHYSICAL_COLUMN_IDS = (1, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468)
 
 
@@ -121,8 +138,8 @@ MPR_COLUMN_DEFINITIONS = {
     7: MprColumnDefinition(7, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field", 7),
     13: MprColumnDefinition(13, "charge relative to origin", "mA.h", "raw_q_minus_q0_mAh", 19, "<f8", "raw charge", "record_field", 13),
     5: MprColumnDefinition(5, "control value", "V or mA", "raw_control_v_or_mA", 27, "<f4", "technique-dependent raw control", "record_field", 5),
-    6: MprColumnDefinition(6, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; role mapping is deferred", "record_field", 6),
-    9: MprColumnDefinition(9, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; role mapping is deferred", "record_field", 9),
+    6: MprColumnDefinition(6, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; GCPL adapter assigns the source role", "record_field", 6),
+    9: MprColumnDefinition(9, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; GCPL adapter assigns the source role", "record_field", 9),
     39: MprColumnDefinition(39, "current range", None, "raw_current_range_code", 39, "<u2", "raw integer code", "record_field", 39),
     211: MprColumnDefinition(211, "charge/discharge quantity", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "raw charge", "record_field", 211),
     468: MprColumnDefinition(468, "half-cycle index bytes", None, "raw_half_cycle_index", 49, "<u4", "full encoded ID; do not truncate to 212", "record_field", 468),
@@ -173,6 +190,31 @@ def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
         )
         for definition in MPR_FLAG_DEFINITIONS
     }
+
+
+def _record_dtype_for_columns(column_ids: tuple[int, ...]) -> np.dtype:
+    """Build the packed dtype for one verified column-ID sequence.
+
+    Flag aliases share one physical byte. The remaining accepted fields are
+    fixed-width and retain the source header order; no unknown width is ever
+    inferred. The full supplied-sample sequence still resolves to
+    ``MPR_RECORD_DTYPE``.
+    """
+
+    fields: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for column_id in column_ids:
+        definition = MPR_COLUMN_DEFINITIONS[column_id]
+        physical = MPR_COLUMN_DEFINITIONS[definition.physical_id]
+        if physical.field_name is None or physical.dtype is None:
+            raise UnsupportedMprColumn(
+                f"VMP column {column_id} has no verified physical record definition"
+            )
+        if physical.field_name in seen:
+            continue
+        seen.add(physical.field_name)
+        fields.append((physical.field_name, physical.dtype))
+    return np.dtype(fields, align=False)
 
 
 class MprError(SourceFormatError):
@@ -422,7 +464,12 @@ def _walk_modules(mapping: mmap.mmap, file_size: int, path: Path) -> tuple[MprMo
     return tuple(modules)
 
 
-def _decode_vmp_data(module: MprModule, path: Path) -> MprDataBlock:
+def _decode_vmp_data(
+    module: MprModule,
+    path: Path,
+    *,
+    decode_records: bool = True,
+) -> MprDataBlock:
     payload = module.payload
     try:
         if len(payload) < VMP_DATA_HEADER_SIZE:
@@ -441,48 +488,58 @@ def _decode_vmp_data(module: MprModule, path: Path) -> MprDataBlock:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP column header")
 
         column_ids = tuple(struct.unpack_from(f">{n_columns}H", payload, 5))
-        unknown_ids = sorted(set(column_ids) - set(SUPPORTED_GCPL_COLUMN_IDS))
+        unknown_ids = sorted(set(column_ids) - SUPPORTED_GCPL_COLUMN_ID_SET)
         if unknown_ids:
             raise UnsupportedMprColumn(
                 f"{_source_label(path)} uses unsupported VMP column IDs: {unknown_ids}"
             )
         if len(set(column_ids)) != len(column_ids):
             raise UnsupportedMprColumn(f"{_source_label(path)} repeats a VMP column ID")
-        if column_ids != SUPPORTED_GCPL_COLUMN_IDS:
+        expected_order = tuple(
+            column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id in column_ids
+        )
+        if column_ids != expected_order:
             raise UnsupportedMprColumn(
                 f"{_source_label(path)} uses an unsupported VMP column ordering/layout"
+            )
+        missing_required = sorted(set(REQUIRED_GCPL_COLUMN_IDS) - set(column_ids))
+        if missing_required:
+            raise UnsupportedMprColumn(
+                f"{_source_label(path)} is missing required GCPL column IDs: {missing_required}"
             )
 
         if len(payload) < VMP_DATA_RECORD_OFFSET:
             raise InvalidMprError(f"{_source_label(path)} has a truncated VMP data prefix")
 
+        record_dtype = _record_dtype_for_columns(column_ids)
+        record_itemsize = record_dtype.itemsize
         data_bytes = len(payload) - VMP_DATA_RECORD_OFFSET
-        if n_datapoints > data_bytes // VMP_DATA_RECORD_ITEMSIZE:
+        if n_datapoints > data_bytes // record_itemsize:
             raise InvalidMprError(
                 f"{_source_label(path)} declares more VMP datapoints than its record area can hold"
             )
-        expected_bytes = n_datapoints * MPR_RECORD_DTYPE.itemsize
+        expected_bytes = n_datapoints * record_itemsize
         if data_bytes != expected_bytes:
             raise InvalidMprError(
                 f"{_source_label(path)} VMP record area is {data_bytes} bytes; "
                 f"expected {expected_bytes} for {n_datapoints} typed records"
             )
-        if MPR_RECORD_DTYPE.itemsize != VMP_DATA_RECORD_ITEMSIZE:
-            raise InvalidMprError("internal MPR record dtype does not match the verified record size")
 
-        record_view = None
-        try:
-            record_view = np.frombuffer(
-                payload,
-                dtype=MPR_RECORD_DTYPE,
-                count=n_datapoints,
-                offset=VMP_DATA_RECORD_OFFSET,
-            )
-            records = record_view.copy()
-        finally:
+        records: np.ndarray | None = None
+        flags: dict[str, np.ndarray] = {}
+        if decode_records:
             record_view = None
-
-        flags = _decode_flags(records)
+            try:
+                record_view = np.frombuffer(
+                    payload,
+                    dtype=record_dtype,
+                    count=n_datapoints,
+                    offset=VMP_DATA_RECORD_OFFSET,
+                )
+                records = record_view.copy()
+            finally:
+                record_view = None
+            flags = _decode_flags(records)
 
         return MprDataBlock(
             module=module,
@@ -490,7 +547,7 @@ def _decode_vmp_data(module: MprModule, path: Path) -> MprDataBlock:
             n_columns=n_columns,
             column_ids=column_ids,
             record_offset=VMP_DATA_RECORD_OFFSET,
-            record_itemsize=MPR_RECORD_DTYPE.itemsize,
+            record_itemsize=record_itemsize,
             records=records,
             flags=flags,
             _payload_view=payload,
@@ -503,7 +560,7 @@ def _decode_vmp_data(module: MprModule, path: Path) -> MprDataBlock:
         raise
 
 
-def read_mpr(path: str | Path) -> MprDocument:
+def read_mpr(path: str | Path, *, decode_records: bool = True) -> MprDocument:
     """Open and structurally decode a supported MPR container.
 
     The returned document owns a read-only memory map.  Callers must close it
@@ -602,7 +659,11 @@ def read_mpr(path: str | Path) -> MprDocument:
                     f"{log_module.version}; expected {VMP_LOG_VERSION}"
                 )
 
-        data_block = _decode_vmp_data(data_module, source_path)
+        data_block = _decode_vmp_data(
+            data_module,
+            source_path,
+            decode_records=decode_records,
+        )
         final_stat = os.fstat(file_handle.fileno())
         if _stat_fingerprint(final_stat) != initial_fingerprint or len(mapping) != file_size:
             raise InvalidMprError(
@@ -636,6 +697,19 @@ def read_mpr(path: str | Path) -> MprDocument:
         raise
 
 
+def read_mpr_header(path: str | Path) -> MprDocument:
+    """Open an MPR while decoding only module and data-column headers.
+
+    The returned :class:`MprDocument` has the same structural ownership rules
+    as :func:`read_mpr`, but ``document.vmp_data.records`` is ``None`` and no
+    record-sized NumPy array is constructed.  This is the only path metadata
+    readers should use; displaying header/settings information must not scale
+    with the number of cycling rows.
+    """
+
+    return read_mpr(path, decode_records=False)
+
+
 __all__ = [
     "InvalidMprError",
     "MPR_COLUMN_DEFINITIONS",
@@ -647,6 +721,7 @@ __all__ = [
     "MPR_MAX_FILE_SIZE",
     "MPR_MAX_MODULE_COUNT",
     "MPR_RECORD_DTYPE",
+    "REQUIRED_GCPL_COLUMN_IDS",
     "MprDataBlock",
     "MprDocument",
     "MprError",
@@ -655,8 +730,10 @@ __all__ = [
     "MprModule",
     "MPR_READER_REVISION",
     "SUPPORTED_GCPL_COLUMN_IDS",
+    "SUPPORTED_GCPL_COLUMN_ID_SET",
     "UnsupportedMprColumn",
     "UnsupportedMprError",
     "UnsupportedMprModuleVersion",
     "read_mpr",
+    "read_mpr_header",
 ]

@@ -251,6 +251,7 @@ Cellxplorer/
 │   ├── test_canonical_cycling.py    Canonical raw cycling-data contract/validation tests (Spec 040.1)
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
+│   ├── test_biologic_metadata.py     BioLogic GCPL settings/log/protocol tests (Spec 041.3)
 │   ├── test_parser_dispatch.py     Format-neutral dispatch and adapter-identity tests (Spec 040.2)
 │   ├── test_source_format_errors.py Format-neutral source-rejection error-taxonomy tests (Spec 040.2)
 │   ├── test_parser_identity.py     Per-source parser identity grammar and cache-invalidation tests (Spec 040.3)

@@ -535,17 +535,21 @@ def _read_neware_binary_header_flat(path: Path) -> dict[str, str]:
 def read_header_metadata(path: str | Path) -> dict:
     """Cheap header/metadata extraction (no full parse).
 
-    Returns {raw: <flattened dict>, barcode, remarks, device_info, channel,
-    start_time, active_mass_mg, nominal_capacity_mah, nda_version}.
+    Returns the normalized source metadata contract.  Neware sources retain
+    the historical flattened ``raw`` map; direct BioLogic MPR metadata carries
+    bounded decoded ``settings``, ``log``, and data-header objects in ``raw``.
 
-    Dispatch uses the user-facing `_EXTENSION_FORMAT_ID` table. Direct-only
-    `.mpr` parsing is intentionally not admitted to this metadata/import path
-    until Spec 041.4 adds its bounded source lifecycle support.
+    Dispatch uses the direct parser registry so backend callers can inspect a
+    BioLogic ``.mpr`` before Spec 041.4 admits that suffix to the user import
+    lifecycle.  ``source_filename_allowed`` and the scanner remain governed by
+    the user-facing Neware-only table.
     """
     path = Path(path)
     suffix = path.suffix.casefold()
-    format_id = _EXTENSION_FORMAT_ID.get(suffix)
+    format_id = _DIRECT_EXTENSION_FORMAT_ID.get(suffix)
     try:
+        if format_id == FORMAT_BIOLOGIC_MPR:
+            return biologic_gcpl.read_gcpl_header_metadata(path)
         if format_id == FORMAT_NEWARE_EXCEL:
             meta = neware_excel.read_metadata(path)
             flat = _flatten(meta)

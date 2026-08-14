@@ -63,8 +63,7 @@ REQUIRED_CYCLING_COLUMNS: tuple[str, ...] = (
 # First-class canonical fields a source may provide without being required
 # to. `working_potential_v` / `counter_potential_v` flow end to end as of
 # Spec 040.4 (cache/stitch/Time-Capacity API/UI/export/saved-plot/portable),
-# but no shipped adapter (binary or Excel Neware) populates them yet — that
-# needs a three-electrode-capable parser (Parent 041).
+# BioLogic's GCPL adapter is the first shipped source that populates them.
 STANDARD_OPTIONAL_COLUMNS: tuple[str, ...] = (
     "total_time_s",
     "charge_energy_mwh",
@@ -121,11 +120,8 @@ VOLTAGE_QUANTITIES: dict[str, str] = {
 DEFAULT_VOLTAGE_QUANTITY = "voltage"
 
 # Default, source-neutral role/label vocabulary for `voltage_capabilities()`
-# below. No current adapter (binary or Excel Neware) populates
-# `working_potential_v`/`counter_potential_v` or declares a `voltage_v` role
-# other than "cell", so every real source today reports the same bounded,
-# truthful two-electrode capability; a future adapter (Parent 041) is the
-# first caller that can pass non-default arguments.
+# below. Adapters pass non-default role/capability facts only when the source
+# layout proves them.
 _DEFAULT_VOLTAGE_ROLE_LABELS: dict[str, str] = {
     "cell": "Cell voltage (V)",
     "working_vs_reference": "Working potential vs ref (V)",
@@ -140,6 +136,7 @@ def voltage_capabilities(
     voltage_role: str = "cell",
     reference_electrode: str | None = None,
     voltage_derived: bool = False,
+    voltage_origin: str | None = None,
 ) -> dict[str, Any]:
     """Bounded voltage-role capability representation (Spec 040.4 parent).
 
@@ -160,15 +157,14 @@ def voltage_capabilities(
     - ``voltage_v_derived``: whether ``voltage_v`` was computed by the
       adapter from the two electrode potentials rather than measured
       directly (Parent 040's ``voltage_v = working_potential_v -
-      counter_potential_v`` case). Always ``False`` today because no adapter
-      performs that derivation yet.
+      counter_potential_v`` case).
     """
     roles: dict[str, str] = {"voltage_v": voltage_role}
     if working_potential_available:
         roles["working_potential_v"] = "working_vs_reference"
     if counter_potential_available:
         roles["counter_potential_v"] = "counter_vs_reference"
-    return {
+    result = {
         "capabilities": {
             "primary_voltage": True,
             "working_potential": working_potential_available,
@@ -178,6 +174,9 @@ def voltage_capabilities(
         "reference_electrode": reference_electrode,
         "voltage_v_derived": voltage_derived,
     }
+    if voltage_origin is not None:
+        result["voltage_v_origin"] = voltage_origin
+    return result
 
 
 def voltage_quantity_label(quantity: str, *, role: str | None = None) -> str:

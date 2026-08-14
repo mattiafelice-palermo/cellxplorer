@@ -76,7 +76,111 @@ def encode_gcpl_records(rows: Sequence[Mapping[str, object]]) -> bytes:
     return bytes(records)
 
 
-def write_gcpl_mpr(path: str | Path, rows: Sequence[Mapping[str, object]]) -> Path:
+def _pascal_write(payload: bytearray, offset: int, value: str | None) -> None:
+    encoded = (value or "").encode("cp1252")
+    if len(encoded) > 255:
+        raise ValueError("fixture Pascal strings must fit in one byte")
+    payload[offset] = len(encoded)
+    payload[offset + 1 : offset + 1 + len(encoded)] = encoded
+
+
+def encode_gcpl_settings(
+    sequences: Sequence[Mapping[str, object]],
+    *,
+    comments: str | None = "fixture GCPL",
+    active_mass_g: float = 0.001,
+    electrode_area_cm2: float = 1.5,
+    reference_electrode: str | None = None,
+    battery_capacity: float = 0.0,
+    battery_capacity_unit: int = 0,
+) -> bytes:
+    """Encode the Spec 041.3 modern GCPL settings discriminator/layout."""
+
+    if not sequences or len(sequences) > 100:
+        raise ValueError("fixture sequence count must be in 1..100")
+    payload = bytearray(0x1847 + 4 + len(sequences) * 108)
+    payload[0] = 0x77
+    _pascal_write(payload, 0x0007, comments)
+    struct.pack_into("<f", payload, 0x0107, active_mass_g)
+    struct.pack_into("<f", payload, 0x0211, electrode_area_cm2)
+    _pascal_write(payload, 0x0215, reference_electrode)
+    struct.pack_into("<f", payload, 0x025C, battery_capacity)
+    payload[0x0260] = battery_capacity_unit
+    struct.pack_into("<HH", payload, 0x1847, len(sequences), 33)
+    for index, sequence in enumerate(sequences):
+        base = 0x1847 + 4 + index * 108
+        struct.pack_into("<B", payload, base, int(sequence.get("set_i_c", 0)))
+        struct.pack_into("<f", payload, base + 1, float(sequence.get("current", 0.0)))
+        payload[base + 5] = int(sequence.get("current_unit", 1))
+        struct.pack_into("<I", payload, base + 6, int(sequence.get("current_vs", 2)))
+        struct.pack_into("<f", payload, base + 10, float(sequence.get("c_rate", 1.0)))
+        struct.pack_into("<I", payload, base + 14, int(sequence.get("sign_code", 0)))
+        struct.pack_into("<f", payload, base + 18, float(sequence.get("t1_s", 0.0)))
+        payload[base + 22] = int(sequence.get("current_range", 9))
+        payload[base + 23] = int(sequence.get("bandwidth", 5))
+        struct.pack_into("<f", payload, base + 24, float(sequence.get("record_delta_mV", 0.0)))
+        struct.pack_into("<f", payload, base + 28, float(sequence.get("record_interval_s", 0.0)))
+        struct.pack_into("<f", payload, base + 32, float(sequence.get("voltage_limit_v", 0.0)))
+        struct.pack_into("<f", payload, base + 36, float(sequence.get("hold_duration_s", 0.0)))
+        struct.pack_into("<f", payload, base + 40, float(sequence.get("current_cutoff", 0.0)))
+        payload[base + 44] = int(sequence.get("current_cutoff_unit", 1))
+        struct.pack_into("<f", payload, base + 50, float(sequence.get("range_lower_v", 0.0)))
+        struct.pack_into("<f", payload, base + 54, float(sequence.get("range_upper_v", 5.0)))
+        struct.pack_into("<f", payload, base + 58, float(sequence.get("capacity_delta", 0.0)))
+        payload[base + 62] = int(sequence.get("capacity_unit", 1))
+        struct.pack_into("<f", payload, base + 67, float(sequence.get("capacity_limit", 0.0)))
+        payload[base + 71] = int(sequence.get("capacity_limit_unit", 1))
+        struct.pack_into("<f", payload, base + 80, float(sequence.get("rest_duration_s", 0.0)))
+        struct.pack_into("<f", payload, base + 84, float(sequence.get("rest_slope_mV_per_h", 0.0)))
+        struct.pack_into("<f", payload, base + 88, float(sequence.get("rest_delta_mV", 0.0)))
+        struct.pack_into("<f", payload, base + 92, float(sequence.get("rest_interval_s", 0.0)))
+        struct.pack_into("<f", payload, base + 96, float(sequence.get("final_voltage_v", float("nan"))))
+        struct.pack_into("<I", payload, base + 100, int(sequence.get("goto_step", 0)))
+        struct.pack_into("<I", payload, base + 104, int(sequence.get("repeat_count", 0)))
+    return bytes(payload)
+
+
+def encode_gcpl_log(
+    *,
+    ole_timestamp: float | None = 45000.0,
+    channel_number: int = 2,
+    channel_serial: int = 1234,
+    filename: str = "fixture.mpr",
+    host: str = "127.0.0.1",
+    address: str = "127.0.0.2",
+    ec_lab_version: str = "11.60",
+    server_version: str = "11.60",
+    interpreter_version: str = "11.60",
+    device_serial: str = "fixture-device",
+) -> bytes:
+    """Encode the bounded LOG fields used by Spec 041.3 tests."""
+
+    payload = bytearray(0x03CF + 1 + len(device_serial.encode("cp1252")))
+    payload[0x0009] = channel_number
+    struct.pack_into("<H", payload, 0x00AB, channel_serial)
+    if ole_timestamp is not None:
+        struct.pack_into("<d", payload, 0x0249, ole_timestamp)
+    for offset, value in (
+        (0x0251, filename),
+        (0x0351, host),
+        (0x0384, address),
+        (0x03B7, ec_lab_version),
+        (0x03BE, server_version),
+        (0x03C5, interpreter_version),
+        (0x03CF, device_serial),
+    ):
+        _pascal_write(payload, offset, value)
+    return bytes(payload)
+
+
+def write_gcpl_mpr(
+    path: str | Path,
+    rows: Sequence[Mapping[str, object]],
+    *,
+    settings_payload: bytes = b"settings",
+    log_payload: bytes = b"log",
+    include_log: bool = False,
+) -> Path:
     """Write a minimal VMP Set + VMP data MPR fixture."""
 
     records = encode_gcpl_records(rows)
@@ -90,7 +194,7 @@ def write_gcpl_mpr(path: str | Path, rows: Sequence[Mapping[str, object]]) -> Pa
         _module(
             short_name=b"VMP Set",
             long_name=b"VMP settings",
-            payload=b"settings",
+            payload=settings_payload,
             version=10,
         ),
         _module(
@@ -100,9 +204,23 @@ def write_gcpl_mpr(path: str | Path, rows: Sequence[Mapping[str, object]]) -> Pa
             version=11,
         ),
     )
+    if include_log:
+        modules = modules + (
+            _module(
+                short_name=b"VMP LOG",
+                long_name=b"VMP LOG",
+                payload=log_payload,
+                version=10,
+            ),
+        )
     output = Path(path)
     output.write_bytes(MPR_MAGIC + b"".join(modules))
     return output
 
 
-__all__ = ["encode_gcpl_records", "write_gcpl_mpr"]
+__all__ = [
+    "encode_gcpl_log",
+    "encode_gcpl_records",
+    "encode_gcpl_settings",
+    "write_gcpl_mpr",
+]

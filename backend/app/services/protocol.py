@@ -318,11 +318,18 @@ def _step_summary(step: dict) -> str:
     return " | ".join(parts)
 
 
-def _protocol_signature(steps: list[dict]) -> str:
+def _protocol_signature(
+    steps: list[dict],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> str:
     """Hash executable settings without source or inferred display values."""
     canonical_steps = []
+    fields = SIGNATURE_FIELDS + tuple(
+        field for field in extra_fields if field not in SIGNATURE_FIELDS
+    )
     for step in steps:
-        item = {field: step.get(field) for field in SIGNATURE_FIELDS}
+        item = {field: step.get(field) for field in fields}
         item["explicit_c_rate"] = (
             step.get("c_rate") if step.get("c_rate_source") == "explicit" else None
         )
@@ -402,7 +409,7 @@ def _structural_groups(steps: list[dict]) -> list[dict]:
     if not steps:
         return []
     by_number = {step["number"]: step for step in steps}
-    loops = [step for step in steps if step["type_id"] == 5 and step["loop_start_step"]]
+    loops = [step for step in steps if step.get("loop_start_step")]
     # A malformed loop pointing forwards would make the range logic meaningless.
     loops = [loop for loop in loops if loop["loop_start_step"] < loop["number"]]
     lo = min(by_number)
@@ -552,6 +559,81 @@ def _window_counts(steps: list[dict], direction: str) -> list[dict]:
         {"voltage_v": voltage, "step_count": count}
         for voltage, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
+
+
+def build_declared_protocol(
+    steps: list[dict],
+    *,
+    nominal_capacity_mah: float | None = None,
+    warnings: list[str] | None = None,
+    capabilities: dict[str, bool] | None = None,
+    summary_extra: dict[str, Any] | None = None,
+    signature_extra_fields: tuple[str, ...] = (),
+) -> dict:
+    """Build the shared declared-protocol response from adapter-owned steps.
+
+    Source adapters own decoding and semantic classification.  This helper is
+    the format-neutral response boundary: it supplies the same step/group,
+    summary, signature, facts, and warning shape used by the existing Neware
+    reconstruction without requiring a vendor-specific protocol API.
+    """
+
+    normalized_steps: list[dict] = []
+    for source_step in steps:
+        step = dict(source_step)
+        step.setdefault("conditions", [])
+        step["summary"] = _step_summary(step)
+        step["facts"] = _step_facts(step)
+        normalized_steps.append(step)
+
+    control_ids = {5, 6, 21}
+    executable = [
+        step for step in normalized_steps if int(step.get("type_id") or 0) not in control_ids
+    ]
+    protection_windows = sorted(
+        {
+            (step.get("protection_lower_v"), step.get("protection_upper_v"))
+            for step in executable
+            if step.get("protection_lower_v") is not None
+            or step.get("protection_upper_v") is not None
+        }
+    )
+    record_intervals = _unique_numbers(
+        [step.get("record_interval_s") for step in executable]
+    )
+    result_warnings = list(warnings or [])
+    if not normalized_steps:
+        result_warnings.append("No verified declared protocol step was found.")
+    result_capabilities = dict(capabilities or {})
+    result_capabilities.setdefault(
+        "declared_protocol_available", bool(normalized_steps)
+    )
+    summary = {
+        "charge_cutoffs": _window_counts(executable, "charge"),
+        "discharge_cutoffs": _window_counts(executable, "discharge"),
+        "protection_windows": [
+            {"lower_v": lower, "upper_v": upper}
+            for lower, upper in protection_windows
+        ],
+        "record_intervals_s": record_intervals,
+    }
+    if summary_extra:
+        summary.update(summary_extra)
+    return {
+        "signature": _protocol_signature(
+            normalized_steps,
+            extra_fields=signature_extra_fields,
+        ),
+        "n_steps": len(normalized_steps),
+        "n_executable_steps": len(executable),
+        "nominal_capacity_mah": nominal_capacity_mah,
+        "nominal_capacity_inferred": False,
+        "steps": normalized_steps,
+        "groups": _structural_groups(normalized_steps),
+        "summary": summary,
+        "warnings": result_warnings,
+        "capabilities": result_capabilities,
+    }
 
 
 def reconstruct_protocol(flat: dict[str, str] | None, nominal_capacity_mah: float | None = None) -> dict:
