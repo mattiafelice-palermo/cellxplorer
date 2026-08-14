@@ -19,7 +19,11 @@ from backend.app.services.biologic_gcpl import (
     map_gcpl_to_canonical,
 )
 from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE
-from tests.biologic_mpr_fixture import encode_gcpl_records, write_gcpl_mpr
+from tests.biologic_mpr_fixture import (
+    encode_gcpl_records,
+    encode_gcpl_settings,
+    write_gcpl_mpr,
+)
 
 
 def _row(
@@ -140,7 +144,17 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(5.0, ns=3, half_cycle=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
         ]
         with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "fixture.mpr", rows)
+            path = write_gcpl_mpr(
+                Path(temp) / "fixture.mpr",
+                rows,
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 1.0},
+                        {"set_i_c": 0, "current": 1.0},
+                        {"set_i_c": 0, "current": -1.0},
+                    ]
+                ),
+            )
             with self.assertRaisesRegex(UnsupportedBiologicGcplError, "cycle identity"):
                 parsing.parse_timeseries(path)
 
@@ -182,6 +196,19 @@ class BiologicGcplMappingTests(unittest.TestCase):
         np.testing.assert_allclose(frame["working_potential_v"], 3.5)
         np.testing.assert_allclose(frame["counter_potential_v"], 0.0)
         self.assertFalse(frame.attrs["biologic_gcpl"]["voltage_v_derived"])
+
+    def test_full_mpr_mapping_rejects_observed_ns_outside_declared_settings(self) -> None:
+        rows = [_row(0.0, ns=2, ns_changed=True)]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "undeclared-ns.mpr",
+                rows,
+                settings_payload=encode_gcpl_settings(
+                    [{"set_i_c": 0, "current": 1.0}]
+                ),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "not declared"):
+                parsing.parse_timeseries(path)
 
     def test_synchronized_ewe_ece_are_subtracted_with_the_verified_sign(self) -> None:
         rows = [

@@ -2415,10 +2415,8 @@ def compute_time_capacity(
     # `voltage_channel` — this is what lets the frontend offer working/counter
     # potential as options at all without advertising a channel no selected
     # source actually has. True two-electrode sources never populate the
-    # aux columns, so this stays {"voltage": True, "working_potential":
-    # False, "counter_potential": False} for every source format that exists
-    # today; only a future adapter with real electrode-potential data changes
-    # that. Checked against the full stitched raw frame (before cycle-range
+    # aux columns, while the BioLogic GCPL adapter populates them only for its
+    # verified Ewe/Ece layout. Checked against the full stitched raw frame (before cycle-range
     # filtering) so the offered options do not flicker as filters change.
     channel_availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
 

@@ -408,6 +408,17 @@ class BiologicMprReaderTests(unittest.TestCase):
             with self.assertRaises(UnsupportedMprColumn):
                 read_mpr(path)
 
+    def test_rejects_unverified_column_omission(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            ids = tuple(
+                column_id
+                for column_id in SUPPORTED_GCPL_COLUMN_IDS
+                if column_id not in {9, 39}
+            )
+            path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
+            with self.assertRaises(UnsupportedMprColumn):
+                read_mpr(path)
+
     def test_required_module_names_use_exact_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(Path(temp))
@@ -762,9 +773,14 @@ class BiologicMprReaderTests(unittest.TestCase):
             path.rename(renamed)
 
     def test_production_reader_has_no_gpl_parser_dependency(self) -> None:
-        source = Path("backend/app/services/biologic_mpr.py").read_text(encoding="utf-8").lower()
-        for prohibited in ("galvani", "bio_logic.mprfile", "mprfile", "pyec-lab", "pympr"):
-            self.assertNotIn(prohibited, source)
+        production_sources = (
+            Path("backend/app/services/biologic_mpr.py"),
+            Path("backend/app/services/biologic_gcpl.py"),
+        )
+        for source_path in production_sources:
+            source = source_path.read_text(encoding="utf-8").lower()
+            for prohibited in ("galvani", "bio_logic.mprfile", "mprfile", "pyec-lab", "pympr"):
+                self.assertNotIn(prohibited, source, str(source_path))
         for relative in (
             "backend/requirements.txt",
             "requirements.txt",

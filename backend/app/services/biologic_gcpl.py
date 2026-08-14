@@ -46,7 +46,7 @@ BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl2"
 # its technique byte, module version, parameter-count discriminator, and
 # fixed item size.  Other software generations fail closed instead of being
 # decoded through positional guesses.
-GCPL_SETTINGS_LAYOUT = "ec-lab-11.50-gcpl-v1"
+GCPL_SETTINGS_LAYOUT = "ec-lab-11.60-gcpl-v1"
 GCPL_TECHNIQUE_ID = 0x77
 GCPL_SETTINGS_PARAMETER_OFFSET = 0x1847
 GCPL_SETTINGS_PARAMETER_COUNT = 33
@@ -87,6 +87,11 @@ _CAPACITY_UNIT_FACTORS_MAH = {
     3: 0.000001,
     4: 0.000000001,
 }
+_SUPPORTED_CURRENT_VS_CODES = frozenset(range(5))
+# The supplied EC-Lab 11.60 layout establishes code 0 as the supported
+# signed-current convention. Other sign encodings remain unresolved until
+# independently verified and therefore fail closed.
+_SUPPORTED_CURRENT_SIGN_CODES = frozenset({0})
 
 # BioLogic's packed mode code is a source-level categorical value.  The
 # values below are locked to the supported GCPL contract: current control,
@@ -190,19 +195,23 @@ def _read_u8(payload: bytes, offset: int, field_name: str) -> int:
 
 
 def _current_to_ma(value: float | None, unit_code: int) -> float | None:
-    if value is None:
-        return None
     factor = _CURRENT_UNIT_FACTORS_MA.get(unit_code)
     if factor is None:
+        raise UnsupportedBiologicGcplError(
+            f"unsupported GCPL current unit code {unit_code}"
+        )
+    if value is None:
         return None
     return value * factor
 
 
 def _capacity_to_mah(value: float | None, unit_code: int) -> float | None:
-    if value is None:
-        return None
     factor = _CAPACITY_UNIT_FACTORS_MAH.get(unit_code)
     if factor is None:
+        raise UnsupportedBiologicGcplError(
+            f"unsupported GCPL capacity unit code {unit_code}"
+        )
+    if value is None:
         return None
     return value * factor
 
@@ -219,14 +228,23 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
     current_raw = _read_f32(payload, base + 1, "Is")
     current_unit_code = _read_u8(payload, base + 5, "unit Is")
     current_vs_code = _read_u32(payload, base + 6, "unit Is vs.")
+    if current_vs_code not in _SUPPORTED_CURRENT_VS_CODES:
+        raise UnsupportedBiologicGcplError(
+            f"unsupported GCPL current-reference code {current_vs_code}"
+        )
     rate_value = _read_f32(payload, base + 10, "N")
     sign_code = _read_u32(payload, base + 14, "I sign")
+    if sign_code not in _SUPPORTED_CURRENT_SIGN_CODES:
+        raise UnsupportedBiologicGcplError(
+            f"unsupported GCPL current-sign code {sign_code}"
+        )
     t1_s = _positive_setting(_read_f32(payload, base + 18, "t1"))
     current_range_code = _read_u8(payload, base + 22, "I Range")
     bandwidth_code = _read_u8(payload, base + 23, "Bandwidth")
     record_delta_v = _positive_setting(_read_f32(payload, base + 24, "dE1"))
     record_interval_s = _positive_setting(_read_f32(payload, base + 28, "dt1"))
-    voltage_limit_v = _positive_setting(_read_f32(payload, base + 32, "EM"))
+    voltage_limit_raw_v = _read_f32(payload, base + 32, "EM")
+    voltage_limit_v = voltage_limit_raw_v
     hold_duration_raw_s = _positive_setting(_read_f32(payload, base + 36, "tM"))
     hold_duration_s = hold_duration_raw_s
     current_cutoff_raw = _read_f32(payload, base + 40, "Im")
@@ -263,6 +281,16 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
     # C/C×N.  Preserve that measured/set current alongside the explicit C-rate
     # instead of fabricating one from active mass.
     current_ma = _current_to_ma(current_raw, current_unit_code)
+    c_rate = _positive_setting(rate_value) if set_i_c in {1, 2} else None
+    # A finite zero EM is meaningful for active current/C-rate control. In the
+    # verified layout it is disabled only for a zero-current sequence with no
+    # explicit rate; retain negative finite settings instead of erasing them.
+    if (
+        voltage_limit_v == 0.0
+        and (current_ma is None or abs(current_ma) <= _CURRENT_TOLERANCE_MA)
+        and c_rate is None
+    ):
+        voltage_limit_v = None
     rest_source = "tR" if rest_duration_s is not None else None
     if (
         rest_duration_s is None
@@ -279,9 +307,6 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         rest_duration_s = hold_duration_raw_s
         rest_source = "tM_zero_current"
         hold_duration_s = None
-    c_rate = (
-        _positive_setting(rate_value) if set_i_c in {1, 2} else None
-    )
     if current_ma is not None and abs(current_ma) > _CURRENT_TOLERANCE_MA:
         direction = "charge" if current_ma > 0 else "discharge"
     elif c_rate is not None:
@@ -312,6 +337,7 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         "record_delta_mV": record_delta_v,
         "record_interval_s": record_interval_s,
         "voltage_limit_v": voltage_limit_v,
+        "voltage_limit_raw_v": voltage_limit_raw_v,
         "hold_duration_s": hold_duration_raw_s,
         "hold_duration_raw_s": hold_duration_raw_s,
         "current_cutoff_raw": current_cutoff_raw,
@@ -610,13 +636,18 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
                     }
                 )
 
+        direction_resolved = direction in {"charge", "discharge"}
         stop_current = (
-            sequence.get("current_cutoff_ma") if hold_supported else None
+            sequence.get("current_cutoff_ma")
+            if hold_supported and direction_resolved
+            else None
         )
-        target_voltage = voltage_cutoff if hold_supported else None
-        stop_voltage = voltage_cutoff
+        target_voltage = (
+            voltage_cutoff if hold_supported and direction_resolved else None
+        )
+        stop_voltage = voltage_cutoff if direction_resolved else None
         time_limit = sequence.get("time_limit_s")
-        if voltage_cutoff is not None:
+        if voltage_cutoff is not None and direction_resolved:
             operational_cutoffs.append(
                 {
                     "step_index": number,
@@ -636,7 +667,7 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
                     "operation": "hold_cutoff",
                 }
             )
-        if sequence.get("capacity_limit_mah") is not None:
+        if sequence.get("capacity_limit_mah") is not None and direction_resolved:
             operational_cutoffs.append(
                 {
                     "step_index": number,
@@ -687,6 +718,7 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
             "protection_lower_v": None,
             "loop_start_step": loop_start,
             "loop_count": loop_count,
+            "loop_body_inclusive": bool(loop_start is not None),
             "conditions": [],
             "capacity_limit_mah": sequence.get("capacity_limit_mah"),
             "hold_duration_s": sequence.get("hold_duration_s"),
@@ -694,38 +726,6 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
             "final_voltage_test_v": sequence.get("final_voltage_test_v"),
             "raw_sequence": sequence.get("raw"),
         }
-        substeps: list[dict[str, Any]] = [
-            {
-                "step_index": number,
-                "type_id": type_id,
-                "type": label,
-                "direction": schema_direction,
-            }
-        ]
-        if hold_supported:
-            substeps.append(
-                {
-                    "step_index": number,
-                    "type_id": 3 if schema_direction == "charge" else 19,
-                    "type": "CV charge" if schema_direction == "charge" else "CV discharge",
-                    "direction": schema_direction,
-                    "target_voltage_v": voltage_cutoff,
-                    "time_limit_s": sequence.get("hold_duration_s"),
-                    "stop_current_ma": stop_current,
-                }
-            )
-        if rest_duration is not None:
-            substeps.append(
-                {
-                    "step_index": number,
-                    "type_id": 4,
-                    "type": "Rest",
-                    "direction": "rest",
-                    "time_limit_s": rest_duration,
-                    "record_interval_s": sequence.get("rest_record_interval_s"),
-                }
-            )
-        step["substeps"] = substeps
         steps.append(step)
 
     if any(step.get("final_voltage_test_v") is not None for step in steps):
@@ -770,6 +770,7 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
             "hold_duration_s",
             "rest_duration_s",
             "final_voltage_test_v",
+            "loop_body_inclusive",
         ),
     )
     for step in result["steps"]:
@@ -896,12 +897,16 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             "settings": settings,
             "log": log,
             "data": data_header,
+            protocol.DECLARED_PROTOCOL_METADATA_KEY: declared_protocol,
         },
         "remarks": settings.get("comments"),
         "start_time": log.get("start_time"),
         "absolute_timestamps": bool(log.get("absolute_timestamps")),
         "timestamp_timezone": log.get("timestamp_timezone"),
-        "channel": None if channel_number is None else str(channel_number),
+        # The LOG payload stores a zero-based channel index. Keep that raw
+        # index in channel_number while exposing the one-based EC-Lab display
+        # number through the normalized channel field.
+        "channel": None if channel_number is None else str(channel_number + 1),
         "channel_number": channel_number,
         "device_info": _device_info(log),
         "software_version": log.get("ec_lab_version"),
@@ -965,6 +970,43 @@ def _field_names(records: np.ndarray) -> set[str]:
     if names is None:
         raise InvalidBiologicGcplError("GCPL records must be a structured NumPy array")
     return set(names)
+
+
+def _validate_document_settings(document: MprDocument) -> dict[str, Any]:
+    """Validate the full-file settings/data identity before canonical mapping."""
+
+    settings = decode_gcpl_settings(document.vmp_set)
+    records = document.vmp_data.records
+    if records is None:
+        raise InvalidBiologicGcplError(
+            "GCPL canonical mapping requires decoded MPR data records"
+        )
+    fields = _field_names(records)
+    if "raw_sample_index" not in fields:
+        raise UnsupportedBiologicGcplError(
+            "GCPL data records do not contain the declared Ns sequence identity"
+        )
+    observed_values = np.asarray(records["raw_sample_index"], dtype=np.float64)
+    if (
+        not np.isfinite(observed_values).all()
+        or np.any(observed_values != np.floor(observed_values))
+        or np.any(observed_values < 1)
+    ):
+        raise UnsupportedBiologicGcplError(
+            "GCPL observed Ns values are not finite positive integers"
+        )
+    observed = {int(value) for value in np.unique(observed_values)}
+    declared = {
+        int(sequence["step_index"])
+        for sequence in settings.get("sequences") or ()
+    }
+    unknown = sorted(observed - declared)
+    if unknown:
+        raise UnsupportedBiologicGcplError(
+            "GCPL data observes Ns value(s) not declared by the settings: "
+            + ", ".join(str(value) for value in unknown)
+        )
+    return settings
 
 
 def _column(records: np.ndarray, name: str) -> np.ndarray:
@@ -1454,6 +1496,8 @@ def map_gcpl_to_canonical(
 ) -> pd.DataFrame:
     """Map one supported MPR data source into the canonical raw frame."""
 
+    if isinstance(source, MprDocument):
+        _validate_document_settings(source)
     records, flags = _records_from_source(source)
     fields = _field_names(records)
     missing = [name for name in _REQUIRED_RECORD_FIELDS if name not in fields]
@@ -1610,6 +1654,7 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     """Read and map a supported BioLogic MPR directly to canonical data."""
 
     with read_mpr(path) as document:
+        _validate_document_settings(document)
         start_time = decode_gcpl_log(document.vmp_log).get("start_time")
         return map_gcpl_to_canonical(document, acquisition_start=start_time)
 

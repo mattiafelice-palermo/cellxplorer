@@ -7,6 +7,7 @@ rate capability.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 import hashlib
 import json
 import re
@@ -286,10 +287,11 @@ def _step_facts(step: dict) -> list[dict]:
         else:
             add("limit", "Time limit", duration)
     if step["loop_start_step"] is not None:
+        loop_end = step["number"] if step.get("loop_body_inclusive") else step["number"] - 1
         add(
             "repeat",
             "Repeat",
-            f"steps {step['loop_start_step']}-{step['number'] - 1} x{step['loop_count']}",
+            f"steps {step['loop_start_step']}-{loop_end} x{step['loop_count']}",
         )
     return facts
 
@@ -314,7 +316,8 @@ def _step_summary(step: dict) -> str:
     elif step["time_limit_s"] is not None:
         parts.append(f"limit {_format_duration(step['time_limit_s'])}")
     if step["loop_start_step"] is not None:
-        parts.append(f"repeat steps {step['loop_start_step']}-{step['number'] - 1} x{step['loop_count']}")
+        loop_end = step["number"] if step.get("loop_body_inclusive") else step["number"] - 1
+        parts.append(f"repeat steps {step['loop_start_step']}-{loop_end} x{step['loop_count']}")
     return " | ".join(parts)
 
 
@@ -418,8 +421,10 @@ def _structural_groups(steps: list[dict]) -> list[dict]:
 
 
 def _loop_body(loop: dict) -> tuple[int, int]:
-    """The steps a loop repeats: from its start step up to just before itself."""
-    return loop["loop_start_step"], loop["number"] - 1
+    """Return the declared loop body, inclusive for adapters that mark it so."""
+    return loop["loop_start_step"], (
+        loop["number"] if loop.get("loop_body_inclusive") else loop["number"] - 1
+    )
 
 
 def _nodes_in_range(
@@ -456,7 +461,12 @@ def _nodes_in_range(
     for loop in direct:
         start, end = _loop_body(loop)
         nodes.extend(_sequence_nodes(cursor, start - 1, by_number, depth, first_overall))
-        children = _nodes_in_range(start, end, loops, by_number, depth + 1, first_overall)
+        child_loops = (
+            [candidate for candidate in loops if candidate is not loop]
+            if loop.get("loop_body_inclusive")
+            else loops
+        )
+        children = _nodes_in_range(start, end, child_loops, by_number, depth + 1, first_overall)
         nodes.append(_loop_node(loop, children, by_number, depth))
         cursor = loop["number"] + 1
     nodes.extend(_sequence_nodes(cursor, hi, by_number, depth, first_overall))
@@ -636,7 +646,51 @@ def build_declared_protocol(
     }
 
 
-def reconstruct_protocol(flat: dict[str, str] | None, nominal_capacity_mah: float | None = None) -> dict:
+DECLARED_PROTOCOL_METADATA_KEY = "_cellxplorer_declared_protocol"
+
+
+def _stored_declared_protocol(header_meta: Mapping[str, Any] | None) -> dict | None:
+    """Find an adapter-built protocol persisted in normalized source metadata."""
+
+    if not isinstance(header_meta, Mapping):
+        return None
+    candidates: list[Mapping[str, Any]] = [header_meta]
+    raw = header_meta.get("raw")
+    if isinstance(raw, Mapping):
+        candidates.append(raw)
+    for candidate in candidates:
+        value = candidate.get(DECLARED_PROTOCOL_METADATA_KEY)
+        if isinstance(value, dict) and isinstance(value.get("steps"), list):
+            return value
+    return None
+
+
+def reconstruct_declared_protocol(
+    header_meta: Mapping[str, Any] | None,
+    nominal_capacity_mah: float | None = None,
+) -> dict:
+    """Return the persisted format-neutral protocol, or reconstruct Neware data.
+
+    BioLogic adapters build the shared protocol once during bounded header
+    inspection and persist it under ``SourceFile.header_meta``. Legacy Neware
+    headers have no such entry and continue through the existing reconstruction
+    path. Keeping this dispatch at the protocol boundary prevents every
+    consumer from growing a vendor-specific branch.
+    """
+
+    stored = _stored_declared_protocol(header_meta)
+    if stored is not None:
+        return stored
+    return reconstruct_protocol(header_meta, nominal_capacity_mah)
+
+
+def reconstruct_protocol(
+    flat: Mapping[str, Any] | None,
+    nominal_capacity_mah: float | None = None,
+) -> dict:
+    stored = _stored_declared_protocol(flat)
+    if stored is not None:
+        return stored
     flat = flat or {}
     mapped_steps = _step_maps(flat)
     inferred_nominal = nominal_capacity_mah is None

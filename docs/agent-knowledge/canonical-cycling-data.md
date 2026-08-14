@@ -119,17 +119,15 @@ reads `voltage_v` and only `voltage_v`, and the default Time/Capacity voltage
 quantity is still `voltage_v`.
 
 `working_potential_v` and `counter_potential_v` are the canonical names for a
-source's synchronized electrode potentials versus a reference. As of 040.4
-they flow end to end — canonical raw frame → Parquet cache → selective raw
-load → `stitch_raw` → Time/Capacity API/UI/export/saved-plot/portable path —
-but **no adapter shipped in Parent 040 populates them**: there is still no
-BioLogic (or other three-electrode) parser. Every real source today therefore
-reports `working_potential`/`counter_potential` capability as `False` and
-every Time/Capacity trace for those channels is empty. The path was built and
-proven with a synthetic canonical frame (`tests/test_analysis_engine.py`'s
-`synth_three_electrode_raw`, `tests/test_canonical_cycling.py`'s
-`_three_electrode_frame`) precisely so a future adapter (Parent 041) does not
-have to build or review this plumbing under time pressure.
+source's synchronized electrode potentials versus a reference. The BioLogic
+GCPL adapter (Spec 041.3, revision `gcpl2`) is now the first shipped adapter
+that populates them when the bounded Ewe/Ece layout is present. It computes the
+signed primary cell voltage as `working_potential_v - counter_potential_v`,
+preserves the source roles, and exposes a measured Ewe-labelled primary only
+for the exact Ece-omitted two-electrode layout. It does not fabricate either
+auxiliary channel when the source does not establish it. The end-to-end path
+remains canonical raw frame → Parquet cache → selective raw load →
+`stitch_raw` → Time/Capacity API/UI/export/saved-plot/portable path.
 
 `validate_raw_timeseries` applies the same numeric-column contract to them as
 `voltage_v` (finite, non-malformed) if a source happens to populate them —
@@ -149,11 +147,10 @@ pure representation of what a source says about its voltage channels:
 }
 ```
 
-`parsing.read_header_metadata` calls it with no arguments for both current
-formats (binary and Excel), so every recognized source's metadata carries the
-default two-electrode shape today — this is a static, format-level fact (no
-header inspection can tell you a column that adapter never produces), not a
-per-file probe. `canonical_cycling.VOLTAGE_QUANTITIES` (`"voltage"`,
+`parsing.read_header_metadata` calls it with no arguments for legacy formats;
+the BioLogic adapter supplies its verified source roles explicitly. This is a
+static, format-level fact about each adapter contract, not a per-file probe.
+`canonical_cycling.VOLTAGE_QUANTITIES` (`"voltage"`,
 `"working_potential"`, `"counter_potential"` → `voltage_v`,
 `working_potential_v`, `counter_potential_v`) is the stable internal quantity
 ID vocabulary the Time/Capacity API and saved-plot settings use;
@@ -374,12 +371,11 @@ working_potential     — working_potential_v is populated
 counter_potential      — counter_potential_v is populated
 ```
 
-As of Spec 040.4, `primary_voltage`/`working_potential`/`counter_potential`
-are computed and exposed two ways (see "Voltage-role capability vocabulary"
-and "Time/Capacity availability rule" above): a static, source-format-level
-declaration in `parsing.read_header_metadata`'s `voltage_capabilities` block
-(always the two-electrode default today, no adapter varies it), and a
-data-driven per-selection availability in
+`primary_voltage`/`working_potential`/`counter_potential` are computed and
+exposed two ways (see "Voltage-role capability vocabulary" and "Time/Capacity
+availability rule" above): a static, source-format-level declaration in
+`parsing.read_header_metadata`'s `voltage_capabilities` block and a data-driven
+per-selection availability in
 `compute_time_capacity`'s `voltage_channels` response field, which is what
 actually drives the frontend selector. `cycling_rows`,
 `absolute_timestamps` and `declared_protocol` remain documentation-only

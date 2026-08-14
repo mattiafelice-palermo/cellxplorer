@@ -68,11 +68,9 @@ The sample's encoded column identifiers, in order, are:
 1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468
 ```
 
-The reader accepts this exact identifier ordering and record layout, or a bounded order-preserving
-subset with the required GCPL fields. The supported two-electrode subset may omit only the Ece
-channel (`9`), yielding a compact 49-byte record; it still requires the mode/flags, Ns, elapsed
-time, incremental/cumulative capacity, control, Ewe/primary voltage, and half-cycle fields. Unknown
-IDs, reordered fields, duplicate physical fields, and other omissions fail closed. The reader
+The reader accepts exactly this identifier ordering and record layout, or exactly the same ordering
+with only the Ece channel (`9`) omitted, yielding a compact 49-byte two-electrode record. Unknown
+IDs, reordered fields, duplicate physical fields, and any other omission fail closed. The reader
 validates the record-area multiplication and uses one NumPy structured dtype from the memory-mapped
 payload; it does not decode records with a Python per-row loop. The first six IDs, `1, 2, 3, 21, 31,
 65`, are logical flags sharing the one physical byte at offset 0. The remaining physical fields
@@ -155,20 +153,50 @@ contract with all of the following discriminators:
 | parameter count | `33` |
 | parameter item size | `108` bytes |
 
-The parameter block begins at `0x1847 + 4`; the first sequence's fixed fields are decoded from the
-independently observed record offsets for `Set I/C`, `Is`, current units, `N`, sign, `t1`, `EM`,
-`tM`, `Im`, `dq`, `dtq`, `dQM`, `tR`, rest record settings, `EL`, `goto Ns`, and `nc cycles`.
-Current and capacity units are normalized to mA and mA.h using the source unit codes. Explicit C-rate
-settings are retained only when the sequence selects C/C×N control; a C-rate is never inferred from
-active mass.
+The parameter block begins at `0x1847 + 4`. The following is the complete bounded field contract
+decoded by `backend/app/services/biologic_gcpl.py`; offsets in the second table are relative to the
+first sequence in that block. `f32`/`f64` are little-endian IEEE values, integer fields are little-endian,
+and Pascal strings are one-byte-length `cp1252` strings.
+
+| Payload offset | Width/encoding | Meaning |
+| ---: | --- | --- |
+| `0x0000` | `u8` | GCPL technique discriminator (`0x77`) |
+| `0x0007` | Pascal | Comments |
+| `0x0107` / `0x010F` / `0x0113` / `0x0117` | `f32` | Active mass (g), molecular weight, atomic weight, acquisition-start raw value |
+| `0x011B` | `u16` | Electrons transferred |
+| `0x011E` / `0x01C0` / `0x0215` | Pascal | Electrode material, electrolyte, reference-electrode text |
+| `0x0211` / `0x024C` | `f32` | Electrode area (cm2), characteristic mass (g) |
+| `0x025C` / `0x0260` | `f32` / `u8` | Battery capacity and capacity unit |
+| `0x1847` / `0x1849` | `u16` / `u16` | Sequence count (`Ns`) and parameter count (`33`) |
+
+| Relative offset | Width/encoding | Meaning |
+| ---: | --- | --- |
+| `+0` / `+1` / `+5` | `u8` / `f32` / `u8` | Set I/C, `Is`, current unit |
+| `+6` / `+10` / `+14` | `u32` / `f32` / `u32` | Current reference selector, `N`, current-sign selector |
+| `+18` / `+22` / `+23` | `f32` / `u8` / `u8` | `t1`, current range, bandwidth |
+| `+24` / `+28` / `+32` / `+36` | `f32` | `dE1` (mV), `dt1` (s), `EM` (V), `tM` (s) |
+| `+40` / `+44` | `f32` / `u8` | `Im` and current-cutoff unit |
+| `+50` / `+54` | `f32` | Voltage range lower/upper bounds |
+| `+58` / `+62` / `+63` | `f32` / `u8` / `f32` | `dq`, capacity unit, `dtq` |
+| `+67` / `+71` | `f32` / `u8` | `dQM` and capacity-limit unit |
+| `+80` / `+84` / `+88` / `+92` | `f32` | `tR`, `dER/dt`, `dER`, `dtR` |
+| `+96` | `f32` | Final-voltage test `EL` |
+| `+100` / `+104` | `u32` / `u32` | `goto Ns` and repeat count `nc` |
+
+The verified private sample provides representative independent values: three sequences, an active
+mass of about `0.001 g`, a sequence-2 current of about `-7.69 mA`, a `0.2 V` sequence-2 `EM`, a
+`900 s` post-discharge `tR`, and a final zero-current `tM` of `3,600 s`. Current and capacity units
+are normalized to mA and mA.h using validated source unit codes. Explicit C-rate settings are
+retained only when the sequence selects C/C×N control; a C-rate is never inferred from active mass.
 
 The normalized protocol uses the existing CellXplorer step schema. A voltage limit with no hold
-duration is CC until an operational cutoff. A verified voltage target plus hold duration is CCCV,
-with the CV portion retained as a nested substep. A zero-current sequence with `tM` but no `EM`
-target is the verified open-circuit/rest representation used by the supplied sample. `goto Ns` and
-`nc cycles` are retained as loop structure when they are valid; malformed forward or zero repeats are
-preserved in raw settings and excluded from structural groups. Instrument protection limits are not
-fabricated from the GCPL operating range.
+duration is CC until an operational cutoff. A verified voltage target plus hold duration is represented
+by the shared CCCV step type; no adapter-only `substeps` field is emitted. A zero-current sequence
+with `tM` but no `EM` target is the verified open-circuit/rest representation used by the supplied
+sample. An unresolved C-rate direction remains an explicit Control step and does not receive a guessed
+charge/discharge or CV meaning. `goto Ns` and `nc cycles` are retained as inclusive loop structure
+when they are valid; malformed forward or zero repeats are preserved in raw settings and excluded
+from structural groups. Instrument protection limits are not fabricated from the GCPL operating range.
 
 The declared protocol exposes explicit capability facts for protocol availability, explicit rates,
 operational cutoffs/limits, loop structure, and semantic condition grammar. BioLogic does not carry
@@ -181,7 +209,7 @@ Only the verified identity/timing fields are decoded from the optional VMP LOG v
 
 | Payload offset | Meaning |
 | ---: | --- |
-| `0x0009` | zero-based channel number |
+| `0x0009` | zero-based raw channel index; normalized metadata exposes the one-based display number |
 | `0x00AB` | channel serial (`uint16`) |
 | `0x0249` | acquisition start as an OLE date (`float64`) |
 | `0x0251` | original filename |

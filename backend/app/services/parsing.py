@@ -663,10 +663,8 @@ def read_header_metadata(path: str | Path) -> dict:
         result["protocol_warnings"] = list(protocol["warnings"])
     # Spec 040.4: bounded, format-neutral voltage-role capability (distinct
     # from the Excel-only `Excel.Capabilities.*` block above, which predates
-    # this and covers unrelated header features). Neither current adapter
-    # (binary or Excel Neware) ever populates `working_potential_v`/
-    # `counter_potential_v`, so this is a static, always-two-electrode fact
-    # for every source recognized by this facade today — a real value only
-    # once a future adapter (Parent 041) both parses and declares otherwise.
+    # this and covers unrelated header features). Legacy Neware adapters use
+    # the two-electrode default here; the direct BioLogic MPR path returns its
+    # verified roles from `biologic_gcpl` before reaching this facade.
     result["voltage_capabilities"] = canonical_cycling.voltage_capabilities()
     return result

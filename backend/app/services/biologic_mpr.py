@@ -5,11 +5,10 @@ boundary.  GCPL semantics, protocol reconstruction, and user-facing source
 recognition belong to later Spec 041 children.
 
 The supported layout is the one independently observed in the supplied
-GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``.  A bounded
-order-preserving subset of that layout is also accepted when an optional
-electrode channel is absent, so ordinary two-electrode GCPL does not require
-an invented auxiliary potential. Unknown data layouts fail closed instead of
-being decoded by positional guesswork.
+GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``. The only
+alternate layout accepted is that exact ordering with Ece omitted, so ordinary
+two-electrode GCPL does not require an invented auxiliary potential. Unknown
+data layouts fail closed instead of being decoded by positional guesswork.
 """
 
 from __future__ import annotations
@@ -73,9 +72,15 @@ SUPPORTED_GCPL_COLUMN_IDS = (
     468,
 )
 SUPPORTED_GCPL_COLUMN_ID_SET = frozenset(SUPPORTED_GCPL_COLUMN_IDS)
-# These fields are needed by the canonical GCPL adapter.  Ece (ID 9) is
-# intentionally optional: its absence is the verified bounded discriminator
-# for a two-electrode primary Ewe/cell channel in this reader revision.
+# The reader accepts exactly the verified three-electrode layout or the same
+# layout with only Ece (ID 9) omitted.  Do not generalize this to arbitrary
+# order-preserving subsets: a missing field can change the packed record width
+# and the scientific meaning of the remaining bytes.
+SUPPORTED_TWO_ELECTRODE_COLUMN_IDS = tuple(
+    column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id != 9
+)
+# These fields are needed by the canonical GCPL adapter.  Ece (ID 9) is the
+# only intentionally optional field in the bounded reader contract.
 REQUIRED_GCPL_COLUMN_IDS = (
     1,
     131,
@@ -495,10 +500,10 @@ def _decode_vmp_data(
             )
         if len(set(column_ids)) != len(column_ids):
             raise UnsupportedMprColumn(f"{_source_label(path)} repeats a VMP column ID")
-        expected_order = tuple(
-            column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id in column_ids
-        )
-        if column_ids != expected_order:
+        if column_ids not in (
+            SUPPORTED_GCPL_COLUMN_IDS,
+            SUPPORTED_TWO_ELECTRODE_COLUMN_IDS,
+        ):
             raise UnsupportedMprColumn(
                 f"{_source_label(path)} uses an unsupported VMP column ordering/layout"
             )
@@ -731,6 +736,7 @@ __all__ = [
     "MPR_READER_REVISION",
     "SUPPORTED_GCPL_COLUMN_IDS",
     "SUPPORTED_GCPL_COLUMN_ID_SET",
+    "SUPPORTED_TWO_ELECTRODE_COLUMN_IDS",
     "UnsupportedMprColumn",
     "UnsupportedMprError",
     "UnsupportedMprModuleVersion",

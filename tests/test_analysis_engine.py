@@ -1410,7 +1410,7 @@ class TimeCapacitySettingsVoltageChannelTests(unittest.TestCase):
 class MultiVoltageTimeCapacityTests(unittest.TestCase):
     """Spec 040.4: Time/Capacity working/counter potential selection,
     end to end through cache -> stitch -> compute_time_capacity, using a
-    synthetic three-electrode source (no real BioLogic parser exists yet)."""
+    synthetic three-electrode source alongside the real adapter contract."""
 
     HASHES = {"three": "3e" * 32, "two": "2e" * 32}
     FRAMES = {}
