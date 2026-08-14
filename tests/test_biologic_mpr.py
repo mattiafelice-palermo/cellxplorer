@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import struct
 import tempfile
@@ -20,7 +21,7 @@ from backend.app.services.biologic_mpr import (
     MPR_MAX_FILE_SIZE,
     MPR_MAX_MODULE_COUNT,
     MPR_MODULE_HEADER_SIZE,
-    MPR_LAYOUT_ALIAS_IDS,
+    MPR_FLAG_ALIAS_IDS,
     MPR_PHYSICAL_COLUMN_IDS,
     MPR_FLAG_DEFINITIONS,
     MPR_RECORD_DTYPE,
@@ -295,9 +296,9 @@ class BiologicMprReaderTests(unittest.TestCase):
             tuple(
                 column_id
                 for column_id in SUPPORTED_GCPL_COLUMN_IDS
-                if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "record_alias"
+                if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "packed_flag_alias"
             ),
-            MPR_LAYOUT_ALIAS_IDS,
+            MPR_FLAG_ALIAS_IDS,
         )
         self.assertEqual(
             MPR_COLUMN_DEFINITIONS[1].flag_names,
@@ -325,6 +326,10 @@ class BiologicMprReaderTests(unittest.TestCase):
                 ("ns_changed", 0x20, 5, True),
                 ("counter_incremented", 0x80, 7, True),
             ],
+        )
+        self.assertEqual(
+            tuple(definition.encoded_id for definition in MPR_FLAG_DEFINITIONS),
+            (1, 2, 3, 21, 31, 65),
         )
 
     def test_public_exports_are_defined_and_star_importable(self) -> None:
@@ -414,6 +419,86 @@ class BiologicMprReaderTests(unittest.TestCase):
             ):
                 with self.assertRaises(UnsupportedMprError):
                     read_mpr(path)
+
+    def test_growth_between_stat_and_mapping_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            real_mmap = biologic_mpr.mmap.mmap
+
+            def grow_before_mapping(*args, **kwargs):
+                with path.open("ab") as handle:
+                    handle.write(b"growth")
+                return real_mmap(*args, **kwargs)
+
+            with patch(
+                "backend.app.services.biologic_mpr.mmap.mmap",
+                side_effect=grow_before_mapping,
+            ):
+                with self.assertRaises(InvalidMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-growth.mpr")
+            path.rename(renamed)
+
+    def test_shrink_between_stat_and_mapping_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            original_size = path.stat().st_size
+            real_mmap = biologic_mpr.mmap.mmap
+
+            def shrink_before_mapping(*args, **kwargs):
+                with path.open("r+b") as handle:
+                    handle.truncate(original_size - 1)
+                return real_mmap(*args, **kwargs)
+
+            with patch(
+                "backend.app.services.biologic_mpr.mmap.mmap",
+                side_effect=shrink_before_mapping,
+            ):
+                with self.assertRaises(InvalidMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-shrink.mpr")
+            path.rename(renamed)
+
+    def test_mapped_actual_size_above_limit_fails_even_with_stale_small_stat(self) -> None:
+        class OversizedMapping:
+            def __len__(self):
+                return MPR_MAX_FILE_SIZE + 1
+
+            def close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with patch(
+                "backend.app.services.biologic_mpr.mmap.mmap",
+                return_value=OversizedMapping(),
+            ):
+                with self.assertRaises(UnsupportedMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-oversize.mpr")
+            path.rename(renamed)
+
+    def test_growth_after_mapping_fails_before_return(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            real_fstat = biologic_mpr.os.fstat
+            calls = 0
+
+            def report_growth(fd):
+                nonlocal calls
+                result = real_fstat(fd)
+                calls += 1
+                if calls == 2:
+                    values = list(result)
+                    values[6] += 1
+                    return os.stat_result(values)
+                return result
+
+            with patch("backend.app.services.biologic_mpr.os.fstat", side_effect=report_growth):
+                with self.assertRaises(InvalidMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-final-growth.mpr")
+            path.rename(renamed)
 
     def test_column_count_bound_fails_before_layout_guessing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

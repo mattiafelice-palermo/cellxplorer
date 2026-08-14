@@ -69,7 +69,7 @@ SUPPORTED_GCPL_COLUMN_IDS = (
     211,
     468,
 )
-MPR_PHYSICAL_COLUMN_IDS = (1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 468)
+MPR_PHYSICAL_COLUMN_IDS = (1, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468)
 
 
 @dataclass(frozen=True)
@@ -84,12 +84,12 @@ class MprFlagDefinition:
 
 
 MPR_FLAG_DEFINITIONS = (
-    MprFlagDefinition("mode", 0x03, 0, False),
-    MprFlagDefinition("oxidation_reduction", 0x04, 2, True),
-    MprFlagDefinition("error", 0x08, 3, True),
-    MprFlagDefinition("control_changed", 0x10, 4, True),
-    MprFlagDefinition("ns_changed", 0x20, 5, True),
-    MprFlagDefinition("counter_incremented", 0x80, 7, True),
+    MprFlagDefinition("mode", 0x03, 0, False, 1),
+    MprFlagDefinition("oxidation_reduction", 0x04, 2, True, 2),
+    MprFlagDefinition("error", 0x08, 3, True, 3),
+    MprFlagDefinition("control_changed", 0x10, 4, True, 21),
+    MprFlagDefinition("ns_changed", 0x20, 5, True, 31),
+    MprFlagDefinition("counter_incremented", 0x80, 7, True, 65),
 )
 MPR_FLAG_NAMES = tuple(definition.name for definition in MPR_FLAG_DEFINITIONS)
 
@@ -112,21 +112,21 @@ class MprColumnDefinition:
 
 MPR_COLUMN_DEFINITIONS = {
     1: MprColumnDefinition(1, "packed record flags", None, "raw_flags", 0, "u1", "one physical byte; masks are exposed by MPR_FLAG_DEFINITIONS", "packed_flags", 1, MPR_FLAG_NAMES),
-    2: MprColumnDefinition(2, "sample sequence number", None, "raw_sample_index", 1, "<u2", "raw integer", "record_field", 2),
-    3: MprColumnDefinition(3, "elapsed time", "s", "elapsed_time_s", 3, "<f8", "raw elapsed time; not canonical step time", "record_field", 3),
-    21: MprColumnDefinition(21, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field", 21),
-    31: MprColumnDefinition(31, "charge relative to origin", "mA.h", "raw_q_minus_q0_mAh", 19, "<f8", "raw charge", "record_field", 31),
-    65: MprColumnDefinition(65, "control value", "V or mA", "raw_control_v_or_mA", 27, "<f4", "technique-dependent raw control", "record_field", 65),
-    131: MprColumnDefinition(131, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; role mapping is deferred", "record_field", 131),
-    4: MprColumnDefinition(4, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; role mapping is deferred", "record_field", 4),
-    7: MprColumnDefinition(7, "current range", None, "raw_current_range_code", 39, "<u2", "raw integer code", "record_field", 7),
-    13: MprColumnDefinition(13, "charge/discharge quantity", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "raw charge", "record_field", 13),
+    2: MprColumnDefinition(2, "mode/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("mode",)),
+    3: MprColumnDefinition(3, "oxidation-reduction/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("oxidation_reduction",)),
+    21: MprColumnDefinition(21, "error/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("error",)),
+    31: MprColumnDefinition(31, "control-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("control_changed",)),
+    65: MprColumnDefinition(65, "Ns-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("ns_changed",)),
+    131: MprColumnDefinition(131, "sample sequence number", None, "raw_sample_index", 1, "<u2", "raw integer", "record_field", 131),
+    4: MprColumnDefinition(4, "elapsed time", "s", "elapsed_time_s", 3, "<f8", "raw elapsed time; not canonical step time", "record_field", 4),
+    7: MprColumnDefinition(7, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field", 7),
+    13: MprColumnDefinition(13, "charge relative to origin", "mA.h", "raw_q_minus_q0_mAh", 19, "<f8", "raw charge", "record_field", 13),
+    5: MprColumnDefinition(5, "control value", "V or mA", "raw_control_v_or_mA", 27, "<f4", "technique-dependent raw control", "record_field", 5),
+    6: MprColumnDefinition(6, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; role mapping is deferred", "record_field", 6),
+    9: MprColumnDefinition(9, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; role mapping is deferred", "record_field", 9),
+    39: MprColumnDefinition(39, "current range", None, "raw_current_range_code", 39, "<u2", "raw integer code", "record_field", 39),
+    211: MprColumnDefinition(211, "charge/discharge quantity", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "raw charge", "record_field", 211),
     468: MprColumnDefinition(468, "half-cycle index bytes", None, "raw_half_cycle_index", 49, "<u4", "full encoded ID; do not truncate to 212", "record_field", 468),
-    5: MprColumnDefinition(5, "control value alias", "V or mA", "raw_control_v_or_mA", 27, "<f4", "encoded alias sharing the ID 65 physical field", "record_alias", 65),
-    6: MprColumnDefinition(6, "working-electrode potential alias", "V", "raw_ewe_v", 31, "<f4", "encoded alias sharing the ID 131 physical field", "record_alias", 131),
-    9: MprColumnDefinition(9, "counter-electrode potential alias", "V", "raw_ece_v", 35, "<f4", "encoded alias sharing the ID 4 physical field", "record_alias", 4),
-    39: MprColumnDefinition(39, "current range alias", None, "raw_current_range_code", 39, "<u2", "encoded alias sharing the ID 7 physical field", "record_alias", 7),
-    211: MprColumnDefinition(211, "charge/discharge quantity alias", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "encoded alias sharing the ID 13 physical field", "record_alias", 13),
 }
 
 if set(MPR_COLUMN_DEFINITIONS) != set(SUPPORTED_GCPL_COLUMN_IDS):
@@ -152,13 +152,13 @@ for _column_id in SUPPORTED_GCPL_COLUMN_IDS:
     assert _definition.record_offset == _physical.record_offset
     assert _definition.dtype == _physical.dtype
 
-MPR_LAYOUT_ALIAS_IDS = (5, 6, 9, 39, 211)
+MPR_FLAG_ALIAS_IDS = (2, 3, 21, 31, 65)
 if tuple(
     column_id
     for column_id in SUPPORTED_GCPL_COLUMN_IDS
-    if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "record_alias"
-) != MPR_LAYOUT_ALIAS_IDS:
-    raise RuntimeError("MPR alias definitions and supported-ID order diverge")
+    if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "packed_flag_alias"
+) != MPR_FLAG_ALIAS_IDS:
+    raise RuntimeError("MPR packed-flag definitions and supported-ID order diverge")
 
 
 def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
@@ -511,7 +511,8 @@ def read_mpr(path: str | Path) -> MprDocument:
     mapping: mmap.mmap | None = None
     data_block: MprDataBlock | None = None
     try:
-        file_size = os.fstat(file_handle.fileno()).st_size
+        initial_stat = os.fstat(file_handle.fileno())
+        file_size = initial_stat.st_size
         if file_size > MPR_MAX_FILE_SIZE:
             raise UnsupportedMprError(
                 f"{_source_label(source_path)} exceeds the {MPR_MAX_FILE_SIZE} byte MPR safety bound"
@@ -523,6 +524,15 @@ def read_mpr(path: str | Path) -> MprDocument:
         if file_size < MPR_INITIAL_HEADER_SIZE:
             raise InvalidMprError(f"{_source_label(source_path)} is shorter than the MPR header")
         mapping = mmap.mmap(file_handle.fileno(), length=0, access=mmap.ACCESS_READ)
+        mapped_size = len(mapping)
+        if mapped_size > MPR_MAX_FILE_SIZE:
+            raise UnsupportedMprError(
+                f"{_source_label(source_path)} exceeds the {MPR_MAX_FILE_SIZE} byte MPR safety bound"
+            )
+        if mapped_size != file_size:
+            raise InvalidMprError(
+                f"{_source_label(source_path)} changed size between stat and memory mapping"
+            )
         if mapping[:MPR_INITIAL_HEADER_SIZE] != MPR_MAGIC:
             raise InvalidMprError(f"{_source_label(source_path)} has an invalid MPR file header")
 
@@ -578,6 +588,11 @@ def read_mpr(path: str | Path) -> MprDocument:
                 )
 
         data_block = _decode_vmp_data(data_module, source_path)
+        final_size = os.fstat(file_handle.fileno()).st_size
+        if final_size != file_size or len(mapping) != file_size:
+            raise InvalidMprError(
+                f"{_source_label(source_path)} changed size while it was being read"
+            )
         return MprDocument(
             path=source_path,
             modules=modules,
@@ -610,7 +625,7 @@ __all__ = [
     "InvalidMprError",
     "MPR_COLUMN_DEFINITIONS",
     "MPR_FLAG_DEFINITIONS",
-    "MPR_LAYOUT_ALIAS_IDS",
+    "MPR_FLAG_ALIAS_IDS",
     "MPR_PHYSICAL_COLUMN_IDS",
     "MPR_MAGIC",
     "MPR_MAGIC_PREFIX",

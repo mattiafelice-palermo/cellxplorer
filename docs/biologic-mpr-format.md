@@ -71,28 +71,30 @@ The sample's encoded column identifiers, in order, are:
 The reader accepts only this exact supported identifier ordering and record layout. It validates the
 record-area multiplication and uses one NumPy structured dtype from the memory-mapped payload; it
 does not decode records with a Python per-row loop. The 16 logical IDs form the exact accepted GCPL
-layout signature. Five IDs are encoded aliases of physical fields already present in the same
-record: `5 -> 65` (control), `6 -> 131` (Ewe-labeled potential), `9 -> 4` (Ece-labeled potential),
-`39 -> 7` (current range), and `211 -> 13` (charge/discharge quantity). The aliases are validated
-and represented once in the 53-byte dtype; they do not create synthetic duplicate byte ranges.
+layout signature. The first six IDs, `1, 2, 3, 21, 31, 65`, are logical flags sharing the one
+physical byte at offset 0. The remaining physical fields follow as `131` (sample sequence), `4`
+(elapsed time), `7` (incremental charge), `13` (charge relative to origin), `5` (control), `6`
+(Ewe-labeled potential), `9` (Ece-labeled potential), `39` (current range), `211`
+(charge/discharge quantity), and `468` (half-cycle index). The five flag IDs after the physical
+byte are validated as packed-flag aliases; they do not create synthetic duplicate byte ranges.
 
 ## Typed 53-byte record
 
 The physical record dtype is little-endian where applicable and has `itemsize == 53`:
 
-| Offset | Size | Dtype | Field | Raw meaning | Unit |
-| ---: | ---: | --- | --- | --- | --- |
-| 0 | 1 | `uint8` | `raw_flags` | packed raw record flags | — |
-| 1 | 2 | `<u2` | `raw_sample_index` | raw sample sequence number | — |
-| 3 | 8 | `<f8` | `elapsed_time_s` | raw elapsed time; not canonical step time | s |
-| 11 | 8 | `<f8` | `raw_dq_mAh` | raw incremental charge | mA.h |
-| 19 | 8 | `<f8` | `raw_q_minus_q0_mAh` | raw charge relative to origin | mA.h |
-| 27 | 4 | `<f4` | `raw_control_v_or_mA` | technique-dependent raw control value | V or mA |
-| 31 | 4 | `<f4` | `raw_ewe_v` | raw Ewe-labeled potential value | V |
-| 35 | 4 | `<f4` | `raw_ece_v` | raw Ece-labeled potential value | V |
-| 39 | 2 | `<u2` | `raw_current_range_code` | raw current-range code | — |
-| 41 | 8 | `<f8` | `raw_q_charge_discharge_mAh` | raw charge/discharge quantity | mA.h |
-| 49 | 4 | `<u4` | `raw_half_cycle_index` | raw half-cycle index | — |
+| Encoded ID(s) | Offset | Size | Dtype | Field | Raw meaning | Unit |
+| ---: | ---: | ---: | --- | --- | --- | --- |
+| `1, 2, 3, 21, 31, 65` | 0 | 1 | `uint8` | `raw_flags` | six logical flags in one packed byte | — |
+| `131` | 1 | 2 | `<u2` | `raw_sample_index` | raw sample sequence number | — |
+| `4` | 3 | 8 | `<f8` | `elapsed_time_s` | raw elapsed time; not canonical step time | s |
+| `7` | 11 | 8 | `<f8` | `raw_dq_mAh` | raw incremental charge | mA.h |
+| `13` | 19 | 8 | `<f8` | `raw_q_minus_q0_mAh` | raw charge relative to origin | mA.h |
+| `5` | 27 | 4 | `<f4` | `raw_control_v_or_mA` | technique-dependent raw control value | V or mA |
+| `6` | 31 | 4 | `<f4` | `raw_ewe_v` | raw Ewe-labeled potential value | V |
+| `9` | 35 | 4 | `<f4` | `raw_ece_v` | raw Ece-labeled potential value | V |
+| `39` | 39 | 2 | `<u2` | `raw_current_range_code` | raw current-range code | — |
+| `211` | 41 | 8 | `<f8` | `raw_q_charge_discharge_mAh` | raw charge/discharge quantity | mA.h |
+| `468` | 49 | 4 | `<u4` | `raw_half_cycle_index` | raw half-cycle index | — |
 
 The full encoded ID `468` is required for the final field. It is not normalized with `% 256` and is
 not silently replaced with the low-byte value `212`.
@@ -117,9 +119,9 @@ partition:
 
 ## Packed flags
 
-The single physical `raw_flags` byte is unpacked into eight neutral raw-bit NumPy arrays with
-vectorized masks. This child deliberately does not assign protocol meanings such as step mode,
-control change, or counter change; those mappings belong to 041.2/041.3.
+The single physical `raw_flags` byte is unpacked into six named NumPy arrays with vectorized masks.
+The encoded IDs `1, 2, 3, 21, 31, 65` identify those logical flags; the physical byte is stored
+once. Canonical status/step semantics built from these acquisition flags belong to 041.2/041.3.
 
 | Name | Mask | Shift | Result |
 | --- | ---: | ---: | --- |
@@ -130,7 +132,7 @@ control change, or counter change; those mappings belong to 041.2/041.3.
 | `ns_changed` | `0x20` | 5 | boolean |
 | `counter_incremented` | `0x80` | 7 | boolean |
 
-The physical dtype contains the packed byte once; the derived arrays are NumPy results owned by the
+The physical dtype contains the packed byte once; the six named arrays are NumPy results owned by the
 data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics
 are intentionally deferred to Spec 041.2.
 
@@ -161,8 +163,9 @@ signature but a truncated/corrupt header is classified as invalid.
 The implementation is independently authored. The physical offsets and dtypes were rederived from
 project-owned bytes: the observed record-area boundary is offset 1,007, the exact module remainder
 is `5,483 * 53`, and a direct-byte probe records the 53-byte partition, little-endian encodings, and
-the first-record values listed below. The alias groups are recorded as logical IDs sharing those
-physical fields; no duplicate byte ranges are invented. Raw field names are descriptive labels
+the first-record values listed below. The first six encoded IDs are recorded as logical flags sharing
+the packed byte; the remaining IDs are recorded in their physical field order. No duplicate byte
+ranges are invented. Raw field names are descriptive labels
 authored for this reader, not canonical CellXplorer semantics. Literal `struct.pack_into` fixture
 bytes independently test every field offset and endian choice.
 
