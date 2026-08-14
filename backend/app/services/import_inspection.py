@@ -5,7 +5,6 @@ from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, 
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from stat import S_ISREG
 import threading
 import time
 from time import perf_counter
@@ -32,6 +31,10 @@ INSPECTION_READING_START_PERCENT = 10.0
 INSPECTION_READING_END_PERCENT = 90.0
 _header_cache: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
 _header_cache_lock = threading.Lock()
+
+
+class SourceInspectionRejection(ValueError):
+    """A selected source is invalid, unsupported, or moving during inspection."""
 
 
 def remember_header_metadata(file_hash: str, size: int, mtime_ns: int, metadata: dict) -> None:
@@ -219,34 +222,42 @@ def match_import(snapshot: ImportIdentitySnapshot, file_hash: str, filename: str
 def inspect_file(path_string: str) -> FileInspection:
     """Inspect one file using filesystem/parser work only; no DB/session."""
     path = Path(path_string)
-    try:
-        initial = path.stat()
-    except OSError as exc:
-        raise ValueError(f"File is missing or unreadable: {path}") from exc
-    if not S_ISREG(initial.st_mode):
-        raise ValueError(f"File is missing: {path}")
     filename = path.name
     if not parsing.source_filename_allowed(filename):
-        raise ValueError(
-            f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {filename}"
+        raise SourceInspectionRejection(
+            f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {filename}"
         )
-    file_hash = parsing.compute_hash(path)
-    metadata = parsing.read_header_metadata(path)
-    parsing.ensure_supported_source_metadata(path, metadata)
     try:
-        final = path.stat()
-    except OSError as exc:
-        raise ValueError(f"Source became unavailable during inspection: {filename}") from exc
-    if initial.st_size != final.st_size or initial.st_mtime_ns != final.st_mtime_ns:
-        raise ValueError(f"Source changed during inspection: {filename}")
-    remember_header_metadata(file_hash, final.st_size, final.st_mtime_ns, metadata)
+        fingerprint = parsing.capture_source_fingerprint(path)
+    except parsing.SourceIdentityError as exc:
+        if "changed" in str(exc).casefold():
+            raise SourceInspectionRejection(
+                f"Source changed during inspection: {filename}"
+            ) from exc
+        raise SourceInspectionRejection(
+            f"Could not establish a stable source identity: {filename}"
+        ) from exc
+    metadata = parsing.read_header_metadata(path)
+    try:
+        parsing.ensure_supported_source_metadata(path, metadata)
+    except ValueError as exc:
+        raise SourceInspectionRejection(str(exc)) from exc
+    try:
+        # capture_source_fingerprint already performed the single digest read
+        # for this inspection; this boundary only needs a cheap stat guard.
+        parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
+    except parsing.SourceIdentityError as exc:
+        raise SourceInspectionRejection(
+            f"Source changed during inspection: {filename}"
+        ) from exc
+    remember_header_metadata(fingerprint.hash, fingerprint.size, fingerprint.mtime_ns, metadata)
     return FileInspection(
         path=str(path),
         filename=filename,
-        size=final.st_size,
-        mtime_ns=final.st_mtime_ns,
+        size=fingerprint.size,
+        mtime_ns=fingerprint.mtime_ns,
         ext=path.suffix.lower().lstrip("."),
-        hash=file_hash,
+        hash=fingerprint.hash,
         metadata=metadata,
     )
 
@@ -260,7 +271,7 @@ def _inspect_file_outcome(path_string: str) -> FileInspectionOutcome:
             inspection=inspect_file(path_string),
             error=None,
         )
-    except Exception as exc:
+    except SourceInspectionRejection as exc:
         message = str(exc).strip() or f"Could not inspect {Path(path_string).name or path_string}."
         return FileInspectionOutcome(
             path=path_string,

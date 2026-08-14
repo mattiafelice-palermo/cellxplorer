@@ -214,9 +214,10 @@ import {
   sourceExportColumns,
 } from "./plotting/sourceChainPlot";
 import {
+  hasMetadataOnlySources as selectionHasMetadataOnlySources,
   multiSourceAnalysisPolicy,
+  selectedSourceCountCellsForSpec,
   type MultiSourceAnalysisPolicy,
-  type SourceCountCell,
 } from "./policies/multiSourceAnalysisPolicy";
 import {
   DEFAULT_PLOT_STYLE,
@@ -911,65 +912,6 @@ function findMatchingSavedPlot(spec: AnalysisSpec, tab: AnalysisTabKey): SavedAn
   );
 }
 
-function selectedSourceCountCells(
-  analysis: AnalysisFull,
-  spec: AnalysisSpec,
-  availableCells: Pick<CellSummary, "id" | "name" | "n_files">[] | undefined = [],
-  availableGroups: ReplicateGroupSummary[] | undefined = [],
-): SourceCountCell[] {
-  const direct = new Map<number, SourceCountCell>(
-    analysis.selection_cells.map((cell) => [cell.id, cell]),
-  );
-  for (const cell of availableCells ?? []) {
-    if (!direct.has(cell.id)) {
-      direct.set(cell.id, { id: cell.id, name: cell.name, source_count: cell.n_files });
-    }
-  }
-  const groups = new Map<number, { cells: SourceCountCell[] }>();
-  for (const group of analysis.selection_groups) {
-    for (const cell of group.cells) {
-      if (!direct.has(cell.id)) direct.set(cell.id, cell);
-    }
-    groups.set(group.id, { cells: group.cells });
-  }
-  for (const group of availableGroups ?? []) {
-    groups.set(group.id, {
-      cells: group.cells.map((cell) => {
-        const resolved = direct.get(cell.id);
-        return resolved ?? { id: cell.id, name: cell.name, source_count: null };
-      }),
-    });
-  }
-  const selected = new Map<number, SourceCountCell>();
-  for (const entry of spec.selection.entries ?? []) {
-    if (entry.kind === "cell") {
-      const cell = direct.get(entry.ref_id) ?? {
-        id: entry.ref_id,
-        name: `Cell #${entry.ref_id}`,
-        source_count: null,
-      };
-      selected.set(cell.id, cell);
-      continue;
-    }
-    if (entry.kind === "replicate_group") {
-      const group = groups.get(entry.ref_id);
-      if (!group) {
-        selected.set(-entry.ref_id, {
-          id: -entry.ref_id,
-          name: `Replicate group #${entry.ref_id}`,
-          source_count: null,
-        });
-        continue;
-      }
-      for (const cell of group.cells) {
-        const resolved = direct.get(cell.id) ?? cell;
-        selected.set(resolved.id, resolved);
-      }
-    }
-  }
-  return [...selected.values()].sort((left, right) => left.id - right.id);
-}
-
 function ProtocolMappingRequiredState({
   policy,
   compact = false,
@@ -1010,6 +952,23 @@ function ProtocolMappingRequiredState({
             {policy.pending
               ? "Wait for source compatibility to resolve. No scientific request will be sent while this check is pending."
               : "Use Cycles or Time / capacity for this selection. Save and scientific export are unavailable until semantic source-step mapping is reviewed."}
+          </Text>
+        </Stack>
+      </Alert>
+    </Paper>
+  );
+}
+
+function CanonicalCyclingUnavailableState() {
+  return (
+    <Paper p="xl" withBorder>
+      <Alert color="orange" icon={<IconInfoCircle size={18} />}>
+        <Stack gap="xs">
+          <Text fw={700}>Canonical cycling data unavailable</Text>
+          <Text size="sm">
+            One or more selected sources has readable metadata but no independently verified
+            canonical cycling rows. This plot is disabled until a verified cycle identity is
+            available.
           </Text>
         </Stack>
       </Alert>
@@ -2062,10 +2021,14 @@ function AnalysisEditorView({
   const protocolSelectionCells = useMemo(
     () =>
       analysis.data && spec
-        ? selectedSourceCountCells(analysis.data, spec, cellsQuery.data, groupsQuery.data)
+        ? selectedSourceCountCellsForSpec(analysis.data, spec, cellsQuery.data, groupsQuery.data)
         : [],
     [analysis.data, cellsQuery.data, groupsQuery.data, spec],
   );
+  // Resolve this from the live draft selection, not only the last persisted
+  // AnalysisFull response. Adding/removing a Cell or replicate group must
+  // synchronously gate every scientific request before autosave/refetch.
+  const hasMetadataOnlySources = selectionHasMetadataOnlySources(protocolSelectionCells);
   const protocolPolicyForTab = (tab: AnalysisTabKey) =>
     multiSourceAnalysisPolicy(tab, protocolSelectionCells);
   const activeProtocolPolicy = protocolPolicyForTab(activeTab);
@@ -2249,6 +2212,7 @@ function AnalysisEditorView({
     enabled:
       spec !== null &&
       initialComputeReady &&
+      !hasMetadataOnlySources &&
       !(
         [
           "time_capacity",
@@ -3317,7 +3281,7 @@ function AnalysisEditorView({
   const rateCapabilityRecognitionEnabled = shouldRunLivePlotCompute({
     workspaceVisible,
     plotSessionActive: activeTab === "crate" && activeTabPlotSession,
-    hasSamples,
+    hasSamples: hasSamples && !hasMetadataOnlySources,
   });
 
   const sidebar = (
@@ -3335,6 +3299,7 @@ function AnalysisEditorView({
         onImportEntries={importAnalysisEntries}
       />
       {(["cycles", "steps", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) &&
+        !hasMetadataOnlySources &&
         (activeTab !== "steps" || activeProtocolPolicy.supported) && (
         <ProtocolSegmentsPanel
           cellIds={protocolCellIds}
@@ -3377,7 +3342,7 @@ function AnalysisEditorView({
           resetAxis={(s, axis) => resetManualAxis(s, "cycles", axis)}
         />
       )}
-      {activeTab === "steps" && activeProtocolPolicy.supported && (
+      {activeTab === "steps" && !hasMetadataOnlySources && activeProtocolPolicy.supported && (
         <StepsSettings
           analysisId={aid}
           spec={spec}
@@ -3385,7 +3350,7 @@ function AnalysisEditorView({
           update={update}
         />
       )}
-      {activeTab === "dcir" && activeProtocolPolicy.supported && (
+      {activeTab === "dcir" && !hasMetadataOnlySources && activeProtocolPolicy.supported && (
         <DcirSettings
           analysisId={aid}
           spec={spec}
@@ -3393,14 +3358,14 @@ function AnalysisEditorView({
           update={update}
         />
       )}
-      {activeTab === "chargeability" && activeProtocolPolicy.supported && (
+      {activeTab === "chargeability" && !hasMetadataOnlySources && activeProtocolPolicy.supported && (
         <ChargeabilitySettings
           analysisId={aid}
           spec={spec}
           update={update}
         />
       )}
-      {activeTab === "crate" && activeProtocolPolicy.supported && (
+      {activeTab === "crate" && !hasMetadataOnlySources && activeProtocolPolicy.supported && (
         <RateCapabilitySettings
           analysisId={aid}
           spec={spec}
@@ -3414,7 +3379,7 @@ function AnalysisEditorView({
   const draftPlotSession = Boolean(isLiveDraft && activeTabPlotSession);
   const newPlotHeaderProps = {
     onNewPlot: startNewPlot,
-    newPlotEnabled: hasSamples && activeProtocolPolicy.supported,
+    newPlotEnabled: hasSamples && activeProtocolPolicy.supported && !hasMetadataOnlySources,
     onUpdatePlot: draftPlotSession
       ? () =>
           setSaveDraft({
@@ -3423,13 +3388,16 @@ function AnalysisEditorView({
             source: "live",
           })
       : updateActivePlot,
-    updatePlotEnabled: activeProtocolPolicy.supported && (draftPlotSession
+    updatePlotEnabled: !hasMetadataOnlySources && activeProtocolPolicy.supported && (draftPlotSession
       ? true
       : Boolean(activeSavedPlotId && activePlotDirty && activePlot?.tab === activeTab)),
     updatePlotLabel: draftPlotSession ? "Save as" : "Update",
   };
 
   const plotSurfaceFor = (tab: AnalysisTabKey, card: ReactNode) => {
+    if (hasMetadataOnlySources && tab !== "settings") {
+      return <CanonicalCyclingUnavailableState />;
+    }
     const policy = protocolPolicyForTab(tab);
     if (policy.family && !policy.supported) {
       return <ProtocolMappingRequiredState policy={policy} />;
@@ -3468,7 +3436,7 @@ function AnalysisEditorView({
         activeSavedPlotId={activeSavedPlotId}
         activePlotDirty={activePlotDirty}
         hasSamples={hasSamples}
-        canSaveNew={activeTabPlotSession && tab === activeTab}
+        canSaveNew={!hasMetadataOnlySources && activeTabPlotSession && tab === activeTab}
         draft={null}
         liveUnsaved={liveUnsavedDraft && tab === activeTab}
         onOpenDraft={() => {
@@ -3501,7 +3469,7 @@ function AnalysisEditorView({
             }
           }
         }}
-        allowPreviewGeneration={
+        allowPreviewGeneration={!hasMetadataOnlySources && (
           tab === "time_capacity"
             ? timeCapacityReady
             : tab === "chargeability"
@@ -3511,7 +3479,7 @@ function AnalysisEditorView({
                 : tab === "cycles" || tab === "recap"
                   ? cycleLivePlotReady
                   : true
-        }
+        )}
       />
     );
   };
@@ -3571,6 +3539,11 @@ function AnalysisEditorView({
       </Group>
 
       {displayResult && <BadgeBar badges={displayResult.badges} />}
+      {hasMetadataOnlySources && (
+        <Alert color="orange" title="Analysis unavailable for metadata-only sources">
+          One or more selected BioLogic sources has readable metadata but no independently verified canonical cycling rows. Cache-backed plots and recompute remain disabled until a verified cycle identity is available.
+        </Alert>
+      )}
 
       {/* keepMounted=false is load-bearing: with Mantine's default, EVERY
           tab's plots, settings panels and saved-plot previews stay mounted
@@ -3804,12 +3777,13 @@ function AnalysisEditorView({
                         : " (current)"}
                     </Text>
                   </div>
-                  <Tooltip label="Render with current parser/calc versions and pin new provenance">
+                  <Tooltip label={hasMetadataOnlySources ? "Recompute is unavailable for metadata-only sources" : "Render with current parser/calc versions and pin new provenance"}>
                     <Button
                       size="xs"
                       variant="default"
                       leftSection={<IconRefresh size={14} />}
                       loading={recompute.isPending}
+                      disabled={hasMetadataOnlySources}
                       onClick={() => recompute.mutate()}
                     >
                       Recompute

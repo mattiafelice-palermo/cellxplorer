@@ -70,8 +70,8 @@ export function importStageTitle(stage: ImportProgressStage): string {
 
 export function importStageExplanation(stage: ImportProgressStage): string {
   return {
-    scan: "Finding supported Neware files and reading their sizes. File identity is not opened yet.",
-    inspect: "Reading one file first to choose serial or multiprocessing, then checking file identity and Neware metadata.",
+    scan: "Finding supported cycler files and reading their sizes. File identity is not opened yet.",
+    inspect: "Reading one file first to choose serial or multiprocessing, then checking file identity and source metadata.",
     register: "Validating the reviewed drafts and committing the Cell registration as one transaction.",
   }[stage];
 }

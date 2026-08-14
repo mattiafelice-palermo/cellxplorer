@@ -107,6 +107,8 @@ _JobThread = threading.Thread
 
 
 def source_file_needs_cache(sf: SourceFile) -> bool:
+    if parsing.source_record_metadata_only(sf):
+        return False
     if sf.parse_status != "parsed":
         return True
     expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
@@ -869,6 +871,10 @@ def cell_dict(
         "has_changed": "changed" in statuses,
         "has_changing": "changing" in statuses,
         "has_parsing": "parsing" in statuses,
+        "has_metadata_only": any(
+            parsing.source_record_metadata_only(source_file)
+            for source_file in source_files
+        ),
         "has_summary_pending": has_summary_pending,
         "has_summary_error": has_summary_error,
         "created_at": cell.created_at.isoformat(),
@@ -2723,6 +2729,32 @@ def cell_cycles(cell_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "No such cell")
     hashes, files = analysis_svc.cell_ordered_hashes(db, cell)
     from pathlib import Path
+
+    metadata_only_sources = [
+        {
+            "source_file_id": source.id,
+            "filename": source.filename,
+            "warning": parsing.source_record_capability(source)["warning"],
+        }
+        for source in files
+        if parsing.source_record_metadata_only(source)
+    ]
+    if metadata_only_sources:
+        return {
+            "columns": [],
+            "rows": [],
+            "segments": [],
+            "missing": [],
+            "capability": {
+                "status": "metadata_only",
+                "metadata_only": True,
+                "canonical_cycling": False,
+                "message": (
+                    "Cycle data is unavailable because one or more selected sources are metadata-only."
+                ),
+                "sources": metadata_only_sources,
+            },
+        }
 
     from ..services import scanner
 

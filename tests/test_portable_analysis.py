@@ -203,7 +203,7 @@ class PortableAnalysisTests(unittest.TestCase):
             manifest["payloads"] = payloads
             portable_analysis._write_html(destination, manifest, payload_paths)
 
-    def fake_cache_build(self, source_hash, source_path):
+    def fake_cache_build(self, source_hash, source_path, **_kwargs):
         # Spec 040.3: mirror what the real `cache.build` does — write/report
         # at THIS source's own effective parser identity, not the
         # transitional global bundle. Using the real path's extension keeps
@@ -326,6 +326,215 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertFalse(any("offline" in warning.lower() for warning in warnings))
         result = analysis_engine.compute(imported_db, imported.spec, imported.provenance)
         self.assertEqual(result["cell_series"][0]["x"], [1])
+
+    def _rewrite_as_metadata_only_mpr(self, source_html: Path, destination: Path) -> str:
+        report = self.read_report(source_html)
+        source = report["sources"][0]
+        source_hash = source["hash"]
+        source.update(
+            {
+                "filename": "metadata-only.mpr",
+                "ext": "mpr",
+                "header_meta": {
+                    "capabilities": {"canonical_cycling": False},
+                    "protocol_warnings": [
+                        "Canonical cycling rows are unavailable until the cycle identity is verified."
+                    ],
+                },
+                "parse_status": "metadata_only",
+                "metadata_only": True,
+                "canonical_cycling": False,
+                "capability_warning": (
+                    "Canonical cycling rows are unavailable until the cycle identity is verified."
+                ),
+                "row_count": 99,
+                "cycle_count": 7,
+                "capacity_summary_status": "ready",
+            }
+        )
+        self.rewrite_report(source_html, report, destination)
+        return source_hash
+
+    def test_portable_import_preserves_metadata_only_source_and_skips_available_original_build(self):
+        # The recorded original path is available to the importing process;
+        # this exercises the same no-rebuild boundary without requiring the
+        # test helper to rewrite a compressed original-source payload.
+        destination, _ = self.create_export(include_original_files=False)
+        rewritten = self.root / "metadata-only-original-portable.html"
+        source_hash = self._rewrite_as_metadata_only_mpr(destination, rewritten)
+        imported_db = self.make_session()
+
+        with patch.object(portable_analysis.cache, "build", side_effect=AssertionError("metadata-only source was parsed")):
+            imported, warnings = portable_analysis.import_analysis_html(imported_db, rewritten)
+
+        source = imported_db.query(SourceFile).one()
+        self.assertEqual(source.ext, "mpr")
+        self.assertEqual(source.parse_status, "metadata_only")
+        self.assertEqual(source.parser_version, parsing.current_parser_identity_for_extension("mpr"))
+        self.assertIsNone(source.row_count)
+        self.assertIsNone(source.cycle_count)
+        self.assertEqual(source.capacity_summary_status, "unavailable")
+        self.assertFalse(cache.raw_path(source_hash, source.parser_version).exists())
+        self.assertFalse(
+            cache.cycles_path(source_hash, source.parser_version, cache.CALC_VERSION).exists()
+        )
+        self.assertFalse(any("metadata-only source was parsed" in warning for warning in warnings))
+        self.assertEqual(imported_db.query(Cell).count(), 1)
+        self.assertIsNotNone(imported)
+
+    def test_portable_import_ignores_embedded_metadata_only_cache_descriptors(self):
+        destination, _ = self.create_export(include_original_files=False)
+        rewritten = self.root / "metadata-only-embedded-cache-portable.html"
+        source_hash = self._rewrite_as_metadata_only_mpr(destination, rewritten)
+        original_payload_by_kind = portable_analysis._payload_by_kind
+
+        def fake_payload_by_kind(manifest, kind):
+            if kind == "raw_cache":
+                return [{
+                    "id": "stale-raw-cache",
+                    "kind": "raw_cache",
+                    "source_id": f"source-{source_hash}",
+                    "parser_version": parsing.current_parser_identity_for_extension("mpr"),
+                }]
+            if kind == "cycle_cache":
+                return [{
+                    "id": "stale-cycle-cache",
+                    "kind": "cycle_cache",
+                    "source_id": f"source-{source_hash}",
+                    "parser_version": parsing.current_parser_identity_for_extension("mpr"),
+                    "calc_version": cache.CALC_VERSION,
+                }]
+            return original_payload_by_kind(manifest, kind)
+
+        imported_db = self.make_session()
+        with patch.object(portable_analysis, "_payload_by_kind", side_effect=fake_payload_by_kind), \
+            patch.object(portable_analysis, "_decode_payload", wraps=portable_analysis._decode_payload) as decode_payload, \
+            patch.object(portable_analysis.cache, "build", side_effect=AssertionError("metadata-only source was parsed")):
+            portable_analysis.import_analysis_html(imported_db, rewritten)
+
+        source = imported_db.query(SourceFile).one()
+        self.assertEqual(source.parse_status, "metadata_only")
+        self.assertFalse(
+            any(
+                call.args[1].get("id") in {"stale-raw-cache", "stale-cycle-cache"}
+                for call in decode_payload.call_args_list
+            )
+        )
+        self.assertFalse(cache.raw_path(source_hash, source.parser_version).exists())
+        self.assertFalse(
+            cache.cycles_path(source_hash, source.parser_version, cache.CALC_VERSION).exists()
+        )
+
+    def test_portable_report_cannot_downgrade_an_existing_canonical_source(self):
+        destination, source_hash = self.create_export(include_original_files=False)
+        rewritten = self.root / "metadata-only-for-canonical-existing.html"
+        self._rewrite_as_metadata_only_mpr(destination, rewritten)
+
+        existing_db = self.make_session()
+        source_path = self.root / "cell.ndax"
+        identity = parsing.current_parser_identity_for_extension("ndax")
+        existing_db.add(
+            SourceFile(
+                hash=source_hash,
+                path=str(source_path),
+                filename=source_path.name,
+                size=source_path.stat().st_size,
+                ext="ndax",
+                parse_status="parsed",
+                parser_version=identity,
+                row_count=2,
+                cycle_count=1,
+                capacity_summary_status="ready",
+                total_charge_capacity_mah=1.0,
+                total_discharge_capacity_mah=0.95,
+            )
+        )
+        existing_db.commit()
+
+        raw_path = cache.raw_path(source_hash, identity)
+        cycle_path = cache.cycles_path(source_hash, identity, cache.CALC_VERSION)
+        raw_before = raw_path.read_bytes()
+        cycle_before = cycle_path.read_bytes()
+        original_payload_by_kind = portable_analysis._payload_by_kind
+
+        def fake_payload_by_kind(manifest, kind):
+            if kind == "raw_cache":
+                return [{
+                    "id": "legacy-raw-cache",
+                    "kind": "raw_cache",
+                    "source_id": f"source-{source_hash}",
+                    "parser_version": identity,
+                }]
+            if kind == "cycle_cache":
+                return [{
+                    "id": "legacy-cycle-cache",
+                    "kind": "cycle_cache",
+                    "source_id": f"source-{source_hash}",
+                    "parser_version": identity,
+                    "calc_version": cache.CALC_VERSION,
+                }]
+            return original_payload_by_kind(manifest, kind)
+
+        with patch.object(portable_analysis, "_payload_by_kind", side_effect=fake_payload_by_kind), \
+            patch.object(portable_analysis, "_decode_payload", wraps=portable_analysis._decode_payload) as decode_payload, \
+            patch.object(portable_analysis.cache, "build", side_effect=AssertionError("existing canonical source was rebuilt")):
+            portable_analysis.import_analysis_html(existing_db, rewritten)
+
+        source = existing_db.query(SourceFile).one()
+        self.assertEqual(source.hash, source_hash)
+        self.assertEqual(source.filename, "cell.ndax")
+        self.assertEqual(source.ext, "ndax")
+        self.assertEqual(source.parse_status, "parsed")
+        self.assertEqual(source.parser_version, identity)
+        self.assertEqual(source.row_count, 2)
+        self.assertEqual(source.cycle_count, 1)
+        self.assertEqual(source.capacity_summary_status, "ready")
+        self.assertFalse(
+            any(
+                call.args[1].get("id") in {"legacy-raw-cache", "legacy-cycle-cache"}
+                for call in decode_payload.call_args_list
+            )
+        )
+        self.assertEqual(raw_path.read_bytes(), raw_before)
+        self.assertEqual(cycle_path.read_bytes(), cycle_before)
+
+    def test_portable_report_cannot_upgrade_an_existing_metadata_only_source(self):
+        destination, source_hash = self.create_export(include_original_files=False)
+        existing_db = self.make_session()
+        source_path = self.root / "cell.ndax"
+        identity = parsing.current_parser_identity_for_extension("mpr")
+        existing_db.add(
+            SourceFile(
+                hash=source_hash,
+                path=str(source_path),
+                filename="existing.mpr",
+                size=source_path.stat().st_size,
+                ext="mpr",
+                header_meta={
+                    "capabilities": {"canonical_cycling": False},
+                    "protocol_warnings": ["Canonical cycling rows are unavailable."],
+                },
+                parse_status="metadata_only",
+                parse_error="Canonical cycling rows are unavailable.",
+                parser_version=identity,
+                row_count=None,
+                cycle_count=None,
+                capacity_summary_status="unavailable",
+            )
+        )
+        existing_db.commit()
+
+        with patch.object(portable_analysis.cache, "build", side_effect=AssertionError("existing metadata-only source was parsed")):
+            portable_analysis.import_analysis_html(existing_db, destination)
+
+        source = existing_db.query(SourceFile).one()
+        self.assertEqual(source.filename, "existing.mpr")
+        self.assertEqual(source.ext, "mpr")
+        self.assertEqual(source.parse_status, "metadata_only")
+        self.assertEqual(source.parser_version, identity)
+        self.assertIsNone(source.row_count)
+        self.assertIsNone(source.cycle_count)
+        self.assertEqual(source.capacity_summary_status, "unavailable")
 
     def test_portable_provenance_preserves_per_source_parser_identity_and_remaps_hash(self):
         """Case 20: exported provenance carries the new per-source
@@ -462,7 +671,7 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(imported_source.location_status, "online")
         self.assertTrue(Path(imported_source.path).is_file())
         self.assertEqual(portable_analysis._sha256_file(Path(imported_source.path)), source_hash)
-        self.assertFalse(any("Original Neware files were not included" in item for item in warnings))
+        self.assertFalse(any("original source files were not included" in item.lower() for item in warnings))
 
     def test_original_xlsx_source_is_embedded_with_normal_provenance(self):
         db, analysis, source, source_path, source_hash = self.create_analysis()

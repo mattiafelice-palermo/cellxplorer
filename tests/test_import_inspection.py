@@ -114,7 +114,7 @@ class ImportInspectionTests(unittest.TestCase):
 
         def fake_inspect(path: str):
             if path == paths[1]:
-                raise ValueError("broken source")
+                raise import_inspection.SourceInspectionRejection("broken source")
             index = int(Path(path).stem.split("-")[-1])
             return import_inspection.FileInspection(
                 path,
@@ -138,7 +138,7 @@ class ImportInspectionTests(unittest.TestCase):
 
         def fake_inspect(path: str):
             if path == paths[9]:
-                raise ValueError("parallel failure")
+                raise import_inspection.SourceInspectionRejection("parallel failure")
             index = int(Path(path).stem.split("-")[1])
             return import_inspection.FileInspection(
                 path,
@@ -156,6 +156,46 @@ class ImportInspectionTests(unittest.TestCase):
         self.assertEqual(len(result), len(paths))
         self.assertEqual(result[9].error, "parallel failure")
         self.assertIsNotNone(result[25].inspection)
+
+    def test_inspection_establishes_one_digest_then_uses_stat_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "one-digest.ndax"
+            path.write_bytes(b"one digest source")
+            original_hash = import_inspection.parsing.compute_hash
+            expected_hash = original_hash(path)
+            with patch.object(
+                import_inspection.parsing,
+                "compute_hash",
+                wraps=original_hash,
+            ) as digest, patch.object(
+                import_inspection.parsing,
+                "read_header_metadata",
+                return_value={},
+            ):
+                result = import_inspection.inspect_file(str(path))
+
+        self.assertEqual(result.hash, expected_hash)
+        self.assertEqual(digest.call_count, 1)
+
+    def test_unexpected_adapter_defect_escapes_batch_inspection(self):
+        paths = ["good.ndax", "defect.mpr"]
+
+        def fake_inspect(path: str):
+            if path == paths[1]:
+                raise RuntimeError("adapter defect")
+            return import_inspection.FileInspection(
+                path,
+                Path(path).name,
+                1,
+                1,
+                "ndax",
+                "hash",
+                {},
+            )
+
+        with patch.object(import_inspection, "inspect_file", side_effect=fake_inspect):
+            with self.assertRaisesRegex(RuntimeError, "adapter defect"):
+                import_inspection.inspect_files(paths)
 
     def test_moving_file_is_rejected_between_stat_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -204,6 +204,10 @@ def analysis_dict(
                 "description": cell.description,
                 "archived": cell.archived,
                 "source_count": len(current_hashes.get(cell.id, [])),
+                "metadata_only": any(
+                    engine.parsing.source_record_metadata_only(source)
+                    for source in engine.cell_ordered_hashes(db, cell)[1]
+                ),
             }
             for cell in cells
         ]
@@ -220,6 +224,10 @@ def analysis_dict(
                         "description": membership.cell.description,
                         "archived": membership.cell.archived,
                         "source_count": len(current_hashes.get(membership.cell.id, [])),
+                        "metadata_only": any(
+                            engine.parsing.source_record_metadata_only(source)
+                            for source in engine.cell_ordered_hashes(db, membership.cell)[1]
+                        ),
                     }
                     for membership in group.cell_links
                 ],
@@ -569,6 +577,12 @@ def _guard_protocol_analysis(db: Session, spec: dict, plot_family: str) -> None:
         raise HTTPException(status_code=422, detail=detail)
 
 
+def _guard_canonical_cycling(db: Session, spec: dict) -> None:
+    detail = engine.canonical_cycling_capability(db, spec)
+    if detail is not None:
+        raise HTTPException(status_code=422, detail=detail)
+
+
 def _open_compute_job(
     db: Session,
     analysis: Analysis,
@@ -613,6 +627,7 @@ def create_analysis_compute_job(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
     if req.kind in engine.PROTOCOL_DERIVED_FAMILIES:
         _guard_protocol_analysis(db, spec, req.kind)
     job_id = _open_compute_job(db, analysis, spec, req.kind, None)
@@ -625,6 +640,7 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
+    _guard_canonical_cycling(db, spec)
     key = analysis_cache.result_key(
         db, "cycles", spec, a.provenance, use_current_versions=req.recompute
     )
@@ -689,6 +705,7 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
+    _guard_canonical_cycling(db, spec)
     _guard_protocol_analysis(db, spec, "steps")
     key = analysis_cache.result_key(
         db, "steps", spec, a.provenance, use_current_versions=req.recompute
@@ -733,6 +750,7 @@ def get_dcir_protocols(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
     _guard_protocol_analysis(db, spec, "dcir")
     from ..services import dcir
     from ..services import protocol as protocol_service
@@ -807,6 +825,7 @@ def compute_dcir_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
     _guard_protocol_analysis(db, spec, "dcir")
     key = analysis_cache.result_key(
         db, "dcir", spec, analysis.provenance, use_current_versions=req.recompute
@@ -852,6 +871,7 @@ def compute_chargeability_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
     _guard_protocol_analysis(db, spec, "chargeability")
     from ..services import chargeability
     key = analysis_cache.result_key(
@@ -906,6 +926,7 @@ def compute_rate_capability_analysis(
     if analysis is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
     _guard_protocol_analysis(db, spec, "rate_capability")
     from ..services import rate_capability
     key = analysis_cache.result_key(
@@ -960,6 +981,7 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
     if a is None:
         raise HTTPException(404, "No such analysis")
     spec = req.spec or a.spec
+    _guard_canonical_cycling(db, spec)
     options = {
         "viewport_width": req.viewport_width or 1200,
         "precision": req.precision,
@@ -1427,6 +1449,7 @@ def export_portable_analysis(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
+    _guard_canonical_cycling(db, analysis.spec or {})
     temporary = tempfile.NamedTemporaryFile(
         prefix="cellxplorer-analysis-",
         suffix=".html",

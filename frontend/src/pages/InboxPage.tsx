@@ -130,6 +130,7 @@ export type ImportDraft = ImportPreview & {
   metadata: Record<string, string>;
   preview_state: ImportPreviewState;
   preview_loading: boolean;
+  metadata_only_acknowledged: boolean;
   active_mass_mg_override: number | null;
   nominal_capacity_mah_override: number | null;
   electrode_area_cm2_override: number | null;
@@ -161,6 +162,7 @@ function useImportPreviewLoader(
   }, []);
 
   const load = useCallback((draft: ImportPreviewDraftState, retry = false) => {
+    if (draft.metadata_only) return;
     const currentSession = sessionVersion.current;
     const previewKey = importPreviewQueryKey(draft.hash)[1];
     const version = (requestVersions.current.get(draft.staged_name) ?? 0) + 1;
@@ -914,6 +916,7 @@ function importDraft(file: ImportPreview): ImportDraft {
     metadata: file.metadata,
     preview_state: { status: "idle" },
     preview_loading: false,
+    metadata_only_acknowledged: false,
     active_mass_mg_override: null,
     nominal_capacity_mah_override: null,
     electrode_area_cm2_override: null,
@@ -1331,6 +1334,7 @@ function ImportModal({
                   source_path: item.source_path,
                   filename: item.filename,
                   inspection: item.inspection,
+                  allow_metadata_only: item.metadata_only && item.metadata_only_acknowledged,
                 })),
               cell_name: variables.continuedCellDraft?.cell_name ?? "",
               description: variables.continuedCellDraft?.description || null,
@@ -1351,6 +1355,7 @@ function ImportModal({
           source_path: d.source_path,
           filename: d.filename,
           inspection: d.inspection,
+          allow_metadata_only: d.metadata_only && d.metadata_only_acknowledged,
           cell_name: d.cell_name,
           description: d.description || null,
           metadata: d.metadata,
@@ -1493,6 +1498,7 @@ function ImportModal({
   const canSave =
     includedDrafts.length > 0 &&
     includedDrafts.every((d) => d.cell_name.trim()) &&
+    includedDrafts.every((d) => !d.metadata_only || d.metadata_only_acknowledged) &&
     includedDrafts.every(
       (d) =>
         d.active_material_selection === "custom" ||
@@ -1913,7 +1919,9 @@ function ImportModal({
                            const previewError = item.preview_state.status === "error"
                              ? item.preview_state.message
                              : null;
-                           const stateLabel = previewError
+                           const stateLabel = item.metadata_only
+                             ? "Metadata only"
+                             : previewError
                              ? "Preview failed"
                              : duplicate
                                ? "Already imported"
@@ -1977,10 +1985,10 @@ function ImportModal({
                                        <Text size="xs" c="dimmed" style={{ flex: "none" }} aria-hidden="true">
                                          ·
                                        </Text>
-                                       {previewError || duplicate || item.import_match?.kind === "possible_update" ? (
+                                       {item.metadata_only || previewError || duplicate || item.import_match?.kind === "possible_update" ? (
                                          <IconAlertTriangle size={13} color="var(--mantine-color-orange-7)" aria-hidden="true" style={{ flex: "none" }} />
                                        ) : null}
-                                       <Text size="xs" truncate c={duplicate ? "red" : previewError ? "orange" : "dimmed"}>
+                                       <Text size="xs" truncate c={duplicate ? "red" : item.metadata_only || previewError ? "orange" : "dimmed"}>
                                          {stateLabel}
                                        </Text>
                                      </Group>
@@ -2056,14 +2064,16 @@ function ImportModal({
                       metadata warning
                     </Badge>
                   )}
-                  <Button
-                    variant="default"
-                    size="xs"
-                    leftSection={<IconTable size={14} />}
-                    onClick={() => loadRawData(0)}
-                  >
-                    Raw data
-                  </Button>
+                  {!draft.metadata_only && (
+                    <Button
+                      variant="default"
+                      size="xs"
+                      leftSection={<IconTable size={14} />}
+                      onClick={() => loadRawData(0)}
+                    >
+                      Raw data
+                    </Button>
+                  )}
                 </Group>
               </Group>
 
@@ -2086,6 +2096,30 @@ function ImportModal({
                 </Stack>
               </Paper>
 
+              {draft.metadata_only && (
+                <Alert color="orange" icon={<IconAlertTriangle size={16} />}>
+                  <Stack gap="xs">
+                    <Text size="sm" fw={600}>
+                      BioLogic metadata-only source
+                    </Text>
+                    <Text size="sm">
+                      {draft.capability_warning ||
+                        "This file can be registered with its header metadata, but it cannot be used for canonical cycling analysis yet."}
+                    </Text>
+                    <Checkbox
+                      label="Register this source explicitly as metadata-only"
+                      checked={draft.metadata_only_acknowledged}
+                      onChange={(event) =>
+                        onChange(active, {
+                          ...draft,
+                          metadata_only_acknowledged: event.currentTarget.checked,
+                        })
+                      }
+                    />
+                  </Stack>
+                </Alert>
+              )}
+
               <TextInput
                 label="Cell name"
                 value={draft.cell_name}
@@ -2107,7 +2141,7 @@ function ImportModal({
                 label={
                   <Group gap={6} wrap="nowrap">
                     <span>Scientific values</span>
-                    <ImportInfoHint label="Neware values remain preserved as source metadata. Enter an override only when the source value is incorrect or missing." />
+                    <ImportInfoHint label="Cycler values remain preserved as source metadata. Enter an override only when the source value is incorrect or missing." />
                   </Group>
                 }
                 labelPosition="left"
@@ -2288,7 +2322,13 @@ function ImportModal({
               )}
 
               <Divider label="Quick preview" labelPosition="left" />
-              {draft.preview_state.status === "loading" ? (
+              {draft.metadata_only ? (
+                <Alert color="gray" title="Capacity preview unavailable">
+                  Canonical cycling preview and cache preparation are unavailable for this
+                  source until its full-cycle identity is independently resolved. Retry will
+                  not change that limitation.
+                </Alert>
+              ) : draft.preview_state.status === "loading" ? (
                 <Paper withBorder p="xs" h={250}>
                   <Center h="100%">
                     <Stack align="center" gap="xs">
@@ -2358,7 +2398,7 @@ function ImportModal({
               >
                 {metadataOpen ? "Hide metadata" : `Show metadata (${metadataRows.length})`}
               </Button>
-              <ImportInfoHint label="Metadata detected in the Neware file is read-only in this import step." />
+              <ImportInfoHint label="Metadata detected in the source file is read-only in this import step." />
               <Collapse in={metadataOpen}>
                 <Stack gap="xs">
                   {metadataRows.length > 0 ? (
@@ -2584,7 +2624,7 @@ export function ImportCellsLauncher({
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No Neware .nda, .ndax, or structured .xlsx files were found.", color: "gray" });
+        notifications.show({ message: "No supported cycler files were found.", color: "gray" });
         return;
       }
       setSourceAppend(append);
@@ -2815,7 +2855,7 @@ export function InboxPage() {
       setProgressToken(null);
       const candidates = result.files;
       if (candidates.length === 0) {
-        notifications.show({ message: "No Neware .nda, .ndax, or structured .xlsx files were found.", color: "gray" });
+        notifications.show({ message: "No supported cycler files were found.", color: "gray" });
         return;
       }
       setSourceAppend(append);
@@ -2863,7 +2903,7 @@ export function InboxPage() {
         <div>
           <Title order={3}>Import</Title>
           <Text size="sm" c="dimmed">
-            Load Neware .nda, .ndax, or structured Excel exports and choose separate or continued-cell import.
+            Load Neware (.nda, .ndax, structured .xlsx) or BioLogic GCPL-family (.mpr) files and choose separate or continued-cell import. BioLogic metadata can be reviewed even when canonical cycling is not yet verified for a source.
           </Text>
         </div>
         <Button
@@ -2924,7 +2964,7 @@ export function InboxPage() {
         <Group gap="lg" align="start">
           <IconFileImport size={34} color="var(--mantine-primary-color-6)" />
           <Stack gap={6}>
-            <Text fw={700}>Start from Neware sources</Text>
+            <Text fw={700}>Start from cycler sources</Text>
             <Text size="sm" c="dimmed" maw={720}>
               Select a single file or a batch. The next step lets you review detected metadata and
               choose whether the sources become separate cells or one ordered continued cell.

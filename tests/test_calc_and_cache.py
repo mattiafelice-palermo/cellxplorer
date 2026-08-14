@@ -1,8 +1,10 @@
 import os
 import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -323,6 +325,96 @@ class WriteBehindTests(unittest.TestCase):
         cycles = cache.build_write_behind(self.HASH, "unused.ndax")
         self.assertEqual(self.calls, 1)  # no re-parse
         self.assertEqual(list(cycles["cycle"]), [1, 2])
+
+
+class CacheSourceSafetyTests(unittest.TestCase):
+    def test_expected_hash_mismatch_is_rejected_before_parse(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "mismatch.ndax"
+            source.write_bytes(b"stable")
+            fingerprint = parsing.capture_source_fingerprint(source)
+            wrong = parsing.SourceFingerprint(
+                "0" * 64,
+                fingerprint.size,
+                fingerprint.mtime_ns,
+            )
+            with patch.object(parsing, "parse_timeseries") as parse:
+                with self.assertRaises(cache.SourceChangedDuringBuild):
+                    cache.build(fingerprint.hash, source, expected_fingerprint=wrong)
+            parse.assert_not_called()
+
+    def test_cache_build_hashes_once_then_uses_stat_only_guards(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "one-digest.ndax"
+            source.write_bytes(b"cache source")
+            fingerprint = parsing.capture_source_fingerprint(source)
+            original_hash = parsing.compute_hash
+            with patch.object(cache, "CACHE_DIR", Path(temp) / "cache"), \
+                patch.object(parsing, "compute_hash", wraps=original_hash) as digest, \
+                patch.object(
+                    parsing,
+                    "parse_timeseries",
+                    return_value=_canonical_cache_test_frame(),
+                ):
+                cache.build(
+                    fingerprint.hash,
+                    source,
+                    expected_fingerprint=fingerprint,
+                )
+
+        self.assertEqual(digest.call_count, 1)
+
+    def test_moving_source_is_rejected_before_new_cache_is_published(self):
+        file_hash = "feedface" + "2" * 56
+        cache_directory = cache.raw_path(file_hash).parent
+        if cache_directory.exists():
+            shutil.rmtree(cache_directory)
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                source = Path(temp) / "moving.ndax"
+                source.write_bytes(b"stable")
+
+                def parse_and_change(_path):
+                    source.write_bytes(b"changed-source")
+                    return _canonical_cache_test_frame()
+
+                with patch.object(parsing, "parse_timeseries", side_effect=parse_and_change):
+                    with self.assertRaises(cache.SourceChangedDuringBuild):
+                        cache.build(file_hash, source)
+            self.assertFalse(cache.raw_path(file_hash).exists())
+            self.assertFalse(cache.cycles_path(file_hash).exists())
+        finally:
+            if cache_directory.exists():
+                shutil.rmtree(cache_directory)
+
+    def test_source_change_after_atomic_write_removes_new_outputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "after-write.ndax"
+            source.write_bytes(b"stable")
+            fingerprint = parsing.capture_source_fingerprint(source)
+            file_hash = fingerprint.hash
+            parser_identity = parsing.parser_identity(source)
+            cache_directory = cache.raw_path(file_hash, parser_identity).parent
+            if cache_directory.exists():
+                shutil.rmtree(cache_directory)
+
+            original_write = cache._write_atomic
+
+            def write_then_change(frame, target):
+                original_write(frame, target)
+                if target.name.startswith("cycles__"):
+                    source.write_bytes(b"changed-after-write")
+
+            try:
+                with patch.object(parsing, "parse_timeseries", return_value=_canonical_cache_test_frame()), \
+                    patch.object(cache, "_write_atomic", side_effect=write_then_change):
+                    with self.assertRaises(cache.SourceChangedDuringBuild):
+                        cache.build(file_hash, source, expected_fingerprint=fingerprint)
+                self.assertFalse(cache.raw_path(file_hash, parser_identity).exists())
+                self.assertFalse(cache.cycles_path(file_hash, parser_identity).exists())
+            finally:
+                if cache_directory.exists():
+                    shutil.rmtree(cache_directory)
 
 
 class CapacityTotalsTests(unittest.TestCase):

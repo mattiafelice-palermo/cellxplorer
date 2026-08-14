@@ -27,6 +27,59 @@ from . import calc, canonical_cycling, parsing
 
 logger = logging.getLogger(__name__)
 
+
+class SourceChangedDuringBuild(parsing.SourceIdentityError):
+    """The source changed while a scientific cache was being built."""
+
+
+def _resolve_source_fingerprint(
+    source_path: str | Path,
+    file_hash: str,
+    expected: parsing.SourceFingerprint | None,
+) -> parsing.SourceFingerprint | None:
+    """Resolve or validate the source identity used by one cache build."""
+    if expected is not None:
+        if expected.hash.casefold() != file_hash.casefold():
+            raise SourceChangedDuringBuild(
+                "Cache source identity does not match the supplied content hash."
+            )
+        try:
+            current = parsing.capture_source_fingerprint(
+                source_path,
+                expected_hash=file_hash,
+            )
+        except parsing.SourceIdentityError as exc:
+            raise SourceChangedDuringBuild(str(exc)) from exc
+        if current != expected:
+            raise SourceChangedDuringBuild(
+                "Cache source identity changed before the build started."
+            )
+        return current
+    try:
+        Path(source_path).stat()
+    except OSError:
+        # Existing unit tests use synthetic paths with mocked parsers. Real
+        # import/scan/preview paths always supply a regular file here.
+        return None
+    try:
+        return parsing.capture_source_fingerprint(source_path, expected_hash=file_hash)
+    except parsing.SourceIdentityError as exc:
+        raise SourceChangedDuringBuild(str(exc)) from exc
+
+
+def _require_source_fingerprint(
+    source_path: str | Path,
+    expected: parsing.SourceFingerprint | None,
+) -> None:
+    if expected is None:
+        return
+    try:
+        parsing.assert_source_fingerprint(source_path, expected, verify_hash=False)
+    except parsing.SourceIdentityError as exc:
+        raise SourceChangedDuringBuild(
+            f"{exc}; the cache was not published."
+        ) from exc
+
 # background (write-behind) cache writes, keyed by file hash — see
 # build_write_behind(). Everything that reads or rebuilds a cache waits on
 # any in-flight write for that hash first.
@@ -279,7 +332,13 @@ def capacity_totals(cycles: pd.DataFrame | None) -> dict[str, float | None]:
     }
 
 
-def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
+def build(
+    file_hash: str,
+    source_path: str | Path,
+    force: bool = False,
+    *,
+    expected_fingerprint: parsing.SourceFingerprint | None = None,
+) -> dict:
     """Parse source file and (re)build raw + cycles caches at that SOURCE's
     own current effective parser identity (Spec 040.3) and the current calc
     version. Returns {rows, cycles, parser_version, calc_version}.
@@ -293,9 +352,15 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     (row/cycle counts come from Parquet metadata). Pass force=True to
     rebuild regardless, e.g. if a cache file is suspected corrupt."""
     _wait_for_pending(file_hash)
+    expected_source_fingerprint = _resolve_source_fingerprint(
+        source_path, file_hash, expected_fingerprint
+    )
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     parser_identity = parsing.parser_identity(source_path)
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     rp, cp = raw_path(file_hash, parser_identity), cycles_path(file_hash, parser_identity)
     if not force and rp.exists() and cp.exists():
+        _require_source_fingerprint(source_path, expected_source_fingerprint)
         import pyarrow.parquet as pq
 
         cycle_columns = [
@@ -318,21 +383,34 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     # cycle cache.
     parsed_from_source = not (rp.exists() and not force)
     if parsed_from_source:
+        _require_source_fingerprint(source_path, expected_source_fingerprint)
         raw = parsing.parse_timeseries(source_path)
         # Full-parse / cache-build boundary (Spec 040.1): a frame already on
         # disk was validated when it was first written, so this only runs on
         # an actual new parse, never on every cache read.
         canonical_cycling.validate_raw_timeseries(raw)
+        _require_source_fingerprint(source_path, expected_source_fingerprint)
     else:
         raw = pd.read_parquet(rp)
     cycles = calc.per_cycle(raw)
     if parsed_from_source:
         parsing.validate_parsed_output(source_path, raw, cycles)
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     d = _dir(file_hash)
     d.mkdir(parents=True, exist_ok=True)
-    if parsed_from_source:
-        _write_atomic(raw, rp)
-    _write_atomic(cycles, cp)
+    raw_was_present = rp.exists()
+    cycles_was_present = cp.exists()
+    try:
+        if parsed_from_source:
+            _write_atomic(raw, rp)
+        _write_atomic(cycles, cp)
+        _require_source_fingerprint(source_path, expected_source_fingerprint)
+    except Exception:
+        if not raw_was_present:
+            rp.unlink(missing_ok=True)
+        if not cycles_was_present:
+            cp.unlink(missing_ok=True)
+        raise
     return {
         "rows": len(raw),
         "cycles": len(cycles),
@@ -343,7 +421,12 @@ def build(file_hash: str, source_path: str | Path, force: bool = False) -> dict:
     }
 
 
-def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
+def build_write_behind(
+    file_hash: str,
+    source_path: str | Path,
+    *,
+    expected_fingerprint: parsing.SourceFingerprint | None = None,
+) -> pd.DataFrame:
     """Parse now, return the per-cycle frame immediately, and write the
     raw + cycles Parquet caches on a background thread.
 
@@ -352,26 +435,44 @@ def build_write_behind(file_hash: str, source_path: str | Path) -> pd.DataFrame:
     later build()/load for the same hash joins the in-flight write first,
     so the caches are always complete before they are read."""
     _wait_for_pending(file_hash)
+    expected_source_fingerprint = _resolve_source_fingerprint(
+        source_path, file_hash, expected_fingerprint
+    )
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     parser_identity = parsing.parser_identity(source_path)
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     if raw_path(file_hash, parser_identity).exists() and cycles_path(
         file_hash, parser_identity
     ).exists():
+        _require_source_fingerprint(source_path, expected_source_fingerprint)
         return load_cycles(file_hash, parser_identity, CALC_VERSION)
 
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
     raw = parsing.parse_timeseries(source_path)
     canonical_cycling.validate_raw_timeseries(raw)
     cycles = calc.per_cycle(raw)
     parsing.validate_parsed_output(source_path, raw, cycles)
+    _require_source_fingerprint(source_path, expected_source_fingerprint)
+    raw_target = raw_path(file_hash, parser_identity)
+    cycles_target = cycles_path(file_hash, parser_identity)
+    raw_was_present = raw_target.exists()
+    cycles_was_present = cycles_target.exists()
 
     def _write() -> None:
         from .process_priority import apply_background_thread_priority
 
         apply_background_thread_priority()
         try:
+            _require_source_fingerprint(source_path, expected_source_fingerprint)
             _dir(file_hash).mkdir(parents=True, exist_ok=True)
-            _write_atomic(raw, raw_path(file_hash, parser_identity))
-            _write_atomic(cycles, cycles_path(file_hash, parser_identity))
+            _write_atomic(raw, raw_target)
+            _write_atomic(cycles, cycles_target)
+            _require_source_fingerprint(source_path, expected_source_fingerprint)
         except Exception:
+            if not raw_was_present:
+                raw_target.unlink(missing_ok=True)
+            if not cycles_was_present:
+                cycles_target.unlink(missing_ok=True)
             logger.exception("background cache write failed for %s", file_hash)
         finally:
             with _pending_lock:

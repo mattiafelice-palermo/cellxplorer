@@ -129,6 +129,39 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertIn("protocol_changed", codes)
         self.assertIn("channel_changed", codes)
 
+    def test_mixed_neware_biologic_chain_surfaces_metadata_only_acknowledgement(self):
+        neware = _source("staged-neware", filename="first.ndax")
+        biologic = _source(
+            "staged-biologic",
+            filename="second.mpr",
+            hash="hash-biologic",
+            protocol_signature="gcpl-signature",
+            channel="2-2",
+            device_info="BioLogic",
+            first_record_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            metadata_only=True,
+            canonical_cycling=False,
+            capability_warning="BioLogic source has no verified canonical cycle identity.",
+        )
+        result = continuations.analyze_continuation_chain(
+            [neware, biologic],
+            staged_keys=["staged-neware", "staged-biologic"],
+        )
+        self.assertTrue(result["can_submit"])
+        codes = {finding["code"] for finding in result["findings"]}
+        self.assertIn("protocol_changed", codes)
+        self.assertIn("device_changed", codes)
+        self.assertIn("channel_changed", codes)
+        self.assertIn("metadata_only_source", codes)
+        metadata_finding = next(
+            finding
+            for finding in result["findings"]
+            if finding["code"] == "metadata_only_source"
+        )
+        with self.assertRaises(continuations.ContinuationValidationError):
+            continuations.ensure_submittable_chain(result, [])
+        continuations.ensure_submittable_chain(result, [metadata_finding["id"]])
+
     def test_timestamp_gap_includes_human_readable_duration(self):
         left_end = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
         right_start = left_end + timedelta(days=6)
@@ -460,6 +493,48 @@ class ContinuationPolicyTests(unittest.TestCase):
         self.assertEqual(enriched["inspection_status"], "pending")
         self.assertEqual(enriched["cache_build_status"], "started")
         schedule.assert_called_once()
+
+    def test_metadata_only_source_is_terminal_and_does_not_schedule_or_poll(self):
+        source = _source(
+            "staged-mpr",
+            filename="staged-mpr.mpr",
+            hash="m" * 64,
+            inspection_status="pending",
+            metadata_only=True,
+            canonical_cycling=False,
+        )
+        with patch.object(continuations, "_maybe_schedule_cache_build") as schedule, patch.object(
+            continuations.cache,
+            "has_cycles",
+        ) as has_cycles:
+            enriched = continuations.enrich_source_timing(
+                source,
+                source_path=Path("staged-mpr.mpr"),
+            )
+
+        self.assertEqual(enriched["inspection_status"], "ready")
+        self.assertEqual(enriched["cache_build_status"], "unavailable")
+        schedule.assert_not_called()
+        has_cycles.assert_not_called()
+
+    def test_metadata_only_confirmation_requires_acknowledgement(self):
+        source = _source(
+            "staged-mpr",
+            filename="staged-mpr.mpr",
+            hash="m" * 64,
+            metadata_only=True,
+            canonical_cycling=False,
+            capability_warning="metadata-only warning",
+        )
+        result = continuations.analyze_continuation_chain(
+            [source],
+            staged_keys=["staged-mpr"],
+        )
+        finding = next(item for item in result["findings"] if item["code"] == "metadata_only_source")
+        self.assertEqual(finding["severity"], "confirmation")
+        with self.assertRaises(continuations.ContinuationValidationError):
+            continuations.ensure_submittable_chain(result, [])
+        continuations.ensure_submittable_chain(result, [finding["id"]])
 
     def test_raw_only_cache_remains_pending_until_cycles_are_available(self):
         source = _source(

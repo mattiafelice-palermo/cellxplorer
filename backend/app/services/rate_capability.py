@@ -854,6 +854,7 @@ def compute(
     from . import analysis_engine as engine
     from . import scanner
 
+    engine.ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version

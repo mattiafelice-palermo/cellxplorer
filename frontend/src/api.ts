@@ -456,9 +456,12 @@ export interface SourceFile {
   active_mass_mg: number | null;
   nominal_capacity_mah: number | null;
   location_status: "online" | "offline" | "changed" | "changing";
-  parse_status: "unparsed" | "parsing" | "parsed" | "error";
+  parse_status: "unparsed" | "parsing" | "parsed" | "metadata_only" | "error";
   parse_error: string | null;
   parser_version: string | null;
+  metadata_only: boolean;
+  canonical_cycling: boolean;
+  capability_warning: string | null;
   row_count: number | null;
   cycle_count: number | null;
   registered: boolean;
@@ -503,6 +506,7 @@ export interface CellSummary {
   has_changed: boolean;
   has_changing: boolean;
   has_parsing: boolean;
+  has_metadata_only: boolean;
   has_summary_pending: boolean;
   has_summary_error: boolean;
   created_at: string;
@@ -647,6 +651,7 @@ export interface ReplicateGroupSummary {
     | "name"
     | "description"
     | "archived"
+    | "has_metadata_only"
     | "total_charge_capacity_mah"
     | "total_discharge_capacity_mah"
   >[];
@@ -1303,6 +1308,7 @@ export interface AnalysisFull extends AnalysisSummary {
   provenance: Provenance | null;
   selection_cells: (Pick<CellSummary, "id" | "name" | "description" | "archived"> & {
     source_count: number;
+    metadata_only: boolean;
   })[];
   selection_groups: {
     id: number;
@@ -1311,6 +1317,7 @@ export interface AnalysisFull extends AnalysisSummary {
     cell_ids: number[];
     cells: (Pick<CellSummary, "id" | "name" | "description" | "archived"> & {
       source_count: number;
+      metadata_only: boolean;
     })[];
   }[];
 }
@@ -1779,9 +1786,25 @@ export interface ImportPreview {
   active_mass_mg: number | null;
   nominal_capacity_mah: number | null;
   nda_version: string | null;
+  source_format: string | null;
+  software_version: string | null;
+  reference_electrode: string | null;
+  parser_version: string | null;
+  canonical_cycling: boolean;
+  metadata_only: boolean;
+  capability_warning: string | null;
   metadata: Record<string, string>;
   raw_metadata: Record<string, string>;
   metadata_error: string | null;
+  voltage_capabilities: {
+    capabilities?: Record<string, boolean>;
+    voltage_roles?: Record<string, string>;
+    reference_electrode?: string;
+    voltage_v_origin?: string;
+    voltage_v_derived?: boolean;
+  };
+  protocol_capabilities: Record<string, boolean>;
+  protocol_warnings: string[];
   import_match: {
     kind: "exact_duplicate" | "possible_update";
     matched_on: string[];
@@ -1902,6 +1925,7 @@ export interface ContinuationInspectSourceRequest {
   staged_name: string;
   source_path?: string | null;
   inspection?: ImportPreview["inspection"] | null;
+  allow_metadata_only?: boolean;
 }
 
 export interface ContinuationInspectRequest {
@@ -1941,10 +1965,13 @@ export interface ContinuationInspectSource {
   active_mass_mg: number | null;
   inspection_status: ContinuationInspectionStatus;
   inspection_error?: string | null;
-  cache_build_status?: "ready" | "started" | "building" | "failed";
+  cache_build_status?: "ready" | "started" | "building" | "failed" | "unavailable";
   location_status?: "online" | "offline" | "changed" | "changing" | null;
-  parse_status?: "unparsed" | "parsing" | "parsed" | "error" | null;
+  parse_status?: "unparsed" | "parsing" | "parsed" | "metadata_only" | "error" | null;
   row_count?: number | null;
+  canonical_cycling: boolean;
+  metadata_only: boolean;
+  capability_warning?: string | null;
 }
 
 export interface ContinuationFinding {
@@ -1974,6 +2001,7 @@ export interface ImportSourceDraft {
   source_path?: string | null;
   filename: string;
   inspection?: ImportPreview["inspection"] | null;
+  allow_metadata_only?: boolean;
 }
 
 export interface ImportCellDraft {
@@ -1981,6 +2009,7 @@ export interface ImportCellDraft {
   source_path?: string | null;
   filename?: string | null;
   inspection?: ImportPreview["inspection"] | null;
+  allow_metadata_only?: boolean;
   sources?: ImportSourceDraft[];
   cell_name: string;
   description?: string | null;

@@ -85,7 +85,7 @@ function formatBytes(value: number): string {
 
 const CACHE_CATEGORY_HINTS = {
   scientific:
-    "Parsed copies of your Neware files (raw datapoints and per-cycle tables) stored as fast Parquet caches, keyed by file checksum. Cleaning the category preserves caches whose original source is offline.",
+    "Parsed copies of your cycler files (raw datapoints and per-cycle tables) stored as fast Parquet caches, keyed by file checksum. Cleaning the category preserves caches whose original source is offline.",
   analysis_results:
     "Numerical outputs of analysis computations: the series and metrics behind each plot view. Cheap to regenerate from the scientific cache the next time a plot is opened.",
   analysis_artifacts:

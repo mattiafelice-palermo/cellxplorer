@@ -12,6 +12,13 @@ interface CyclesPayload {
   rows: Record<string, number | string | null>[];
   segments: { file_hash: string; segment: number; cycle_start: number; cycle_end: number }[];
   missing: string[];
+  capability?: {
+    status: "metadata_only" | string;
+    metadata_only: boolean;
+    canonical_cycling: boolean;
+    message: string;
+    sources: { source_file_id: number; filename: string; warning: string | null }[];
+  };
 }
 
 const QUICK_QUANTITIES = [
@@ -39,6 +46,8 @@ export function CellQuickPlot({ cellId, cellName }: { cellId: number; cellName: 
   if (cycles.isError) return <Alert color="red">Could not load cycle data.</Alert>;
 
   const rows = cycles.data?.rows ?? [];
+  if (cycles.data?.capability?.metadata_only)
+    return <Alert color="orange" title="Cycle data unavailable">{cycles.data.capability.message}</Alert>;
   if (rows.length === 0)
     return (
       <Alert color="gray">

@@ -7,15 +7,13 @@ indirectly via `cache.py`).
 
 It owns:
 
-- stable format identifiers (`FORMAT_NEWARE_BINARY`, `FORMAT_NEWARE_EXCEL`, and the direct-only
+- stable format identifiers (`FORMAT_NEWARE_BINARY`, `FORMAT_NEWARE_EXCEL`, and
   `FORMAT_BIOLOGIC_MPR`)
   and a narrow static descriptor per format (`SourceFormatDescriptor`) —
   a frozen dataclass registry, not a plugin framework: no dynamic loading,
   no importlib discovery, no base-class hierarchy;
-- format recognition (`recognize_source`) and two explicit extension tables:
-  `_EXTENSION_FORMAT_ID` remains the user-facing Neware import/metadata policy, while
-  `_DIRECT_EXTENSION_FORMAT_ID` additionally routes direct-only `.mpr` parser calls until Spec
-  041.4 owns import lifecycle support;
+- format recognition (`recognize_source`) and one centralized extension table used by
+  import admission, inspection, scanning, direct parsing, and parser identity;
 - the direct NewareNDA integration for `.nda`/`.ndax`: `RAW_COLUMNS`, the
   vectorized fast-path installation (`fast_neware.install()`), and the
   direct NDAX XML metadata optimization (`_read_ndax_metadata_flat`);
@@ -77,6 +75,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 
 import NewareNDA
@@ -149,20 +148,54 @@ _FORMAT_DESCRIPTORS: dict[str, SourceFormatDescriptor] = {
     _NEWARE_EXCEL_FORMAT.format_id: _NEWARE_EXCEL_FORMAT,
     _BIOLOGIC_MPR_FORMAT.format_id: _BIOLOGIC_MPR_FORMAT,
 }
-# The existing Neware extension table remains the user-facing import,
-# inspection, and scanner policy until Spec 041.4.  Direct parser support for
-# `.mpr` uses the separate registry below so backend tests/services can map a
-# BioLogic source without accidentally admitting it to import UI flows.
+
+
+def source_glob(*format_ids: str) -> str:
+    """Return native-picker patterns derived from the format registry."""
+
+    selected = set(format_ids) if format_ids else set(_FORMAT_DESCRIPTORS)
+    extensions = sorted(
+        {
+            extension
+            for format_id, descriptor in _FORMAT_DESCRIPTORS.items()
+            if format_id in selected
+            for extension in descriptor.extensions
+        }
+    )
+    return " ".join(f"*{extension}" for extension in extensions)
+
+
+# This is the one user-facing source-admission policy. Every extension is
+# derived from the descriptor registry so scanners, import inspection,
+# browser enumeration, native filters, direct parsing, and parser identity
+# cannot drift into separate format lists.
 _EXTENSION_FORMAT_ID: dict[str, str] = {
-    **{ext: _NEWARE_BINARY_FORMAT.format_id for ext in _NEWARE_BINARY_FORMAT.extensions},
-    **{ext: _NEWARE_EXCEL_FORMAT.format_id for ext in _NEWARE_EXCEL_FORMAT.extensions},
+    extension: format_id
+    for format_id, descriptor in _FORMAT_DESCRIPTORS.items()
+    for extension in descriptor.extensions
 }
-SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
-_DIRECT_EXTENSION_FORMAT_ID: dict[str, str] = {
-    **_EXTENSION_FORMAT_ID,
-    **{ext: _BIOLOGIC_MPR_FORMAT.format_id for ext in _BIOLOGIC_MPR_FORMAT.extensions},
+SUPPORTED_SOURCE_EXTENSIONS = frozenset(_EXTENSION_FORMAT_ID)
+# Compatibility name retained for older callers that only need the Neware
+# subset. It is derived from the same registry and is not an admission policy.
+SUPPORTED_NEWARE_SOURCE_EXTENSIONS = frozenset(
+    extension
+    for extension, format_id in _EXTENSION_FORMAT_ID.items()
+    if format_id != FORMAT_BIOLOGIC_MPR
+)
+_DIRECT_EXTENSION_FORMAT_ID = _EXTENSION_FORMAT_ID
+SUPPORTED_DIRECT_SOURCE_EXTENSIONS = SUPPORTED_SOURCE_EXTENSIONS
+
+SUPPORTED_SOURCE_DESCRIPTION = (
+    "Cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family "
+    "(.mpr; canonical cycling availability is verified per source)"
+)
+SUPPORTED_SOURCE_GLOB = source_glob()
+
+_FORMAT_FAMILY = {
+    FORMAT_NEWARE_BINARY: "binary",
+    FORMAT_NEWARE_EXCEL: "excel",
+    FORMAT_BIOLOGIC_MPR: "biologic",
 }
-SUPPORTED_DIRECT_SOURCE_EXTENSIONS = frozenset(_DIRECT_EXTENSION_FORMAT_ID)
 
 
 # `UnsupportedSourceFormatError` (raised below for both a wholly unknown
@@ -176,34 +209,33 @@ SUPPORTED_DIRECT_SOURCE_EXTENSIONS = frozenset(_DIRECT_EXTENSION_FORMAT_ID)
 
 
 def source_filename_allowed(filename: str | Path) -> bool:
-    """Return whether a filename can enter the Neware source inspection path."""
+    """Return whether a filename can enter the supported source path."""
 
-    return Path(str(filename or "")).suffix.casefold() in SUPPORTED_NEWARE_SOURCE_EXTENSIONS
+    return Path(str(filename or "")).suffix.casefold() in SUPPORTED_SOURCE_EXTENSIONS
 
 
 def source_parser_family(filename: str | Path) -> str | None:
-    """Return the parser family selected by a supported Neware suffix.
+    """Return the parser family selected by a supported source suffix.
 
     Deliberately filename/suffix-only, never content-based: `scanner.py`
     calls this on a bare filename (sometimes for a source it has not
     necessarily re-read) to guard against exact-hash relinking silently
-    crossing the binary/Excel family boundary. `recognize_source` below is
+    crossing the binary/Excel/BioLogic family boundary. `recognize_source` below is
     the content-aware counterpart used when an actual readable path is
     available; the two must not be conflated. Return values stay the
-    pre-existing short "binary"/"excel" strings rather than the new
+    stable short family strings rather than the new
     `format_id` spelling — this is a stability-critical safety guard, not
-    new dispatch surface, and changing its return values is out of scope.
+    dispatch surface; changing the family labels would break lifecycle safety.
     """
 
     value = str(filename or "")
     suffix = Path(value).suffix.casefold()
-    if not suffix and value.casefold() in {"nda", "ndax", "xlsx"}:
-        suffix = f".{value.casefold()}"
-    if suffix == ".xlsx":
-        return "excel"
-    if suffix in {".nda", ".ndax"}:
-        return "binary"
-    return None
+    if not suffix:
+        candidate = f".{value.casefold()}"
+        if candidate in _EXTENSION_FORMAT_ID:
+            suffix = candidate
+    format_id = _EXTENSION_FORMAT_ID.get(suffix)
+    return _FORMAT_FAMILY.get(format_id) if format_id is not None else None
 
 
 def recognize_source(path: str | Path) -> str | None:
@@ -340,13 +372,26 @@ def parser_identity(path: str | Path) -> str:
 
 
 def ensure_supported_source_metadata(path: str | Path, metadata: dict) -> None:
-    """Reject an Excel file whose bounded metadata read identified no Neware export."""
+    """Reject a recognized source whose bounded header read failed.
 
-    if Path(path).suffix.casefold() != ".xlsx":
+    Adapter-specific detail remains in ``metadata["error"]`` while the
+    concise user-facing taxonomy is carried in ``error_message``.
+    """
+
+    suffix = Path(path).suffix.casefold()
+    if suffix not in {".xlsx", ".mpr"}:
         return
     error = metadata.get("error") if isinstance(metadata, dict) else None
-    if error:
-        raise UnsupportedSourceFormatError(str(error))
+    if not error:
+        return
+    message = metadata.get("error_message") or str(error)
+    if metadata.get("error_kind") == "unsupported":
+        raise UnsupportedSourceFormatError(message)
+    if metadata.get("error_kind") == "invalid":
+        raise InvalidSourceFormatError(message)
+    if suffix == ".mpr":
+        raise InvalidSourceFormatError(message)
+    raise UnsupportedSourceFormatError(str(error))
 
 # Vectorized fast paths for NewareNDA — verified output-identical (see
 # tests/test_fast_neware.py); the bundle version above still records both parser owners.
@@ -380,6 +425,140 @@ def compute_hash(path: str | Path) -> str:
     return h.hexdigest()
 
 
+@dataclass(frozen=True)
+class SourceFingerprint:
+    """Plain, process-safe identity snapshot for one source read."""
+
+    hash: str
+    size: int
+    mtime_ns: int
+
+
+class SourceIdentityError(ValueError):
+    """The source disappeared, moved, or no longer matches its identity."""
+
+
+def capture_source_fingerprint(
+    path: str | Path,
+    *,
+    expected_hash: str | None = None,
+) -> SourceFingerprint:
+    """Hash a regular source between two stat checks.
+
+    This is the shared source-read boundary for inspection, registration,
+    scanner updates, and cache publication. It intentionally performs no
+    adapter-specific parsing.
+    """
+    source_path = Path(path)
+    try:
+        initial = source_path.stat()
+    except OSError as exc:
+        raise SourceIdentityError(f"Source is missing or unreadable: {source_path}") from exc
+    if not S_ISREG(initial.st_mode):
+        raise SourceIdentityError(f"Source is not a regular file: {source_path}")
+    try:
+        file_hash = compute_hash(source_path)
+        final = source_path.stat()
+    except OSError as exc:
+        raise SourceIdentityError(f"Source became unavailable while being read: {source_path}") from exc
+    if (initial.st_size, initial.st_mtime_ns) != (final.st_size, final.st_mtime_ns):
+        raise SourceIdentityError("Source changed during identity read")
+    if expected_hash and file_hash.casefold() != expected_hash.casefold():
+        raise SourceIdentityError("Source bytes do not match the inspected content hash")
+    return SourceFingerprint(file_hash, final.st_size, final.st_mtime_ns)
+
+
+def assert_source_fingerprint(
+    path: str | Path,
+    fingerprint: SourceFingerprint,
+    *,
+    verify_hash: bool = True,
+) -> None:
+    """Require a source to retain one inspected size/mtime/hash snapshot."""
+    source_path = Path(path)
+    try:
+        before = source_path.stat()
+    except OSError as exc:
+        raise SourceIdentityError("Source became unavailable while being read") from exc
+    if (before.st_size, before.st_mtime_ns) != (fingerprint.size, fingerprint.mtime_ns):
+        raise SourceIdentityError("Source changed during identity read")
+    try:
+        current_hash = compute_hash(source_path) if verify_hash else fingerprint.hash
+    except OSError as exc:
+        raise SourceIdentityError("Source became unavailable while being read") from exc
+    try:
+        after = source_path.stat()
+    except OSError as exc:
+        raise SourceIdentityError("Source became unavailable while being read") from exc
+    if (after.st_size, after.st_mtime_ns) != (fingerprint.size, fingerprint.mtime_ns):
+        raise SourceIdentityError("Source changed during identity read")
+    if current_hash.casefold() != fingerprint.hash.casefold():
+        raise SourceIdentityError("Source bytes no longer match the inspected content hash")
+
+
+def source_metadata_only(metadata: dict | None) -> bool:
+    """Return whether a recognized source has no canonical cycling contract.
+
+    Format adapters may still expose useful header facts while deliberately
+    withholding scientific rows.  Keep this decision in the shared parsing
+    layer so registration, scanner preparation, and UI responses cannot drift
+    into treating those sources as analysis-ready.
+    """
+
+    if not isinstance(metadata, dict):
+        return False
+    capabilities = metadata.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raw = metadata.get("raw")
+        capabilities = raw.get("capabilities") if isinstance(raw, dict) else None
+    return isinstance(capabilities, dict) and capabilities.get("canonical_cycling") is False
+
+
+def source_metadata_only_message(metadata: dict | None) -> str:
+    if isinstance(metadata, dict):
+        warnings = metadata.get("protocol_warnings")
+        if isinstance(warnings, (list, tuple)):
+            for warning in warnings:
+                text = str(warning).strip()
+                if text and ("cycle" in text.casefold() or "canonical" in text.casefold()):
+                    return text
+    return (
+        "This source has readable metadata but no independently verified canonical cycling "
+        "rows yet; it is metadata-only until the source cycle identity is resolved."
+    )
+
+
+def source_record_metadata_only(source: object) -> bool:
+    """Return the persisted capability boundary without opening the source.
+
+    Registered sources must be safe to inspect from database state alone. In
+    particular, a metadata-only BioLogic source must never be reparsed merely
+    because a cache or preview consumer asks for cycling data.
+    """
+
+    if getattr(source, "parse_status", None) == "metadata_only":
+        return True
+    header = getattr(source, "header_meta", None)
+    return source_metadata_only({"raw": header} if isinstance(header, dict) else None)
+
+
+def source_record_capability(source: object) -> dict[str, object]:
+    """Describe the stable persisted scientific capability of one source."""
+
+    metadata_only = source_record_metadata_only(source)
+    warning = (
+        source_metadata_only_message({"raw": getattr(source, "header_meta", None)})
+        if metadata_only
+        else None
+    )
+    return {
+        "status": "metadata_only" if metadata_only else "canonical_cycling",
+        "metadata_only": metadata_only,
+        "canonical_cycling": not metadata_only,
+        "warning": warning,
+    }
+
+
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
     """Full parse of a supported cycling source into a normalized DataFrame.
 
@@ -391,10 +570,8 @@ def parse_timeseries(path: str | Path) -> pd.DataFrame:
     cache-build boundary in `cache.build` / `cache.build_write_behind`, the
     only production callers of this function.
 
-    Dispatch is deterministic and suffix-based, through the direct parser
-    registry. Neware metadata/import policy continues to use
-    `_EXTENSION_FORMAT_ID`; the direct registry additionally contains `.mpr`
-    until the later import-lifecycle child owns that extension. It does not
+    Dispatch is deterministic and suffix-based, through the centralized
+    adapter registry. It does not
     call `recognize_source` (which additionally sniffs Excel content) —
     `neware_excel.parse_timeseries` performs that same structural check
     itself as a side effect of actually parsing, so a second check here
@@ -539,10 +716,9 @@ def read_header_metadata(path: str | Path) -> dict:
     the historical flattened ``raw`` map; direct BioLogic MPR metadata carries
     bounded decoded ``settings``, ``log``, and data-header objects in ``raw``.
 
-    Dispatch uses the direct parser registry so backend callers can inspect a
-    BioLogic ``.mpr`` before Spec 041.4 admits that suffix to the user import
-    lifecycle.  ``source_filename_allowed`` and the scanner remain governed by
-    the user-facing Neware-only table.
+    The complete raw header stays server-side. Import routes expose only a
+    bounded scalar preview, while registration persists this raw document in
+    ``SourceFile.header_meta``.
     """
     path = Path(path)
     suffix = path.suffix.casefold()
@@ -559,9 +735,47 @@ def read_header_metadata(path: str | Path) -> dict:
             raise UnsupportedSourceFormatError(
                 f"Unsupported cycling source format: {path.suffix or '<none>'}."
             )
-    except Exception as exc:  # corrupt/unsupported file: still importable
+    except SourceFormatError as exc:
         logger.warning("metadata read failed for %s: %s", path, exc)
-        return {"raw": {}, "error": str(exc)}
+        if isinstance(exc, UnsupportedSourceFormatError):
+            error_kind = "unsupported"
+        else:
+            error_kind = "invalid"
+        if suffix == ".mpr":
+            unrecognized = "is not a BioLogic MPR file" in str(exc)
+            error_message = (
+                "The selected .mpr file is not a BioLogic MPR container."
+                if unrecognized
+                else "Unsupported BioLogic .mpr technique or file layout; "
+                "CellXplorer does not support this source yet."
+                if error_kind == "unsupported"
+                else "Invalid BioLogic .mpr; the file is corrupt or could not be read safely."
+            )
+        else:
+            error_message = str(exc)
+        result = {
+            "raw": {},
+            "error": str(exc),
+            "error_kind": error_kind,
+            "error_message": error_message,
+        }
+        if suffix == ".mpr":
+            result["source_format"] = FORMAT_BIOLOGIC_MPR
+        return result
+    except Exception as exc:
+        if suffix == ".mpr":
+            # An unexpected adapter defect is not a user/source rejection and
+            # must remain visible to the caller and test harness.
+            logger.exception("unexpected BioLogic metadata failure for %s", path)
+            raise
+        logger.warning("metadata read failed for %s: %s", path, exc)
+        return {
+            "raw": {},
+            "source_format": None,
+            "error": str(exc),
+            "error_kind": None,
+            "error_message": str(exc),
+        }
 
     result: dict[str, Any] = {"raw": flat}
 

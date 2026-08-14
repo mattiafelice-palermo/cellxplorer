@@ -137,15 +137,19 @@ popover, and lists history from `GET /api/downloads/history`. File actions are d
 delete goes through `DELETE /api/downloads/history/{id}?delete_file=…`. The web build shows history
 but hides open/reveal/delete-file. Any new export path must call `saveDownload` to appear here.
 
-Original Neware files normally remain at their source paths. The database stores their provenance,
+Original cycler source files normally remain at their source paths. The database stores their provenance,
 checksums, parser state, and relationships. An installer upgrade or normal uninstall must not
 delete the data directory. Destructive removal is an explicit, separately confirmed choice.
 
 Supported source dispatch is centralized in `backend/app/services/parsing.py` (Spec 040.2): a small
 static registry of `SourceFormatDescriptor`s (`FORMAT_NEWARE_BINARY` = `.nda`/`.ndax`,
-`FORMAT_NEWARE_EXCEL` = `.xlsx`) drives one shared extension -> format_id decision table that both
-`parse_timeseries` and `read_header_metadata` dispatch through. `.nda`/`.ndax` use the shared
-NewareNDA boundary, while structured Neware `.xlsx` files use `backend/app/services/neware_excel.py`.
+`FORMAT_NEWARE_EXCEL` = `.xlsx`, `FORMAT_BIOLOGIC_MPR` = verified GCPL-family `.mpr`) drives one
+shared extension -> format_id decision table that admission, inspection, `parse_timeseries`,
+`read_header_metadata`, scanners, pickers, and parser identity all use. `.nda`/`.ndax` use the
+shared NewareNDA boundary, structured Neware `.xlsx` files use
+`backend/app/services/neware_excel.py`, and `.mpr` uses the independently authored
+`biologic_mpr.py`/`biologic_gcpl.py` boundary. `.mpt` remains validation ground truth, not an
+admitted source format.
 `parsing.recognize_source(path)` is the content-aware recognition function (Excel additionally
 requires `neware_excel.is_supported_workbook`'s bounded header check, so a generic `.xlsx` is never
 recognized by extension alone); `parsing.source_parser_descriptor(path)` exposes each format's
@@ -166,6 +170,20 @@ compatibility fallback for a source that predates 040.3 and has no stored `parse
 static registry, not a plugin framework: no dynamic loading, no importlib discovery, no base-class
 hierarchy. Excel sources are normalized into the same canonical raw, protocol and versioned raw/cycle
 cache contracts, so scientific services remain format-neutral.
+
+The normal source lifecycle carries one server-issued immutable `SourceFingerprint` (hash, size,
+and `mtime_ns`) from inspection through registration, cache preparation, scanner work, and
+cache-result publication. The browser may echo only that typed identity receipt; normalized headers
+remain in the server-owned inspection cache and are reread when evicted. Registration and
+continuation attachment perform a final full identity pass immediately before commit, while later
+worker/result guards use stat-only checks against the established receipt (whose hash remains
+server-owned). Successes and failures are both applied only when the source path and stored
+identity still match; stale or missing results are reported as discarded rather than changing a
+newer SourceFile. The scanner carries the same immutable identity in each job and applies stale
+guards before either success or failure mutation. Recognized BioLogic `.mpr` files currently have
+an explicit metadata-only capability when no independently verified full-cycle identity exists:
+their bounded header may be registered after acknowledgement, but no canonical rows, capacity
+preview, or cycling cache is published. `.mpt` remains excluded from user import.
 
 A Cell's ordered sources may legitimately carry different parser identities (a binary source
 continued by a structured Excel export is the reference case, proven end to end by
@@ -285,7 +303,7 @@ Cell -> ordered SourceFiles
 ```
 
 A Cell is the physical scientific object users select and analyse. It owns one ordered chain of
-original Neware files. Interruptions, restarts, channel moves, and restarted protocols with removed
+original cycler source files. Interruptions, restarts, channel moves, and restarted protocols with removed
 or changed steps remain successive sources in that same chain.
 
 The relational schema still contains `Test` and `TestFile` for compatibility:

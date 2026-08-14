@@ -151,6 +151,29 @@ class FormatRecognitionTests(unittest.TestCase):
         self.assertEqual(result["raw"], {})
         self.assertIn("error", result)
 
+    def test_source_admission_and_picker_globs_come_from_registry(self):
+        self.assertEqual(
+            parsing.source_glob(parsing.FORMAT_BIOLOGIC_MPR),
+            "*.mpr",
+        )
+        self.assertEqual(
+            parsing.source_glob(
+                parsing.FORMAT_NEWARE_BINARY,
+                parsing.FORMAT_NEWARE_EXCEL,
+            ),
+            "*.nda *.ndax *.xlsx",
+        )
+        self.assertEqual(
+            set(parsing.SUPPORTED_SOURCE_EXTENSIONS),
+            {
+                extension
+                for descriptor in parsing._FORMAT_DESCRIPTORS.values()
+                for extension in descriptor.extensions
+            },
+        )
+        self.assertIn("BioLogic GCPL-family", parsing.SUPPORTED_SOURCE_DESCRIPTION)
+        self.assertNotIn(".mpt", parsing.SUPPORTED_SOURCE_GLOB)
+
 
 class AdapterDescriptorTests(unittest.TestCase):
     """Case 6: the adapter descriptor exposes format id, adapter revision,
@@ -320,18 +343,24 @@ class ExtensionPolicyUnchangedTests(unittest.TestCase):
         self.assertEqual(
             parsing.SUPPORTED_NEWARE_SOURCE_EXTENSIONS, frozenset({".nda", ".ndax", ".xlsx"})
         )
+        self.assertEqual(
+            parsing.SUPPORTED_SOURCE_EXTENSIONS,
+            frozenset({".nda", ".ndax", ".xlsx", ".mpr"}),
+        )
 
     def test_source_filename_allowed_matches_supported_extensions(self):
         self.assertTrue(parsing.source_filename_allowed("a.nda"))
         self.assertTrue(parsing.source_filename_allowed("a.ndax"))
         self.assertTrue(parsing.source_filename_allowed("a.xlsx"))
+        self.assertTrue(parsing.source_filename_allowed("a.mpr"))
         self.assertFalse(parsing.source_filename_allowed("a.csv"))
-        self.assertFalse(parsing.source_filename_allowed("a.mpr"))
+        self.assertFalse(parsing.source_filename_allowed("a.mpt"))
 
     def test_source_parser_family_unchanged(self):
         self.assertEqual(parsing.source_parser_family("a.nda"), "binary")
         self.assertEqual(parsing.source_parser_family("a.ndax"), "binary")
         self.assertEqual(parsing.source_parser_family("a.xlsx"), "excel")
+        self.assertEqual(parsing.source_parser_family("a.mpr"), "biologic")
         self.assertIsNone(parsing.source_parser_family("a.csv"))
 
 

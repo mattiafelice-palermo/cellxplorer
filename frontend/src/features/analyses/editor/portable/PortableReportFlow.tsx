@@ -48,8 +48,9 @@ import {
 } from "../artifacts/SavedPlotPreviews";
 import { specForSavedPlotView } from "../policies/analysisPlotPolicy";
 import {
+  hasMetadataOnlySources,
   multiSourceAnalysisPolicy,
-  type SourceCountCell,
+  selectedSourceCountCellsForSpec,
 } from "../policies/multiSourceAnalysisPolicy";
 
 export interface PortableReportFlowProps {
@@ -57,7 +58,7 @@ export interface PortableReportFlowProps {
   title: string;
   spec: AnalysisSpec | null;
   analysis?: AnalysisFull;
-  availableCells?: Pick<CellSummary, "id" | "name" | "n_files">[];
+  availableCells?: Pick<CellSummary, "id" | "name" | "n_files" | "has_metadata_only">[];
   availableGroups?: ReplicateGroupSummary[];
   sourceCompatibilityPending: boolean;
   normalizeSpec: (input: AnalysisSpec) => AnalysisSpec;
@@ -85,65 +86,6 @@ const TAB_LABELS: Record<string, string> = {
 
 function tabLabel(tab: AnalysisTabKey): string {
   return TAB_LABELS[tab] ?? tab;
-}
-
-function selectedSourceCountCells(
-  analysis: AnalysisFull,
-  candidateSpec: AnalysisSpec,
-  availableCells: Pick<CellSummary, "id" | "name" | "n_files">[] = [],
-  availableGroups: ReplicateGroupSummary[] = [],
-): SourceCountCell[] {
-  const direct = new Map<number, SourceCountCell>(
-    analysis.selection_cells.map((cell) => [cell.id, cell]),
-  );
-  for (const cell of availableCells) {
-    if (!direct.has(cell.id)) {
-      direct.set(cell.id, { id: cell.id, name: cell.name, source_count: cell.n_files });
-    }
-  }
-  const groups = new Map<number, { cells: SourceCountCell[] }>();
-  for (const group of analysis.selection_groups) {
-    for (const cell of group.cells) {
-      if (!direct.has(cell.id)) direct.set(cell.id, cell);
-    }
-    groups.set(group.id, { cells: group.cells });
-  }
-  for (const group of availableGroups) {
-    groups.set(group.id, {
-      cells: group.cells.map((cell) => {
-        const resolved = direct.get(cell.id);
-        return resolved ?? { id: cell.id, name: cell.name, source_count: null };
-      }),
-    });
-  }
-  const selected = new Map<number, SourceCountCell>();
-  for (const entry of candidateSpec.selection.entries ?? []) {
-    if (entry.kind === "cell") {
-      const cell = direct.get(entry.ref_id) ?? {
-        id: entry.ref_id,
-        name: `Cell #${entry.ref_id}`,
-        source_count: null,
-      };
-      selected.set(cell.id, cell);
-      continue;
-    }
-    if (entry.kind === "replicate_group") {
-      const group = groups.get(entry.ref_id);
-      if (!group) {
-        selected.set(-entry.ref_id, {
-          id: -entry.ref_id,
-          name: `Replicate group #${entry.ref_id}`,
-          source_count: null,
-        });
-        continue;
-      }
-      for (const cell of group.cells) {
-        const resolved = direct.get(cell.id) ?? cell;
-        selected.set(resolved.id, resolved);
-      }
-    }
-  }
-  return [...selected.values()].sort((left, right) => left.id - right.id);
 }
 
 function portableSpecForPlot(
@@ -188,11 +130,16 @@ export function PortableReportFlow({
     phase: "plots" | "packing" | "done";
   } | null>(null);
 
+  const selectedCells = analysis && spec
+    ? selectedSourceCountCellsForSpec(analysis, spec, availableCells, availableGroups)
+    : [];
+  const selectionHasMetadataOnlySources = hasMetadataOnlySources(selectedCells);
+
   const portableEstimate = useQuery({
     queryKey: ["portable-analysis-estimate", analysisId],
     queryFn: () =>
       get<PortableAnalysisEstimate>(`/api/analyses/${analysisId}/portable-estimate`),
-    enabled: portableExportOpen,
+    enabled: portableExportOpen && !selectionHasMetadataOnlySources,
     staleTime: 30_000,
   });
   const portableSourcePreflight = useMutation({
@@ -222,7 +169,7 @@ export function PortableReportFlow({
       "selection" in plot ? portableSpecForPlot(spec, plot, normalizeSpec) : spec;
     return multiSourceAnalysisPolicy(
       plot.tab,
-      selectedSourceCountCells(analysis, plotSpec, availableCells, availableGroups),
+      selectedSourceCountCellsForSpec(analysis, plotSpec, availableCells, availableGroups),
     );
   };
   const portablePlotPolicies = portablePlotOptions.map((plot) => ({
@@ -245,6 +192,11 @@ export function PortableReportFlow({
       includeOriginalFiles: boolean;
     }) => {
       if (!spec) throw new Error("The analysis is not ready.");
+      if (selectionHasMetadataOnlySources) {
+        throw new Error(
+          "Portable scientific export is unavailable while metadata-only sources are selected.",
+        );
+      }
       if (portablePlotIds.length === 0) throw new Error("Select at least one saved plot.");
       setPortableProgress({
         completed: 0,
@@ -376,6 +328,14 @@ export function PortableReportFlow({
       });
       return;
     }
+    if (selectionHasMetadataOnlySources) {
+      notifications.show({
+        message:
+          "Portable scientific export is unavailable while metadata-only sources are selected.",
+        color: "orange",
+      });
+      return;
+    }
     setPortableExportAction(action);
     setPreparedPortableShare(null);
     setPreparedShareBusy(false);
@@ -426,6 +386,14 @@ export function PortableReportFlow({
 
   const beginPortableExport = async (action: "download" | "share") => {
     if (!spec || portablePlotIds.length === 0) return;
+    if (selectionHasMetadataOnlySources) {
+      notifications.show({
+        message:
+          "Portable scientific export is unavailable while metadata-only sources are selected.",
+        color: "orange",
+      });
+      return;
+    }
     const blockedSelected = portablePlotPolicies.filter(
       ({ plot, policy }) =>
         portablePlotIds.includes(plot.id) && policy.family && !policy.supported,
@@ -570,7 +538,7 @@ export function PortableReportFlow({
           <Button
             variant="default"
             leftSection={<IconFileExport size={16} />}
-            disabled={sourceCompatibilityPending}
+            disabled={sourceCompatibilityPending || selectionHasMetadataOnlySources}
             onClick={() => openPortableExport("download")}
           >
             Portable report
@@ -582,7 +550,7 @@ export function PortableReportFlow({
               variant="default"
               size={36}
               aria-label="Portable report actions"
-              disabled={sourceCompatibilityPending}
+              disabled={sourceCompatibilityPending || selectionHasMetadataOnlySources}
               style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
             >
               <IconChevronDown size={15} />
@@ -807,11 +775,11 @@ export function PortableReportFlow({
             checked={includePortableOriginals}
             onChange={(event) => setIncludePortableOriginals(event.currentTarget.checked)}
             disabled={portableExportBusy}
-            label="Include original Neware source files"
+            label="Include original source files"
             description={
               portableEstimate.data
                 ? `${formatPortableBytes(portableEstimate.data.original_bytes)} before compression. Embedded sources are gzip-compressed and decoded only when extracted or imported.`
-                : "Original Neware files can make the HTML substantially larger."
+                : "Original source files can make the HTML substantially larger."
             }
           />
           {includePortableOriginals && portableEstimate.data?.missing_originals ? (

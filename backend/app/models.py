@@ -37,7 +37,7 @@ def utcnow() -> datetime:
 
 
 class SourceFile(Base):
-    """One Neware source file. Identity = content hash; path is mutable."""
+    """One cycler source file. Identity = content hash; path is mutable."""
 
     __tablename__ = "source_files"
 
@@ -46,7 +46,7 @@ class SourceFile(Base):
     path: Mapped[str] = mapped_column(Text)  # current location (mutable attribute)
     filename: Mapped[str] = mapped_column(String(255))
     size: Mapped[int] = mapped_column(Integer)
-    ext: Mapped[str] = mapped_column(String(10))  # nda | ndax | xlsx
+    ext: Mapped[str] = mapped_column(String(10))  # nda | ndax | xlsx | mpr
     observed_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     observed_mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_source_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -65,7 +65,7 @@ class SourceFile(Base):
     # lifecycle
     # location_status: online | offline | changed  (path-level, reactive badge)
     location_status: Mapped[str] = mapped_column(String(20), default="online")
-    # parse_status: unparsed | parsing | parsed | error
+    # parse_status: unparsed | parsing | parsed | metadata_only | error
     parse_status: Mapped[str] = mapped_column(String(20), default="unparsed")
     parse_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -74,7 +74,7 @@ class SourceFile(Base):
     total_charge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_discharge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_discharge_capacity_mah: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # pending | ready | error. Capacity totals are persisted so library reads
+    # pending | ready | unavailable | error. Capacity totals are persisted so library reads
     # never need to open the per-cycle Parquet cache.
     capacity_summary_status: Mapped[str] = mapped_column(String(20), default="pending")
 

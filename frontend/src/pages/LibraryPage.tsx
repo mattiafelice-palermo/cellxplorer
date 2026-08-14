@@ -1510,7 +1510,7 @@ export function LibraryPage() {
             <Stack gap={6}>
               <Text fw={700}>No cells in the library yet</Text>
               <Text size="sm" c="dimmed" maw={720}>
-                Import a Neware file to create the first cell. The parsed cycle cache will appear
+                Import a cycler file to create the first cell. The parsed cycle cache will appear
                 here after import.
               </Text>
             </Stack>
@@ -2428,7 +2428,7 @@ export function LibraryPage() {
                 />
                 <Divider label="Scientific metadata overrides" labelPosition="left" />
                 <Alert color="gray">
-                  Overrides are used in calculations while the original Neware values remain visible
+                  Overrides are used in calculations while the original cycler values remain visible
                   in the Metadata tab. Clear a field to restore the source value.
                 </Alert>
                 <Group grow align="start">

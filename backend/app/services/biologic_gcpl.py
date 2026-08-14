@@ -872,10 +872,17 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
     )
     log_warnings = list(log.get("warnings") or [])
     protocol_warnings = list(declared_protocol.get("warnings") or []) + log_warnings
+    protocol_warnings.append(
+        "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
+        "until an independently verified full-cycle identity is available; this source is "
+        "metadata-only."
+    )
     capability_flags = dict(declared_protocol.get("capabilities") or {})
     capability_flags.update(
         {
-            "cycling_rows": True,
+            "cycling_rows": False,
+            "canonical_cycling": False,
+            "metadata_only": True,
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
             "primary_voltage": bool(
                 voltage_capabilities["capabilities"].get("primary_voltage")
@@ -916,6 +923,8 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
             "settings": settings,
             "log": log,
             "data": data_header,
+            "capabilities": capability_flags,
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: voltage_capabilities,
             protocol.DECLARED_PROTOCOL_METADATA_KEY: declared_protocol,
         },
         "remarks": settings.get("comments"),

@@ -300,6 +300,57 @@ def cell_ordered_hashes(db: Session, cell: Cell) -> tuple[list[str], list[Source
     return hashes, files
 
 
+class CanonicalCyclingUnavailable(ValueError):
+    """The selected sources cannot produce scientific cycling rows."""
+
+    def __init__(self, detail: dict[str, object]):
+        self.detail = detail
+        super().__init__(str(detail.get("message") or "Canonical cycling data is unavailable."))
+
+
+def canonical_cycling_capability(db: Session, spec: dict) -> dict[str, object] | None:
+    """Return a stable capability response when selection contains metadata-only sources."""
+
+    units, _missing = resolve_selection(db, spec)
+    sources: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for unit in units:
+        _hashes, files = cell_ordered_hashes(db, unit["cell"])
+        for source in files:
+            if source.id in seen or not parsing.source_record_metadata_only(source):
+                continue
+            seen.add(source.id)
+            capability = parsing.source_record_capability(source)
+            sources.append(
+                {
+                    "source_file_id": source.id,
+                    "filename": source.filename,
+                    "cell_id": unit["cell"].id,
+                    "cell_name": unit["cell"].name,
+                    "warning": capability["warning"],
+                }
+            )
+    if not sources:
+        return None
+    return {
+        "code": "canonical_cycling_unavailable",
+        "status": "metadata_only",
+        "metadata_only": True,
+        "canonical_cycling": False,
+        "message": (
+            "This analysis includes metadata-only sources. Canonical cycling rows are not "
+            "available for these sources, so cache-backed analysis and recompute are disabled."
+        ),
+        "sources": sources,
+    }
+
+
+def ensure_canonical_cycling_available(db: Session, spec: dict) -> None:
+    detail = canonical_cycling_capability(db, spec)
+    if detail is not None:
+        raise CanonicalCyclingUnavailable(detail)
+
+
 # --------------------------------------------------- per-source parser identity
 
 
@@ -1611,6 +1662,7 @@ def compute(
     use_current_versions: bool = False,
     progress: ProgressCallback | None = None,
 ) -> dict:
+    ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version
@@ -1938,6 +1990,7 @@ def compute_steps(
     plotted in isolation, which the cycle path cannot do. See
     ``services/step_blocks.py`` for the block definitions.
     """
+    ensure_canonical_cycling_available(db, spec)
     from . import protocol as protocol_service
     from . import step_blocks
 
@@ -2174,6 +2227,7 @@ def compute_dcir(
     progress: ProgressCallback | None = None,
 ) -> dict:
     """Compute one DCIR line for every explicit (cell, DCIR segment) pair."""
+    ensure_canonical_cycling_available(db, spec)
     from . import dcir
     from . import protocol as protocol_service
 
@@ -2387,6 +2441,7 @@ def compute_time_capacity(
     compact: bool = False,
     progress: ProgressCallback | None = None,
 ) -> dict:
+    ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
     if provenance and not use_current_versions:
         calc_version = provenance.get("calc_version") or calc_version

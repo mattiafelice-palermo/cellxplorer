@@ -155,6 +155,35 @@ def _inspect_import_path(
     file_hash = inspected.hash
     meta = inspected.metadata
     preview_meta = _metadata_preview(meta)
+    metadata_only = parsing.source_metadata_only(meta)
+    metadata_facts = _bounded_staged_metadata_fields(
+        {
+            "barcode": _bounded_staged_text_or_none(meta.get("barcode")),
+            "remarks": _bounded_staged_text_or_none(meta.get("remarks")),
+            "device_info": _bounded_staged_text_or_none(meta.get("device_info")),
+            "channel": _bounded_staged_text_or_none(meta.get("channel")),
+            "start_time": _bounded_staged_text_or_none(meta.get("start_time")),
+            "active_mass_mg": meta.get("active_mass_mg"),
+            "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
+            "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),
+            "source_format": _bounded_staged_text_or_none(meta.get("source_format")),
+            "software_version": _bounded_staged_text_or_none(meta.get("software_version")),
+            "reference_electrode": _bounded_staged_text_or_none(meta.get("reference_electrode")),
+            "capability_warning": (
+                _bounded_staged_text_or_none(parsing.source_metadata_only_message(meta))
+                if metadata_only
+                else None
+            ),
+            "metadata": preview_meta,
+            "raw_metadata": _raw_metadata_preview(meta.get("raw") or {}),
+            "metadata_error": _bounded_staged_text_or_none(
+                meta.get("error_message") or meta.get("error")
+            ),
+            "voltage_capabilities": _bounded_voltage_capabilities(meta),
+            "protocol_capabilities": _bounded_bool_map(meta.get("capabilities")),
+            "protocol_warnings": _bounded_warnings(meta.get("protocol_warnings")),
+        }
+    )
     return {
         "staged_name": staged_name or f"path:{uuid.uuid4().hex}",
         "source_path": str(path) if expose_source_path else None,
@@ -162,17 +191,10 @@ def _inspect_import_path(
         "size": inspected.size,
         "ext": inspected.ext,
         "hash": file_hash,
-        "barcode": meta.get("barcode"),
-        "remarks": meta.get("remarks"),
-        "device_info": meta.get("device_info"),
-        "channel": meta.get("channel"),
-        "start_time": meta.get("start_time"),
-        "active_mass_mg": meta.get("active_mass_mg"),
-        "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
-        "nda_version": meta.get("nda_version"),
-        "metadata": preview_meta,
-        "raw_metadata": _raw_metadata_preview(meta.get("raw") or {}),
-        "metadata_error": meta.get("error"),
+        **metadata_facts,
+        "parser_version": parsing.current_parser_identity_for_extension(inspected.ext),
+        "canonical_cycling": not metadata_only,
+        "metadata_only": metadata_only,
         "import_match": (
             import_inspection.match_import(match_snapshot, file_hash, original, meta)
             if match_snapshot is not None
@@ -195,6 +217,115 @@ def _inspect_import_path(
     }
 
 
+_STAGED_PREVIEW_MAX_KEY_CHARS = 128
+_STAGED_PREVIEW_MAX_VALUE_CHARS = 512
+_STAGED_PREVIEW_MAX_BYTES = 16 * 1024
+_STAGED_METADATA_FACTS_MAX_BYTES = 32 * 1024
+
+
+def _bounded_staged_text_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    return _bounded_preview_text(value, _STAGED_PREVIEW_MAX_VALUE_CHARS)
+
+
+def _bounded_preview_text(value: object, limit: int) -> str:
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    suffix = "..."
+    return text[: max(0, limit - len(suffix))] + suffix
+
+
+def _bounded_preview_mapping(
+    values: list[tuple[object, object]],
+    *,
+    max_items: int | None = None,
+    max_bytes: int = _STAGED_PREVIEW_MAX_BYTES,
+) -> dict[str, str]:
+    """Bound both scalar size and total JSON size of staged preview facts."""
+
+    result: dict[str, str] = {}
+    serialized_bytes = 2  # the enclosing JSON object
+    for key, value in values:
+        if max_items is not None and len(result) >= max_items:
+            break
+        key_text = _bounded_preview_text(key, _STAGED_PREVIEW_MAX_KEY_CHARS)
+        value_text = _bounded_preview_text(value, _STAGED_PREVIEW_MAX_VALUE_CHARS)
+        candidate_bytes = len(
+            json.dumps(
+                {key_text: value_text},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if serialized_bytes + candidate_bytes > max_bytes:
+            break
+        result[key_text] = value_text
+        serialized_bytes += candidate_bytes
+    return result
+
+
+def _bounded_staged_metadata_fields(
+    fields: dict[str, object],
+    *,
+    max_bytes: int = _STAGED_METADATA_FACTS_MAX_BYTES,
+) -> dict[str, object]:
+    """Keep the complete staged metadata-fact bundle within one byte budget."""
+
+    result: dict[str, object] = {
+        key: dict(value) if isinstance(value, dict) else list(value) if isinstance(value, list) else value
+        for key, value in fields.items()
+    }
+
+    def encoded_size() -> int:
+        return len(
+            json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        )
+
+    # Drop the least important tail entries first. Every nested source fact
+    # has already received a scalar bound; this second pass protects the full
+    # response when many otherwise-valid header keys are present together.
+    while encoded_size() > max_bytes:
+        changed = False
+        for key in ("raw_metadata", "metadata", "protocol_capabilities"):
+            value = result.get(key)
+            if isinstance(value, dict) and value:
+                value.pop(next(reversed(value)))
+                changed = True
+                break
+        if changed:
+            continue
+        warnings = result.get("protocol_warnings")
+        if isinstance(warnings, list) and warnings:
+            warnings.pop()
+            continue
+        voltage = result.get("voltage_capabilities")
+        if isinstance(voltage, dict) and voltage:
+            voltage.pop(next(reversed(voltage)))
+            continue
+        for key, value in result.items():
+            if isinstance(value, str) and len(value) > 64:
+                result[key] = _bounded_preview_text(value, max(64, len(value) // 2))
+                changed = True
+                break
+        if changed:
+            continue
+        # The known adapter fields are JSON scalars. If an unexpected scalar
+        # is still consuming the budget, omit that optional fact rather than
+        # allowing one malformed header value to defeat the aggregate bound.
+        for key in ("remarks", "device_info", "barcode", "channel", "start_time"):
+            if result.get(key) is not None:
+                result[key] = None
+                changed = True
+                break
+        if not changed:
+            break
+    return result
+
+
 def _metadata_preview(meta: dict) -> dict[str, str]:
     fields = {
         "start_step_id": meta.get("start_step_id"),
@@ -213,13 +344,132 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
         "record_interval_s": meta.get("record_interval_s"),
         "nda_version": meta.get("nda_version"),
         "source_format": meta.get("source_format"),
+        "software_version": meta.get("software_version"),
+        "reference_electrode": meta.get("reference_electrode"),
+        "voltage_capabilities": _voltage_capability_label(meta),
+        "protocol_capabilities": _protocol_capability_label(meta),
+        "protocol_warnings": "; ".join(_bounded_warnings(meta.get("protocol_warnings"))),
+        "cycling_support": (
+            "Metadata only; canonical cycling rows are unavailable"
+            if parsing.source_metadata_only(meta)
+            else "Canonical cycling rows available"
+        ),
         "remarks": meta.get("remarks"),
     }
-    return {k: str(v) for k, v in fields.items() if v not in (None, "")}
+    return _bounded_preview_mapping(
+        [(key, value) for key, value in fields.items() if value not in (None, "")]
+    )
 
 
 def _raw_metadata_preview(raw: dict, limit: int = 80) -> dict[str, str]:
-    return dict(list((raw or {}).items())[:limit])
+    """Return only small scalar/raw-header facts for the staged response.
+
+    BioLogic ``raw`` also owns the complete decoded settings and LOG payloads
+    for server-side persistence. Those nested documents must never be copied
+    into a 1,000-file browser response.
+    """
+    excluded = {
+        "settings",
+        "log",
+        "protocol",
+        "_cellxplorer_voltage_capabilities",
+        "_cellxplorer_declared_protocol",
+    }
+    candidates: list[tuple[object, object]] = []
+    for key, value in (raw or {}).items():
+        key_string = str(key)
+        if key_string in excluded:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            candidates.append((key_string, value))
+        elif key_string == "modules" and isinstance(value, (list, tuple)):
+            candidates.append(("modules.count", len(value)))
+        elif key_string == "data" and isinstance(value, dict):
+            for name in ("n_datapoints", "n_columns", "record_itemsize"):
+                if name in value and len(candidates) < limit:
+                    candidates.append((f"data.{name}", value[name]))
+        if len(candidates) >= limit:
+            break
+    return _bounded_preview_mapping(candidates, max_items=limit)
+
+
+def _bounded_bool_map(value: object, limit: int = 24) -> dict[str, bool]:
+    if not isinstance(value, dict):
+        return {}
+    candidates: list[tuple[object, object]] = []
+    for key, item in list(value.items())[:limit]:
+        if isinstance(item, bool):
+            candidates.append(
+                (_bounded_preview_text(key, _STAGED_PREVIEW_MAX_KEY_CHARS), bool(item))
+            )
+    result: dict[str, bool] = {}
+    for key, item in candidates:
+        if len(result) >= limit:
+            break
+        result[str(key)] = bool(item)
+        if len(
+            json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ) > _STAGED_PREVIEW_MAX_BYTES:
+            result.pop(str(key), None)
+            break
+    return result
+
+
+def _bounded_warnings(value: object, limit: int = 8) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [
+        _bounded_preview_text(item, 240)
+        for item in value[:limit]
+        if str(item).strip()
+    ]
+
+
+def _bounded_voltage_capabilities(meta: dict) -> dict:
+    value = meta.get("voltage_capabilities")
+    if not isinstance(value, dict):
+        return {}
+    capabilities = _bounded_bool_map(value.get("capabilities"), limit=8)
+    roles = value.get("voltage_roles")
+    bounded_roles = {}
+    if isinstance(roles, dict):
+        bounded_roles = {
+            _bounded_preview_text(key, _STAGED_PREVIEW_MAX_KEY_CHARS): _bounded_preview_text(item, _STAGED_PREVIEW_MAX_VALUE_CHARS)
+            for key, item in list(roles.items())[:8]
+            if item is not None
+        }
+    result = {"capabilities": capabilities, "voltage_roles": bounded_roles}
+    for key in ("reference_electrode", "voltage_v_origin", "voltage_v_derived"):
+        if key in value and value[key] is not None:
+            item = value[key]
+            result[key] = (
+                _bounded_preview_text(item, _STAGED_PREVIEW_MAX_VALUE_CHARS)
+                if isinstance(item, str)
+                else item
+            )
+    if len(
+        json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+    ) > _STAGED_PREVIEW_MAX_BYTES:
+        result["voltage_roles"] = {}
+    return result
+
+
+def _voltage_capability_label(meta: dict) -> str | None:
+    value = meta.get("voltage_capabilities")
+    capabilities = value.get("capabilities") if isinstance(value, dict) else None
+    if not isinstance(capabilities, dict):
+        return None
+    if capabilities.get("working_potential") and capabilities.get("counter_potential"):
+        return "Working and counter potentials available"
+    if capabilities.get("working_potential"):
+        return "Working potential available"
+    return "Primary voltage only"
+
+
+def _protocol_capability_label(meta: dict) -> str | None:
+    capabilities = _bounded_bool_map(meta.get("capabilities"))
+    enabled = [key for key, value in capabilities.items() if value]
+    return ", ".join(enabled) if enabled else None
 
 
 def cell_metadata_from_header(meta: dict, draft_metadata: dict[str, str] | None = None) -> dict[str, str]:
@@ -378,14 +628,37 @@ def capacity_preview_from_cycles(cycles) -> dict:
 def build_capacity_preview(
     path: Path,
     file_hash: str | None = None,
+    expected_size: int | None = None,
+    expected_mtime_ns: int | None = None,
 ) -> tuple[dict | None, str | None]:
     """Preview via the versioned cache: one parse per file content, ever.
     The preview responds as soon as the parse finishes; the Parquet caches
     are written behind it on a background thread, so the import confirm
     (and any later work on this file) reuses them instead of re-parsing."""
     try:
-        verified_hash = file_hash or parsing.compute_hash(path)
-        cycles = cache.build_write_behind(verified_hash, path)
+        expected_fingerprint = None
+        if file_hash and expected_size is not None and expected_mtime_ns is not None:
+            expected_fingerprint = parsing.SourceFingerprint(
+                file_hash.casefold(), int(expected_size), int(expected_mtime_ns)
+            )
+        verified_hash = file_hash or parsing.capture_source_fingerprint(path).hash
+        if path.suffix.casefold() == ".mpr":
+            metadata = import_inspection.cached_header_metadata(
+                verified_hash,
+                int(expected_size) if expected_size is not None else path.stat().st_size,
+                int(expected_mtime_ns) if expected_mtime_ns is not None else path.stat().st_mtime_ns,
+            )
+            if metadata is None:
+                metadata = parsing.read_header_metadata(path)
+            parsing.ensure_supported_source_metadata(path, metadata)
+            if parsing.source_metadata_only(metadata):
+                return None, parsing.source_metadata_only_message(metadata)
+        cache_kwargs = (
+            {"expected_fingerprint": expected_fingerprint}
+            if expected_fingerprint is not None
+            else {}
+        )
+        cycles = cache.build_write_behind(verified_hash, path, **cache_kwargs)
         if cycles is None:
             raise RuntimeError("cycle cache could not be built")
         return capacity_preview_from_cycles(cycles), None
@@ -395,10 +668,34 @@ def build_capacity_preview(
 
 def _build_import_cache_worker(job: dict) -> dict:
     try:
-        info = cache.build(job["hash"], job["path"])
-        return {"staged_name": job["staged_name"], "ok": True, **info}
+        expected = job.get("source_fingerprint")
+        fingerprint = (
+            parsing.SourceFingerprint(
+                str(expected["hash"]), int(expected["size"]), int(expected["mtime_ns"])
+            )
+            if isinstance(expected, dict)
+            else None
+        )
+        info = cache.build(
+            job["hash"],
+            job["path"],
+            expected_fingerprint=fingerprint,
+        )
+        return {
+            "staged_name": job["staged_name"],
+            "source_path": job["path"],
+            "source_fingerprint": expected,
+            "ok": True,
+            **info,
+        }
     except Exception as exc:
-        return {"staged_name": job["staged_name"], "ok": False, "error": str(exc)}
+        return {
+            "staged_name": job["staged_name"],
+            "source_path": job.get("path"),
+            "source_fingerprint": job.get("source_fingerprint"),
+            "ok": False,
+            "error": str(exc),
+        }
 
 
 def import_cache_worker_count(n_jobs: int, max_workers: int | None = None) -> int:
@@ -465,13 +762,66 @@ def apply_import_cache_results(
     db: Session,
     source_file_ids_by_staged_name: dict[str, int],
     cache_results: dict[str, dict],
-) -> None:
+) -> dict[str, str]:
+    """Apply only results whose complete source identity still matches.
+
+    The disposition is explicit so callers cannot report a stale result as
+    ready or as a failure of the current source row.
+    """
+
+    dispositions: dict[str, str] = {}
     for staged_name, result in cache_results.items():
         source_file_id = source_file_ids_by_staged_name.get(staged_name)
         if source_file_id is None:
+            dispositions[staged_name] = "missing"
             continue
-        sf = db.get(SourceFile, source_file_id)
+        # A cache worker can finish after another request has replaced this
+        # SourceFile identity. Refresh from the database before comparing the
+        # immutable job receipt; SessionLocal disables expire-on-commit.
+        sf = (
+            db.query(SourceFile)
+            .populate_existing()
+            .filter(SourceFile.id == source_file_id)
+            .one_or_none()
+        )
         if sf is None:
+            dispositions[staged_name] = "missing"
+            continue
+        fingerprint_data = result.get("source_fingerprint")
+        try:
+            result_fingerprint = parsing.SourceFingerprint(
+                str(fingerprint_data["hash"]),
+                int(fingerprint_data["size"]),
+                int(fingerprint_data["mtime_ns"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("discarding malformed cache result for source %s: %s", sf.id, exc)
+            dispositions[staged_name] = "stale"
+            continue
+        expected_size = int(sf.observed_size if sf.observed_size is not None else sf.size)
+        expected_mtime_ns = int(
+            sf.observed_mtime_ns if sf.observed_mtime_ns is not None else -1
+        )
+        source_hash = result.get("source_hash")
+        if (
+            str(result.get("source_path") or "") != sf.path
+            or (source_hash is not None and str(source_hash).casefold() != sf.hash.casefold())
+            or result_fingerprint.hash.casefold() != sf.hash.casefold()
+            or result_fingerprint.size != expected_size
+            or result_fingerprint.mtime_ns != expected_mtime_ns
+        ):
+            logger.warning("discarding stale cache result for source %s", sf.id)
+            dispositions[staged_name] = "stale"
+            continue
+        try:
+            parsing.assert_source_fingerprint(
+                Path(sf.path),
+                result_fingerprint,
+                verify_hash=False,
+            )
+        except (OSError, ValueError) as exc:
+            logger.warning("discarding stale cache result for source %s: %s", sf.id, exc)
+            dispositions[staged_name] = "stale"
             continue
         if result.get("ok"):
             sf.parse_status = "parsed"
@@ -484,7 +834,9 @@ def apply_import_cache_results(
             sf.parse_status = "error"
             sf.parse_error = result.get("error") or "Cache build failed"
             sf.capacity_summary_status = "error"
+        dispositions[staged_name] = "applied"
     db.commit()
+    return dispositions
 
 
 def _ensure_terminal_background_job(background_job_id: int) -> None:
@@ -521,14 +873,25 @@ def run_import_cache_jobs(
 
         all_source_ids = set(source_file_ids_by_staged_name.values())
         abandoned = False
+        publication_counts = {"applied": 0, "stale": 0, "missing": 0}
+        publication_dispositions: dict[str, str] = {}
 
         def report_progress(cache_job: dict, result: dict) -> None:
             nonlocal abandoned
-            apply_import_cache_results(
+            result = dict(result)
+            # The immutable job payload is authoritative for both successes
+            # and failures, including compatibility workers with sparse output.
+            result.setdefault("source_path", cache_job.get("path"))
+            result.setdefault("source_hash", cache_job.get("hash"))
+            result.setdefault("source_fingerprint", cache_job.get("source_fingerprint"))
+            dispositions = apply_import_cache_results(
                 db,
                 {cache_job["staged_name"]: source_file_ids_by_staged_name[cache_job["staged_name"]]},
                 {cache_job["staged_name"]: result},
             )
+            disposition = dispositions.get(cache_job["staged_name"], "missing")
+            publication_dispositions[cache_job["staged_name"]] = disposition
+            publication_counts[disposition] = publication_counts.get(disposition, 0) + 1
             source_file_id = source_file_ids_by_staged_name[cache_job["staged_name"]]
             source_is_registered = (
                 db.query(SourceFile.id)
@@ -554,13 +917,34 @@ def run_import_cache_jobs(
                 # delete each cache it had just written.
                 if not db.query(SourceFile.id).filter(SourceFile.id.in_(all_source_ids)).first():
                     abandoned = True
+            applied = disposition == "applied"
+            stale = disposition == "stale"
+            missing = disposition == "missing"
             background_jobs.record_result(
                 background_job_id,
                 cache_job["staged_name"],
-                status="ready" if result.get("ok") else "failed",
-                detail="Cycling cache ready" if result.get("ok") else None,
-                error=result.get("error"),
-                counter="ready" if result.get("ok") else "failed",
+                status=(
+                    "ready"
+                    if applied and result.get("ok")
+                    else "failed"
+                    if applied
+                    else "stale"
+                    if stale
+                    else "missing"
+                    if missing
+                    else "failed"
+                ),
+                detail=(
+                    "Cycling cache ready"
+                    if applied and result.get("ok")
+                    else "Cache result discarded because the source identity changed"
+                    if stale
+                    else "Cache result discarded because the source record is gone"
+                    if missing
+                    else None
+                ),
+                error=result.get("error") if applied else None,
+                counter=("ready" if applied and result.get("ok") else "failed" if applied else disposition),
             )
 
         cache_results = build_import_caches_parallel(
@@ -575,13 +959,34 @@ def run_import_cache_jobs(
                 description="Stopped preparing cycling caches; the imported Cells were deleted",
             )
             return
-        failed = sum(1 for result in cache_results.values() if not result.get("ok"))
+        ready = sum(
+            1
+            for staged_name, result in cache_results.items()
+            if result.get("ok")
+            and publication_dispositions.get(staged_name) == "applied"
+        )
+        failed = sum(
+            1
+            for staged_name, result in cache_results.items()
+            if not result.get("ok")
+            and publication_dispositions.get(staged_name) == "applied"
+        )
         background_jobs.update_job(
             background_job_id,
             status="completed",
             description=(
-                f"Prepared cycling caches for {len(cache_results) - failed} files"
+                f"Prepared cycling caches for {ready} files"
                 + (f"; {failed} failed" if failed else "")
+                + (
+                    f"; {publication_counts['stale']} stale results discarded"
+                    if publication_counts["stale"]
+                    else ""
+                )
+                + (
+                    f"; {publication_counts['missing']} source records missing"
+                    if publication_counts["missing"]
+                    else ""
+                )
             ),
         )
         record_activity(
@@ -589,14 +994,26 @@ def run_import_cache_jobs(
             category="import",
             action="prepare_import_caches",
             message=(
-                f"Prepared cycling caches for {len(cache_results) - failed} files"
+                f"Prepared cycling caches for {ready} files"
                 + (f"; {failed} failed" if failed else "")
+                + (
+                    f"; {publication_counts['stale']} stale results discarded"
+                    if publication_counts["stale"]
+                    else ""
+                )
+                + (
+                    f"; {publication_counts['missing']} source records missing"
+                    if publication_counts["missing"]
+                    else ""
+                )
             ),
-            severity="warning" if failed else "info",
+            severity="warning" if failed or publication_counts["stale"] or publication_counts["missing"] else "info",
             details={
                 "background_job_id": background_job_id,
                 "source_file_ids": list(source_file_ids_by_staged_name.values()),
                 "failed": failed,
+                "stale": publication_counts["stale"],
+                "missing": publication_counts["missing"],
             },
         )
         db.commit()
@@ -609,17 +1026,32 @@ def run_import_cache_jobs(
         # that is often *why* we are here — and an exception escaping this
         # handler would kill the thread with the job still marked running, which
         # is what left a large import stuck at a partial count forever.
+        failure_dispositions: dict[str, str] = {}
         if db is not None:
             try:
                 db.rollback()
-                for source_file_id in set(source_file_ids_by_staged_name.values()):
-                    sf = db.get(SourceFile, source_file_id)
-                    if sf is None:
+                for cache_job in cache_jobs:
+                    staged_name = cache_job["staged_name"]
+                    source_file_id = source_file_ids_by_staged_name.get(staged_name)
+                    if source_file_id is None:
+                        # A malformed worker mapping is not evidence that a
+                        # SourceFile row was deleted. Keep it as an unknown
+                        # failure so the UI does not invent a missing source.
+                        failure_dispositions[staged_name] = "failed"
                         continue
-                    sf.parse_status = "error"
-                    sf.parse_error = error
-                    sf.capacity_summary_status = "error"
-                db.commit()
+                    failure_result = {
+                        "ok": False,
+                        "error": error,
+                        "source_path": cache_job.get("path"),
+                        "source_hash": cache_job.get("hash"),
+                        "source_fingerprint": cache_job.get("source_fingerprint"),
+                    }
+                    disposition = apply_import_cache_results(
+                        db,
+                        {staged_name: source_file_id},
+                        {staged_name: failure_result},
+                    ).get(staged_name, "failed")
+                    failure_dispositions[staged_name] = disposition
             except Exception:
                 logger.exception("could not mark sources failed for job %s", background_job_id)
                 try:
@@ -637,17 +1069,32 @@ def run_import_cache_jobs(
                         "background_job_id": background_job_id,
                         "source_file_ids": list(source_file_ids_by_staged_name.values()),
                         "error": error,
+                        "dispositions": failure_dispositions,
                     },
                 )
                 db.commit()
             except Exception:
                 logger.exception("could not record the cache failure activity")
         for cache_job in cache_jobs:
+            # A missing disposition is only truthful when the publication
+            # query confirmed that the SourceFile is gone.  If the database
+            # session itself failed, preserve the worker error as an
+            # unclassified/failed item instead of claiming the row vanished.
+            disposition = failure_dispositions.get(cache_job["staged_name"], "failed")
             background_jobs.update_item(
                 background_job_id,
                 cache_job["staged_name"],
-                status="failed",
-                error=error,
+                status="failed" if disposition == "applied" else disposition,
+                error=error if disposition in {"applied", "failed"} else None,
+                detail=(
+                    "Cache preparation failed for the current source"
+                    if disposition in {"applied", "failed"}
+                    else "Cache result discarded because the source identity changed"
+                    if disposition == "stale"
+                    else "Source record is no longer available"
+                    if disposition == "missing"
+                    else "Cache result disposition could not be determined"
+                ),
             )
         background_jobs.update_job(
             background_job_id,
@@ -752,6 +1199,7 @@ def raw_table_from_frame(df: pd.DataFrame, offset: int = 0, limit: int = 100) ->
 
 def file_dict(sf: SourceFile) -> dict:
     link = sf.test_link
+    capability = parsing.source_record_capability(sf)
     return {
         "id": sf.id,
         "hash": sf.hash,
@@ -771,6 +1219,9 @@ def file_dict(sf: SourceFile) -> dict:
         "parse_status": sf.parse_status,
         "parse_error": sf.parse_error,
         "parser_version": sf.parser_version,
+        "canonical_cycling": capability["canonical_cycling"],
+        "metadata_only": capability["metadata_only"],
+        "capability_warning": capability["warning"],
         "row_count": sf.row_count,
         "cycle_count": sf.cycle_count,
         "registered": link is not None,
@@ -787,18 +1238,31 @@ class ScanRequest(BaseModel):
     parse_now: bool = False
 
 
+class ImportIdentityReceipt(BaseModel):
+    """Server-issued inspection identity echoed by the browser at submit time."""
+
+    hash: str
+    size: int
+    mtime_ns: int | str
+
+    class Config:
+        extra = "forbid"
+
+
 class ImportSourceDraft(BaseModel):
     staged_name: str
     source_path: str | None = None
     filename: str
-    inspection: dict | None = None
+    inspection: ImportIdentityReceipt | None = None
+    allow_metadata_only: bool = False
 
 
 class ImportCellDraft(BaseModel):
     staged_name: str | None = None
     source_path: str | None = None
     filename: str | None = None
-    inspection: dict | None = None
+    inspection: ImportIdentityReceipt | None = None
+    allow_metadata_only: bool = False
     sources: list[ImportSourceDraft] = []
     cell_name: str
     description: str | None = None
@@ -840,6 +1304,7 @@ def normalize_import_cell_sources(draft: ImportCellDraft) -> list[ImportSourceDr
                 source_path=draft.source_path,
                 filename=draft.filename,
                 inspection=draft.inspection,
+                allow_metadata_only=draft.allow_metadata_only,
             )
         ]
     raise HTTPException(400, "Each cell draft needs at least one source")
@@ -1029,7 +1494,8 @@ class ImportPathInspectRequest(BaseModel):
 class ContinuationInspectSourceRequest(BaseModel):
     staged_name: str
     source_path: str | None = None
-    inspection: dict | None = None
+    inspection: ImportIdentityReceipt | None = None
+    allow_metadata_only: bool = False
 
 
 class ContinuationInspectRequest(BaseModel):
@@ -1352,7 +1818,7 @@ def list_import_sources(
         if not import_filename_allowed(path.name):
             raise HTTPException(
                 400,
-                f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {path.name}",
+                f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {path.name}",
             )
         key = os.path.normcase(str(path))
         if key in seen:
@@ -1446,7 +1912,7 @@ async def inspect_import_files(files: list[UploadFile] = File(...), db: Session 
         if not import_filename_allowed(original):
             raise HTTPException(
                 400,
-                f"Only Neware .nda, .ndax, and structured .xlsx exports can be imported: {original}",
+                f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {original}",
             )
 
         staged_name = f"{uuid.uuid4().hex}_{original}"
@@ -1480,7 +1946,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
         job_id = background_jobs.create_job(
             kind="import_inspect",
             title="Inspecting import files",
-            description="Checking identity and reading Neware metadata",
+            description="Checking identity and reading source metadata",
             total=len(req.paths),
             items=items,
             token=req.job_token,
@@ -1606,7 +2072,7 @@ def inspect_import_paths(req: ImportPathInspectRequest, db: Session = Depends(ge
                         job_id,
                         path_string,
                         status="ready",
-                        detail="Identity and Neware metadata ready",
+                        detail="Identity and source metadata ready",
                     )
             if job_id is not None:
                 background_jobs.update_job(
@@ -1650,6 +2116,7 @@ def _continuation_existing_source(
     sf = link.file
     header_meta = sf.header_meta or {}
     nominal = sf.nominal_capacity_mah
+    capability = parsing.source_record_capability(sf)
     source = {
         "key": f"existing-{sf.id}",
         "kind": "existing",
@@ -1683,8 +2150,29 @@ def _continuation_existing_source(
         "location_status": sf.location_status,
         "parse_status": sf.parse_status,
         "row_count": sf.row_count,
+        "canonical_cycling": bool(capability["canonical_cycling"]),
+        "metadata_only": bool(capability["metadata_only"]),
+        "capability_warning": capability["warning"],
     }
     return continuations.enrich_source_timing(source, source_path=Path(sf.path) if sf.path else None)
+
+
+def metadata_only_capability_detail(sf: SourceFile) -> dict[str, object]:
+    capability = parsing.source_record_capability(sf)
+    return {
+        "code": "canonical_cycling_unavailable",
+        "status": capability["status"],
+        "metadata_only": capability["metadata_only"],
+        "canonical_cycling": capability["canonical_cycling"],
+        "source_file_id": sf.id,
+        "filename": sf.filename,
+        "message": capability["warning"],
+    }
+
+
+def ensure_source_can_produce_canonical_cycling(sf: SourceFile) -> None:
+    if parsing.source_record_metadata_only(sf):
+        raise HTTPException(422, detail=metadata_only_capability_detail(sf))
 
 
 def _continuation_staged_source(
@@ -1721,6 +2209,11 @@ def _continuation_staged_source(
         "channel": None,
         "nominal_capacity_mah": None,
         "active_mass_mg": None,
+        "canonical_cycling": True,
+        "metadata_only": False,
+        "capability_warning": None,
+        "parse_status": "unparsed",
+        "row_count": None,
     }
     if unsupported:
         source["inspection_status"] = "error"
@@ -1735,7 +2228,39 @@ def _continuation_staged_source(
         source["unreadable_message"] = str(exc)
         return source
 
-    integrity = continuations.inspect_path_integrity(source_path)
+    # A browser continuation normally carries the server-issued inspection
+    # receipt from the Inbox scan. Reuse that established content identity
+    # with a stat-only guard while preparing the proposal; the final lifecycle
+    # commit performs the one full fingerprint pass. Direct callers without a
+    # receipt retain the original full identity read.
+    inspection_values = _inspection_identity_values(draft.inspection)
+    if inspection_values:
+        try:
+            source_stat = source_path.stat()
+        except OSError as exc:
+            integrity = {
+                "missing": not source_path.exists(),
+                "unreadable": True,
+                "changing": False,
+                "message": str(exc),
+                "hash": inspection_values.get("hash"),
+            }
+        else:
+            receipt_size = int(inspection_values["size"])
+            receipt_mtime = inspection_values["mtime_ns"]
+            changed_since_inspection = (
+                source_stat.st_size != receipt_size
+                or not _mtime_fingerprint_matches(receipt_mtime, source_stat.st_mtime_ns)
+            )
+            integrity = {
+                "missing": False,
+                "unreadable": False,
+                "changing": changed_since_inspection,
+                "message": None,
+                "hash": inspection_values["hash"],
+            }
+    else:
+        integrity = continuations.inspect_path_integrity(source_path)
     source["missing"] = integrity["missing"]
     source["unreadable"] = integrity["unreadable"]
     source["changing"] = integrity["changing"]
@@ -1758,10 +2283,9 @@ def _continuation_staged_source(
         source_stat = source_path.stat()
     except OSError:
         source_stat = None
-    hint = draft.inspection
+    hint = _inspection_identity_values(draft.inspection)
     hint_is_valid = (
-        isinstance(hint, dict)
-        and hint.get("hash") == file_hash
+        hint.get("hash") == file_hash
         and source_stat is not None
         and hint.get("size") == source_stat.st_size
         and _mtime_fingerprint_matches(hint.get("mtime_ns"), source_stat.st_mtime_ns)
@@ -1772,9 +2296,7 @@ def _continuation_staged_source(
         else None
     )
     if meta is None:
-        meta = hint.get("header_metadata") if (
-            hint_is_valid and isinstance(hint, dict) and isinstance(hint.get("header_metadata"), dict)
-        ) else parsing.read_header_metadata(source_path)
+        meta = parsing.read_header_metadata(source_path)
     try:
         parsing.ensure_supported_source_metadata(source_path, meta)
     except ValueError as exc:
@@ -1786,6 +2308,14 @@ def _continuation_staged_source(
     header_fields = continuations.header_fields_from_metadata(meta)
     source.update(header_fields)
     source["hash"] = file_hash
+    source["metadata_only"] = parsing.source_metadata_only(meta)
+    source["canonical_cycling"] = not source["metadata_only"]
+    source["capability_warning"] = (
+        parsing.source_metadata_only_message(meta)
+        if source["metadata_only"]
+        else None
+    )
+    source["parse_status"] = "metadata_only" if source["metadata_only"] else "unparsed"
 
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing is not None:
@@ -1869,6 +2399,7 @@ def _inspect_cell_draft_chain(
                 staged_name=source.staged_name,
                 source_path=source.source_path,
                 inspection=source.inspection,
+                allow_metadata_only=source.allow_metadata_only,
             )
             for source in sources
         ],
@@ -1915,46 +2446,166 @@ def _lifecycle_mutation_response(
     }
 
 
-def _source_identity_snapshot_or_error(
+def _capture_import_source_fingerprint_or_error(
     source_path: Path,
     *,
     expected_hash: str | None,
-    previous_hash: str | None = None,
-) -> str:
-    integrity = continuations.inspect_path_integrity(source_path)
-    if integrity.get("missing") or integrity.get("unreadable") or integrity.get("changing"):
+) -> parsing.SourceFingerprint:
+    try:
+        return parsing.capture_source_fingerprint(
+            source_path,
+            expected_hash=expected_hash,
+        )
+    except parsing.SourceIdentityError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_changed" if expected_hash else "source_identity_unstable",
+                "message": str(exc) or "The source changed during submission; inspect again.",
+                "filename": source_path.name,
+                "expected_hash_prefix": continuations.hash_prefix(expected_hash),
+            },
+        ) from exc
+
+
+def _inspection_identity_values(inspection: object) -> dict[str, object]:
+    """Return only the immutable identity receipt supplied by the client.
+
+    Header metadata is intentionally not part of this payload.  The server
+    owns the inspection cache and will reread the header when that cache has
+    expired; accepting a browser-provided header would let registration bind
+    scientific metadata to an identity the server never inspected.
+    """
+
+    if inspection is None:
+        return {}
+    if isinstance(inspection, ImportIdentityReceipt):
+        return {
+            "hash": inspection.hash,
+            "size": int(inspection.size),
+            "mtime_ns": inspection.mtime_ns,
+        }
+    if isinstance(inspection, dict):
+        allowed = {"hash", "size", "mtime_ns"}
+        extra = sorted(set(inspection) - allowed)
+        if extra:
+            raise HTTPException(
+                400,
+                {
+                    "code": "invalid_inspection_receipt",
+                    "message": "Inspection receipts may contain only source identity fields.",
+                    "fields": extra,
+                },
+            )
+        try:
+            values = {
+                "hash": str(inspection["hash"]),
+                "size": int(inspection["size"]),
+                "mtime_ns": inspection["mtime_ns"],
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                400,
+                {
+                    "code": "invalid_inspection_receipt",
+                    "message": "Inspection receipts must contain hash, size, and mtime_ns.",
+                },
+            ) from exc
+        if not values["hash"].strip():
+            raise HTTPException(400, "Inspection receipt hash is required")
+        return values
+    raise HTTPException(400, "Inspection receipt is invalid")
+
+
+def _established_source_fingerprint(
+    source_path: Path,
+    *,
+    expected_hash: str | None,
+    inspection: object = None,
+    filename: str | None = None,
+) -> parsing.SourceFingerprint:
+    """Carry the server-established identity without rereading the bytes.
+
+    Inspection already performed the establishment digest. Registration and
+    continuation preparation therefore use the receipt hash plus a stat-only
+    guard; the one full digest that follows is the final pre-commit check.
+    Direct internal callers without an established hash retain the safe full
+    capture fallback.
+    """
+
+    values = _inspection_identity_values(inspection)
+    receipt_hash = str(values.get("hash") or "").strip().lower() or None
+    supplied_hash = str(expected_hash or "").strip().lower() or None
+    if receipt_hash and supplied_hash and receipt_hash != supplied_hash:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_changed",
+                "message": "The inspection receipt does not match the inspected source identity.",
+                "filename": filename or source_path.name,
+            },
+        )
+    identity_hash = receipt_hash or supplied_hash
+    if identity_hash is None:
+        return _capture_import_source_fingerprint_or_error(
+            source_path,
+            expected_hash=None,
+        )
+    try:
+        source_stat = source_path.stat()
+    except OSError as exc:
         raise HTTPException(
             409,
             {
                 "code": "source_identity_unstable",
-                "message": "The source changed or became unavailable during submission; inspect again.",
-                "filename": source_path.name,
+                "message": "The source became unavailable during submission; inspect again.",
+                "filename": filename or source_path.name,
             },
-        )
-    current_hash = integrity.get("hash")
-    if not current_hash or (expected_hash and current_hash != expected_hash):
+        ) from exc
+    try:
+        receipt_size = int(values["size"]) if values else None
+    except (KeyError, TypeError, ValueError):
+        receipt_size = None
+    receipt_mtime = values.get("mtime_ns") if values else None
+    if values and (
+        receipt_size != source_stat.st_size
+        or not _mtime_fingerprint_matches(receipt_mtime, source_stat.st_mtime_ns)
+    ):
         raise HTTPException(
             409,
             {
-                "code": "source_identity_changed",
-                "message": "The source bytes differ from the inspected source; inspect again.",
-                "filename": source_path.name,
-                "expected_hash_prefix": continuations.hash_prefix(expected_hash),
-                "actual_hash_prefix": continuations.hash_prefix(current_hash),
+                "code": "source_identity_unstable",
+                "message": "The source changed since inspection; inspect again.",
+                "filename": filename or source_path.name,
             },
         )
-    if previous_hash and current_hash != previous_hash:
+    return parsing.SourceFingerprint(
+        identity_hash,
+        source_stat.st_size,
+        source_stat.st_mtime_ns,
+    )
+
+
+def _ensure_import_source_admitted(source_path: Path, filename: str) -> str:
+    """Enforce the central extension policy at final registration."""
+
+    actual_suffix = source_path.suffix.casefold()
+    if not parsing.source_filename_allowed(source_path.name):
+        raise HTTPException(
+            400,
+            f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {source_path.name}",
+        )
+    presented_suffix = Path(filename or source_path.name).suffix.casefold()
+    if presented_suffix != actual_suffix:
         raise HTTPException(
             409,
             {
-                "code": "source_identity_changed",
-                "message": "The source changed during final registration; inspect again.",
+                "code": "source_extension_mismatch",
+                "message": "The submitted filename does not match the selected source format; inspect again.",
                 "filename": source_path.name,
-                "expected_hash_prefix": continuations.hash_prefix(previous_hash),
-                "actual_hash_prefix": continuations.hash_prefix(current_hash),
             },
         )
-    return current_hash
+    return actual_suffix.lstrip(".")
 
 
 def _validate_staged_source_snapshots(
@@ -1979,7 +2630,15 @@ def _validate_staged_source_snapshots(
                     "filename": source_path.name,
                 },
             )
-        _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash)
+        # The continuation inspection established the content hash already.
+        # Keep this pre-registration guard stat-only; the final attachment
+        # validation performs the one full digest immediately before commit.
+        _established_source_fingerprint(
+            source_path,
+            expected_hash=expected_hash,
+            inspection=source_draft.inspection,
+            filename=source_path.name,
+        )
 
 
 def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile | None) -> dict:
@@ -1994,8 +2653,10 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
         else None
     ) or parsing.PARSER_VERSION
     prepared["existing_source_file_id"] = existing.id if existing is not None else None
+    prepared["metadata_only"] = parsing.source_metadata_only(prepared.get("meta"))
     prepared["cache_ready"] = bool(
-        existing is not None
+        not prepared["metadata_only"]
+        and existing is not None
         and existing.parse_status == "parsed"
         and existing.parser_version == expected_parser_version
         and existing.row_count is not None
@@ -2006,13 +2667,99 @@ def _complete_prepared_import_source_file(prepared: dict, existing: SourceFile |
     return prepared
 
 
+def _validate_prepared_source_fingerprints(prepared_sources: object) -> None:
+    """Revalidate every prepared source immediately before relational commit."""
+
+    values = (
+        prepared_sources.values()
+        if isinstance(prepared_sources, dict)
+        else prepared_sources
+    )
+    for prepared in values or ():
+        expected = parsing.SourceFingerprint(
+            str(prepared["hash"]),
+            int(prepared["size"]),
+            int(prepared["observed_mtime_ns"]),
+        )
+        try:
+            current = parsing.capture_source_fingerprint(
+                prepared["source_path"],
+                expected_hash=expected.hash,
+            )
+        except parsing.SourceIdentityError as exc:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_unstable",
+                    "message": "A source changed before registration could be committed; inspect again.",
+                    "filename": prepared["filename"],
+                },
+            ) from exc
+        if current != expected:
+            raise HTTPException(
+                409,
+                {
+                    "code": "source_identity_unstable",
+                    "message": "A source changed before registration could be committed; inspect again.",
+                    "filename": prepared["filename"],
+                },
+            )
+
+
+def _validate_registered_source_fingerprints(db: Session, source_ids: list[int]) -> None:
+    """Revalidate attached sources immediately before continuation commit."""
+
+    for source_id in source_ids:
+        source = (
+            db.query(SourceFile)
+            .populate_existing()
+            .filter(SourceFile.id == source_id)
+            .one_or_none()
+        )
+        if source is None:
+            raise HTTPException(409, "A continuation source disappeared before commit; inspect again.")
+        if source.observed_mtime_ns is None or source.observed_size is None:
+            try:
+                source_stat = Path(source.path).stat()
+            except OSError as exc:
+                raise HTTPException(
+                    409,
+                    "A continuation source became unavailable before commit; inspect again.",
+                ) from exc
+            if source.observed_size is None:
+                source.observed_size = source_stat.st_size
+            if source.observed_mtime_ns is None:
+                source.observed_mtime_ns = source_stat.st_mtime_ns
+        expected = parsing.SourceFingerprint(
+            source.hash,
+            int(source.observed_size if source.observed_size is not None else source.size),
+            int(source.observed_mtime_ns),
+        )
+        try:
+            current = parsing.capture_source_fingerprint(
+                source.path,
+                expected_hash=expected.hash,
+            )
+        except parsing.SourceIdentityError as exc:
+            raise HTTPException(
+                409,
+                "A continuation source changed before commit; inspect again.",
+            ) from exc
+        if current != expected:
+            raise HTTPException(
+                409,
+                "A continuation source changed before commit; inspect again.",
+            )
+
+
 def _prepare_import_source_file(
     db: Session,
     *,
     source_path: Path,
     filename: str,
     expected_hash: str | None = None,
-    inspection: dict | None = None,
+    inspection: object = None,
+    allow_metadata_only: bool = False,
     existing_sources_by_hash: dict[str, SourceFile] | None = None,
 ) -> dict:
     """Prepare immutable source facts before the relational write transaction."""
@@ -2023,87 +2770,57 @@ def _prepare_import_source_file(
     except OSError as exc:
         raise HTTPException(409, f"Source became unavailable: {filename}") from exc
 
-    inspection = inspection if isinstance(inspection, dict) else {}
-    expected_hash = (expected_hash or inspection.get("hash") or "").strip().lower() or None
-    fingerprint_matches = bool(
+    ext = _ensure_import_source_admitted(source_path, filename)
+    inspection_values = _inspection_identity_values(inspection)
+    expected_hash = (
         expected_hash
-        and inspection.get("size") == source_stat.st_size
-        and _mtime_fingerprint_matches(inspection.get("mtime_ns"), source_stat.st_mtime_ns)
+        or str(inspection_values.get("hash") or "").strip().lower()
+        or None
     )
-    if fingerprint_matches:
-        file_hash = expected_hash
-        # The inspected fingerprint is authoritative for the bytes, but a
-        # final lightweight stat still catches a source that changed while
-        # the user was editing the third modal.
-        try:
-            final_stat = source_path.stat()
-        except FileNotFoundError as exc:
-            raise HTTPException(404, f"Source file is missing: {filename}") from exc
-        except OSError as exc:
-            raise HTTPException(409, f"Source became unavailable: {filename}") from exc
-        if (
-            final_stat.st_size != source_stat.st_size
-            or final_stat.st_mtime_ns != source_stat.st_mtime_ns
-        ):
-            raise HTTPException(
-                409,
-                {
-                    "code": "source_identity_unstable",
-                    "message": "The source changed after inspection; inspect again.",
-                    "filename": source_path.name,
-                },
-            )
-        source_stat = final_stat
-    else:
-        file_hash = parsing.compute_hash(source_path).lower()
-        if expected_hash and file_hash != expected_hash:
-            raise HTTPException(
-                409,
-                {
-                    "code": "source_identity_changed",
-                    "message": "The source bytes differ from the inspected source; inspect again.",
-                    "filename": source_path.name,
-                    "expected_hash_prefix": continuations.hash_prefix(expected_hash),
-                    "actual_hash_prefix": continuations.hash_prefix(file_hash),
-                },
-            )
-        try:
-            after_hash_stat = source_path.stat()
-        except OSError as exc:
-            raise HTTPException(409, f"Source became unavailable: {filename}") from exc
-        if (
-            after_hash_stat.st_size != source_stat.st_size
-            or after_hash_stat.st_mtime_ns != source_stat.st_mtime_ns
-        ):
-            raise HTTPException(
-                409,
-                {
-                    "code": "source_identity_unstable",
-                    "message": "The source changed during submission; inspect again.",
-                    "filename": source_path.name,
-                },
-            )
+    fingerprint = _established_source_fingerprint(
+        source_path,
+        expected_hash=expected_hash,
+        inspection=inspection,
+        filename=source_path.name,
+    )
+    file_hash = fingerprint.hash
 
-    meta = (
-        inspection.get("header_metadata")
-        if fingerprint_matches and isinstance(inspection.get("header_metadata"), dict)
-        else import_inspection.cached_header_metadata(
-            file_hash,
-            source_stat.st_size,
-            source_stat.st_mtime_ns,
-        )
+    meta = import_inspection.cached_header_metadata(
+        file_hash,
+        fingerprint.size,
+        fingerprint.mtime_ns,
     )
     if not isinstance(meta, dict):
         meta = parsing.read_header_metadata(source_path)
     parsing.ensure_supported_source_metadata(source_path, meta)
+    if parsing.source_metadata_only(meta) and not allow_metadata_only:
+        raise HTTPException(
+            422,
+            {
+                "code": "metadata_only_source_requires_acknowledgement",
+                "message": parsing.source_metadata_only_message(meta),
+                "filename": source_path.name,
+            },
+        )
+    try:
+        parsing.assert_source_fingerprint(source_path, fingerprint, verify_hash=False)
+    except parsing.SourceIdentityError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_unstable",
+                "message": "The source changed during submission; inspect again.",
+                "filename": source_path.name,
+            },
+        ) from exc
 
     prepared = {
         "source_path": source_path,
         "filename": filename,
         "hash": file_hash,
-        "size": source_stat.st_size,
-        "observed_mtime_ns": source_stat.st_mtime_ns,
-        "ext": Path(filename).suffix.lower().lstrip("."),
+        "size": fingerprint.size,
+        "observed_mtime_ns": fingerprint.mtime_ns,
+        "ext": ext,
         "meta": meta,
     }
     existing = (
@@ -2129,6 +2846,10 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
         raise HTTPException(409, f"{prepared['filename']} is already registered")
 
     meta = prepared["meta"]
+    metadata_only = bool(prepared.get("metadata_only"))
+    metadata_only_error = (
+        parsing.source_metadata_only_message(meta) if metadata_only else None
+    )
     values = {
         "hash": prepared["hash"],
         "path": str(prepared["source_path"]),
@@ -2152,8 +2873,26 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
     if existing is None:
         sf = SourceFile(
             **values,
-            parse_status="parsed" if prepared["cache_ready"] else "parsing",
-            capacity_summary_status="ready" if prepared["cache_ready"] else "pending",
+            parse_status=(
+                "metadata_only"
+                if metadata_only
+                else "parsed"
+                if prepared["cache_ready"]
+                else "parsing"
+            ),
+            parse_error=metadata_only_error,
+            parser_version=(
+                parsing.current_parser_identity_for_extension(prepared["ext"])
+                if metadata_only
+                else None
+            ),
+            capacity_summary_status=(
+                "unavailable"
+                if metadata_only
+                else "ready"
+                if prepared["cache_ready"]
+                else "pending"
+            ),
         )
         db.add(sf)
         return sf
@@ -2161,9 +2900,13 @@ def _persist_prepared_import_source_file(db: Session, prepared: dict) -> SourceF
     for key, value in values.items():
         setattr(existing, key, value)
     if not prepared["cache_ready"]:
-        existing.parse_status = "parsing"
-        existing.parse_error = None
-        existing.capacity_summary_status = "pending"
+        existing.parse_status = "metadata_only" if metadata_only else "parsing"
+        existing.parse_error = metadata_only_error
+        existing.capacity_summary_status = "unavailable" if metadata_only else "pending"
+        if metadata_only:
+            existing.parser_version = parsing.current_parser_identity_for_extension(
+                prepared["ext"]
+            )
     return existing
 
 
@@ -2173,15 +2916,26 @@ def _register_or_refresh_source_file(
     source_path: Path,
     filename: str,
     expected_hash: str | None = None,
-    inspection: dict | None = None,
+    inspection: object = None,
+    allow_metadata_only: bool = False,
 ) -> SourceFile:
     if not source_path.exists():
         raise HTTPException(404, f"Source file is missing: {filename}")
 
-    file_hash = _source_identity_snapshot_or_error(
+    ext = _ensure_import_source_admitted(source_path, filename)
+
+    inspection_values = _inspection_identity_values(inspection)
+    initial_fingerprint = _established_source_fingerprint(
         source_path,
-        expected_hash=expected_hash,
+        expected_hash=(
+            expected_hash
+            or str(inspection_values.get("hash") or "").strip().lower()
+            or None
+        ),
+        inspection=inspection,
+        filename=source_path.name,
     )
+    file_hash = initial_fingerprint.hash
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing is not None:
         remove_archived_cell_blocking_source(db, existing)
@@ -2195,10 +2949,11 @@ def _register_or_refresh_source_file(
     except OSError as exc:
         raise HTTPException(409, f"Source became unavailable: {filename}") from exc
     hint_fingerprint_matches = (
-        isinstance(inspection, dict)
-        and inspection.get("hash") == file_hash
-        and inspection.get("size") == source_stat.st_size
-        and _mtime_fingerprint_matches(inspection.get("mtime_ns"), source_stat.st_mtime_ns)
+        inspection_values.get("hash") == file_hash
+        and inspection_values.get("size") == initial_fingerprint.size
+        and _mtime_fingerprint_matches(
+            inspection_values.get("mtime_ns"), initial_fingerprint.mtime_ns
+        )
     )
     meta = (
         import_inspection.cached_header_metadata(file_hash, source_stat.st_size, source_stat.st_mtime_ns)
@@ -2206,22 +2961,43 @@ def _register_or_refresh_source_file(
         else None
     )
     if meta is None:
-        meta = inspection.get("header_metadata") if (
-            hint_fingerprint_matches
-            and isinstance(inspection, dict)
-            and isinstance(inspection.get("header_metadata"), dict)
-        ) else parsing.read_header_metadata(source_path)
+        meta = parsing.read_header_metadata(source_path)
     parsing.ensure_supported_source_metadata(source_path, meta)
-    file_hash = _source_identity_snapshot_or_error(source_path, expected_hash=expected_hash, previous_hash=file_hash)
+    if parsing.source_metadata_only(meta) and not allow_metadata_only:
+        raise HTTPException(
+            422,
+            {
+                "code": "metadata_only_source_requires_acknowledgement",
+                "message": parsing.source_metadata_only_message(meta),
+                "filename": source_path.name,
+            },
+        )
+    try:
+        parsing.assert_source_fingerprint(
+            source_path,
+            initial_fingerprint,
+            verify_hash=False,
+        )
+    except parsing.SourceIdentityError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_identity_unstable",
+                "message": "The source changed during submission; inspect again.",
+                "filename": source_path.name,
+            },
+        ) from exc
+    source_size = initial_fingerprint.size
+    source_mtime_ns = initial_fingerprint.mtime_ns
     if existing is None:
         sf = SourceFile(
             hash=file_hash,
             path=str(source_path),
             filename=filename,
-            size=source_stat.st_size,
-            ext=Path(filename).suffix.lower().lstrip("."),
-            observed_size=source_stat.st_size,
-            observed_mtime_ns=source_stat.st_mtime_ns,
+            size=source_size,
+            ext=ext,
+            observed_size=source_size,
+            observed_mtime_ns=source_mtime_ns,
             last_source_check_at=datetime.now(timezone.utc),
             nda_version=meta.get("nda_version"),
             device_info=meta.get("device_info"),
@@ -2233,7 +3009,20 @@ def _register_or_refresh_source_file(
             nominal_capacity_mah=meta.get("nominal_capacity_mah"),
             header_meta=meta.get("raw") or None,
             location_status="online",
-            parse_status="unparsed",
+            parse_status="metadata_only" if parsing.source_metadata_only(meta) else "unparsed",
+            parse_error=(
+                parsing.source_metadata_only_message(meta)
+                if parsing.source_metadata_only(meta)
+                else None
+            ),
+            parser_version=(
+                parsing.current_parser_identity_for_extension(ext)
+                if parsing.source_metadata_only(meta)
+                else None
+            ),
+            capacity_summary_status=(
+                "unavailable" if parsing.source_metadata_only(meta) else "pending"
+            ),
         )
         db.add(sf)
         db.flush()
@@ -2242,10 +3031,10 @@ def _register_or_refresh_source_file(
     sf = existing
     sf.path = str(source_path)
     sf.filename = filename
-    sf.size = source_stat.st_size
-    sf.ext = Path(filename).suffix.lower().lstrip(".")
-    sf.observed_size = source_stat.st_size
-    sf.observed_mtime_ns = source_stat.st_mtime_ns
+    sf.size = source_size
+    sf.ext = ext
+    sf.observed_size = source_size
+    sf.observed_mtime_ns = source_mtime_ns
     sf.last_source_check_at = datetime.now(timezone.utc)
     sf.nda_version = meta.get("nda_version")
     sf.device_info = meta.get("device_info")
@@ -2257,6 +3046,15 @@ def _register_or_refresh_source_file(
     sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None
     sf.location_status = "online"
+    if parsing.source_metadata_only(meta):
+        sf.parse_status = "metadata_only"
+        sf.parse_error = parsing.source_metadata_only_message(meta)
+        sf.parser_version = parsing.current_parser_identity_for_extension(ext)
+        sf.capacity_summary_status = "unavailable"
+    elif sf.parse_status == "metadata_only":
+        sf.parse_status = "unparsed"
+        sf.parse_error = None
+        sf.capacity_summary_status = "pending"
     return sf
 
 
@@ -2392,12 +3190,20 @@ def pick_import_files(db: Session = Depends(get_db)):
     root.attributes("-topmost", True)
     try:
         selected = filedialog.askopenfilenames(
-            title="Select Neware cell files",
+            title="Select cycler source files",
             filetypes=[
-                ("Neware files", "*.nda *.ndax *.xlsx"),
-                ("Neware Excel exports", "*.xlsx"),
-                ("NDAX files", "*.ndax"),
-                ("NDA files", "*.nda"),
+                ("Supported cycling files", parsing.SUPPORTED_SOURCE_GLOB),
+                (
+                    "BioLogic GCPL-family files",
+                    parsing.source_glob(parsing.FORMAT_BIOLOGIC_MPR),
+                ),
+                (
+                    "Neware files",
+                    parsing.source_glob(
+                        parsing.FORMAT_NEWARE_BINARY,
+                        parsing.FORMAT_NEWARE_EXCEL,
+                    ),
+                ),
                 ("All files", "*.*"),
             ],
         )
@@ -2418,7 +3224,7 @@ def pick_import_folder():
     root.withdraw()
     root.attributes("-topmost", True)
     try:
-        selected = filedialog.askdirectory(title="Select a folder containing Neware cell files")
+        selected = filedialog.askdirectory(title="Select a folder containing cycler source files")
     finally:
         root.destroy()
     if not selected:
@@ -2466,6 +3272,8 @@ def preview_import_file(req: ImportPreviewRequest):
     capacity_preview, preview_error = build_capacity_preview(
         source_path,
         file_hash=verified_hash,
+        expected_size=source_stat.st_size,
+        expected_mtime_ns=source_stat.st_mtime_ns,
     )
     return {
         "capacity_preview": capacity_preview,
@@ -2483,6 +3291,14 @@ def raw_import_file_data(req: ImportRawDataRequest):
     if not source_path.exists():
         raise HTTPException(404, "Source file is missing")
     try:
+        if source_path.suffix.casefold() == ".mpr":
+            metadata = parsing.read_header_metadata(source_path)
+            parsing.ensure_supported_source_metadata(source_path, metadata)
+            if parsing.source_metadata_only(metadata):
+                raise HTTPException(
+                    422,
+                    parsing.source_metadata_only_message(metadata),
+                )
         # served from the hash-keyed raw cache; the parse happens at most
         # once per file content, not once per page view
         file_hash = parsing.compute_hash(source_path)
@@ -2625,13 +3441,13 @@ def _create_imported_cells_impl_raw(
                 )
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
-            inspection = source_draft.inspection if isinstance(source_draft.inspection, dict) else {}
             prepared_sources_by_staged_name[source_draft.staged_name] = _prepare_import_source_file(
                 db,
                 source_path=source_path,
                 filename=source_draft.filename,
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
-                inspection=inspection,
+                inspection=source_draft.inspection,
+                allow_metadata_only=source_draft.allow_metadata_only,
                 existing_sources_by_hash={},
             )
             source_hashes.add(prepared_sources_by_staged_name[source_draft.staged_name]["hash"])
@@ -2762,12 +3578,17 @@ def _create_imported_cells_impl_raw(
             sf = _persist_prepared_import_source_file(db, prepared_source)
             db.add(TestFile(test=test, file=sf, position=position))
             source_objects.append((source_draft, sf))
-            if not prepared_source["cache_ready"]:
+            if not prepared_source["cache_ready"] and not prepared_source["metadata_only"]:
                 cache_jobs.append(
                     {
                         "staged_name": source_draft.staged_name,
                         "hash": prepared_source["hash"],
                         "path": str(prepared_source["source_path"]),
+                        "source_fingerprint": {
+                            "hash": prepared_source["hash"],
+                            "size": prepared_source["size"],
+                            "mtime_ns": prepared_source["observed_mtime_ns"],
+                        },
                     }
                 )
         pending_cells.append(
@@ -2857,6 +3678,7 @@ def _create_imported_cells_impl_raw(
             "parsing_started": bool(cache_jobs),
         },
     )
+    _validate_prepared_source_fingerprints(prepared_sources_by_staged_name)
     db.commit()
     if job_id is not None:
         for draft_index in range(len(req.cells)):
@@ -3194,6 +4016,7 @@ def parse_file(file_id: int, db: Session = Depends(get_db)):
     sf = db.get(SourceFile, file_id)
     if sf is None:
         raise HTTPException(404, "No such file")
+    ensure_source_can_produce_canonical_cycling(sf)
     if not Path(sf.path).exists():
         sf.location_status = "offline"
         db.commit()
@@ -3239,6 +4062,7 @@ def preview_file(file_id: int, kind: str = "cycles", db: Session = Depends(get_d
     sf = db.get(SourceFile, file_id)
     if sf is None:
         raise HTTPException(404, "No such file")
+    ensure_source_can_produce_canonical_cycling(sf)
     if sf.parse_status != "parsed":
         if not Path(sf.path).exists():
             raise HTTPException(409, "File is offline and has no cache yet")
@@ -3602,20 +4426,29 @@ def attach_continuations(
                 filename=filename,
                 expected_hash=inspected_hashes_by_staged_name.get(source_draft.staged_name),
                 inspection=source_draft.inspection,
+                allow_metadata_only=source_draft.allow_metadata_only,
             )
             db.add(TestFile(test_id=test.id, file_id=sf.id, position=base_position + offset))
-            sf.parse_status = "parsing"
-            sf.capacity_summary_status = "pending"
+            if not parsing.source_metadata_only({"raw": sf.header_meta}):
+                sf.parse_status = "parsing"
+                sf.parse_error = None
+                sf.capacity_summary_status = "pending"
             db.flush()
             attached_ids.append(sf.id)
             source_file_ids_by_staged_name[source_draft.staged_name] = sf.id
-            cache_jobs.append(
-                {
-                    "staged_name": source_draft.staged_name,
-                    "hash": sf.hash,
-                    "path": str(source_path),
-                }
-            )
+            if sf.parse_status != "metadata_only":
+                cache_jobs.append(
+                    {
+                        "staged_name": source_draft.staged_name,
+                        "hash": sf.hash,
+                        "path": str(source_path),
+                        "source_fingerprint": {
+                            "hash": sf.hash,
+                            "size": sf.observed_size if sf.observed_size is not None else sf.size,
+                            "mtime_ns": sf.observed_mtime_ns,
+                        },
+                    }
+                )
         _record_source_lifecycle_activity(
             db,
             action="continuation_attached",
@@ -3635,6 +4468,7 @@ def attach_continuations(
                 "previous_source_order": old_order,
             },
         )
+        _validate_registered_source_fingerprints(db, attached_ids)
         db.commit()
     except HTTPException:
         db.rollback()

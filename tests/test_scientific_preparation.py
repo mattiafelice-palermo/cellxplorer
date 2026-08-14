@@ -77,6 +77,24 @@ class ScientificPreparationTests(unittest.TestCase):
         db.commit()
         return source
 
+    def test_deleted_source_before_dispatch_is_reported_as_missing(self):
+        db = self.factory()
+        job_id = background_jobs.create_job(
+            kind="scientific_preparation",
+            title="Preparing one source",
+            description="Deleted before dispatch",
+            total=1,
+            items=[{"id": 404, "label": "deleted.ndax"}],
+        )
+
+        self.assertIsNone(scanner._load_capacity_source_job(db, 404, job_id, True))
+        job = background_jobs.get_job(job_id)
+        item = job["items"][0]
+        self.assertEqual(item["status"], "missing")
+        self.assertEqual(job["counters"], {"missing": 1})
+        self.assertIn("source record is gone", item["detail"].lower())
+        db.close()
+
     def test_missing_cache_is_rebuilt_and_summary_becomes_ready(self):
         with tempfile.TemporaryDirectory() as folder:
             source_path = Path(folder) / "cell.ndax"
@@ -509,6 +527,75 @@ class ScientificPreparationTests(unittest.TestCase):
 
             self.assertEqual((ready, failed), (2, 0))
             self.assertEqual(background_jobs.get_job(job_id)["completed"], 2)
+            db.close()
+
+    def test_stale_scientific_worker_result_is_discarded_for_success_or_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "stale-worker.ndax"
+            path.write_bytes(b"source-before-worker")
+            db = self.factory()
+            source = self._source(db, path, summary_status="pending")
+            job_id = background_jobs.create_job(
+                kind="scientific_preparation",
+                title="Preparing source",
+                description="stale result test",
+                total=1,
+                items=[{"id": source.id, "label": source.filename}],
+            )
+            source_job = scanner._capacity_source_job(
+                source,
+                prepare_all_missing=True,
+            )
+            db.commit()
+
+            # Publish the replacement through a different session. The
+            # publication session has expire-on-commit disabled, so the
+            # regression must prove that _apply_capacity_source_result
+            # refreshes the row before comparing the immutable worker job.
+            replacement_db = self.factory()
+            replacement = replacement_db.get(SourceFile, source.id)
+            replacement.hash = "f" * 64
+            replacement.parse_status = "parsing"
+            replacement.parse_error = "current state"
+            replacement.capacity_summary_status = "pending"
+            replacement_db.commit()
+            replacement_db.close()
+            result = {
+                "ok": True,
+                "built": True,
+                "info": {
+                    "parser_version": "new-parser",
+                    "rows": 4,
+                    "cycles": 2,
+                    "total_charge_capacity_mah": 1.0,
+                    "total_discharge_capacity_mah": 0.9,
+                    "max_discharge_capacity_mah": 0.9,
+                },
+            }
+            self.assertEqual(
+                scanner._apply_capacity_source_result(db, job_id, source_job, result),
+                (0, 0),
+            )
+            db.refresh(source)
+            self.assertEqual(source.parse_status, "parsing")
+            self.assertEqual(source.parse_error, "current state")
+            self.assertEqual(
+                background_jobs.get_job(job_id)["counters"]["stale"],
+                1,
+            )
+            self.assertEqual(
+                scanner._apply_capacity_source_result(
+                    db,
+                    job_id,
+                    source_job,
+                    {"ok": False, "error": "old worker failure"},
+                ),
+                (0, 0),
+            )
+            self.assertEqual(
+                background_jobs.get_job(job_id)["counters"]["stale"],
+                2,
+            )
             db.close()
 
 

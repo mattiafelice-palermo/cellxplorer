@@ -120,6 +120,27 @@ class ProtocolAnalysisSafetyTests(unittest.TestCase):
                         kind,
                     )
 
+    def test_portable_export_fails_before_packaging_metadata_only_selection(self):
+        source = self.multi.tests[0].file_links[0].file
+        source.parse_status = "metadata_only"
+        source.parse_error = "Canonical cycling rows are unavailable."
+        source.header_meta = {"capabilities": {"canonical_cycling": False}}
+        self.db.commit()
+
+        with patch.object(
+            analyses.tempfile,
+            "NamedTemporaryFile",
+            side_effect=AssertionError("portable packaging started"),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                analyses.export_portable_analysis(
+                    self.analysis.id,
+                    analyses.PortableExportRequest(),
+                    self.db,
+                )
+        self.assertEqual(context.exception.status_code, 422)
+        self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
     def test_warmup_does_not_enqueue_guarded_saved_plot(self):
         self.analysis.spec["saved_plots"] = [
             {"id": "steps-plot", "name": "Steps", "tab": "steps"}

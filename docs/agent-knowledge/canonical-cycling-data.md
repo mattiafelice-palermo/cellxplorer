@@ -231,7 +231,7 @@ code — never to the validator.
 
 ## 8. How a future source format should map into the contract
 
-A new adapter (e.g. a future BioLogic `.mpr` adapter, Parent 041) must:
+A new adapter (including the current independently authored BioLogic GCPL `.mpr` adapter) must:
 
 1. produce a `pandas.DataFrame` with every column in
    `canonical_cycling.REQUIRED_CYCLING_COLUMNS` (`record_index`, `cycle`,

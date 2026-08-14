@@ -42,6 +42,7 @@ import styles from "./CellDetailTabs.module.css";
 
 function statusColor(status: string) {
   if (status === "parsed" || status === "online") return "teal";
+  if (status === "metadata_only") return "orange";
   if (status === "changed") return "orange";
   if (status === "changing") return "yellow";
   if (status === "error" || status === "offline") return "red";
@@ -354,6 +355,9 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         ["nda_version", file.nda_version], ["barcode", file.barcode], ["remarks", file.remarks],
         ["active_mass_mg", file.active_mass_mg], ["nominal_capacity_mah", file.nominal_capacity_mah],
         ["parser_version", file.parser_version],
+        ...(file.metadata_only
+          ? [["capability", file.capability_warning ?? "Canonical cycling rows are unavailable"] as const]
+          : []),
       ]
         .filter(([, value]) => value !== null && value !== undefined && value !== "")
         .map(([key, value]) => [`source ${index + 1} / ${key}`, String(value)] as const)

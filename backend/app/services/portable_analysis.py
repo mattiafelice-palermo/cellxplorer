@@ -304,6 +304,7 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
 
 
 def _source_document(source: SourceFile) -> dict:
+    capability = parsing.source_record_capability(source)
     return {
         "portable_id": f"source-{source.hash}",
         "original_id": source.id,
@@ -327,6 +328,10 @@ def _source_document(source: SourceFile) -> dict:
         "total_charge_capacity_mah": source.total_charge_capacity_mah,
         "total_discharge_capacity_mah": source.total_discharge_capacity_mah,
         "capacity_summary_status": source.capacity_summary_status,
+        "parse_status": source.parse_status,
+        "metadata_only": capability["metadata_only"],
+        "canonical_cycling": capability["canonical_cycling"],
+        "capability_warning": capability["warning"],
     }
 
 
@@ -594,6 +599,9 @@ def export_analysis_html(
     strict_original_files: bool = False,
     views: list[dict] | None = None,
 ) -> dict:
+    # Portable reports contain scientific snapshots and therefore share the
+    # same canonical-cycling boundary as every other analysis computation.
+    analysis_engine.ensure_canonical_cycling_available(db, analysis.spec or {})
     cells, groups = _selected_entities(db, analysis)
     source_rows = _analysis_sources(analysis, db)
     sources = [source for source, _cell in source_rows]
@@ -2080,6 +2088,7 @@ def import_analysis_html(
         resolutions = source_resolutions or {}
         imported_cell_names = cell_names or {}
         explicitly_reused_sources: set[str] = set()
+        cache_reuse_sources: set[str] = set()
         imported_hash_to_effective_hash: dict[str, str] = {}
 
         for source_id, document in source_documents.items():
@@ -2114,8 +2123,14 @@ def import_analysis_html(
                         f'The selected library source is not a valid match for "{document["filename"]}".',
                     )
                 explicitly_reused_sources.add(source_id)
+                cache_reuse_sources.add(source_id)
             else:
                 existing = exact_source
+                if existing is not None:
+                    # The library already owns this source and its cache. A
+                    # portable package is untrusted input, so never restore
+                    # its legacy raw/cycle payload over an exact-hash row.
+                    cache_reuse_sources.add(source_id)
             original_descriptor = originals.get(source_id)
             extracted_path: Path | None = None
             recorded_path: Path | None = None
@@ -2148,6 +2163,40 @@ def import_analysis_html(
             resolved_path = extracted_path or recorded_path
             available_path = Path(existing.path) if existing_path_matches and existing is not None else resolved_path
 
+            # Report capability initializes a new SourceFile only.  For an
+            # exact-hash or explicitly selected library source, the database
+            # is the server-owned scientific authority: a stale or modified
+            # report must not downgrade a canonical source or upgrade a
+            # metadata-only one while importing its analysis shell.
+            document_header = document.get("header_meta")
+            report_metadata_only = (
+                bool(document.get("metadata_only"))
+                or document.get("canonical_cycling") is False
+                or parsing.source_metadata_only(
+                    {"raw": document_header} if isinstance(document_header, dict) else None
+                )
+            )
+            if existing is None:
+                metadata_only = report_metadata_only
+                metadata_warning = (
+                    parsing.source_metadata_only_message(
+                        {"raw": document_header} if isinstance(document_header, dict) else None
+                    )
+                    if metadata_only
+                    else None
+                )
+                effective_parser_identity = (
+                    parsing.current_parser_identity_for_extension(
+                        document.get("ext") or Path(document["filename"]).suffix.lstrip(".")
+                    )
+                    or document.get("parser_version")
+                    or parsing.PARSER_VERSION
+                )
+            else:
+                metadata_only = parsing.source_record_metadata_only(existing)
+                metadata_warning = existing.parse_error if metadata_only else None
+                effective_parser_identity = existing.parser_version or parsing.PARSER_VERSION
+
             if existing is None:
                 existing = SourceFile(
                     hash=source_hash,
@@ -2165,50 +2214,83 @@ def import_analysis_html(
                     nominal_capacity_mah=document.get("nominal_capacity_mah"),
                     header_meta=document.get("header_meta"),
                     location_status="online" if resolved_path else "offline",
-                    parse_status="parsed" if source_id in raw_caches or source_id in cycle_caches else "unparsed",
-                    parser_version=document.get("parser_version") or parsing.PARSER_VERSION,
-                    row_count=document.get("row_count"),
-                    cycle_count=document.get("cycle_count"),
-                    total_charge_capacity_mah=document.get("total_charge_capacity_mah"),
-                    total_discharge_capacity_mah=document.get("total_discharge_capacity_mah"),
-                    capacity_summary_status=document.get("capacity_summary_status") or "pending",
+                    parse_status=(
+                        "metadata_only"
+                        if metadata_only
+                        else "parsed"
+                        if source_id in raw_caches or source_id in cycle_caches
+                        else "unparsed"
+                    ),
+                    parse_error=metadata_warning,
+                    parser_version=effective_parser_identity,
+                    row_count=None if metadata_only else document.get("row_count"),
+                    cycle_count=None if metadata_only else document.get("cycle_count"),
+                    total_charge_capacity_mah=(
+                        None if metadata_only else document.get("total_charge_capacity_mah")
+                    ),
+                    total_discharge_capacity_mah=(
+                        None if metadata_only else document.get("total_discharge_capacity_mah")
+                    ),
+                    capacity_summary_status=(
+                        "unavailable"
+                        if metadata_only
+                        else document.get("capacity_summary_status") or "pending"
+                    ),
                 )
                 db.add(existing)
                 db.flush()
             elif resolved_path is not None and not existing_path_matches:
                 existing.path = str(resolved_path)
                 existing.location_status = "online"
+            if existing is None and metadata_only:
+                # Do not let a legacy report or an existing stale cache
+                # relabel this source as analysis-ready during import.
+                existing.parse_status = "metadata_only"
+                existing.parse_error = metadata_warning
+                existing.parser_version = effective_parser_identity
+                existing.row_count = None
+                existing.cycle_count = None
+                existing.total_charge_capacity_mah = None
+                existing.total_discharge_capacity_mah = None
+                existing.capacity_summary_status = "unavailable"
             source_rows[source_id] = existing
             effective_hash = existing.hash
             imported_hash_to_effective_hash[source_hash] = effective_hash
 
-            for descriptor, target in (
-                (
-                    None if source_id in explicitly_reused_sources else raw_caches.get(source_id),
-                    cache.raw_path(
-                        effective_hash,
-                        (raw_caches.get(source_id) or {}).get("parser_version")
-                        or document.get("parser_version")
-                        or parsing.PARSER_VERSION,
+            if not metadata_only:
+                for descriptor, target in (
+                    (
+                        None if source_id in cache_reuse_sources else raw_caches.get(source_id),
+                        cache.raw_path(
+                            effective_hash,
+                            (raw_caches.get(source_id) or {}).get("parser_version")
+                            or document.get("parser_version")
+                            or parsing.PARSER_VERSION,
+                        ),
                     ),
-                ),
-                (
-                    None if source_id in explicitly_reused_sources else cycle_caches.get(source_id),
-                    cache.cycles_path(
-                        effective_hash,
-                        (cycle_caches.get(source_id) or {}).get("parser_version")
-                        or document.get("parser_version")
-                        or parsing.PARSER_VERSION,
-                        (cycle_caches.get(source_id) or {}).get("calc_version") or CALC_VERSION,
+                    (
+                        None if source_id in cache_reuse_sources else cycle_caches.get(source_id),
+                        cache.cycles_path(
+                            effective_hash,
+                            (cycle_caches.get(source_id) or {}).get("parser_version")
+                            or document.get("parser_version")
+                            or parsing.PARSER_VERSION,
+                            (cycle_caches.get(source_id) or {}).get("calc_version") or CALC_VERSION,
+                        ),
                     ),
-                ),
-            ):
-                if descriptor is None:
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                decoded = temp_dir / f"{descriptor['id']}.parquet"
-                _decode_payload(html_path, descriptor, decoded, bounds)
-                os.replace(decoded, target)
+                ):
+                    if descriptor is None:
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    decoded = temp_dir / f"{descriptor['id']}.parquet"
+                    _decode_payload(html_path, descriptor, decoded, bounds)
+                    os.replace(decoded, target)
+
+            if metadata_only:
+                # A portable report can contain stale embedded caches from an
+                # older producer.  They are deliberately ignored, and an
+                # available original is never sent through the full parser.
+                continue
 
             # Spec 040.3: "current" is per-source now, resolved from this
             # source's own extension — a global bundle default here would
@@ -2416,7 +2498,7 @@ def import_analysis_html(
             row.location_status == "offline" for row in source_rows.values()
         ):
             warnings.append(
-                "Some original Neware files were not included or could not be found at their recorded paths."
+                "Some original source files were not included or could not be found at their recorded paths."
             )
         record_activity(
             db,

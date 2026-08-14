@@ -1,6 +1,6 @@
 """Background folder scanning & file registration.
 
-Scan a directory for Neware .nda/.ndax/.xlsx files → hash → header parse → upsert
+Scan a directory for supported cycler files (.nda/.ndax/.xlsx/.mpr) → hash → header parse → upsert
 SourceFile rows. Relinking is automatic: if a hash is already known but the
 path moved, the path attribute is updated (identity is the hash).
 
@@ -54,6 +54,16 @@ def _require_signature(path: Path, expected: tuple[int, int]) -> None:
         raise SourceChangedDuringRead("Source became unavailable while it was being read") from exc
     if current != expected:
         raise SourceChangedDuringRead("Source is still changing; update deferred")
+
+
+def _assert_stable_fingerprint(
+    path: Path,
+    fingerprint: parsing.SourceFingerprint,
+) -> None:
+    try:
+        parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
+    except parsing.SourceIdentityError as exc:
+        raise SourceChangedDuringRead("Source is still changing; update deferred") from exc
 
 
 def apply_capacity_summary(sf: SourceFile, info: dict) -> None:
@@ -196,6 +206,11 @@ def start_capacity_summary_backfill(
             .filter(SourceFile.parse_status == "parsed")
             .all()
         )
+        parsed_sources = [
+            source
+            for source in parsed_sources
+            if not parsing.source_record_metadata_only(source)
+        ]
         # Spec 042: bring an identity-mismatched source's own registration
         # forward unconditionally — independent of `prepare_missing` — so an
         # upgrade that changes the expected parser identity self-heals on the
@@ -330,13 +345,33 @@ def _capacity_source_job(
     *,
     prepare_all_missing: bool,
 ) -> dict[str, Any]:
+    observed_size = sf.observed_size if sf.observed_size is not None else sf.size
+    observed_mtime_ns = sf.observed_mtime_ns
+    # Very old SourceFile rows predate the stored stat snapshot. Establish the
+    # cheap stat half of the identity before dispatching the worker; the worker
+    # still hashes once and rejects bytes that do not match sf.hash.
+    if observed_mtime_ns is None:
+        try:
+            source_stat = Path(sf.path).stat()
+        except OSError:
+            source_stat = None
+        if source_stat is not None:
+            observed_size = source_stat.st_size
+            observed_mtime_ns = source_stat.st_mtime_ns
+            sf.observed_size = observed_size
+            sf.observed_mtime_ns = observed_mtime_ns
     return {
         "id": sf.id,
         "hash": sf.hash,
         "path": sf.path,
-        "size": sf.size,
+        "size": observed_size,
         "filename": sf.filename,
         "ext": sf.ext,
+        "source_fingerprint": {
+            "hash": sf.hash,
+            "size": observed_size,
+            "mtime_ns": observed_mtime_ns,
+        },
         "summary_was_ready": sf.capacity_summary_status == "ready",
         "prepare_all_missing": prepare_all_missing,
     }
@@ -345,7 +380,26 @@ def _capacity_source_job(
 def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
     """Build one source cache without touching SQLite or process-local job state."""
     location_status: str | None = None
+    source_fingerprint = job.get("source_fingerprint")
     try:
+        if not isinstance(source_fingerprint, dict):
+            source_fingerprint = {
+                "hash": job["hash"],
+                "size": job["size"],
+                "mtime_ns": job.get("mtime_ns"),
+            }
+        expected_hash = str(source_fingerprint["hash"])
+        expected_size = int(source_fingerprint["size"])
+        expected_mtime_ns = source_fingerprint.get("mtime_ns")
+        expected_fingerprint = (
+            parsing.SourceFingerprint(
+                expected_hash,
+                expected_size,
+                int(expected_mtime_ns),
+            )
+            if expected_mtime_ns is not None
+            else None
+        )
         expected = (
             parsing.current_parser_identity_for_extension(job.get("ext"))
             or parsing.PARSER_VERSION
@@ -358,43 +412,81 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
         raw_ready = cache.raw_path(job["hash"], expected).is_file()
         if cycles is None or (job["prepare_all_missing"] and not raw_ready):
             source_path = Path(job["path"])
-            if not source_path.exists():
-                location_status = "offline"
-                raise FileNotFoundError("Original source file is unavailable")
             try:
-                if (
-                    source_path.stat().st_size != job["size"]
-                    or parsing.compute_hash(source_path) != job["hash"]
-                ):
-                    location_status = "changed"
-                    raise SourceChangedDuringRead(
-                        "Original source has changed; update it before rebuilding the cache"
-                    )
+                source_stat = source_path.stat()
             except OSError as exc:
                 location_status = "offline"
                 raise FileNotFoundError("Original source file is unavailable") from exc
+            if expected_fingerprint is None:
+                expected_fingerprint = parsing.SourceFingerprint(
+                    expected_hash,
+                    source_stat.st_size,
+                    source_stat.st_mtime_ns,
+                )
+                source_fingerprint = {
+                    "hash": expected_fingerprint.hash,
+                    "size": expected_fingerprint.size,
+                    "mtime_ns": expected_fingerprint.mtime_ns,
+                }
+            try:
+                _assert_stable_fingerprint(source_path, expected_fingerprint)
+            except SourceChangedDuringRead:
+                location_status = "changed"
+                raise
             location_status = "online"
-            expected = source_signature(source_path)
-            info = cache.build(job["hash"], source_path)
-            _require_signature(source_path, expected)
+            try:
+                info = cache.build(
+                    job["hash"],
+                    source_path,
+                    expected_fingerprint=expected_fingerprint,
+                )
+            except cache.SourceChangedDuringBuild as exc:
+                location_status = "changed"
+                raise SourceChangedDuringRead(str(exc)) from exc
+            _assert_stable_fingerprint(source_path, expected_fingerprint)
             return {
                 "ok": True,
                 "built": True,
                 "info": info,
                 "location_status": location_status,
+                "source_fingerprint": source_fingerprint,
             }
         return {
             "ok": True,
             "built": False,
             "info": cache.capacity_totals(cycles),
             "location_status": location_status,
+            "source_fingerprint": source_fingerprint,
         }
     except Exception as exc:
         return {
             "ok": False,
             "error": str(exc),
             "location_status": location_status,
+            "source_fingerprint": source_fingerprint,
         }
+
+
+def _capacity_source_job_matches(sf: SourceFile, source_job: dict[str, Any]) -> bool:
+    fingerprint = source_job.get("source_fingerprint") or {}
+    expected_mtime = fingerprint.get("mtime_ns")
+    current_mtime = sf.observed_mtime_ns
+    try:
+        expected_size = int(fingerprint.get("size", source_job.get("size", -1)))
+        expected_mtime_value = int(expected_mtime) if expected_mtime is not None else None
+    except (TypeError, ValueError):
+        return False
+    mtime_matches = (
+        current_mtime is None
+        if expected_mtime_value is None
+        else current_mtime is not None and int(current_mtime) == expected_mtime_value
+    )
+    return (
+        sf.path == source_job.get("path")
+        and sf.hash.casefold() == str(source_job.get("hash") or "").casefold()
+        and int(sf.observed_size if sf.observed_size is not None else sf.size) == expected_size
+        and mtime_matches
+    )
 
 
 def _load_capacity_source_job(
@@ -408,13 +500,18 @@ def _load_capacity_source_job(
         background_jobs.record_result(
             job_id,
             source_id,
-            status="failed",
-            error="Source record no longer exists",
-            counter="failed",
+            status="missing",
+            detail="Scientific preparation skipped because the source record is gone",
+            counter="missing",
         )
         return None
     background_jobs.update_item(job_id, sf.id, status="processing")
-    return _capacity_source_job(sf, prepare_all_missing=prepare_all_missing)
+    source_job = _capacity_source_job(sf, prepare_all_missing=prepare_all_missing)
+    # Persist a legacy row's newly established stat half before the worker is
+    # dispatched. Otherwise the publication session quite correctly sees the
+    # old NULL snapshot and classifies every result as stale.
+    db.commit()
+    return source_job
 
 
 def _apply_capacity_source_result(
@@ -423,16 +520,33 @@ def _apply_capacity_source_result(
     source_job: dict[str, Any],
     result: dict[str, Any],
 ) -> tuple[int, int]:
-    sf = db.get(SourceFile, source_job["id"])
+    # Do not trust the session identity map: a source can be relinked or
+    # replaced by another request while the worker is reading bytes.
+    sf = (
+        db.query(SourceFile)
+        .populate_existing()
+        .filter(SourceFile.id == source_job["id"])
+        .one_or_none()
+    )
     if sf is None:
         background_jobs.record_result(
             job_id,
             source_job["id"],
-            status="failed",
-            error="Source record no longer exists",
-            counter="failed",
+            status="missing",
+            detail="Scientific preparation result discarded because the source record is gone",
+            counter="missing",
         )
         return 0, 1
+    if not _capacity_source_job_matches(sf, source_job):
+        background_jobs.record_result(
+            job_id,
+            source_job["id"],
+            status="stale",
+            detail="Scientific preparation result discarded because the source identity changed",
+            counter="stale",
+        )
+        db.commit()
+        return 0, 0
     if result.get("location_status"):
         sf.location_status = result["location_status"]
     if result.get("ok"):
@@ -454,6 +568,16 @@ def _apply_capacity_source_result(
         return 1, 0
 
     error = str(result.get("error") or "Scientific cache preparation failed")
+    if result.get("location_status") == "offline":
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="missing",
+            detail="The original source file is unavailable; no cache was published",
+            counter="missing",
+        )
+        db.commit()
+        return 0, 1
     if not source_job["summary_was_ready"]:
         sf.capacity_summary_status = "error"
     sf.parse_error = error
@@ -804,10 +928,16 @@ def _run_scan(job_id: int, root: str, parse_now: bool) -> None:
 
 
 def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | None = None) -> SourceFile:
-    """Hash + header-parse one supported Neware source and upsert its SourceFile row."""
-    file_hash = parsing.compute_hash(path)
+    """Hash + header-parse one supported source and upsert its SourceFile row."""
+    if not parsing.source_filename_allowed(path.name):
+        raise ValueError(
+            f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {path.name}"
+        )
+    fingerprint = parsing.capture_source_fingerprint(path)
+    file_hash = fingerprint.hash
     existing = db.query(SourceFile).filter(SourceFile.hash == file_hash).first()
     if existing:
+        parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
         target_ext = path.suffix.casefold().lstrip(".")
         target_family = parsing.source_parser_family(path)
         registered_family = parsing.source_parser_family(existing.path or existing.ext or "")
@@ -820,7 +950,7 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             or target_family != registered_family
         ):
             raise ValueError(
-                "A known Neware source cannot be relinked across parser families: "
+                "A known source cannot be relinked across parser families: "
                 f"{existing.filename} -> {path.name}"
             )
         # same content seen again: relink path if it moved, mark online
@@ -833,10 +963,8 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             existing.filename = path.name
             existing.ext = target_ext
             existing.location_status = "online"
-            try:
-                existing.observed_size, existing.observed_mtime_ns = source_signature(path)
-            except OSError:
-                pass
+            existing.observed_size = fingerprint.size
+            existing.observed_mtime_ns = fingerprint.mtime_ns
             db.commit()
             if job_id is not None:
                 _bump(job_id, "relinked")
@@ -854,18 +982,19 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 
     meta = parsing.read_header_metadata(path)
     parsing.ensure_supported_source_metadata(path, meta)
+    parsing.assert_source_fingerprint(path, fingerprint, verify_hash=False)
+    metadata_only = parsing.source_metadata_only(meta)
 
     # New content is now safe to adopt; the prior same-path identity is kept
     # in place (and already marked changed) so its caches remain untouched.
-    observed_size, observed_mtime_ns = source_signature(path)
     sf = SourceFile(
         hash=file_hash,
         path=str(path),
         filename=path.name,
-        size=observed_size,
+        size=fingerprint.size,
         ext=path.suffix.lower().lstrip("."),
-        observed_size=observed_size,
-        observed_mtime_ns=observed_mtime_ns,
+        observed_size=fingerprint.size,
+        observed_mtime_ns=fingerprint.mtime_ns,
         last_source_check_at=datetime.now(timezone.utc),
         nda_version=meta.get("nda_version"),
         device_info=meta.get("device_info"),
@@ -877,24 +1006,47 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
         nominal_capacity_mah=meta.get("nominal_capacity_mah"),
         header_meta=meta.get("raw") or None,
         location_status="online",
-        parse_status="unparsed",
+        parser_version=(
+            parsing.current_parser_identity_for_extension(path.suffix)
+            if metadata_only
+            else None
+        ),
+        parse_status="metadata_only" if metadata_only else "unparsed",
+        parse_error=(parsing.source_metadata_only_message(meta) if metadata_only else None),
+        capacity_summary_status="unavailable" if metadata_only else "pending",
     )
     db.add(sf)
     db.commit()
     if job_id is not None:
         _bump(job_id, "new")
-    if parse_now:
+    if parse_now and not metadata_only:
         parse_file(db, sf)
     return sf
 
 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
+    if parsing.source_record_metadata_only(sf):
+        sf.parser_version = parsing.current_parser_identity_for_extension(sf.ext)
+        sf.parse_status = "metadata_only"
+        sf.parse_error = parsing.source_metadata_only_message({"raw": sf.header_meta})
+        sf.capacity_summary_status = "unavailable"
+        db.commit()
+        return sf
     sf.parse_status = "parsing"
     sf.capacity_summary_status = "pending"
     db.commit()
     try:
-        info = cache.build(sf.hash, sf.path)
+        expected = (
+            parsing.SourceFingerprint(
+                sf.hash,
+                int(sf.observed_size if sf.observed_size is not None else sf.size),
+                int(sf.observed_mtime_ns),
+            )
+            if sf.observed_mtime_ns is not None
+            else None
+        )
+        info = cache.build(sf.hash, sf.path, expected_fingerprint=expected)
         sf.parse_status = "parsed"
         sf.parse_error = None
         sf.parser_version = info["parser_version"]
@@ -933,17 +1085,40 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
         db.commit()
         return sf
 
-    new_hash = parsing.compute_hash(p)
+    if not parsing.source_filename_allowed(p.name):
+        raise ValueError(
+            f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {p.name}"
+        )
+    try:
+        fingerprint = parsing.capture_source_fingerprint(p)
+    except parsing.SourceIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+    new_hash = fingerprint.hash
     duplicate = db.query(SourceFile).filter(SourceFile.hash == new_hash, SourceFile.id != sf.id).first()
     if duplicate is not None:
         raise ValueError("Another source file already has this content hash")
 
     meta = parsing.read_header_metadata(p)
     parsing.ensure_supported_source_metadata(p, meta)
+    metadata_only = parsing.source_metadata_only(meta)
+    try:
+        parsing.assert_source_fingerprint(p, fingerprint, verify_hash=False)
+        info = (
+            None
+            if metadata_only
+            else cache.build(new_hash, p, expected_fingerprint=fingerprint)
+        )
+    except Exception as exc:
+        # Do not replace a usable SourceFile identity until its replacement
+        # cache was built against the same stable fingerprint.
+        logger.error("update parse failed for %s\n%s", sf.path, traceback.format_exc())
+        raise ValueError(str(exc)) from exc
+
     sf.hash = new_hash
     sf.filename = p.name
-    sf.size, sf.observed_mtime_ns = source_signature(p)
-    sf.observed_size = sf.size
+    sf.size = fingerprint.size
+    sf.observed_mtime_ns = fingerprint.mtime_ns
+    sf.observed_size = fingerprint.size
     sf.last_source_check_at = datetime.now(timezone.utc)
     sf.ext = p.suffix.lower().lstrip(".")
     sf.nda_version = meta.get("nda_version")
@@ -956,27 +1131,22 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None
     sf.location_status = "online"
-    sf.parse_status = "parsing"
-    sf.parse_error = None
-    sf.capacity_summary_status = "pending"
-    db.commit()
-
-    try:
-        info = cache.build(sf.hash, p)
-        sf.parse_status = "parsed"
-        sf.parse_error = None
-        sf.parser_version = info["parser_version"]
-        sf.row_count = info["rows"]
-        sf.cycle_count = info["cycles"]
+    sf.parse_status = "metadata_only" if metadata_only else "parsed"
+    sf.parse_error = (
+        parsing.source_metadata_only_message(meta) if metadata_only else None
+    )
+    sf.parser_version = (
+        parsing.current_parser_identity_for_extension(sf.ext) if metadata_only else info["parser_version"]
+    )
+    sf.row_count = None if metadata_only else info["rows"]
+    sf.cycle_count = None if metadata_only else info["cycles"]
+    if metadata_only:
+        sf.capacity_summary_status = "unavailable"
+        sf.total_charge_capacity_mah = None
+        sf.total_discharge_capacity_mah = None
+        sf.max_discharge_capacity_mah = None
+    else:
         apply_capacity_summary(sf, info)
-    except Exception as exc:
-        sf.parse_status = "error"
-        sf.parse_error = str(exc)
-        sf.capacity_summary_status = "error"
-        logger.error("update parse failed for %s\n%s", sf.path, traceback.format_exc())
-    # The current bytes have been adopted even if rebuilding their cache
-    # failed; another source check must not be needed to clear "changed".
-    sf.location_status = "online"
     db.commit()
     if sf.hash != previous_hash:
         from . import cache_maintenance
@@ -990,8 +1160,7 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
                 queue_warmup=sf.parse_status == "parsed",
             )
             db.commit()
-        if sf.parse_status == "parsed":
-            _remove_replaced_cache(db, previous_hash, sf.hash)
+        _remove_replaced_cache(db, previous_hash, sf.hash)
     return sf
 
 
@@ -1006,9 +1175,18 @@ def update_source_from_path_if_stable(
     previous_hash = sf.hash
     p = Path(sf.path)
     expected = (expected_size, expected_mtime_ns)
+    if not parsing.source_filename_allowed(p.name):
+        raise ValueError(
+            f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file: {p.name}"
+        )
     _require_signature(p, expected)
     new_hash = parsing.compute_hash(p)
-    _require_signature(p, expected)
+    expected_fingerprint = parsing.SourceFingerprint(
+        new_hash,
+        int(expected_size),
+        int(expected_mtime_ns),
+    )
+    _assert_stable_fingerprint(p, expected_fingerprint)
 
     duplicate = db.query(SourceFile).filter(
         SourceFile.hash == new_hash,
@@ -1019,9 +1197,17 @@ def update_source_from_path_if_stable(
 
     meta = parsing.read_header_metadata(p)
     parsing.ensure_supported_source_metadata(p, meta)
-    _require_signature(p, expected)
-    info = cache.build(new_hash, p)
-    _require_signature(p, expected)
+    metadata_only = parsing.source_metadata_only(meta)
+    _assert_stable_fingerprint(p, expected_fingerprint)
+    try:
+        info = (
+            None
+            if metadata_only
+            else cache.build(new_hash, p, expected_fingerprint=expected_fingerprint)
+        )
+    except cache.SourceChangedDuringBuild as exc:
+        raise SourceChangedDuringRead(str(exc)) from exc
+    _assert_stable_fingerprint(p, expected_fingerprint)
 
     sf.hash = new_hash
     sf.filename = p.name
@@ -1040,12 +1226,22 @@ def update_source_from_path_if_stable(
     sf.nominal_capacity_mah = meta.get("nominal_capacity_mah")
     sf.header_meta = meta.get("raw") or None
     sf.location_status = "online"
-    sf.parse_status = "parsed"
-    sf.parse_error = None
-    sf.parser_version = info["parser_version"]
-    sf.row_count = info["rows"]
-    sf.cycle_count = info["cycles"]
-    apply_capacity_summary(sf, info)
+    sf.parse_status = "metadata_only" if metadata_only else "parsed"
+    sf.parse_error = (
+        parsing.source_metadata_only_message(meta) if metadata_only else None
+    )
+    sf.parser_version = (
+        parsing.current_parser_identity_for_extension(sf.ext) if metadata_only else info["parser_version"]
+    )
+    sf.row_count = None if metadata_only else info["rows"]
+    sf.cycle_count = None if metadata_only else info["cycles"]
+    if metadata_only:
+        sf.capacity_summary_status = "unavailable"
+        sf.total_charge_capacity_mah = None
+        sf.total_discharge_capacity_mah = None
+        sf.max_discharge_capacity_mah = None
+    else:
+        apply_capacity_summary(sf, info)
     db.commit()
     if sf.hash != previous_hash:
         from . import cache_maintenance

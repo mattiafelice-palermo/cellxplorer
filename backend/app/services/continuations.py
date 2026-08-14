@@ -46,6 +46,7 @@ FindingCode = Literal[
     "local_cycles_overlap",
     "local_cycles_gap",
     "timestamp_confidence_incomplete",
+    "metadata_only_source",
 ]
 
 
@@ -279,7 +280,7 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             source_keys=[key],
             title="Unsupported file type",
             message=(
-                "Only Neware .nda, .ndax, and structured .xlsx exports can be used as continuations."
+                f"{parsing.SUPPORTED_SOURCE_DESCRIPTION}; unsupported file types cannot be used as continuations."
             ),
         )
     if source.get("missing"):
@@ -320,6 +321,19 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             message=source.get("inspection_error")
             or "The source identity could not be established.",
         )
+    if source.get("metadata_only"):
+        _append_finding(
+            findings,
+            code="metadata_only_source",
+            severity="confirmation",
+            source_keys=[key],
+            title="Canonical cycling data is not available",
+            message=(
+                source.get("capability_warning")
+                or "This source has readable metadata but no independently verified canonical cycling rows. "
+                "Attach it as metadata-only only if that limitation is understood."
+            ),
+        )
     if source.get("cache_build_error"):
         _append_finding(
             findings,
@@ -346,7 +360,7 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             severity="blocking",
             source_keys=[key],
             title="Source already belongs to another test",
-            message="Each Neware file can belong to only one test.",
+            message="Each source file can belong to only one test.",
             details={"linked_test_id": linked_test_id},
         )
     if source.get("path_refresh_candidate"):
@@ -688,6 +702,9 @@ def _continuation_chain_response(
                 "location_status": source.get("location_status"),
                 "parse_status": source.get("parse_status"),
                 "row_count": source.get("row_count"),
+                "canonical_cycling": source.get("canonical_cycling", True),
+                "metadata_only": bool(source.get("metadata_only")),
+                "capability_warning": source.get("capability_warning"),
             }
         )
 
@@ -763,6 +780,18 @@ def _maybe_schedule_cache_build(file_hash: str, source_path) -> dict[str, str | 
 
 def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[str, Any]:
     """Fill timing/cycle fields from existing caches when available."""
+    if source.get("metadata_only") or source.get("canonical_cycling") is False:
+        # Metadata-only sources are a stable terminal inspection state. They
+        # deliberately do not schedule cache work, retry parsing, or poll the
+        # continuation panel while waiting for a cycle identity that is not
+        # currently available.
+        source["inspection_status"] = "ready"
+        source["cache_build_status"] = "unavailable"
+        source.setdefault(
+            "capability_warning",
+            "This source has readable metadata but no independently verified canonical cycling rows yet.",
+        )
+        return source
     file_hash = source.get("hash")
     if not file_hash:
         source["inspection_status"] = "error"

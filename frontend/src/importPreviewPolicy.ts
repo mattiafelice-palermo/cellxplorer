@@ -43,7 +43,12 @@ export function shouldRequestImportPreview(
   draft: ImportPreviewDraftState | undefined,
   explicitSelection: boolean,
 ): draft is ImportPreviewDraftState {
-  return Boolean(explicitSelection && draft && draft.preview_state.status === "idle");
+  return Boolean(
+    explicitSelection
+    && draft
+    && !draft.metadata_only
+    && draft.preview_state.status === "idle",
+  );
 }
 
 export function importDraftWindow(

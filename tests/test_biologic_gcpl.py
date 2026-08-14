@@ -125,7 +125,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
             },
         )
         self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl2:r1")
-        self.assertFalse(parsing.source_filename_allowed("source.mpr"))
+        self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_direct_mpr_dispatch_defers_unresolved_cycle_and_three_electrode_voltage(self) -> None:
         rows = [

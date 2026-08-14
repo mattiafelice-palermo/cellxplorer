@@ -208,6 +208,23 @@ class AnalysisEngineTests(unittest.TestCase):
         )
         self.assertEqual(spec["presentation"]["hidden_protocol_segment_ids"], [])
 
+    def test_metadata_only_selection_fails_closed_before_any_timeseries_parse(self):
+        source = self.cells["c1"].tests[0].file_links[0].file
+        source.parse_status = "metadata_only"
+        source.parse_error = "metadata-only source"
+        source.header_meta = {"capabilities": {"canonical_cycling": False}}
+        source.capacity_summary_status = "unavailable"
+        self.db.commit()
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+
+        detail = engine.canonical_cycling_capability(self.db, spec)
+        self.assertIsNotNone(detail)
+        self.assertEqual(detail["code"], "canonical_cycling_unavailable")
+        with patch.object(parsing, "parse_timeseries", side_effect=AssertionError("parsed")):
+            with self.assertRaises(engine.CanonicalCyclingUnavailable) as raised:
+                engine.compute(self.db, spec, None)
+        self.assertEqual(raised.exception.detail["status"], "metadata_only")
+
     def test_cycle_protocol_filters_distinguish_hidden_excluded_and_only(self):
         expected = {
             "excluded": (list(range(2, 51, 2)), 25),

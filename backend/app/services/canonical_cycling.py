@@ -36,6 +36,12 @@ import pandas as pd
 
 CANONICAL_RAW_VERSION = 1
 
+# Bounded normalized metadata blocks may remain in ``SourceFile.header_meta``
+# without becoming CellMetadata rows.  Adapters use this key for source-level
+# capabilities that must still be available after the original file is
+# offline.
+VOLTAGE_CAPABILITIES_METADATA_KEY = "_cellxplorer_voltage_capabilities"
+
 # Every source that claims normal cycling capability must produce all of
 # these columns. This is Parent 040's "Required core columns" table minus
 # `timestamp`: current binary Neware parsing only adds a `timestamp` column

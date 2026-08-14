@@ -73,6 +73,8 @@ function draftSource(draft: DraftSource) {
   return {
     staged_name: draft.staged_name,
     source_path: draft.source_path,
+    inspection: draft.inspection,
+    allow_metadata_only: draft.metadata_only,
   };
 }
 
@@ -94,6 +96,9 @@ function fallbackSource(draft: DraftSource) {
     nominal_capacity_mah: draft.nominal_capacity_mah,
     active_mass_mg: draft.active_mass_mg,
     inspection_status: "pending" as const,
+    canonical_cycling: !draft.metadata_only,
+    metadata_only: draft.metadata_only,
+    capability_warning: draft.capability_warning,
   };
 }
 

@@ -1,11 +1,15 @@
 # Cellxplorer
 
 Single-user, local web app for organizing, analyzing, comparing and
-revisiting Neware battery-cycling data. Built per [SPEC.md](spec.md) around
-the open-source **NewareNDA** parser (the same library embedded in the
-Neware Batch Converter found in this directory). CellXplorer imports Neware
-`.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports through the same
-Cell/source/cache/analysis workflow; arbitrary Excel workbooks are not supported.
+revisiting battery-cycling data. Built per [SPEC.md](spec.md) around the
+open-source **NewareNDA** parser for Neware sources and an independently
+authored BioLogic GCPL-family `.mpr` reader. CellXplorer imports Neware
+`.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports plus recognized
+BioLogic `.mpr` sources through the same Cell/source workflow. The current
+verified MPR layout is metadata-readable but remains explicitly metadata-only
+until an independently verified full-cycle identity is available, so it does
+not create canonical cycling caches or capacity previews yet. Arbitrary Excel
+workbooks, `.mpt` files, and unsupported MPR techniques are not supported.
 
 ## Run on Windows
 
@@ -64,7 +68,7 @@ python backend/seed_demo.py
 Stable app state lives in `%USERPROFILE%\.cellxplorer`; Beta app state lives in
 `%USERPROFILE%\.cellxplorer-beta`. `CELLXPLORER_DATA` overrides either root for development and
 tests. Each root contains `cellxplorer.db` (SQLite) and `cache/` (Parquet, keyed by file hash +
-parser/calc versions). Raw Neware files stay wherever they are — referenced by content hash,
+parser/calc versions). Raw cycler files stay wherever they are — referenced by content hash,
 never copied, except app-managed imports selected for the explicit Stable-to-Beta snapshot.
 
 The SQLite schema is explicitly versioned. Existing databases are backed up
@@ -80,7 +84,7 @@ See [`docs/portable-analysis-html.md`](docs/portable-analysis-html.md).
 ## Architecture in one paragraph
 
 There is one canonical library whose scientific object is the physical **Cell**. A Cell owns one
-ordered chain of original `SourceFile` records, allowing interrupted and restarted Neware runs to
+ordered chain of original `SourceFile` records, allowing interrupted and restarted cycler runs to
 be viewed continuously without modifying the original files. The existing `Test`/`TestFile` tables
 remain internal compatibility storage for that chain; normal Cells use one internal Test row, and
 Test is not a user-facing grouping or analysis concept. Everything else references Cells: folders
@@ -92,7 +96,9 @@ explicit status and recompute actions.
 ## Layout
 
 - `backend/app/models.py` — relational schema, including the internal source-chain compatibility rows
-- `backend/app/services/` — `parsing.py` (the only NewareNDA import),
+- `backend/app/services/` — `parsing.py` (central dispatch and the only NewareNDA import),
+  `biologic_mpr.py`/`biologic_gcpl.py` (independent BioLogic MPR/GCPL adapter;
+  current production MPR path is metadata-only until cycle identity is verified),
   `cache.py` (versioned Parquet), `calc.py` (per-cycle derivations),
   `stitch.py` (multi-source Cell chains), `scanner.py` (background scans/relink),
   `analysis_engine.py` (analysis compute engine)

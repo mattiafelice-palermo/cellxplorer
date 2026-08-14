@@ -156,7 +156,7 @@ def _warm_scientific_services() -> None:
         import python_calamine  # noqa: F401
         import openpyxl  # noqa: F401
 
-        from .services import scanner
+        from .services import biologic_gcpl, biologic_mpr, scanner  # noqa: F401
 
         scanner.start_capacity_summary_backfill()
     except Exception:

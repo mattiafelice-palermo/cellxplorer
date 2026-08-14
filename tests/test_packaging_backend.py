@@ -17,6 +17,11 @@ SPEC.loader.exec_module(backend_entry)
 
 
 class PackagedBackendTests(unittest.TestCase):
+    def test_scientific_warmup_collects_biologic_adapters(self):
+        source = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+        self.assertIn("from .services import biologic_gcpl, biologic_mpr, scanner", source)
+        self.assertNotIn("gpl_parser", source.casefold())
+
     def test_backend_port_defaults_to_development_port(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(backend_entry._backend_port(), 8642)

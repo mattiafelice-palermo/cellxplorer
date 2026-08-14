@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import os
 import shutil
+import json
 from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 from fastapi import HTTPException
 from openpyxl import Workbook
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -26,8 +28,12 @@ from app.models import Cell, CellMetadata, ImportSubmission, SourceFile, Test, T
 from app.routers import files
 from app.routers import library
 from app.services import cache, parsing
+from app.services import canonical_cycling
 from app.services import background_jobs
 from app.services import import_inspection
+from app.services import scanner
+from app.services.biologic_mpr import MPR_MAGIC
+from tests.biologic_mpr_fixture import encode_gcpl_log, encode_gcpl_settings, write_gcpl_mpr
 
 
 IMPORT_RECORD_HEADERS = [
@@ -82,6 +88,27 @@ def _write_importable_neware_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _write_importable_biologic_mpr(path: Path) -> None:
+    write_gcpl_mpr(
+        path,
+        [{"total_time_s": 0.0, "ns": 0}],
+        settings_payload=encode_gcpl_settings(
+            [
+                {
+                    "set_i_c": 0,
+                    "current": -1.0,
+                    "t1_s": 10.0,
+                    "voltage_limit_v": 2.8,
+                    "record_interval_s": 1.0,
+                }
+            ],
+            reference_electrode="Ag/AgCl",
+        ),
+        log_payload=encode_gcpl_log(),
+        include_log=True,
+    )
+
+
 class ImportFlowTests(unittest.TestCase):
     def make_session(self):
         engine = create_engine(
@@ -92,15 +119,237 @@ class ImportFlowTests(unittest.TestCase):
         Base.metadata.create_all(engine)
         return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
 
-    def test_import_filename_allows_only_neware_files(self):
+    def test_import_filename_allows_supported_cycler_files(self):
         self.assertTrue(files.import_filename_allowed("formation.ndax"))
         self.assertTrue(files.import_filename_allowed("cycling.NDA"))
         self.assertTrue(files.import_filename_allowed("formation.xlsx"))
         self.assertTrue(files.import_filename_allowed("cycling.XLSX"))
+        self.assertTrue(files.import_filename_allowed("cycling.mpr"))
         self.assertFalse(files.import_filename_allowed("notes.csv"))
         self.assertFalse(files.import_filename_allowed("legacy.xls"))
         self.assertFalse(files.import_filename_allowed("legacy.xlsm"))
+        self.assertFalse(files.import_filename_allowed("cycling.mpt"))
         self.assertFalse(files.import_filename_allowed(""))
+
+    def test_biologic_mpr_inspection_is_header_only_and_preview_is_bounded(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "known.mpr"
+            _write_importable_biologic_mpr(path)
+            with patch.object(parsing, "parse_timeseries", side_effect=AssertionError("full parse")):
+                inspected = import_inspection.inspect_file(str(path))
+            preview = files._inspect_import_path(path, db, inspected=inspected)
+
+        self.assertEqual(inspected.ext, "mpr")
+        self.assertEqual(preview["source_format"], "biologic_mpr")
+        self.assertEqual(preview["reference_electrode"], "Ag/AgCl")
+        self.assertTrue(preview["parser_version"].startswith("bm:"))
+        self.assertNotIn("settings", preview["raw_metadata"])
+        self.assertNotIn("log", preview["raw_metadata"])
+        self.assertNotIn("protocol", preview["raw_metadata"])
+        self.assertEqual(preview["raw_metadata"]["modules.count"], "3")
+        self.assertEqual(preview["raw_metadata"]["data.n_datapoints"], "1")
+
+    def test_complete_staged_preview_bounds_all_metadata_facts(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large-header.mpr"
+            path.write_bytes(b"header-only")
+            huge = "header-value " * 20_000
+            inspected = import_inspection.FileInspection(
+                path=str(path),
+                filename=path.name,
+                size=path.stat().st_size,
+                mtime_ns=path.stat().st_mtime_ns,
+                ext="mpr",
+                hash="a" * 64,
+                metadata={
+                    "remarks": huge,
+                    "device_info": huge,
+                    "capabilities": {f"capability-{index}-{huge}": True for index in range(40)},
+                    "protocol_warnings": [huge for _ in range(20)],
+                    "voltage_capabilities": {
+                        "voltage_roles": {f"role-{huge}": huge for _ in range(12)},
+                        "reference_electrode": huge,
+                    },
+                    "raw": {"comment": huge, "settings": {"secret": huge}},
+                },
+            )
+            preview = files._inspect_import_path(path, db, inspected=inspected)
+
+        fact_keys = {
+            "barcode",
+            "remarks",
+            "device_info",
+            "channel",
+            "start_time",
+            "active_mass_mg",
+            "nominal_capacity_mah",
+            "nda_version",
+            "source_format",
+            "software_version",
+            "reference_electrode",
+            "capability_warning",
+            "metadata",
+            "raw_metadata",
+            "metadata_error",
+            "voltage_capabilities",
+            "protocol_capabilities",
+            "protocol_warnings",
+        }
+        facts = {key: preview[key] for key in fact_keys}
+        self.assertLessEqual(
+            len(json.dumps(facts, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+            files._STAGED_METADATA_FACTS_MAX_BYTES,
+        )
+        self.assertLessEqual(len(preview["remarks"]), files._STAGED_PREVIEW_MAX_VALUE_CHARS)
+        self.assertLessEqual(
+            len(preview["voltage_capabilities"].get("reference_electrode", "")),
+            files._STAGED_PREVIEW_MAX_VALUE_CHARS,
+        )
+
+    def test_biologic_mpr_unsupported_and_corrupt_sources_have_distinct_rejections(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unsupported_settings = bytearray(
+                encode_gcpl_settings([{"set_i_c": 0, "current": -1.0}])
+            )
+            unsupported_settings[0] = 0x04
+            unsupported = root / "unsupported.mpr"
+            write_gcpl_mpr(unsupported, [{"total_time_s": 0.0}], settings_payload=bytes(unsupported_settings))
+            with self.assertRaisesRegex(ValueError, r"Unsupported BioLogic \.mpr"):
+                import_inspection.inspect_file(str(unsupported))
+
+            corrupt = root / "corrupt.mpr"
+            corrupt.write_bytes(MPR_MAGIC + b"truncated")
+            with self.assertRaisesRegex(ValueError, r"Invalid BioLogic \.mpr"):
+                import_inspection.inspect_file(str(corrupt))
+
+            wrong_container = root / "wrong-container.mpr"
+            wrong_container.write_bytes(b"not an MPR container")
+            with self.assertRaisesRegex(ValueError, r"not a BioLogic MPR container"):
+                import_inspection.inspect_file(str(wrong_container))
+
+    def test_unexpected_biologic_adapter_failure_is_not_reclassified_as_bad_input(self):
+        with patch.object(
+            parsing.biologic_gcpl,
+            "read_gcpl_header_metadata",
+            side_effect=RuntimeError("adapter defect"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "adapter defect"):
+                parsing.read_header_metadata("unexpected.mpr")
+
+    def test_biologic_preview_stays_metadata_only_until_cycle_identity_is_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "preview.mpr"
+            _write_importable_biologic_mpr(path)
+            with patch.object(files.cache, "build_write_behind", return_value=None) as build:
+                preview, error = files.build_capacity_preview(
+                    path, file_hash="a" * 64
+                )
+
+        self.assertIsNone(preview)
+        self.assertIn("canonical cycling rows", error or "")
+        build.assert_not_called()
+        self.assertEqual(
+            parsing.current_parser_identity_for_extension("mpr"),
+            parsing.parser_identity("preview.mpr"),
+        )
+
+    def test_biologic_mpr_synthetic_preview_fails_closed_without_cycle_identity(self):
+        """The fixture exercises the production boundary, not real-file parity."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "preview-without-cycle-field.mpr"
+            _write_importable_biologic_mpr(path)
+            cache_root = root / "cache"
+            fingerprint = parsing.capture_source_fingerprint(path)
+            with patch.object(files.cache, "CACHE_DIR", cache_root):
+                preview, error = files.build_capacity_preview(
+                    path,
+                    file_hash=fingerprint.hash,
+                    expected_size=fingerprint.size,
+                    expected_mtime_ns=fingerprint.mtime_ns,
+                )
+
+        self.assertIsNone(preview)
+        self.assertRegex(error or "", r"canonical cycling rows|logical cycle identity|MPT")
+        self.assertFalse(cache_root.exists())
+
+    def test_biologic_registration_persists_source_header_without_point_rows(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "register.mpr"
+            _write_importable_biologic_mpr(path)
+            inspected = import_inspection.inspect_file(str(path))
+            prepared = files._prepare_import_source_file(
+                db,
+                source_path=path,
+                filename=path.name,
+                expected_hash=inspected.hash,
+                inspection={
+                    "hash": inspected.hash,
+                    "size": inspected.size,
+                    "mtime_ns": str(inspected.mtime_ns),
+                },
+                allow_metadata_only=True,
+            )
+            source_file = files._persist_prepared_import_source_file(db, prepared)
+            db.flush()
+
+        self.assertEqual(source_file.ext, "mpr")
+        self.assertEqual(source_file.hash, inspected.hash)
+        self.assertEqual(source_file.parse_status, "metadata_only")
+        self.assertEqual(source_file.capacity_summary_status, "unavailable")
+        self.assertIn("settings", source_file.header_meta)
+        self.assertIn("log", source_file.header_meta)
+        capabilities = source_file.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]
+        self.assertEqual(capabilities["voltage_roles"]["voltage_v"], "cell")
+        self.assertTrue(capabilities["voltage_v_derived"])
+        # The normalized capability block remains available even if the
+        # original source later goes offline.
+        path.unlink(missing_ok=True)
+        self.assertEqual(
+            source_file.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]["reference_electrode"],
+            "Ag/AgCl",
+        )
+        self.assertEqual(db.query(SourceFile).count(), 1)
+
+    def test_biologic_metadata_only_registration_requires_explicit_acknowledgement(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "requires-ack.mpr"
+            _write_importable_biologic_mpr(path)
+            inspected = import_inspection.inspect_file(str(path))
+            with self.assertRaises(files.HTTPException) as raised:
+                files._prepare_import_source_file(
+                    db,
+                    source_path=path,
+                    filename=path.name,
+                    expected_hash=inspected.hash,
+                    inspection={
+                        "hash": inspected.hash,
+                        "size": inspected.size,
+                        "mtime_ns": str(inspected.mtime_ns),
+                    },
+                )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(
+            raised.exception.detail["code"],
+            "metadata_only_source_requires_acknowledgement",
+        )
+
+    def test_scanner_discovers_and_registers_biologic_source(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan.mpr"
+            _write_importable_biologic_mpr(path)
+            source_file = scanner.ingest_path(db, path)
+
+        self.assertEqual(source_file.ext, "mpr")
+        self.assertEqual(source_file.location_status, "online")
+        self.assertEqual(source_file.parse_status, "metadata_only")
 
     def test_xlsx_inspection_requires_the_neware_record_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,6 +380,8 @@ class ImportFlowTests(unittest.TestCase):
             nested.mkdir(parents=True)
             (root / "root.nda").write_bytes(b"root")
             (root / "export.xlsx").write_bytes(b"export")
+            (root / "bio.mpr").write_bytes(b"bio")
+            (root / "bio.mpt").write_bytes(b"exclude")
             (nested / "cell.ndax").write_bytes(b"nested")
             (nested / "notes.csv").write_text("ignore", encoding="ascii")
 
@@ -138,7 +389,7 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [item["relative_path"] for item in result["files"]],
-            ["export.xlsx", "root.nda", "batch/nested/cell.ndax"],
+            ["bio.mpr", "export.xlsx", "root.nda", "batch/nested/cell.ndax"],
         )
         self.assertTrue(all(item["selection_root"]["kind"] == "folder" for item in result["files"]))
         self.assertEqual(result["files"][0]["selection_root"]["path"], str(root.resolve()))
@@ -438,7 +689,11 @@ class ImportFlowTests(unittest.TestCase):
         job = background_jobs.get_job(job_id)
         self.assertEqual(job["status"], "failed")
         self.assertIn("session unavailable", job["error"])
+        # No database session was available, so the worker could not confirm
+        # that the SourceFile was deleted. Preserve the worker error as a
+        # failed/unclassified item rather than claiming the row is missing.
         self.assertEqual(job["items"][0]["status"], "failed")
+        self.assertIn("session unavailable", job["items"][0]["error"])
         background_jobs.clear_jobs()
 
     def test_import_submission_returns_before_registration_worker_finishes(self):
@@ -743,7 +998,7 @@ class ImportFlowTests(unittest.TestCase):
                 engine.dispose()
         background_jobs.clear_jobs()
 
-    def test_registration_consumes_inspection_identity_and_header_without_reopening_source(self):
+    def test_registration_consumes_inspection_identity_and_server_header_cache_without_reopening_source(self):
         background_jobs.clear_jobs()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -758,6 +1013,15 @@ class ImportFlowTests(unittest.TestCase):
             source_path.write_bytes(b"inspection-backed-source")
             source_stat = source_path.stat()
             inspected_hash = parsing.compute_hash(source_path)
+            import_inspection.remember_header_metadata(
+                inspected_hash,
+                source_stat.st_size,
+                source_stat.st_mtime_ns,
+                {
+                    "barcode": "INSPECTED-BARCODE",
+                    "raw": {"Config.Barcode": "INSPECTED-BARCODE"},
+                },
+            )
             request = files.ImportCellsRequest(
                 cells=[files.ImportCellDraft(
                     staged_name=source_path.name,
@@ -767,10 +1031,6 @@ class ImportFlowTests(unittest.TestCase):
                         "hash": inspected_hash,
                         "size": source_stat.st_size,
                         "mtime_ns": str(source_stat.st_mtime_ns),
-                        "header_metadata": {
-                            "barcode": "INSPECTED-BARCODE",
-                            "raw": {"Config.Barcode": "INSPECTED-BARCODE"},
-                        },
                     },
                     cell_name="Inspection-backed cell",
                 )]
@@ -778,17 +1038,341 @@ class ImportFlowTests(unittest.TestCase):
             db = factory()
             try:
                 with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
-                    patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
-                    patch.object(files.parsing, "read_header_metadata", side_effect=AssertionError("header reopened")):
+                    patch.object(files.parsing, "read_header_metadata", side_effect=AssertionError("header reopened")), \
+                    patch.object(files.parsing, "compute_hash", wraps=parsing.compute_hash) as compute_hash:
                     files._create_imported_cells_impl(request, db)
                 source = db.query(SourceFile).one()
                 self.assertEqual(source.hash, inspected_hash)
                 self.assertEqual(source.barcode, "INSPECTED-BARCODE")
                 self.assertEqual(db.query(Cell).count(), 1)
+                # The inspection receipt established identity; registration
+                # performs only the final full fingerprint pass.
+                self.assertEqual(compute_hash.call_count, 1)
             finally:
                 db.close()
                 engine.dispose()
         background_jobs.clear_jobs()
+
+    def test_inspection_receipt_rejects_client_header_injection(self):
+        with self.assertRaises(ValidationError):
+            files.ImportCellsRequest(
+                cells=[
+                    files.ImportCellDraft(
+                        staged_name="injected.ndax",
+                        source_path="C:/data/injected.ndax",
+                        filename="injected.ndax",
+                        cell_name="Injected header",
+                        inspection={
+                            "hash": "a" * 64,
+                            "size": 10,
+                            "mtime_ns": 1,
+                            "header_metadata": {"barcode": "not-server-owned"},
+                        },
+                    )
+                ]
+            )
+
+    def test_final_import_fingerprint_pass_rejects_source_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mutated.ndax"
+            path.write_bytes(b"before-registration")
+            fingerprint = parsing.capture_source_fingerprint(path)
+            prepared = {
+                "source_path": path,
+                "filename": path.name,
+                "hash": fingerprint.hash,
+                "size": fingerprint.size,
+                "observed_mtime_ns": fingerprint.mtime_ns,
+            }
+            path.write_bytes(b"after-registration")
+            with self.assertRaises(files.HTTPException) as raised:
+                files._validate_prepared_source_fingerprints([prepared])
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "source_identity_unstable")
+
+    def test_continuation_endpoint_rejects_source_mutated_in_commit_window(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_path = root / "old.ndax"
+            old_path.write_bytes(b"old source")
+            staged_path = root / "continued.ndax"
+            staged_path.write_bytes(b"continued source")
+            old_fingerprint = parsing.capture_source_fingerprint(old_path)
+            staged_fingerprint = parsing.capture_source_fingerprint(staged_path)
+            cell = Cell(name="Continuation identity")
+            test = Test(cell=cell, name="Imported file")
+            old_source = SourceFile(
+                hash=old_fingerprint.hash,
+                path=str(old_path),
+                filename=old_path.name,
+                size=old_fingerprint.size,
+                ext="ndax",
+                observed_size=old_fingerprint.size,
+                observed_mtime_ns=old_fingerprint.mtime_ns,
+                parse_status="parsed",
+                parser_version=parsing.PARSER_VERSION,
+                capacity_summary_status="ready",
+            )
+            db.add_all([cell, test, old_source])
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=old_source.id, position=0))
+            db.commit()
+
+            analysis = {
+                "sources": [{
+                    "kind": "staged",
+                    "key": staged_path.name,
+                    "hash": staged_fingerprint.hash,
+                    "inspection_status": "ready",
+                }],
+                "findings": [],
+                "inspection_complete": True,
+                "can_submit": True,
+            }
+            request = files.AttachContinuationsRequest(
+                sources=[files.ContinuationInspectSourceRequest(
+                    staged_name=staged_path.name,
+                    source_path=str(staged_path),
+                    inspection={
+                        "hash": staged_fingerprint.hash,
+                        "size": staged_fingerprint.size,
+                        "mtime_ns": str(staged_fingerprint.mtime_ns),
+                    },
+                )]
+            )
+            original_register = files._register_or_refresh_source_file
+
+            def register_then_mutate(*args, **kwargs):
+                result = original_register(*args, **kwargs)
+                staged_path.write_bytes(b"mutated after registration")
+                return result
+
+            try:
+                with patch.object(files, "_inspect_test_chain", return_value=analysis), \
+                    patch.object(files.parsing, "read_header_metadata", return_value={}), \
+                    patch.object(files, "_register_or_refresh_source_file", side_effect=register_then_mutate), \
+                    patch.object(files, "start_import_cache_jobs") as start_cache, \
+                    patch.object(files.parsing, "compute_hash", wraps=parsing.compute_hash) as compute_hash:
+                    with self.assertRaises(files.HTTPException) as raised:
+                        files.attach_continuations(test.id, request, db)
+                self.assertEqual(raised.exception.status_code, 409)
+                self.assertIn("changed before commit", str(raised.exception.detail))
+                start_cache.assert_not_called()
+                self.assertEqual(compute_hash.call_count, 1)
+                self.assertEqual(db.query(TestFile).count(), 1)
+                self.assertIsNone(
+                    db.query(SourceFile).filter(SourceFile.hash == staged_fingerprint.hash).one_or_none()
+                )
+            finally:
+                db.close()
+
+    def test_persisted_metadata_only_source_has_stable_no_parse_capability(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata-only.mpr"
+            path.write_bytes(b"metadata-only source")
+            source = SourceFile(
+                hash="m" * 64,
+                path=str(path),
+                filename=path.name,
+                size=path.stat().st_size,
+                ext="mpr",
+                parse_status="metadata_only",
+                parse_error="metadata-only warning",
+                parser_version="bm:gcpl2",
+                capacity_summary_status="unavailable",
+                header_meta={"capabilities": {"canonical_cycling": False}},
+            )
+            cell = Cell(name="Metadata-only cell")
+            test = Test(cell=cell, name="Imported file")
+            db.add_all([cell, test, source])
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+            db.commit()
+
+            with patch.object(files.scanner, "parse_file") as parse_file:
+                with self.assertRaises(files.HTTPException) as parse_error:
+                    files.parse_file(source.id, db)
+                with self.assertRaises(files.HTTPException) as preview_error:
+                    files.preview_file(source.id, db=db)
+            parse_file.assert_not_called()
+            self.assertEqual(parse_error.exception.detail["code"], "canonical_cycling_unavailable")
+            self.assertEqual(preview_error.exception.detail["status"], "metadata_only")
+
+            with patch.object(scanner, "parse_file") as cell_parse:
+                cycles = library.cell_cycles(cell.id, db)
+            cell_parse.assert_not_called()
+            self.assertEqual(cycles["capability"]["status"], "metadata_only")
+            self.assertEqual(cycles["rows"], [])
+        db.close()
+
+    def test_continuation_proposal_reuses_inspection_receipt_without_rehashing(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "receipt.ndax"
+            path.write_bytes(b"continuation receipt")
+            fingerprint = parsing.capture_source_fingerprint(path)
+            request = files.ContinuationInspectSourceRequest(
+                staged_name=path.name,
+                source_path=str(path),
+                inspection={
+                    "hash": fingerprint.hash,
+                    "size": fingerprint.size,
+                    "mtime_ns": str(fingerprint.mtime_ns),
+                },
+            )
+            with patch.object(files.parsing, "compute_hash", side_effect=AssertionError("rehash")), \
+                patch.object(files.parsing, "read_header_metadata", return_value={}), \
+                patch.object(files.continuations, "enrich_source_timing", side_effect=lambda source, **_: source):
+                source = files._continuation_staged_source(
+                    request,
+                    db,
+                    existing_test_id=None,
+                    input_order=0,
+                )
+        self.assertEqual(source["hash"], fingerprint.hash)
+        self.assertEqual(source["inspection_status"], "pending")
+        db.close()
+
+    def test_metadata_only_continuation_requires_ack_and_queues_no_cache_job(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_path = root / "old.mpr"
+            old_path.write_bytes(b"old metadata-only source")
+            staged_path = root / "continued.mpr"
+            staged_path.write_bytes(b"continued metadata-only source")
+            old_fingerprint = parsing.capture_source_fingerprint(old_path)
+            staged_fingerprint = parsing.capture_source_fingerprint(staged_path)
+            metadata = {
+                "raw": {"capabilities": {"canonical_cycling": False}},
+                "capabilities": {"canonical_cycling": False},
+                "protocol_warnings": ["Canonical cycling rows are unavailable."],
+            }
+            cell = Cell(name="Metadata-only continuation")
+            test = Test(cell=cell, name="Imported file")
+            old_source = SourceFile(
+                hash=old_fingerprint.hash,
+                path=str(old_path),
+                filename=old_path.name,
+                size=old_fingerprint.size,
+                ext="mpr",
+                observed_size=old_fingerprint.size,
+                observed_mtime_ns=old_fingerprint.mtime_ns,
+                parse_status="metadata_only",
+                parse_error="Canonical cycling rows are unavailable.",
+                parser_version="bm:gcpl2",
+                capacity_summary_status="unavailable",
+                header_meta=metadata["raw"],
+            )
+            db.add_all([cell, test, old_source])
+            db.flush()
+            db.add(TestFile(test_id=test.id, file_id=old_source.id, position=0))
+            db.commit()
+            source_request = files.ContinuationInspectSourceRequest(
+                staged_name=staged_path.name,
+                source_path=str(staged_path),
+                inspection={
+                    "hash": staged_fingerprint.hash,
+                    "size": staged_fingerprint.size,
+                    "mtime_ns": str(staged_fingerprint.mtime_ns),
+                },
+                allow_metadata_only=True,
+            )
+            with patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.continuations, "_maybe_schedule_cache_build") as schedule:
+                proposal = files._inspect_test_chain(db, test, [source_request])
+            self.assertTrue(proposal["inspection_complete"])
+            self.assertTrue(proposal["can_submit"])
+            finding_ids = [
+                finding["id"]
+                for finding in proposal["findings"]
+                if finding["code"] == "metadata_only_source"
+            ]
+            self.assertEqual(len(finding_ids), 2)
+            schedule.assert_not_called()
+            request = files.AttachContinuationsRequest(
+                sources=[source_request],
+                acknowledged_finding_ids=finding_ids,
+            )
+            with patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.continuations, "_maybe_schedule_cache_build") as schedule, \
+                patch.object(files, "start_import_cache_jobs") as start_cache:
+                result = files.attach_continuations(test.id, request, db)
+            schedule.assert_not_called()
+            start_cache.assert_called_once()
+            self.assertEqual(start_cache.call_args.args[1], [])
+            self.assertEqual(result["cache_jobs"]["parsing_started"], False)
+            self.assertEqual(db.query(TestFile).count(), 2)
+        db.close()
+
+    def test_stale_import_cache_success_and_failure_do_not_mutate_new_source_identity(self):
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = []
+            old_results = {}
+            for index, ok in enumerate((True, False)):
+                path = Path(tmp) / f"stale-{index}.ndax"
+                path.write_bytes(f"old-{index}".encode())
+                old = parsing.capture_source_fingerprint(path)
+                source = SourceFile(
+                    hash=old.hash,
+                    path=str(path),
+                    filename=path.name,
+                    size=old.size,
+                    ext="ndax",
+                    observed_size=old.size,
+                    observed_mtime_ns=old.mtime_ns,
+                    parse_status="parsing",
+                    capacity_summary_status="pending",
+                    parse_error=None,
+                )
+                db.add(source)
+                db.flush()
+                rows.append(source)
+                old_results[path.name] = {
+                    "source_path": str(path),
+                    "source_hash": old.hash,
+                    "source_fingerprint": {
+                        "hash": old.hash,
+                        "size": old.size,
+                        "mtime_ns": old.mtime_ns,
+                    },
+                    "ok": ok,
+                    "parser_version": "old-parser",
+                    "rows": 10,
+                    "cycles": 2,
+                    "error": "old worker failure" if not ok else None,
+                }
+            db.commit()
+
+            for index, source in enumerate(rows):
+                path = Path(source.path)
+                path.write_bytes(f"new-{index}".encode())
+                current = parsing.capture_source_fingerprint(path)
+                source.hash = current.hash
+                source.size = current.size
+                source.observed_size = current.size
+                source.observed_mtime_ns = current.mtime_ns
+                source.parse_status = "parsing"
+                source.parse_error = "keep current state"
+                source.capacity_summary_status = "pending"
+            db.commit()
+
+            dispositions = files.apply_import_cache_results(
+                db,
+                {source.filename: source.id for source in rows},
+                old_results,
+            )
+            self.assertEqual(dispositions, {"stale-0.ndax": "stale", "stale-1.ndax": "stale"})
+            for source in rows:
+                db.refresh(source)
+                self.assertEqual(source.parse_status, "parsing")
+                self.assertEqual(source.parse_error, "keep current state")
+                self.assertEqual(source.capacity_summary_status, "pending")
+        db.close()
 
     def test_inspection_response_does_not_ship_the_parsed_header(self):
         """~56 KB per file to the browser and back is ~58 MB each way at 1,000
@@ -819,7 +1403,7 @@ class ImportFlowTests(unittest.TestCase):
             path = Path(tmp) / "cached.ndax"
             path.write_bytes(b"cached-header-content")
             stat = path.stat()
-            file_hash = "d" * 64
+            file_hash = parsing.compute_hash(path)
             import_inspection.remember_header_metadata(
                 file_hash,
                 stat.st_size,
@@ -842,7 +1426,6 @@ class ImportFlowTests(unittest.TestCase):
                 ]
             )
             with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
-                patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
                 patch.object(files.parsing, "read_header_metadata", side_effect=AssertionError("header reopened")):
                 files._create_imported_cells_impl(request, db)
 
@@ -859,7 +1442,7 @@ class ImportFlowTests(unittest.TestCase):
             path = Path(tmp) / "evicted.ndax"
             path.write_bytes(b"evicted-header-content")
             stat = path.stat()
-            file_hash = "e" * 64
+            file_hash = parsing.compute_hash(path)
             import_inspection._header_cache.clear()
             request = files.ImportCellsRequest(
                 cells=[
@@ -877,7 +1460,6 @@ class ImportFlowTests(unittest.TestCase):
                 ]
             )
             with patch.object(files, "start_import_cache_jobs", return_value={"queued": False}), \
-                patch.object(files.parsing, "compute_hash", side_effect=AssertionError("hash recomputed")), \
                 patch.object(
                     files.parsing, "read_header_metadata", return_value={"barcode": "REREAD"}
                 ) as read_header:
@@ -1200,7 +1782,12 @@ class ImportFlowTests(unittest.TestCase):
                 )
 
         compute_hash.assert_not_called()
-        build_preview.assert_called_once_with(path.resolve(), file_hash="a" * 64)
+        build_preview.assert_called_once_with(
+            path.resolve(),
+            file_hash="a" * 64,
+            expected_size=stat.st_size,
+            expected_mtime_ns=stat.st_mtime_ns,
+        )
         self.assertEqual(response["verified_hash"], "a" * 64)
 
     def test_preview_fingerprint_mismatch_rehashes_and_rejects_changed_source(self):
@@ -1245,7 +1832,12 @@ class ImportFlowTests(unittest.TestCase):
                 )
 
         compute_hash.assert_called_once_with(path.resolve())
-        build_preview.assert_called_once_with(path.resolve(), file_hash="a" * 64)
+        build_preview.assert_called_once_with(
+            path.resolve(),
+            file_hash="a" * 64,
+            expected_size=stat.st_size,
+            expected_mtime_ns=stat.st_mtime_ns,
+        )
         self.assertEqual(response["verified_hash"], "a" * 64)
 
     def test_capacity_preview_uses_verified_hash_without_recomputing(self):
@@ -1286,45 +1878,139 @@ class ImportFlowTests(unittest.TestCase):
 
     def test_cache_worker_failure_marks_registered_source_error(self):
         db = self.make_session()
-        source = SourceFile(
-            hash="d" * 64,
-            path="C:/data/failing.ndax",
-            filename="failing.ndax",
-            size=1,
-            ext="ndax",
-            parse_status="parsing",
-            capacity_summary_status="pending",
-        )
-        db.add(source)
-        db.commit()
-        background_jobs.clear_jobs()
-        job_id = background_jobs.create_job(
-            kind="import_cache",
-            title="Preparing imported cells",
-            description="Building cycling caches",
-            total=1,
-            items=[{"id": "failing.ndax", "label": "failing.ndax"}],
-        )
-        try:
-            db_worker = Mock(wraps=db)
-            db_worker.close = Mock()
-            with patch.object(files, "SessionLocal", return_value=db_worker), patch.object(
-                files,
-                "build_import_caches_parallel",
-                side_effect=RuntimeError("worker unavailable"),
-            ):
-                files.run_import_cache_jobs(
-                    {"failing.ndax": source.id},
-                    [{"staged_name": "failing.ndax", "hash": source.hash, "path": source.path}],
-                    job_id,
-                )
-        finally:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "failing.ndax"
+            path.write_bytes(b"registered source")
+            fingerprint = parsing.capture_source_fingerprint(path)
+            source = SourceFile(
+                hash=fingerprint.hash,
+                path=str(path),
+                filename=path.name,
+                size=fingerprint.size,
+                ext="ndax",
+                observed_size=fingerprint.size,
+                observed_mtime_ns=fingerprint.mtime_ns,
+                parse_status="parsing",
+                capacity_summary_status="pending",
+            )
+            db.add(source)
+            db.commit()
             background_jobs.clear_jobs()
+            job_id = background_jobs.create_job(
+                kind="import_cache",
+                title="Preparing imported cells",
+                description="Building cycling caches",
+                total=1,
+                items=[{"id": "failing.ndax", "label": "failing.ndax"}],
+            )
+            try:
+                db_worker = Mock(wraps=db)
+                db_worker.close = Mock()
+                with patch.object(files, "SessionLocal", return_value=db_worker), patch.object(
+                    files,
+                    "build_import_caches_parallel",
+                    side_effect=RuntimeError("worker unavailable"),
+                ):
+                    files.run_import_cache_jobs(
+                        {"failing.ndax": source.id},
+                        [{
+                            "staged_name": "failing.ndax",
+                            "hash": source.hash,
+                            "path": source.path,
+                            "source_fingerprint": {
+                                "hash": fingerprint.hash,
+                                "size": fingerprint.size,
+                                "mtime_ns": fingerprint.mtime_ns,
+                            },
+                        }],
+                        job_id,
+                    )
+            finally:
+                background_jobs.clear_jobs()
 
-        db.refresh(source)
-        self.assertEqual(source.parse_status, "error")
-        self.assertEqual(source.capacity_summary_status, "error")
-        self.assertIn("registration succeeded", source.parse_error)
+            db.refresh(source)
+            self.assertEqual(source.parse_status, "error")
+            self.assertEqual(source.capacity_summary_status, "error")
+            self.assertIn("registration succeeded", source.parse_error)
+
+    def test_cache_worker_outer_failure_discards_result_after_cross_session_replacement(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        db = factory()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "replaced.ndax"
+            path.write_bytes(b"original cache source")
+            fingerprint = parsing.capture_source_fingerprint(path)
+            source = SourceFile(
+                hash=fingerprint.hash,
+                path=str(path),
+                filename=path.name,
+                size=fingerprint.size,
+                ext="ndax",
+                observed_size=fingerprint.size,
+                observed_mtime_ns=fingerprint.mtime_ns,
+                parse_status="parsing",
+                capacity_summary_status="pending",
+            )
+            db.add(source)
+            db.commit()
+            job_id = background_jobs.create_job(
+                kind="import_cache",
+                title="Preparing imported cells",
+                description="Building cycling caches",
+                total=1,
+                items=[{"id": path.name, "label": path.name}],
+            )
+            cache_job = {
+                "staged_name": path.name,
+                "hash": fingerprint.hash,
+                "path": str(path),
+                "source_fingerprint": {
+                    "hash": fingerprint.hash,
+                    "size": fingerprint.size,
+                    "mtime_ns": fingerprint.mtime_ns,
+                },
+            }
+
+            def fail_after_replacement(*_args, **_kwargs):
+                replacement_db = factory()
+                replacement = replacement_db.get(SourceFile, source.id)
+                replacement.hash = "e" * 64
+                replacement.parse_status = "parsed"
+                replacement.parse_error = "current replacement"
+                replacement.capacity_summary_status = "ready"
+                replacement_db.commit()
+                replacement_db.close()
+                raise RuntimeError("worker unavailable")
+
+            try:
+                with patch.object(files, "SessionLocal", factory), patch.object(
+                    files,
+                    "build_import_caches_parallel",
+                    side_effect=fail_after_replacement,
+                ):
+                    files.run_import_cache_jobs(
+                        {path.name: source.id},
+                        [cache_job],
+                        job_id,
+                    )
+                current = factory().get(SourceFile, source.id)
+                self.assertEqual(current.hash, "e" * 64)
+                self.assertEqual(current.parse_status, "parsed")
+                self.assertEqual(current.parse_error, "current replacement")
+                self.assertEqual(
+                    background_jobs.get_job(job_id)["items"][0]["status"],
+                    "stale",
+                )
+            finally:
+                background_jobs.clear_jobs()
+                db.close()
+                engine.dispose()
 
     def test_header_metadata_prefers_neware_head_remark(self):
         with patch.object(
@@ -1407,6 +2093,24 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(preview["nominal_capacity_mah"], "51.4")
         self.assertEqual(preview["builder"], "CY")
         self.assertEqual(preview["part_number"], "P-1")
+
+    def test_staged_metadata_previews_bound_scalar_and_total_payload_size(self):
+        huge = "header-value " * 20_000
+        preview = files._metadata_preview({"remarks": huge, "builder": huge})
+        raw_preview = files._raw_metadata_preview(
+            {"comment": huge, "nested": {"ignored": huge}}
+        )
+
+        self.assertLessEqual(
+            len(json.dumps(preview, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+            files._STAGED_PREVIEW_MAX_BYTES,
+        )
+        self.assertLessEqual(
+            len(json.dumps(raw_preview, ensure_ascii=False, separators=(",", ":")).encode("utf-8")),
+            files._STAGED_PREVIEW_MAX_BYTES,
+        )
+        self.assertLessEqual(len(preview["remarks"]), files._STAGED_PREVIEW_MAX_VALUE_CHARS)
+        self.assertLessEqual(len(raw_preview["comment"]), files._STAGED_PREVIEW_MAX_VALUE_CHARS)
 
     def test_imported_cell_metadata_excludes_the_raw_header(self):
         """The raw header belongs to SourceFile.header_meta, not to the Cell.
@@ -1791,6 +2495,10 @@ class ImportFlowTests(unittest.TestCase):
         job = background_jobs.get_job(job_id)
         self.assertEqual(job["status"], "completed")
         self.assertIn("deleted", job["description"])
+        self.assertEqual(job["items"][0]["status"], "missing")
+        self.assertIn("source record is gone", job["items"][0]["detail"])
+        self.assertEqual(job["counters"].get("missing"), 1)
+        self.assertNotIn("stale", job["counters"])
         background_jobs.clear_jobs()
 
     def test_registration_stores_the_raw_header_only_on_the_source_file(self):

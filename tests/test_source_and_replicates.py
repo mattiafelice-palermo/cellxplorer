@@ -64,7 +64,7 @@ class SourceAndReplicateTests(unittest.TestCase):
                 "active_mass_mg": 4.2,
                 "raw": {"hello": "world"},
             }
-            cache.build = lambda file_hash, file_path: {
+            cache.build = lambda file_hash, file_path, **_kwargs: {
                 "parser_version": "parser-x",
                 "rows": 123,
                 "cycles": 45,
@@ -374,9 +374,11 @@ class SourceAndReplicateTests(unittest.TestCase):
                 patch.object(cache, "build", side_effect=ValueError("parse failed")),
                 patch.object(cache, "remove_hash_cache") as remove_old,
             ):
-                scanner.update_source_from_path(db, source)
+                with self.assertRaisesRegex(ValueError, "parse failed"):
+                    scanner.update_source_from_path(db, source)
 
-            self.assertEqual(source.parse_status, "error")
+            self.assertEqual(source.hash, "a" * 64)
+            self.assertEqual(source.parse_status, "parsed")
             remove_old.assert_not_called()
 
     def test_replicate_preview_aggregates_aligned_cycle_values_and_stats(self):
@@ -2243,20 +2245,26 @@ class MultiSourceLifecycleApiTests(unittest.TestCase):
             path.write_bytes(b"source")
             first_hash = "1" * 64
             second_hash = "2" * 64
-            with patch.object(parsing, "compute_hash", side_effect=[first_hash, second_hash]), patch.object(
+            with patch.object(parsing, "compute_hash", return_value=second_hash) as compute_hash, patch.object(
                 parsing,
                 "read_header_metadata",
                 return_value={},
             ):
+                source = files._register_or_refresh_source_file(
+                    db,
+                    source_path=path,
+                    filename=path.name,
+                    expected_hash=first_hash,
+                )
                 with self.assertRaises(HTTPException) as ctx:
-                    files._register_or_refresh_source_file(
-                        db,
-                        source_path=path,
-                        filename=path.name,
-                        expected_hash=first_hash,
-                    )
+                    # Registration establishes the identity once; the
+                    # continuation transaction performs the final full
+                    # fingerprint pass immediately before commit.
+                    files._validate_registered_source_fingerprints(db, [source.id])
+                compute_hash.assert_called_once()
         self.assertEqual(ctx.exception.status_code, 409)
-        self.assertEqual(ctx.exception.detail["code"], "source_identity_changed")
+        self.assertIn("changed", str(ctx.exception.detail))
+        db.rollback()
         self.assertEqual(db.query(SourceFile).count(), 0)
 
     def test_detach_last_source_is_rejected(self):

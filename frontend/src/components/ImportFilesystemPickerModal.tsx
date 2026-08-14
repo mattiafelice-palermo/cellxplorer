@@ -357,7 +357,7 @@ export function ImportFilesystemPickerModal({
       closeDisabled={loading}
       title="Load cell files"
       step={1}
-      titleInfo="Select Neware .nda, .ndax, or structured Excel exports (.xlsx), plus folders. Click a folder row to open it; use its checkbox to select the folder recursively."
+      titleInfo="Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family (.mpr; canonical cycling is verified per source), plus folders. Click a folder row to open it; use its checkbox to select the folder recursively."
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       actions={
         <>
@@ -505,7 +505,7 @@ export function ImportFilesystemPickerModal({
             <Paper withBorder p={0}>
               {browseQuery.isPending && !browseQuery.data ? <Center h={360}><Loader /></Center> : browseQuery.isError ? <Center h={360} px="lg"><Alert color="red" w="100%">{browseQuery.error instanceof Error ? browseQuery.error.message : "This folder could not be opened."}</Alert></Center> : <ScrollArea h={360} type="auto" onScrollPositionChange={({ y }) => setEntryScrollTop(y)}><Stack gap={0}>
                 <Group gap="xs" wrap="nowrap" px="sm" py={8} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))" style={{ minHeight: IMPORT_BROWSER_HEADER_HEIGHT, boxSizing: "border-box", borderBottom: "1px solid var(--mantine-color-default-border)" }}><Checkbox aria-label="Select all visible importable files" checked={allVisibleSelected} indeterminate={someVisibleSelected && !allVisibleSelected} disabled={shownSelection.disabled} onChange={toggleShownSelection} /><Text size="xs" fw={700} style={{ flex: 1 }}>Name</Text><Text size="xs" fw={700} w={90} ta="right">Size</Text><Text size="xs" fw={700} w={145}>Modified</Text></Group>
-                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or Neware files here.</Text></Center> : <>
+                {visibleEntries.length === 0 ? <Center h={300}><Text size="sm" c="dimmed">No folders or supported cycler files here.</Text></Center> : <>
                   <Box h={leadingSpacerHeight} aria-hidden="true" />
                   {renderedEntries.map((entry) => {
                   const isFolder = entry.kind === "folder";

@@ -37,6 +37,7 @@ import { ContinuationSourceList } from "./ContinuationSourceList";
 type SourceChainFile = Omit<CellSource, "position" | "tracked_tail">;
 
 function sourceFromFile(file: SourceChainFile): ContinuationInspectSource {
+  const metadataOnly = file.metadata_only || file.parse_status === "metadata_only";
   return {
     key: `existing-${file.id}`,
     kind: "existing",
@@ -54,16 +55,24 @@ function sourceFromFile(file: SourceChainFile): ContinuationInspectSource {
     channel: file.channel,
     nominal_capacity_mah: file.nominal_capacity_mah,
     active_mass_mg: file.active_mass_mg,
-    inspection_status: file.parse_status === "error" ? "error" : file.parse_status === "parsed" ? "ready" : "pending",
+    inspection_status: file.parse_status === "error" ? "error" : metadataOnly || file.parse_status === "parsed" ? "ready" : "pending",
     inspection_error: file.parse_error,
     location_status: file.location_status,
     parse_status: file.parse_status,
     row_count: file.row_count,
+    canonical_cycling: file.canonical_cycling,
+    metadata_only: metadataOnly,
+    capability_warning: file.capability_warning ?? (metadataOnly ? file.parse_error : null),
   };
 }
 
 function stagedSource(source: ImportPreview) {
-  return { staged_name: source.staged_name, source_path: source.source_path };
+  return {
+    staged_name: source.staged_name,
+    source_path: source.source_path,
+    inspection: source.inspection,
+    allow_metadata_only: source.metadata_only,
+  };
 }
 
 function flattenFiles(cell: CellDetail): CellSource[] {
@@ -185,6 +194,9 @@ export function ContinuationManagementPanel({
           cell_id: null,
           cell_name: null,
           created_at: "",
+          canonical_cycling: !source.metadata_only,
+          metadata_only: source.metadata_only,
+          capability_warning: source.capability_warning,
         }),
         key: source.staged_name,
         kind: "staged" as const,
@@ -339,6 +351,7 @@ export function ContinuationManagementPanel({
             disabled={actionInProgress || mode !== "attach"}
             emptyMessage="No sources remain in this proposal."
           />
+          {proposalInspection?.sources.some((source) => source.metadata_only) && <Alert color="orange" title="Metadata-only continuation">One or more selected sources has readable metadata but no independently verified canonical cycling rows. The explicit acknowledgement below is required; no cycling cache or analysis data will be created for that source.</Alert>}
           {proposalInspection && proposalConfirmationIds.length > 0 && <Stack gap={4}><Text size="xs" fw={700}>Acknowledgements</Text>{proposalInspection.findings.filter((finding) => finding.severity === "confirmation").map((finding) => <Checkbox key={finding.id} size="xs" disabled={actionInProgress} checked={acknowledged.has(finding.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); if (event.currentTarget.checked) next.add(finding.id); else next.delete(finding.id); return next; })} label={findingSummary(finding)} />)}</Stack>}
           <Group justify="flex-end" gap="xs">
             <Button variant="default" onClick={closeProposal}>Cancel</Button>

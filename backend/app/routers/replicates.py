@@ -142,6 +142,12 @@ def group_dict(group: ReplicateGroup) -> dict:
                 "name": cell.name,
                 "description": cell.description,
                 "archived": cell.archived,
+                "has_metadata_only": any(
+                    parsing.source_record_metadata_only(link.file)
+                    for test in cell.tests
+                    for link in test.file_links
+                    if link.file is not None
+                ),
                 "total_charge_capacity_mah": cell.total_charge_capacity_mah,
                 "total_discharge_capacity_mah": cell.total_discharge_capacity_mah,
             }
