@@ -123,14 +123,14 @@ The single physical `raw_flags` byte is unpacked into six named NumPy arrays wit
 The encoded IDs `1, 2, 3, 21, 31, 65` identify those logical flags; the physical byte is stored
 once. Canonical status/step semantics built from these acquisition flags belong to 041.2/041.3.
 
-| Name | Mask | Shift | Result |
-| --- | ---: | ---: | --- |
-| `mode` | `0x03` | 0 | uint8 code |
-| `oxidation_reduction` | `0x04` | 2 | boolean |
-| `error` | `0x08` | 3 | boolean |
-| `control_changed` | `0x10` | 4 | boolean |
-| `ns_changed` | `0x20` | 5 | boolean |
-| `counter_incremented` | `0x80` | 7 | boolean |
+| Encoded ID | Name | Mask | Shift | Result |
+| ---: | --- | ---: | ---: | --- |
+| `1` | `mode` | `0x03` | 0 | uint8 code |
+| `2` | `oxidation_reduction` | `0x04` | 2 | boolean |
+| `3` | `error` | `0x08` | 3 | boolean |
+| `21` | `control_changed` | `0x10` | 4 | boolean |
+| `31` | `ns_changed` | `0x20` | 5 | boolean |
+| `65` | `counter_incremented` | `0x80` | 7 | boolean |
 
 The physical dtype contains the packed byte once; the six named arrays are NumPy results owned by the
 data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics

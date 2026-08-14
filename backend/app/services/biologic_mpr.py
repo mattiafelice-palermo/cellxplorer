@@ -91,7 +91,6 @@ MPR_FLAG_DEFINITIONS = (
     MprFlagDefinition("ns_changed", 0x20, 5, True, 31),
     MprFlagDefinition("counter_incremented", 0x80, 7, True, 65),
 )
-MPR_FLAG_NAMES = tuple(definition.name for definition in MPR_FLAG_DEFINITIONS)
 
 
 @dataclass(frozen=True)
@@ -111,12 +110,12 @@ class MprColumnDefinition:
 
 
 MPR_COLUMN_DEFINITIONS = {
-    1: MprColumnDefinition(1, "packed record flags", None, "raw_flags", 0, "u1", "one physical byte; masks are exposed by MPR_FLAG_DEFINITIONS", "packed_flags", 1, MPR_FLAG_NAMES),
-    2: MprColumnDefinition(2, "mode/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("mode",)),
-    3: MprColumnDefinition(3, "oxidation-reduction/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("oxidation_reduction",)),
-    21: MprColumnDefinition(21, "error/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("error",)),
-    31: MprColumnDefinition(31, "control-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("control_changed",)),
-    65: MprColumnDefinition(65, "Ns-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("ns_changed",)),
+    1: MprColumnDefinition(1, "packed record flags / mode", None, "raw_flags", 0, "u1", "one physical byte and the mode logical ID", "packed_flags", 1, ("mode",)),
+    2: MprColumnDefinition(2, "oxidation-reduction/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("oxidation_reduction",)),
+    3: MprColumnDefinition(3, "error/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("error",)),
+    21: MprColumnDefinition(21, "control-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("control_changed",)),
+    31: MprColumnDefinition(31, "Ns-change/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("ns_changed",)),
+    65: MprColumnDefinition(65, "counter-increment/flag logical ID", None, "raw_flags", 0, "u1", "logical flag sharing the ID 1 packed byte", "packed_flag_alias", 1, ("counter_incremented",)),
     131: MprColumnDefinition(131, "sample sequence number", None, "raw_sample_index", 1, "<u2", "raw integer", "record_field", 131),
     4: MprColumnDefinition(4, "elapsed time", "s", "elapsed_time_s", 3, "<f8", "raw elapsed time; not canonical step time", "record_field", 4),
     7: MprColumnDefinition(7, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field", 7),
@@ -159,6 +158,9 @@ if tuple(
     if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "packed_flag_alias"
 ) != MPR_FLAG_ALIAS_IDS:
     raise RuntimeError("MPR packed-flag definitions and supported-ID order diverge")
+for _flag_definition in MPR_FLAG_DEFINITIONS:
+    if _flag_definition.name not in MPR_COLUMN_DEFINITIONS[_flag_definition.encoded_id].flag_names:
+        raise RuntimeError("MPR flag and column-definition metadata diverge")
 
 
 def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
@@ -342,6 +344,13 @@ def _source_label(path: Path) -> str:
     return path.name or "<unnamed MPR>"
 
 
+def _stat_fingerprint(stat_result: object) -> tuple[int, int | None]:
+    return (
+        int(getattr(stat_result, "st_size")),
+        getattr(stat_result, "st_mtime_ns", None),
+    )
+
+
 def _decode_ascii(raw: bytes, field_name: str, path: Path) -> str:
     try:
         return raw.rstrip(b" \x00").decode("ascii")
@@ -513,6 +522,7 @@ def read_mpr(path: str | Path) -> MprDocument:
     try:
         initial_stat = os.fstat(file_handle.fileno())
         file_size = initial_stat.st_size
+        initial_fingerprint = _stat_fingerprint(initial_stat)
         if file_size > MPR_MAX_FILE_SIZE:
             raise UnsupportedMprError(
                 f"{_source_label(source_path)} exceeds the {MPR_MAX_FILE_SIZE} byte MPR safety bound"
@@ -532,6 +542,11 @@ def read_mpr(path: str | Path) -> MprDocument:
         if mapped_size != file_size:
             raise InvalidMprError(
                 f"{_source_label(source_path)} changed size between stat and memory mapping"
+            )
+        mapped_stat = os.fstat(file_handle.fileno())
+        if _stat_fingerprint(mapped_stat) != initial_fingerprint:
+            raise InvalidMprError(
+                f"{_source_label(source_path)} changed between stat and memory mapping"
             )
         if mapping[:MPR_INITIAL_HEADER_SIZE] != MPR_MAGIC:
             raise InvalidMprError(f"{_source_label(source_path)} has an invalid MPR file header")
@@ -588,10 +603,10 @@ def read_mpr(path: str | Path) -> MprDocument:
                 )
 
         data_block = _decode_vmp_data(data_module, source_path)
-        final_size = os.fstat(file_handle.fileno()).st_size
-        if final_size != file_size or len(mapping) != file_size:
+        final_stat = os.fstat(file_handle.fileno())
+        if _stat_fingerprint(final_stat) != initial_fingerprint or len(mapping) != file_size:
             raise InvalidMprError(
-                f"{_source_label(source_path)} changed size while it was being read"
+                f"{_source_label(source_path)} changed while it was being read"
             )
         return MprDocument(
             path=source_path,

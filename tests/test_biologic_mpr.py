@@ -302,7 +302,7 @@ class BiologicMprReaderTests(unittest.TestCase):
         )
         self.assertEqual(
             MPR_COLUMN_DEFINITIONS[1].flag_names,
-            ("mode", "oxidation_reduction", "error", "control_changed", "ns_changed", "counter_incremented"),
+            ("mode",),
         )
         for column_id in SUPPORTED_GCPL_COLUMN_IDS:
             definition = MPR_COLUMN_DEFINITIONS[column_id]
@@ -330,6 +330,28 @@ class BiologicMprReaderTests(unittest.TestCase):
         self.assertEqual(
             tuple(definition.encoded_id for definition in MPR_FLAG_DEFINITIONS),
             (1, 2, 3, 21, 31, 65),
+        )
+        expected_flag_by_id = {
+            1: ("mode", 0x03, 0, False),
+            2: ("oxidation_reduction", 0x04, 2, True),
+            3: ("error", 0x08, 3, True),
+            21: ("control_changed", 0x10, 4, True),
+            31: ("ns_changed", 0x20, 5, True),
+            65: ("counter_incremented", 0x80, 7, True),
+        }
+        for definition in MPR_FLAG_DEFINITIONS:
+            self.assertEqual(
+                (definition.name, definition.mask, definition.shift, definition.boolean),
+                expected_flag_by_id[definition.encoded_id],
+            )
+            self.assertEqual(
+                MPR_COLUMN_DEFINITIONS[definition.encoded_id].flag_names,
+                (definition.name,),
+            )
+            self.assertEqual(MPR_COLUMN_DEFINITIONS[definition.encoded_id].physical_id, 1)
+        self.assertEqual(
+            MPR_PHYSICAL_COLUMN_IDS,
+            (1, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468),
         )
 
     def test_public_exports_are_defined_and_star_importable(self) -> None:
@@ -459,6 +481,30 @@ class BiologicMprReaderTests(unittest.TestCase):
             renamed = path.with_name("renamed-after-shrink.mpr")
             path.rename(renamed)
 
+    def test_same_size_rewrite_between_stat_and_mapping_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            original_mtime = path.stat().st_mtime_ns
+            real_mmap = biologic_mpr.mmap.mmap
+
+            def rewrite_before_mapping(*args, **kwargs):
+                with path.open("r+b") as handle:
+                    handle.seek(0)
+                    first = handle.read(1)
+                    handle.seek(0)
+                    handle.write(bytes([first[0] ^ 1]))
+                os.utime(path, ns=(path.stat().st_atime_ns, original_mtime + 1_000_000))
+                return real_mmap(*args, **kwargs)
+
+            with patch(
+                "backend.app.services.biologic_mpr.mmap.mmap",
+                side_effect=rewrite_before_mapping,
+            ):
+                with self.assertRaises(InvalidMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-same-size-before-map.mpr")
+            path.rename(renamed)
+
     def test_mapped_actual_size_above_limit_fails_even_with_stale_small_stat(self) -> None:
         class OversizedMapping:
             def __len__(self):
@@ -488,7 +534,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 nonlocal calls
                 result = real_fstat(fd)
                 calls += 1
-                if calls == 2:
+                if calls == 3:
                     values = list(result)
                     values[6] += 1
                     return os.stat_result(values)
@@ -498,6 +544,30 @@ class BiologicMprReaderTests(unittest.TestCase):
                 with self.assertRaises(InvalidMprError):
                     read_mpr(path)
             renamed = path.with_name("renamed-after-final-growth.mpr")
+            path.rename(renamed)
+
+    def test_same_size_rewrite_after_mapping_fails_before_return(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            original_mtime = path.stat().st_mtime_ns
+            real_decode_flags = biologic_mpr._decode_flags
+
+            def rewrite_after_mapping(records):
+                with path.open("r+b") as handle:
+                    handle.seek(1197)
+                    current = handle.read(1)
+                    handle.seek(1197)
+                    handle.write(bytes([current[0] ^ 1]))
+                os.utime(path, ns=(path.stat().st_atime_ns, original_mtime + 2_000_000))
+                return real_decode_flags(records)
+
+            with patch(
+                "backend.app.services.biologic_mpr._decode_flags",
+                side_effect=rewrite_after_mapping,
+            ):
+                with self.assertRaises(InvalidMprError):
+                    read_mpr(path)
+            renamed = path.with_name("renamed-after-same-size-after-map.mpr")
             path.rename(renamed)
 
     def test_column_count_bound_fails_before_layout_guessing(self) -> None:
