@@ -44,7 +44,7 @@ def _settings(*, reference_electrode: str | None = "Ag/AgCl") -> bytes:
                 "hold_duration_s": 4.0,
                 "current_cutoff": 0.1,
                 "record_interval_s": 2.0,
-                "goto_step": 1,
+                "goto_step": 0,
                 "repeat_count": 3,
             },
         ],
@@ -261,6 +261,7 @@ class BiologicMetadataTests(unittest.TestCase):
             (base + 62, 9, "capacity unit code"),
             (base + 71, 9, "capacity unit code"),
             (0x0260, 9, "capacity unit code"),
+            (base + 6, 1, "current-reference code"),
             (base + 6, 9, "current-reference code"),
             (base + 14, 9, "current-sign code"),
         ):

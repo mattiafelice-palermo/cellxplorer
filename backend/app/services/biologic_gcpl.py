@@ -51,6 +51,11 @@ GCPL_TECHNIQUE_ID = 0x77
 GCPL_SETTINGS_PARAMETER_OFFSET = 0x1847
 GCPL_SETTINGS_PARAMETER_COUNT = 33
 GCPL_SETTINGS_PARAMETER_ITEMSIZE = 108
+GCPL_SOURCE_SEQUENCE_BASE = 0
+GCPL_CANONICAL_STEP_BASE = 1
+GCPL_STEP_INDEX_BASE_ADJUSTMENT = (
+    GCPL_CANONICAL_STEP_BASE - GCPL_SOURCE_SEQUENCE_BASE
+)
 
 _GCPL_SETTINGS_MINIMUM_SIZE = GCPL_SETTINGS_PARAMETER_OFFSET + 4
 _GCPL_LOG_TIMESTAMP_OFFSET = 0x0249
@@ -87,10 +92,10 @@ _CAPACITY_UNIT_FACTORS_MAH = {
     3: 0.000001,
     4: 0.000000001,
 }
-_SUPPORTED_CURRENT_VS_CODES = frozenset(range(5))
-# The supplied EC-Lab 11.60 layout establishes code 0 as the supported
-# signed-current convention. Other sign encodings remain unresolved until
-# independently verified and therefore fail closed.
+_SUPPORTED_CURRENT_VS_CODES = frozenset({2})
+# The supplied EC-Lab 11.60 layout establishes current-reference selector 2
+# as the only independently verified value. Other selectors remain unresolved
+# until their source meaning is established and therefore fail closed.
 _SUPPORTED_CURRENT_SIGN_CODES = frozenset({0})
 
 # BioLogic's packed mode code is a source-level categorical value.  The
@@ -386,7 +391,10 @@ def _decode_gcpl_sequence(payload: bytes, sequence_number: int) -> dict[str, Any
         ),
         "rest_record_interval_s": rest_record_interval_s,
         "final_voltage_test_v": final_voltage_test_v,
-        "loop_start_step": goto_step or None,
+        # This is the raw zero-based goto target. It is converted to the
+        # canonical one-based protocol step only after the sequence count is
+        # known and a nonzero repeat count proves that zero is a real target.
+        "loop_start_step": None,
         "loop_count": repeat_count or None,
         "raw": raw,
     }
@@ -464,10 +472,21 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         _read_f32(payload, 0x024C, "characteristic mass")
     )
     acquisition_start_raw = _read_f32(payload, 0x0117, "acquisition start")
-    sequences = tuple(
+    sequences = list(
         _decode_gcpl_sequence(payload, sequence_number)
         for sequence_number in range(1, n_sequences + 1)
     )
+    for sequence in sequences:
+        raw_goto = int(sequence["raw"]["goto_step"])
+        repeat_count = sequence.get("loop_count")
+        if repeat_count is None:
+            sequence["loop_start_step"] = None
+            continue
+        if raw_goto >= n_sequences:
+            raise UnsupportedBiologicGcplError(
+                f"GCPL goto Ns target {raw_goto} is outside the zero-based sequence range"
+            )
+        sequence["loop_start_step"] = raw_goto + GCPL_STEP_INDEX_BASE_ADJUSTMENT
     return {
         "layout": GCPL_SETTINGS_LAYOUT,
         "technique_id": technique_id,
@@ -497,7 +516,7 @@ def decode_gcpl_settings(module: MprModule) -> dict[str, Any]:
         "parameter_count": n_parameters,
         "parameter_itemsize": GCPL_SETTINGS_PARAMETER_ITEMSIZE,
         "n_sequences": int(n_sequences),
-        "sequences": list(sequences),
+        "sequences": sequences,
     }
 
 
@@ -990,12 +1009,15 @@ def _validate_document_settings(document: MprDocument) -> dict[str, Any]:
     if (
         not np.isfinite(observed_values).all()
         or np.any(observed_values != np.floor(observed_values))
-        or np.any(observed_values < 1)
+        or np.any(observed_values < GCPL_SOURCE_SEQUENCE_BASE)
     ):
         raise UnsupportedBiologicGcplError(
-            "GCPL observed Ns values are not finite positive integers"
+            "GCPL observed Ns values are not finite non-negative integers"
         )
-    observed = {int(value) for value in np.unique(observed_values)}
+    observed = {
+        int(value) + GCPL_STEP_INDEX_BASE_ADJUSTMENT
+        for value in np.unique(observed_values)
+    }
     declared = {
         int(sequence["step_index"])
         for sequence in settings.get("sequences") or ()
@@ -1513,7 +1535,14 @@ def map_gcpl_to_canonical(
     if np.any(~supported_mode):
         values = np.unique(mode[~supported_mode]).astype(np.int64).tolist()
         raise UnsupportedBiologicGcplError(f"unsupported BioLogic GCPL mode code(s): {values}")
-    ns = _validate_integer_column(_column(records, "raw_sample_index"), "Ns", positive=True)
+    raw_ns = _validate_integer_column(
+        _column(records, "raw_sample_index"), "Ns", positive=False
+    )
+    if np.any(raw_ns < GCPL_SOURCE_SEQUENCE_BASE):
+        raise UnsupportedBiologicGcplError(
+            "GCPL Ns contains a negative source sequence identity"
+        )
+    ns = raw_ns + GCPL_STEP_INDEX_BASE_ADJUSTMENT
     half_cycle = _validate_integer_column(
         _column(records, "raw_half_cycle_index"), "half-cycle", positive=False
     )
@@ -1631,7 +1660,7 @@ def map_gcpl_to_canonical(
         "adapter_revision": BIOLOGIC_GCPL_ADAPTER_REVISION,
         "record_index_base": 1,
         "step_index_source": "Ns",
-        "step_index_base_adjustment": 0,
+        "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
         "cycle_source": "explicit full-cycle field",
         "cycle_formula": "copied from independently decoded raw_cycle_index",
         "current_sign_factor": 1,
@@ -1665,6 +1694,9 @@ __all__ = [
     "GCPL_SETTINGS_PARAMETER_COUNT",
     "GCPL_SETTINGS_PARAMETER_ITEMSIZE",
     "GCPL_SETTINGS_PARAMETER_OFFSET",
+    "GCPL_SOURCE_SEQUENCE_BASE",
+    "GCPL_CANONICAL_STEP_BASE",
+    "GCPL_STEP_INDEX_BASE_ADJUSTMENT",
     "GCPL_TECHNIQUE_ID",
     "BiologicGcplError",
     "build_gcpl_protocol",

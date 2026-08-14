@@ -31,7 +31,7 @@ def _row(
     *,
     cycle: int = 1,
     mode: int = MPR_MODE_GALVANOSTATIC,
-    ns: int = 1,
+    ns: int = 0,
     half_cycle: int = 0,
     control: float = 3600.0,
     q_mAh: float = 0.0,
@@ -131,17 +131,17 @@ class BiologicGcplMappingTests(unittest.TestCase):
         rows = [
             _row(0.0, ns_changed=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
-            _row(2.0, mode=MPR_MODE_REST, ns=2, control=0.0, q_mAh=1.0, ns_changed=True),
-            _row(3.0, mode=MPR_MODE_REST, ns=2, control=0.0, q_mAh=1.0),
+            _row(2.0, mode=MPR_MODE_REST, ns=1, control=0.0, q_mAh=1.0, ns_changed=True),
+            _row(3.0, mode=MPR_MODE_REST, ns=1, control=0.0, q_mAh=1.0),
             _row(
                 4.0,
-                ns=3,
+                ns=2,
                 half_cycle=0,
                 control=-3600.0,
                 q_mAh=1.0,
                 ns_changed=True,
             ),
-            _row(5.0, ns=3, half_cycle=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
+            _row(5.0, ns=2, half_cycle=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
         ]
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(
@@ -276,9 +276,9 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_programmed_sequence_is_preserved_and_repeated_execution_gets_new_step(self) -> None:
         rows = [
-            _row(0.0, ns=1, ns_changed=True),
-            _row(1.0, ns=2, half_cycle=0, control=-3600.0, ns_changed=True),
-            _row(2.0, ns=1, half_cycle=0, ns_changed=True),
+            _row(0.0, ns=0, ns_changed=True),
+            _row(1.0, ns=1, half_cycle=0, control=-3600.0, ns_changed=True),
+            _row(2.0, ns=0, half_cycle=0, ns_changed=True),
         ]
         frame = _map_rows(rows)
 
@@ -385,16 +385,16 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_capacity_transfer_at_step_boundary_fails_closed(self) -> None:
         rows = [
-            _row(0.0, ns=1, ns_changed=True),
-            _row(1.0, ns=2, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
+            _row(0.0, ns=0, ns_changed=True),
+            _row(1.0, ns=1, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
         ]
         with self.assertRaises(UnsupportedBiologicGcplError):
             _map_rows(rows)
 
     def test_unexplained_ns_changed_flag_fails_closed(self) -> None:
         rows = [
-            _row(0.0, ns=1, ns_changed=True),
-            _row(1.0, ns=1, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
+            _row(0.0, ns=0, ns_changed=True),
+            _row(1.0, ns=0, ns_changed=True, q_mAh=1.0, dq_mAh=1.0),
         ]
         with self.assertRaisesRegex(UnsupportedBiologicGcplError, "Ns-change flag"):
             _map_rows(rows)
@@ -523,10 +523,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
         rows = [
             _row(0.0, half_cycle=0, ns_changed=True),
             _row(1.0, half_cycle=0, q_mAh=1.0, dq_mAh=1.0),
-            _row(2.0, half_cycle=1, ns=2, control=-3600.0, q_mAh=0.0, ns_changed=True),
-            _row(3.0, half_cycle=1, ns=2, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
-            _row(4.0, half_cycle=2, ns=3, q_mAh=0.0, ns_changed=True),
-            _row(5.0, half_cycle=2, ns=3, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=0.0, ns_changed=True),
+            _row(3.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
+            _row(4.0, half_cycle=2, ns=2, q_mAh=0.0, ns_changed=True),
+            _row(5.0, half_cycle=2, ns=2, q_mAh=1.0, dq_mAh=1.0),
         ]
         with self.assertRaises(UnsupportedBiologicGcplError):
             _map_rows(rows)
@@ -535,7 +535,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         rows = [
             _row(0.0, half_cycle=0, ns_changed=True),
             _row(1.0, half_cycle=1, q_mAh=1.0, dq_mAh=1.0),
-            _row(2.0, half_cycle=0, ns=2, q_mAh=2.0, dq_mAh=1.0, ns_changed=True),
+            _row(2.0, half_cycle=0, ns=1, q_mAh=2.0, dq_mAh=1.0, ns_changed=True),
         ]
         with self.assertRaisesRegex(UnsupportedBiologicGcplError, "regresses or resets"):
             _map_rows(rows)
@@ -546,9 +546,9 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(1.0, voltage_v=3.7, q_mAh=1.0, dq_mAh=1.0),
             _row(2.0, mode=MPR_MODE_POTENTIOSTATIC, voltage_v=3.7, control=3.7, q_mAh=1.8, dq_mAh=0.8, measured_current_ma=3500.0),
             _row(3.0, mode=MPR_MODE_POTENTIOSTATIC, voltage_v=3.7, control=3.7, q_mAh=2.8, dq_mAh=1.0, measured_current_ma=3000.0),
-            _row(4.0, ns=2, control=-3600.0, voltage_v=3.7, q_mAh=2.8, ns_changed=True),
-            _row(5.0, ns=2, control=-3600.0, voltage_v=3.4, q_mAh=1.8, dq_mAh=-1.0),
-            _row(6.0, ns=2, control=-3600.0, voltage_v=3.0, q_mAh=0.0, dq_mAh=-1.8),
+            _row(4.0, ns=1, control=-3600.0, voltage_v=3.7, q_mAh=2.8, ns_changed=True),
+            _row(5.0, ns=1, control=-3600.0, voltage_v=3.4, q_mAh=1.8, dq_mAh=-1.0),
+            _row(6.0, ns=1, control=-3600.0, voltage_v=3.0, q_mAh=0.0, dq_mAh=-1.8),
         ]
         frame = _map_rows(rows, dedicated_current=True)
         cycles = calc.per_cycle(frame)
@@ -601,7 +601,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         records = np.zeros(3, dtype=dtype)
         records["raw_cycle_index"] = [1, 1, 1]
         records["raw_flags"] = [0x21, 0x01, 0x01]
-        records["raw_sample_index"] = [1, 1, 1]
+        records["raw_sample_index"] = [0, 0, 0]
         records["elapsed_time_s"] = [10.0, 11.0, 12.0]
         records["raw_dq_mAh"] = [0.0, 1.0, 0.0]
         records["raw_control_v_or_mA"] = [3600.0, 3600.0, 3600.0]
@@ -627,9 +627,9 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_explicit_step_time_must_reset_at_non_time_step_boundary(self) -> None:
         rows = [
-            {**_row(0.0, ns=1, ns_changed=True), "step_time_s": 0.0},
-            {**_row(1.0, ns=1, q_mAh=1.0, dq_mAh=1.0), "step_time_s": 1.0},
-            {**_row(2.0, ns=2, q_mAh=1.0, ns_changed=True), "step_time_s": 2.0},
+            {**_row(0.0, ns=0, ns_changed=True), "step_time_s": 0.0},
+            {**_row(1.0, ns=0, q_mAh=1.0, dq_mAh=1.0), "step_time_s": 1.0},
+            {**_row(2.0, ns=1, q_mAh=1.0, ns_changed=True), "step_time_s": 2.0},
         ]
         with self.assertRaisesRegex(InvalidBiologicGcplError, "does not reset"):
             _map_rows(rows, step_time=True)

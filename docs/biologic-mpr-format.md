@@ -188,15 +188,20 @@ mass of about `0.001 g`, a sequence-2 current of about `-7.69 mA`, a `0.2 V` seq
 `900 s` post-discharge `tR`, and a final zero-current `tM` of `3,600 s`. Current and capacity units
 are normalized to mA and mA.h using validated source unit codes. Explicit C-rate settings are
 retained only when the sequence selects C/C×N control; a C-rate is never inferred from active mass.
+The current-reference selector is independently verified only for code `2` in this revision; other
+selectors fail closed rather than receiving the same current meaning by assumption.
 
 The normalized protocol uses the existing CellXplorer step schema. A voltage limit with no hold
 duration is CC until an operational cutoff. A verified voltage target plus hold duration is represented
 by the shared CCCV step type; no adapter-only `substeps` field is emitted. A zero-current sequence
 with `tM` but no `EM` target is the verified open-circuit/rest representation used by the supplied
 sample. An unresolved C-rate direction remains an explicit Control step and does not receive a guessed
-charge/discharge or CV meaning. `goto Ns` and `nc cycles` are retained as inclusive loop structure
-when they are valid; malformed forward or zero repeats are preserved in raw settings and excluded
-from structural groups. Instrument protection limits are not fabricated from the GCPL operating range.
+charge/discharge or CV meaning. Raw `goto Ns` targets are zero-based and are converted with the same
+`+1` adjustment as data rows; raw target zero is retained when `nc cycles` is nonzero, so a loop can
+legitimately target the first sequence. `goto Ns` and `nc cycles` are retained as inclusive loop
+structure when they are valid; malformed forward or zero repeats are preserved in raw settings and
+excluded from structural groups. Instrument protection limits are not fabricated from the GCPL
+operating range.
 
 The declared protocol exposes explicit capability facts for protocol availability, explicit rates,
 operational cutoffs/limits, loop structure, and semantic condition grammar. BioLogic does not carry
@@ -228,7 +233,9 @@ as `NaT`; file modification time is never used.
 The direct adapter in `backend/app/services/biologic_gcpl.py` maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
-is copied without renumbering into `step_index`. The supported contract is one-based (`Ns >= 1`).
+is zero-based in the verified file. The canonical adapter applies the documented base adjustment
+`step_index = raw Ns + 1` (`raw Ns >= 0`); for example, the private sample's raw `Ns=1` belongs to
+settings sequence 2 and is published as canonical `step_index=2`.
 
 The adapter keeps the accepted BioLogic sign factor explicit as `+1`: positive canonical current is
 charge and negative canonical current is discharge. ID-211 is converted into non-negative,
@@ -271,7 +278,7 @@ does not contain a verified timezone offset. If the log is absent or unreliable,
 present with `NaT` values and `absolute_timestamps` is false. File modification time is never used.
 
 An executed `step` is a one-based source-local occurrence. Occurrence boundaries are established by
-validated Ns/cycle/half-cycle changes, explicit step-time resets, and entry/exit from Rest. A
+validated zero-based Ns/cycle/half-cycle changes, explicit step-time resets, and entry/exit from Rest. A
 galvanostatic-to-potentiostatic transition within one occurrence stays one step and is classified as
 CCCV when the canonical vocabulary supports it. Current, voltage, capacity, rest, loop, and timestamp
 settings are retained in the normalized protocol metadata; unsupported Neware condition expressions
