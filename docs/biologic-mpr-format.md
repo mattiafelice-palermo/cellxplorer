@@ -80,38 +80,41 @@ The physical record dtype is little-endian where applicable and has `itemsize ==
 
 | Offset | Size | Dtype | Field | Raw meaning | Unit |
 | ---: | ---: | --- | --- | --- | --- |
-| 0 | 1 | `uint8` | `flags` | packed record flags | — |
-| 1 | 2 | `<u2` | `ns` | sample sequence number | — |
-| 3 | 8 | `<f8` | `time_s` | elapsed time | s |
-| 11 | 8 | `<f8` | `dq_mAh` | incremental charge | mA.h |
-| 19 | 8 | `<f8` | `q_minus_q0_mAh` | charge relative to origin | mA.h |
-| 27 | 4 | `<f4` | `control_v_or_mA` | technique-dependent control value | V or mA |
-| 31 | 4 | `<f4` | `working_potential_v` | working-electrode potential | V |
-| 35 | 4 | `<f4` | `counter_potential_v` | counter-electrode potential | V |
-| 39 | 2 | `<u2` | `current_range` | current-range code | — |
-| 41 | 8 | `<f8` | `q_charge_discharge_mAh` | charge/discharge quantity | mA.h |
-| 49 | 4 | `<u4` | `half_cycle` | half-cycle index | — |
+| 0 | 1 | `uint8` | `raw_flags` | packed raw record flags | — |
+| 1 | 2 | `<u2` | `raw_sample_index` | raw sample sequence number | — |
+| 3 | 8 | `<f8` | `elapsed_time_s` | raw elapsed time; not canonical step time | s |
+| 11 | 8 | `<f8` | `raw_dq_mAh` | raw incremental charge | mA.h |
+| 19 | 8 | `<f8` | `raw_q_minus_q0_mAh` | raw charge relative to origin | mA.h |
+| 27 | 4 | `<f4` | `raw_control_v_or_mA` | technique-dependent raw control value | V or mA |
+| 31 | 4 | `<f4` | `raw_ewe_v` | raw Ewe-labeled potential value | V |
+| 35 | 4 | `<f4` | `raw_ece_v` | raw Ece-labeled potential value | V |
+| 39 | 2 | `<u2` | `raw_current_range_code` | raw current-range code | — |
+| 41 | 8 | `<f8` | `raw_q_charge_discharge_mAh` | raw charge/discharge quantity | mA.h |
+| 49 | 4 | `<u4` | `raw_half_cycle_index` | raw half-cycle index | — |
 
 The full encoded ID `468` is required for the final field. It is not normalized with `% 256` and is
 not silently replaced with the low-byte value `212`.
 
 ## Packed flags
 
-The single physical `flags` byte is unpacked into NumPy arrays with vectorized masks. The masks
-below are the only flags exposed by this reader revision; bit `0x40` remains unclaimed.
+The single physical `raw_flags` byte is unpacked into eight neutral raw-bit NumPy arrays with
+vectorized masks. This child deliberately does not assign protocol meanings such as step mode,
+control change, or counter change; those mappings belong to 041.2/041.3.
 
 | Name | Mask | Shift | Result |
 | --- | ---: | ---: | --- |
-| `mode` | `0x03` | 0 | uint8 code |
-| `oxidation_reduction` | `0x04` | 2 | boolean |
-| `error` | `0x08` | 3 | boolean |
-| `control_changed` | `0x10` | 4 | boolean |
-| `ns_changed` | `0x20` | 5 | boolean |
-| `counter_incremented` | `0x80` | 7 | boolean |
+| `raw_bit_0` | `0x01` | 0 | boolean |
+| `raw_bit_1` | `0x02` | 0 | boolean |
+| `raw_bit_2` | `0x04` | 0 | boolean |
+| `raw_bit_3` | `0x08` | 0 | boolean |
+| `raw_bit_4` | `0x10` | 0 | boolean |
+| `raw_bit_5` | `0x20` | 0 | boolean |
+| `raw_bit_6` | `0x40` | 0 | boolean |
+| `raw_bit_7` | `0x80` | 0 | boolean |
 
-The physical dtype contains the packed byte once; the derived arrays are views/temporary NumPy
-results owned by the open data block and are cleared with it. Canonical status/step semantics are
-intentionally deferred to Spec 041.2.
+The physical dtype contains the packed byte once; the derived arrays are NumPy results owned by the
+data block and are cleared with it. Canonical status/step semantics are intentionally deferred to
+Spec 041.2.
 
 ## Bounds and ownership
 
@@ -120,9 +123,11 @@ above 64 columns before decoding. It validates declared module ends, exact recor
 the `n_datapoints * 53` multiplication before calling `np.frombuffer`. An unknown optional module
 is preserved as a descriptor and skipped by its declared length.
 
-`read_mpr()` owns a read-only memory map. `MprDocument`/`MprDataBlock` are context managers and the
-typed record array must not be retained after the context closes unless the caller makes an owning
-copy.
+`read_mpr()` owns a read-only memory map. `MprDocument`/`MprDataBlock` are context managers. Typed
+records are copied into an owning NumPy array before return, so ordinary record consumption remains
+valid after the context closes. Module payloads remain zero-copy views and must be released before
+closing the document; a retained view causes close to fail explicitly and can be released before a
+retry.
 
 ## Fail-closed rules
 
@@ -135,8 +140,14 @@ signature but a truncated/corrupt header is classified as invalid.
 
 ## Provenance and licensing
 
-The implementation is independently authored. No GPL parser package, source, comments, dtype table,
-mapping table, or test is imported or copied into the reader. A separate external runtime was used
-only as a private comparison oracle for the supplied file's dtype names, byte offsets, and flag
-masks; it remains outside the repository and runtime. No MPT file was available, so no MPT-derived
-claim is made here.
+The implementation is independently authored. The physical offsets and dtypes were rederived from
+project-owned bytes: the observed record-area boundary is offset 1,007, the exact module remainder
+is `5,483 * 53`, and the field partition is recorded in the table above. Raw names are descriptive
+labels authored for this reader, not copied vendor names; flag exposure is neutral bit decomposition.
+Literal `struct.pack_into` fixture bytes independently test every field offset and endian choice.
+
+A separate external GPL runtime was run only after that direct-byte definition as an output-only
+comparison oracle. It was not used as implementation input, and no package, source, comments, dtype
+table, mapping table, or private sample entered the repository or runtime. Static tests audit the
+reader, requirements, and production entry-point files for prohibited parser dependencies. No MPT
+file was available, so no MPT-derived claim is made here.

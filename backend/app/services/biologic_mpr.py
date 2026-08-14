@@ -82,49 +82,55 @@ class MprColumnDefinition:
     record_offset: int | None
     dtype: str | None
     note: str
+    storage_kind: str
+    flag_names: tuple[str, ...] = ()
 
 
-# The five auxiliary IDs are part of the exact GCPL layout signature but do
-# not add another byte range to the 53-byte record emitted by the supplied
-# modern sample.  They are retained and validated as IDs rather than guessed
-# into synthetic numeric fields.  Their protocol meaning belongs to 041.2.
-MPR_AUXILIARY_COLUMN_IDS = (5, 6, 9, 39, 211)
+# The five layout-descriptor IDs are part of the exact GCPL layout signature
+# but do not add another byte range to the 53-byte record emitted by the
+# supplied modern sample. They are retained and validated as descriptor IDs,
+# rather than guessed into synthetic numeric fields. Their protocol meaning
+# belongs to 041.2.
+MPR_LAYOUT_DESCRIPTOR_IDS = (5, 6, 9, 39, 211)
 
 MPR_RECORD_DTYPE = np.dtype(
     [
-        ("flags", "u1"),
-        ("ns", "<u2"),
-        ("time_s", "<f8"),
-        ("dq_mAh", "<f8"),
-        ("q_minus_q0_mAh", "<f8"),
-        ("control_v_or_mA", "<f4"),
-        ("working_potential_v", "<f4"),
-        ("counter_potential_v", "<f4"),
-        ("current_range", "<u2"),
-        ("q_charge_discharge_mAh", "<f8"),
-        ("half_cycle", "<u4"),
+        ("raw_flags", "u1"),
+        ("raw_sample_index", "<u2"),
+        ("elapsed_time_s", "<f8"),
+        ("raw_dq_mAh", "<f8"),
+        ("raw_q_minus_q0_mAh", "<f8"),
+        ("raw_control_v_or_mA", "<f4"),
+        ("raw_ewe_v", "<f4"),
+        ("raw_ece_v", "<f4"),
+        ("raw_current_range_code", "<u2"),
+        ("raw_q_charge_discharge_mAh", "<f8"),
+        ("raw_half_cycle_index", "<u4"),
     ],
     align=False,
 )
 
 MPR_COLUMN_DEFINITIONS = {
-    1: MprColumnDefinition(1, "packed record flags", None, "flags", 0, "u1", "packed flags"),
-    2: MprColumnDefinition(2, "sample sequence number", None, "ns", 1, "<u2", "raw integer"),
-    3: MprColumnDefinition(3, "elapsed time", "s", "time_s", 3, "<f8", "raw time"),
-    21: MprColumnDefinition(21, "incremental charge", "mA.h", "dq_mAh", 11, "<f8", "raw charge"),
-    31: MprColumnDefinition(31, "charge relative to origin", "mA.h", "q_minus_q0_mAh", 19, "<f8", "raw charge"),
-    65: MprColumnDefinition(65, "control value", "V or mA", "control_v_or_mA", 27, "<f4", "technique-dependent raw control"),
-    131: MprColumnDefinition(131, "working-electrode potential", "V", "working_potential_v", 31, "<f4", "raw potential"),
-    4: MprColumnDefinition(4, "counter-electrode potential", "V", "counter_potential_v", 35, "<f4", "raw potential"),
-    7: MprColumnDefinition(7, "current range", None, "current_range", 39, "<u2", "raw integer code"),
-    13: MprColumnDefinition(13, "charge/discharge quantity", "mA.h", "q_charge_discharge_mAh", 41, "<f8", "raw charge"),
-    468: MprColumnDefinition(468, "half-cycle index", None, "half_cycle", 49, "<u4", "full encoded ID; do not truncate to 212"),
-    5: MprColumnDefinition(5, "auxiliary GCPL layout identifier", None, None, None, None, "validated layout signature; no standalone record field"),
-    6: MprColumnDefinition(6, "auxiliary GCPL layout identifier", None, None, None, None, "validated layout signature; no standalone record field"),
-    9: MprColumnDefinition(9, "auxiliary GCPL layout identifier", None, None, None, None, "validated layout signature; no standalone record field"),
-    39: MprColumnDefinition(39, "auxiliary GCPL layout identifier", None, None, None, None, "validated layout signature; no standalone record field"),
-    211: MprColumnDefinition(211, "auxiliary GCPL layout identifier", None, None, None, None, "validated layout signature; no standalone record field"),
+    1: MprColumnDefinition(1, "packed record flags", None, "raw_flags", 0, "u1", "one physical byte; meanings remain raw in 041.1", "packed_flags", tuple(f"raw_bit_{bit}" for bit in range(8))),
+    2: MprColumnDefinition(2, "sample sequence number", None, "raw_sample_index", 1, "<u2", "raw integer", "record_field"),
+    3: MprColumnDefinition(3, "elapsed time", "s", "elapsed_time_s", 3, "<f8", "raw elapsed time; not canonical step time", "record_field"),
+    21: MprColumnDefinition(21, "incremental charge", "mA.h", "raw_dq_mAh", 11, "<f8", "raw charge", "record_field"),
+    31: MprColumnDefinition(31, "charge relative to origin", "mA.h", "raw_q_minus_q0_mAh", 19, "<f8", "raw charge", "record_field"),
+    65: MprColumnDefinition(65, "control value", "V or mA", "raw_control_v_or_mA", 27, "<f4", "technique-dependent raw control", "record_field"),
+    131: MprColumnDefinition(131, "working-electrode potential bytes", "V", "raw_ewe_v", 31, "<f4", "raw Ewe-labeled value; role mapping is deferred", "record_field"),
+    4: MprColumnDefinition(4, "counter-electrode potential bytes", "V", "raw_ece_v", 35, "<f4", "raw Ece-labeled value; role mapping is deferred", "record_field"),
+    7: MprColumnDefinition(7, "current range", None, "raw_current_range_code", 39, "<u2", "raw integer code", "record_field"),
+    13: MprColumnDefinition(13, "charge/discharge quantity", "mA.h", "raw_q_charge_discharge_mAh", 41, "<f8", "raw charge", "record_field"),
+    468: MprColumnDefinition(468, "half-cycle index bytes", None, "raw_half_cycle_index", 49, "<u4", "full encoded ID; do not truncate to 212", "record_field"),
+    5: MprColumnDefinition(5, "GCPL layout descriptor 5", None, None, None, None, "declared by the exact supported block signature; consumes no separate record bytes", "layout_descriptor"),
+    6: MprColumnDefinition(6, "GCPL layout descriptor 6", None, None, None, None, "declared by the exact supported block signature; consumes no separate record bytes", "layout_descriptor"),
+    9: MprColumnDefinition(9, "GCPL layout descriptor 9", None, None, None, None, "declared by the exact supported block signature; consumes no separate record bytes", "layout_descriptor"),
+    39: MprColumnDefinition(39, "GCPL layout descriptor 39", None, None, None, None, "declared by the exact supported block signature; consumes no separate record bytes", "layout_descriptor"),
+    211: MprColumnDefinition(211, "GCPL layout descriptor 211", None, None, None, None, "declared by the exact supported block signature; consumes no separate record bytes", "layout_descriptor"),
 }
+
+if set(MPR_COLUMN_DEFINITIONS) != set(SUPPORTED_GCPL_COLUMN_IDS):
+    raise RuntimeError("MPR column definitions and supported-ID allowlist diverge")
 
 @dataclass(frozen=True)
 class MprFlagDefinition:
@@ -136,18 +142,13 @@ class MprFlagDefinition:
     boolean: bool
 
 
-MPR_FLAG_DEFINITIONS = (
-    MprFlagDefinition("mode", 0x03, 0, False),
-    MprFlagDefinition("oxidation_reduction", 0x04, 2, True),
-    MprFlagDefinition("error", 0x08, 3, True),
-    MprFlagDefinition("control_changed", 0x10, 4, True),
-    MprFlagDefinition("ns_changed", 0x20, 5, True),
-    MprFlagDefinition("counter_incremented", 0x80, 7, True),
+MPR_FLAG_DEFINITIONS = tuple(
+    MprFlagDefinition(f"raw_bit_{bit}", 1 << bit, 0, True) for bit in range(8)
 )
 
 
 def _decode_flags(records: np.ndarray) -> dict[str, np.ndarray]:
-    packed = records["flags"]
+    packed = records["raw_flags"]
     return {
         definition.name: (
             ((packed & definition.mask) >> definition.shift).astype(np.uint8, copy=False)
@@ -212,15 +213,24 @@ class MprModule:
 
     @property
     def is_vmp_set(self) -> bool:
-        return self.module_type.upper() == "VMP" and self.long_name.lower().startswith("set")
+        return (
+            self.short_name.casefold() == "modulevmp"
+            and self.long_name.casefold() == "set   vmp settings"
+        )
 
     @property
     def is_vmp_data(self) -> bool:
-        return self.module_type.upper() == "VMP" and self.long_name.lower().startswith("data")
+        return (
+            self.short_name.casefold() == "modulevmp"
+            and self.long_name.casefold() == "data  vmp data"
+        )
 
     @property
     def is_vmp_log(self) -> bool:
-        return self.module_type.upper() == "VMP" and self.long_name.lower().startswith("log")
+        return (
+            self.short_name.casefold() == "modulevmp"
+            and self.long_name.casefold() == "log   vmp log"
+        )
 
 
 @dataclass
@@ -284,15 +294,22 @@ class MprDocument:
             raise MprError(
                 "MPR mapped data is still referenced; release records/views before closing"
             ) from exc
-        finally:
-            self._file.close()
+        self._file.close()
         self._closed = True
 
     def __enter__(self) -> "MprDocument":
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            # A retained zero-copy module view must not replace an exception
+            # raised by the caller. The caller can release that view and retry
+            # close() explicitly; successful ordinary record consumption is
+            # lifetime-safe because records are owning arrays.
+            if exc_type is None:
+                raise
 
 
 def _source_label(path: Path) -> str:
@@ -432,7 +449,7 @@ def _decode_vmp_data(module: MprModule, path: Path) -> MprDataBlock:
             dtype=MPR_RECORD_DTYPE,
             count=n_datapoints,
             offset=VMP_DATA_RECORD_OFFSET,
-        )
+        ).copy()
     except (TypeError, ValueError) as exc:
         payload.release()
         raise InvalidMprError(f"{_source_label(path)} VMP records cannot be bulk-decoded") from exc

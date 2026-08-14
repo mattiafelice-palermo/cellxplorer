@@ -3,20 +3,29 @@ from __future__ import annotations
 from pathlib import Path
 import struct
 import tempfile
+import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
 from backend.app.services.biologic_mpr import (
     InvalidMprError,
+    MPR_LAYOUT_DESCRIPTOR_IDS,
+    MPR_COLUMN_DEFINITIONS,
     MPR_MAGIC,
     MPR_MAGIC_PREFIX,
+    MPR_MAX_COLUMNS,
+    MPR_MAX_FILE_SIZE,
+    MPR_MAX_MODULE_COUNT,
     MPR_MODULE_HEADER_SIZE,
     MPR_RECORD_DTYPE,
     SUPPORTED_GCPL_COLUMN_IDS,
     UnsupportedMprColumn,
     UnsupportedMprError,
     UnsupportedMprModuleVersion,
+    MprError,
     read_mpr,
 )
 
@@ -63,6 +72,57 @@ def _data_payload(
         + struct.pack(f">{len(column_ids)}H", *column_ids)
     )
     return prefix.ljust(record_offset, b"\x00") + records
+
+
+def _literal_record_bytes(
+    *,
+    flags: tuple[int, ...],
+    raw_sample_index: tuple[int, ...],
+    elapsed_time_s: tuple[float, ...],
+    raw_dq_mAh: tuple[float, ...],
+    raw_q_minus_q0_mAh: tuple[float, ...],
+    raw_control_v_or_mA: tuple[float, ...],
+    raw_ewe_v: tuple[float, ...],
+    raw_ece_v: tuple[float, ...],
+    raw_current_range_code: tuple[int, ...],
+    raw_q_charge_discharge_mAh: tuple[float, ...],
+    raw_half_cycle_index: tuple[int, ...],
+) -> bytes:
+    """Encode known records from literal offsets, independently of production dtype."""
+
+    columns = (
+        flags,
+        raw_sample_index,
+        elapsed_time_s,
+        raw_dq_mAh,
+        raw_q_minus_q0_mAh,
+        raw_control_v_or_mA,
+        raw_ewe_v,
+        raw_ece_v,
+        raw_current_range_code,
+        raw_q_charge_discharge_mAh,
+        raw_half_cycle_index,
+    )
+    assert len({len(column) for column in columns}) == 1
+    records = bytearray(len(flags) * 53)
+    field_specs = (
+        (0, "<B", flags),
+        (1, "<H", raw_sample_index),
+        (3, "<d", elapsed_time_s),
+        (11, "<d", raw_dq_mAh),
+        (19, "<d", raw_q_minus_q0_mAh),
+        (27, "<f", raw_control_v_or_mA),
+        (31, "<f", raw_ewe_v),
+        (35, "<f", raw_ece_v),
+        (39, "<H", raw_current_range_code),
+        (41, "<d", raw_q_charge_discharge_mAh),
+        (49, "<I", raw_half_cycle_index),
+    )
+    for index in range(len(flags)):
+        base = index * 53
+        for offset, format_string, values in field_specs:
+            struct.pack_into(format_string, records, base + offset, values[index])
+    return bytes(records)
 
 
 def _write_fixture(
@@ -139,8 +199,8 @@ class BiologicMprReaderTests(unittest.TestCase):
                     document.vmp_data.records.dtype.names,
                     MPR_RECORD_DTYPE.names,
                 )
-                self.assertIsInstance(document.vmp_data.records.base, memoryview)
-                self.assertEqual(document.vmp_data.flags["mode"].shape, (2,))
+                self.assertIsNone(document.vmp_data.records.base)
+                self.assertEqual(document.vmp_data.flags["raw_bit_0"].shape, (2,))
 
     def test_log_module_is_optional_at_low_level(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -216,6 +276,24 @@ class BiologicMprReaderTests(unittest.TestCase):
             with self.assertRaises(UnsupportedMprModuleVersion):
                 read_mpr(path)
 
+    def test_column_definitions_cover_exact_layout_and_storage_roles(self) -> None:
+        self.assertEqual(
+            tuple(MPR_COLUMN_DEFINITIONS[column_id].encoded_id for column_id in SUPPORTED_GCPL_COLUMN_IDS),
+            SUPPORTED_GCPL_COLUMN_IDS,
+        )
+        self.assertEqual(
+            tuple(
+                column_id
+                for column_id in SUPPORTED_GCPL_COLUMN_IDS
+                if MPR_COLUMN_DEFINITIONS[column_id].storage_kind == "layout_descriptor"
+            ),
+            MPR_LAYOUT_DESCRIPTOR_IDS,
+        )
+        self.assertEqual(
+            MPR_COLUMN_DEFINITIONS[1].flag_names,
+            tuple(f"raw_bit_{bit}" for bit in range(8)),
+        )
+
     def test_rejects_unknown_column_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             ids = list(SUPPORTED_GCPL_COLUMN_IDS)
@@ -229,6 +307,25 @@ class BiologicMprReaderTests(unittest.TestCase):
             ids = (SUPPORTED_GCPL_COLUMN_IDS[1],) + SUPPORTED_GCPL_COLUMN_IDS[:1] + SUPPORTED_GCPL_COLUMN_IDS[2:]
             path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
             with self.assertRaises(UnsupportedMprColumn):
+                read_mpr(path)
+
+    def test_required_module_names_use_exact_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            contents = bytearray(path.read_bytes())
+            contents[52 + 10 : 52 + 10 + 31] = b"settings extension".ljust(31, b" ")
+            path.write_bytes(contents)
+            with self.assertRaises(UnsupportedMprError):
+                read_mpr(path)
+
+    def test_data_module_name_collision_is_not_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            contents = bytearray(path.read_bytes())
+            data_offset = 52 + MPR_MODULE_HEADER_SIZE + 8
+            contents[data_offset + 10 : data_offset + 10 + 31] = b"database extension".ljust(31, b" ")
+            path.write_bytes(contents)
+            with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
     def test_rejects_record_area_size_mismatch(self) -> None:
@@ -263,19 +360,56 @@ class BiologicMprReaderTests(unittest.TestCase):
             with self.assertRaises(InvalidMprError):
                 read_mpr(path)
 
+    def test_module_count_bound_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp), unknown_modules=MPR_MAX_MODULE_COUNT)
+            with self.assertRaises(UnsupportedMprError):
+                read_mpr(path)
+
+    def test_file_size_bound_fails_before_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with patch(
+                "backend.app.services.biologic_mpr.os.fstat",
+                return_value=SimpleNamespace(st_size=MPR_MAX_FILE_SIZE + 1),
+            ):
+                with self.assertRaises(UnsupportedMprError):
+                    read_mpr(path)
+
+    def test_column_count_bound_fails_before_layout_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            ids = tuple(range(MPR_MAX_COLUMNS + 1))
+            path = _write_fixture(Path(temp), data_payload=_data_payload(column_ids=ids))
+            with self.assertRaises(InvalidMprError):
+                read_mpr(path)
+
     def test_decodes_known_typed_values_and_packed_flags_vectorially(self) -> None:
-        expected = np.zeros(2, dtype=MPR_RECORD_DTYPE)
-        expected["flags"] = [0xB5, 0x08]
-        expected["ns"] = [17, 18]
-        expected["time_s"] = [1.25, 2.5]
-        expected["dq_mAh"] = [-0.125, 0.25]
-        expected["q_minus_q0_mAh"] = [-1.5, -1.25]
-        expected["control_v_or_mA"] = [-7.69, 0.5]
-        expected["working_potential_v"] = [1.4368, 1.2]
-        expected["counter_potential_v"] = [-0.00015, 0.0002]
-        expected["current_range"] = [10, 11]
-        expected["q_charge_discharge_mAh"] = [-0.125, 0.25]
-        expected["half_cycle"] = [0, 4]
+        record_bytes = _literal_record_bytes(
+            flags=(0xB5, 0x08),
+            raw_sample_index=(17, 18),
+            elapsed_time_s=(1.25, 2.5),
+            raw_dq_mAh=(-0.125, 0.25),
+            raw_q_minus_q0_mAh=(-1.5, -1.25),
+            raw_control_v_or_mA=(-7.69, 0.5),
+            raw_ewe_v=(1.4368, 1.2),
+            raw_ece_v=(-0.00015, 0.0002),
+            raw_current_range_code=(10, 11),
+            raw_q_charge_discharge_mAh=(-0.125, 0.25),
+            raw_half_cycle_index=(0, 4),
+        )
+        expected = {
+            "raw_flags": (0xB5, 0x08),
+            "raw_sample_index": (17, 18),
+            "elapsed_time_s": (1.25, 2.5),
+            "raw_dq_mAh": (-0.125, 0.25),
+            "raw_q_minus_q0_mAh": (-1.5, -1.25),
+            "raw_control_v_or_mA": (-7.69, 0.5),
+            "raw_ewe_v": (1.4368, 1.2),
+            "raw_ece_v": (-0.00015, 0.0002),
+            "raw_current_range_code": (10, 11),
+            "raw_q_charge_discharge_mAh": (-0.125, 0.25),
+            "raw_half_cycle_index": (0, 4),
+        }
 
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(
@@ -283,7 +417,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 data_payload=_data_payload(
                     n_datapoints=2,
                     record_itemsize=MPR_RECORD_DTYPE.itemsize,
-                    record_bytes=expected.tobytes(),
+                    record_bytes=record_bytes,
                 ),
             )
             with read_mpr(path) as document:
@@ -291,37 +425,86 @@ class BiologicMprReaderTests(unittest.TestCase):
                 actual_flags = {
                     name: values.copy() for name, values in document.vmp_data.flags.items()
                 }
-            for field_name in MPR_RECORD_DTYPE.names:
-                np.testing.assert_allclose(actual[field_name], expected[field_name])
-            self.assertEqual(actual_flags["mode"].tolist(), [1, 0])
-            self.assertEqual(actual_flags["oxidation_reduction"].tolist(), [True, False])
-            self.assertEqual(actual_flags["error"].tolist(), [False, True])
-            self.assertEqual(actual_flags["control_changed"].tolist(), [True, False])
-            self.assertEqual(actual_flags["ns_changed"].tolist(), [True, False])
-            self.assertEqual(actual_flags["counter_incremented"].tolist(), [True, False])
+            for field_name, expected_values in expected.items():
+                np.testing.assert_allclose(actual[field_name], expected_values)
+            expected_flags = {
+                f"raw_bit_{bit}": [bool(0xB5 & (1 << bit)), bool(0x08 & (1 << bit))]
+                for bit in range(8)
+            }
+            self.assertEqual(actual_flags.keys(), expected_flags.keys())
+            for name, expected_values in expected_flags.items():
+                self.assertEqual(actual_flags[name].tolist(), expected_values)
 
     def test_large_fixture_uses_one_typed_bulk_array(self) -> None:
-        n_datapoints = 50_000
-        records = np.zeros(n_datapoints, dtype=MPR_RECORD_DTYPE)
-        records["ns"] = np.arange(n_datapoints, dtype=np.uint16)
-        records["time_s"] = np.arange(n_datapoints, dtype=np.float64)
+        n_datapoints = 500_000
+        records = bytearray(n_datapoints * MPR_RECORD_DTYPE.itemsize)
+        for index in range(n_datapoints):
+            struct.pack_into("<H", records, index * MPR_RECORD_DTYPE.itemsize + 1, index % 65536)
         with tempfile.TemporaryDirectory() as temp:
             path = _write_fixture(
                 Path(temp),
                 data_payload=_data_payload(
                     n_datapoints=n_datapoints,
                     record_itemsize=MPR_RECORD_DTYPE.itemsize,
-                    record_bytes=records.tobytes(),
+                    record_bytes=bytes(records),
                 ),
             )
+            started = time.perf_counter()
             with read_mpr(path) as document:
                 self.assertEqual(document.vmp_data.records.shape, (n_datapoints,))
                 self.assertEqual(document.vmp_data.records.dtype, MPR_RECORD_DTYPE)
+                self.assertEqual(document.vmp_data.records.nbytes, n_datapoints * 53)
+            self.assertLess(time.perf_counter() - started, 10.0)
+
+    def test_owned_records_survive_document_close(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            with read_mpr(path) as document:
+                records = document.vmp_data.records
+            self.assertEqual(records.shape, (2,))
+            self.assertEqual(int(records["raw_sample_index"][0]), 513)
+
+    def test_retained_payload_requires_release_then_close_is_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            document = read_mpr(path)
+            payload = document.vmp_set.payload
+            with self.assertRaises(MprError):
+                document.close()
+            self.assertFalse(document._closed)
+            payload.release()
+            document.close()
+            document.close()
+            self.assertTrue(document._closed)
+
+    def test_body_exception_is_not_masked_by_retained_payload_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_fixture(Path(temp))
+            document = None
+            payload = None
+            with self.assertRaisesRegex(ValueError, "body failure"):
+                with read_mpr(path) as document:
+                    payload = document.vmp_set.payload
+                    raise ValueError("body failure")
+            payload.release()
+            document.close()
 
     def test_production_reader_has_no_gpl_parser_dependency(self) -> None:
         source = Path("backend/app/services/biologic_mpr.py").read_text(encoding="utf-8").lower()
-        for prohibited in ("galvani", "bio_logic.mprfile", "mprfile"):
+        for prohibited in ("galvani", "bio_logic.mprfile", "mprfile", "pyec-lab", "pympr"):
             self.assertNotIn(prohibited, source)
+        for relative in (
+            "backend/requirements.txt",
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.py",
+            "backend/app/main.py",
+        ):
+            candidate = Path(relative)
+            if candidate.exists():
+                dependency_text = candidate.read_text(encoding="utf-8").lower()
+                for prohibited in ("galvani", "bio_logic.mprfile", "mprfile", "pyec-lab", "pympr"):
+                    self.assertNotIn(prohibited, dependency_text, str(candidate))
 
 
 if __name__ == "__main__":
