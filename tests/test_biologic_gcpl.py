@@ -19,7 +19,7 @@ from backend.app.services.biologic_gcpl import (
     map_gcpl_to_canonical,
 )
 from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE, read_mpr
-from tests.biologic_mpr_fixture import write_gcpl_mpr
+from tests.biologic_mpr_fixture import encode_gcpl_records, write_gcpl_mpr
 
 
 def _row(
@@ -33,6 +33,8 @@ def _row(
     dq_mAh: float = 0.0,
     ewe_v: float = 3.5,
     ece_v: float = 0.0,
+    voltage_v: float | None = None,
+    measured_current_ma: float | None = None,
     ns_changed: bool = False,
 ) -> dict[str, object]:
     return {
@@ -45,8 +47,61 @@ def _row(
         "raw_dq_mAh": dq_mAh,
         "ewe_v": ewe_v,
         "ece_v": ece_v,
+        "voltage_v": ewe_v - ece_v if voltage_v is None else voltage_v,
+        "measured_current_ma": control if measured_current_ma is None else measured_current_ma,
         "ns_changed": ns_changed,
     }
+
+
+def _structured_records(
+    rows: list[dict[str, object]],
+    *,
+    dedicated_current: bool = False,
+    direct_voltage: bool = True,
+    step_time: bool = False,
+) -> np.ndarray:
+    """Build semantic test records with independently verified optional fields."""
+
+    extra = []
+    if direct_voltage:
+        extra.append(("raw_voltage_v", "<f8"))
+    if dedicated_current:
+        extra.append(("raw_current_ma", "<f8"))
+    if step_time:
+        extra.append(("raw_step_time_s", "<f8"))
+    dtype = np.dtype(MPR_RECORD_DTYPE.descr + extra)
+    base = np.frombuffer(encode_gcpl_records(rows), dtype=MPR_RECORD_DTYPE)
+    records = np.zeros(len(rows), dtype=dtype)
+    for name in MPR_RECORD_DTYPE.names or ():
+        records[name] = base[name]
+    if direct_voltage:
+        records["raw_voltage_v"] = [
+            float(row.get("voltage_v", row.get("ewe_v", 3.5))) for row in rows
+        ]
+    if dedicated_current:
+        records["raw_current_ma"] = [
+            float(row.get("measured_current_ma", row.get("control", 0.0))) for row in rows
+        ]
+    if step_time:
+        records["raw_step_time_s"] = [float(row.get("step_time_s", 0.0)) for row in rows]
+    return records
+
+
+def _map_rows(
+    rows: list[dict[str, object]],
+    *,
+    dedicated_current: bool = False,
+    direct_voltage: bool = True,
+    step_time: bool = False,
+):
+    return map_gcpl_to_canonical(
+        _structured_records(
+            rows,
+            dedicated_current=dedicated_current,
+            direct_voltage=direct_voltage,
+            step_time=step_time,
+        )
+    )
 
 
 class BiologicGcplMappingTests(unittest.TestCase):
@@ -63,7 +118,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl1:r1")
         self.assertFalse(parsing.source_filename_allowed("source.mpr"))
 
-    def test_direct_mpr_dispatch_returns_valid_canonical_frame(self) -> None:
+    def test_direct_mpr_dispatch_defers_unresolved_three_electrode_voltage(self) -> None:
         rows = [
             _row(0.0, ns_changed=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
@@ -72,16 +127,19 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(
                 4.0,
                 ns=3,
-                half_cycle=1,
+                half_cycle=0,
                 control=-3600.0,
                 q_mAh=1.0,
                 ns_changed=True,
             ),
-            _row(5.0, ns=3, half_cycle=1, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
+            _row(5.0, ns=3, half_cycle=0, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
         ]
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(Path(temp) / "fixture.mpr", rows)
-            frame = parsing.parse_timeseries(path)
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "primary full-cell voltage"):
+                parsing.parse_timeseries(path)
+
+        frame = _map_rows(rows)
 
         self.assertEqual(
             list(frame.columns),
@@ -113,22 +171,19 @@ class BiologicGcplMappingTests(unittest.TestCase):
         np.testing.assert_allclose(frame["voltage_v"], 3.5)
         np.testing.assert_allclose(frame["charge_capacity_mah"], [0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
         np.testing.assert_allclose(frame["discharge_capacity_mah"], [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-        self.assertTrue(frame.attrs["biologic_gcpl"]["voltage_v_derived"])
+        self.assertFalse(frame.attrs["biologic_gcpl"]["voltage_v_derived"])
 
     def test_programmed_sequence_is_preserved_and_repeated_execution_gets_new_step(self) -> None:
         rows = [
             _row(0.0, ns=1, ns_changed=True),
-            _row(1.0, ns=2, half_cycle=1, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0, ns_changed=True),
-            _row(2.0, ns=1, half_cycle=2, q_mAh=0.0, ns_changed=True),
+            _row(1.0, ns=2, half_cycle=0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0, ns_changed=True),
+            _row(2.0, ns=1, half_cycle=0, q_mAh=0.0, ns_changed=True),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "loop.mpr", rows)
-            with read_mpr(path) as document:
-                frame = map_gcpl_to_canonical(document)
+        frame = _map_rows(rows)
 
         self.assertEqual(frame["step_index"].tolist(), [1, 2, 1])
         self.assertEqual(frame["step"].tolist(), [1, 2, 3])
-        self.assertEqual(frame["cycle"].tolist(), [1, 1, 2])
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
 
     def test_cc_cv_transition_stays_one_executed_step_and_maps_cccv(self) -> None:
         rows = [
@@ -140,11 +195,10 @@ class BiologicGcplMappingTests(unittest.TestCase):
                 control=3.7,
                 q_mAh=2.0,
                 dq_mAh=1.0,
+                measured_current_ma=3600.0,
             ),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "cccv.mpr", rows)
-            frame = parsing.parse_timeseries(path)
+        frame = _map_rows(rows, dedicated_current=True)
 
         self.assertEqual(frame["step"].tolist(), [1, 1, 1])
         self.assertEqual(frame["status"].unique().tolist(), ["CCCV_Chg"])
@@ -156,22 +210,79 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(0.0, ns_changed=True),
             _row(1.0, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "ambiguous.mpr", rows)
-            with self.assertRaises(UnsupportedBiologicGcplError):
-                parsing.parse_timeseries(path)
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows)
+
+    def test_zero_current_active_block_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, control=0.0, ns_changed=True),
+            _row(1.0, control=0.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows)
+
+    def test_capacity_transfer_during_rest_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, mode=MPR_MODE_REST, control=0.0, ns_changed=True),
+            _row(1.0, mode=MPR_MODE_REST, control=0.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows)
+
+    def test_current_capacity_and_incremental_signs_must_agree(self) -> None:
+        rows = [
+            _row(0.0, control=3600.0, ns_changed=True),
+            _row(1.0, control=3600.0, q_mAh=1.0, dq_mAh=-1.0),
+        ]
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows)
+
+    def test_dedicated_current_is_preserved_instead_of_using_control_setpoint(self) -> None:
+        rows = [
+            _row(0.0, control=1000.0, measured_current_ma=2000.0, ns_changed=True),
+            _row(1.0, control=1000.0, measured_current_ma=2000.0, q_mAh=2.0, dq_mAh=2.0),
+        ]
+        frame = _map_rows(rows, dedicated_current=True)
+        np.testing.assert_allclose(frame["current_ma"], [2000.0, 2000.0])
+
+    def test_error_flag_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, ns_changed=True),
+            {**_row(1.0, q_mAh=1.0, dq_mAh=1.0), "error": True},
+        ]
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
 
     def test_standalone_cv_discharge_is_not_mislabelled(self) -> None:
         rows = [
-            _row(0.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, ns_changed=True),
-            _row(1.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, q_mAh=-1.0, dq_mAh=-1.0),
+            _row(
+                0.0,
+                mode=MPR_MODE_POTENTIOSTATIC,
+                control=3.0,
+                measured_current_ma=-3600.0,
+                ns_changed=True,
+            ),
+            _row(
+                1.0,
+                mode=MPR_MODE_POTENTIOSTATIC,
+                control=3.0,
+                q_mAh=-1.0,
+                dq_mAh=-1.0,
+                measured_current_ma=-3600.0,
+            ),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "cv-discharge.mpr", rows)
-            with self.assertRaises(UnsupportedBiologicGcplError):
-                parsing.parse_timeseries(path)
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows, dedicated_current=True)
 
-    def test_half_cycle_formula_and_capacity_reset_are_deterministic(self) -> None:
+    def test_potentiostatic_rows_require_measured_current(self) -> None:
+        rows = [
+            _row(0.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, ns_changed=True),
+            _row(1.0, mode=MPR_MODE_POTENTIOSTATIC, control=3.0, q_mAh=1.0, dq_mAh=1.0),
+        ]
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "measured-current"):
+            _map_rows(rows)
+
+    def test_unvalidated_half_cycle_progression_fails_closed(self) -> None:
         rows = [
             _row(0.0, half_cycle=0, ns_changed=True),
             _row(1.0, half_cycle=0, q_mAh=1.0, dq_mAh=1.0),
@@ -180,47 +291,72 @@ class BiologicGcplMappingTests(unittest.TestCase):
             _row(4.0, half_cycle=2, ns=3, q_mAh=0.0, ns_changed=True),
             _row(5.0, half_cycle=2, ns=3, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "cycles.mpr", rows)
-            frame = parsing.parse_timeseries(path)
+        with self.assertRaises(UnsupportedBiologicGcplError):
+            _map_rows(rows)
 
-        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1, 1, 2, 2])
-        np.testing.assert_allclose(frame["charge_capacity_mah"], [0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
-        np.testing.assert_allclose(frame["discharge_capacity_mah"], [0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+    def test_half_cycle_regression_or_reset_fails_closed(self) -> None:
+        rows = [
+            _row(0.0, half_cycle=0, ns_changed=True),
+            _row(1.0, half_cycle=1, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, half_cycle=0, ns=2, q_mAh=2.0, dq_mAh=1.0, ns_changed=True),
+        ]
+        with self.assertRaisesRegex(UnsupportedBiologicGcplError, "regresses or resets"):
+            _map_rows(rows)
 
     def test_calc_per_cycle_consumes_canonical_frame_without_biologic_branch(self) -> None:
         rows = [
-            _row(0.0, ns_changed=True),
-            _row(1.0, q_mAh=1.0, dq_mAh=1.0),
-            _row(2.0, ns=2, half_cycle=1, control=-3600.0, q_mAh=1.0, ns_changed=True),
-            _row(3.0, ns=2, half_cycle=1, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
+            _row(0.0, ns_changed=True, voltage_v=3.5),
+            _row(1.0, voltage_v=3.7, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, mode=MPR_MODE_POTENTIOSTATIC, voltage_v=3.7, control=3.7, q_mAh=1.8, dq_mAh=0.8, measured_current_ma=3500.0),
+            _row(3.0, mode=MPR_MODE_POTENTIOSTATIC, voltage_v=3.7, control=3.7, q_mAh=2.8, dq_mAh=1.0, measured_current_ma=3000.0),
+            _row(4.0, ns=2, control=-3600.0, voltage_v=3.7, q_mAh=2.8, ns_changed=True),
+            _row(5.0, ns=2, control=-3600.0, voltage_v=3.4, q_mAh=1.8, dq_mAh=-1.0),
+            _row(6.0, ns=2, control=-3600.0, voltage_v=3.0, q_mAh=0.0, dq_mAh=-1.8),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "calc.mpr", rows)
-            frame = parsing.parse_timeseries(path)
+        frame = _map_rows(rows, dedicated_current=True)
         cycles = calc.per_cycle(frame)
         self.assertEqual(cycles["cycle"].tolist(), [1])
-        self.assertEqual(cycles.loc[0, "charge_capacity_mah"], 1.0)
-        self.assertEqual(cycles.loc[0, "discharge_capacity_mah"], 1.0)
+        self.assertAlmostEqual(cycles.loc[0, "charge_capacity_mah"], 2.8)
+        self.assertAlmostEqual(cycles.loc[0, "discharge_capacity_mah"], 2.8)
         self.assertEqual(cycles.loc[0, "coulombic_efficiency_pct"], 100.0)
+        self.assertAlmostEqual(cycles.loc[0, "charge_time_h"], 3.0 / 3600.0)
+        self.assertAlmostEqual(cycles.loc[0, "discharge_time_h"], 2.0 / 3600.0)
+        self.assertAlmostEqual(cycles.loc[0, "mean_charge_voltage_v"], (3.5 + 3.7 + 3.7 + 3.7) / 4.0)
+        self.assertAlmostEqual(cycles.loc[0, "first_charge_voltage_v"], 3.5)
+        self.assertAlmostEqual(cycles.loc[0, "last_charge_voltage_v"], 3.7)
+        self.assertAlmostEqual(cycles.loc[0, "mean_discharge_voltage_v"], (3.7 + 3.4 + 3.0) / 3.0)
+        self.assertAlmostEqual(cycles.loc[0, "first_discharge_voltage_v"], 3.7)
+        self.assertAlmostEqual(cycles.loc[0, "last_discharge_voltage_v"], 3.0)
+        self.assertAlmostEqual(cycles.loc[0, "cv_charge_time_h"], 2.0 / 3600.0)
+        self.assertAlmostEqual(cycles.loc[0, "cv_charge_capacity_mah"], 1.8)
+        self.assertAlmostEqual(cycles.loc[0, "cv_charge_fraction_pct"], 1.8 / 2.8 * 100.0)
+        self.assertEqual(cycles.loc[0, "cv_charge_event_count"], 1.0)
+        self.assertEqual(cycles.loc[0, "cv_reached"], 1.0)
+        self.assertTrue(np.isnan(cycles.loc[0, "cycle_duration_h"]))
         self.assertTrue(np.isnan(cycles.loc[0, "charge_energy_mwh"]))
         self.assertTrue(np.isnan(cycles.loc[0, "discharge_energy_mwh"]))
+
+        malformed = frame.copy()
+        malformed.loc[1, "step_index"] = 2
+        with self.assertRaises(canonical_cycling.CanonicalCyclingError):
+            canonical_cycling.validate_raw_timeseries(malformed)
 
     def test_integration_cross_check_is_diagnostic_only(self) -> None:
         rows = [
             _row(0.0, ns_changed=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
         ]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "integration.mpr", rows)
-            frame = parsing.parse_timeseries(path)
+        frame = _map_rows(rows)
         integrated = integrate_capacity_by_step(frame)
         self.assertAlmostEqual(integrated[1], 1.0, places=9)
         self.assertAlmostEqual(frame["charge_capacity_mah"].iloc[-1], 1.0, places=9)
         self.assertNotIn("charge_energy_mwh", frame.columns)
 
     def test_explicit_step_time_reset_is_a_boundary_when_available(self) -> None:
-        dtype = np.dtype(MPR_RECORD_DTYPE.descr + [("raw_step_time_s", "<f8")])
+        dtype = np.dtype(
+            MPR_RECORD_DTYPE.descr
+            + [("raw_voltage_v", "<f8"), ("raw_step_time_s", "<f8")]
+        )
         records = np.zeros(3, dtype=dtype)
         records["raw_flags"] = [0x21, 0x01, 0x01]
         records["raw_sample_index"] = [1, 1, 1]
@@ -229,6 +365,7 @@ class BiologicGcplMappingTests(unittest.TestCase):
         records["raw_control_v_or_mA"] = [3600.0, 3600.0, 3600.0]
         records["raw_ewe_v"] = [3.5, 3.5, 3.5]
         records["raw_ece_v"] = [0.0, 0.0, 0.0]
+        records["raw_voltage_v"] = [3.5, 3.5, 3.5]
         records["raw_q_charge_discharge_mAh"] = [0.0, 1.0, 2.0]
         records["raw_half_cycle_index"] = [0, 0, 0]
         records["raw_step_time_s"] = [0.0, 1.0, 0.0]
@@ -238,10 +375,8 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
     def test_invalid_total_time_is_rejected_before_canonical_validation(self) -> None:
         rows = [_row(0.0, ns_changed=True), _row(-1.0)]
-        with tempfile.TemporaryDirectory() as temp:
-            path = write_gcpl_mpr(Path(temp) / "time.mpr", rows)
-            with self.assertRaises(InvalidBiologicGcplError):
-                parsing.parse_timeseries(path)
+        with self.assertRaises(InvalidBiologicGcplError):
+            _map_rows(rows)
 
 
 if __name__ == "__main__":

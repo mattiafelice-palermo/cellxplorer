@@ -147,9 +147,8 @@ production migrations. See `docs/database-migrations.md`.
   (Spec 040.1); see `docs/agent-knowledge/canonical-cycling-data.md`
 - `backend/app/services/source_format_errors.py`: format-neutral source-rejection error taxonomy
   every adapter's errors derive from (Spec 040.2)
-- `backend/app/services/biologic_mpr.py`: independent BioLogic MPR container and typed VMP data reader
+- `backend/app/services/biologic_mpr.py`: independent BioLogic MPR container and typed VMP data reader (Spec 041.1)
 - `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
-  (Spec 041.1)
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
@@ -237,6 +236,7 @@ Cellxplorer/
 │   │   └── pages/                  Inbox, Library, Projects, Analysis, Settings views
 │   └── tests/                      Lightweight TypeScript policy tests, including importProgress.test.ts, librarySelectionScope.test.ts, and cellMetadataDisplay.test.ts
 ├── tests/                          Python backend and domain tests
+│   ├── biologic_mpr_fixture.py     Synthetic BioLogic MPR/GCPL byte fixtures (Specs 041.1/041.2)
 │   ├── golden_analysis_support.py  Golden corpus harness, comparator, fixture installer
 │   ├── test_golden_approval_checkpoints.py  Fail-closed scientific/privacy approval checks
 │   ├── test_golden_analysis.py     Full-source golden analysis regression tests

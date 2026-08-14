@@ -78,6 +78,11 @@ physical byte at offset 0. The remaining physical fields follow as `131` (sample
 (charge/discharge quantity), and `468` (half-cycle index). The five flag IDs after the physical
 byte are validated as packed-flag aliases; they do not create synthetic duplicate byte ranges.
 
+The names `Ns`, `Ewe`, and `Ece` below are source-label interpretations recorded from the observed
+GCPL layout, not an official three-electrode capability claim. The 041.2 adapter uses only the
+independently established raw fields and a directly supplied full-cell field; official protocol and
+electrode-role semantics are intentionally resolved in 041.3 rather than inferred from these labels.
+
 ## Typed 53-byte record
 
 The physical record dtype is little-endian where applicable and has `itemsize == 53`:
@@ -140,15 +145,12 @@ the one-based ordinal `1..n`. The ID-131 value (`raw_sample_index` in the low-le
 BioLogic `Ns` programmed-sequence identity and is copied without renumbering into `step_index`.
 The supported contract is one-based (`Ns >= 1`).
 
-The ID-468 half-cycle value is mapped with the documented provisional rule:
-
-```text
-cycle = floor(raw_half_cycle_index / 2) + 1
-```
-
-This treats a source half-cycle value of zero as the first logical cycle. The rule is deterministic
-and covered by synthetic tests; real `.mpr`/`.mpt` semantic parity remains pending because no MPT
-was available for this implementation.
+The supplied private sample contains only a constant-zero ID-468 half-cycle value. Because no MPT
+was available to establish the starting value, direction, progression, or formation behavior of a
+non-zero counter, the production adapter accepts only that observed constant-zero contract and
+emits `cycle = 1`. Any non-zero, regressing, or resetting half-cycle sequence fails closed until a
+paired MPR/MPT corpus is available. Synthetic tests cover the rejection; they do not define a
+production cycle formula.
 
 An executed `step` is a one-based source-local occurrence. A new occurrence starts on an `Ns`
 change, a half-cycle change, a verified `Ns changes` flag, an explicit decoded step-time reset, or
@@ -158,25 +160,28 @@ pure voltage blocks become `CC_Chg`/`CC_DChg` and `CV_Chg`; standalone CV discha
 because the current canonical vocabulary has no `CV_DChg` status. Mixed charge/discharge
 direction in one occurrence is rejected.
 
-BioLogic's verified GCPL sign already matches CellXplorer (`current_ma > 0` is charge and
-`current_ma < 0` is discharge), so the adapter's explicit current sign factor is `+1`. In
-galvanostatic rows the ID-5 control value is the current; in potentiostatic rows current is derived
-from the required incremental ID-7 charge field and whole-test elapsed time. The required signed
-ID-211 quantity is converted into a non-negative phase-specific capacity counter relative to the
-first row of each executed step. The adapter also exposes a diagnostic trapezoidal current
-integration helper, but never substitutes that diagnostic for the vendor counter.
+The adapter keeps the accepted BioLogic sign factor explicit as `+1` (`current_ma > 0` is charge
+and `current_ma < 0` is discharge), but the required paired MPT semantic parity is still pending.
+In galvanostatic rows the ID-5 control value is used only for the supported current-control mode.
+A potentiostatic block requires a separately decoded measured-current field; unverified interval
+`dq/time` reconstruction is rejected. The required signed ID-211 quantity is converted into a
+non-negative phase-specific capacity counter relative to the first row of each executed step, and
+its sign must agree with current and incremental ID-7 charge. The adapter also exposes a diagnostic
+trapezoidal current integration helper, but never substitutes that diagnostic for the vendor
+counter.
 
 The supported GCPL6 layout does not expose a verified vendor energy counter, so the adapter chooses
 Policy C: canonical energy columns are absent and downstream energy quantities remain unavailable.
 Absolute timestamps are also deferred to 041.3 because the low-level reader has not yet established
-a minimal log timestamp decoder. Until 041.3 adds first-class electrode channels, the primary
-`voltage_v` is the adapter-private common-reference derivation `raw_ewe_v - raw_ece_v`; the
-result is marked `voltage_v_derived` in the frame attributes and no vendor field names leak into
-the canonical frame.
+a minimal log timestamp decoder. The exact GCPL6 layout exposes Ewe/Ece-labelled fields but no
+independently decoded full-cell role in 041.2, so the production adapter does not derive or publish
+`voltage_v` from them. A synthetic/direct full-cell field remains testable; the real three-electrode
+path is intentionally deferred to 041.3. Rows carrying the decoded error flag are rejected.
 
 The physical dtype contains the packed byte once; the six named arrays are NumPy results owned by the
 data block and are cleared with it. These are raw acquisition flags; canonical status/step semantics
-are intentionally deferred to Spec 041.2.
+are owned by Spec 041.2, while electrode roles, timestamps, and three-electrode capability exposure
+remain deferred to Spec 041.3.
 
 ## Bounds and ownership
 

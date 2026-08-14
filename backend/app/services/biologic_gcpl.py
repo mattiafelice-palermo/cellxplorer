@@ -116,6 +116,7 @@ def _flag_column(
     if "raw_flags" not in _field_names(records):
         return np.full(len(records), default, dtype=bool)
     masks = {
+        "error": 0x08,
         "ns_changed": 0x20,
         "counter_incremented": 0x80,
     }
@@ -169,6 +170,27 @@ def _validate_total_time(total_time_s: np.ndarray) -> None:
         )
 
 
+def _validate_supported_half_cycle(half_cycle: np.ndarray) -> None:
+    """Accept only the observed single-segment half-cycle contract.
+
+    The supplied private file contains only zero-valued half-cycle records.
+    Without the paired text export, starting value, direction, formation
+    handling, and progression of a non-zero counter are not independently
+    established.  It is safer to defer multi-half-cycle canonical numbering
+    than to publish a plausible but wrong cycle grouping.
+    """
+
+    if np.any(np.diff(half_cycle) < 0):
+        raise UnsupportedBiologicGcplError(
+            "GCPL half-cycle counter regresses or resets; paired MPT evidence is required"
+        )
+    if np.any(half_cycle != 0):
+        raise UnsupportedBiologicGcplError(
+            "GCPL half-cycle progression is not independently validated; paired MPT evidence "
+            "is required before canonical cycle numbering can be emitted"
+        )
+
+
 def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
     fields = _field_names(records)
     for name in names:
@@ -180,44 +202,40 @@ def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
 def _raw_current_ma(
     records: np.ndarray,
     mode: np.ndarray,
-    total_time_s: np.ndarray,
-    raw_dq_mAh: np.ndarray,
     control: np.ndarray,
 ) -> np.ndarray:
     """Resolve BioLogic current in mA without changing its source sign.
 
     The supported GCPL sample stores the measured/current-control value in
     the technique-dependent ID-5 field.  A future supported variant may carry
-    a dedicated current field; it is preferred when present.  During a CV
-    portion, ID-5 is a voltage control value, so the per-record incremental
-    ``dq`` field supplies the only verified current estimate.  This is a
-    current reconstruction, not a capacity fallback: the required vendor
-    capacity counter is still mandatory below.
+    a dedicated measured-current field; it is preferred and preserved when
+    present.  During a CV portion, ID-5 is a voltage control value, so a
+    dedicated measured-current field is required.  The unverified interval
+    ``dq/time`` reconstruction is intentionally rejected.
     """
 
     dedicated = _optional_column(records, "raw_current_ma", "current_ma")
     if dedicated is not None:
         raw_current = dedicated.copy()
+        if np.any(
+            (mode == MPR_MODE_REST)
+            & (np.abs(raw_current) > _CURRENT_TOLERANCE_MA)
+        ):
+            raise UnsupportedBiologicGcplError(
+                "dedicated GCPL current is non-zero during a rest block"
+            )
     else:
+        if np.any(mode == MPR_MODE_POTENTIOSTATIC):
+            raise UnsupportedBiologicGcplError(
+                "potentiostatic GCPL rows require an independently decoded measured-current field; "
+                "interval dq/time reconstruction is not part of the supported contract"
+            )
         raw_current = np.full(len(records), np.nan, dtype=np.float64)
+        raw_current[mode == MPR_MODE_GALVANOSTATIC] = control[
+            mode == MPR_MODE_GALVANOSTATIC
+        ]
+        raw_current[mode == MPR_MODE_REST] = 0.0
 
-    current_mode = mode == MPR_MODE_GALVANOSTATIC
-    raw_current[current_mode] = control[current_mode]
-
-    if len(records) > 1:
-        dt = np.diff(total_time_s)
-        valid_dt = dt > _TIME_TOLERANCE_S
-        derivative = np.full(len(records), np.nan, dtype=np.float64)
-        derivative[1:][valid_dt] = raw_dq_mAh[1:][valid_dt] / dt[valid_dt] * 3600.0
-        first_dt = total_time_s[1] - total_time_s[0]
-        if first_dt > _TIME_TOLERANCE_S:
-            derivative[0] = raw_dq_mAh[1] / first_dt * 3600.0
-        needs_derived = ~np.isfinite(raw_current) | (mode == MPR_MODE_POTENTIOSTATIC)
-        raw_current[needs_derived] = derivative[needs_derived]
-
-    # A rest row has no current by definition, even if a stale control value
-    # is retained in the binary record.
-    raw_current[mode == MPR_MODE_REST] = 0.0
     if not np.isfinite(raw_current).all():
         raise UnsupportedBiologicGcplError(
             "supported GCPL records do not contain a usable current value for every row"
@@ -274,6 +292,7 @@ def _block_ranges(boundaries: np.ndarray) -> list[tuple[int, int]]:
 def _direction_for_block(
     current_ma: np.ndarray,
     raw_capacity: np.ndarray,
+    raw_dq_mAh: np.ndarray,
     start: int,
     end: int,
     *,
@@ -287,36 +306,63 @@ def _direction_for_block(
             f"GCPL executed block {start + 1}:{end} mixes charge and discharge direction"
         )
     if positive:
-        return 1
-    if negative:
-        return -1
+        direction = 1
+    elif negative:
+        direction = -1
+    else:
+        direction = 0
 
-    # If a source records a zero current at every point, use the required
-    # signed vendor counter only to distinguish a non-rest block.  It is not a
-    # replacement for current on an active block; the caller still rejects a
-    # directionless non-rest operation below.
-    capacity_delta = raw_capacity[end - 1] - raw_capacity[start]
-    if abs(capacity_delta) > _CAPACITY_TOLERANCE_MAH:
-        if mode[start:end].tolist() and np.all(mode[start:end] == MPR_MODE_REST):
-            return 0
-        return 1 if capacity_delta > 0 else -1
-    return 0
+    if direction:
+        capacity_delta = raw_capacity[end - 1] - raw_capacity[start]
+        if end - start > 1 and abs(capacity_delta) <= _CAPACITY_TOLERANCE_MAH:
+            raise UnsupportedBiologicGcplError(
+                f"GCPL active block {start + 1}:{end} has no capacity transfer"
+            )
+        if direction * capacity_delta < -_CAPACITY_TOLERANCE_MAH:
+            raise UnsupportedBiologicGcplError(
+                f"GCPL current and capacity directions disagree in block {start + 1}:{end}"
+            )
+        increments = raw_dq_mAh[start:end]
+        nonzero = np.abs(increments) > _CAPACITY_TOLERANCE_MAH
+        if np.any(direction * increments[nonzero] < -_CAPACITY_TOLERANCE_MAH):
+            raise UnsupportedBiologicGcplError(
+                f"GCPL current and incremental-capacity directions disagree in block "
+                f"{start + 1}:{end}"
+            )
+        return direction
+
+    if np.all(mode[start:end] == MPR_MODE_REST):
+        if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH or np.any(
+            np.abs(raw_dq_mAh[start:end]) > _CAPACITY_TOLERANCE_MAH
+        ):
+            raise UnsupportedBiologicGcplError(
+                f"GCPL rest block {start + 1}:{end} transfers capacity"
+            )
+        return 0
+    raise UnsupportedBiologicGcplError(
+        f"GCPL active block {start + 1}:{end} has no independently resolvable current direction"
+    )
 
 
 def _classify_block(mode: np.ndarray, direction: int, start: int, end: int) -> str:
-    block_modes = set(int(value) for value in mode[start:end])
-    if block_modes <= {MPR_MODE_REST}:
+    block_modes = np.unique(mode[start:end])
+    if np.all(block_modes == MPR_MODE_REST):
         return "Rest"
     if direction == 0:
         raise UnsupportedBiologicGcplError(
             f"GCPL active block {start + 1}:{end} has no resolvable current direction"
         )
-    has_cc = MPR_MODE_GALVANOSTATIC in block_modes
-    has_cv = MPR_MODE_POTENTIOSTATIC in block_modes
-    if not block_modes <= _SUPPORTED_MODES or not (has_cc or has_cv):
+    known_modes = np.isin(block_modes, tuple(_SUPPORTED_MODES))
+    if not bool(np.all(known_modes)):
         raise UnsupportedBiologicGcplError(
             f"GCPL block {start + 1}:{end} uses unsupported control mode(s): "
-            f"{sorted(block_modes)}"
+            f"{block_modes[~known_modes].tolist()}"
+        )
+    has_cc = bool(np.any(block_modes == MPR_MODE_GALVANOSTATIC))
+    has_cv = bool(np.any(block_modes == MPR_MODE_POTENTIOSTATIC))
+    if not (has_cc or has_cv):
+        raise UnsupportedBiologicGcplError(
+            f"GCPL block {start + 1}:{end} has no supported active control mode"
         )
     if has_cc and has_cv:
         return "CCCV_Chg" if direction > 0 else "CCCV_DChg"
@@ -341,6 +387,10 @@ def _capacity_columns(
     discharge = np.zeros(len(raw_capacity), dtype=np.float64)
     for direction, (start, end) in zip(directions, ranges):
         if direction == 0:
+            if np.ptp(raw_capacity[start:end]) > _CAPACITY_TOLERANCE_MAH:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL rest block {start + 1}:{end} has a changing capacity counter"
+                )
             continue
         source = raw_capacity[start:end]
         baseline = source[0]
@@ -363,12 +413,10 @@ def _primary_voltage(records: np.ndarray) -> tuple[np.ndarray, bool]:
         if not np.isfinite(direct).all():
             raise InvalidBiologicGcplError("GCPL primary voltage contains non-finite values")
         return direct, False
-    ewe = _require_float_column(records, "raw_ewe_v")
-    ece = _require_float_column(records, "raw_ece_v")
-    # The supported GCPL6 contract records Ewe and Ece against the same
-    # reference.  Until 041.3 adds the first-class electrode columns and
-    # metadata, this is an adapter-private derivation of the full-cell path.
-    return ewe - ece, True
+    raise UnsupportedBiologicGcplError(
+        "GCPL primary full-cell voltage is not independently resolved; defer Ewe/Ece role "
+        "mapping and signed subtraction to Spec 041.3"
+    )
 
 
 def integrate_capacity_by_step(frame: pd.DataFrame) -> dict[int, float]:
@@ -417,8 +465,9 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         raise InvalidBiologicGcplError("GCPL data block contains no records")
 
     mode = _mode_column(records, flags)
-    if np.any(~np.isin(mode, tuple(_SUPPORTED_MODES))):
-        values = sorted(set(int(value) for value in mode if value not in _SUPPORTED_MODES))
+    supported_mode = np.isin(mode, tuple(_SUPPORTED_MODES))
+    if np.any(~supported_mode):
+        values = np.unique(mode[~supported_mode]).astype(np.int64).tolist()
         raise UnsupportedBiologicGcplError(f"unsupported BioLogic GCPL mode code(s): {values}")
     ns = _validate_integer_column(_column(records, "raw_sample_index"), "Ns", positive=True)
     half_cycle = _validate_integer_column(
@@ -426,12 +475,17 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     )
     if np.any(half_cycle < 0):
         raise InvalidBiologicGcplError("GCPL half-cycle values cannot be negative")
+    _validate_supported_half_cycle(half_cycle)
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
     raw_dq_mAh = _require_float_column(records, "raw_dq_mAh")
     raw_capacity = _require_float_column(records, "raw_q_charge_discharge_mAh")
     control = _require_float_column(records, "raw_control_v_or_mA")
-    current_ma = _raw_current_ma(records, mode, total_time_s, raw_dq_mAh, control)
+    if np.any(_flag_column(records, flags, "error")):
+        raise InvalidBiologicGcplError(
+            "GCPL data contains a row with the BioLogic error flag set"
+        )
+    current_ma = _raw_current_ma(records, mode, control)
     voltage_v, voltage_v_derived = _primary_voltage(records)
 
     ns_changed = _flag_column(records, flags, "ns_changed")
@@ -445,7 +499,14 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     )
     ranges = _block_ranges(boundaries)
     directions = [
-        _direction_for_block(current_ma, raw_capacity, start, end, mode=mode)
+        _direction_for_block(
+            current_ma,
+            raw_capacity,
+            raw_dq_mAh,
+            start,
+            end,
+            mode=mode,
+        )
         for start, end in ranges
     ]
     statuses = [
@@ -470,7 +531,7 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
     frame = pd.DataFrame(
         {
             "record_index": np.arange(1, len(records) + 1, dtype=np.int64),
-            "cycle": (half_cycle // 2) + 1,
+            "cycle": np.ones(len(records), dtype=np.int64),
             "step": step,
             "step_index": ns,
             "status": pd.Series(status, dtype="string"),
@@ -487,8 +548,8 @@ def map_gcpl_to_canonical(source: Any) -> pd.DataFrame:
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": 0,
-        "cycle_source": "half-cycle",
-        "cycle_formula": "floor(half_cycle / 2) + 1",
+        "cycle_source": "validated constant-zero half-cycle contract",
+        "cycle_formula": "cycle = 1; non-zero progression deferred pending paired MPT",
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": False,

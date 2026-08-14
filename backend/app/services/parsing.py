@@ -7,14 +7,15 @@ indirectly via `cache.py`).
 
 It owns:
 
-- stable format identifiers (`FORMAT_NEWARE_BINARY`, `FORMAT_NEWARE_EXCEL`)
+- stable format identifiers (`FORMAT_NEWARE_BINARY`, `FORMAT_NEWARE_EXCEL`, and the direct-only
+  `FORMAT_BIOLOGIC_MPR`)
   and a narrow static descriptor per format (`SourceFormatDescriptor`) —
   a frozen dataclass registry, not a plugin framework: no dynamic loading,
   no importlib discovery, no base-class hierarchy;
-- format recognition (`recognize_source`) and the one shared
-  extension -> format_id decision table (`_EXTENSION_FORMAT_ID`) that both
-  `parse_timeseries` and `read_header_metadata` dispatch through, so a
-  suffix cannot be routed to a different format by one than the other;
+- format recognition (`recognize_source`) and two explicit extension tables:
+  `_EXTENSION_FORMAT_ID` remains the user-facing Neware import/metadata policy, while
+  `_DIRECT_EXTENSION_FORMAT_ID` additionally routes direct-only `.mpr` parser calls until Spec
+  041.4 owns import lifecycle support;
 - the direct NewareNDA integration for `.nda`/`.ndax`: `RAW_COLUMNS`, the
   vectorized fast-path installation (`fast_neware.install()`), and the
   direct NDAX XML metadata optimization (`_read_ndax_metadata_flat`);
@@ -110,8 +111,8 @@ PARSER_VERSION: str = f"{NEWARE_NDA_VERSION}-cxp{EXCEL_PARSER_REVISION}"
 class SourceFormatDescriptor:
     """Narrow, static identity for one recognized source format.
 
-    This — plus the two module-level instances and the `_EXTENSION_FORMAT_ID`
-    lookup built from them below — is the complete "adapter registry" this
+    This — plus the static module-level descriptors and the explicit extension
+    lookups built from them below — is the complete "adapter registry" this
     facade needs. It is deliberately not a plugin interface: no dynamic
     loading, no importlib discovery, no abstract base class hierarchy.
     `adapter_revision` is per-format identity information reserved for Spec
@@ -537,9 +538,9 @@ def read_header_metadata(path: str | Path) -> dict:
     Returns {raw: <flattened dict>, barcode, remarks, device_info, channel,
     start_time, active_mass_mg, nominal_capacity_mah, nda_version}.
 
-    Dispatch uses the same `_EXTENSION_FORMAT_ID` table `parse_timeseries`
-    uses, so both functions make the same format decision for a given
-    suffix.
+    Dispatch uses the user-facing `_EXTENSION_FORMAT_ID` table. Direct-only
+    `.mpr` parsing is intentionally not admitted to this metadata/import path
+    until Spec 041.4 adds its bounded source lifecycle support.
     """
     path = Path(path)
     suffix = path.suffix.casefold()
