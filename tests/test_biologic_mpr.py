@@ -489,9 +489,9 @@ class BiologicMprReaderTests(unittest.TestCase):
 
             def rewrite_before_mapping(*args, **kwargs):
                 with path.open("r+b") as handle:
-                    handle.seek(0)
+                    handle.seek(290)
                     first = handle.read(1)
-                    handle.seek(0)
+                    handle.seek(290)
                     handle.write(bytes([first[0] ^ 1]))
                 os.utime(path, ns=(path.stat().st_atime_ns, original_mtime + 1_000_000))
                 return real_mmap(*args, **kwargs)
@@ -500,7 +500,7 @@ class BiologicMprReaderTests(unittest.TestCase):
                 "backend.app.services.biologic_mpr.mmap.mmap",
                 side_effect=rewrite_before_mapping,
             ):
-                with self.assertRaises(InvalidMprError):
+                with self.assertRaisesRegex(InvalidMprError, "changed between stat and memory mapping"):
                     read_mpr(path)
             renamed = path.with_name("renamed-after-same-size-before-map.mpr")
             path.rename(renamed)
