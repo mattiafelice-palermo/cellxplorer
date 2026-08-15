@@ -3,183 +3,152 @@
 **Parent specification:** [`../041-biologic-mpr-gcpl-support.md`](../041-biologic-mpr-gcpl-support.md)  
 **Branch:** `feature/biologic-mpr-gcpl-support`  
 **Merge base:** `main@aca39740039b4d7146afc9104f5c471bff7c7c46`  
-**R1 implementation checkpoint:** `33b0efea55ed89e9b7dd18206f57f92d5cda63cc`  
-**R2 implementation checkpoint:** `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`  
-**Initial user-amendment checkpoint:** `befc0863de5b616d8d08de180afe8d909a9d8252`  
-**R3/R4 implementation checkpoint:** `29952b5b7d685897bc04f20ed605523345e95cab`  
-**R4/R5 correction checkpoint:** `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`  
-**Neutral-preamble implementation checkpoint reviewed:** `51deb8e25d54ef5dd42e86cd0d9a6886b55a138a`  
-**Returned handoff head reviewed:** `4e10d1b88910322314ad56b19d0e5620d7254dd3`  
-**Status:** **CHANGES REQUIRED — R6/R7; MPR/MPT PARITY DEFERRED**
+**Prior implementation-review checkpoint:** `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`  
+**Neutral-preamble implementation checkpoint:** `51deb8e25d54ef5dd42e86cd0d9a6886b55a138a`  
+**R6/R7 returned implementation checkpoint:** `a77315b70f55474301ade3d2ce8b9ed6a45a0f68`  
+**Returned handoff head reviewed:** `9897e88a935511eab8d8fdbb85b19f625703ca06`  
+**Status:** **CHANGES REQUIRED — R7 ONLY; MPR/MPT PARITY DEFERRED**
 
-This is the cumulative Parent 041 review. R1-R5 are resolved. The 2026-08-15 user amendment added one narrow cycle-identity exception for a declared, non-repeating charge/rest-only or discharge/rest-only MPR when decoded rows prove constant-zero half-cycle, monotonic `Ns`, one signed active-current direction and at least one active row. The inferred cycle `1` is source-local only.
+This is the cumulative Parent 041 review. R1-R6 are resolved. One documentation/specification mismatch remains in R7.
 
-On 2026-08-16 the user explicitly amended the closure scope again: same-experiment `.mpr` / `.mpt` parity is deferred to later work and must **not** block Parent 041 closure or merge. No MPR/MPT numerical-parity claim is made by this feature.
+On 2026-08-16 the user explicitly deferred same-experiment `.mpr` / `.mpt` parity to later work. It remains truthfully **NOT RUN**, no general/repeating multi-cycle parity claim is made, and the absent pair is **not** a Parent 041 closure or merge blocker.
 
-The user then supplied a real GCPL discharge file that exposed a concrete parser bug: EC-Lab retained a neutral zero-current setup/control sequence before the active discharge even though the recorded data begins at the discharge sequence. The implementer returned `51deb8e25d54ef5dd42e86cd0d9a6886b55a138a`, which permits a header-proven zero-current control/setup preamble while continuing to validate decoded execution before source-local cycle-1 promotion. Static re-review found two follow-up defects, R6 and R7 below.
+The supplied real GCPL discharge file also established one additional bounded case for the single-direction cycle-1 exception: EC-Lab may retain a neutral zero-current setup/control sequence before the active discharge while the recorded rows begin at the discharge sequence. The implementation accepts only a header-proven zero-current setup/control preamble and still requires the decoded execution to satisfy the single-direction proof before canonical promotion.
 
-The reviewer used the live GitHub branch and performed static connector inspection only. The reviewer did **not** execute tests, preflight, builds, packaged-app smoke, browser/manual checks, private MPR parsing, or MPR/MPT parity during this review round.
+The reviewer used the live GitHub branch and performed static connector inspection only. The reviewer did **not** execute tests, preflight, builds, packaged-app checks, browser/manual checks, private-file parsing/stitching, or MPR/MPT parity.
 
 ## Confirmed cumulative behavior
 
-The following parent-level properties remain consistent with the locked design:
-
-- The production MPR reader remains independently authored, bounded and limited to the independently observed 16-ID / 53-byte GCPL record layout; the synthetic-only 15-ID / 49-byte variant remains rejected.
-- `.mpr` remains admitted through the central source-format registry and `.mpt` remains excluded as a user import format.
-- Three-electrode voltage roles and signed Ewe/Ece handling remain explicit.
+- Production MPR decoding remains limited to the independently observed 16-ID / 53-byte GCPL record layout; the synthetic-only 15-ID / 49-byte layout remains unsupported.
+- `.mpr` is centrally admitted; `.mpt` remains validation-only rather than a user import format.
+- Three-electrode Ewe/Ece roles and signed working-minus-counter primary voltage remain explicit.
 - Metadata-only continuation acknowledgement remains content-hash bound.
 - Cell Database list summaries remain relational and bounded.
-- Generic scientific compute, saved-artifact, warmup and portable-export capability guards remain format-neutral.
-- The R1 saved-artifact/warmup fail-closed boundary remains present.
-- The R2 live capability guard remains scalar/header-free on cache-hit/artifact/warmup paths.
-- Generic Time/Capacity voltage selection and saved/export/portable presentation remain format-neutral; no BioLogic-specific downstream scientific calculation branch was added.
+- Generic compute, saved-artifact, warmup and portable-export capability guards remain format-neutral and fail closed.
 - No relational migration or `CALC_VERSION` bump was introduced.
-- Runtime requirements still do not add a GPL BioLogic parser dependency.
-- `main` remains at merge base `aca39740039b4d7146afc9104f5c471bff7c7c46`.
-- At the reviewed checkpoint the MPR adapter identity is still `bm:gcpl7:r1`; `bm:gcpl5:r1` and `bm:gcpl6:r1` are legacy/reinspection-only identities.
-- The constant-zero half-cycle requirement is enforced before the single-direction fallback; non-zero or regressing half-cycle values remain rejected.
-- Source-local cycle numbering is compatible with the generic stitcher: each source's local cycle labels are remapped densely to cell/test-global cycles while `source_cycle` preserves the local label.
-- Legacy BioLogic reinspection runs from the post-listening scientific warmup thread rather than delaying API reachability.
-- The neutral-preamble code does not turn unresolved executed control rows into a guessed electrochemical direction: row-level current/mode/block validation remains fail-closed.
+- No GPL BioLogic parser runtime dependency was introduced.
+- Current BioLogic adapter identity is `bm:gcpl8:r1`.
+- `bm:gcpl5:r1`, `bm:gcpl6:r1`, and `bm:gcpl7:r1` are reinspection-only identities.
+- Online legacy BioLogic sources pass the current source-reading path before receiving `gcpl8`; offline/missing sources are database-only downgraded so parser-derived row/cycle/capacity summaries cannot remain live.
+- Historical prior-identity cache bytes may remain but cannot satisfy the current parser identity.
+- Constant-zero half-cycle, monotonic `Ns`, one signed active-current direction, declared/executed direction agreement and no repeat loop remain part of the single-direction proof.
+- The neutral setup/control allowance does not make executed unresolved/non-zero control blocks acceptable; row-level execution remains fail-closed.
+- Source-local cycle `1` remains a plotting/stitching label, not an absolute experiment cycle number.
 
 ## Finding status
 
-### R1 — RESOLVED: retired gcpl3 saved artifacts are no longer live after metadata-only downgrade
+### R1 — RESOLVED: retired parser saved-artifact/warmup capability leak
 
-The generic canonical-cycling guard applies before saved-artifact signature/cache access and across warmup discovery, task admission and late completion. Retired scientific bytes may remain for forensic cleanup but are not live.
+Saved artifact, thumbnail and warmup boundaries apply the canonical-cycling capability guard before old cache/artifact bytes can remain live.
 
-### R2 — RESOLVED: live capability guards no longer materialize deferred `header_meta`
+### R2 — RESOLVED: generic capability guard N+1/deferred-header load
 
-The generic capability path uses persisted scalar identity/status/error state with `include_header=False`; header-aware behavior remains limited to reconciliation/presentation paths that genuinely need persisted header evidence.
+Live capability checks use bounded persisted scalar state with `include_header=False`; they do not materialize deferred `header_meta` per source.
 
-### R3 — RESOLVED: settings eligibility is provisional until decoded-row verification succeeds
+### R3 — RESOLVED: header-only single-direction eligibility is provisional
 
-The `gcpl7` implementation separates header eligibility from verified canonical capability. Header-only inspection remains record-decode-free and advertises a bounded pending state rather than claiming canonical rows already exist. Pending candidates proceed through preparation while scientific consumers fail closed until full-parse promotion; failed proof persists metadata-only/noncanonical state.
+Header inspection records a pending candidate rather than claiming canonical rows. Full decoded-row verification promotes the source; failed proof persists fail-closed metadata-only capability.
 
-### R4 — RESOLVED: declared/raw direction and legacy gcpl6 upgrade boundaries fail closed completely
+### R4 — RESOLVED: declared/raw direction and offline legacy-summary safety
 
-The mapper validates observed execution against declared per-`Ns` single-direction semantics. Declared charge cannot be satisfied by discharge rows, declared discharge cannot be satisfied by charge rows, and active execution on declared Rest is rejected. Offline/missing-path `gcpl5`/`gcpl6` registrations are database-only downgraded so stale row/cycle/capacity summaries cannot remain live; online legacy sources are re-inspected through the current parser.
+Declared per-`Ns` charge/discharge/rest semantics are checked against decoded execution, and offline/missing prior-parser registrations cannot retain live parser-derived capacity summaries.
 
-### R5 — RESOLVED: 041.6 closure record matched the gcpl7 amendment state at the prior checkpoint
+### R5 — RESOLVED: 041.6 implementation record tracked the live parser boundary
 
-The implementation record correctly preserved the historical `gcpl5 → gcpl6 → gcpl7` evolution and the R3/R4 verification boundary before the newly supplied real-file bug was addressed.
+The closure record was brought forward through the `gcpl7` candidate/verified boundary and its exact verification checkpoints.
 
-### R6 — HIGH — OPEN: neutral-preamble semantic change reuses `gcpl7`, stranding existing failed `gcpl7` registrations
+### R6 — RESOLVED: neutral-preamble semantic widening now has a new parser identity and upgrade path
 
-**Affected files**
+**Reviewed implementation:** `a77315b70f55474301ade3d2ce8b9ed6a45a0f68`.
 
-- `backend/app/services/biologic_gcpl.py`
-- `backend/app/services/parsing.py`
-- `backend/app/services/scanner.py`
-- focused BioLogic upgrade/reinspection regression tests
-- 041.6 implementation/provenance record
+The adapter advances from `gcpl7` to `gcpl8`, and `bm:gcpl7:r1` joins the explicit legacy/reinspection set. Startup `reinspect_legacy_biologic_sources()` therefore handles the old identity rather than treating it as current.
 
-**Current**
+The focused regression recreates the exact migration hole: an online neutral-preamble source is first registered under current `gcpl8`, then deliberately rewritten into the old persisted metadata-only `bm:gcpl7:r1` state with no reinspection marker. The normal legacy reinspection path re-reads it, promotes it to parsed/canonical `bm:gcpl8:r1`, creates current raw/cycle caches and leaves the historical `gcpl7` cache bytes intact. A separate regression proves an offline `bm:gcpl7:r1` source is downgraded database-only, clears row/cycle/capacity summaries, requires reinspection, retains historical cache bytes and has no fabricated `gcpl8` cache. fileciteturn544file0
 
-`51deb8e25d54ef5dd42e86cd0d9a6886b55a138a` changes canonical parser semantics: a source shape that the previous `gcpl7` implementation rejected as metadata-only can now become canonical when its zero-current control/setup preamble is header-proven neutral and decoded execution satisfies the single-direction contract. However, `BIOLOGIC_GCPL_ADAPTER_REVISION` remains `gcpl7`.
+The implementation does not bump `CALC_VERSION`; parser identity remains the correct provenance/cache dimension for this semantic change.
 
-That is not only a cache-labeling issue. A candidate that failed under the old rule is persisted by `mark_biologic_mpr_cycle_verification_failed()` using the **current parser identity**, i.e. `bm:gcpl7:r1`, with `requires_reinspection=False`. Startup `reinspect_legacy_biologic_sources()` only targets the explicit legacy set (`bm:gcpl5:r1`, `bm:gcpl6:r1`), while the generic identity bring-forward path only triggers when stored identity differs from the current expected identity. Therefore an already-registered real file rejected by the old `gcpl7` rule has no automatic upgrade signal after installing this fix: its row stays current-identity metadata-only even though the new parser would now promote it.
+**R6 acceptance: satisfied.**
 
-This violates the existing per-source parser-identity contract: the identity must advance when canonical parser output semantics change so persisted registrations/caches can be deterministically brought forward without silently reusing an old semantic boundary.
+### R7 — MEDIUM — OPEN: Parent 041's single-direction amendment still contradicts the accepted neutral setup/control case
 
-**Target**
-
-Advance the BioLogic adapter identity for this semantic change (expected next identity: `gcpl8`) and treat `bm:gcpl7:r1` as a prior identity requiring bounded upgrade handling. Online prior-`gcpl7` sources must pass the current header/full-parse path before receiving the new identity. Offline/missing sources must fail closed without leaving parser-derived row/cycle/capacity summaries live. Historical `gcpl7` cache bytes may remain as historical/relinkable artifacts but must not satisfy current-cache/provenance checks.
-
-Do **not** bump `CALC_VERSION` solely for this parser-semantic change; parser identity is the correct cache/provenance dimension unless the meaning of downstream calculated output changes independently.
-
-**Acceptance criteria**
-
-- `BIOLOGIC_GCPL_ADAPTER_REVISION` advances from `gcpl7` to a new revision and current identity changes accordingly.
-- `bm:gcpl7:r1` is explicitly covered by the prior-identity reconciliation/reinspection policy.
-- A regression creates an online persisted metadata-only `bm:gcpl7:r1` registration representing the neutral-preamble file rejected by the old rule, runs the normal upgrade path, and proves it is re-read under the new parser, promoted to canonical capability, and receives the new parser identity.
-- Offline/missing-path `bm:gcpl7:r1` registrations are fail-closed and cannot expose stale row/cycle/capacity summaries; they remain relinkable without destructive cache/source deletion.
-- Any previously canonical `gcpl7` registration is likewise considered stale/current-parser-mismatched and is rebuilt/revalidated before publishing under the new identity.
-- Old `gcpl7` caches are not treated as current `gcpl8` scientific caches or provenance.
-- Focused upgrade tests and canonical preflight pass and are recorded against the exact implementation checkpoint.
-
-### R7 — MEDIUM — OPEN: active closure records resurrect the user-deferred MPR/MPT gate
-
-**Affected files**
+**Affected file**
 
 - `docs/specs/041-biologic-mpr-gcpl-support.md`
-- `docs/specs/041.6-scientific-regression-real-file-parity-and-closure.md`
-- durable BioLogic support documentation where it still states the old closure boundary (including `AGENTS.md` / `docs/biologic-mpr-format.md` as applicable)
-- new workflow handoffs/implementation record
 
 **Current**
 
-The user explicitly deferred same-experiment `.mpr`/`.mpt` parity on 2026-08-16 and the cumulative Parent 041 review already records that it is no longer a closure blocker. Nevertheless, the returned 041.6 record still says Parent 041 “remains blocked from final closure” until a paired `.mpt` is available, and the latest implementer handoff repeats the same obsolete blocker. The parent spec itself already permits this requirement to be removed by explicit user amendment.
+The parity-deferral portion of R7 is fixed: Parent 041, 041.6, AGENTS, BioLogic-format documentation and the new handoff correctly say MPR/MPT parity is NOT RUN, makes no general/repeating multi-cycle claim, and is not a current Parent 041 merge blocker. 041.6 also correctly records the supplied private MPR's neutral zero-current setup/control preamble and `gcpl8` behavior. fileciteturn549file0
 
-This creates two conflicting authoritative instructions for the next coding/review agent and can incorrectly prevent Parent 041 completion after R6 is fixed.
+However, the Parent 041 user-amendment bullets still define the single-direction exception as follows:
+
+- all non-active sequences must be Rest; and
+- the settings must not declare an unresolved C-rate/control direction.
+
+That directly excludes the now-supported real-file case, whose sequence 1 is a header-proven zero-current **Control** setup/preamble before the active discharge. The same Parent section therefore contradicts both the reviewed implementation and 041.6. fileciteturn546file0
 
 **Target**
 
-Persist the 2026-08-16 user amendment in the active Parent 041/041.6 specification and durable support record. Keep `MPR/MPT semantic parity: NOT RUN` truthful and preserve the limitation that Parent 041 makes no general multi-cycle parity claim, but remove the pair as a closure/merge gate for this parent. General/repeating multi-cycle MPR expansion belongs to later work with its own validation requirement.
+Amend the Parent 041 single-direction rules so they describe the actual bounded contract:
 
-Historical append-only coordination entries may remain unchanged as historical statements; new/current decision text must not present the old gate as active.
+- active charge/discharge sequences must still resolve to one direction;
+- ordinary non-active sequences may be Rest;
+- in addition, a setup/control sequence may be ignored for direction classification only when its decoded/normalized settings prove zero current within the existing tolerance and it contributes no unresolved active direction;
+- non-zero or otherwise unresolved control semantics, mixed direction, loops/repeats, non-monotonic execution and failed row proof remain fail-closed;
+- the source-local cycle-1 label remains non-absolute.
+
+Do not weaken the row-level verification merely to make the prose match.
 
 **Acceptance criteria**
 
-- No current authoritative Parent 041/041.6 decision or ground-truth section says Parent 041 is blocked solely by the absent `.mpt` pair.
-- Current docs explicitly state: parity was not run; no general multi-cycle parity claim is made; the user deferred that validation to later work; the missing pair is not a Parent 041 merge blocker.
-- Durable support wording acknowledges the narrow verified single-direction/source-local-cycle-1 exception rather than globally describing all current MPR as metadata-only.
-- Future general/repeating multi-cycle support is clearly left for later work rather than implicitly certified by this amendment.
-- The next implementer → reviewer handoff uses the amended closure rule.
+- Parent 041 no longer states that every non-active sequence must be Rest when the supported neutral zero-current Control preamble is present.
+- Parent 041 distinguishes the narrowly permitted zero-current setup/control preamble from an unresolved/non-zero control direction, which remains unsupported.
+- Parent 041, 041.6 and durable BioLogic documentation describe one consistent single-direction support boundary.
+- MPR/MPT parity remains NOT RUN/deferred and is not reintroduced as a Parent 041 blocker.
+- No implementation change is required unless the documentation correction exposes a real code mismatch.
 
-## MPR/MPT parity — DEFERRED BY USER, no longer a Parent 041 closure gate
+## MPR/MPT parity — DEFERRED BY USER
 
-The original Parent 041 acceptance criteria required a privacy-approved same-experiment `.mpr` / `.mpt` pair for general multi-cycle semantic parity. That validation was never run because no matching `.mpt` was available.
+The original paired `.mpr` / `.mpt` gate has been explicitly amended by the user. Current truth is:
 
-On 2026-08-16 the user explicitly deferred that work to a later implementation. Therefore:
+- `MPR/MPT semantic parity: NOT RUN`;
+- no general/repeating multi-cycle parity claim;
+- absence of a paired `.mpt` does not block Parent 041 closure or merge;
+- future general/repeating multi-cycle MPR support must establish its own scientific validation gate.
 
-- MPR/MPT semantic parity remains truthfully **NOT RUN**;
-- no parity claim is made for general multi-cycle GCPL semantics;
-- the currently implemented narrow charge-only/discharge-only source-local cycle-1 support remains bounded by decoded-row proof and regressions;
-- absence of a paired `.mpt` is **not** a blocker for closing or merging Parent 041;
-- future expansion to general/repeating multi-cycle MPR support must establish its own scientific validation requirements.
+Parent 041's paired-validation section now reflects this correctly. fileciteturn548file0
 
 ## Verification record
 
-### Implementer-reported for R3/R4 checkpoint `29952b5b7d685897bc04f20ed605523345e95cab`
-
-- Focused R3/R4 suites: reported PASS — 172 tests.
-- `python scripts\preflight.py --no-cache`: reported PASS — 5/5; all 68 backend modules, 541 frontend tests, TypeScript type check and Vite production bundle passed.
-- MPR/MPT semantic parity: **NOT RUN**.
-- Browser/manual feature verification: NOT RUN.
-
-### Implementer-reported for R4/R5 correction checkpoint `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`
-
-- Focused R4/R5 suites: reported PASS — 172 tests.
-- `python scripts\preflight.py --no-cache`: reported PASS — 5/5; all 68 backend modules, 541 frontend tests, TypeScript type check and Vite production bundle passed.
-- MPR/MPT semantic parity: **NOT RUN**.
-- Browser/manual feature verification: NOT RUN.
-
 ### Implementer-reported for neutral-preamble checkpoint `51deb8e25d54ef5dd42e86cd0d9a6886b55a138a`
 
-- Focused parser/import/continuation suite: reported PASS — **173 tests**.
-- `python scripts\preflight.py --no-cache`: reported PASS — **5/5** after the elevated Windows Vite build; 68 backend modules, 541 frontend policy tests, TypeScript and production bundle passed.
-- Private `BB_eNargiZinc_Discharge-OD19_04_GCPL6_C16.mpr`: reported PASS through production header/full canonical parse, isolated cache build and temporary registration; 5,483 rows, one source-local discharge/rest cycle, canonical capability promoted.
-- Private four-part stitch (`04`, `06`, `08`, `10`): reported PASS — 15,700 raw rows, four dense global cycles, no missing segments, 1,002.932626 mAh total discharge capacity.
-- MPR/MPT semantic parity: **NOT RUN**.
+- Focused parser/import/continuation suite: PASS — 173 tests.
+- `python scripts\preflight.py --no-cache`: PASS — 5/5; 68 backend modules, 541 frontend policy tests, TypeScript and Vite production bundle.
+- Private `BB_eNargiZinc_Discharge-OD19_04_GCPL6_C16.mpr`: PASS through production header/full parse/cache/temp registration; 5,483 rows, one source-local discharge/rest cycle, canonical promotion.
+- Private four-part stitch (`04`, `06`, `08`, `10`): PASS — 15,700 raw rows, four dense global cycles, no missing segments, 1,002.932626 mAh total discharge capacity.
+- MPR/MPT semantic parity: NOT RUN.
 - Browser/manual feature verification: NOT RUN.
 
-Historical earlier checkpoint verification remains historical evidence and is not restated as proof of the current implementation.
+### Implementer-reported for R6/R7 checkpoint `a77315b70f55474301ade3d2ce8b9ed6a45a0f68`
 
-### Reviewer independently inspected in this round
+- Focused BioLogic GCPL/closure suite: PASS — 64 tests.
+- `python scripts\preflight.py --no-cache`: PASS — 5/5; 68 backend modules, 541 frontend policy tests, TypeScript and Vite production bundle.
+- Private four-part MPR stitch evidence remains PASS — 15,700 raw rows, four dense global cycles, no missing segments, 1,002.932626 mAh total discharge capacity.
+- MPR/MPT semantic parity: NOT RUN and explicitly deferred.
+- Browser/manual feature verification: NOT RUN.
 
-- Current `main` head and merge base.
-- Exact implementation delta `51deb8e25d54ef5dd42e86cd0d9a6886b55a138a` and returned handoff head `4e10d1b88910322314ad56b19d0e5620d7254dd3`.
-- `_single_direction_protocol_direction()` neutral-control predicate.
-- Full-map per-`Ns` declared execution validation and downstream current/mode/block fail-closed behavior.
-- New synthetic neutral-preamble regression.
-- Current `BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl7"`.
-- Candidate failure persistence under the current parser identity.
-- Explicit legacy identity sets and `reinspect_legacy_biologic_sources()` query boundary.
-- Generic current-identity bring-forward condition.
-- Spec 040.3 parser-identity/cache/provenance invariant requiring an identity change when canonical parser semantics change.
-- Active Parent 041, 041.6, AGENTS and BioLogic format documentation around parity/metadata-only support boundaries.
-- Cumulative branch scope from the prior clean checkpoint to the returned handoff; no unrelated implementation subsystem was added by the bug fix.
+### Reviewer independently inspected this round
+
+- `main` remains `aca39740039b4d7146afc9104f5c471bff7c7c46`.
+- Exact R6/R7 implementation checkpoint `a77315b70f55474301ade3d2ce8b9ed6a45a0f68` and handoff head `9897e88a935511eab8d8fdbb85b19f625703ca06`.
+- `BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl8"` and the current parser-identity grammar.
+- Explicit addition of `bm:gcpl7:r1` to the legacy/reinspection set.
+- Online/offline legacy reinspection path.
+- Exact online prior-`gcpl7` metadata-only neutral-preamble migration regression.
+- Exact offline prior-`gcpl7` fail-closed/relinkable regression.
+- Current Parent 041 paired-validation amendment.
+- Current 041.6 private real-file record, `gcpl8` identity and parity-deferral language.
+- AGENTS/agent-knowledge/BioLogic-format documentation delta.
+- Branch scope since the reviewer handoff: only the intended parser-identity migration, focused tests, workflow/spec/docs updates.
 
 ### Reviewer did NOT independently execute
 
@@ -194,8 +163,8 @@ Historical earlier checkpoint verification remains historical evidence and is no
 
 ## Decision
 
-**CHANGES REQUIRED — R6 and R7. Parent 041 is not ready to merge yet.**
+**CHANGES REQUIRED — R7 only. Parent 041 is not ready to merge yet.**
 
-The neutral-preamble mapping itself is a bounded correction for the supplied real discharge file, and the implementer reports successful production parse/cache/stitch verification. The blocking implementation defect is upgrade safety: the semantic widening currently reuses `gcpl7`, so existing `gcpl7` registrations that failed under the old rule can remain stranded metadata-only after upgrade. R6 must advance and reconcile the parser identity. R7 must make the current spec/documentation reflect the user's explicit parity deferral.
+R6 is resolved: the neutral-preamble semantic change is now isolated behind `gcpl8`, with a bounded upgrade path for both online and offline `gcpl7` registrations. The remaining correction is documentation-only but authoritative: Parent 041 must update its own single-direction amendment rules to permit the exact header-proven zero-current Control preamble that 041.6 and the implementation now support.
 
-The missing `.mpr/.mpt` pair is **not** an open finding and is **not** a Parent 041 closure blocker. After R6/R7 return, resume `FINAL_REVIEW` from the new delta.
+The missing `.mpr/.mpt` pair is not an open finding and is not a Parent 041 blocker. Resume `FINAL_REVIEW` after R7.
