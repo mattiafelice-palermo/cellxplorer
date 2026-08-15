@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "spec": "045",
+  "branch": "feature/faster-local-verification",
+  "active_child": "045",
+  "children": [
+    "045"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-16T01:28:03+02:00"
+}
