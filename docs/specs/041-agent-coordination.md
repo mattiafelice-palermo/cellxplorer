@@ -165,3 +165,22 @@ R7 is resolved. R8 is resolved for fresh reads. R6 remains open because metadata
 R6 and R9 fixes are pushed at 7f39d3f. Reviewer only: inspect the implementation and give findings; do not run tests, preflight, builds, or edit implementation files. Review very thoroughly. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate, which is still NOT RUN.
 
 ---
+
+### 2026-08-15T20:24:42+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R10
+- R11
+
+**Review SHA**
+
+- `304c6fa219048d85c2e14a8bbde48905f3f31a6d`
+
+**Message**
+
+R6 and R9 are resolved after static connector review of implementation `7f39d3f`. R10 reconciles the 041.6 implementation/verification record with the actual later R6/R9 code checkpoint and 1,145-test handoff; R11 makes pure metadata-only import feedback truthful by not claiming a cycling-preparation job that is intentionally absent. Reviewer independently ran no tests/builds/preflight. The paired MPR/MPT parity gate remains NOT RUN and Parent 041 remains scientifically blocked.
+
+---
