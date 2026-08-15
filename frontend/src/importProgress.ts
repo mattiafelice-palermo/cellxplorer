@@ -49,9 +49,9 @@ export function importRegistrationSuccessMessage(
     return `${importedLabel} accepted. Registration is being committed; no cycling data preparation is queued.`;
   }
   if (!hasMetadataOnlySources) {
-    return `${importedLabel} accepted. Registration is being committed; cycling data preparation continues in the background.`;
+    return `${importedLabel} accepted. Registration is being committed; cycling data will be prepared in the background if needed.`;
   }
-  return `${importedLabel} accepted. Registration is being committed; cycling data preparation continues for canonical sources in the background.`;
+  return `${importedLabel} accepted. Registration is being committed; cycling data will be prepared for canonical sources in the background if needed.`;
 }
 
 export function importRegistrationUiState(

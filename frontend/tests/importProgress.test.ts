@@ -52,22 +52,22 @@ test("metadata-only import success does not claim a cycling-preparation job", ()
   );
 });
 
-test("canonical import success retains background-preparation feedback", () => {
+test("canonical import success keeps preparation feedback conditional", () => {
   assert.equal(
     importRegistrationSuccessMessage(2, [
       { canonical_cycling: true, metadata_only: false },
     ]),
-    "2 cells accepted. Registration is being committed; cycling data preparation continues in the background.",
+    "2 cells accepted. Registration is being committed; cycling data will be prepared in the background if needed.",
   );
 });
 
-test("mixed import success names the canonical sources that need preparation", () => {
+test("mixed import success names canonical sources with conditional preparation feedback", () => {
   assert.equal(
     importRegistrationSuccessMessage(1, [
       { canonical_cycling: true, metadata_only: false },
       { canonical_cycling: false, metadata_only: true },
     ]),
-    "1 cell accepted. Registration is being committed; cycling data preparation continues for canonical sources in the background.",
+    "1 cell accepted. Registration is being committed; cycling data will be prepared for canonical sources in the background if needed.",
   );
 });
 
