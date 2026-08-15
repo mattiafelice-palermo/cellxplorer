@@ -474,3 +474,36 @@ R4/R5 are addressed. Offline or missing-path bm:gcpl5:r1/bm:gcpl6:r1 registratio
 R4 and R5 are resolved after static re-review of `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`. The narrow charge-only/discharge-only source-local cycle-1 amendment is implementation-review clean, including the gcpl7 candidate/verified boundary, declared/raw direction proof and offline legacy summary invalidation. Reviewer independently ran no tests/builds/preflight. The branch remains in `REVIEWER + FINAL_REVIEW` with no open findings because the separate general same-experiment MPR/MPT semantic-parity gate remains NOT RUN; do not transition to COMPLETE or merge under the current Parent 041 acceptance criteria.
 
 ---
+### 2026-08-16T00:12:27+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** User-supplied MPR fix ready for review
+
+**Implementation checkpoint**
+
+- `51deb8e` — Allow neutral GCPL setup preambles
+
+**Verification**
+
+- Focused parser/import/continuation suite: **PASS (173 tests)**.
+- `python scripts\preflight.py --no-cache`: **PASS (5/5 stages)** after the elevated Windows
+  Vite build; all 68 backend modules, 541 frontend policy tests, TypeScript, and production
+  bundle passed.
+- Private `BB_eNargiZinc_Discharge-OD19_04_GCPL6_C16.mpr`: **PASS** through production header,
+  full canonical parse, isolated cache build and temporary registration; 5,483 rows, one
+  discharge/rest cycle, canonical capability promoted.
+- Private four-part stitch (`04`, `06`, `08`, `10`): **PASS**; 15,700 raw rows, four dense global
+  cycles, no missing segments, 1,002.932626 mAh total discharge capacity.
+- MPR/MPT semantic parity: **NOT RUN**; no paired `.mpt` is available.
+- Browser/manual feature verification: **NOT RUN**, per the user's manual-review workflow.
+
+**Message**
+
+The real file exposed a safe gap in the previous candidate rule: EC-Lab records a neutral
+zero-current setup/control sequence before the active discharge, while the recorded data begins
+at the discharge sequence. The adapter now ignores only a header-proven neutral control preamble,
+still rejects unresolved/nonzero control semantics, and validates any decoded control rows as
+neutral. The real source and all four continuation parts now parse, cache and stitch through the
+production path. Reviewer should inspect the new parser/test/docs checkpoint; Parent 041 remains
+scientifically blocked on the separate paired MPR/MPT parity gate.
+
+---
