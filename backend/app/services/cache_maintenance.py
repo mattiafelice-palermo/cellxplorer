@@ -398,7 +398,19 @@ class WarmupCoordinator:
             generation = self._generation
         tasks: list[dict[str, Any]] = []
         for analysis in analyses:
-            for plot in ((analysis.spec or {}).get("saved_plots") or []):
+            analysis_spec = analysis.spec or {}
+            if analysis_engine.canonical_cycling_capability(db, analysis_spec) is not None:
+                # Retired/metadata-only sources may still have old artifact
+                # bytes and ready markers on disk, but neither is live truth.
+                # Remove only the marker so a future capability restoration
+                # cannot adopt the retired artifact by identity alone.
+                for plot in analysis_spec.get("saved_plots") or []:
+                    if plot.get("id"):
+                        analysis_cache.clear_prepared_marker(
+                            analysis.id, str(plot.get("id"))
+                        )
+                continue
+            for plot in (analysis_spec.get("saved_plots") or []):
                 if not plot.get("id"):
                     continue
                 tab = str(plot.get("tab") or "cycles")
@@ -690,6 +702,8 @@ class WarmupCoordinator:
                 return False
             tab = str(plot.get("tab") or "cycles")
             plot_family = "rate_capability" if tab == "crate" else tab
+            if analysis_engine.canonical_cycling_capability(session, analysis.spec or {}) is not None:
+                return False
             if (
                 plot_family in analysis_engine.PROTOCOL_DERIVED_FAMILIES
                 and analysis_engine.multi_source_cells_for_spec(session, analysis.spec or {})
@@ -827,6 +841,7 @@ class WarmupCoordinator:
         db: Session | None = None,
     ) -> dict[str, Any]:
         finished = False
+        capability_unavailable = False
         job_id: int | None
         with self._lock:
             if self._active is None or self._active["id"] != task_id:
@@ -834,6 +849,21 @@ class WarmupCoordinator:
             job_id = self._job_id
             completed_task = self._active
             self._active = None
+            if status == "ready" and not error and db is not None:
+                analysis = db.get(Analysis, completed_task["analysis_id"])
+                if analysis is None or analysis_engine.canonical_cycling_capability(
+                    db, analysis.spec or {}
+                ) is not None:
+                    # A source can be withdrawn after _is_current() admits a
+                    # task but before the browser reports its render. Do not
+                    # inspect old thumbnails or record a marker in that race.
+                    capability_unavailable = True
+                    status = "skipped"
+                    detail = "Canonical cycling data is unavailable for this saved plot"
+                    error = None
+                    analysis_cache.clear_prepared_marker(
+                        completed_task["analysis_id"], completed_task["plot_id"]
+                    )
             if status == "ready" and not error:
                 has_saved = analysis_cache.load_latest_thumbnail(
                     completed_task["analysis_id"],
@@ -880,7 +910,7 @@ class WarmupCoordinator:
                         status="paused",
                         description="Paused until CellXplorer is idle",
                     )
-        if status in {"ready", "skipped"} and not error:
+        if status in {"ready", "skipped"} and not error and not capability_unavailable:
             # Record what this plot was prepared for, so the next queue
             # build can skip it. Covers both fresh renders and tasks that
             # completed straight from an existing cache entry. A skipped

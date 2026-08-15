@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -27,11 +28,14 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base  # noqa: E402
-from app.models import Cell, SourceFile, Test, TestFile  # noqa: E402
+from app.models import Analysis, Cell, SourceFile, Test, TestFile  # noqa: E402
+from app.routers import analyses as analyses_router  # noqa: E402
 from app.services import (  # noqa: E402
+    analysis_cache,
     analysis_engine,
     background_jobs,
     cache,
+    cache_maintenance,
     import_inspection,
     parsing,
     scanner,
@@ -423,6 +427,213 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
                 analysis_engine.compute(self.db, spec, provenance)
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
+
+    def test_retired_saved_artifacts_and_warmup_fail_closed_before_cache_access(self) -> None:
+        source, cell = self._add_retired_source(hash_value="ef" * 32)
+        spec = analysis_engine.default_spec("retired artifact")
+        spec["selection"]["entries"] = [{"kind": "cell", "ref_id": cell.id}]
+        spec["saved_plots"] = [
+            {
+                "id": "retired-plot",
+                "name": "Retired plot",
+                "tab": "cycles",
+                "modified_at": "2026-08-15T00:00:00+00:00",
+            }
+        ]
+        analysis = Analysis(
+            title="Retired artifact",
+            spec=spec,
+            provenance={
+                "calc_version": cache.CALC_VERSION,
+                "parser_version": "bm:gcpl3:r1",
+                "sources": [{"cell_id": cell.id, "file_hashes": [source.hash]}],
+            },
+        )
+        self.db.add(analysis)
+        self.db.commit()
+
+        old_signature = analysis_cache.saved_plot_data_signature(
+            self.db, analysis, spec["saved_plots"][0]
+        )
+        artifact = {
+            "svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            "thumbnail": "data:image/png;base64,AA==",
+            "preview_thumbnail": "data:image/webp;base64,AA==",
+            "figure": {"data": [], "layout": {}},
+            "summary": [],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.multiple(
+                analysis_cache,
+                _ROOT=root,
+                _ARTIFACTS=root / "artifacts",
+                _THUMBNAILS=root / "thumbnails",
+                _THUMBNAIL_INDEXES=root / "thumbnail-index",
+                _PREPARED=root / "prepared",
+                _budget_total=None,
+                ANALYSIS_CACHE_LIMIT_BYTES=None,
+            ):
+                analysis_cache.store_artifact(
+                    analysis.id,
+                    "retired-plot",
+                    f"client:{old_signature}",
+                    artifact,
+                    client_signature="client",
+                    data_signature=old_signature,
+                )
+                analysis_cache.store_prepared_marker(
+                    analysis.id,
+                    "retired-plot",
+                    old_signature,
+                    spec["saved_plots"][0]["modified_at"],
+                )
+
+                self.assertEqual(
+                    scanner.reconcile_retired_biologic_sources(self.db),
+                    1,
+                )
+                self.db.expire_all()
+                refreshed = self.db.get(Analysis, analysis.id)
+                self.assertIsNotNone(refreshed)
+
+                with patch.object(
+                    analyses_router.analysis_cache,
+                    "load_artifact",
+                    side_effect=AssertionError("retired artifact must not be read"),
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        analyses_router.get_plot_artifact(
+                            analysis.id,
+                            "retired-plot",
+                            "client",
+                            self.db,
+                        )
+                self.assertEqual(context.exception.status_code, 422)
+                self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
+                with patch.object(
+                    analyses_router.analysis_cache,
+                    "load_artifact",
+                    side_effect=AssertionError("retired artifact lookup must not be read"),
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        analyses_router.lookup_plot_artifact(
+                            analysis.id,
+                            "retired-plot",
+                            analyses_router.PlotArtifactLookup(signature="client"),
+                            self.db,
+                        )
+                self.assertEqual(context.exception.status_code, 422)
+                self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
+                with patch.object(
+                    analyses_router.analysis_cache,
+                    "load_indexed_thumbnail",
+                    side_effect=AssertionError("retired thumbnail index must not be read"),
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        analyses_router.lookup_plot_thumbnail(
+                            analysis.id,
+                            "retired-plot",
+                            analyses_router.PlotArtifactLookup(signature="client"),
+                            self.db,
+                        )
+                self.assertEqual(context.exception.status_code, 422)
+                self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
+                with patch.object(
+                    analyses_router.analysis_cache,
+                    "load_latest_thumbnail",
+                    side_effect=AssertionError("retired latest thumbnail must not be read"),
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        analyses_router.latest_plot_thumbnail(
+                            analysis.id,
+                            "retired-plot",
+                            db=self.db,
+                        )
+                self.assertEqual(context.exception.status_code, 422)
+                self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
+                write_request = analyses_router.PlotArtifactRequest(
+                    signature="client",
+                    svg=artifact["svg"],
+                    figure=artifact["figure"],
+                    expected_data_signature=old_signature,
+                )
+                with patch.object(
+                    analyses_router.analysis_cache,
+                    "store_artifact",
+                    side_effect=AssertionError("retired artifact must not be republished"),
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        analyses_router.store_plot_artifact(
+                            analysis.id,
+                            "retired-plot",
+                            write_request,
+                            self.db,
+                        )
+                self.assertEqual(context.exception.status_code, 422)
+                self.assertEqual(context.exception.detail["code"], "canonical_cycling_unavailable")
+
+                with (
+                    patch.object(
+                        analysis_cache,
+                        "load_prepared_marker",
+                        side_effect=AssertionError("retired marker must not authorize warmup"),
+                    ),
+                    patch.object(
+                        analysis_cache,
+                        "load_latest_thumbnail",
+                        side_effect=AssertionError("retired thumbnail must not authorize warmup"),
+                    ),
+                ):
+                    coordinator = cache_maintenance.WarmupCoordinator()
+                    started = coordinator.start(self.db, force=True)
+                self.assertEqual(started["total"], 0)
+                self.assertIsNone(coordinator.next_task(self.db))
+
+                # Also cover the race where a task passed _is_current before
+                # startup reconciliation withdrew the source.
+                analysis_cache.store_prepared_marker(
+                    analysis.id,
+                    "retired-plot",
+                    old_signature,
+                    spec["saved_plots"][0]["modified_at"],
+                )
+                completion = cache_maintenance.WarmupCoordinator()
+                stale_task = {
+                    "id": "retired-task",
+                    "analysis_id": analysis.id,
+                    "plot_id": "retired-plot",
+                    "expected_data_signature": old_signature,
+                }
+                with completion._lock:
+                    completion._active = stale_task
+                with patch.object(
+                    analysis_cache,
+                    "load_latest_thumbnail",
+                    side_effect=AssertionError("retired completion must not read thumbnails"),
+                ):
+                    completed = completion.complete(
+                        "retired-task",
+                        status="ready",
+                        detail="Ready",
+                        error=None,
+                        db=self.db,
+                    )
+                self.assertTrue(completed["ok"])
+                self.assertIsNone(
+                    analysis_cache.load_prepared_marker(analysis.id, "retired-plot")
+                )
+
+                # The old forensic artifact may remain physically, but its
+                # prepared marker is removed so a later capability change
+                # cannot adopt it by stale identity alone.
+                self.assertIsNone(
+                    analysis_cache.load_prepared_marker(analysis.id, "retired-plot")
+                )
 
     def test_retired_worker_result_cannot_promote_source_back_to_canonical(self) -> None:
         source, _cell = self._add_retired_source(hash_value="12" * 32)

@@ -249,8 +249,10 @@ without opening source files: stored data-header evidence proving the observed 1
 layout is brought to the current `bm:gcpl5:r1` metadata-only identity, while the withdrawn
 15-ID/49-byte layout (or missing/ambiguous evidence) clears the parser identity and marks the
 source as metadata-only with `requires_reinspection=true`. Old identity-keyed caches may remain
-for later forensic cleanup, but the persisted capability gate blocks previews, recompute, warmup,
-and portable scientific export from consuming them. The same gate applies before startup
+for later forensic cleanup, but the persisted capability gate blocks saved-artifact reads and
+writes, previews, recompute, warmup, and portable scientific export from consuming them. The
+warmup completion boundary repeats the check so a task admitted before retirement cannot inspect
+old thumbnails or record a prepared marker afterward. The same gate applies before startup
 reconciliation, so an offline or interrupted upgrade cannot briefly expose an old cache through a
 pinned provenance. List/request capability checks do not reread every source, and this identity
 transition does not change `CALC_VERSION`.

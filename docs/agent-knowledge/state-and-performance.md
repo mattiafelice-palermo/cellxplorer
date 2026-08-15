@@ -416,8 +416,12 @@ excluded: results are computed from the cached Parquet, which transient offline/
 not touch, so a drive reconnect or a still-cycling source file must not invalidate every cached
 result for the cell. Availability badges are therefore refreshed at response time from the
 database status fields (`analysis_engine.refresh_availability_badges`) whenever a cached result
-is served. Warmup tasks must never recompute a plot whose thumbnail or artifact is already
-cached; the background compute is gated exactly like the visible preview path.
+is served. The persisted canonical-cycling capability gate also applies to saved-artifact and
+thumbnail reads/writes, warmup queue discovery, active-task admission, and completion: a source
+retired to metadata-only cannot expose old visual bytes or record a prepared marker, including
+when retirement races a browser render that was already admitted. Warmup tasks must never
+recompute a plot whose thumbnail or artifact is already cached; the background compute is gated
+exactly like the visible preview path.
 
 When one analysis endpoint changes its cached response schema, bump only that entry in
 `analysis_cache.RESULT_SCHEMA_VERSIONS`. The per-kind schema version is part of `result_key`, so

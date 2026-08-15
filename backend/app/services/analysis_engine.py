@@ -312,6 +312,11 @@ def canonical_cycling_capability(db: Session, spec: dict) -> dict[str, object] |
     """Return a stable capability response when selection contains metadata-only sources."""
 
     units, _missing = resolve_selection(db, spec)
+    cells = list({unit["cell"].id: unit["cell"] for unit in units}.values())
+    # Saved-artifact and warmup callers use this same capability boundary as
+    # compute endpoints. Warm the relational source chain once so the guard
+    # does not turn a multi-cell analysis into a per-cell relationship walk.
+    preload_cell_sources(db, cells)
     sources: list[dict[str, object]] = []
     seen: set[int] = set()
     for unit in units:

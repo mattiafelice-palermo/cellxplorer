@@ -657,6 +657,11 @@ def store_prepared_marker(
         temporary.unlink(missing_ok=True)
 
 
+def clear_prepared_marker(analysis_id: int, plot_id: str) -> None:
+    """Forget one plot's prepared state without deleting its forensic bytes."""
+    _prepared_marker_path(analysis_id, plot_id).unlink(missing_ok=True)
+
+
 def clear_prepared_markers(analysis_id: int | None = None) -> None:
     import shutil
 

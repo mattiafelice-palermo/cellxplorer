@@ -1097,6 +1097,10 @@ def _guard_saved_plot_protocol_analysis(
     )
     if saved_plot is None:
         raise HTTPException(404, "No such saved plot")
+    # Saved artifacts are scientific outputs too. Persisted source capability
+    # must be authoritative before a historical artifact, thumbnail, or stale
+    # client write can reach any cache boundary.
+    _guard_canonical_cycling(db, analysis.spec)
     plot_family = "rate_capability" if saved_plot.get("tab") == "crate" else str(
         saved_plot.get("tab") or "cycles"
     )
