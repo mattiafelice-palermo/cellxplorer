@@ -188,6 +188,20 @@ Use stable `R1`, `R2`, ... findings exactly as defined in the workflow guide. Ea
 
 Report only concrete defects, spec deviations, regression risks, or required verification gaps.
 
+### Verification evidence
+
+Treat canonical preflight as the repository's aggregate verification command. When an implementer reports a successful `python scripts\preflight.py` run, do not request an additional standalone full backend or frontend-policy run merely to duplicate coverage that preflight already executed.
+
+Require a separate full-suite result only when:
+
+- the active spec explicitly requires that standalone command/result;
+- a finding specifically needs isolated full-suite evidence;
+- preflight or its test coverage changed and needs independent confirmation.
+
+Focused tests remain useful evidence for attribution to the changed subsystem and may still be required by the active spec. Never waive explicit scientific, migration, packaging, browser, or manual acceptance checks merely because preflight passed.
+
+If Vite/preflight is reported blocked by a known coding-environment filesystem restriction, distinguish that environment limitation from a product defect. The implementer should request the required filesystem access on the first invocation rather than intentionally failing once and retrying. A blocked build is still unverified and must be recorded as such.
+
 ### Changes required
 
 Update the canonical review file, then apply the equivalent of:

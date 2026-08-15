@@ -89,6 +89,53 @@ For each review finding, satisfy its:
 
 Run the verification required by the active spec and repository guidance.
 
+### Verification efficiency
+
+Use the narrowest checks that provide the required evidence while developing, then run the canonical preflight once before handoff.
+
+Default pattern:
+
+```text
+while implementing/fixing
+→ focused tests/checks for the changed area
+
+before handoff
+→ focused checks required by the active spec/review
+→ python scripts\preflight.py
+```
+
+The canonical preflight already runs the full backend suite through the repository's parallel backend runner and runs the frontend policy suite. Therefore, **do not immediately precede preflight with another full serial backend run such as `python -m unittest discover tests`, or another complete frontend-policy run, merely to duplicate the same coverage**.
+
+Run a separate full suite only when one of these is true:
+
+- the active spec or reviewer finding explicitly requires a standalone full-suite result;
+- you are diagnosing a failure and need an isolated run;
+- the canonical preflight implementation changed so its coverage must first be re-established.
+
+If a standalone full backend run is required, prefer the repository's parallel runner:
+
+```bash
+python scripts\run_backend_tests.py
+```
+
+unless the exact command itself is an acceptance criterion.
+
+Use `python scripts\preflight.py --no-cache` when the active spec/review/release instructions require a forced full frontend build, when validating preflight cache behavior, or when the normal repository guidance explicitly calls for it. Otherwise use normal canonical preflight and let its conservative cache rules apply.
+
+An explicit active-spec or review requirement overrides these efficiency rules. Do not weaken required scientific, migration, packaging, or manual verification to save time.
+
+### Windows/Vite filesystem access
+
+In coding environments where Vite requires expanded repository filesystem access, request/use that access on the **first** `vite build` or canonical-preflight invocation. Do not intentionally run the known restricted form first, wait for an error such as `Cannot read directory "../../.."`, and then repeat the same build with additional access.
+
+This applies equally when Vite is launched indirectly by:
+
+```bash
+python scripts\preflight.py
+```
+
+If the environment cannot grant the required access, report the build/preflight as blocked instead of claiming it passed.
+
 Report only checks that actually ran. Never claim browser/manual verification unless it was actually performed.
 
 ## Handoff to reviewer
