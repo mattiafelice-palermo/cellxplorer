@@ -190,15 +190,20 @@ Report only concrete defects, spec deviations, regression risks, or required ver
 
 ### Verification evidence
 
-Treat canonical preflight as the repository's aggregate verification command. When an implementer reports a successful `python scripts\preflight.py` run, do not request an additional standalone full backend or frontend-policy run merely to duplicate coverage that preflight already executed.
+Canonical `python scripts\preflight.py` is the aggregate full-suite verification for a normal implementer handoff. It already includes the complete backend suite and complete frontend policy suite.
 
-Require a separate full-suite result only when:
+Do **not** request, require, or treat as missing an additional standalone full backend/frontend-policy run when canonical preflight will be or has been run for the same handoff.
 
-- the active spec explicitly requires that standalone command/result;
-- a finding specifically needs isolated full-suite evidence;
-- preflight or its test coverage changed and needs independent confirmation.
+A separate full-suite invocation is justified only when:
 
-Focused tests remain useful evidence for attribution to the changed subsystem and may still be required by the active spec. Never waive explicit scientific, migration, packaging, browser, or manual acceptance checks merely because preflight passed.
+- the active spec/reviewer acceptance criterion **literally requires a separate full-suite command/result**; or
+- the user explicitly requests one.
+
+Do not create a separate full-suite requirement merely because a change is scientific, broad, high-risk, or complex. Require strong focused regression tests for those risks instead.
+
+If a failure needs diagnosis, expect the implementer to use focused tests/modules first rather than rerunning the entire suite by default.
+
+Focused tests remain useful evidence for attribution to the changed subsystem and may still be explicitly required by the active spec. Never waive scientific, migration, packaging, browser, or manual acceptance checks merely because preflight passed.
 
 If Vite/preflight is reported blocked by a known coding-environment filesystem restriction, distinguish that environment limitation from a product defect. The implementer should request the required filesystem access on the first invocation rather than intentionally failing once and retrying. A blocked build is still unverified and must be recorded as such.
 
