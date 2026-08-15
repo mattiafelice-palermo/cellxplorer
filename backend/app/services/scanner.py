@@ -130,6 +130,34 @@ def _needs_identity_bring_forward(sf: SourceFile) -> bool:
     return sf.parser_version != expected
 
 
+def reconcile_retired_biologic_sources(db: Session) -> int:
+    """Reclassify persisted sources whose canonical parser was withdrawn.
+
+    The query is deliberately bounded by extension and the explicit retired
+    identity list.  It does not inspect source paths or cache files, and it
+    includes offline rows so a disconnected library receives the same
+    truthful capability downgrade as an online one.
+    """
+
+    retired_identities = parsing.RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
+    if not retired_identities:
+        return 0
+    sources = (
+        db.query(SourceFile)
+        .filter(
+            SourceFile.ext == "mpr",
+            SourceFile.parser_version.in_(retired_identities),
+        )
+        .all()
+    )
+    changed = 0
+    for source in sources:
+        changed += int(parsing.reclassify_retired_biologic_source(source))
+    if changed:
+        db.commit()
+    return changed
+
+
 def scientific_preparation_worker_count(
     n_jobs: int,
     *,
@@ -198,6 +226,10 @@ def start_capacity_summary_backfill(
 
     db = SessionLocal()
     try:
+        # Do this before selecting parsed sources.  A gcpl3 row can otherwise
+        # enter the normal identity bring-forward path and retain its old
+        # canonical registration when the current gcpl4 build fails closed.
+        reconcile_retired_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)
         copied_library_preparation = scientific_preparation.is_pending(preparation_state)
         prepare_all_missing = prepare_missing or copied_library_preparation
@@ -549,6 +581,24 @@ def _apply_capacity_source_result(
         return 0, 0
     if result.get("location_status"):
         sf.location_status = result["location_status"]
+    if parsing.source_uses_retired_biologic_parser(sf):
+        parsing.reclassify_retired_biologic_source(sf)
+        warning = parsing.RETIRED_BIOLOGIC_MPR_WARNING
+        logger.warning(
+            "scientific preparation skipped for retired parser %s: %s",
+            sf.filename,
+            warning,
+        )
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="failed",
+            detail=warning,
+            error=warning,
+            counter="failed",
+        )
+        db.commit()
+        return 0, 1
     if result.get("ok"):
         info = result["info"]
         if result.get("built"):
@@ -1027,9 +1077,10 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
     if parsing.source_record_metadata_only(sf):
+        metadata_only_message = parsing.source_record_metadata_only_message(sf)
         sf.parser_version = parsing.current_parser_identity_for_extension(sf.ext)
         sf.parse_status = "metadata_only"
-        sf.parse_error = parsing.source_metadata_only_message({"raw": sf.header_meta})
+        sf.parse_error = metadata_only_message
         sf.capacity_summary_status = "unavailable"
         db.commit()
         return sf

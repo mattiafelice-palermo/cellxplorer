@@ -356,6 +356,15 @@ identity-keyed filenames (`cache.raw_path`/`cache.cycles_path` never touch anoth
 so a preparation pass rebuilding a source's current-identity cache cannot disturb a pinned analysis
 still rendering from its own older-identity cache.
 
+One exception is an adapter identity that has been scientifically withdrawn. Before the ordinary
+parsed-source work set is selected, startup reconciles persisted BioLogic `bm:gcpl3:r1` rows in a
+bounded extension-plus-identity query. It does not open the source or inspect cache files, and it
+includes offline rows. The row becomes current `bm:gcpl4:r1` metadata-only state, with live cycle
+and capacity fields cleared; the old cache remains non-live forensic material. The same retired
+identity check is part of the shared source capability boundary, which prevents pinned analysis
+resolution or any cache-backed scientific consumer from using the old cache if it runs before that
+startup pass.
+
 Settings exposes category actions with different safety boundaries:
 
 - **Clean eligible** scientific data removes only orphaned or currently regenerable caches and

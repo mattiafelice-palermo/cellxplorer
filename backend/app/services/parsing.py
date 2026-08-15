@@ -73,6 +73,7 @@ import re
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
@@ -415,6 +416,19 @@ RAW_COLUMNS = {
     "Timestamp": "timestamp",
 }
 
+# ``gcpl3`` briefly exposed canonical cycling rows before the logical cycle
+# identity requirement was made explicit.  Those rows and their caches are
+# not a reproducible historical scientific result: the adapter can no longer
+# vouch for their cycle labels.  Keep the retirement list narrow and explicit
+# so a later BioLogic adapter revision can add its own migration decision
+# without changing the behavior of unrelated source formats.
+RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
+RETIRED_BIOLOGIC_MPR_WARNING = (
+    "BioLogic MPR canonical cycling from parser bm:gcpl3:r1 is no longer "
+    "scientifically valid because logical cycle identity was not independently "
+    "verified; this source is metadata-only."
+)
+
 
 def compute_hash(path: str | Path) -> str:
     """Content hash = file identity. sha256, streamed."""
@@ -516,16 +530,135 @@ def source_metadata_only(metadata: dict | None) -> bool:
 
 def source_metadata_only_message(metadata: dict | None) -> str:
     if isinstance(metadata, dict):
-        warnings = metadata.get("protocol_warnings")
-        if isinstance(warnings, (list, tuple)):
-            for warning in warnings:
-                text = str(warning).strip()
-                if text and ("cycle" in text.casefold() or "canonical" in text.casefold()):
-                    return text
+        candidates: list[dict] = [metadata]
+        raw = metadata.get("raw")
+        if isinstance(raw, dict):
+            candidates.append(raw)
+            declared = raw.get("_cellxplorer_declared_protocol")
+            if isinstance(declared, dict):
+                candidates.append(declared)
+        for candidate in candidates:
+            warnings = candidate.get("protocol_warnings") or candidate.get("warnings")
+            if isinstance(warnings, (list, tuple)):
+                for warning in warnings:
+                    text = str(warning).strip()
+                    if text and ("cycle" in text.casefold() or "canonical" in text.casefold()):
+                        return text
     return (
         "This source has readable metadata but no independently verified canonical cycling "
         "rows yet; it is metadata-only until the source cycle identity is resolved."
     )
+
+
+def is_retired_biologic_parser_identity(
+    ext: str | None,
+    parser_version: str | None,
+) -> bool:
+    """Return whether a persisted BioLogic identity has been withdrawn.
+
+    This is deliberately a cheap relational check.  It never opens the MPR,
+    consults a cache, or imports an adapter, so list, startup, and analysis
+    capability paths can fail closed before any scientific data is read.
+    """
+
+    suffix = str(ext or "").casefold().lstrip(".")
+    return (
+        suffix == "mpr"
+        and str(parser_version or "") in RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
+    )
+
+
+def source_uses_retired_biologic_parser(source: object) -> bool:
+    return is_retired_biologic_parser_identity(
+        getattr(source, "ext", None),
+        getattr(source, "parser_version", None),
+    )
+
+
+def source_record_metadata_only_message(source: object) -> str:
+    """Return the persisted source's truthful metadata-only explanation."""
+
+    if source_uses_retired_biologic_parser(source):
+        return RETIRED_BIOLOGIC_MPR_WARNING
+    header = getattr(source, "header_meta", None)
+    return source_metadata_only_message({"raw": header} if isinstance(header, dict) else None)
+
+
+def reclassify_retired_biologic_source(source: object) -> bool:
+    """Downgrade one withdrawn BioLogic registration without source I/O.
+
+    Old parser caches are intentionally left on disk for later forensic
+    cleanup.  The relational registration and its persisted capability flags
+    are the live authority, so every current consumer sees the source as
+    metadata-only after this bounded state transition.
+    """
+
+    if not source_uses_retired_biologic_parser(source):
+        return False
+
+    original = getattr(source, "header_meta", None)
+    header = deepcopy(original) if isinstance(original, dict) else {}
+    containers: list[dict] = [header]
+    raw = header.get("raw")
+    if isinstance(raw, dict):
+        containers.append(raw)
+
+    for container in containers:
+        capabilities = container.get("capabilities")
+        capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        capabilities.update(
+            {
+                "cycling_rows": False,
+                "canonical_cycling": False,
+                "metadata_only": True,
+            }
+        )
+        container["capabilities"] = capabilities
+        warnings = container.get("protocol_warnings")
+        warnings = list(warnings) if isinstance(warnings, (list, tuple)) else []
+        if RETIRED_BIOLOGIC_MPR_WARNING not in warnings:
+            warnings.append(RETIRED_BIOLOGIC_MPR_WARNING)
+        container["protocol_warnings"] = warnings
+
+        declared = container.get("_cellxplorer_declared_protocol")
+        if isinstance(declared, dict):
+            declared_copy = deepcopy(declared)
+            declared_capabilities = declared_copy.get("capabilities")
+            declared_capabilities = (
+                dict(declared_capabilities)
+                if isinstance(declared_capabilities, dict)
+                else {}
+            )
+            declared_capabilities.update(
+                {
+                    "cycling_rows": False,
+                    "canonical_cycling": False,
+                    "metadata_only": True,
+                }
+            )
+            declared_copy["capabilities"] = declared_capabilities
+            declared_warnings = declared_copy.get("warnings")
+            declared_warnings = (
+                list(declared_warnings)
+                if isinstance(declared_warnings, (list, tuple))
+                else []
+            )
+            if RETIRED_BIOLOGIC_MPR_WARNING not in declared_warnings:
+                declared_warnings.append(RETIRED_BIOLOGIC_MPR_WARNING)
+            declared_copy["warnings"] = declared_warnings
+            container["_cellxplorer_declared_protocol"] = declared_copy
+
+    source.header_meta = header
+    source.parser_version = current_parser_identity_for_extension(getattr(source, "ext", None))
+    source.parse_status = "metadata_only"
+    source.parse_error = RETIRED_BIOLOGIC_MPR_WARNING
+    source.row_count = None
+    source.cycle_count = None
+    source.capacity_summary_status = "unavailable"
+    source.total_charge_capacity_mah = None
+    source.total_discharge_capacity_mah = None
+    source.max_discharge_capacity_mah = None
+    return True
 
 
 def source_record_metadata_only(source: object) -> bool:
@@ -536,6 +669,8 @@ def source_record_metadata_only(source: object) -> bool:
     because a cache or preview consumer asks for cycling data.
     """
 
+    if source_uses_retired_biologic_parser(source):
+        return True
     if getattr(source, "parse_status", None) == "metadata_only":
         return True
     header = getattr(source, "header_meta", None)
@@ -547,7 +682,7 @@ def source_record_capability(source: object) -> dict[str, object]:
 
     metadata_only = source_record_metadata_only(source)
     warning = (
-        source_metadata_only_message({"raw": getattr(source, "header_meta", None)})
+        source_record_metadata_only_message(source)
         if metadata_only
         else None
     )

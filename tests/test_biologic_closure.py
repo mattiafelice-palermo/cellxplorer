@@ -11,10 +11,12 @@ field is covered separately by ``test_biologic_gcpl``.
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,7 +27,15 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base  # noqa: E402
-from app.services import cache, import_inspection, parsing, scanner  # noqa: E402
+from app.models import Cell, SourceFile, Test, TestFile  # noqa: E402
+from app.services import (  # noqa: E402
+    analysis_engine,
+    background_jobs,
+    cache,
+    import_inspection,
+    parsing,
+    scanner,
+)
 from app.services.biologic_gcpl import (  # noqa: E402
     UnsupportedBiologicGcplError,
     read_gcpl_header_metadata,
@@ -124,7 +134,8 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(engine)
-        self.db = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)()
+        self.factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        self.db = self.factory()
         self.cache_root = self.root / f"cache-{id(self)}"
         self.old_cache_dir = cache.CACHE_DIR
         cache.CACHE_DIR = self.cache_root
@@ -132,7 +143,70 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         cache.CACHE_DIR = self.old_cache_dir
+        background_jobs.clear_jobs()
         self.db.close()
+
+    def _add_retired_source(
+        self,
+        *,
+        location_status: str = "online",
+        hash_value: str = "ab" * 32,
+    ) -> tuple[SourceFile, Cell]:
+        header = deepcopy(self.source.header_meta or {})
+        capabilities = dict(header.get("capabilities") or {})
+        capabilities.update(
+            {
+                "cycling_rows": True,
+                "canonical_cycling": True,
+                "metadata_only": False,
+            }
+        )
+        header["capabilities"] = capabilities
+        source_path = (
+            self.mpr_path
+            if location_status == "online"
+            else self.root / f"missing-{hash_value[:6]}.mpr"
+        )
+        source = SourceFile(
+            hash=hash_value,
+            path=str(source_path),
+            filename="retired-gcpl3.mpr",
+            size=source_path.stat().st_size if source_path.exists() else 1,
+            ext="mpr",
+            observed_size=source_path.stat().st_size if source_path.exists() else 1,
+            observed_mtime_ns=(
+                source_path.stat().st_mtime_ns if source_path.exists() else None
+            ),
+            location_status=location_status,
+            parse_status="parsed",
+            parser_version="bm:gcpl3:r1",
+            header_meta=header,
+            row_count=4,
+            cycle_count=2,
+            total_charge_capacity_mah=1.0,
+            total_discharge_capacity_mah=0.9,
+            max_discharge_capacity_mah=0.9,
+            capacity_summary_status="ready",
+        )
+        cell = Cell(name=f"retired-{hash_value[:8]}")
+        self.db.add(source)
+        self.db.add(cell)
+        self.db.flush()
+        test = Test(cell_id=cell.id, name="retired-source")
+        self.db.add(test)
+        self.db.flush()
+        self.db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        self.db.commit()
+        return source, cell
+
+    def _write_retired_cache(self, source: SourceFile) -> tuple[Path, Path]:
+        old_identity = "bm:gcpl3:r1"
+        old_raw = cache.raw_path(source.hash, old_identity)
+        old_cycles = cache.cycles_path(source.hash, old_identity, cache.CALC_VERSION)
+        old_raw.parent.mkdir(parents=True, exist_ok=True)
+        old_raw.write_bytes(b"withdrawn canonical raw cache")
+        old_cycles.write_bytes(b"withdrawn canonical cycles cache")
+        return old_raw, old_cycles
 
     def test_header_capabilities_are_truthfully_metadata_only(self) -> None:
         metadata = read_gcpl_header_metadata(self.mpr_path)
@@ -179,6 +253,102 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertFalse(cache.cycles_path(file_hash, current_identity, cache.CALC_VERSION).exists())
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
+
+    def test_startup_reclassifies_retired_online_and_offline_sources(self) -> None:
+        online, _online_cell = self._add_retired_source(
+            location_status="online", hash_value="ab" * 32
+        )
+        offline, _offline_cell = self._add_retired_source(
+            location_status="offline", hash_value="cd" * 32
+        )
+        online_raw, online_cycles = self._write_retired_cache(online)
+        offline_raw, offline_cycles = self._write_retired_cache(offline)
+
+        with patch.object(scanner, "SessionLocal", side_effect=self.factory):
+            result = scanner.start_capacity_summary_backfill()
+
+        self.assertEqual(result["total"], 0)
+        self.db.expire_all()
+        for source in (online, offline):
+            refreshed = self.db.get(SourceFile, source.id)
+            self.assertEqual(refreshed.parser_version, "bm:gcpl4:r1")
+            self.assertEqual(refreshed.parse_status, "metadata_only")
+            self.assertEqual(refreshed.capacity_summary_status, "unavailable")
+            self.assertTrue(parsing.source_record_metadata_only(refreshed))
+            self.assertFalse(refreshed.header_meta["capabilities"]["canonical_cycling"])
+            self.assertFalse(refreshed.header_meta["capabilities"]["cycling_rows"])
+            self.assertTrue(refreshed.header_meta["capabilities"]["metadata_only"])
+            self.assertIn("bm:gcpl3:r1", refreshed.parse_error)
+        self.assertEqual(self.db.get(SourceFile, online.id).location_status, "online")
+        self.assertEqual(self.db.get(SourceFile, offline.id).location_status, "offline")
+        # Retired cache files may remain for forensic cleanup, but their
+        # existence cannot keep either registration scientifically usable.
+        self.assertTrue(online_raw.exists())
+        self.assertTrue(online_cycles.exists())
+        self.assertTrue(offline_raw.exists())
+        self.assertTrue(offline_cycles.exists())
+
+    def test_retired_pinned_analysis_is_blocked_before_old_cache_read(self) -> None:
+        source, cell = self._add_retired_source(hash_value="ef" * 32)
+        old_raw, old_cycles = self._write_retired_cache(source)
+        spec = analysis_engine.default_spec("retired")
+        spec["selection"]["entries"] = [{"kind": "cell", "ref_id": cell.id}]
+        provenance = {
+            "calc_version": cache.CALC_VERSION,
+            "parser_version": "bm:gcpl3:r1",
+            "sources": [{"cell_id": cell.id, "file_hashes": [source.hash]}],
+        }
+
+        detail = analysis_engine.canonical_cycling_capability(self.db, spec)
+        self.assertEqual(detail["code"], "canonical_cycling_unavailable")
+        self.assertIn("bm:gcpl3:r1", detail["sources"][0]["warning"])
+        with patch.object(
+            cache,
+            "load_cycles",
+            side_effect=AssertionError("retired cache must not be read"),
+        ):
+            with self.assertRaises(analysis_engine.CanonicalCyclingUnavailable):
+                analysis_engine.compute(self.db, spec, provenance)
+        self.assertTrue(old_raw.exists())
+        self.assertTrue(old_cycles.exists())
+
+    def test_retired_worker_result_cannot_promote_source_back_to_canonical(self) -> None:
+        source, _cell = self._add_retired_source(hash_value="12" * 32)
+        self._write_retired_cache(source)
+        job_id = background_jobs.create_job(
+            kind="scientific_preparation",
+            title="Retired source",
+            description="retired parser publication guard",
+            total=1,
+            items=[{"id": source.id, "label": source.filename}],
+        )
+        source_job = scanner._capacity_source_job(source, prepare_all_missing=True)
+        self.db.commit()
+        result = {
+            "ok": True,
+            "built": True,
+            "info": {
+                "parser_version": "bm:gcpl4:r1",
+                "rows": 4,
+                "cycles": 2,
+                "total_charge_capacity_mah": 1.0,
+                "total_discharge_capacity_mah": 0.9,
+                "max_discharge_capacity_mah": 0.9,
+            },
+        }
+
+        self.assertEqual(
+            scanner._apply_capacity_source_result(
+                self.db, job_id, source_job, result
+            ),
+            (0, 1),
+        )
+        self.db.expire_all()
+        refreshed = self.db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.parse_status, "metadata_only")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl4:r1")
+        self.assertEqual(refreshed.capacity_summary_status, "unavailable")
+        self.assertEqual(background_jobs.get_job(job_id)["counters"]["failed"], 1)
 
     def test_header_batch_is_bounded_without_promoting_cycling_capability(self) -> None:
         paths = []

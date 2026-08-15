@@ -239,6 +239,14 @@ exercise the explicit-cycle path, while paired MPR/MPT evidence remains required
 semantic closure. This boundary is owned by the adapter and is not a BioLogic-specific branch in
 any generic scientific service.
 
+The withdrawn `bm:gcpl3:r1` identity is not treated as a reproducible historical scientific
+result. On startup, the scanner performs a bounded database-only reconciliation for persisted MPR
+rows at that identity, changes them to the current `bm:gcpl4:r1` metadata-only registration, and
+clears their live canonical counters. Old identity-keyed caches may remain for later forensic
+cleanup, but the persisted capability gate blocks previews, recompute, warmup, and portable
+scientific export from consuming them. The same gate applies before startup reconciliation, so an
+offline or interrupted upgrade cannot briefly expose the old cache through a pinned provenance.
+
 ## 8. How a future source format should map into the contract
 
 A new adapter (including the current independently authored BioLogic GCPL `.mpr` adapter) must:
