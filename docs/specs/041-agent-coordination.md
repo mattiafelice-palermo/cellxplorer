@@ -201,3 +201,21 @@ R6 and R9 are resolved after static connector review of implementation `7f39d3f`
 R10 and R11 are implemented and pushed. Reviewer-only inspection requested; do not run tests, preflight, builds, or edit implementation files. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate.
 
 ---
+
+### 2026-08-15T20:54:02+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R11
+
+**Review SHA**
+
+- `3b98da49cb33079204cf528f4d14f964bbc6d0e3`
+
+**Message**
+
+R10 is resolved. R11 is improved but remains open narrowly: acceptance-time copy now handles pure metadata-only correctly, but it still treats canonical capability as proof that a new cache job is running. Existing unregistered canonical sources may already be cache-ready and are then intentionally omitted from `cache_jobs`, so definitive “preparation continues” wording can still be false. Use conditional generic wording such as “will be prepared in the background if needed,” or defer definitive wording until actual job state exists. Reviewer independently ran no tests/builds/preflight. Parent 041 remains scientifically blocked by the missing paired MPR/MPT gate.
+
+---
