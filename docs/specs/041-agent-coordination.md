@@ -421,3 +421,22 @@ R3 keeps the header-only single-direction result provisional until decoded rows 
 R3/R4 are implemented. Header-only single-direction MPR inspection now records a provisional candidate without canonical capability; full parsing validates declared per-Ns charge/discharge/rest semantics plus the existing half-cycle, monotonic-Ns, and signed-current proof before promotion. Any candidate proof failure persists current-parser metadata-only state with canonical flags cleared, parse error/warning retained, and no live cache publication. Deferred capability checks fail closed while candidate parsing is pending. The parser identity advanced from gcpl6 to gcpl7, and both gcpl5/gcpl6 registrations are reinspection-only so unsafe prior caches cannot remain live. Continuation inspection distinguishes pending candidates from terminal metadata-only sources and schedules their cache build.
 
 ---
+
+### 2026-08-15T23:43:14+02:00 — REVIEWER → IMPLEMENTER — Parent 041 final review
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+- R5
+
+**Review SHA**
+
+- `75ae444bea55c3b543e4a71715ca6ff2ac91277f`
+
+**Message**
+
+R3 is resolved. R4 remains open narrowly: offline legacy `bm:gcpl6:r1` rows are correctly blocked by the scientific capability guard, but `reinspect_legacy_biologic_sources()` skips them without withdrawing old `ready` capacity-summary scalars, so the relational Cell Database can still display unsafe gcpl6-derived capacities. R5 updates the stale 041.6 implementation record from gcpl6 to the actual gcpl7 candidate/verified boundary and latest checkpoint/verification. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after R4/R5; the separate general MPR/MPT scientific-closure gate remains unchanged.
+
+---
