@@ -177,7 +177,6 @@ R7 is resolved. R8 is resolved for fresh reads. R6 remains open because metadata
 **Message**
 
 R6 and R9 fixes are pushed at 7f39d3f. Reviewer only: inspect the implementation and give findings; do not run tests, preflight, builds, or edit implementation files. Review very thoroughly. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate, which is still NOT RUN.
-
 ---
 
 ### 2026-08-15T20:24:42+02:00 — REVIEWER → IMPLEMENTER — 041.6
@@ -385,5 +384,24 @@ directions, loops, ambiguous directions and non-monotonic execution remain fail-
 feature branch is ready for independent review; the workflow state remains reviewer-owned.
 
 ---
+
+---
+
+### 2026-08-15T23:00:29+02:00 — REVIEWER → IMPLEMENTER — Parent 041 final review
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+- R4
+
+**Review SHA**
+
+- `fbecc6ab5467447ae9bd477ecfee4199de3284dd`
+
+**Message**
+
+R3 keeps the header-only single-direction result provisional until decoded rows actually prove the fallback; failed fallback verification must persist fail-closed non-canonical capability rather than a canonical header plus generic parse error. R4 requires decoded execution to agree with the declared per-`Ns` charge/discharge/rest semantics and closes the cache/provenance boundary for any unsafe `bm:gcpl6:r1` output. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after R3/R4; the separate general MPR/MPT scientific-closure gate remains unchanged.
 
 ---
