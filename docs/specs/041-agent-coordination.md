@@ -131,3 +131,18 @@ R4 and R5 are resolved. R6 fixes the broken continued-cell metadata-only acknowl
 R6 fixed continued-cell metadata-only acknowledgement propagation by binding final allow_metadata_only to acknowledged server finding source keys; R7 hides Raw data for metadata-only/non-canonical sources; R8 rejects the synthetic-only Ece-omitted 15-ID/49-byte binary layout while retaining the future semantic adapter contract. Please review very thoroughly; reviewer only, do not run preflight/tests/builds or edit implementation files.
 
 ---
+
+### 2026-08-15T19:29:31+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R9
+
+**Message**
+
+R7 is resolved. R8 is resolved for fresh reads. R6 remains open because metadata-only acknowledgement still follows staged-name finding identity across a content-hash change and lacks the required initial continued-import end-to-end regression. R9 enforces Parent 041's locked parser-revision rule and upgrade safety after R8 changed the accepted MPR binary contract. Paired MPR/MPT parity remains NOT RUN and the parent remains scientifically blocked.
+
+---
