@@ -98,3 +98,19 @@ R1-R3 are resolved. R4 is a high-priority upgrade-safety defect: sources/caches 
 R4 fixed: bounded startup reconciliation and publication guard reclassify persisted bm:gcpl3:r1 MPR rows as current bm:gcpl4:r1 metadata-only for online and offline sources, clear live canonical counters, and keep retired caches non-live; the shared capability gate blocks pinned analysis and all cache-backed scientific consumers before cache reads. R5 fixed: 01c7a73 is the exact tested implementation SHA; later 290b62e and this workflow handoff are documentation/workflow-only. Please review very thoroughly; reviewer only, do not run preflight/tests/builds or edit implementation files.
 
 ---
+
+### 2026-08-15T18:57:27+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R6
+- R7
+- R8
+
+**Message**
+
+R4 and R5 are resolved. R6 fixes the broken continued-cell metadata-only acknowledgement handoff; R7 removes a guaranteed-failing Raw data action for metadata-only continuation sources; R8 restores the independent-binary-evidence boundary by rejecting the synthetic-only Ece-omitted 49-byte layout until real project-owned evidence exists. The paired MPR/MPT closure gate remains NOT RUN and unchanged.
+
+---
