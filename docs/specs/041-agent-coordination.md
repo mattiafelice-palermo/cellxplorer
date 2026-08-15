@@ -405,3 +405,19 @@ feature branch is ready for independent review; the workflow state remains revie
 R3 keeps the header-only single-direction result provisional until decoded rows actually prove the fallback; failed fallback verification must persist fail-closed non-canonical capability rather than a canonical header plus generic parse error. R4 requires decoded execution to agree with the declared per-`Ns` charge/discharge/rest semantics and closes the cache/provenance boundary for any unsafe `bm:gcpl6:r1` output. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after R3/R4; the separate general MPR/MPT scientific-closure gate remains unchanged.
 
 ---
+### 2026-08-15T23:27:36+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused R3/R4 suites: PASS (172 tests)
+- python scripts\preflight.py --no-cache: PASS (5/5 stages; 68 backend modules; 541 frontend tests; type check; Vite bundle)
+- MPR/MPT parity: NOT RUN; no paired .mpt is available
+- Browser/manual feature verification: NOT RUN; reserved for the user's reviewer/manual check
+
+**Message**
+
+R3/R4 are implemented. Header-only single-direction MPR inspection now records a provisional candidate without canonical capability; full parsing validates declared per-Ns charge/discharge/rest semantics plus the existing half-cycle, monotonic-Ns, and signed-current proof before promotion. Any candidate proof failure persists current-parser metadata-only state with canonical flags cleared, parse error/warning retained, and no live cache publication. Deferred capability checks fail closed while candidate parsing is pending. The parser identity advanced from gcpl6 to gcpl7, and both gcpl5/gcpl6 registrations are reinspection-only so unsafe prior caches cannot remain live. Continuation inspection distinguishes pending candidates from terminal metadata-only sources and schedules their cache build.
+
+---

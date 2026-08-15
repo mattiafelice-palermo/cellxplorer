@@ -222,7 +222,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         source = scanner.ingest_path(self.db, path, parse_now=True)
 
         self.assertEqual(source.parse_status, "parsed")
-        self.assertEqual(source.parser_version, "bm:gcpl6:r1")
+        self.assertEqual(source.parser_version, "bm:gcpl7:r1")
         self.assertEqual(source.row_count, 4)
         self.assertEqual(source.cycle_count, 1)
         self.assertEqual(source.capacity_summary_status, "ready")
@@ -258,7 +258,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl6:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl7:r1")
         self.assertEqual(refreshed.parse_status, "parsed")
         self.assertEqual(refreshed.cycle_count, 1)
         self.assertFalse(parsing.source_record_metadata_only(refreshed))
@@ -387,14 +387,16 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
     def test_header_capabilities_advertise_single_direction_cycling(self) -> None:
         metadata = read_gcpl_header_metadata(self.mpr_path)
         capabilities = metadata["capabilities"]
-        self.assertTrue(capabilities["canonical_cycling"])
-        self.assertTrue(capabilities["cycling_rows"])
+        self.assertFalse(capabilities["canonical_cycling"])
+        self.assertFalse(capabilities["cycling_rows"])
+        self.assertTrue(capabilities["canonical_cycling_pending"])
+        self.assertTrue(capabilities["single_direction_cycle_candidate"])
         self.assertFalse(capabilities["metadata_only"])
         self.assertEqual(
             capabilities["cycle_identity_source"],
-            "single_direction_inferred",
+            "single_direction_pending",
         )
-        self.assertIn("cycle 1", " ".join(metadata["protocol_warnings"]).casefold())
+        self.assertIn("pending", " ".join(metadata["protocol_warnings"]).casefold())
 
         voltage = metadata["voltage_capabilities"]
         self.assertEqual(voltage["voltage_roles"]["voltage_v"], "cell")
@@ -404,10 +406,18 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_scanner_registers_single_direction_and_builds_a_cache(self) -> None:
         self.assertEqual(self.source.parse_status, "parsed")
-        self.assertEqual(self.source.parser_version, "bm:gcpl6:r1")
+        self.assertEqual(self.source.parser_version, "bm:gcpl7:r1")
         self.assertEqual(self.source.row_count, 4)
         self.assertEqual(self.source.cycle_count, 1)
         self.assertEqual(self.source.capacity_summary_status, "ready")
+        capabilities = (self.source.header_meta or {}).get("capabilities") or {}
+        self.assertTrue(capabilities["canonical_cycling"])
+        self.assertTrue(capabilities["canonical_cycling_verified"])
+        self.assertFalse(capabilities["canonical_cycling_pending"])
+        self.assertEqual(
+            capabilities["single_direction_cycle_verification"],
+            "verified",
+        )
         self.assertFalse(parsing.source_record_metadata_only(self.source))
         self.assertTrue(cache.raw_path(self.source.hash, self.source.parser_version).exists())
 
@@ -420,7 +430,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_parser_revision_invalidates_the_previous_canonical_identity(self) -> None:
         current_identity = parsing.parser_identity(self.mpr_path)
-        self.assertEqual(current_identity, "bm:gcpl6:r1")
+        self.assertEqual(current_identity, "bm:gcpl7:r1")
         file_hash = parsing.capture_source_fingerprint(self.mpr_path).hash
         old_identity = "bm:gcpl3:r1"
         old_raw = cache.raw_path(file_hash, old_identity)
@@ -451,7 +461,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         for source in (online, offline):
             refreshed = self.db.get(SourceFile, source.id)
-            self.assertEqual(refreshed.parser_version, "bm:gcpl6:r1")
+            self.assertEqual(refreshed.parser_version, "bm:gcpl7:r1")
             self.assertEqual(refreshed.parse_status, "metadata_only")
             self.assertEqual(refreshed.capacity_summary_status, "unavailable")
             self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -483,7 +493,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
-        self.assertEqual(refreshed.parser_version, "bm:gcpl6:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl7:r1")
         self.assertEqual(refreshed.parse_status, "metadata_only")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -862,9 +872,96 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
         self.assertEqual(refreshed.parse_status, "metadata_only")
-        self.assertEqual(refreshed.parser_version, "bm:gcpl6:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl7:r1")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertEqual(background_jobs.get_job(job_id)["counters"]["failed"], 1)
+
+    def test_failed_single_direction_verification_persists_metadata_only_capability(self) -> None:
+        path = write_gcpl_mpr(
+            self.root / "failed-single-direction-verification.mpr",
+            _single_discharge_rows(),
+            # The decoded rows are discharge, while the settings declare
+            # charge. Header inspection is still eligible, but full parsing
+            # must downgrade the persisted source when row proof fails.
+            settings_payload=_settings(),
+            log_payload=encode_gcpl_log(ole_timestamp=45000.0),
+            include_log=True,
+        )
+
+        source = scanner.ingest_path(self.db, path, parse_now=True)
+
+        self.assertEqual(source.parse_status, "metadata_only")
+        self.assertEqual(source.parser_version, "bm:gcpl7:r1")
+        self.assertTrue(parsing.source_record_metadata_only(source))
+        self.assertEqual(source.capacity_summary_status, "unavailable")
+        self.assertIn("declared charge", source.parse_error or "")
+        capabilities = source.header_meta["capabilities"]
+        self.assertFalse(capabilities["canonical_cycling"])
+        self.assertFalse(capabilities["cycling_rows"])
+        self.assertTrue(capabilities["metadata_only"])
+        self.assertFalse(capabilities["canonical_cycling_pending"])
+        self.assertNotEqual(
+            capabilities.get("cycle_identity_source"),
+            "single_direction_inferred",
+        )
+        self.assertFalse(
+            cache.raw_path(source.hash, "bm:gcpl7:r1").exists()
+        )
+        capability = parsing.source_record_capability(source)
+        self.assertEqual(capability["status"], "metadata_only")
+        self.assertFalse(capability["canonical_cycling"])
+
+    def test_pending_candidate_is_unavailable_to_deferred_capability_checks(self) -> None:
+        self.source.parse_status = "parsing"
+        self.source.parser_version = None
+        self.db.commit()
+        self.db.expire_all()
+
+        capability = parsing.source_record_capability(
+            self.source,
+            include_header=False,
+        )
+
+        self.assertEqual(capability["status"], "pending")
+        self.assertTrue(capability["canonical_cycling_pending"])
+        self.assertFalse(capability["canonical_cycling"])
+        self.assertTrue(
+            parsing.source_record_metadata_only(
+                self.source,
+                include_header=False,
+            )
+        )
+
+    def test_previous_gcpl6_identity_is_reinspected_and_offline_rows_fail_closed(self) -> None:
+        online = self.source
+        online.parser_version = "bm:gcpl6:r1"
+        online.parse_status = "parsed"
+        self.db.commit()
+        old_raw = cache.raw_path(online.hash, "bm:gcpl6:r1")
+        old_cycles = cache.cycles_path(online.hash, "bm:gcpl6:r1", cache.CALC_VERSION)
+        old_raw.parent.mkdir(parents=True, exist_ok=True)
+        old_raw.write_bytes(b"unsafe gcpl6 raw cache")
+        old_cycles.write_bytes(b"unsafe gcpl6 cycles cache")
+
+        offline, _cell = self._add_retired_source(
+            location_status="offline",
+            hash_value="de" * 32,
+        )
+        offline.parser_version = "bm:gcpl6:r1"
+        offline.parse_status = "parsed"
+        self.db.commit()
+
+        self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
+        self.db.expire_all()
+        refreshed_online = self.db.get(SourceFile, online.id)
+        refreshed_offline = self.db.get(SourceFile, offline.id)
+        self.assertEqual(refreshed_online.parser_version, "bm:gcpl7:r1")
+        self.assertEqual(refreshed_online.parse_status, "parsed")
+        self.assertTrue(old_raw.exists())
+        self.assertTrue(old_cycles.exists())
+        self.assertEqual(refreshed_offline.parser_version, "bm:gcpl6:r1")
+        self.assertTrue(parsing.source_record_metadata_only(refreshed_offline))
+        self.assertIn("previous parser identity", (parsing.source_record_metadata_only_message(refreshed_offline)).casefold())
 
     def test_header_batch_is_bounded_with_single_direction_capability(self) -> None:
         paths = []
@@ -890,7 +987,8 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertTrue(all(outcome.inspection is not None for outcome in outcomes))
         self.assertTrue(
             all(
-                outcome.inspection.metadata["capabilities"]["canonical_cycling"]
+                not outcome.inspection.metadata["capabilities"]["canonical_cycling"]
+                and outcome.inspection.metadata["capabilities"]["canonical_cycling_pending"]
                 for outcome in outcomes
                 if outcome.inspection is not None
             )

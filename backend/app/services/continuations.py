@@ -712,6 +712,9 @@ def _continuation_chain_response(
                 "parse_status": source.get("parse_status"),
                 "row_count": source.get("row_count"),
                 "canonical_cycling": source.get("canonical_cycling", True),
+                "canonical_cycling_pending": bool(
+                    source.get("canonical_cycling_pending")
+                ),
                 "metadata_only": bool(source.get("metadata_only")),
                 "capability_warning": source.get("capability_warning"),
             }
@@ -789,7 +792,10 @@ def _maybe_schedule_cache_build(file_hash: str, source_path) -> dict[str, str | 
 
 def enrich_source_timing(source: dict[str, Any], *, source_path=None) -> dict[str, Any]:
     """Fill timing/cycle fields from existing caches when available."""
-    if source.get("metadata_only") or source.get("canonical_cycling") is False:
+    if source.get("metadata_only") or (
+        source.get("canonical_cycling") is False
+        and not source.get("canonical_cycling_pending")
+    ):
         # Metadata-only sources are a stable terminal inspection state. They
         # deliberately do not schedule cache work, retry parsing, or poll the
         # continuation panel while waiting for a cycle identity that is not

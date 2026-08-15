@@ -422,15 +422,16 @@ RAW_COLUMNS = {
 # vouch for their cycle labels.  ``gcpl4`` is a different upgrade boundary:
 # R8 withdrew a synthetic-only 15-ID/49-byte binary layout, so persisted
 # gcpl4 metadata must be reconciled from its stored data-header evidence
-# before it can receive the new identity. ``gcpl5`` is the immediately prior
-# current identity; the user-requested single-direction cycle-1 fallback
-# changes its canonical output, so it must be re-inspected rather than
-# silently reusing any old metadata-only registration. Keep these sets
-# explicit so a later BioLogic revision can add its own bounded migration
-# decision without changing unrelated source formats.
+# before it can receive the new identity. ``gcpl5`` and ``gcpl6`` are both
+# previous identities whose MPR fallback output must be re-inspected after
+# the candidate/verified boundary and declared-direction checks changed.
+# Keep these sets explicit so a later BioLogic revision can add its own
+# bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
 PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
-LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl5:r1"})
+LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
+    {"bm:gcpl5:r1", "bm:gcpl6:r1"}
+)
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
     RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
     | PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES
@@ -455,9 +456,10 @@ BIOLOGIC_MPR_REINSPECTION_WARNING = (
     "layout. Re-inspect the source before using it; it remains metadata-only."
 )
 BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING = (
-    "This BioLogic MPR was registered under parser bm:gcpl5:r1 before the "
-    "single-direction cycle-1 fallback was added. Re-inspect the source before "
-    "using it; it remains metadata-only until the upgrade is verified."
+    "This BioLogic MPR was registered under a previous parser identity before "
+    "the single-direction candidate/verified boundary and declared-direction "
+    "checks were added. Re-inspect the source before using it; it remains "
+    "metadata-only until the upgrade is verified."
 )
 
 
@@ -541,6 +543,29 @@ def assert_source_fingerprint(
         raise SourceIdentityError("Source bytes no longer match the inspected content hash")
 
 
+def _metadata_capabilities(metadata: dict | None) -> dict | None:
+    if not isinstance(metadata, dict):
+        return None
+    capabilities = metadata.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raw = metadata.get("raw")
+        capabilities = raw.get("capabilities") if isinstance(raw, dict) else None
+    return capabilities if isinstance(capabilities, dict) else None
+
+
+def source_metadata_cycling_pending(metadata: dict | None) -> bool:
+    """Return whether header facts describe a candidate awaiting full parsing."""
+
+    capabilities = _metadata_capabilities(metadata)
+    if not capabilities:
+        return False
+    return bool(
+        capabilities.get("canonical_cycling_pending")
+        or capabilities.get("single_direction_cycle_candidate")
+        or capabilities.get("single_direction_cycle_verification") == "pending"
+    )
+
+
 def source_metadata_only(metadata: dict | None) -> bool:
     """Return whether a recognized source has no canonical cycling contract.
 
@@ -550,13 +575,17 @@ def source_metadata_only(metadata: dict | None) -> bool:
     into treating those sources as analysis-ready.
     """
 
-    if not isinstance(metadata, dict):
+    capabilities = _metadata_capabilities(metadata)
+    if not capabilities:
         return False
-    capabilities = metadata.get("capabilities")
-    if not isinstance(capabilities, dict):
-        raw = metadata.get("raw")
-        capabilities = raw.get("capabilities") if isinstance(raw, dict) else None
-    return isinstance(capabilities, dict) and capabilities.get("canonical_cycling") is False
+    if capabilities.get("metadata_only") is True:
+        return True
+    # A settings-eligible BioLogic source has canonical_cycling=False while
+    # its decoded-row proof is still pending. It is not metadata-only for
+    # registration purposes: it must proceed automatically to full parsing.
+    if source_metadata_cycling_pending(metadata):
+        return False
+    return capabilities.get("canonical_cycling") is False
 
 
 def source_metadata_only_message(metadata: dict | None) -> str:
@@ -650,6 +679,36 @@ def _biologic_mpr_header_containers(header_meta: object) -> list[dict]:
     if isinstance(raw, dict) and raw is not header_meta:
         containers.append(raw)
     return containers
+
+
+def source_has_pending_biologic_cycle_verification(source: object) -> bool:
+    """Return whether a registered MPR is awaiting decoded-row promotion."""
+
+    if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
+        return False
+    header = getattr(source, "header_meta", None)
+    return any(
+        source_metadata_cycling_pending(container)
+        for container in _biologic_mpr_header_containers(header)
+    )
+
+
+def _source_has_pending_biologic_cycle_verification_without_header(
+    source: object,
+) -> bool:
+    """Recognize the pending registration state without loading ``header_meta``.
+
+    Registration persists eligible MPR candidates as ``unparsed``/``parsing``
+    with no parser identity until the full cache build promotes or downgrades
+    them. This scalar state is the fail-closed capability signal for cache-hit,
+    artifact, and warmup paths that intentionally defer the header document.
+    """
+
+    return (
+        str(getattr(source, "ext", "") or "").casefold().lstrip(".") == "mpr"
+        and getattr(source, "parse_status", None) in {"unparsed", "parsing"}
+        and not getattr(source, "parser_version", None)
+    )
 
 
 def persisted_biologic_mpr_layout(source: object) -> str | None:
@@ -752,6 +811,11 @@ def source_record_metadata_only_message(
         return BIOLOGIC_MPR_REINSPECTION_WARNING
     if source_uses_pre_r8_biologic_parser(source):
         return BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING
+    if (
+        getattr(source, "parse_status", None) == "metadata_only"
+        and getattr(source, "parse_error", None)
+    ):
+        return str(source.parse_error)
     if not include_header:
         stored_error = getattr(source, "parse_error", None)
         if stored_error:
@@ -781,10 +845,16 @@ def _mark_biologic_source_metadata_only(
             {
                 "cycling_rows": False,
                 "canonical_cycling": False,
+                "canonical_cycling_pending": False,
+                "canonical_cycling_verified": False,
                 "metadata_only": True,
+                "single_direction_cycle_candidate": False,
+                "single_direction_cycle_verification": "failed",
                 "requires_reinspection": requires_reinspection,
             }
         )
+        if "cycle_identity_source" in capabilities:
+            capabilities["cycle_identity_source"] = "unresolved"
         container["capabilities"] = capabilities
         warnings = container.get("protocol_warnings")
         warnings = list(warnings) if isinstance(warnings, (list, tuple)) else []
@@ -805,10 +875,16 @@ def _mark_biologic_source_metadata_only(
                 {
                     "cycling_rows": False,
                     "canonical_cycling": False,
+                    "canonical_cycling_pending": False,
+                    "canonical_cycling_verified": False,
                     "metadata_only": True,
+                    "single_direction_cycle_candidate": False,
+                    "single_direction_cycle_verification": "failed",
                     "requires_reinspection": requires_reinspection,
                 }
             )
+            if "cycle_identity_source" in declared_capabilities:
+                declared_capabilities["cycle_identity_source"] = "unresolved"
             declared_copy["capabilities"] = declared_capabilities
             declared_warnings = declared_copy.get("warnings")
             declared_warnings = (
@@ -831,6 +907,95 @@ def _mark_biologic_source_metadata_only(
     source.total_charge_capacity_mah = None
     source.total_discharge_capacity_mah = None
     source.max_discharge_capacity_mah = None
+
+
+def mark_biologic_mpr_canonical(source: object) -> bool:
+    """Promote a settings-only MPR candidate after a successful full parse."""
+
+    if not source_has_pending_biologic_cycle_verification(source):
+        return False
+    original = getattr(source, "header_meta", None)
+    header = deepcopy(original) if isinstance(original, dict) else {}
+    containers = _biologic_mpr_header_containers(header) or [header]
+    for container in containers:
+        capabilities = container.get("capabilities")
+        capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        capabilities.update(
+            {
+                "cycling_rows": True,
+                "canonical_cycling": True,
+                "canonical_cycling_pending": False,
+                "canonical_cycling_verified": True,
+                "metadata_only": False,
+                "single_direction_cycle_candidate": False,
+                "single_direction_cycle_verification": "verified",
+                "cycle_identity_source": "single_direction_inferred",
+            }
+        )
+        container["capabilities"] = capabilities
+        warnings = container.get("protocol_warnings")
+        if isinstance(warnings, (list, tuple)):
+            warnings = [
+                warning
+                for warning in warnings
+                if "canonical cycling remains pending" not in str(warning).casefold()
+            ]
+            container["protocol_warnings"] = warnings
+
+        declared = container.get("_cellxplorer_declared_protocol")
+        if isinstance(declared, dict):
+            declared_copy = deepcopy(declared)
+            declared_capabilities = declared_copy.get("capabilities")
+            declared_capabilities = (
+                dict(declared_capabilities)
+                if isinstance(declared_capabilities, dict)
+                else {}
+            )
+            declared_capabilities.update(
+                {
+                    "cycling_rows": True,
+                    "canonical_cycling": True,
+                    "canonical_cycling_pending": False,
+                    "canonical_cycling_verified": True,
+                    "metadata_only": False,
+                    "single_direction_cycle_candidate": False,
+                    "single_direction_cycle_verification": "verified",
+                    "cycle_identity_source": "single_direction_inferred",
+                }
+            )
+            declared_copy["capabilities"] = declared_capabilities
+            declared_warnings = declared_copy.get("warnings")
+            if isinstance(declared_warnings, (list, tuple)):
+                declared_copy["warnings"] = [
+                    warning
+                    for warning in declared_warnings
+                    if "canonical cycling remains pending"
+                    not in str(warning).casefold()
+                ]
+            container["_cellxplorer_declared_protocol"] = declared_copy
+    source.header_meta = header
+    return True
+
+
+def mark_biologic_mpr_cycle_verification_failed(
+    source: object,
+    *,
+    detail: str | None = None,
+) -> None:
+    """Persist a fail-closed downgrade after candidate row verification fails."""
+
+    detail_text = str(detail or "decoded rows did not satisfy the fallback contract").strip()
+    warning = (
+        "BioLogic MPR decoded rows did not verify the declared single-direction "
+        "cycle-1 contract; this source is metadata-only."
+    )
+    _mark_biologic_source_metadata_only(
+        source,
+        warning=warning,
+        parser_version=current_parser_identity_for_extension(getattr(source, "ext", None)),
+        requires_reinspection=False,
+    )
+    source.parse_error = f"{warning} Last row verification failure: {detail_text}"
 
 
 def reclassify_retired_biologic_source(source: object) -> bool:
@@ -917,6 +1082,17 @@ def source_record_metadata_only(
         or getattr(source, "parse_status", None) == "metadata_only"
     ):
         return True
+    pending = (
+        source_has_pending_biologic_cycle_verification(source)
+        if include_header
+        else _source_has_pending_biologic_cycle_verification_without_header(source)
+    )
+    if pending:
+        # A pending candidate is not metadata-only for registration: the
+        # scanner explicitly bypasses this capability gate while it builds the
+        # full cache. It is nevertheless unavailable to every scientific
+        # consumer until promotion, so fail closed here.
+        return True
     if not include_header:
         return False
     if source_requires_biologic_mpr_reinspection(source):
@@ -932,6 +1108,23 @@ def source_record_capability(
 ) -> dict[str, object]:
     """Describe the stable persisted scientific capability of one source."""
 
+    pending = (
+        source_has_pending_biologic_cycle_verification(source)
+        if include_header
+        else _source_has_pending_biologic_cycle_verification_without_header(source)
+    )
+    if pending:
+        return {
+            "status": "pending",
+            "metadata_only": False,
+            "canonical_cycling": False,
+            "canonical_cycling_pending": True,
+            "warning": source_record_metadata_only_message(
+                source,
+                include_header=include_header,
+            ),
+            "requires_reinspection": False,
+        }
     metadata_only = source_record_metadata_only(source, include_header=include_header)
     warning = (
         source_record_metadata_only_message(source, include_header=include_header)
@@ -942,6 +1135,7 @@ def source_record_capability(
         "status": "metadata_only" if metadata_only else "canonical_cycling",
         "metadata_only": metadata_only,
         "canonical_cycling": not metadata_only,
+        "canonical_cycling_pending": False,
         "warning": warning,
         "requires_reinspection": source_requires_biologic_mpr_reinspection(
             source,

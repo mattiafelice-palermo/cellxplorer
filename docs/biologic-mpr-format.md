@@ -233,7 +233,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl6`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl7`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -250,15 +250,16 @@ Energy follows Policy C for this layout: no verified vendor energy counter is pr
 energy columns remain unavailable rather than being fabricated.
 
 The supplied sample's ID-468 half-cycle is constant zero, and the verified record layout does not
-expose a separate full-cycle field. The production adapter remains metadata-only for general
-multi-phase or repeated runs. Under the explicit 2026-08-15 user-requested exception, a declared
-non-repeating single-direction run may be represented as canonical cycle 1 after the decoded rows
-confirm charge-only or discharge-only current and monotonic `Ns`; mixed directions, loops,
-ambiguous directions and non-monotonic execution still fail closed. The inferred `1` is a
-source-local plotting label and does not claim an absolute experiment cycle number. This bounded
-fallback does not claim MPR/MPT semantic parity, and paired evidence remains required for general
-real-file scientific closure. Synthetic tests may exercise either the explicit-cycle mapper
-behavior or the single-direction fallback.
+expose a separate full-cycle field. Header inspection remains bounded and record-decode-free: a
+declared non-repeating single-direction run is recorded as a candidate only. Full parsing must
+confirm the declared per-`Ns` charge/discharge/rest semantics, constant-zero half-cycle,
+monotonic `Ns`, and one signed active direction before it promotes the source to canonical cycle
+1. A candidate that fails that proof is persisted as metadata-only with no live canonical cache;
+general multi-phase or repeated runs remain metadata-only. The inferred `1` is a source-local
+plotting label and does not claim an absolute experiment cycle number. This bounded fallback does
+not claim MPR/MPT semantic parity, and paired evidence remains required for general real-file
+scientific closure. Synthetic tests may exercise either the explicit-cycle mapper behavior or the
+single-direction fallback.
 
 ### Electrode roles and primary voltage
 

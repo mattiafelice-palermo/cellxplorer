@@ -42,7 +42,7 @@ from .source_format_errors import (
 )
 
 
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl6"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl7"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
@@ -596,19 +596,19 @@ def _format_gcpl_duration(seconds: float) -> str:
     return f"{seconds:g} s"
 
 
-def _is_single_direction_protocol(settings: Mapping[str, Any]) -> bool:
-    """Return whether settings declare one non-repeating single-direction run.
+def _single_direction_protocol_direction(settings: Mapping[str, Any]) -> str | None:
+    """Return the one declared active direction for a non-repeating run.
 
-    This is only a capability advertisement.  The canonical mapper still
-    checks the decoded rows, signed current and acquisition order before it
-    assigns cycle 1.  Unresolved C-rate/control directions, an opposite active
-    direction, and any repeat structure remain metadata-only because they
-    could describe multiple logical cycles.
+    Unresolved C-rate/control directions, an opposite active direction, and
+    any repeat structure remain ineligible because they could describe
+    multiple logical cycles.  Retaining the direction separately from the
+    boolean eligibility decision lets the full mapper compare decoded
+    execution with the declared per-``Ns`` semantics.
     """
 
     sequences = list(settings.get("sequences") or [])
     if not sequences:
-        return False
+        return None
     active_direction: str | None = None
     for sequence in sequences:
         direction = sequence.get("direction")
@@ -616,15 +616,19 @@ def _is_single_direction_protocol(settings: Mapping[str, Any]) -> bool:
             if active_direction is None:
                 active_direction = direction
             elif direction != active_direction:
-                return False
+                return None
         elif direction != "rest":
-            return False
+            return None
         if (
             sequence.get("loop_start_step") is not None
             or sequence.get("loop_count") is not None
         ):
-            return False
-    return active_direction is not None
+            return None
+    return active_direction
+
+
+def _is_single_direction_protocol(settings: Mapping[str, Any]) -> bool:
+    return _single_direction_protocol_direction(settings) is not None
 
 
 def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
@@ -908,15 +912,16 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
     log_warnings = list(log.get("warnings") or [])
     protocol_warnings = list(declared_protocol.get("warnings") or []) + log_warnings
     capability_flags = dict(declared_protocol.get("capabilities") or {})
-    single_direction_inference = bool(
+    single_direction_candidate = bool(
         capability_flags.get("single_direction_cycle_inference")
     )
-    if single_direction_inference:
+    declared_direction = _single_direction_protocol_direction(settings)
+    if single_direction_candidate:
         protocol_warnings.append(
             "This BioLogic MPR has no decoded full-cycle field, but its declared protocol "
-            "is a non-repeating single-direction run. The canonical adapter will verify the "
-            "decoded rows and represent the run as cycle 1; sources with both charge and "
-            "discharge phases, loops or ambiguous directions remain unavailable for cycling."
+            "is a non-repeating single-direction run. Canonical cycling remains pending "
+            "until the decoded rows verify the declared direction, constant-zero half-cycle "
+            "and monotonic Ns conditions; sources that fail that proof remain metadata-only."
         )
     else:
         protocol_warnings.append(
@@ -926,12 +931,24 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
         )
     capability_flags.update(
         {
-            "cycling_rows": single_direction_inference,
-            "canonical_cycling": single_direction_inference,
-            "metadata_only": not single_direction_inference,
+            # Header inspection deliberately does not decode VMP records. A
+            # settings-eligible source is therefore a candidate, not yet a
+            # scientifically verified canonical source. Registration still
+            # proceeds automatically because ``metadata_only`` remains false;
+            # full parsing owns promotion or fail-closed downgrade.
+            "cycling_rows": False,
+            "canonical_cycling": False,
+            "canonical_cycling_pending": single_direction_candidate,
+            "canonical_cycling_verified": False,
+            "metadata_only": not single_direction_candidate,
+            "single_direction_cycle_candidate": single_direction_candidate,
+            "single_direction_cycle_verification": (
+                "pending" if single_direction_candidate else "unavailable"
+            ),
+            "single_direction_declared_direction": declared_direction,
             "cycle_identity_source": (
-                "single_direction_inferred"
-                if single_direction_inference
+                "single_direction_pending"
+                if single_direction_candidate
                 else "unresolved"
             ),
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
@@ -1090,6 +1107,62 @@ def _validate_document_settings(document: MprDocument) -> dict[str, Any]:
             + ", ".join(str(value) for value in unknown)
         )
     return settings
+
+
+def _validate_declared_execution_direction(
+    settings: Mapping[str, Any],
+    ns: np.ndarray,
+    mode: np.ndarray,
+    current_ma: np.ndarray,
+) -> None:
+    """Require decoded execution to agree with declared per-``Ns`` semantics.
+
+    The cycle-1 fallback is intentionally narrower than a global one-sign
+    current check. A charge-only declaration cannot be made canonical by a
+    discharge-shaped record, and a Rest declaration cannot carry an active
+    galvanostatic block. Rest rows attached to an active sequence are
+    tolerated because GCPL can encode a post-step rest without assigning it a
+    separate sequence identity.
+    """
+
+    sequence_by_step = {
+        int(sequence["step_index"]): sequence
+        for sequence in settings.get("sequences") or ()
+    }
+    for index, (step_index, row_mode, row_current) in enumerate(
+        zip(ns, mode, current_ma, strict=True),
+        start=1,
+    ):
+        sequence = sequence_by_step.get(int(step_index))
+        if sequence is None:
+            # ``_validate_document_settings`` owns the more descriptive
+            # unknown-Ns error; keep this helper safe for direct callers too.
+            raise UnsupportedBiologicGcplError(
+                f"GCPL execution row {index} references undeclared Ns {int(step_index)}"
+            )
+        declared = sequence.get("direction")
+        is_rest = int(row_mode) == MPR_MODE_REST
+        if declared == "rest":
+            if not is_rest or abs(float(row_current)) > _CURRENT_TOLERANCE_MA:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL Ns {int(step_index)} is declared Rest but decoded execution is active"
+                )
+            continue
+        if declared == "charge":
+            if not is_rest and float(row_current) <= _CURRENT_TOLERANCE_MA:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL Ns {int(step_index)} is declared charge but decoded execution is not positive charge"
+                )
+            continue
+        if declared == "discharge":
+            if not is_rest and float(row_current) >= -_CURRENT_TOLERANCE_MA:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL Ns {int(step_index)} is declared discharge but decoded execution is not negative discharge"
+                )
+            continue
+        raise UnsupportedBiologicGcplError(
+            f"GCPL Ns {int(step_index)} has no independently resolvable declared direction"
+        )
 
 
 def _column(records: np.ndarray, name: str) -> np.ndarray:
@@ -1663,15 +1736,22 @@ def map_gcpl_to_canonical(
         )
     current_ma = _raw_current_ma(records, mode, control)
     direct_cycle = _optional_column(records, "raw_cycle_index")
+    declared_single_direction = (
+        declared_settings is not None
+        and _is_single_direction_protocol(declared_settings)
+    )
+    if direct_cycle is None and declared_single_direction:
+        _validate_declared_execution_direction(
+            declared_settings,
+            ns,
+            mode,
+            current_ma,
+        )
     single_direction_inferred = direct_cycle is None and _single_direction_cycle_is_safe(
         raw_ns,
         mode,
         current_ma,
-        declared_protocol=(
-            _is_single_direction_protocol(declared_settings)
-            if declared_settings is not None
-            else True
-        ),
+        declared_protocol=(declared_single_direction if declared_settings is not None else True),
     )
     cycle = _cycle_column(
         records,

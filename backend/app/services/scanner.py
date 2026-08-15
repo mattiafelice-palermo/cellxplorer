@@ -138,7 +138,7 @@ def reconcile_retired_biologic_sources(db: Session) -> int:
     files, and it includes offline rows so a disconnected library receives
     the same truthful capability state as an online one. The gcpl3 retirement
     and the post-R8 gcpl4 layout reconciliation have separate state rules in
-    ``parsing``; the immediately prior gcpl5 identity is handled by the
+    ``parsing``; the previous gcpl5/gcpl6 identities are handled by the
     source-reading upgrade pass below.
     """
 
@@ -167,7 +167,8 @@ def reconcile_retired_biologic_sources(db: Session) -> int:
 def reinspect_legacy_biologic_sources(db: Session) -> int:
     """Rebuild registrations from the immediately prior BioLogic identity.
 
-    ``gcpl5`` sources were intentionally metadata-only.  The user-requested
+    ``gcpl5`` and ``gcpl6`` sources were registered before the current
+    candidate/verified boundary. The user-requested
     single-direction fallback changes the canonical capability contract, so an
     online source must pass the current header/full-parse path before it can
     become usable.  Offline rows stay untouched and are retried when the user
@@ -280,7 +281,7 @@ def start_capacity_summary_backfill(
     try:
         # Do this before selecting parsed sources. A withdrawn or pre-R8 row
         # can otherwise enter the normal identity path with stale capability
-        # state when the current gcpl6 build fails closed.
+        # state when the current gcpl7 build fails closed.
         reconcile_retired_biologic_sources(db)
         reinspect_legacy_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)
@@ -670,6 +671,23 @@ def _apply_capacity_source_result(
         )
         db.commit()
         return 0, 1
+    if parsing.source_uses_legacy_biologic_parser(sf):
+        parsing.mark_biologic_mpr_reinspection_required(
+            sf,
+            detail="a previous BioLogic parser identity cannot publish its cache",
+        )
+        warning = parsing.source_record_metadata_only_message(sf)
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="failed",
+            detail=warning,
+            error=warning,
+            counter="failed",
+        )
+        db.commit()
+        return 0, 1
+    pending_biologic_candidate = parsing.source_has_pending_biologic_cycle_verification(sf)
     if result.get("ok"):
         info = result["info"]
         if result.get("built"):
@@ -677,6 +695,8 @@ def _apply_capacity_source_result(
             sf.row_count = info["rows"]
             sf.cycle_count = info["cycles"]
             sf.parse_error = None
+            if pending_biologic_candidate:
+                parsing.mark_biologic_mpr_canonical(sf)
         apply_capacity_summary(sf, info)
         background_jobs.record_result(
             job_id,
@@ -699,9 +719,12 @@ def _apply_capacity_source_result(
         )
         db.commit()
         return 0, 1
-    if not source_job["summary_was_ready"]:
-        sf.capacity_summary_status = "error"
-    sf.parse_error = error
+    if pending_biologic_candidate:
+        parsing.mark_biologic_mpr_cycle_verification_failed(sf, detail=error)
+    else:
+        if not source_job["summary_was_ready"]:
+            sf.capacity_summary_status = "error"
+        sf.parse_error = error
     logger.error("capacity summary backfill failed for %s: %s", sf.filename, error)
     background_jobs.record_result(
         job_id,
@@ -1158,7 +1181,8 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
-    if parsing.source_record_metadata_only(sf):
+    pending_biologic_candidate = parsing.source_has_pending_biologic_cycle_verification(sf)
+    if parsing.source_record_metadata_only(sf) and not pending_biologic_candidate:
         if parsing.source_uses_retired_biologic_parser(sf):
             parsing.reclassify_retired_biologic_source(sf)
         elif parsing.source_uses_pre_r8_biologic_parser(sf):
@@ -1194,10 +1218,18 @@ def parse_file(db: Session, sf: SourceFile) -> SourceFile:
         sf.row_count = info["rows"]
         sf.cycle_count = info["cycles"]
         apply_capacity_summary(sf, info)
+        if pending_biologic_candidate:
+            parsing.mark_biologic_mpr_canonical(sf)
     except Exception as exc:
-        sf.parse_status = "error"
-        sf.parse_error = str(exc)
-        sf.capacity_summary_status = "error"
+        if pending_biologic_candidate:
+            parsing.mark_biologic_mpr_cycle_verification_failed(
+                sf,
+                detail=str(exc),
+            )
+        else:
+            sf.parse_status = "error"
+            sf.parse_error = str(exc)
+            sf.capacity_summary_status = "error"
         logger.error("parse failed for %s\n%s", sf.path, traceback.format_exc())
     db.commit()
     return sf
@@ -1242,6 +1274,7 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
     meta = parsing.read_header_metadata(p)
     parsing.ensure_supported_source_metadata(p, meta)
     metadata_only = parsing.source_metadata_only(meta)
+    pending_biologic_candidate = parsing.source_metadata_cycling_pending(meta)
     try:
         parsing.assert_source_fingerprint(p, fingerprint, verify_hash=False)
         info = (
@@ -1288,6 +1321,8 @@ def update_source_from_path(db: Session, sf: SourceFile) -> SourceFile:
         sf.max_discharge_capacity_mah = None
     else:
         apply_capacity_summary(sf, info)
+        if pending_biologic_candidate:
+            parsing.mark_biologic_mpr_canonical(sf)
     db.commit()
     if sf.hash != previous_hash:
         from . import cache_maintenance
@@ -1339,6 +1374,7 @@ def update_source_from_path_if_stable(
     meta = parsing.read_header_metadata(p)
     parsing.ensure_supported_source_metadata(p, meta)
     metadata_only = parsing.source_metadata_only(meta)
+    pending_biologic_candidate = parsing.source_metadata_cycling_pending(meta)
     _assert_stable_fingerprint(p, expected_fingerprint)
     try:
         info = (
@@ -1383,6 +1419,8 @@ def update_source_from_path_if_stable(
         sf.max_discharge_capacity_mah = None
     else:
         apply_capacity_summary(sf, info)
+        if pending_biologic_candidate:
+            parsing.mark_biologic_mpr_canonical(sf)
     db.commit()
     if sf.hash != previous_hash:
         from . import cache_maintenance

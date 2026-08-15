@@ -156,6 +156,7 @@ def _inspect_import_path(
     meta = inspected.metadata
     preview_meta = _metadata_preview(meta)
     metadata_only = parsing.source_metadata_only(meta)
+    canonical_cycling_pending = parsing.source_metadata_cycling_pending(meta)
     metadata_facts = _bounded_staged_metadata_fields(
         {
             "barcode": _bounded_staged_text_or_none(meta.get("barcode")),
@@ -173,6 +174,10 @@ def _inspect_import_path(
             "capability_warning": (
                 _bounded_staged_text_or_none(parsing.source_metadata_only_message(meta))
                 if metadata_only
+                else _bounded_staged_text_or_none(
+                    parsing.source_metadata_only_message(meta)
+                )
+                if canonical_cycling_pending
                 else None
             ),
             "metadata": preview_meta,
@@ -194,7 +199,8 @@ def _inspect_import_path(
         "hash": file_hash,
         **metadata_facts,
         "parser_version": parsing.current_parser_identity_for_extension(inspected.ext),
-        "canonical_cycling": not metadata_only,
+        "canonical_cycling": not metadata_only and not canonical_cycling_pending,
+        "canonical_cycling_pending": canonical_cycling_pending,
         "metadata_only": metadata_only,
         "import_match": (
             import_inspection.match_import(match_snapshot, file_hash, original, meta)
@@ -354,6 +360,8 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
         "cycling_support": (
             "Metadata only; canonical cycling rows are unavailable"
             if parsing.source_metadata_only(meta)
+            else "Canonical cycling rows pending decoded verification"
+            if parsing.source_metadata_cycling_pending(meta)
             else "Canonical cycling rows available"
         ),
         "remarks": meta.get("remarks"),
@@ -825,6 +833,7 @@ def apply_import_cache_results(
             logger.warning("discarding stale cache result for source %s: %s", sf.id, exc)
             dispositions[staged_name] = "stale"
             continue
+        pending_biologic_candidate = parsing.source_has_pending_biologic_cycle_verification(sf)
         if result.get("ok"):
             sf.parse_status = "parsed"
             sf.parse_error = None
@@ -832,10 +841,19 @@ def apply_import_cache_results(
             sf.row_count = result["rows"]
             sf.cycle_count = result["cycles"]
             scanner.apply_capacity_summary(sf, result)
+            if pending_biologic_candidate:
+                parsing.mark_biologic_mpr_canonical(sf)
         else:
-            sf.parse_status = "error"
-            sf.parse_error = result.get("error") or "Cache build failed"
-            sf.capacity_summary_status = "error"
+            error = result.get("error") or "Cache build failed"
+            if pending_biologic_candidate:
+                parsing.mark_biologic_mpr_cycle_verification_failed(
+                    sf,
+                    detail=error,
+                )
+            else:
+                sf.parse_status = "error"
+                sf.parse_error = error
+                sf.capacity_summary_status = "error"
         dispositions[staged_name] = "applied"
     db.commit()
     return dispositions
@@ -2162,6 +2180,7 @@ def _continuation_existing_source(
         "parse_status": sf.parse_status,
         "row_count": sf.row_count,
         "canonical_cycling": bool(capability["canonical_cycling"]),
+        "canonical_cycling_pending": capability["status"] == "pending",
         "metadata_only": bool(capability["metadata_only"]),
         "capability_warning": capability["warning"],
     }
@@ -2321,10 +2340,15 @@ def _continuation_staged_source(
     source.update(header_fields)
     source["hash"] = file_hash
     source["metadata_only"] = parsing.source_metadata_only(meta)
-    source["canonical_cycling"] = not source["metadata_only"]
+    source["canonical_cycling_pending"] = parsing.source_metadata_cycling_pending(meta)
+    source["canonical_cycling"] = (
+        not source["metadata_only"] and not source["canonical_cycling_pending"]
+    )
     source["capability_warning"] = (
         parsing.source_metadata_only_message(meta)
         if source["metadata_only"]
+        else parsing.source_metadata_only_message(meta)
+        if source["canonical_cycling_pending"]
         else None
     )
     source["parse_status"] = "metadata_only" if source["metadata_only"] else "unparsed"

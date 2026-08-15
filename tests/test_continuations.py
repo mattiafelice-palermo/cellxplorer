@@ -570,6 +570,40 @@ class ContinuationPolicyTests(unittest.TestCase):
         schedule.assert_not_called()
         has_cycles.assert_not_called()
 
+    def test_pending_biologic_candidate_schedules_cache_without_claiming_canonical(self):
+        source = _source(
+            "staged-mpr",
+            filename="staged-mpr.mpr",
+            hash="m" * 64,
+            inspection_status="pending",
+            metadata_only=False,
+            canonical_cycling=False,
+            canonical_cycling_pending=True,
+        )
+        with (
+            patch.object(continuations.cache, "has_cycles", return_value=False),
+            patch.object(
+                continuations.cache,
+                "raw_path",
+                return_value=SimpleNamespace(is_file=lambda: False),
+            ),
+            patch.object(
+                continuations,
+                "_maybe_schedule_cache_build",
+                return_value={"status": "started", "error": None},
+            ) as schedule,
+        ):
+            enriched = continuations.enrich_source_timing(
+                source,
+                source_path=Path("staged-mpr.mpr"),
+            )
+
+        self.assertFalse(enriched["canonical_cycling"])
+        self.assertTrue(enriched["canonical_cycling_pending"])
+        self.assertEqual(enriched["inspection_status"], "pending")
+        self.assertEqual(enriched["cache_build_status"], "started")
+        schedule.assert_called_once()
+
     def test_metadata_only_confirmation_requires_acknowledgement(self):
         source = _source(
             "staged-mpr",

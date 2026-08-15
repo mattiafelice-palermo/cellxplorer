@@ -125,11 +125,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl6",
+                "adapter_revision": "gcpl7",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl6:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl7:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_single_direction_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:
@@ -178,12 +178,14 @@ class BiologicGcplMappingTests(unittest.TestCase):
 
             metadata = read_gcpl_header_metadata(path)
             capabilities = metadata["capabilities"]
-            self.assertTrue(capabilities["canonical_cycling"])
-            self.assertTrue(capabilities["cycling_rows"])
+            self.assertFalse(capabilities["canonical_cycling"])
+            self.assertFalse(capabilities["cycling_rows"])
+            self.assertTrue(capabilities["canonical_cycling_pending"])
+            self.assertTrue(capabilities["single_direction_cycle_candidate"])
             self.assertFalse(capabilities["metadata_only"])
             self.assertEqual(
                 capabilities["cycle_identity_source"],
-                "single_direction_inferred",
+                "single_direction_pending",
             )
 
             frame = parsing.parse_timeseries(path)
@@ -237,10 +239,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             )
             metadata = read_gcpl_header_metadata(path)
             capabilities = metadata["capabilities"]
-            self.assertTrue(capabilities["canonical_cycling"])
+            self.assertFalse(capabilities["canonical_cycling"])
+            self.assertTrue(capabilities["canonical_cycling_pending"])
             self.assertEqual(
                 capabilities["cycle_identity_source"],
-                "single_direction_inferred",
+                "single_direction_pending",
             )
             frame = parsing.parse_timeseries(path)
 
@@ -251,6 +254,104 @@ class BiologicGcplMappingTests(unittest.TestCase):
             "single direction fallback",
         )
         canonical_cycling.validate_raw_timeseries(frame)
+
+    def test_single_direction_fallback_rejects_declared_charge_with_discharge_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "declared-charge-discharge-rows.mpr",
+                [
+                    _row(0.0, ns=0, control=-1.0, q_mAh=1.0, ns_changed=True),
+                    _row(3600.0, ns=0, control=-1.0, q_mAh=0.0, dq_mAh=-1.0),
+                    _row(
+                        3600.0,
+                        mode=MPR_MODE_REST,
+                        ns=1,
+                        control=0.0,
+                        q_mAh=0.0,
+                        ns_changed=True,
+                    ),
+                ],
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 1.0},
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                    ]
+                ),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "declared charge"):
+                parsing.parse_timeseries(path)
+
+    def test_single_direction_fallback_rejects_declared_discharge_with_charge_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "declared-discharge-charge-rows.mpr",
+                [
+                    _row(0.0, ns=0, control=1.0, q_mAh=0.0, ns_changed=True),
+                    _row(3600.0, ns=0, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+                    _row(
+                        3600.0,
+                        mode=MPR_MODE_REST,
+                        ns=1,
+                        control=0.0,
+                        q_mAh=1.0,
+                        ns_changed=True,
+                    ),
+                ],
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": -1.0},
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                    ]
+                ),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "declared discharge"):
+                parsing.parse_timeseries(path)
+
+    def test_single_direction_fallback_rejects_active_execution_on_declared_rest_ns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "declared-rest-active-rows.mpr",
+                [
+                    _row(0.0, ns=0, control=-1.0, q_mAh=1.0, ns_changed=True),
+                    _row(3600.0, ns=0, control=-1.0, q_mAh=0.0, dq_mAh=-1.0),
+                    _row(
+                        3600.0,
+                        mode=MPR_MODE_REST,
+                        ns=1,
+                        control=0.0,
+                        q_mAh=0.0,
+                        ns_changed=True,
+                    ),
+                ],
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                        {"set_i_c": 0, "current": -1.0},
+                    ]
+                ),
+            )
+            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "declared Rest"):
+                parsing.parse_timeseries(path)
+
+    def test_single_direction_fallback_accepts_a_partial_source_starting_at_later_ns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "partial-later-ns.mpr",
+                [
+                    _row(0.0, ns=1, control=1.0, q_mAh=0.0, ns_changed=True),
+                    _row(3600.0, ns=1, control=1.0, q_mAh=1.0, dq_mAh=1.0),
+                ],
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                        {"set_i_c": 0, "current": 1.0},
+                    ]
+                ),
+            )
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].tolist(), [1, 1])
+        self.assertEqual(frame["status"].tolist(), ["CC_Chg", "CC_Chg"])
 
     def test_real_mpr_dispatch_fails_closed_without_verified_cycle_identity(self) -> None:
         rows = [
