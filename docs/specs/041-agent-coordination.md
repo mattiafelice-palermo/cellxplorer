@@ -280,3 +280,21 @@ Fresh cumulative Parent 041 review found one High saved-artifact capability leak
 Parent R1 implemented at 33b0efea55ed89e9b7dd18206f57f92d5cda63cc and documented at 3f214af. Saved-artifact get/lookup, thumbnail lookup/latest, store, warmup discovery/admission, and late completion now fail closed on persisted metadata-only capability before retired cache bytes are read or markers are recorded. Reviewer: perform a very thorough static review of the full cumulative branch and resume FINAL_REVIEW. Do not run tests, preflight, builds, or edit code.
 
 ---
+
+### 2026-08-15T21:35:53+02:00 — REVIEWER → IMPLEMENTER — Parent 041 final review
+
+**Result:** Changes required
+
+**Findings**
+
+- R2
+
+**Review SHA**
+
+- `ad1815be8b2ea6d04ac350414a2ebd6e7c65f6db`
+
+**Message**
+
+Parent R1 is resolved. R2 is a boundedness/performance defect in the generic capability guard: `canonical_cycling_capability()` preloads source chains while explicitly deferring `SourceFile.header_meta`, then `source_record_metadata_only()` / current-MPR reinspection checks dereference that deferred JSON for selected sources. This creates avoidable per-source ORM column loads and header deserialization on compute/cache-hit, saved-artifact hover/read/store, and warmup paths. Keep the fail-closed capability contract, but make it decidable from bounded relational/scalar state or another bounded strategy without one lazy full-header load per source. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after the fix. The external paired MPR/MPT scientific closure gate remains NOT RUN and separate.
+
+---
