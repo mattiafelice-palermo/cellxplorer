@@ -47,34 +47,122 @@ Then begin polling.
 
 Stay in this **ChatGPT Chat** conversation.
 
-**Do not switch to ChatGPT Work.**
+**Do not switch to ChatGPT Work.**  
 **Do not create a scheduled task or automation.**
+
+Once polling begins, remain in the heartbeat/review cycle until `ACTION: COMPLETE`, unless the user explicitly tells you to stop.
 
 While remote state says `TURN: IMPLEMENTER`:
 
-1. Use the Chat Python tool:
+1. Use the Chat Python tool for a sequence of short heartbeat calls. Each call must remain safely below the Python execution timeout.
+
+For the first six calls, use approximately:
 
 ```python
 import time
-time.sleep(40)
+from datetime import datetime
+
+time.sleep(45)
+print(
+    datetime.now().astimezone().isoformat(timespec="seconds")
+    + " — heartbeat X/7 — elapsed ~Ys",
+    flush=True,
+)
 ```
 
-2. Run that as separate Python calls approximately seven times, then one final:
+where:
+
+```text
+heartbeat 1/7 → elapsed ~45s
+heartbeat 2/7 → elapsed ~90s
+heartbeat 3/7 → elapsed ~135s
+heartbeat 4/7 → elapsed ~180s
+heartbeat 5/7 → elapsed ~225s
+heartbeat 6/7 → elapsed ~270s
+```
+
+Then run one final approximately 30-second call:
 
 ```python
 import time
-time.sleep(20)
+from datetime import datetime
+
+time.sleep(30)
+print(
+    datetime.now().astimezone().isoformat(timespec="seconds")
+    + " — heartbeat 7/7 — elapsed ~300s",
+    flush=True,
+)
 ```
+
+2. The heartbeat timestamp/counter is the feedback mechanism for the polling cadence.
+
+After every heartbeat, inspect the printed counter and elapsed time:
+
+```text
+elapsed clearly below ~5 minutes
+→ next action MUST be another Python heartbeat call
+
+elapsed approximately ~5 minutes
+→ next action MUST be one GitHub check
+```
+
+Do not query GitHub after every short heartbeat.
 
 3. After roughly five minutes, use the **GitHub connector in Chat** to refresh the shared feature branch.
+
 4. Re-read:
    - `docs/specs/NNN-agent-state.json`;
    - latest entries in `docs/specs/NNN-agent-coordination.md`.
-5. If still `TURN: IMPLEMENTER`, repeat the wait/check cycle.
+
+5. If still `TURN: IMPLEMENTER`:
+   - reset the heartbeat counter;
+   - immediately begin another ~5-minute heartbeat cycle;
+   - do not send a normal response saying that you are still waiting.
+
 6. If `TURN: REVIEWER`, stop polling and act immediately according to `ACTION`.
+
 7. If `ACTION: COMPLETE`, stop.
 
 The committed JSON state is always authoritative.
+
+### Waiting output discipline
+
+During heartbeat waiting, keep visible output minimal.
+
+Each heartbeat should print only its timestamp, heartbeat counter, and approximate elapsed time, for example:
+
+```text
+2026-08-15T19:04:12+02:00 — heartbeat 1/7 — elapsed ~45s
+```
+
+Do not add prose such as:
+
+- “Still waiting.”
+- “The implementer is still working.”
+- “No state change yet.”
+- “I will continue monitoring.”
+- “I am checking again.”
+
+Do not repeatedly explain the polling mechanism.
+
+### If the user sends a message during polling
+
+A user message may interrupt the current heartbeat turn.
+
+If that happens:
+
+1. Process the user's new instruction.
+2. If the user explicitly asks you to stop polling, stop.
+3. Otherwise, **do not treat the interruption as the end of the heartbeat workflow**.
+4. Inspect the latest visible heartbeat counter/elapsed time.
+5. Resume from that point:
+   - if the cycle has not yet reached approximately five minutes, the next action must be another Python heartbeat call;
+   - if approximately five minutes have elapsed, perform the GitHub check and then continue normally.
+
+Do not merely reply that you will resume polling and then stop.
+
+**Replying that you will continue the heartbeat is not the same as continuing it. You must actually execute the next heartbeat or GitHub-check action.**
 
 ## Review
 
@@ -128,7 +216,7 @@ python docs/specs/workflow/spec_workflow.py review-clean \
 
 Commit/push review + state + timestamped coordination entry together.
 
-If control passes to implementer, resume polling.
+If control passes to implementer, immediately resume the heartbeat polling cycle.
 
 ## Final parent review
 
