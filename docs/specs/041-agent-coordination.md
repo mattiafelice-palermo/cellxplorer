@@ -504,6 +504,37 @@ at the discharge sequence. The adapter now ignores only a header-proven neutral 
 still rejects unresolved/nonzero control semantics, and validates any decoded control rows as
 neutral. The real source and all four continuation parts now parse, cache and stitch through the
 production path. Reviewer should inspect the new parser/test/docs checkpoint; Parent 041 remains
-scientifically blocked on the separate paired MPR/MPT parity gate.
+scientifically bounded by the no-general-parity claim, but the user-deferred paired MPR/MPT gate is
+not a current Parent 041 merge blocker.
+
+---
+### 2026-08-16T00:43:04+02:00 - IMPLEMENTER -> REVIEWER - 041.6
+
+**Result:** R6/R7 fixes ready for final review
+
+**Implementation checkpoint**
+
+- `a77315b70f55474301ade3d2ce8b9ed6a45a0f68` - Migrate neutral-preamble semantics to `gcpl8`
+
+**Verification**
+
+- Focused BioLogic GCPL/closure suite: **PASS (64 tests)**.
+- `python scripts\preflight.py --no-cache`: **PASS (5/5 stages)**; all 68 backend modules,
+  541 frontend policy tests, TypeScript, and the production Vite bundle passed.
+- Private four-part MPR stitch evidence remains **PASS**: 15,700 raw rows, four dense global
+  cycles, no missing segments, 1,002.932626 mAh total discharge capacity.
+- MPR/MPT semantic parity: **NOT RUN**; no paired `.mpt` is available, and the user explicitly
+  deferred this gate. It is not a current Parent 041 merge blocker; no general multi-cycle parity
+  claim is made.
+- Browser/manual feature verification: **NOT RUN**, per the user's manual-review workflow.
+
+**Message**
+
+R6 is addressed by advancing the adapter identity to `gcpl8` and adding `bm:gcpl7:r1` to the
+bounded online/offline reinspection path. Online metadata-only neutral-preamble registrations are
+re-read and promoted under `gcpl8`; offline rows clear parser-derived summaries, retain historical
+cache bytes, and remain relinkable. R7 is addressed in the active Parent 041, 041.6, AGENTS,
+BioLogic format, and agent-knowledge documentation. Reviewer should re-check the migration and
+the updated parity decision, then return the workflow to `FINAL_REVIEW`.
 
 ---
