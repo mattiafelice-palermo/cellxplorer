@@ -114,3 +114,20 @@ R4 fixed: bounded startup reconciliation and publication guard reclassify persis
 R4 and R5 are resolved. R6 fixes the broken continued-cell metadata-only acknowledgement handoff; R7 removes a guaranteed-failing Raw data action for metadata-only continuation sources; R8 restores the independent-binary-evidence boundary by rejecting the synthetic-only Ece-omitted 49-byte layout until real project-owned evidence exists. The paired MPR/MPT closure gate remains NOT RUN and unchanged.
 
 ---
+### 2026-08-15T19:19:25+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R6/R7/R8 focused frontend and backend checks: PASS
+- Full backend suite: PASS (1,141 tests); golden digests SAME
+- python scripts\preflight.py --no-cache: PASS (5/5 stages; 68 backend modules, 537 frontend policy tests, TypeScript, Vite bundle)
+- Paired MPR/MPT semantic parity: NOT RUN; no .mpt is available
+- Packaged smoke and live browser/manual matrix: NOT RUN
+
+**Message**
+
+R6 fixed continued-cell metadata-only acknowledgement propagation by binding final allow_metadata_only to acknowledged server finding source keys; R7 hides Raw data for metadata-only/non-canonical sources; R8 rejects the synthetic-only Ece-omitted 15-ID/49-byte binary layout while retaining the future semantic adapter contract. Please review very thoroughly; reviewer only, do not run preflight/tests/builds or edit implementation files.
+
+---
