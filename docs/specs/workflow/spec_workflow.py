@@ -31,6 +31,7 @@ IMPLEMENT = "IMPLEMENT"
 FIX_REVIEW = "FIX_REVIEW"
 REVIEW = "REVIEW"
 FINAL_REVIEW = "FINAL_REVIEW"
+BLOCKED = "BLOCKED"
 COMPLETE = "COMPLETE"
 
 VALID_PAIRS = {
@@ -38,6 +39,7 @@ VALID_PAIRS = {
     (IMPLEMENTER, FIX_REVIEW),
     (REVIEWER, REVIEW),
     (REVIEWER, FINAL_REVIEW),
+    (REVIEWER, BLOCKED),
     (REVIEWER, COMPLETE),
 }
 
@@ -166,7 +168,7 @@ def resolve(repo: Path, requested: str | None) -> tuple[Path, Path, dict[str, An
             data = load(path)
         except WorkflowError:
             continue
-        (terminal if data["action"] == COMPLETE else active).append(path)
+        (terminal if data["action"] in {BLOCKED, COMPLETE} else active).append(path)
     choices = active or terminal
     if len(choices) != 1:
         fail("Pass --spec NNN when zero or multiple workflow states are available.")
@@ -179,10 +181,12 @@ def assert_branch(data: dict[str, Any]) -> None:
     if current != data["branch"]:
         fail(f"Workflow branch is {data['branch']!r}; current branch is {current!r}.")
 
-def assert_transition_ready(repo: Path, sp: Path, cp: Path, data: dict[str, Any]) -> None:
+def assert_transition_ready(repo: Path, sp: Path, cp: Path, data: dict[str, Any], *, allow_blocked: bool = False) -> None:
     assert_branch(data)
     if data["action"] == COMPLETE:
         fail("Workflow is already COMPLETE.")
+    if data["action"] == BLOCKED and not allow_blocked:
+        fail("Workflow is BLOCKED. Use resume-final-review when the external dependency is available.")
     for path in (sp, cp):
         rel = path.relative_to(repo).as_posix()
         if git("status", "--porcelain", "--", rel):
@@ -277,6 +281,25 @@ def cmd_review_clean(args: argparse.Namespace) -> None:
     append_entry(cp, timestamp=ts, actor=REVIEWER, recipient=recipient, child=completed,
                  result=result, findings=[], message=args.message)
 
+def cmd_block(args: argparse.Namespace) -> None:
+    repo = root(); sp, cp, data = resolve(repo, args.spec); assert_transition_ready(repo, sp, cp, data)
+    if (data["turn"], data["action"]) != (REVIEWER, FINAL_REVIEW):
+        fail("block is only valid for REVIEWER + FINAL_REVIEW.")
+    message = (args.message or "").strip()
+    if not message:
+        fail("block requires --message describing the external dependency.")
+    ts = now(); data.update(action=BLOCKED, findings=[], resume_review=None, updated_at=ts); save(sp, data)
+    append_entry(cp, timestamp=ts, actor=REVIEWER, recipient=None, child=data["active_child"],
+                 result="Final review blocked on external dependency", findings=[], message=message)
+
+def cmd_resume_final_review(args: argparse.Namespace) -> None:
+    repo = root(); sp, cp, data = resolve(repo, args.spec); assert_transition_ready(repo, sp, cp, data, allow_blocked=True)
+    if (data["turn"], data["action"]) != (REVIEWER, BLOCKED):
+        fail("resume-final-review is only valid for REVIEWER + BLOCKED.")
+    ts = now(); data.update(action=FINAL_REVIEW, findings=[], resume_review=None, updated_at=ts); save(sp, data)
+    append_entry(cp, timestamp=ts, actor=REVIEWER, recipient=None, child=data["active_child"],
+                 result="External dependency available; resuming final parent review", findings=[], message=args.message)
+
 def cmd_complete(args: argparse.Namespace) -> None:
     repo = root(); sp, cp, data = resolve(repo, args.spec); assert_transition_ready(repo, sp, cp, data)
     if (data["turn"], data["action"]) != (REVIEWER, FINAL_REVIEW):
@@ -299,6 +322,8 @@ def parser() -> argparse.ArgumentParser:
     x = sub.add_parser("handoff-review"); add_spec(x); x.add_argument("--verification", action="append", default=[]); add_message(x); x.set_defaults(func=cmd_handoff_review)
     x = sub.add_parser("request-fixes"); x.add_argument("findings", nargs="+"); add_spec(x); add_message(x); x.set_defaults(func=cmd_request_fixes)
     x = sub.add_parser("review-clean"); add_spec(x); add_message(x); x.set_defaults(func=cmd_review_clean)
+    x = sub.add_parser("block"); add_spec(x); add_message(x); x.set_defaults(func=cmd_block)
+    x = sub.add_parser("resume-final-review"); add_spec(x); add_message(x); x.set_defaults(func=cmd_resume_final_review)
     x = sub.add_parser("complete"); add_spec(x); add_message(x); x.set_defaults(func=cmd_complete)
     return p
 
