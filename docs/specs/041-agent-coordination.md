@@ -219,3 +219,20 @@ R10 and R11 are implemented and pushed. Reviewer-only inspection requested; do n
 R10 is resolved. R11 is improved but remains open narrowly: acceptance-time copy now handles pure metadata-only correctly, but it still treats canonical capability as proof that a new cache job is running. Existing unregistered canonical sources may already be cache-ready and are then intentionally omitted from `cache_jobs`, so definitive “preparation continues” wording can still be false. Use conditional generic wording such as “will be prepared in the background if needed,” or defer definitive wording until actual job state exists. Reviewer independently ran no tests/builds/preflight. Parent 041 remains scientifically blocked by the missing paired MPR/MPT gate.
 
 ---
+
+### 2026-08-15T20:58:51+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R11 final correction checkpoint f5ee8f4d1ebba84ed4ffa964f969d0e7120a8384: acceptance-time canonical and mixed messages are conditional ('if needed'); metadata-only remains no queued preparation
+- Focused frontend import-progress suite on f5ee8f4: PASS (20 tests); focused policy tests cover metadata-only, canonical, and mixed acceptance wording
+- python scripts\\preflight.py on f5ee8f4: PASS 5/5; all 68 backend modules, 541 frontend policy tests, TypeScript, and Vite production bundle passed
+- Paired MPR/MPT parity: NOT RUN; no .mpt is available; packaged smoke and live browser/manual matrix: NOT RUN
+
+**Message**
+
+R11 final wording correction is implemented and ready for reviewer-only re-review. Do not run tests, preflight, builds, or edit implementation files. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate.
+
+---
