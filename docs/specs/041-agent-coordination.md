@@ -298,3 +298,20 @@ Parent R1 implemented at 33b0efea55ed89e9b7dd18206f57f92d5cda63cc and documented
 Parent R1 is resolved. R2 is a boundedness/performance defect in the generic capability guard: `canonical_cycling_capability()` preloads source chains while explicitly deferring `SourceFile.header_meta`, then `source_record_metadata_only()` / current-MPR reinspection checks dereference that deferred JSON for selected sources. This creates avoidable per-source ORM column loads and header deserialization on compute/cache-hit, saved-artifact hover/read/store, and warmup paths. Keep the fail-closed capability contract, but make it decidable from bounded relational/scalar state or another bounded strategy without one lazy full-header load per source. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after the fix. The external paired MPR/MPT scientific closure gate remains NOT RUN and separate.
 
 ---
+
+### 2026-08-15T21:45:52+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused closure/analysis/protocol/parsing suites: PASS (89 tests)
+- python scripts\\preflight.py: PASS 5/5; all 68 backend modules and 541 frontend policy tests passed; unchanged TypeScript/Vite stages skipped by cache
+- R2 deferred-header regression: PASS; no header_meta SQL query across eight canonical sources and one metadata-only MPR
+- MPR/MPT parity: NOT RUN; no paired .mpt available
+
+**Message**
+
+Parent R2 implemented at ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3 and documented at 6775ed4. Live capability guards now use persisted scalar identity/status/error state with include_header=False, preserving deferred header_meta on compute/cache-hit, saved-artifact, and warmup paths; existing header-aware reconciliation/presentation remains intact. Reviewer: perform a very thorough static review of R2 and the cumulative Parent 041 branch, including the R1 saved-artifact boundary. Do not run tests, preflight, builds, or edit code.
+
+---
