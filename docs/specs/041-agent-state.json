@@ -12,10 +12,8 @@
     "041.6"
   ],
   "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R11"
-  ],
-  "resume_review": "REVIEW",
-  "updated_at": "2026-08-15T20:58:51+02:00"
+  "action": "FINAL_REVIEW",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-15T21:03:00+02:00"
 }
