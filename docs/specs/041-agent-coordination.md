@@ -70,3 +70,18 @@ R1 protects the locked external-parity gate; R2 is the scientific production blo
 R1-R3 fixes are implemented, committed, pushed, and verified. Please review very thoroughly; reviewer only, do not run preflight/tests/builds or edit implementation files.
 
 ---
+
+### 2026-08-15T18:31:05+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+- R5
+
+**Message**
+
+R1-R3 are resolved. R4 is a high-priority upgrade-safety defect: sources/caches created under the rejected gcpl3 canonical semantics can remain renderable after gcpl4 unless explicitly reclassified. R5 reconciles the contradictory exact-preflight SHA record. The paired MPR/MPT scientific closure gate remains externally blocked and must not be weakened.
+
+---
