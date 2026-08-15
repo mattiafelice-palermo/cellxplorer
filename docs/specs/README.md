@@ -23,7 +23,7 @@
     — generic Cell/Working/Counter potential selection and truthful source presentation.
   - [`041.6-scientific-regression-real-file-parity-and-closure.md`](041.6-scientific-regression-real-file-parity-and-closure.md)
     — MPR regression, analysis-family checks, performance/licensing audit, documentation, and final review.
-  **Plan.** Implementer/reviewer coordination is tracked in the active Codex task; no repository ledger is required.
+  **Implementation in progress; final cumulative review pending.** Follow [`workflow/README.md`](workflow/README.md); state is authoritative in [`041-agent-state.json`](041-agent-state.json) and handoffs are recorded in [`041-agent-coordination.md`](041-agent-coordination.md).
 - [`040-canonical-cycler-data-architecture.md`](040-canonical-cycler-data-architecture.md)
   formalizes the existing Neware-like raw representation as a CellXplorer-owned canonical cycling
   contract, introduces source-format adapters and per-source parser/cache provenance, and adds an

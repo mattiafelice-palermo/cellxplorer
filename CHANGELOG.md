@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.23.0-beta.1 - 2026-08-15
+
+- Add BioLogic GCPL MPR cycling support.
+
 ## 0.22.0-beta.8 - 2026-08-13
 
 ### Bug fixes

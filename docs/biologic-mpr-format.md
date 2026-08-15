@@ -230,7 +230,8 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` maps the verified records into the
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl3`)
+maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
 is zero-based in the verified file. The canonical adapter applies the documented base adjustment
@@ -245,11 +246,15 @@ error flags, unvalidated counter-increment flags, and unsupported control histor
 Energy follows Policy C for this layout: no verified vendor energy counter is present, so canonical
 energy columns remain unavailable rather than being fabricated.
 
-The supplied sample's ID-468 half-cycle is constant zero, so it does not by itself establish a
-multi-cycle identity. The current direct parser therefore remains intentionally fail-closed for
-that real-file canonical mapping until an independent cycle ground truth is available; this is not
-a claim of MPR/MPT parity. Synthetic mapper tests exercise explicit cycle fields and do not silently
-promote that evidence to the private file.
+The supplied sample's ID-468 half-cycle is constant zero, and the verified record layout does not
+expose a separate full-cycle field. The first implementation therefore follows the user's explicit
+no-MPT amendment to Parent 041: it validates the half-cycle counter as a monotonic execution
+boundary signal but never converts its numeric value into a cycle number. When no explicit full-cycle
+field is present, the adapter assigns cycle 1 to the first execution sequence and starts the next
+cycle when a charge execution begins after a completed discharge execution; rest and repeated
+same-direction steps remain in the current cycle. This convention is implemented only at the GCPL
+adapter boundary and is covered by the committed synthetic two-cycle corpus. It is not a claim of
+real MPR/MPT parity, and the private sample was not available in this rollout for acceptance.
 
 ### Electrode roles and primary voltage
 
@@ -284,6 +289,11 @@ CCCV when the canonical vocabulary supports it. Current, voltage, capacity, rest
 settings are retained in the normalized protocol metadata; unsupported Neware condition expressions
 are reported through `semantic_conditions_available = false`.
 
+The exact production MPR record layout currently verified here has no separate measured-current
+field for potentiostatic rows. A standalone or combined CCCV block therefore fails closed rather
+than inferring current from `dq/time`; the direct mapper's dedicated-current path is reserved for a
+future byte layout that establishes that field independently.
+
 ## Bounds and ownership
 
 The reader rejects files above 8 GiB, walks at most 32 declared modules, and rejects data headers
@@ -310,12 +320,14 @@ classified as invalid.
 
 ## Header-only performance evidence
 
-On the private 307,115-byte sample, `read_mpr_header()` validated the three modules and 5,483-row
-data header without constructing records; `read_mpr()` returned the owning `(5483,)` structured array.
-The measured single-run wall times on the development machine were `0.000488 s` and `0.000924 s`,
-respectively. The absolute values are machine-specific; the relevant invariant is that the header
-path does not call the record `np.frombuffer` operation. The focused test patches that operation to
-fail if the header path attempts a full decode.
+The private sample's header/full-read observations remain recorded above, but that file was not
+available in the 041.6 workspace and was not re-run for closure. The committed closure test instead
+generates 50 bounded MPR files, reads all 50 through `read_gcpl_header_metadata()`, then full-parses
+the two-cycle fixture through the normal cache/parser path. The absolute batch timing is descriptive
+and machine-specific; the relevant invariants are that header inspection does not construct a
+record-sized array, full `np.frombuffer` decoding occurs only on the full-parse path, and the reader
+does not create an inner process pool. The focused reader tests patch the decode operation to fail if
+the header path attempts a full decode.
 
 ## Provenance and licensing
 

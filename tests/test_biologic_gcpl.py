@@ -67,10 +67,11 @@ def _structured_records(
     dedicated_current: bool = False,
     direct_voltage: bool = True,
     step_time: bool = False,
+    explicit_cycle: bool = True,
 ) -> np.ndarray:
     """Build byte-backed records plus test-only semantic fields at the mapper boundary."""
 
-    extra = [("raw_cycle_index", "<i8")]
+    extra = [("raw_cycle_index", "<i8")] if explicit_cycle else []
     if direct_voltage:
         extra.append(("raw_voltage_v", "<f8"))
     if dedicated_current:
@@ -82,7 +83,8 @@ def _structured_records(
     records = np.zeros(len(rows), dtype=dtype)
     for name in MPR_RECORD_DTYPE.names or ():
         records[name] = base[name]
-    records["raw_cycle_index"] = [int(row.get("cycle", 1)) for row in rows]
+    if explicit_cycle:
+        records["raw_cycle_index"] = [int(row.get("cycle", 1)) for row in rows]
     if direct_voltage:
         records["raw_voltage_v"] = [
             float(row.get("voltage_v", row.get("ewe_v", 3.5))) for row in rows
@@ -102,6 +104,7 @@ def _map_rows(
     dedicated_current: bool = False,
     direct_voltage: bool = True,
     step_time: bool = False,
+    explicit_cycle: bool = True,
 ):
     return map_gcpl_to_canonical(
         _structured_records(
@@ -109,6 +112,7 @@ def _map_rows(
             dedicated_current=dedicated_current,
             direct_voltage=direct_voltage,
             step_time=step_time,
+            explicit_cycle=explicit_cycle,
         )
     )
 
@@ -120,14 +124,14 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl2",
+                "adapter_revision": "gcpl3",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl2:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl3:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
-    def test_direct_mpr_dispatch_defers_unresolved_cycle_and_three_electrode_voltage(self) -> None:
+    def test_direct_mpr_dispatch_uses_execution_pair_cycles_and_three_electrode_voltage(self) -> None:
         rows = [
             _row(0.0, ns_changed=True),
             _row(1.0, q_mAh=1.0, dq_mAh=1.0),
@@ -155,8 +159,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
                     ]
                 ),
             )
-            with self.assertRaisesRegex(UnsupportedBiologicGcplError, "cycle identity"):
-                parsing.parse_timeseries(path)
+            frame_from_file = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame_from_file["cycle"].tolist(), [1, 1, 1, 1, 1, 1])
+        self.assertEqual(frame_from_file["step"].tolist(), [1, 1, 2, 2, 3, 3])
+        np.testing.assert_allclose(frame_from_file["voltage_v"], 3.5)
 
         frame = _map_rows(rows)
 
@@ -519,17 +526,20 @@ class BiologicGcplMappingTests(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedBiologicGcplError, "measured-current"):
             _map_rows(rows)
 
-    def test_unvalidated_half_cycle_progression_fails_closed(self) -> None:
+    def test_monotonic_half_cycle_progression_is_only_an_execution_boundary(self) -> None:
         rows = [
             _row(0.0, half_cycle=0, ns_changed=True),
             _row(1.0, half_cycle=0, q_mAh=1.0, dq_mAh=1.0),
-            _row(2.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=0.0, ns_changed=True),
-            _row(3.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=-1.0, dq_mAh=-1.0),
-            _row(4.0, half_cycle=2, ns=2, q_mAh=0.0, ns_changed=True),
-            _row(5.0, half_cycle=2, ns=2, q_mAh=1.0, dq_mAh=1.0),
+            _row(2.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=1.0, ns_changed=True),
+            _row(3.0, half_cycle=1, ns=1, control=-3600.0, q_mAh=0.0, dq_mAh=-1.0),
         ]
-        with self.assertRaises(UnsupportedBiologicGcplError):
-            _map_rows(rows)
+        frame = _map_rows(rows, explicit_cycle=False)
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1, 1])
+        self.assertEqual(frame["step"].tolist(), [1, 1, 2, 2])
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["cycle_source"],
+            "execution charge/discharge pair",
+        )
 
     def test_half_cycle_regression_or_reset_fails_closed(self) -> None:
         rows = [

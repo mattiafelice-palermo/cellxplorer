@@ -4,12 +4,12 @@ Single-user, local web app for organizing, analyzing, comparing and
 revisiting battery-cycling data. Built per [SPEC.md](spec.md) around the
 open-source **NewareNDA** parser for Neware sources and an independently
 authored BioLogic GCPL-family `.mpr` reader. CellXplorer imports Neware
-`.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports plus recognized
-BioLogic `.mpr` sources through the same Cell/source workflow. The current
-verified MPR layout is metadata-readable but remains explicitly metadata-only
-until an independently verified full-cycle identity is available, so it does
-not create canonical cycling caches or capacity previews yet. Arbitrary Excel
-workbooks, `.mpt` files, and unsupported MPR techniques are not supported.
+`.nda`, `.ndax`, and structured Neware Excel `.xlsx` exports plus supported
+BioLogic GCPL-family `.mpr` sources through the same Cell/source workflow.
+The verified MPR path produces normal canonical cycling rows, caches and
+capacity previews; it uses the documented execution-pair cycle convention
+when no explicit full-cycle field is present. Arbitrary Excel workbooks,
+`.mpt` files, and unsupported MPR techniques are not supported.
 
 ## Run on Windows
 
@@ -98,7 +98,7 @@ explicit status and recompute actions.
 - `backend/app/models.py` — relational schema, including the internal source-chain compatibility rows
 - `backend/app/services/` — `parsing.py` (central dispatch and the only NewareNDA import),
   `biologic_mpr.py`/`biologic_gcpl.py` (independent BioLogic MPR/GCPL adapter;
-  current production MPR path is metadata-only until cycle identity is verified),
+  supported GCPL sources map into canonical rows and versioned caches),
   `cache.py` (versioned Parquet), `calc.py` (per-cycle derivations),
   `stitch.py` (multi-source Cell chains), `scanner.py` (background scans/relink),
   `analysis_engine.py` (analysis compute engine)

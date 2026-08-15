@@ -27,6 +27,10 @@ that matches the change, then follow its links to the authoritative implementati
   the verified current sign convention, capacity/energy reset semantics, and the
   validator/adapter ownership boundary.
 
+The independently authored BioLogic MPR/GCPL reader contract is documented in
+[`../biologic-mpr-format.md`](../biologic-mpr-format.md), including the no-MPT first-implementation
+cycle convention and format/provenance evidence limits (Specs 041.1â€“041.6).
+
 Existing specialist references:
 
 - [`../database-migrations.md`](../database-migrations.md)

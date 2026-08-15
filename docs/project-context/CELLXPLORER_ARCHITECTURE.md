@@ -1,8 +1,9 @@
 # CellXplorer Architecture
 
 Repository: `mattiafelice-palermo/cellxplorer`  
-Context last synchronized: 2026-08-13  
-Verified against: `main` at `562c2edff1277fef71789244c95e3b17abc586fa` (`0.22.0-beta.5`)
+Context last synchronized: 2026-08-15
+Verified against: `main` at `aca39740039b4d7146afc9104f5c471bff7c7c46` (`0.22.0-beta.8`) plus the
+`feature/biologic-mpr-gcpl-support` BioLogic GCPL closure work (`0.23.0-beta.1`)
 
 This is a compact orientation document. The authoritative technical sources are `AGENTS.md`,
 `docs/agent-knowledge/`, the current code and tests.
@@ -11,7 +12,8 @@ This is a compact orientation document. The authoritative technical sources are 
 
 CellXplorer is a local-first Windows application for battery scientists. It imports, organizes,
 inspects, analyses and exports Neware cycling data from binary `.nda` and `.ndax` files and from
-structured Neware `.xlsx` exports.
+structured Neware `.xlsx` exports, plus supported BioLogic GCPL-family `.mpr` cycling sources.
+`.mpt` files are validation artifacts and are not user-imported sources.
 
 Major user workflows include:
 
@@ -50,14 +52,15 @@ Key surfaces:
   computation, invalidation and portable-report generation.
 - `backend/app/services/parsing.py` owns supported-source dispatch and the direct NewareNDA
   integration. Structured Neware `.xlsx` workbooks are owned by
-  `backend/app/services/neware_excel.py`; scientific code downstream of parsing stays
-  format-neutral.
+  `backend/app/services/neware_excel.py`; supported BioLogic `.mpr` files use the independent
+  `biologic_mpr.py` container reader and `biologic_gcpl.py` canonical adapter. Scientific code
+  downstream of parsing stays format-neutral.
 
 Key modules:
 
 - `models.py`: relational schema;
 - `routers/`: API endpoints;
-- `services/parsing.py`: supported-source dispatch and NewareNDA integration;
+- `services/parsing.py`: supported-source dispatch and NewareNDA/BioLogic adapter identities;
 - `services/neware_excel.py`: structured Neware Excel recognition and raw mapping;
 - `services/cache.py` and `calc.py`: parsed/per-cycle cache generation;
 - `services/analysis_engine.py`: analysis computation;
@@ -116,10 +119,12 @@ stored in checksum/version-keyed Parquet caches.
 
 Supported sources are recognized centrally rather than trusted by extension alone. `.nda` and
 `.ndax` use the NewareNDA boundary; `.xlsx` is accepted only when it satisfies the structured
-Neware export contract, so an arbitrary workbook is rejected rather than parsed as cycling data.
-Binary and Excel sources are distinct parser families, which prevents an exact-checksum relink from
-silently crossing between them. Import discovery and metadata inspection stay bounded: recognizing a
-source and reading its header must not trigger a full parse.
+Neware export contract, so an arbitrary workbook is rejected rather than parsed as cycling data;
+supported `.mpr` files use the independent GCPL reader/adapter and fail closed for unsupported
+techniques or missing measured-current semantics. Binary, Excel, and BioLogic sources are distinct
+parser families, which prevents an exact-checksum relink from silently crossing between them.
+Import discovery and metadata inspection stay bounded: recognizing a source and reading its header
+must not trigger a full parse.
 
 Source updates are conservative:
 

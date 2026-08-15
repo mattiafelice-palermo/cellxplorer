@@ -81,6 +81,13 @@ larger batch reopens the evicted files' headers at ~6 ms each. Do not try to poo
 header parsing is GIL-bound, and measurement puts a four-thread pool at 0.94x and a four-process
 pool at 0.57x of serial.
 
+BioLogic MPR inspection follows the same bounded boundary: `read_mpr_header()` and
+`read_gcpl_header_metadata()` walk module declarations and column metadata without constructing
+the record-sized NumPy array. Full structured decoding belongs only to cache preparation/full parse.
+The MPR reader has no inner process pool; large import batches use the existing outer bounded worker
+policy. Keep header/full-parse timings descriptive and test the separation with synthetic files, not
+by turning header inspection into a second full parse.
+
 Structured Neware Excel parsing uses a reader ladder in `backend/app/services/neware_excel.py`:
 `fastexcel` performs the primary full-width columnar read, pandas' `calamine` engine is the
 validated middle fallback, and the existing read-only openpyxl path is the compatibility fallback.

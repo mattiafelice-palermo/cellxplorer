@@ -120,7 +120,7 @@ quantity is still `voltage_v`.
 
 `working_potential_v` and `counter_potential_v` are the canonical names for a
 source's synchronized electrode potentials versus a reference. The BioLogic
-GCPL adapter (Spec 041.3, revision `gcpl2`) is now the first shipped adapter
+GCPL adapter (Spec 041.3, revision `gcpl3`) is now the first shipped adapter
 that populates them when the bounded Ewe/Ece layout is present. It computes the
 signed primary cell voltage as `working_potential_v - counter_potential_v`,
 preserves the source roles, and exposes a measured Ewe-labelled primary only
@@ -228,6 +228,18 @@ If a check would require inferring, reconstructing, or computing a value
 (charge/discharge from current sign, executed-step boundaries, integrated
 capacity, a fabricated timestamp), it belongs to the adapter or to scientific
 code — never to the validator.
+
+### BioLogic GCPL cycle convention (Spec 041)
+
+The verified BioLogic GCPL MPR layout may provide no separate full-cycle column. Under the
+explicit no-MPT amendment for the first implementation, `biologic_gcpl.py` validates the source
+half-cycle counter only for non-negative monotonic acquisition order; it never treats that numeric
+counter as a logical cycle formula. If an independently decoded full-cycle field is present it wins.
+Otherwise the adapter assigns cycle 1 to the first execution sequence and increments the cycle when
+a charge execution begins after a completed discharge execution. Rest and repeated same-direction
+programmed steps remain in the current cycle. This convention is deliberately owned by the adapter,
+is covered by `tests/test_biologic_closure.py`, and is not a BioLogic-specific branch in any generic
+scientific service.
 
 ## 8. How a future source format should map into the contract
 

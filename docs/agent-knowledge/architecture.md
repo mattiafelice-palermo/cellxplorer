@@ -180,10 +180,13 @@ worker/result guards use stat-only checks against the established receipt (whose
 server-owned). Successes and failures are both applied only when the source path and stored
 identity still match; stale or missing results are reported as discarded rather than changing a
 newer SourceFile. The scanner carries the same immutable identity in each job and applies stale
-guards before either success or failure mutation. Recognized BioLogic `.mpr` files currently have
-an explicit metadata-only capability when no independently verified full-cycle identity exists:
-their bounded header may be registered after acknowledgement, but no canonical rows, capacity
-preview, or cycling cache is published. `.mpt` remains excluded from user import.
+guards before either success or failure mutation. Recognized BioLogic `.mpr` files in the verified
+GCPL family follow the normal canonical raw/protocol/cache path. When a source does not expose an
+explicit full-cycle field, `biologic_gcpl.py` uses its documented execution charge/discharge-pair
+convention; it does not numerically convert the half-cycle counter. Ambiguous flags or unsupported
+layouts still fail closed. `.mpt` remains excluded from user import, and the first implementation
+does not require a paired MPT export because the parent requirement was explicitly amended by the
+user.
 
 A Cell's ordered sources may legitimately carry different parser identities (a binary source
 continued by a structured Excel export is the reference case, proven end to end by

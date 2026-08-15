@@ -3,7 +3,9 @@
 ## What this repository is
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
-inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data.
+inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
+plus supported BioLogic GCPL-family `.mpr` sources. BioLogic `.mpt` files remain validation
+artifacts rather than user-imported sources.
 The UI is React + Mantine, the API is FastAPI + SQLAlchemy, and the desktop installer is a Tauri
 shell that launches a bundled Python backend sidecar. Arbitrary Excel workbooks remain unsupported.
 
@@ -252,6 +254,7 @@ Cellxplorer/
 │   ├── test_biologic_mpr.py          Independent BioLogic MPR reader tests (Spec 041.1)
 │   ├── test_biologic_gcpl.py         BioLogic GCPL canonical mapping tests (Spec 041.2)
 │   ├── test_biologic_metadata.py     BioLogic GCPL settings/log/protocol tests (Spec 041.3)
+│   ├── test_biologic_closure.py       Synthetic MPR/cache/analysis closure regressions (Spec 041.6)
 │   ├── test_parser_dispatch.py     Format-neutral dispatch and adapter-identity tests (Spec 040.2)
 │   ├── test_source_format_errors.py Format-neutral source-rejection error-taxonomy tests (Spec 040.2)
 │   ├── test_parser_identity.py     Per-source parser identity grammar and cache-invalidation tests (Spec 040.3)

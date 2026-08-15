@@ -9,7 +9,7 @@ New exports use format version 2 and offer two modes:
 
 - **Linked report:** embeds frozen Plotly figures, metadata, analysis settings, source paths and
   checksums. Import reconnects existing library sources by checksum or verifies the recorded path.
-- **Self-contained report:** adds the original `.nda`/`.ndax` sources. Sources are gzip-compressed
+- **Self-contained report:** adds the original `.nda`/`.ndax`/`.mpr` sources. Sources are gzip-compressed
   before Base64 encoding and parsed into local caches after import.
 
 Parquet caches are internal, regenerable application data and are not included in version 2
@@ -26,7 +26,7 @@ order.
 
 ## Original-source preflight
 
-When original files are requested, export hashes every selected `.nda`/`.ndax` source before it
+When original files are requested, export hashes every selected `.nda`/`.ndax`/`.mpr` source before it
 generates plot snapshots. A source is ready only when its current bytes match the checksum stored
 by CellXplorer and its size and modification time remain stable throughout the check.
 
@@ -129,6 +129,6 @@ HTML remains fully viewable regardless.
 
 ## Size
 
-Plotly itself is embedded once and compresses strongly. Neware binaries are also gzip-compressed,
+Plotly itself is embedded once and compresses strongly. Neware and BioLogic binaries are also gzip-compressed,
 but many `.ndax` files are already dense and may shrink only slightly; Base64 adds roughly 33% to
 the compressed payload size.
