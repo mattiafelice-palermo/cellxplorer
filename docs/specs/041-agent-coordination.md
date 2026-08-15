@@ -146,3 +146,22 @@ R6 fixed continued-cell metadata-only acknowledgement propagation by binding fin
 R7 is resolved. R8 is resolved for fresh reads. R6 remains open because metadata-only acknowledgement still follows staged-name finding identity across a content-hash change and lacks the required initial continued-import end-to-end regression. R9 enforces Parent 041's locked parser-revision rule and upgrade safety after R8 changed the accepted MPR binary contract. Paired MPR/MPT parity remains NOT RUN and the parent remains scientifically blocked.
 
 ---
+### 2026-08-15T20:15:28+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused backend R6/R9/import/MPR suites: 158 tests PASS
+- Focused parser/format/MPR suites: 107 tests PASS
+- Frontend continuation tests: 14 PASS
+- Full backend suite: 1,145 tests PASS
+- python -m compileall -q backend tests: PASS; git diff --check: PASS
+- python scripts\preflight.py: PASS, 5/5; frontend type check and production bundle were correctly skipped as unchanged by the canonical preflight cache
+- Paired MPR/MPT semantic parity: NOT RUN; no .mpt is available
+
+**Message**
+
+R6 and R9 fixes are pushed at 7f39d3f. Reviewer only: inspect the implementation and give findings; do not run tests, preflight, builds, or edit implementation files. Review very thoroughly. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate, which is still NOT RUN.
+
+---
