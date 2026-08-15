@@ -203,10 +203,18 @@ def _append_finding(
     title: str,
     message: str,
     details: dict[str, Any] | None = None,
+    identity_source_keys: list[str] | None = None,
 ) -> None:
     findings.append(
         {
-            "id": finding_id(code, source_keys),
+            # Some confirmations describe a request-local source key but must
+            # be acknowledged against the immutable source identity instead.
+            # Callers can supply that identity separately while retaining the
+            # staged key in the response for payload binding.
+            "id": finding_id(
+                code,
+                source_keys if identity_source_keys is None else identity_source_keys,
+            ),
             "code": code,
             "severity": severity,
             "source_keys": source_keys,
@@ -327,6 +335,7 @@ def _identity_findings(source: dict[str, Any]) -> list[dict[str, Any]]:
             code="metadata_only_source",
             severity="confirmation",
             source_keys=[key],
+            identity_source_keys=[str(source.get("hash") or key)],
             title="Canonical cycling data is not available",
             message=(
                 source.get("capability_warning")

@@ -82,7 +82,7 @@ from typing import Any
 import NewareNDA
 import pandas as pd
 
-from . import biologic_gcpl, canonical_cycling, fast_neware, neware_excel
+from . import biologic_gcpl, biologic_mpr, canonical_cycling, fast_neware, neware_excel
 from .source_format_errors import (
     InvalidSourceFormatError,
     SourceFormatError,
@@ -419,14 +419,36 @@ RAW_COLUMNS = {
 # ``gcpl3`` briefly exposed canonical cycling rows before the logical cycle
 # identity requirement was made explicit.  Those rows and their caches are
 # not a reproducible historical scientific result: the adapter can no longer
-# vouch for their cycle labels.  Keep the retirement list narrow and explicit
-# so a later BioLogic adapter revision can add its own migration decision
-# without changing the behavior of unrelated source formats.
+# vouch for their cycle labels.  ``gcpl4`` is a different upgrade boundary:
+# R8 withdrew a synthetic-only 15-ID/49-byte binary layout, so persisted
+# gcpl4 metadata must be reconciled from its stored data-header evidence
+# before it can receive the new identity. Keep these sets explicit so a later
+# BioLogic revision can add its own bounded migration decision without
+# changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
+PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
+BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
+    RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
+    | PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES
+)
+BIOLOGIC_MPR_VERIFIED_LAYOUT = "observed_16_id_53_byte"
+BIOLOGIC_MPR_WITHDRAWN_LAYOUT = "withdrawn_15_id_49_byte"
+BIOLOGIC_MPR_UNKNOWN_LAYOUT = "unknown_or_unrecorded"
 RETIRED_BIOLOGIC_MPR_WARNING = (
     "BioLogic MPR canonical cycling from parser bm:gcpl3:r1 is no longer "
     "scientifically valid because logical cycle identity was not independently "
     "verified; this source is metadata-only."
+)
+BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING = (
+    "BioLogic MPR parser bm:gcpl4:r1 was reconciled to the current post-R8 "
+    "identity from stored observed 16-ID/53-byte layout evidence; canonical "
+    "cycling remains unavailable until logical cycle identity is independently "
+    "verified, so this source is metadata-only."
+)
+BIOLOGIC_MPR_REINSPECTION_WARNING = (
+    "This BioLogic MPR was registered under the pre-R8 parser identity, but its "
+    "stored binary-layout evidence does not prove the observed 16-ID/53-byte "
+    "layout. Re-inspect the source before using it; it remains metadata-only."
 )
 
 
@@ -575,33 +597,119 @@ def source_uses_retired_biologic_parser(source: object) -> bool:
     )
 
 
+def is_pre_r8_biologic_parser_identity(
+    ext: str | None,
+    parser_version: str | None,
+) -> bool:
+    suffix = str(ext or "").casefold().lstrip(".")
+    return (
+        suffix == "mpr"
+        and str(parser_version or "") in PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES
+    )
+
+
+def source_uses_pre_r8_biologic_parser(source: object) -> bool:
+    return is_pre_r8_biologic_parser_identity(
+        getattr(source, "ext", None),
+        getattr(source, "parser_version", None),
+    )
+
+
+def _biologic_mpr_header_containers(header_meta: object) -> list[dict]:
+    if not isinstance(header_meta, dict):
+        return []
+    containers = [header_meta]
+    raw = header_meta.get("raw")
+    if isinstance(raw, dict) and raw is not header_meta:
+        containers.append(raw)
+    return containers
+
+
+def persisted_biologic_mpr_layout(source: object) -> str | None:
+    """Classify only the binary-layout evidence already persisted in a source row.
+
+    This helper intentionally performs no path, cache, or adapter I/O.  A
+    missing data header is represented as ``None``; an unreadable or
+    unrecognized persisted header is represented by the explicit unknown
+    layout.  The reconciliation caller treats both as requiring reinspection.
+    """
+
+    if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
+        return None
+    saw_data_header = False
+    withdrawn_column_ids = tuple(
+        column_id
+        for column_id in biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS
+        if column_id != 9
+    )
+    for container in _biologic_mpr_header_containers(getattr(source, "header_meta", None)):
+        data = container.get("data")
+        if not isinstance(data, dict):
+            continue
+        saw_data_header = True
+        try:
+            n_columns = int(data.get("n_columns"))
+            column_ids = tuple(int(value) for value in data.get("column_ids") or ())
+            record_offset = int(data.get("record_offset"))
+            record_itemsize = int(data.get("record_itemsize"))
+        except (TypeError, ValueError):
+            continue
+        if (
+            n_columns == len(biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS)
+            and column_ids == biologic_mpr.SUPPORTED_GCPL_COLUMN_IDS
+            and record_offset == biologic_mpr.VMP_DATA_RECORD_OFFSET
+            and record_itemsize == biologic_mpr.VMP_DATA_RECORD_ITEMSIZE
+        ):
+            return BIOLOGIC_MPR_VERIFIED_LAYOUT
+        if (
+            n_columns == len(withdrawn_column_ids)
+            and column_ids == withdrawn_column_ids
+            and record_offset == biologic_mpr.VMP_DATA_RECORD_OFFSET
+            and record_itemsize == 49
+        ):
+            return BIOLOGIC_MPR_WITHDRAWN_LAYOUT
+    return BIOLOGIC_MPR_UNKNOWN_LAYOUT if saw_data_header else None
+
+
+def source_requires_biologic_mpr_reinspection(source: object) -> bool:
+    """Return the persisted, no-I/O reinspection state for a BioLogic source."""
+
+    if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
+        return False
+    for container in _biologic_mpr_header_containers(getattr(source, "header_meta", None)):
+        capabilities = container.get("capabilities")
+        if isinstance(capabilities, dict) and capabilities.get("requires_reinspection") is True:
+            return True
+    if not source_uses_pre_r8_biologic_parser(source):
+        return False
+    return persisted_biologic_mpr_layout(source) != BIOLOGIC_MPR_VERIFIED_LAYOUT
+
+
 def source_record_metadata_only_message(source: object) -> str:
     """Return the persisted source's truthful metadata-only explanation."""
 
     if source_uses_retired_biologic_parser(source):
         return RETIRED_BIOLOGIC_MPR_WARNING
+    if source_requires_biologic_mpr_reinspection(source):
+        return BIOLOGIC_MPR_REINSPECTION_WARNING
+    if source_uses_pre_r8_biologic_parser(source):
+        return BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING
     header = getattr(source, "header_meta", None)
     return source_metadata_only_message({"raw": header} if isinstance(header, dict) else None)
 
 
-def reclassify_retired_biologic_source(source: object) -> bool:
-    """Downgrade one withdrawn BioLogic registration without source I/O.
-
-    Old parser caches are intentionally left on disk for later forensic
-    cleanup.  The relational registration and its persisted capability flags
-    are the live authority, so every current consumer sees the source as
-    metadata-only after this bounded state transition.
-    """
-
-    if not source_uses_retired_biologic_parser(source):
-        return False
+def _mark_biologic_source_metadata_only(
+    source: object,
+    *,
+    warning: str,
+    parser_version: str | None,
+    requires_reinspection: bool,
+) -> None:
+    """Persist one bounded BioLogic capability downgrade without source I/O."""
 
     original = getattr(source, "header_meta", None)
     header = deepcopy(original) if isinstance(original, dict) else {}
-    containers: list[dict] = [header]
-    raw = header.get("raw")
-    if isinstance(raw, dict):
-        containers.append(raw)
+    containers = _biologic_mpr_header_containers(header) or [header]
 
     for container in containers:
         capabilities = container.get("capabilities")
@@ -611,13 +719,14 @@ def reclassify_retired_biologic_source(source: object) -> bool:
                 "cycling_rows": False,
                 "canonical_cycling": False,
                 "metadata_only": True,
+                "requires_reinspection": requires_reinspection,
             }
         )
         container["capabilities"] = capabilities
         warnings = container.get("protocol_warnings")
         warnings = list(warnings) if isinstance(warnings, (list, tuple)) else []
-        if RETIRED_BIOLOGIC_MPR_WARNING not in warnings:
-            warnings.append(RETIRED_BIOLOGIC_MPR_WARNING)
+        if warning not in warnings:
+            warnings.append(warning)
         container["protocol_warnings"] = warnings
 
         declared = container.get("_cellxplorer_declared_protocol")
@@ -634,6 +743,7 @@ def reclassify_retired_biologic_source(source: object) -> bool:
                     "cycling_rows": False,
                     "canonical_cycling": False,
                     "metadata_only": True,
+                    "requires_reinspection": requires_reinspection,
                 }
             )
             declared_copy["capabilities"] = declared_capabilities
@@ -643,21 +753,63 @@ def reclassify_retired_biologic_source(source: object) -> bool:
                 if isinstance(declared_warnings, (list, tuple))
                 else []
             )
-            if RETIRED_BIOLOGIC_MPR_WARNING not in declared_warnings:
-                declared_warnings.append(RETIRED_BIOLOGIC_MPR_WARNING)
+            if warning not in declared_warnings:
+                declared_warnings.append(warning)
             declared_copy["warnings"] = declared_warnings
             container["_cellxplorer_declared_protocol"] = declared_copy
 
     source.header_meta = header
-    source.parser_version = current_parser_identity_for_extension(getattr(source, "ext", None))
+    source.parser_version = parser_version
     source.parse_status = "metadata_only"
-    source.parse_error = RETIRED_BIOLOGIC_MPR_WARNING
+    source.parse_error = warning
     source.row_count = None
     source.cycle_count = None
     source.capacity_summary_status = "unavailable"
     source.total_charge_capacity_mah = None
     source.total_discharge_capacity_mah = None
     source.max_discharge_capacity_mah = None
+
+
+def reclassify_retired_biologic_source(source: object) -> bool:
+    """Downgrade one withdrawn BioLogic registration without source I/O.
+
+    Old parser caches are intentionally left on disk for later forensic
+    cleanup.  The relational registration and its persisted capability flags
+    are the live authority, so every current consumer sees the source as
+    metadata-only after this bounded state transition.
+    """
+
+    if not source_uses_retired_biologic_parser(source):
+        return False
+    _mark_biologic_source_metadata_only(
+        source,
+        warning=RETIRED_BIOLOGIC_MPR_WARNING,
+        parser_version=current_parser_identity_for_extension(getattr(source, "ext", None)),
+        requires_reinspection=False,
+    )
+    return True
+
+
+def reclassify_pre_r8_biologic_source(source: object) -> bool:
+    """Reconcile a pre-R8 MPR row from its persisted binary-layout evidence."""
+
+    if not source_uses_pre_r8_biologic_parser(source):
+        return False
+    layout = persisted_biologic_mpr_layout(source)
+    if layout == BIOLOGIC_MPR_VERIFIED_LAYOUT:
+        _mark_biologic_source_metadata_only(
+            source,
+            warning=BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING,
+            parser_version=current_parser_identity_for_extension(getattr(source, "ext", None)),
+            requires_reinspection=False,
+        )
+    else:
+        _mark_biologic_source_metadata_only(
+            source,
+            warning=BIOLOGIC_MPR_REINSPECTION_WARNING,
+            parser_version=None,
+            requires_reinspection=True,
+        )
     return True
 
 
@@ -669,7 +821,11 @@ def source_record_metadata_only(source: object) -> bool:
     because a cache or preview consumer asks for cycling data.
     """
 
-    if source_uses_retired_biologic_parser(source):
+    if (
+        source_uses_retired_biologic_parser(source)
+        or source_uses_pre_r8_biologic_parser(source)
+        or source_requires_biologic_mpr_reinspection(source)
+    ):
         return True
     if getattr(source, "parse_status", None) == "metadata_only":
         return True
@@ -691,6 +847,7 @@ def source_record_capability(source: object) -> dict[str, object]:
         "metadata_only": metadata_only,
         "canonical_cycling": not metadata_only,
         "warning": warning,
+        "requires_reinspection": source_requires_biologic_mpr_reinspection(source),
     }
 
 

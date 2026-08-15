@@ -55,6 +55,29 @@ test("continued metadata-only acknowledgement is bound to the server finding sou
   );
 });
 
+test("continued metadata-only acknowledgement expires when the inspected hash changes", () => {
+  const oldResult = result({
+    sources: [
+      { key: "metadata-a", kind: "staged", source_file_id: null, filename: "a.mpr", hash: "old-hash", start_time: null, end_time: null, local_cycle_start: null, local_cycle_end: null, local_cycle_count: null, protocol_signature: null, device_info: null, channel: null, nominal_capacity_mah: null, active_mass_mg: null, inspection_status: "ready", canonical_cycling: false, metadata_only: true },
+    ],
+    findings: [
+      { id: "old-confirmation", code: "metadata_only_source", severity: "confirmation", source_keys: ["metadata-a"], title: "Metadata only", message: "", details: {} },
+    ],
+  });
+  const reinspection = result({
+    sources: [
+      { ...oldResult.sources[0], hash: "new-hash" },
+    ],
+    findings: [
+      { id: "new-confirmation", code: "metadata_only_source", severity: "confirmation", source_keys: ["metadata-a"], title: "Metadata only", message: "", details: {} },
+    ],
+  });
+
+  assert.deepEqual(preserveAcknowledgements(["old-confirmation"], reinspection), []);
+  assert.equal(continuedImportCanSubmit(reinspection, "Cell A", ["old-confirmation"]), false);
+  assert.equal(continuedImportCanSubmit(reinspection, "Cell A", ["new-confirmation"]), true);
+});
+
 test("continued raw-data access follows source capability", () => {
   assert.equal(continuationSourceCanOpenRawData({ metadata_only: false, canonical_cycling: true }), true);
   assert.equal(continuationSourceCanOpenRawData({ metadata_only: true, canonical_cycling: false }), false);

@@ -39,7 +39,7 @@ from .source_format_errors import (
 )
 
 
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl4"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl5"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by

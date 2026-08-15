@@ -1302,6 +1302,107 @@ class ImportFlowTests(unittest.TestCase):
             self.assertEqual(db.query(TestFile).count(), 2)
         db.close()
 
+    def test_initial_continued_import_acknowledges_mpr_without_mpr_cache_job(self):
+        """The real multi-source registration path must preserve the MPR boundary."""
+        background_jobs.clear_jobs()
+        db = self.make_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            neware_path = root / "part-01.ndax"
+            neware_path.write_bytes(b"neware-shaped continuation source")
+            mpr_path = root / "part-02.mpr"
+            _write_importable_biologic_mpr(mpr_path)
+
+            neware_metadata = {
+                "raw": {"Protocol": "continued-neware"},
+                "source_format": "Neware binary",
+                "start_time": "2026-01-01T00:00:00+00:00",
+                "device_info": "Neware",
+                "channel": "1-1",
+                "nominal_capacity_mah": 1.0,
+                "active_mass_mg": 1.0,
+            }
+            original_read_header = parsing.read_header_metadata
+
+            def metadata_for(path):
+                if Path(path).suffix.casefold() == ".mpr":
+                    return original_read_header(path)
+                return neware_metadata
+
+            def ready_non_mpr(source, *, source_path=None):
+                if source.get("metadata_only"):
+                    source["inspection_status"] = "ready"
+                    source["cache_build_status"] = "unavailable"
+                    return source
+                source.update(
+                    {
+                        "inspection_status": "ready",
+                        "cache_build_status": "ready",
+                        "local_cycle_start": 1,
+                        "local_cycle_end": 1,
+                        "local_cycle_count": 1,
+                        "first_record_timestamp": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                        "end_timestamp": datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+                        "end_time": "2026-01-01T00:01:00+00:00",
+                    }
+                )
+                return source
+
+            draft = files.ImportCellDraft(
+                cell_name="Initial continued MPR cell",
+                sources=[
+                    files.ImportSourceDraft(
+                        staged_name=neware_path.name,
+                        source_path=str(neware_path),
+                        filename=neware_path.name,
+                    ),
+                    files.ImportSourceDraft(
+                        staged_name=mpr_path.name,
+                        source_path=str(mpr_path),
+                        filename=mpr_path.name,
+                    ),
+                ],
+            )
+            request = files.ImportCellsRequest(cells=[draft])
+
+            with patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for), \
+                patch.object(files.continuations, "enrich_source_timing", side_effect=ready_non_mpr):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files._create_imported_cells_impl(request, db)
+                self.assertEqual(raised.exception.status_code, 422)
+                self.assertEqual(db.query(Cell).count(), 0)
+                analysis = files._inspect_cell_draft_chain(draft, db)
+
+            confirmation_ids = [
+                finding["id"]
+                for finding in analysis["findings"]
+                if finding["severity"] == "confirmation"
+            ]
+            self.assertTrue(
+                any(
+                    finding["code"] == "metadata_only_source"
+                    for finding in analysis["findings"]
+                )
+            )
+            draft.acknowledged_finding_ids = confirmation_ids
+            draft.sources[1].allow_metadata_only = True
+
+            with patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for), \
+                patch.object(files.continuations, "enrich_source_timing", side_effect=ready_non_mpr), \
+                patch.object(files, "start_import_cache_jobs", return_value={}) as start_cache:
+                result = files._create_imported_cells_impl(request, db)
+
+            self.assertEqual(len(result["created"]), 1)
+            self.assertEqual(db.query(Cell).count(), 1)
+            test = db.query(Test).one()
+            links = sorted(test.file_links, key=lambda link: link.position)
+            self.assertEqual([link.file.ext for link in links], ["ndax", "mpr"])
+            self.assertEqual(links[1].file.parse_status, "metadata_only")
+            jobs = start_cache.call_args.args[1]
+            self.assertEqual([job["staged_name"] for job in jobs], [neware_path.name])
+        db.close()
+        background_jobs.clear_jobs()
+
     def test_stale_import_cache_success_and_failure_do_not_mutate_new_source_identity(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:

@@ -124,11 +124,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl4",
+                "adapter_revision": "gcpl5",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl4:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl5:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_real_mpr_dispatch_fails_closed_without_verified_cycle_identity(self) -> None:

@@ -208,6 +208,65 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         old_cycles.write_bytes(b"withdrawn canonical cycles cache")
         return old_raw, old_cycles
 
+    def _add_pre_r8_source(
+        self,
+        *,
+        layout: str,
+        location_status: str = "offline",
+        hash_value: str = "34" * 32,
+    ) -> tuple[SourceFile, Cell]:
+        header = deepcopy(self.source.header_meta or {})
+        data = dict(header.get("data") or {})
+        if layout == parsing.BIOLOGIC_MPR_WITHDRAWN_LAYOUT:
+            data["column_ids"] = [
+                column_id
+                for column_id in data.get("column_ids", [])
+                if int(column_id) != 9
+            ]
+            data["n_columns"] = 15
+            data["record_itemsize"] = 49
+        header["data"] = data
+        capabilities = dict(header.get("capabilities") or {})
+        capabilities.update(
+            {
+                "cycling_rows": True,
+                "canonical_cycling": True,
+                "metadata_only": False,
+                "requires_reinspection": False,
+            }
+        )
+        header["capabilities"] = capabilities
+        source_path = self.root / f"pre-r8-{hash_value[:6]}.mpr"
+        source = SourceFile(
+            hash=hash_value,
+            path=str(source_path),
+            filename="pre-r8-gcpl4.mpr",
+            size=1,
+            ext="mpr",
+            observed_size=1,
+            observed_mtime_ns=None,
+            location_status=location_status,
+            parse_status="parsed",
+            parser_version="bm:gcpl4:r1",
+            header_meta=header,
+            row_count=4,
+            cycle_count=2,
+            total_charge_capacity_mah=1.0,
+            total_discharge_capacity_mah=0.9,
+            max_discharge_capacity_mah=0.9,
+            capacity_summary_status="ready",
+        )
+        cell = Cell(name=f"pre-r8-{hash_value[:8]}")
+        self.db.add(source)
+        self.db.add(cell)
+        self.db.flush()
+        test = Test(cell_id=cell.id, name="pre-r8-source")
+        self.db.add(test)
+        self.db.flush()
+        self.db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+        self.db.commit()
+        return source, cell
+
     def test_header_capabilities_are_truthfully_metadata_only(self) -> None:
         metadata = read_gcpl_header_metadata(self.mpr_path)
         capabilities = metadata["capabilities"]
@@ -224,7 +283,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_scanner_registers_metadata_only_and_never_builds_a_cache(self) -> None:
         self.assertEqual(self.source.parse_status, "metadata_only")
-        self.assertEqual(self.source.parser_version, "bm:gcpl4:r1")
+        self.assertEqual(self.source.parser_version, "bm:gcpl5:r1")
         self.assertIsNone(self.source.row_count)
         self.assertIsNone(self.source.cycle_count)
         self.assertEqual(self.source.capacity_summary_status, "unavailable")
@@ -240,7 +299,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
 
     def test_parser_revision_invalidates_the_previous_canonical_identity(self) -> None:
         current_identity = parsing.parser_identity(self.mpr_path)
-        self.assertEqual(current_identity, "bm:gcpl4:r1")
+        self.assertEqual(current_identity, "bm:gcpl5:r1")
         file_hash = parsing.capture_source_fingerprint(self.mpr_path).hash
         old_identity = "bm:gcpl3:r1"
         old_raw = cache.raw_path(file_hash, old_identity)
@@ -271,7 +330,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         for source in (online, offline):
             refreshed = self.db.get(SourceFile, source.id)
-            self.assertEqual(refreshed.parser_version, "bm:gcpl4:r1")
+            self.assertEqual(refreshed.parser_version, "bm:gcpl5:r1")
             self.assertEqual(refreshed.parse_status, "metadata_only")
             self.assertEqual(refreshed.capacity_summary_status, "unavailable")
             self.assertTrue(parsing.source_record_metadata_only(refreshed))
@@ -287,6 +346,59 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertTrue(online_cycles.exists())
         self.assertTrue(offline_raw.exists())
         self.assertTrue(offline_cycles.exists())
+
+    def test_pre_r8_verified_layout_reconciles_offline_without_source_read(self) -> None:
+        source, _cell = self._add_pre_r8_source(
+            layout=parsing.BIOLOGIC_MPR_VERIFIED_LAYOUT,
+            location_status="offline",
+            hash_value="78" * 32,
+        )
+        with patch.object(
+            parsing.biologic_gcpl,
+            "read_gcpl_header_metadata",
+            side_effect=AssertionError("pre-R8 reconciliation must use stored evidence"),
+        ):
+            self.assertEqual(scanner.reconcile_retired_biologic_sources(self.db), 1)
+
+        self.db.expire_all()
+        refreshed = self.db.get(SourceFile, source.id)
+        self.assertEqual(refreshed.parser_version, "bm:gcpl5:r1")
+        self.assertEqual(refreshed.parse_status, "metadata_only")
+        self.assertEqual(refreshed.capacity_summary_status, "unavailable")
+        self.assertTrue(parsing.source_record_metadata_only(refreshed))
+        self.assertFalse(parsing.source_requires_biologic_mpr_reinspection(refreshed))
+        self.assertFalse(refreshed.header_meta["capabilities"]["canonical_cycling"])
+        self.assertTrue(refreshed.header_meta["capabilities"]["metadata_only"])
+        self.assertIn("bm:gcpl4:r1", refreshed.parse_error)
+        self.assertIsNone(refreshed.row_count)
+        self.assertIsNone(refreshed.cycle_count)
+
+    def test_pre_r8_withdrawn_layout_requires_reinspection_without_source_read(self) -> None:
+        source, _cell = self._add_pre_r8_source(
+            layout=parsing.BIOLOGIC_MPR_WITHDRAWN_LAYOUT,
+            location_status="offline",
+            hash_value="9a" * 32,
+        )
+        with patch.object(
+            parsing.biologic_gcpl,
+            "read_gcpl_header_metadata",
+            side_effect=AssertionError("pre-R8 reconciliation must use stored evidence"),
+        ):
+            self.assertEqual(scanner.reconcile_retired_biologic_sources(self.db), 1)
+
+        self.db.expire_all()
+        refreshed = self.db.get(SourceFile, source.id)
+        self.assertIsNone(refreshed.parser_version)
+        self.assertEqual(refreshed.parse_status, "metadata_only")
+        self.assertEqual(refreshed.capacity_summary_status, "unavailable")
+        self.assertTrue(parsing.source_record_metadata_only(refreshed))
+        self.assertTrue(parsing.source_requires_biologic_mpr_reinspection(refreshed))
+        self.assertTrue(refreshed.header_meta["capabilities"]["requires_reinspection"])
+        self.assertFalse(refreshed.header_meta["capabilities"]["canonical_cycling"])
+        self.assertIn("Re-inspect", refreshed.parse_error)
+        capability = parsing.source_record_capability(refreshed)
+        self.assertTrue(capability["requires_reinspection"])
+        self.assertEqual(scanner.reconcile_retired_biologic_sources(self.db), 0)
 
     def test_retired_pinned_analysis_is_blocked_before_old_cache_read(self) -> None:
         source, cell = self._add_retired_source(hash_value="ef" * 32)
@@ -328,7 +440,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
             "ok": True,
             "built": True,
             "info": {
-                "parser_version": "bm:gcpl4:r1",
+                "parser_version": "bm:gcpl5:r1",
                 "rows": 4,
                 "cycles": 2,
                 "total_charge_capacity_mah": 1.0,
@@ -346,7 +458,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.db.expire_all()
         refreshed = self.db.get(SourceFile, source.id)
         self.assertEqual(refreshed.parse_status, "metadata_only")
-        self.assertEqual(refreshed.parser_version, "bm:gcpl4:r1")
+        self.assertEqual(refreshed.parser_version, "bm:gcpl5:r1")
         self.assertEqual(refreshed.capacity_summary_status, "unavailable")
         self.assertEqual(background_jobs.get_job(job_id)["counters"]["failed"], 1)
 

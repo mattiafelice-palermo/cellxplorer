@@ -131,28 +131,33 @@ def _needs_identity_bring_forward(sf: SourceFile) -> bool:
 
 
 def reconcile_retired_biologic_sources(db: Session) -> int:
-    """Reclassify persisted sources whose canonical parser was withdrawn.
+    """Reconcile persisted BioLogic MPR identities without source I/O.
 
-    The query is deliberately bounded by extension and the explicit retired
-    identity list.  It does not inspect source paths or cache files, and it
-    includes offline rows so a disconnected library receives the same
-    truthful capability downgrade as an online one.
+    The query is deliberately bounded by extension and the explicit
+    pre-current identity list. It does not inspect source paths or cache
+    files, and it includes offline rows so a disconnected library receives
+    the same truthful capability state as an online one. The gcpl3 retirement
+    and the post-R8 gcpl4 layout reconciliation have separate state rules in
+    ``parsing``.
     """
 
-    retired_identities = parsing.RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
-    if not retired_identities:
+    reconciliation_identities = parsing.BIOLOGIC_MPR_RECONCILIATION_IDENTITIES
+    if not reconciliation_identities:
         return 0
     sources = (
         db.query(SourceFile)
         .filter(
             SourceFile.ext == "mpr",
-            SourceFile.parser_version.in_(retired_identities),
+            SourceFile.parser_version.in_(reconciliation_identities),
         )
         .all()
     )
     changed = 0
     for source in sources:
-        changed += int(parsing.reclassify_retired_biologic_source(source))
+        if parsing.source_uses_retired_biologic_parser(source):
+            changed += int(parsing.reclassify_retired_biologic_source(source))
+        elif parsing.source_uses_pre_r8_biologic_parser(source):
+            changed += int(parsing.reclassify_pre_r8_biologic_source(source))
     if changed:
         db.commit()
     return changed
@@ -226,9 +231,9 @@ def start_capacity_summary_backfill(
 
     db = SessionLocal()
     try:
-        # Do this before selecting parsed sources.  A gcpl3 row can otherwise
-        # enter the normal identity bring-forward path and retain its old
-        # canonical registration when the current gcpl4 build fails closed.
+        # Do this before selecting parsed sources. A withdrawn or pre-R8 row
+        # can otherwise enter the normal identity path with stale capability
+        # state when the current gcpl5 build fails closed.
         reconcile_retired_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)
         copied_library_preparation = scientific_preparation.is_pending(preparation_state)
@@ -586,6 +591,24 @@ def _apply_capacity_source_result(
         warning = parsing.RETIRED_BIOLOGIC_MPR_WARNING
         logger.warning(
             "scientific preparation skipped for retired parser %s: %s",
+            sf.filename,
+            warning,
+        )
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="failed",
+            detail=warning,
+            error=warning,
+            counter="failed",
+        )
+        db.commit()
+        return 0, 1
+    if parsing.source_uses_pre_r8_biologic_parser(sf):
+        parsing.reclassify_pre_r8_biologic_source(sf)
+        warning = parsing.source_record_metadata_only_message(sf)
+        logger.warning(
+            "scientific preparation skipped for pre-R8 parser %s: %s",
             sf.filename,
             warning,
         )
@@ -1077,8 +1100,16 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
 def parse_file(db: Session, sf: SourceFile) -> SourceFile:
     """Full parse → build Parquet caches at current versions."""
     if parsing.source_record_metadata_only(sf):
+        if parsing.source_uses_retired_biologic_parser(sf):
+            parsing.reclassify_retired_biologic_source(sf)
+        elif parsing.source_uses_pre_r8_biologic_parser(sf):
+            parsing.reclassify_pre_r8_biologic_source(sf)
         metadata_only_message = parsing.source_record_metadata_only_message(sf)
-        sf.parser_version = parsing.current_parser_identity_for_extension(sf.ext)
+        if (
+            not parsing.source_uses_retired_biologic_parser(sf)
+            and not parsing.source_requires_biologic_mpr_reinspection(sf)
+        ):
+            sf.parser_version = parsing.current_parser_identity_for_extension(sf.ext)
         sf.parse_status = "metadata_only"
         sf.parse_error = metadata_only_message
         sf.capacity_summary_status = "unavailable"

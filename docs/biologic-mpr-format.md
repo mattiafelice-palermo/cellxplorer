@@ -233,7 +233,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl4`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl5`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and

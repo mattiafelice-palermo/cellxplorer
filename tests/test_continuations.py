@@ -162,6 +162,59 @@ class ContinuationPolicyTests(unittest.TestCase):
             continuations.ensure_submittable_chain(result, [])
         continuations.ensure_submittable_chain(result, [metadata_finding["id"]])
 
+    def test_metadata_only_acknowledgement_changes_with_hash_but_survives_reorder(self):
+        first = _source(
+            "staged-a",
+            filename="a.mpr",
+            hash="hash-a",
+            metadata_only=True,
+            canonical_cycling=False,
+        )
+        second = _source(
+            "staged-b",
+            filename="b.ndax",
+            hash="hash-b",
+            first_record_timestamp=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            local_cycle_start=1,
+            local_cycle_end=1,
+        )
+        original = continuations.analyze_continuation_chain(
+            [first, second],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        original_id = next(
+            finding["id"]
+            for finding in original["findings"]
+            if finding["code"] == "metadata_only_source"
+        )
+
+        replaced = dict(first)
+        replaced["hash"] = "hash-a-replaced"
+        changed = continuations.analyze_continuation_chain(
+            [replaced, second],
+            staged_keys=["staged-a", "staged-b"],
+        )
+        changed_id = next(
+            finding["id"]
+            for finding in changed["findings"]
+            if finding["code"] == "metadata_only_source"
+        )
+        self.assertNotEqual(original_id, changed_id)
+        with self.assertRaises(continuations.ContinuationValidationError):
+            continuations.ensure_submittable_chain(changed, [original_id])
+
+        reordered = continuations.analyze_continuation_chain(
+            [second, first],
+            staged_keys=["staged-b", "staged-a"],
+            proposed_staged_order=["staged-b", "staged-a"],
+        )
+        reordered_id = next(
+            finding["id"]
+            for finding in reordered["findings"]
+            if finding["code"] == "metadata_only_source"
+        )
+        self.assertEqual(original_id, reordered_id)
+
     def test_timestamp_gap_includes_human_readable_duration(self):
         left_end = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
         right_start = left_end + timedelta(days=6)

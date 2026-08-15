@@ -120,7 +120,7 @@ quantity is still `voltage_v`.
 
 `working_potential_v` and `counter_potential_v` are the canonical names for a
 source's synchronized electrode potentials versus a reference. The BioLogic
-GCPL adapter (Spec 041.3, revision `gcpl4`) exposes these roles in bounded header
+GCPL adapter (Spec 041.3, revision `gcpl5`) exposes these roles in bounded header
 metadata when the bounded Ewe/Ece layout is present. It computes the
 signed primary cell voltage as `working_potential_v - counter_potential_v`,
 preserves the source roles, and exposes a measured Ewe-labelled primary only
@@ -243,11 +243,17 @@ any generic scientific service.
 
 The withdrawn `bm:gcpl3:r1` identity is not treated as a reproducible historical scientific
 result. On startup, the scanner performs a bounded database-only reconciliation for persisted MPR
-rows at that identity, changes them to the current `bm:gcpl4:r1` metadata-only registration, and
-clears their live canonical counters. Old identity-keyed caches may remain for later forensic
-cleanup, but the persisted capability gate blocks previews, recompute, warmup, and portable
-scientific export from consuming them. The same gate applies before startup reconciliation, so an
-offline or interrupted upgrade cannot briefly expose the old cache through a pinned provenance.
+rows at that identity, changes them to the current `bm:gcpl5:r1` metadata-only registration, and
+clears their live canonical counters. The same startup pass handles pre-R8 `bm:gcpl4:r1` rows
+without opening source files: stored data-header evidence proving the observed 16-ID/53-byte
+layout is brought to the current `bm:gcpl5:r1` metadata-only identity, while the withdrawn
+15-ID/49-byte layout (or missing/ambiguous evidence) clears the parser identity and marks the
+source as metadata-only with `requires_reinspection=true`. Old identity-keyed caches may remain
+for later forensic cleanup, but the persisted capability gate blocks previews, recompute, warmup,
+and portable scientific export from consuming them. The same gate applies before startup
+reconciliation, so an offline or interrupted upgrade cannot briefly expose an old cache through a
+pinned provenance. List/request capability checks do not reread every source, and this identity
+transition does not change `CALC_VERSION`.
 
 ## 8. How a future source format should map into the contract
 
