@@ -5,109 +5,182 @@
 **Merge base:** `main@aca39740039b4d7146afc9104f5c471bff7c7c46`  
 **R1 implementation checkpoint:** `33b0efea55ed89e9b7dd18206f57f92d5cda63cc`  
 **R2 implementation checkpoint:** `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`  
-**Returned workflow head inspected:** `cf5d4a9c69c8fd3e30f1f384635c1c2dedcdc399`  
-**Status:** **IMPLEMENTATION REVIEW CLEAN / SCIENTIFIC CLOSURE BLOCKED — not ready to merge**
+**User-amendment implementation checkpoint:** `befc0863de5b616d8d08de180afe8d909a9d8252`  
+**Status:** **CHANGES REQUIRED / SCIENTIFIC CLOSURE BLOCKED — not ready to merge**
 
-This is the fresh cumulative Parent 041 review required after child 041.6 became review-clean. It compares the complete feature branch against the verified merge base rather than relying only on child reviews.
+This is the cumulative Parent 041 review. R1/R2 were previously resolved and the implementation review was clean before the 2026-08-15 user amendment. The amendment deliberately adds one narrow cycle-identity exception for a declared, non-repeating charge/rest-only or discharge/rest-only MPR when decoded rows prove constant-zero half-cycle, monotonic `Ns`, one signed active-current direction and at least one active row. The inferred cycle `1` is source-local only.
 
-The reviewer used the live GitHub branch and performed static connector inspection only. The reviewer did **not** execute tests, preflight, builds, packaged-app smoke, browser/manual checks, or private MPR/MPT parity during this review.
+The reviewer used the live GitHub branch and performed static connector inspection only. The reviewer did **not** execute tests, preflight, builds, packaged-app smoke, browser/manual checks, or private MPR/MPT parity during this amendment review.
 
 ## Confirmed cumulative behavior
 
-The following parent-level properties were independently re-inspected and remain consistent with the locked design:
+The following earlier Parent 041 properties remain intact after the amendment unless explicitly covered by R3/R4 below:
 
-- The production MPR reader is independently authored, bounded and limited to the independently observed 16-ID / 53-byte GCPL record layout; the synthetic-only 15-ID / 49-byte variant is rejected.
-- The currently verified real MPR has no independently decoded full-cycle identity, so production canonical mapping fails closed and the source is registered metadata-only rather than inventing cycles.
-- Three-electrode voltage roles and signed Ewe/Ece handling are explicit; unsupported current/cycle semantics fail closed.
-- `.mpr` is admitted through the central source-format registry and `.mpt` is not a user import format.
-- Current BioLogic parser identity is `bm:gcpl5:r1`; retired/pre-R8 registrations are reconciled from persisted evidence without opening source files at startup.
-- Metadata-only import registration persists provenance/metadata and queues no cycling-cache job. Continued-import acknowledgement is content-hash bound.
-- Cell Database list summaries remain relational and bounded; no list-row source-file or Parquet reads were introduced.
-- Generic compute and portable export fail closed when canonical cycling is unavailable.
-- Saved-artifact get/lookup, thumbnail lookup/latest, store and warmup now use the same generic canonical-cycling capability boundary, so retired scientific artifacts cannot remain live after a source is downgraded to metadata-only.
-- The saved-artifact/warmup capability guard remains bounded: live capability checks use persisted scalar identity/status/error state and leave `SourceFile.header_meta` deferred on cache-hit/artifact/warmup paths.
-- Generic Time/Capacity voltage selection and saved/export/portable presentation remain format-neutral; no BioLogic-specific downstream scientific branch was added.
+- The production MPR reader remains independently authored, bounded and limited to the independently observed 16-ID / 53-byte GCPL record layout; the synthetic-only 15-ID / 49-byte variant remains rejected.
+- `.mpr` remains admitted through the central source-format registry and `.mpt` remains excluded as a user import format.
+- Three-electrode voltage roles and signed Ewe/Ece handling remain explicit.
+- Metadata-only continuation acknowledgement remains content-hash bound.
+- Cell Database list summaries remain relational and bounded.
+- Generic scientific compute, saved-artifact, warmup and portable-export capability guards remain format-neutral.
+- The R1 saved-artifact/warmup fail-closed boundary remains present.
+- The R2 live capability guard remains scalar/header-free on cache-hit/artifact/warmup paths.
+- Generic Time/Capacity voltage selection and saved/export/portable presentation remain format-neutral; no BioLogic-specific downstream scientific calculation branch was added.
 - No relational migration or `CALC_VERSION` bump was introduced.
-- Runtime requirements do not add a GPL BioLogic parser dependency.
-- README/changelog/project architecture text describes current MPR support truthfully as metadata-only.
-- No concrete unrelated implementation feature was identified in the cumulative branch scope.
-- `main` remains at the original merge base `aca39740039b4d7146afc9104f5c471bff7c7c46` during this final-review round.
+- Runtime requirements still do not add a GPL BioLogic parser dependency.
+- `main` remains at the original merge base `aca39740039b4d7146afc9104f5c471bff7c7c46`.
+- The amendment correctly advances the MPR adapter identity from `gcpl5` to `gcpl6` and keeps persisted `bm:gcpl5:r1` registrations fail-closed until source reinspection.
+- The constant-zero half-cycle requirement is enforced before the new fallback by `_validate_supported_half_cycle()`; non-zero or regressing half-cycle values remain rejected.
+- Source-local cycle numbering is compatible with the existing generic stitcher: each source's local cycle labels are remapped densely to test-global cycles while `source_cycle` preserves the local label, so multiple source-local cycle-1 segments do not collide.
+- The gcpl5 reinspection pass runs from the post-listening scientific warmup thread rather than delaying API reachability.
 
 ## Finding status
 
 ### R1 — RESOLVED: retired gcpl3 saved artifacts are no longer live after metadata-only downgrade
 
-The returned fix applies the generic canonical-cycling guard before saved-artifact signature/cache access, covering full artifact get/lookup, thumbnail lookup/latest and stale-client artifact store.
-
-Warmup checks persisted capability when discovering tasks, rechecks it at task admission, and checks again on late completion. A source withdrawn between task admission and browser completion therefore cannot cause a retired thumbnail read or prepared-marker write. The old forensic artifact bytes may remain physically, but their prepared marker is cleared and live endpoints cannot serve them.
-
-The focused regression creates a persisted retired scenario with old `bm:gcpl3:r1` provenance and matching saved artifacts/thumbnails/prepared marker, then performs normal source reconciliation. It asserts `canonical_cycling_unavailable` before artifact/thumbnail cache access and covers the late-completion race.
+The generic canonical-cycling guard now applies before saved-artifact signature/cache access and across warmup discovery, task admission and late completion. Retired scientific bytes may remain for forensic cleanup but are not live.
 
 ### R2 — RESOLVED: live capability guards no longer materialize deferred `header_meta`
 
-The R2 fix adds an explicit bounded scalar-only capability mode rather than removing the fail-closed guard.
+The generic capability path uses persisted scalar identity/status/error state with `include_header=False`; header-aware behavior remains limited to reconciliation/presentation paths that genuinely need persisted header evidence.
 
-`canonical_cycling_capability()` now calls `source_record_metadata_only(..., include_header=False)` and `source_record_capability(..., include_header=False)`. In that mode:
+### R3 — High: header-only eligibility is published as verified canonical cycling before decoded-row validation
 
-- retired `bm:gcpl3:r1` identities remain metadata-only;
-- pre-R8 `bm:gcpl4:r1` identities remain fail-closed until reconciliation;
-- current `parse_status="metadata_only"` sources remain blocked;
-- current reinspection state can be represented from persisted scalar error/status state;
-- ordinary canonical sources do not dereference deferred `header_meta` merely to conclude that canonical cycling is available.
+Affected files:
+- `backend/app/services/biologic_gcpl.py`
+- `backend/app/services/parsing.py`
+- `backend/app/services/scanner.py`
+- `backend/app/routers/files.py`
+- `tests/test_biologic_closure.py`
+- `tests/test_import_flow.py`
 
-Header-aware behavior remains the default for reconciliation/presentation paths that genuinely need persisted binary-layout or protocol evidence.
+**Current**
 
-The focused regression instruments SQL and verifies that a capability check over eight canonical Neware/Excel-style sources plus one metadata-only MPR issues no query containing `header_meta`. The existing retired/pre-R8 and saved-artifact regressions remain in the focused verification tranche.
+The user amendment requires the cycle-1 exception only after **decoded rows** prove the bounded single-direction conditions. Header inspection intentionally does not decode the VMP data records: `read_gcpl_header_metadata()` opens the MPR with `decode_records=False` and can therefore establish only that the declared settings are *eligible* for the fallback.
 
-No new implementation finding remains after the R2 re-review and resumed cumulative pass.
+However, `_gcpl_metadata_from_document()` converts that settings-only eligibility directly into:
+
+```python
+"cycling_rows": True
+"canonical_cycling": True
+"metadata_only": False
+"cycle_identity_source": "single_direction_inferred"
+```
+
+before any row has been checked. The warning itself says the adapter **will verify** the rows later, which confirms that this state is still provisional.
+
+That provisional header result is then used as persisted capability state. A newly inspected/registered candidate can be stored as `unparsed`/`parsing` while its header already says canonical cycling is available. Import preview text likewise reports `Canonical cycling rows available` from the header-only result.
+
+More importantly, if the later full cache build rejects the decoded rows, the normal import/scanner failure paths set `parse_status="error"` and `parse_error`, but they do not downgrade the persisted header capability to metadata-only. The scalar capability guard introduced by Parent R2 intentionally does not load `header_meta`; for a current non-retired source whose status is merely `error`, `source_record_metadata_only(..., include_header=False)` therefore does not identify it as metadata-only. The branch can consequently retain a persisted state that advertises canonical capability even though the row-level proof required by the amendment failed.
+
+This violates the amendment's locked distinction between a declared candidate and a **verified** single-direction source. Mixed directions, non-monotonic execution and other fallback failures are required to remain metadata-only, not canonical-capable registrations with a generic parse error.
+
+**Target**
+
+Keep header inspection bounded and record-decode-free, but distinguish **single-direction candidate/eligibility** from **verified canonical cycling**.
+
+A header-only candidate must not be published through the live capability contract as already verified canonical cycling. The import/scanner pipeline may still automatically queue/perform the full parse without asking the user for a metadata-only acknowledgement; the candidate state simply must not become scientifically usable until the decoded-row validation succeeds.
+
+After a successful full parse of a candidate, persist/promote the source to current canonical capability and normal parsed/cache state. If a structurally valid candidate fails the bounded single-direction row checks (mixed sign, non-monotonic `Ns`, unsupported half-cycle, ambiguous active direction, etc.), persist a truthful fail-closed metadata-only/unavailable capability rather than leaving the source canonical-capable with only a generic error. Truly corrupt/invalid source failures may remain errors as appropriate; the important distinction is that failure to prove the cycle-1 exception cannot leave canonical capability live.
+
+Do not solve this by decoding all VMP records during the batch/header inspection path.
+
+**Acceptance criteria**
+
+- Header-only inspection of a declared single-direction MPR remains `decode_records=False` / bounded and does not claim that row-verified canonical cycling already exists.
+- The candidate still proceeds automatically to normal full scientific preparation; no new user acknowledgement is required merely because row verification is pending.
+- A valid charge/rest-only and a valid discharge/rest-only source become `parsed`, current-parser canonical sources only after full row validation and cache publication succeed.
+- A declared single-direction source whose rows violate one of the amendment conditions ends in a persisted fail-closed non-canonical state; generic analysis/artifact/warmup capability checks return `canonical_cycling_unavailable` before scientific cache use.
+- A failed fallback verification cannot leave `header_meta`/scalar source state claiming canonical cycling or `cycle_identity_source="single_direction_inferred"` as an accomplished fact.
+- Focused import/scanner regressions cover at least a settings-eligible source with row-level mixed signs or non-monotonic `Ns`, including the persisted post-failure capability state.
+- Existing metadata-only acknowledgement semantics for genuinely non-candidate MPR sources remain unchanged.
+- No full record decode, source-wide scientific computation or per-file heavy work is added to the header-only batch inspection path.
+
+### R4 — High: the cycle-1 fallback does not verify observed direction against the declared per-`Ns` protocol direction
+
+Affected files:
+- `backend/app/services/biologic_gcpl.py`
+- `tests/test_biologic_gcpl.py`
+- `tests/test_biologic_closure.py` / import lifecycle tests as needed for the persisted fail-closed result
+- parser-identity/reinspection declarations if the corrected contract invalidates existing `gcpl6` cache output
+
+**Current**
+
+The amendment is specifically for a declared **charge/rest-only** or **discharge/rest-only** run whose decoded rows confirm that same single-direction execution.
+
+`_is_single_direction_protocol()` currently collapses the declared settings to a boolean. It verifies that all declared active sequences have one direction, but it does not return/preserve which direction that is. `_single_direction_cycle_is_safe()` then checks only that the decoded current contains one non-zero sign globally. `_validate_document_settings()` verifies that observed `Ns` values exist in the settings but does not compare the observed operation to the declared sequence for that `Ns`.
+
+As a result, a file with a declared charge-only protocol can pass the fallback when its decoded rows are all negative-current discharge rows. The raw mapper then labels those rows `CC_DChg`, while the persisted declared protocol still says charge. Likewise, an `Ns` declared as Rest can carry an active galvanostatic row without the fallback itself rejecting the declared/raw semantic contradiction, provided the source remains globally one-sign and other raw/capacity checks pass.
+
+That produces internally inconsistent scientific representations: protocol-aware consumers can see a different operation/direction from the canonical raw rows. It also violates the fail-closed intent of the amendment; a one-sign current is not sufficient proof if it contradicts the settings that made the source eligible for the exception.
+
+**Target**
+
+For the no-full-cycle-field fallback, validate decoded execution against the declared sequence semantics indexed by normalized `Ns`, not only against a global settings boolean.
+
+At minimum:
+
+- observed active rows/blocks for an `Ns` declared charge must have the supported positive charge direction;
+- observed active rows/blocks for an `Ns` declared discharge must have the supported negative discharge direction;
+- an observed `Ns` declared Rest must not execute as an active current operation;
+- unsupported/control/ambiguous declared directions remain ineligible;
+- partial files may observe only a subset of the declared sequence and may start at a later declared `Ns`; do not require execution to begin at sequence 1 merely to enforce semantic agreement.
+
+Any mismatch must fail closed and, together with R3, end in a non-canonical persisted state.
+
+Because `befc086` can already create `bm:gcpl6:r1` canonical caches for inputs that the corrected contract must reject, the fix must also preserve cache/provenance safety. Advance the MPR parser identity again or provide an equivalently deterministic invalidation/reinspection boundary that proves no cache created under the unsafe `gcpl6` contract can remain live after the correction. Offline persisted sources must fail closed until they can be safely reconciled/reinspected.
+
+**Acceptance criteria**
+
+- Declared charge + decoded negative/discharge current is rejected by the fallback.
+- Declared discharge + decoded positive/charge current is rejected.
+- A declared Rest `Ns` carrying an active galvanostatic execution is rejected.
+- Valid charge/rest-only and discharge/rest-only sources remain accepted.
+- A valid partial source that starts at a later declared `Ns` remains accepted when all observed execution agrees with the corresponding declared steps.
+- The fallback continues to require constant-zero half-cycle, monotonic `Ns`, at least one active row, one observed current sign and no loop/repeat structure.
+- Protocol metadata and canonical raw `status`/current direction cannot disagree for an accepted fallback source.
+- Existing explicit `raw_cycle_index` semantic tests are not unnecessarily constrained by this fallback-only rule.
+- Any canonical cache/provenance created under the now-unsafe `bm:gcpl6:r1` acceptance boundary cannot remain current after the fix; focused upgrade/offline tests cover the chosen revision/invalidation strategy.
+- No BioLogic-specific branch is added to downstream generic scientific calculations.
 
 ## External scientific closure gate — still BLOCKED
 
-This is **not** an implementer-actionable code finding.
+This remains separate from R3/R4 and is **not** an implementer-actionable code finding.
 
-Parent 041 explicitly requires at least one privacy-approved same-experiment `.mpr` / `.mpt` pair for final scientific closure unless the user amends that requirement. The latest implementer handoff still reports no paired `.mpt`, and a reviewer File Library search surfaced only specification documents mentioning `.mpt`, not a same-experiment validation file.
+The user amendment deliberately permits the narrow single-direction source-local cycle-1 fallback without a paired `.mpt`; it does **not** waive Parent 041's general same-experiment `.mpr` / `.mpt` validation requirement for multi-cycle scientific closure.
 
 Accordingly:
 
-- real MPR/MPT semantic parity is **NOT RUN**;
-- the currently verified real MPR remains metadata-only because full-cycle identity is unresolved;
-- the required real registered-source scientific matrix for Cycles, Time/Capacity, Steps, DCIR, Rate Capability and Chargeability cannot truthfully be claimed complete from the current real source;
-- synthetic `raw_cycle_index` fixtures remain regression evidence, not substitute external ground truth;
-- the feature cannot truthfully be marked `COMPLETE` or ready to merge under the locked Parent 041 acceptance criteria.
-
-The repository workflow helper currently has no distinct `BLOCKED` state: `FINAL_REVIEW` can only transition to `COMPLETE`. Therefore the truthful repository state is to remain `REVIEWER + FINAL_REVIEW` with no open implementation findings until the required paired evidence is supplied, or the user explicitly amends the parent requirement.
+- real general MPR/MPT semantic parity remains **NOT RUN**;
+- the narrow single-direction exception can be implemented/reviewed independently of that missing pair;
+- synthetic single-direction fixtures are regression evidence for the exception, not substitute ground truth for general GCPL cycle semantics;
+- Parent 041 still cannot be marked `COMPLETE` or ready to merge under the current acceptance criteria after code findings are resolved unless the paired gate is satisfied or explicitly amended.
 
 ## Verification record
 
-### Implementer-reported
+### Implementer-reported for amendment checkpoint `befc0863de5b616d8d08de180afe8d909a9d8252`
 
-Latest R2 implementation checkpoint: `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`.
-
-- Focused closure/analysis/protocol/parsing suites: reported PASS — 89 tests.
-- `python scripts\preflight.py`: reported PASS — 5/5; 68 backend modules and 541 frontend policy tests passed; unchanged TypeScript/Vite stages were skipped by the canonical preflight cache.
-- R2 deferred-header regression: reported PASS — no `header_meta` SQL query across eight canonical sources and one metadata-only MPR.
-- R1 focused backend closure/cache-maintenance/protocol suites: previously reported PASS — 49 tests.
-- Earlier R6/R9 checkpoint `7f39d3f`: full backend suite previously reported PASS — 1,145 tests; golden digests unchanged.
-- Final frontend/import-progress checkpoint `f5ee8f4`: focused frontend suite previously reported PASS — 20 tests; preflight 5/5 reported PASS.
+- Single-direction MPR mapper/import/cache focused suites: reported PASS — 251 tests.
+- `python scripts\preflight.py --no-cache`: reported PASS — 5/5; all 68 backend modules, 541 frontend policy tests, TypeScript type check and Vite production bundle passed.
+- Vite completed with the existing chunk-size and static/dynamic-import warnings.
+- `git diff --check`: reported PASS.
 - Paired MPR/MPT semantic parity: **NOT RUN**; no paired `.mpt` available.
-- Packaged Windows MPR smoke: NOT RUN.
-- Live browser/manual matrix: NOT RUN.
+- Browser/manual feature verification: NOT RUN.
 
-### Reviewer independently inspected
+Earlier R1/R2 verification remains historical evidence and is not restated as proof of the amendment.
 
-- Exact R1 patch `33b0efea55ed89e9b7dd18206f57f92d5cda63cc` and its saved-artifact/warmup regression coverage.
-- Exact R2 patch `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3` and returned workflow head `cf5d4a9c69c8fd3e30f1f384635c1c2dedcdc399`.
-- Artifact read/lookup/thumbnail/store guard ordering.
-- Warmup discovery, `_is_current()` admission and late `complete()` capability race handling.
-- Bounded source-chain preload and deferred-column behavior.
-- Scalar-only versus header-aware metadata-only/reinspection capability paths.
-- R2 SQL instrumentation regression.
-- Current MPR reader fail-closed layout support and parser-identity upgrade boundary.
-- Metadata-only source lifecycle/import acknowledgement and no-cache-job behavior.
-- Cell Database relational/list-path boundary.
-- Generic scientific, saved-artifact, portable-export and voltage-channel integration boundaries.
+### Reviewer independently inspected in this amendment review
+
+- Exact amendment diff `3e9596cf93c3d40dcd15fc3be6ae9fde605a17e5..befc0863de5b616d8d08de180afe8d909a9d8252`.
+- Amended Parent 041 and 041.6 locked single-direction conditions.
+- GCPL settings direction decoding and declared protocol construction.
+- `_validate_document_settings()`, `_validate_supported_half_cycle()`, `_single_direction_cycle_is_safe()` and the canonical mapper ordering.
+- Header-only metadata construction and its persisted capability flags.
+- Import preview/capacity-preview, registration, cache-worker result publication and scanner parse/update paths.
+- Persisted scalar/header capability behavior after the prior Parent R2 fix.
+- gcpl5 → gcpl6 identity/reinspection path and startup warmup ownership.
+- Generic multi-source stitch behavior for source-local cycle labels.
+- New focused mapper/import/closure tests, including the absence of declared-vs-observed direction mismatch and post-row-verification capability regressions.
 - Current `main` head and merge base.
-- Parent 041 locked paired-file closure requirement and current workflow state model.
 
 ### Reviewer did NOT independently execute
 
@@ -117,11 +190,13 @@ Latest R2 implementation checkpoint: `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`.
 - TypeScript/Vite build.
 - Packaged Windows smoke.
 - Browser/manual matrix.
-- Private real-file parse during this final-review round.
+- Private real-file parse during this amendment review.
 - MPR/MPT semantic parity.
 
 ## Decision
 
-**IMPLEMENTATION REVIEW CLEAN — no open R findings. SCIENTIFIC CLOSURE BLOCKED.**
+**CHANGES REQUIRED — R3 and R4.**
 
-The branch is **not ready to merge** under the current Parent 041 requirements. The only remaining blocker is the locked external same-experiment `.mpr` / `.mpt` validation gate. Keep the workflow in `REVIEWER + FINAL_REVIEW` with no open implementation findings. Resume final scientific closure when the paired evidence is available, or if the user explicitly amends the parent requirement.
+The single-direction amendment is directionally correct and preserves the existing generic stitch/scientific architecture, but the current implementation promotes a settings-only candidate to canonical capability before the required row proof and does not enforce semantic agreement between the declared per-`Ns` direction and the decoded execution.
+
+Return only R3/R4 to the implementer and resume `FINAL_REVIEW` after the fixes. The separate general paired MPR/MPT scientific-closure gate remains unchanged.
