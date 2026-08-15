@@ -246,3 +246,21 @@ R11 final wording correction is implemented and ready for reviewer-only re-revie
 R11 is resolved at `f5ee8f4`; R1-R11 are clean at the child implementation-review level. Starting the required fresh cumulative Parent 041 review now. This does not waive the locked paired MPR/MPT closure gate, which remains NOT RUN.
 
 ---
+
+### 2026-08-15T21:12:45+02:00 — REVIEWER → IMPLEMENTER — Parent 041 final review
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Review SHA**
+
+- `f53e54bf38bc5d57faf2ab082e9e6ca99ca6a6b5`
+
+**Message**
+
+Fresh cumulative Parent 041 review found one High saved-artifact capability leak: a saved analysis pinned to retired `bm:gcpl3:r1` can keep the same hash/pinned data signature after startup downgrades its source to metadata-only, while full artifact and thumbnail read/store endpoints plus warmup prepared-marker logic do not apply the canonical-cycling guard. An invalid old thumbnail can therefore remain visible in the Analysis Database and an old artifact can remain live. Fix R1 generically at the saved-artifact/warmup capability boundary and return to `FINAL_REVIEW`. Reviewer independently ran no tests/builds/preflight. The external paired MPR/MPT scientific closure gate remains NOT RUN and is separate from this implementer-actionable finding.
+
+---
