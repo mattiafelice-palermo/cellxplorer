@@ -6,8 +6,9 @@
 **R1 implementation checkpoint:** `33b0efea55ed89e9b7dd18206f57f92d5cda63cc`  
 **R2 implementation checkpoint:** `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`  
 **Initial user-amendment checkpoint:** `befc0863de5b616d8d08de180afe8d909a9d8252`  
-**R3/R4 returned implementation checkpoint:** `29952b5b7d685897bc04f20ed605523345e95cab`  
-**Status:** **CHANGES REQUIRED / SCIENTIFIC CLOSURE BLOCKED — not ready to merge**
+**R3/R4 implementation checkpoint:** `29952b5b7d685897bc04f20ed605523345e95cab`  
+**R4/R5 correction checkpoint:** `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`  
+**Status:** **IMPLEMENTATION REVIEW CLEAN / SCIENTIFIC CLOSURE BLOCKED — not ready to merge**
 
 This is the cumulative Parent 041 review. R1/R2 were previously resolved and the implementation review was clean before the 2026-08-15 user amendment. The amendment deliberately adds one narrow cycle-identity exception for a declared, non-repeating charge/rest-only or discharge/rest-only MPR when decoded rows prove constant-zero half-cycle, monotonic `Ns`, one signed active-current direction and at least one active row. The inferred cycle `1` is source-local only.
 
@@ -15,7 +16,7 @@ The reviewer used the live GitHub branch and performed static connector inspecti
 
 ## Confirmed cumulative behavior
 
-The following parent-level properties remain intact:
+The following parent-level properties remain consistent with the locked design:
 
 - The production MPR reader remains independently authored, bounded and limited to the independently observed 16-ID / 53-byte GCPL record layout; the synthetic-only 15-ID / 49-byte variant remains rejected.
 - `.mpr` remains admitted through the central source-format registry and `.mpt` remains excluded as a user import format.
@@ -29,7 +30,7 @@ The following parent-level properties remain intact:
 - No relational migration or `CALC_VERSION` bump was introduced.
 - Runtime requirements still do not add a GPL BioLogic parser dependency.
 - `main` remains at the original merge base `aca39740039b4d7146afc9104f5c471bff7c7c46`.
-- The current MPR adapter identity is `bm:gcpl7:r1`; both `bm:gcpl5:r1` and `bm:gcpl6:r1` are now legacy/reinspection-only identities.
+- The current MPR adapter identity is `bm:gcpl7:r1`; both `bm:gcpl5:r1` and `bm:gcpl6:r1` are legacy/reinspection-only identities.
 - The constant-zero half-cycle requirement is enforced before the single-direction fallback; non-zero or regressing half-cycle values remain rejected.
 - Source-local cycle numbering is compatible with the existing generic stitcher: each source's local cycle labels are remapped densely to test-global cycles while `source_cycle` preserves the local label, so multiple source-local cycle-1 segments do not collide.
 - Legacy BioLogic reinspection runs from the post-listening scientific warmup thread rather than delaying API reachability.
@@ -44,11 +45,11 @@ The generic canonical-cycling guard applies before saved-artifact signature/cach
 
 The generic capability path uses persisted scalar identity/status/error state with `include_header=False`; header-aware behavior remains limited to reconciliation/presentation paths that genuinely need persisted header evidence.
 
-### R3 — RESOLVED: settings eligibility is now provisional until decoded-row verification succeeds
+### R3 — RESOLVED: settings eligibility is provisional until decoded-row verification succeeds
 
-The returned `gcpl7` implementation separates header eligibility from verified canonical capability.
+The `gcpl7` implementation separates header eligibility from verified canonical capability.
 
-Header-only inspection remains record-decode-free and now advertises a bounded pending state instead of claiming canonical rows already exist:
+Header-only inspection remains record-decode-free and advertises a bounded pending state instead of claiming canonical rows already exist:
 
 ```text
 canonical_cycling = false
@@ -57,89 +58,49 @@ metadata_only = false
 cycle_identity_source = single_direction_pending
 ```
 
-Pending is deliberately distinct from terminal metadata-only: import/continuation preparation may proceed automatically, while generic scientific consumers fail closed until promotion. Successful full parsing promotes the persisted source to verified canonical capability. Candidate row-verification failure clears pending/canonical flags, removes live row/cycle/capacity summaries and persists the source as current-parser metadata-only with the failure reason retained.
+Pending is deliberately distinct from terminal metadata-only: import/continuation preparation proceeds automatically, while generic scientific consumers fail closed until promotion. Successful full parsing promotes the persisted source to verified canonical capability. Candidate row-verification failure clears pending/canonical flags, removes live row/cycle/capacity summaries and persists the source as current-parser metadata-only with the failure reason retained.
 
-Focused tests now cover pending header capability, valid charge/discharge promotion, persisted failure after declared/raw mismatch, and continuation preparation of pending candidates.
+Focused tests cover pending header capability, valid charge/discharge promotion, persisted failure after declared/raw mismatch, and continuation preparation of pending candidates.
 
-### R4 — High: offline unsafe gcpl6 registrations still expose old parser-derived Cell Database capacity summaries
+### R4 — RESOLVED: declared/raw direction and legacy gcpl6 upgrade boundaries now fail closed completely
 
-Affected files:
-- `backend/app/services/scanner.py`
-- `backend/app/services/parsing.py` as needed for a bounded scalar downgrade helper
-- `backend/app/routers/library.py` only if the chosen fix belongs at the summary boundary rather than reconciliation
-- `tests/test_biologic_closure.py`
-- focused Library/source-summary tests as needed
+The current mapper validates the source's observed execution against the declared single-direction protocol at the normalized `Ns` level before allowing the cycle-1 fallback. Declared charge cannot be satisfied by discharge-current rows, declared discharge cannot be satisfied by charge-current rows, and active execution on a declared Rest sequence is rejected. A partial source beginning at a later declared `Ns` remains valid when the observed subset is internally consistent.
 
-**Current**
+The parser identity advanced from `gcpl6` to `gcpl7`; both `bm:gcpl5:r1` and `bm:gcpl6:r1` are reinspection-only.
 
-The returned implementation correctly advances the adapter to `gcpl7`, makes both `bm:gcpl5:r1` and `bm:gcpl6:r1` legacy identities, rejects declared/raw direction mismatches, and prevents old `gcpl6` raw/cycle caches from being used by analysis through the generic capability guard.
+The returned R4 correction closes the remaining offline relational-summary leak. `reinspect_legacy_biologic_sources()` now performs a database-only fail-closed downgrade for legacy rows that are offline or whose path is missing. The shared downgrade helper clears parser-derived row/cycle/capacity summaries, sets `capacity_summary_status="unavailable"`, records reinspection-required state and removes the legacy parser identity from live registration while leaving historical source/cache bytes untouched. Online legacy sources still pass through the current `gcpl7` header/full-parse path.
 
-However, `scanner.reinspect_legacy_biologic_sources()` simply skips a legacy source when `location_status != "online"`. An offline persisted `bm:gcpl6:r1` row therefore keeps its pre-upgrade scalar scientific summaries unchanged: `row_count`, `cycle_count`, `capacity_summary_status="ready"`, and the stored charge/discharge/max-capacity values may all remain live.
+The focused regression now proves that an offline previously `ready` `bm:gcpl6:r1` registration:
 
-That is not merely cosmetic stale metadata. `library.cell_capacity_totals()` intentionally stays relational and bounded; it does not invoke parser capability. If every source has `capacity_summary_status == "ready"`, it sums the persisted `total_charge_capacity_mah` / `total_discharge_capacity_mah` and max discharge value. Consequently an offline `gcpl6` source whose canonical output is no longer trusted can still publish parser-derived capacity numbers in the Cell Database even though analysis correctly reports `canonical_cycling_unavailable`.
+- becomes metadata-only/reinspection-required;
+- has `row_count` and `cycle_count` cleared;
+- has charge/discharge/max-capacity scalars cleared;
+- has `capacity_summary_status="unavailable"`;
+- causes `library.cell_capacity_totals()` to return unavailable/`None` values rather than the old unsafe totals;
+- retains historical old cache bytes for recovery/forensic cleanup.
 
-The new regression `test_previous_gcpl6_identity_is_reinspected_and_offline_rows_fail_closed` proves the offline identity is treated as unavailable by `source_record_metadata_only()`, but it deliberately leaves `parser_version="bm:gcpl6:r1"` and currently does not assert that the old scalar scientific summaries are withdrawn.
+No source/Parquet read is required for this offline downgrade.
 
-This leaves part of the unsafe `gcpl6` scientific output live and does not satisfy R4's offline fail-closed requirement.
+### R5 — RESOLVED: 041.6 closure record now matches the gcpl7 amendment state
 
-**Target**
+The implementation record now preserves the historical `gcpl5 → gcpl6` amendment checkpoint while explicitly recording that the live R3/R4 correction advances the adapter to `gcpl7` and makes both `bm:gcpl5:r1` and `bm:gcpl6:r1` reinspection-only.
 
-When a persisted `gcpl5`/`gcpl6` BioLogic source cannot be re-read because it is offline, reconcile its **live relational scientific state** to fail closed without opening the source:
-
-- retain the original source identity/path and any historical cache bytes for forensic/recovery purposes;
-- keep or record an explicit legacy/reinspection-required capability state;
-- clear or make unavailable parser-derived live row/cycle/capacity summary fields that were produced under the unsafe identity;
-- ensure Cell Database relational summaries cannot display those old values while the source is blocked;
-- do not require source I/O merely to perform this downgrade.
-
-If the source is later relinked/comes online, normal current `gcpl7` reinspection may rebuild and republish verified summaries.
-
-**Acceptance criteria**
-
-- An offline persisted `bm:gcpl6:r1` source with previously `ready` capacity summaries becomes fail-closed at startup/reconciliation without opening the source.
-- `cell_capacity_totals()` for a Cell containing that source returns unavailable/`None` values rather than the old gcpl6 totals.
-- `row_count`/`cycle_count` and any other live parser-derived scalar values that imply current canonical data are withdrawn or otherwise guaranteed not to surface as current science.
-- Old gcpl6 Parquet/cache bytes may remain physically present but cannot be served as live scientific output.
-- Online valid legacy sources still re-inspect to `bm:gcpl7:r1` and republish verified summaries.
-- Offline sources remain relinkable/recoverable; no source file or forensic cache is deleted merely by the downgrade.
-- The downgrade remains relational/bounded and performs no source/Parquet reads.
-- Existing R1/R2 capability/artifact/warmup protections remain intact.
-
-### R5 — Low: 041.6 closure record is stale after the gcpl7 amendment fix
-
-Affected file:
-- `docs/specs/041.6-scientific-regression-real-file-parity-and-closure.md`
-
-**Current**
-
-The implementation record still identifies the user amendment as a `gcpl5 → gcpl6` transition and describes only `bm:gcpl5:r1` as the prior identity. It does not record the exact `29952b5b7d685897bc04f20ed605523345e95cab` R3/R4 implementation checkpoint, the `gcpl7` candidate/verified boundary, `gcpl5` + `gcpl6` reinspection policy, or the latest reported 172-test / no-cache preflight verification.
-
-Those statements are now materially stale relative to the branch being reviewed.
-
-**Target**
-
-Update the pending implementation record to describe the current branch truth without rewriting historical checkpoints. Record the exact R3/R4 implementation SHA, current `gcpl7` semantics and legacy identities, and the latest implementer-reported verification. Preserve the explicit `MPR/MPT parity: NOT RUN` and browser/packaged/manual limitations.
-
-**Acceptance criteria**
-
-- Current amendment text says the live adapter is `gcpl7`, not `gcpl6`.
-- Both `bm:gcpl5:r1` and `bm:gcpl6:r1` are documented as legacy/reinspection-only after the R3/R4 correction.
-- `29952b5b7d685897bc04f20ed605523345e95cab` and the reported focused/preflight results are attributable to the correct checkpoint.
-- Historical gcpl5/gcpl6 checkpoints remain historically accurate rather than being rewritten as if they were always gcpl7.
-- MPR/MPT parity, packaged smoke and browser/manual evidence remain truthfully labelled RUN/NOT RUN.
+It records the exact `29952b5b7d685897bc04f20ed605523345e95cab` R3/R4 implementation checkpoint and the implementer-reported 172-test / no-cache preflight evidence, while preserving `MPR/MPT semantic parity: NOT RUN` and packaged/manual/browser checks as NOT RUN.
 
 ## External scientific closure gate — still BLOCKED
 
-This remains separate from R4/R5 and is **not** an implementer-actionable code finding.
+This remains separate from the resolved R findings and is **not** an implementer-actionable code finding.
 
 The user amendment deliberately permits the narrow single-direction source-local cycle-1 fallback without a paired `.mpt`; it does **not** waive Parent 041's general same-experiment `.mpr` / `.mpt` validation requirement for multi-cycle scientific closure.
 
 Accordingly:
 
 - real general MPR/MPT semantic parity remains **NOT RUN**;
-- the narrow single-direction exception can be implemented/reviewed independently of that missing pair;
+- the narrow single-direction exception is implementation-review clean without that missing pair;
 - synthetic single-direction fixtures are regression evidence for the exception, not substitute ground truth for general GCPL cycle semantics;
-- Parent 041 still cannot be marked `COMPLETE` or ready to merge under the current acceptance criteria after code findings are resolved unless the paired gate is satisfied or explicitly amended.
+- Parent 041 still cannot be marked `COMPLETE` or ready to merge under the current acceptance criteria unless the paired gate is satisfied or explicitly amended.
+
+The workflow helper currently has no distinct USER/BLOCKED state in the active JSON schema. The truthful repository state is therefore to remain `REVIEWER + FINAL_REVIEW` with no open implementation findings rather than falsely transitioning to `COMPLETE`.
 
 ## Verification record
 
@@ -150,11 +111,18 @@ Accordingly:
 - MPR/MPT semantic parity: **NOT RUN**; no paired `.mpt` available.
 - Browser/manual feature verification: NOT RUN.
 
+### Implementer-reported for R4/R5 correction checkpoint `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`
+
+- Focused R4/R5 suites: reported PASS — 172 tests.
+- `python scripts\preflight.py --no-cache`: reported PASS — 5/5; all 68 backend modules, 541 frontend tests, TypeScript type check and Vite production bundle passed.
+- MPR/MPT semantic parity: **NOT RUN**; no paired `.mpt` available.
+- Browser/manual feature verification: NOT RUN.
+
 Historical earlier checkpoint verification remains historical evidence and is not restated as proof of the current implementation.
 
-### Reviewer independently inspected in this round
+### Reviewer independently inspected in the amendment rounds
 
-- Exact returned implementation commit `29952b5b7d685897bc04f20ed605523345e95cab` against the R3/R4 handoff checkpoint.
+- Exact amendment and correction deltas through `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`.
 - Current `main` head and merge base.
 - `gcpl7` header pending/candidate capability construction.
 - Full-map declared-per-`Ns` direction validation and partial-later-`Ns` behavior.
@@ -163,7 +131,8 @@ Historical earlier checkpoint verification remains historical evidence and is no
 - Continuation preparation of pending candidates.
 - `gcpl5`/`gcpl6` legacy identity boundary and online/offline reinspection behavior.
 - Cell Database relational capacity-summary behavior for persisted source summaries.
-- Focused R3/R4 tests, including the offline gcpl6 regression's current assertions.
+- Offline legacy database-only downgrade and recovery/relink boundary.
+- Focused R3/R4/R5 regression assertions.
 - Current 041.6 implementation/verification record.
 
 ### Reviewer did NOT independently execute
@@ -179,8 +148,8 @@ Historical earlier checkpoint verification remains historical evidence and is no
 
 ## Decision
 
-**CHANGES REQUIRED — R3 resolved; R4 remains open narrowly; R5 added.**
+**IMPLEMENTATION REVIEW CLEAN — no open R findings. SCIENTIFIC CLOSURE BLOCKED.**
 
-The row-verification architecture and declared-direction correction are now sound for newly prepared/current sources. The remaining scientific defect is the live relational summary state of offline unsafe `gcpl6` registrations. The closure record must also be brought forward to the actual `gcpl7` checkpoint.
+The narrow user-requested charge-only/discharge-only source-local cycle-1 exception is implementation-review clean at current head. R1-R5 are resolved, including the `gcpl7` candidate/verified boundary, declared/raw direction proof and offline legacy summary invalidation.
 
-Return only R4/R5 to the implementer and resume `FINAL_REVIEW` after the fixes. The separate general paired MPR/MPT scientific-closure gate remains unchanged.
+The branch is nevertheless **not ready to merge under the current Parent 041 acceptance criteria** because the separate general same-experiment MPR/MPT semantic-parity gate remains NOT RUN. Keep the workflow in `REVIEWER + FINAL_REVIEW` with no open findings. Resume final scientific closure when paired evidence is available, or if the user explicitly amends that remaining parent-level requirement.
