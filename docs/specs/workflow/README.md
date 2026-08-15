@@ -43,7 +43,10 @@ REVIEWER reviews actual code/tests
              └── no  → REVIEWER performs cumulative parent review
                               │
                               ├── problems → same fix/review loop
-                              └── clean → COMPLETE
+                              ├── clean + all required evidence available → COMPLETE
+                              └── clean + required external dependency unavailable → BLOCKED
+                                                                                     ↓
+                                                                           later resume final review
 ```
 
 The remote Git branch is authoritative. A new agent should be able to resume by reading the state file, recent coordination entries, active spec, and canonical review file.
@@ -94,8 +97,11 @@ IMPLEMENTER + IMPLEMENT
 IMPLEMENTER + FIX_REVIEW
 REVIEWER    + REVIEW
 REVIEWER    + FINAL_REVIEW
+REVIEWER    + BLOCKED
 REVIEWER    + COMPLETE
 ```
+
+`BLOCKED` is terminal for the current agent sessions but resumable later. It means the implementation/review is clean enough that no implementer finding remains, but a required external dependency or acceptance input is unavailable, so the feature is not complete or merge-ready.
 
 Do not put prose communication in the JSON and do not edit it manually when the workflow script is available.
 
@@ -162,7 +168,7 @@ docs/specs/NNN-agent-coordination.md
 
 Act only when `TURN` matches your role. Work only on `ACTIVE_CHILD`.
 
-If `ACTION: COMPLETE`, stop.
+If `ACTION: BLOCKED` or `ACTION: COMPLETE`, stop the current agent session.
 
 ## 6. Implementer workflow
 
@@ -246,7 +252,7 @@ Then stage:
 
 Commit them together and push once.
 
-**After pushing the handoff, the implementer must stop repository work completely.** Do not begin the next child, do not make speculative fixes, and do not continue editing while `TURN: REVIEWER`. Wait until the reviewer commits/pushes a new state with `TURN: IMPLEMENTER`; only then resume from the new `ACTION` and `FINDINGS`.
+**After pushing the handoff, the implementer must stop repository work completely.** Do not begin the next child, do not make speculative fixes, and do not continue editing while `TURN: REVIEWER`. Wait until the reviewer commits/pushes a new state with `TURN: IMPLEMENTER`; only then resume from the new `ACTION` and `FINDINGS`. If the reviewer instead commits `ACTION: BLOCKED` or `ACTION: COMPLETE`, stop the current implementer session.
 
 ## 7. Review files and exact naming
 
@@ -341,9 +347,11 @@ perform a fresh cumulative review against the correct merge base.
 
 Check complete branch scope, all locked parent requirements, cumulative regressions, final architecture/ownership, required verification, documentation/status closure, and merge readiness.
 
-Use the same R-finding loop if defects exist.
+Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
 
-When clean:
+### Clean and complete
+
+When the cumulative review is clean and all required acceptance evidence is available:
 
 ```bash
 python docs/specs/workflow/spec_workflow.py complete \
@@ -361,6 +369,42 @@ ACTION: COMPLETE
 
 Both agents stop.
 
+### Clean but externally blocked
+
+If no implementation finding remains, but a required external dependency or acceptance input is unavailable, record the exact reason in the parent review and use:
+
+```bash
+python docs/specs/workflow/spec_workflow.py block \
+  --message "Exact external dependency preventing completion."
+```
+
+This transitions to:
+
+```text
+TURN: REVIEWER
+ACTION: BLOCKED
+```
+
+`BLOCKED` means the feature is not complete or merge-ready, but neither agent has productive repository work to do. Commit/push the parent review + JSON state + coordination together, then both agents stop polling and stop their current sessions.
+
+Do not search unrelated user storage, previous uploads, File Library, or other sources to satisfy the missing external gate unless the user explicitly asks for that search or identifies the source to use.
+
+When the required external dependency later becomes available:
+
+```bash
+python docs/specs/workflow/spec_workflow.py resume-final-review \
+  --message "Required external dependency is now available."
+```
+
+This returns the state to:
+
+```text
+TURN: REVIEWER
+ACTION: FINAL_REVIEW
+```
+
+Commit/push the resumed JSON state + coordination entry, then perform the cumulative final review with the newly available evidence. Do not transition directly from `BLOCKED` to `COMPLETE`.
+
 ## 10. Important rules
 
 - Reviewer initializes the workflow.
@@ -372,6 +416,8 @@ Both agents stop.
 - Implementer does not edit reviewer findings.
 - Reviewer does not modify implementation code unless explicitly instructed.
 - After implementer handoff/push, the implementer waits and does no repository work until `TURN: IMPLEMENTER` returns.
+- `BLOCKED` is only for a clean final review that cannot complete because a required external dependency/acceptance input is unavailable; it is not a substitute for ordinary review findings.
+- While `BLOCKED`, neither agent polls or performs speculative work. Resume only through `resume-final-review` when the external dependency is actually available.
 - Transition state before the handoff commit.
 - Commit substantive work + state + coordination together.
 - Push once, then stop when ownership changes.
@@ -386,5 +432,7 @@ python docs/specs/workflow/spec_workflow.py handoff-review \
   [--verification "..."] [--verification "..."] [--message "..."]
 python docs/specs/workflow/spec_workflow.py request-fixes R1 R2 ... [--message "..."]
 python docs/specs/workflow/spec_workflow.py review-clean [--message "..."]
+python docs/specs/workflow/spec_workflow.py block --message "..."
+python docs/specs/workflow/spec_workflow.py resume-final-review [--message "..."]
 python docs/specs/workflow/spec_workflow.py complete [--message "..."]
 ```
