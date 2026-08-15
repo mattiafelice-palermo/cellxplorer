@@ -255,6 +255,57 @@ class BiologicGcplMappingTests(unittest.TestCase):
         )
         canonical_cycling.validate_raw_timeseries(frame)
 
+    def test_single_direction_allows_zero_current_setup_sequence_before_discharge(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                ns=1,
+                control=-1.0,
+                q_mAh=1.0,
+                ns_changed=True,
+            ),
+            _row(
+                3600.0,
+                ns=1,
+                control=-1.0,
+                q_mAh=0.0,
+                dq_mAh=-1.0,
+            ),
+            _row(
+                3600.0,
+                mode=MPR_MODE_REST,
+                ns=1,
+                control=0.0,
+                q_mAh=0.0,
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "single-discharge-with-control-preamble.mpr",
+                rows,
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 0.0},
+                        {"set_i_c": 0, "current": -1.0},
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                    ]
+                ),
+            )
+
+            capabilities = read_gcpl_header_metadata(path)["capabilities"]
+            self.assertTrue(capabilities["single_direction_cycle_candidate"])
+            self.assertTrue(capabilities["canonical_cycling_pending"])
+            self.assertFalse(capabilities["metadata_only"])
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
+        self.assertEqual(frame["status"].tolist(), ["CC_DChg", "CC_DChg", "Rest"])
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["cycle_source"],
+            "single direction fallback",
+        )
+        canonical_cycling.validate_raw_timeseries(frame)
+
     def test_single_direction_fallback_rejects_declared_charge_with_discharge_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = write_gcpl_mpr(

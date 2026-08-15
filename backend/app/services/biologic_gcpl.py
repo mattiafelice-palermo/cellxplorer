@@ -599,11 +599,13 @@ def _format_gcpl_duration(seconds: float) -> str:
 def _single_direction_protocol_direction(settings: Mapping[str, Any]) -> str | None:
     """Return the one declared active direction for a non-repeating run.
 
-    Unresolved C-rate/control directions, an opposite active direction, and
-    any repeat structure remain ineligible because they could describe
-    multiple logical cycles.  Retaining the direction separately from the
-    boolean eligibility decision lets the full mapper compare decoded
-    execution with the declared per-``Ns`` semantics.
+    A zero-current control/setup sequence is harmless when it does not declare
+    an active direction; it is common for EC-Lab to retain that preamble even
+    when no data rows were recorded for it. Unresolved C-rate directions, an
+    opposite active direction, and any repeat structure remain ineligible
+    because they could describe multiple logical cycles. Retaining the
+    direction separately from the boolean eligibility decision lets the full
+    mapper compare decoded execution with the declared per-``Ns`` semantics.
     """
 
     sequences = list(settings.get("sequences") or [])
@@ -616,6 +618,22 @@ def _single_direction_protocol_direction(settings: Mapping[str, Any]) -> str | N
             if active_direction is None:
                 active_direction = direction
             elif direction != active_direction:
+                return None
+        elif direction == "control":
+            # A zero-current setup/control row cannot contribute a charge or
+            # discharge direction. It is safe to ignore only when the header
+            # proves that it is genuinely neutral; unresolved directions are
+            # represented by ``None`` above and remain fail-closed.
+            current_ma = sequence.get("current_ma")
+            if current_ma is None:
+                return None
+            try:
+                neutral = math.isfinite(float(current_ma)) and (
+                    abs(float(current_ma)) <= _CURRENT_TOLERANCE_MA
+                )
+            except (TypeError, ValueError):
+                neutral = False
+            if not neutral:
                 return None
         elif direction != "rest":
             return None
@@ -1146,6 +1164,12 @@ def _validate_declared_execution_direction(
             if not is_rest or abs(float(row_current)) > _CURRENT_TOLERANCE_MA:
                 raise UnsupportedBiologicGcplError(
                     f"GCPL Ns {int(step_index)} is declared Rest but decoded execution is active"
+                )
+            continue
+        if declared == "control":
+            if not is_rest and abs(float(row_current)) > _CURRENT_TOLERANCE_MA:
+                raise UnsupportedBiologicGcplError(
+                    f"GCPL Ns {int(step_index)} is declared control but decoded execution is active"
                 )
             continue
         if declared == "charge":
