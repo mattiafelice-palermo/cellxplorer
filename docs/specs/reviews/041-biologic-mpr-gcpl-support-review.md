@@ -63,7 +63,7 @@ The closure record was brought forward through the `gcpl7` candidate/verified bo
 
 The adapter advances from `gcpl7` to `gcpl8`, and `bm:gcpl7:r1` joins the explicit legacy/reinspection set. Startup `reinspect_legacy_biologic_sources()` therefore handles the old identity rather than treating it as current.
 
-The focused regression recreates the exact migration hole: an online neutral-preamble source is first registered under current `gcpl8`, then deliberately rewritten into the old persisted metadata-only `bm:gcpl7:r1` state with no reinspection marker. The normal legacy reinspection path re-reads it, promotes it to parsed/canonical `bm:gcpl8:r1`, creates current raw/cycle caches and leaves the historical `gcpl7` cache bytes intact. A separate regression proves an offline `bm:gcpl7:r1` source is downgraded database-only, clears row/cycle/capacity summaries, requires reinspection, retains historical cache bytes and has no fabricated `gcpl8` cache. fileciteturn544file0
+The focused regression recreates the exact migration hole: an online neutral-preamble source is first registered under current `gcpl8`, then deliberately rewritten into the old persisted metadata-only `bm:gcpl7:r1` state with no reinspection marker. The normal legacy reinspection path re-reads it, promotes it to parsed/canonical `bm:gcpl8:r1`, creates current raw/cycle caches and leaves the historical `gcpl7` cache bytes intact. A separate regression proves an offline `bm:gcpl7:r1` source is downgraded database-only, clears row/cycle/capacity summaries, requires reinspection, retains historical cache bytes and has no fabricated `gcpl8` cache.
 
 The implementation does not bump `CALC_VERSION`; parser identity remains the correct provenance/cache dimension for this semantic change.
 
@@ -77,14 +77,14 @@ The implementation does not bump `CALC_VERSION`; parser identity remains the cor
 
 **Current**
 
-The parity-deferral portion of R7 is fixed: Parent 041, 041.6, AGENTS, BioLogic-format documentation and the new handoff correctly say MPR/MPT parity is NOT RUN, makes no general/repeating multi-cycle claim, and is not a current Parent 041 merge blocker. 041.6 also correctly records the supplied private MPR's neutral zero-current setup/control preamble and `gcpl8` behavior. fileciteturn549file0
+The parity-deferral portion of R7 is fixed: Parent 041, 041.6, AGENTS, BioLogic-format documentation and the new handoff correctly say MPR/MPT parity is NOT RUN, makes no general/repeating multi-cycle claim, and is not a current Parent 041 merge blocker. 041.6 also correctly records the supplied private MPR's neutral zero-current setup/control preamble and `gcpl8` behavior.
 
 However, the Parent 041 user-amendment bullets still define the single-direction exception as follows:
 
 - all non-active sequences must be Rest; and
 - the settings must not declare an unresolved C-rate/control direction.
 
-That directly excludes the now-supported real-file case, whose sequence 1 is a header-proven zero-current **Control** setup/preamble before the active discharge. The same Parent section therefore contradicts both the reviewed implementation and 041.6. fileciteturn546file0
+That directly excludes the now-supported real-file case, whose sequence 1 is a header-proven zero-current **Control** setup/preamble before the active discharge. The same Parent section therefore contradicts both the reviewed implementation and 041.6.
 
 **Target**
 
@@ -115,7 +115,7 @@ The original paired `.mpr` / `.mpt` gate has been explicitly amended by the user
 - absence of a paired `.mpt` does not block Parent 041 closure or merge;
 - future general/repeating multi-cycle MPR support must establish its own scientific validation gate.
 
-Parent 041's paired-validation section now reflects this correctly. fileciteturn548file0
+Parent 041's paired-validation section now reflects this correctly.
 
 ## Verification record
 
