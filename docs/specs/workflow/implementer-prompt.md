@@ -60,13 +60,19 @@ ACTION: COMPLETE
 
 → Stop. The workflow is finished.
 
+```text
+ACTION: BLOCKED
+```
+
+→ Stop the agent session. The implementation/review work is not complete, but progress is waiting on an external dependency rather than implementer work. Do not poll while the workflow is `BLOCKED`.
+
 If:
 
 ```text
 TURN: REVIEWER
 ```
 
-you must make **no repository changes**. Enter the waiting loop described below instead.
+you must make **no repository changes**. If `ACTION` is `BLOCKED` or `COMPLETE`, stop as above. Otherwise enter the waiting loop described below.
 
 ## Implementation rules
 
@@ -183,7 +189,7 @@ While the remote state says:
 TURN: REVIEWER
 ```
 
-remain alive and poll the authoritative remote state every **2 minutes**.
+and `ACTION` is neither `BLOCKED` nor `COMPLETE`, remain alive and poll the authoritative remote state every **2 minutes**.
 
 ### Waiting output discipline
 
@@ -229,9 +235,7 @@ Then:
 
 ### If the remote state still says `TURN: REVIEWER`
 
-Do not comment on it.
-
-Immediately begin another two-minute wait cycle.
+If `ACTION` is `BLOCKED` or `COMPLETE`, stop the agent session. Otherwise do not comment on it and immediately begin another two-minute wait cycle.
 
 The next visible textual output should again be only the timestamp produced by the wait command.
 
@@ -260,9 +264,9 @@ Read:
 
 Then continue according to `ACTION`.
 
-### If the remote state says `ACTION: COMPLETE`
+### If the remote state says `ACTION: BLOCKED` or `ACTION: COMPLETE`
 
-Stop the agent session. Do not perform additional implementation, cleanup, merging, tagging, or release work.
+Stop the agent session. Do not perform additional implementation, cleanup, merging, tagging, release work, or polling.
 
 ## Continuous lifecycle
 
@@ -285,9 +289,13 @@ wait 2 minutes
         ↓
 fetch + inspect remote state
         │
-        ├── still REVIEWER
+        ├── still REVIEWER + REVIEW/FINAL_REVIEW
         │      ↓
         │   wait 2 minutes again
+        │
+        ├── REVIEWER + BLOCKED/COMPLETE
+        │      ↓
+        │   stop session
         │
         └── IMPLEMENTER
                ↓
@@ -303,7 +311,7 @@ fetch + inspect remote state
 Repeat this **implement → handoff → wait → resume** cycle until:
 
 ```text
-ACTION: COMPLETE
+ACTION: BLOCKED or ACTION: COMPLETE
 ```
 
 The distinction is mandatory:
@@ -312,4 +320,6 @@ The distinction is mandatory:
 stop repository work ≠ stop the agent session
 ```
 
-The implementer remains alive while waiting, but performs no repository-changing work until ownership returns.
+except when the workflow itself is `BLOCKED` or `COMPLETE`, which ends the current agent session.
+
+The implementer remains alive while waiting for an ordinary reviewer turn, but performs no repository-changing work until ownership returns.
