@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -22,6 +23,9 @@ RunCommand = Callable[[list[str], Path, dict[str, str]], int]
 PREFLIGHT_CACHE_FILE = ".preflight-cache.json"
 SKIP_FRONTEND_BUILD_MESSAGE = (
     "SKIP: frontend build (unchanged since last successful run)"
+)
+SKIP_FRONTEND_POLICY_TESTS_MESSAGE = (
+    "SKIP: frontend policy tests (unchanged since last successful run)"
 )
 
 
@@ -38,8 +42,18 @@ def repo_root(start: Path | None = None) -> Path:
     return (start or Path(__file__).resolve()).parents[1]
 
 
+def preflight_cpu_budget() -> int:
+    raw = os.environ.get("CELLXPLORER_PREFLIGHT_CPU_BUDGET")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return os.cpu_count() or 4
+
+
 def default_backend_jobs() -> int:
-    return max(1, min(16, os.cpu_count() or 4))
+    return max(1, min(16, preflight_cpu_budget()))
 
 
 def discover_frontend_test_files(root: Path) -> list[Path]:
@@ -87,6 +101,27 @@ def iter_frontend_build_inputs(root: Path) -> Iterable[Path]:
         for path in sorted(public_root.rglob("*")):
             if path.is_file():
                 yield path
+
+
+def iter_frontend_policy_inputs(root: Path) -> Iterable[Path]:
+    explicit = [
+        root / "frontend" / "package.json",
+        root / "frontend" / "package-lock.json",
+        root / "frontend" / "tsconfig.json",
+        root / "scripts" / "preflight.py",
+        root / "scripts" / "run_backend_tests.py",
+    ]
+    for path in explicit:
+        if path.is_file():
+            yield path
+    for directory in (
+        root / "frontend" / "src",
+        root / "frontend" / "tests",
+    ):
+        if directory.is_dir():
+            for path in sorted(directory.rglob("*")):
+                if path.is_file():
+                    yield path
 
 
 def frontend_toolchain_fingerprint(root: Path) -> str:
@@ -138,6 +173,22 @@ def frontend_build_input_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
+def frontend_policy_input_hash(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in iter_frontend_policy_inputs(root):
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(relative)
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    toolchain = frontend_toolchain_fingerprint(root)
+    if toolchain:
+        digest.update(b"toolchain\0")
+        digest.update(toolchain.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def read_preflight_cache(root: Path) -> dict[str, object] | None:
     path = root / PREFLIGHT_CACHE_FILE
     if not path.is_file():
@@ -149,10 +200,18 @@ def read_preflight_cache(root: Path) -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def write_preflight_cache(root: Path, *, frontend_hash: str, passed: bool) -> None:
+def write_preflight_cache(
+    root: Path,
+    *,
+    frontend_hash: str,
+    passed: bool,
+    frontend_policy_hash: str | None = None,
+) -> None:
     path = root / PREFLIGHT_CACHE_FILE
     payload = {
         "frontend_build_hash": frontend_hash,
+        "frontend_policy_test_hash": frontend_policy_hash
+        or frontend_policy_input_hash(root),
         "last_run_passed": passed,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -170,6 +229,18 @@ def should_skip_frontend_build(root: Path, *, no_cache: bool) -> bool:
     if not isinstance(cached_hash, str) or not cached_hash:
         return False
     return cached_hash == frontend_build_input_hash(root)
+
+
+def should_skip_frontend_policy_tests(root: Path, *, no_cache: bool) -> bool:
+    if cache_disabled(no_cache=no_cache):
+        return False
+    cache = read_preflight_cache(root)
+    if not cache or cache.get("last_run_passed") is not True:
+        return False
+    cached_hash = cache.get("frontend_policy_test_hash")
+    if not isinstance(cached_hash, str) or not cached_hash:
+        return False
+    return cached_hash == frontend_policy_input_hash(root)
 
 
 def validate_python_version() -> str | None:
@@ -220,6 +291,7 @@ def build_stages(
     npm_executable: str | None = None,
     backend_jobs: int | None = None,
     skip_frontend_build: bool = False,
+    skip_frontend_policy_tests: bool = False,
 ) -> list[Stage]:
     python_executable = python_executable or sys.executable
     node_executable = node_executable or find_node_executable()
@@ -227,11 +299,17 @@ def build_stages(
     if node_executable is None or npm_executable is None:
         raise RuntimeError("Node.js and npm must be available to build preflight stages.")
 
-    frontend_tests = [
-        path.relative_to(root).as_posix().replace("/", os.sep)
-        for path in discover_frontend_test_files(root)
-    ]
     jobs = backend_jobs if backend_jobs is not None else default_backend_jobs()
+    test_command = [
+        python_executable,
+        str(root / "scripts" / "run_backend_tests.py"),
+        "--jobs",
+        str(jobs),
+        "--node",
+        node_executable,
+    ]
+    if skip_frontend_policy_tests:
+        test_command.append("--skip-frontend-tests")
 
     stages = [
         Stage(
@@ -244,28 +322,18 @@ def build_stages(
         ),
         Stage(
             2,
-            f"Backend tests ({jobs} workers)",
-            [
-                python_executable,
-                str(root / "scripts" / "run_backend_tests.py"),
-                "--jobs",
-                str(jobs),
-            ],
+            f"Backend + frontend tests ({jobs} workers)",
+            test_command,
         ),
         Stage(
             3,
-            "Frontend policy tests",
-            [node_executable, "--test", *frontend_tests],
-        ),
-        Stage(
-            4,
             "Frontend type check",
             npm_exec_command(npm_executable, "tsc", "-b"),
             skipped=skip_frontend_build,
             cwd=root / "frontend",
         ),
         Stage(
-            5,
+            4,
             "Frontend production bundle",
             npm_exec_command(npm_executable, "vite", "build"),
             skipped=skip_frontend_build,
@@ -292,23 +360,39 @@ def run_stage(
     root: Path,
     env: dict[str, str],
     run_command: RunCommand,
-) -> tuple[Stage, int]:
+) -> tuple[Stage, int, float]:
     print(f"[{stage.number}/{stage_count}] {stage.name}")
     if stage.skipped:
         print(SKIP_FRONTEND_BUILD_MESSAGE)
-        print(f"PASS: {stage.name} (skipped)")
-        return stage, 0
+        print(f"PASS: {stage.name} (skipped, 0.00 s)")
+        return stage, 0, 0.0
     if stage.command is None:
         raise RuntimeError(f"Stage {stage.name!r} has no command.")
+    started = time.monotonic()
     try:
         exit_code = run_command(stage.command, stage.cwd or root, env)
     except KeyboardInterrupt:
         raise
+    duration = time.monotonic() - started
     if exit_code != 0:
-        print(f"FAIL: {stage.name} exited with code {exit_code}", file=sys.stderr)
+        print(
+            f"FAIL: {stage.name} exited with code {exit_code} ({duration:.2f} s)",
+            file=sys.stderr,
+        )
     else:
-        print(f"PASS: {stage.name}")
-    return stage, exit_code
+        print(f"PASS: {stage.name} ({duration:.2f} s)")
+    return stage, exit_code, duration
+
+
+def print_preflight_timings(
+    stage_timings: list[tuple[Stage, float]],
+    *,
+    started: float,
+) -> None:
+    print("\nPreflight timings:")
+    for stage, duration in sorted(stage_timings, key=lambda item: item[0].number):
+        print(f"{stage.name}: {duration:.2f} s")
+    print(f"Total preflight wall time: {time.monotonic() - started:.2f} s")
 
 
 def run_preflight(
@@ -321,6 +405,7 @@ def run_preflight(
     no_cache: bool = False,
     run_command: RunCommand | None = None,
 ) -> int:
+    started = time.monotonic()
     root = root or repo_root()
     run_command = run_command or default_run_command
 
@@ -330,9 +415,11 @@ def run_preflight(
         npm_executable=npm_executable,
     ):
         print(error, file=sys.stderr)
+        print_preflight_timings([], started=started)
         return 1
 
     skip_frontend_build = should_skip_frontend_build(root, no_cache=no_cache)
+    skip_frontend_policy_tests = should_skip_frontend_policy_tests(root, no_cache=no_cache)
 
     try:
         stages = build_stages(
@@ -342,28 +429,32 @@ def run_preflight(
             npm_executable=npm_executable,
             backend_jobs=backend_jobs,
             skip_frontend_build=skip_frontend_build,
+            skip_frontend_policy_tests=skip_frontend_policy_tests,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
+        print_preflight_timings([], started=started)
         return 1
 
     stage_count = len(stages)
+    stage_timings: list[tuple[Stage, float]] = []
 
     with tempfile.TemporaryDirectory(prefix="cellxplorer-preflight-") as temp_data_dir:
         env = os.environ.copy()
         env["CELLXPLORER_DATA"] = temp_data_dir
         if "CELLXPLORER_PREFLIGHT_CPU_BUDGET" not in env:
-            env["CELLXPLORER_PREFLIGHT_CPU_BUDGET"] = str(os.cpu_count() or 4)
+            env["CELLXPLORER_PREFLIGHT_CPU_BUDGET"] = str(preflight_cpu_budget())
 
         version_stage = stages[0]
         try:
-            _, version_code = run_stage(
+            _, version_code, version_duration = run_stage(
                 version_stage,
                 stage_count=stage_count,
                 root=root,
                 env=env,
                 run_command=run_command,
             )
+            stage_timings.append((version_stage, version_duration))
         except KeyboardInterrupt:
             print("\nPreflight cancelled.")
             return 130
@@ -372,9 +463,11 @@ def run_preflight(
             write_preflight_cache(
                 root,
                 frontend_hash=frontend_build_input_hash(root),
+                frontend_policy_hash=frontend_policy_input_hash(root),
                 passed=False,
             )
             print("\nPreflight stopped. Later stages were not run.", file=sys.stderr)
+            print_preflight_timings(stage_timings, started=started)
             return version_code if version_code > 0 else 1
 
         parallel_stages = stages[1:]
@@ -382,7 +475,7 @@ def run_preflight(
 
         print(
             f"Running {len(parallel_stages)} verification stages in parallel "
-            f"(backend, frontend tests, frontend type check, frontend bundle)."
+            f"(shared backend/frontend test pool, frontend type check, frontend bundle)."
         )
         try:
             with ThreadPoolExecutor(max_workers=len(parallel_stages)) as pool:
@@ -398,7 +491,8 @@ def run_preflight(
                     for stage in parallel_stages
                 }
                 for future in as_completed(futures):
-                    stage, exit_code = future.result()
+                    stage, exit_code, duration = future.result()
+                    stage_timings.append((stage, duration))
                     if exit_code != 0:
                         failures.append((stage, exit_code))
         except KeyboardInterrupt:
@@ -409,19 +503,23 @@ def run_preflight(
             write_preflight_cache(
                 root,
                 frontend_hash=frontend_build_input_hash(root),
+                frontend_policy_hash=frontend_policy_input_hash(root),
                 passed=False,
             )
             print("\nPreflight failed:", file=sys.stderr)
             for stage, exit_code in sorted(failures, key=lambda item: item[0].number):
                 print(f"- {stage.name} (exit {exit_code})", file=sys.stderr)
+            print_preflight_timings(stage_timings, started=started)
             return next(code for _stage, code in failures if code != 0)
 
         write_preflight_cache(
             root,
             frontend_hash=frontend_build_input_hash(root),
+            frontend_policy_hash=frontend_policy_input_hash(root),
             passed=True,
         )
 
+    print_preflight_timings(stage_timings, started=started)
     print("=" * 40)
     print("PREFLIGHT PASSED")
     print(f"{stage_count}/{stage_count} stages completed successfully")
@@ -434,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Always run frontend type-check and bundle stages.",
+        help="Always run frontend policy tests, type-check, and bundle stages.",
     )
     args = parser.parse_args(argv)
     jobs = os.environ.get("CELLXPLORER_PREFLIGHT_JOBS")

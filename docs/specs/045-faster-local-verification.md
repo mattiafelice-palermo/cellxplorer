@@ -1,6 +1,6 @@
 # Spec 045: faster local verification
 
-Status: **Plan**  
+Status: **Implementation ready for review**
 Type: **development tooling / test performance**  
 Branch: `feature/faster-local-verification`
 
@@ -210,3 +210,31 @@ Record before/after timing for:
 8. Backend isolation and exact failure reporting remain correct.
 9. Canonical no-cache and normal preflight both pass.
 10. Before/after timings demonstrate the actual effect of the changes.
+
+## Implementation record
+
+Branch: `feature/faster-local-verification`.
+
+- Backend modules and frontend policy files now use one bounded worker pool controlled by
+  `CELLXPLORER_PREFLIGHT_CPU_BUDGET`.
+- Preflight and each test task report monotonic durations; the test stage reports the ten slowest
+  files/modules.
+- Frontend policy caching has its own conservative fingerprint covering frontend source/tests,
+  package manifests, `tsconfig.json`, the test runner, and the installed Node toolchain. Backend
+  tests are never skipped by this cache.
+- The measured slowest modules were `tests.test_portable_analysis`, `tests.test_beta_bootstrap`,
+  `tests.test_fast_neware`, and `tests.test_neware_excel`. They exercise isolated portable-report,
+  database, binary-parity, and workbook fixtures respectively; no safe setup sharing was found
+  that would preserve their isolation and full assertions, so those fixtures remain unchanged.
+
+## Verification record
+
+```text
+Pre-implementation: python scripts\preflight.py --no-cache  ~84.6 s, passed
+Final:             python scripts\preflight.py --no-cache  69.75 s, 4/4 stages, passed
+Immediate normal/backend-only repeat: python scripts\preflight.py  70.80 s, passed
+Focused tooling tests: python -m unittest tests.test_run_backend_tests tests.test_preflight_script -v  27 passed
+```
+
+The final no-cache run executed all 68 backend modules and 58 frontend policy files. The normal
+repeat explicitly skipped unchanged frontend policy tests and the TypeScript/Vite stages.

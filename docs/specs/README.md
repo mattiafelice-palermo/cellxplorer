@@ -1,5 +1,9 @@
 # Feature specs
 
+- [`045-faster-local-verification.md`](045-faster-local-verification.md)
+  unifies backend modules and frontend policy files in one bounded preflight test pool, adds
+  monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend
+  policy tests. **Implementation ready for review.**
 - [`043-context-sync-and-cache-reclamation.md`](043-context-sync-and-cache-reclamation.md)
   two independent maintenance parts, to be done in separate sessions. Part A folds Parent 040 into the
   project-context architecture file and closes the process gap that let those files drift 405 commits.

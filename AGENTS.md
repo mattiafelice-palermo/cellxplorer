@@ -296,7 +296,7 @@ Cellxplorer/
 │   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
 │   ├── release_channels.py         Manifest-only branch contract gate (Spec 023)
 │   ├── verify_updater_manifest.py  Channel-aware latest.json validation
-│   └── run_backend_tests.py        Parallel backend unittest runner for preflight
+│   └── run_backend_tests.py        Unified bounded backend/frontend test runner for preflight
 ├── .github/workflows/              GitHub Actions CI and release automation
 │   ├── preflight.yml               Clean Windows preflight on main pushes
 │   └── release.yml                 Signed Stable/Beta publishing on v* tags (Specs 019/023)

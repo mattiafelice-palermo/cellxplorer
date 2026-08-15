@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
-"""Run backend unittest modules in parallel with isolated CELLXPLORER_DATA."""
+"""Run backend modules and frontend policy files in one bounded test pool."""
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
+
+
+FRONTEND_POLICY_SKIP_MESSAGE = (
+    "SKIP: frontend policy tests (unchanged since last successful run)"
+)
+
+
+@dataclass(frozen=True)
+class TaskResult:
+    name: str
+    kind: str
+    exit_code: int
+    output: str
+    duration: float
+    data_dir: str | None = None
 
 
 def repo_root(start: Path | None = None) -> Path:
@@ -17,6 +35,10 @@ def repo_root(start: Path | None = None) -> Path:
 
 def discover_test_modules(tests_dir: Path) -> list[str]:
     return sorted(f"tests.{path.stem}" for path in tests_dir.glob("test_*.py"))
+
+
+def discover_frontend_test_files(tests_dir: Path) -> list[Path]:
+    return sorted(tests_dir.glob("*.test.ts"))
 
 
 def cpu_budget() -> int:
@@ -33,14 +55,28 @@ def default_jobs() -> int:
     return max(1, min(16, cpu_budget()))
 
 
+def effective_test_jobs(requested: int, task_count: int) -> int:
+    return max(1, min(requested, task_count, cpu_budget()))
+
+
 def effective_backend_jobs(requested: int, module_count: int) -> int:
-    return max(1, min(requested, module_count, cpu_budget()))
+    """Backward-compatible name for callers that used the old backend-only runner."""
+    return effective_test_jobs(requested, module_count)
 
 
-def ndax_worker_budget(backend_jobs: int) -> int:
-    """Reserve capacity for parallel backend modules and frontend stages."""
-    reserve = backend_jobs + 2
+def ndax_worker_budget(test_pool_jobs: int) -> int:
+    """Leave room for the shared pool and the two non-test preflight stages."""
+    reserve = test_pool_jobs + 2
     return max(1, min(12, cpu_budget() - reserve))
+
+
+def _merge_output(stdout: str, stderr: str) -> str:
+    output = stdout
+    if stderr:
+        if output and not output.endswith("\n"):
+            output += "\n"
+        output += stderr
+    return output
 
 
 def run_module(
@@ -56,20 +92,58 @@ def run_module(
     env["CELLXPLORER_BACKEND_TEST_PARALLEL"] = "1"
     env["CELLXPLORER_BACKEND_TEST_JOBS"] = str(backend_jobs)
     env["CELLXPLORER_NDAX_MAX_WORKERS"] = str(ndax_worker_budget(backend_jobs))
-    completed = subprocess.run(
-        [python_executable, "-m", "unittest", module],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        shell=False,
-    )
-    output = completed.stdout
-    if completed.stderr:
-        if output and not output.endswith("\n"):
-            output += "\n"
-        output += completed.stderr
-    return module, completed.returncode, output, env["CELLXPLORER_DATA"]
+    try:
+        completed = subprocess.run(
+            [python_executable, "-m", "unittest", module],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        output = _merge_output(completed.stdout, completed.stderr)
+        exit_code = completed.returncode
+    except OSError as exc:
+        output = str(exc)
+        exit_code = 1
+    return module, exit_code, output, str(data_dir)
+
+
+def run_module_timed(**kwargs) -> tuple[str, int, str, str, float]:
+    started = time.monotonic()
+    module, exit_code, output, data_dir = run_module(**kwargs)
+    return module, exit_code, output, data_dir, time.monotonic() - started
+
+
+def run_frontend_test(
+    *,
+    node_executable: str,
+    root: Path,
+    test_path: Path,
+) -> tuple[str, int, str, float]:
+    label = test_path.relative_to(root).as_posix()
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            [node_executable, "--test", str(test_path)],
+            cwd=root,
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+        output = _merge_output(completed.stdout, completed.stderr)
+        exit_code = completed.returncode
+    except OSError as exc:
+        output = str(exc)
+        exit_code = 1
+    return label, exit_code, output, time.monotonic() - started
+
+
+def _print_slowest(results: list[TaskResult]) -> None:
+    print("\nSlowest test files/modules:")
+    for result in sorted(results, key=lambda item: item.duration, reverse=True)[:10]:
+        print(f"{result.duration:5.1f} s  {result.name}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         "--jobs",
         type=int,
         default=default_jobs(),
-        help="Maximum parallel unittest modules (default: min(16, CPU count)).",
+        help="Maximum parallel backend/frontend test tasks (default: min(16, CPU count)).",
     )
     parser.add_argument(
         "--data-root",
@@ -89,7 +163,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--python",
         default=sys.executable,
-        help="Python executable used to run unittest.",
+        help="Python executable used to run backend unittest modules.",
+    )
+    parser.add_argument(
+        "--node",
+        default=None,
+        help="Node executable used to run frontend policy files (default: PATH).",
+    )
+    parser.add_argument(
+        "--skip-frontend-tests",
+        action="store_true",
+        help="Skip unchanged frontend policy files after a successful cache hit.",
     )
     args = parser.parse_args(argv)
 
@@ -99,47 +183,92 @@ def main(argv: list[str] | None = None) -> int:
         print("No backend test modules found.", file=sys.stderr)
         return 1
 
-    data_root = args.data_root or Path(os.environ.get("CELLXPLORER_DATA", root / ".test-cellxplorer"))
+    frontend_files = []
+    if not args.skip_frontend_tests:
+        frontend_files = discover_frontend_test_files(root / "frontend" / "tests")
+        if not frontend_files:
+            print("No frontend policy test files found.", file=sys.stderr)
+            return 1
+    elif discover_frontend_test_files(root / "frontend" / "tests"):
+        print(FRONTEND_POLICY_SKIP_MESSAGE)
+
+    node_executable = args.node or shutil.which("node")
+    if frontend_files and node_executable is None:
+        print("Node.js is not available on PATH.", file=sys.stderr)
+        return 1
+
+    data_root = args.data_root or Path(
+        os.environ.get("CELLXPLORER_DATA", root / ".test-cellxplorer")
+    )
     data_root.mkdir(parents=True, exist_ok=True)
 
-    jobs = effective_backend_jobs(args.jobs, len(modules))
+    task_count = len(modules) + len(frontend_files)
+    jobs = effective_test_jobs(args.jobs, task_count)
     print(
-        f"Running {len(modules)} backend test modules with {jobs} workers "
-        f"(CPU budget {cpu_budget()}, NDAX cap {ndax_worker_budget(jobs)})."
+        f"Running {len(modules)} backend modules and {len(frontend_files)} frontend test files "
+        f"with {jobs} workers (CPU budget {cpu_budget()}, "
+        f"NDAX cap {ndax_worker_budget(jobs)})."
     )
 
-    failures: list[tuple[str, str]] = []
+    results: list[TaskResult] = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = {
             pool.submit(
-                run_module,
+                run_module_timed,
                 python_executable=args.python,
                 root=root,
                 module=module,
                 data_dir=data_root / module.replace(".", "-"),
                 backend_jobs=jobs,
-            ): module
+            ): ("backend", module)
             for module in modules
         }
-        for future in as_completed(futures):
-            module, exit_code, output, _data_dir = future.result()
-            if exit_code == 0:
-                print(f"PASS {module}")
-                continue
-            failures.append((module, output))
-            print(f"FAIL {module} (exit {exit_code})", file=sys.stderr)
+        futures.update(
+            {
+                pool.submit(
+                    run_frontend_test,
+                    node_executable=node_executable,
+                    root=root,
+                    test_path=test_path,
+                ): ("frontend", test_path)
+                for test_path in frontend_files
+            }
+        )
 
+        for future in as_completed(futures):
+            kind, _requested_name = futures[future]
+            if kind == "backend":
+                name, exit_code, output, data_dir, duration = future.result()
+                result = TaskResult(name, kind, exit_code, output, duration, data_dir)
+            else:
+                name, exit_code, output, duration = future.result()
+                result = TaskResult(name, kind, exit_code, output, duration)
+            results.append(result)
+            if result.exit_code == 0:
+                print(f"PASS {result.name} ({result.duration:.2f} s)")
+            else:
+                print(
+                    f"FAIL {result.name} (exit {result.exit_code}, {result.duration:.2f} s)",
+                    file=sys.stderr,
+                )
+
+    _print_slowest(results)
+
+    failures = [result for result in results if result.exit_code != 0]
     if failures:
-        print("\nBackend test failures:", file=sys.stderr)
-        for module, output in sorted(failures):
-            print(f"\n=== {module} ===", file=sys.stderr)
-            if output.strip():
-                print(output.rstrip(), file=sys.stderr)
+        print("\nTest task failures:", file=sys.stderr)
+        for result in sorted(failures, key=lambda item: item.name):
+            print(f"\n=== {result.name} ===", file=sys.stderr)
+            if result.output.strip():
+                print(result.output.rstrip(), file=sys.stderr)
             else:
                 print("(no output)", file=sys.stderr)
         return 1
 
-    print(f"All {len(modules)} backend test modules passed.")
+    if frontend_files:
+        print(f"All {len(results)} backend/frontend test files/modules passed.")
+    else:
+        print(f"All {len(modules)} backend test modules passed.")
     return 0
 
 
@@ -147,5 +276,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        print("\nBackend tests cancelled.", file=sys.stderr)
+        print("\nBackend/frontend tests cancelled.", file=sys.stderr)
         raise SystemExit(130) from None
