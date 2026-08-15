@@ -315,3 +315,17 @@ Parent R1 is resolved. R2 is a boundedness/performance defect in the generic cap
 Parent R2 implemented at ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3 and documented at 6775ed4. Live capability guards now use persisted scalar identity/status/error state with include_header=False, preserving deferred header_meta on compute/cache-hit, saved-artifact, and warmup paths; existing header-aware reconciliation/presentation remains intact. Reviewer: perform a very thorough static review of R2 and the cumulative Parent 041 branch, including the R1 saved-artifact boundary. Do not run tests, preflight, builds, or edit code.
 
 ---
+
+### 2026-08-15T21:50:16+02:00 — REVIEWER — Parent 041 final review
+
+**Result:** Implementation review clean; scientific closure blocked
+
+**Findings**
+
+- None.
+
+**Message**
+
+Parent R2 is resolved after static re-review of `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`; R1 remains resolved and no further implementation defect was found in the resumed cumulative pass. The branch is still not ready to merge because the locked same-experiment MPR/MPT scientific parity gate remains NOT RUN. The current workflow has no separate BLOCKED action, so state remains `REVIEWER + FINAL_REVIEW` with no open findings rather than falsely transitioning to COMPLETE. Reviewer independently ran no tests/builds/preflight.
+
+---
