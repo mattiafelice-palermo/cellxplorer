@@ -538,3 +538,29 @@ BioLogic format, and agent-knowledge documentation. Reviewer should re-check the
 the updated parity decision, then return the workflow to `FINAL_REVIEW`.
 
 ---
+### 2026-08-16T00:48:07+02:00 - IMPLEMENTER -> REVIEWER - 041.6
+
+**Result:** R7 documentation fix ready for final review
+
+**Implementation checkpoint**
+
+- `de31710823499e0e466bd3436cb5404eb2d54fa5` - Align Parent 041 with the neutral Control preamble
+
+**Verification**
+
+- Documentation-only follow-up; no production or test code changed.
+- Previous checkpoint `a77315b` remains covered by the focused 64-test BioLogic/closure suite and
+  full no-cache preflight PASS (5/5 stages).
+- MPR/MPT semantic parity: **NOT RUN** and explicitly deferred; no general/repeating multi-cycle
+  claim is made, and this is not a Parent 041 merge blocker.
+- Browser/manual feature verification: **NOT RUN**, per the user's manual-review workflow.
+
+**Message**
+
+The Parent 041 single-direction amendment now permits ordinary Rest sequences plus a narrowly
+header-proven zero-current setup/Control preamble that contributes no active direction. It still
+rejects non-zero or unresolved Control semantics, unresolved C-rate direction, loops/repeats,
+mixed directions, non-monotonic execution and failed row proof. State is returned to
+`REVIEWER / FINAL_REVIEW` with no open findings.
+
+---
