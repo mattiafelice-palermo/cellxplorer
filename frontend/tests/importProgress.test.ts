@@ -11,6 +11,7 @@ import {
   importProgressMode,
   importProgressPercent,
   importJobPollInterval,
+  importRegistrationSuccessMessage,
   importRegistrationUiState,
   importRemainingEstimate,
   importStageExplanation,
@@ -40,6 +41,34 @@ test("stage copy names discovery, inspection, and registration truthfully", () =
   assert.match(importStageExplanation("inspect"), /identity/);
   assert.match(importStageExplanation("register"), /transaction/);
   assert.equal(importProgressCountLabel("scan", job({ total: 3, completed: 1 })), "Scanning 2 of 3 selected locations");
+});
+
+test("metadata-only import success does not claim a cycling-preparation job", () => {
+  assert.equal(
+    importRegistrationSuccessMessage(1, [
+      { canonical_cycling: false, metadata_only: true },
+    ]),
+    "1 cell accepted. Registration is being committed; no cycling data preparation is queued.",
+  );
+});
+
+test("canonical import success retains background-preparation feedback", () => {
+  assert.equal(
+    importRegistrationSuccessMessage(2, [
+      { canonical_cycling: true, metadata_only: false },
+    ]),
+    "2 cells accepted. Registration is being committed; cycling data preparation continues in the background.",
+  );
+});
+
+test("mixed import success names the canonical sources that need preparation", () => {
+  assert.equal(
+    importRegistrationSuccessMessage(1, [
+      { canonical_cycling: true, metadata_only: false },
+      { canonical_cycling: false, metadata_only: true },
+    ]),
+    "1 cell accepted. Registration is being committed; cycling data preparation continues for canonical sources in the background.",
+  );
 });
 
 test("scan is indeterminate and active jobs never show early 100 percent", () => {

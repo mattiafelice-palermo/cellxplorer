@@ -100,6 +100,7 @@ import {
   removeStagedDraft,
 } from "../importDraftPolicy";
 import {
+  importRegistrationSuccessMessage,
   importRegistrationUiState,
   newImportJobToken,
   type ImportProgressStage,
@@ -1430,9 +1431,9 @@ function ImportModal({
         ),
       });
       setRegistrationAccepted(true);
-      const importedLabel = `${submittedCells} cell${submittedCells === 1 ? "" : "s"}`;
+      const submittedSources = variables.mode === "continued" ? drafts : includedDrafts;
       notifications.show({
-        message: `${importedLabel} accepted. Registration is being committed; cycling data preparation continues in the background.`,
+        message: importRegistrationSuccessMessage(submittedCells, submittedSources),
         color: "teal",
       });
       qc.invalidateQueries({ queryKey: ["cells"] });

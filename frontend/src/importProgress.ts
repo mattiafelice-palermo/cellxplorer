@@ -30,6 +30,30 @@ export function newImportJobToken(): string {
   return `import-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export type ImportSourceCapability = {
+  canonical_cycling: boolean;
+  metadata_only: boolean;
+};
+
+export function importRegistrationSuccessMessage(
+  submittedCells: number,
+  sources: readonly ImportSourceCapability[],
+): string {
+  const importedLabel = `${submittedCells} cell${submittedCells === 1 ? "" : "s"}`;
+  const hasMetadataOnlySources = sources.some((source) => source.metadata_only);
+  const hasCanonicalSources = sources.some(
+    (source) => source.canonical_cycling && !source.metadata_only,
+  );
+
+  if (!hasCanonicalSources) {
+    return `${importedLabel} accepted. Registration is being committed; no cycling data preparation is queued.`;
+  }
+  if (!hasMetadataOnlySources) {
+    return `${importedLabel} accepted. Registration is being committed; cycling data preparation continues in the background.`;
+  }
+  return `${importedLabel} accepted. Registration is being committed; cycling data preparation continues for canonical sources in the background.`;
+}
+
 export function importRegistrationUiState(
   accepted: boolean,
   status: BackgroundJob["status"] | undefined,
