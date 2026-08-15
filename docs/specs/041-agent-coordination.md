@@ -264,3 +264,19 @@ R11 is resolved at `f5ee8f4`; R1-R11 are clean at the child implementation-revie
 Fresh cumulative Parent 041 review found one High saved-artifact capability leak: a saved analysis pinned to retired `bm:gcpl3:r1` can keep the same hash/pinned data signature after startup downgrades its source to metadata-only, while full artifact and thumbnail read/store endpoints plus warmup prepared-marker logic do not apply the canonical-cycling guard. An invalid old thumbnail can therefore remain visible in the Analysis Database and an old artifact can remain live. Fix R1 generically at the saved-artifact/warmup capability boundary and return to `FINAL_REVIEW`. Reviewer independently ran no tests/builds/preflight. The external paired MPR/MPT scientific closure gate remains NOT RUN and is separate from this implementer-actionable finding.
 
 ---
+
+### 2026-08-15T21:27:47+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused backend closure/cache-maintenance/protocol suites: PASS (49 tests)
+- python scripts\\preflight.py: PASS 5/5; all 68 backend modules and 541 frontend policy tests passed; unchanged TypeScript/Vite stages skipped by cache
+- MPR/MPT parity: NOT RUN; no paired .mpt available
+
+**Message**
+
+Parent R1 implemented at 33b0efea55ed89e9b7dd18206f57f92d5cda63cc and documented at 3f214af. Saved-artifact get/lookup, thumbnail lookup/latest, store, warmup discovery/admission, and late completion now fail closed on persisted metadata-only capability before retired cache bytes are read or markers are recorded. Reviewer: perform a very thorough static review of the full cumulative branch and resume FINAL_REVIEW. Do not run tests, preflight, builds, or edit code.
+
+---
