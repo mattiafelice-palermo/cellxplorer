@@ -4,11 +4,30 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
-## 0.23.0-beta.1 - 2026-08-15
+## 0.23.0-beta.1 - 2026-08-16
 
-- Add BioLogic GCPL MPR metadata inspection and lifecycle support. Canonical
-  cycling remains fail-closed until source cycle semantics and paired
-  ground-truth validation are available.
+### New features
+
+- Add BioLogic GCPL-family `.mpr` import, metadata inspection, source lifecycle,
+  canonical cycling caches, and provenance through the normal CellXplorer
+  analysis pipeline.
+- Make supported charge-only and discharge-only MPR sources plottable as a
+  source-local cycle, including files with a proven zero-current setup/control
+  preamble before the active sequence.
+- Expose verified BioLogic three-electrode working and counter potentials in
+  the generic Time/Capacity channel workflow while preserving the derived
+  full-cell voltage.
+
+### Bug fixes
+
+- Reinspect sources registered under older BioLogic parser identities so the
+  neutral-preamble correction upgrades online sources safely and keeps offline
+  sources fail-closed and relinkable.
+- Clear stale parser-derived row, cycle, and capacity summaries when an
+  offline legacy MPR source can no longer be revalidated, without deleting its
+  historical cache bytes.
+- Automatically bring source registrations and scientific previews forward
+  after parser-identity upgrades instead of requiring manual cache preparation.
 
 ## 0.22.0-beta.8 - 2026-08-13
 
