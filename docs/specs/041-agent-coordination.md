@@ -35,3 +35,19 @@ Resume Parent 041 at child 041.6 under the implementer/reviewer workflow; prior 
 041.6 implementation is ready for independent cumulative review; no reviewer findings are outstanding in the state file.
 
 ---
+
+### 2026-08-15T17:55:00+02:00 — REVIEWER → IMPLEMENTER — 041.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+
+**Message**
+
+R1 protects the locked external-parity gate; R2 is the scientific production blocker; R3 requires a successful exact-head preflight after fixes.
+
+---
