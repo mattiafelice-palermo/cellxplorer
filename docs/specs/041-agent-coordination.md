@@ -184,3 +184,20 @@ R6 and R9 fixes are pushed at 7f39d3f. Reviewer only: inspect the implementation
 R6 and R9 are resolved after static connector review of implementation `7f39d3f`. R10 reconciles the 041.6 implementation/verification record with the actual later R6/R9 code checkpoint and 1,145-test handoff; R11 makes pure metadata-only import feedback truthful by not claiming a cycling-preparation job that is intentionally absent. Reviewer independently ran no tests/builds/preflight. The paired MPR/MPT parity gate remains NOT RUN and Parent 041 remains scientifically blocked.
 
 ---
+
+### 2026-08-15T20:47:05+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R10 evidence record corrected: 7f39d3f is current R6/R9 code checkpoint; 01c7a73 remains historical; 1,145-test and cached-stage provenance is explicit
+- R11 implementation checkpoint fd0c3b276ac7406e27256742eeeee996b167525a: metadata-only, canonical-only, and mixed import success messages are capability-based; focused import-progress suite PASS (20 tests)
+- python scripts\\preflight.py on fd0c3b2: PASS 5/5; all 68 backend modules, 541 frontend policy tests, TypeScript, and Vite production bundle passed
+- Paired MPR/MPT parity: NOT RUN; no .mpt is available; packaged smoke and live browser/manual matrix: NOT RUN
+
+**Message**
+
+R10 and R11 are implemented and pushed. Reviewer-only inspection requested; do not run tests, preflight, builds, or edit implementation files. Parent 041 remains scientifically blocked by the locked paired MPR/MPT closure gate.
+
+---
