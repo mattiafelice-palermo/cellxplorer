@@ -671,11 +671,27 @@ def persisted_biologic_mpr_layout(source: object) -> str | None:
     return BIOLOGIC_MPR_UNKNOWN_LAYOUT if saw_data_header else None
 
 
-def source_requires_biologic_mpr_reinspection(source: object) -> bool:
-    """Return the persisted, no-I/O reinspection state for a BioLogic source."""
+def source_requires_biologic_mpr_reinspection(
+    source: object,
+    *,
+    include_header: bool = True,
+) -> bool:
+    """Return the persisted reinspection state for a BioLogic source.
+
+    ``include_header=False`` is the cache-hit capability path. It treats any
+    pre-R8 identity as unavailable until reconciliation and uses the scalar
+    parse error for a current metadata-only reinspection marker. It never
+    materializes deferred ``header_meta``.
+    """
 
     if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
         return False
+    if source_uses_pre_r8_biologic_parser(source):
+        if not include_header:
+            return True
+    if not include_header:
+        parse_error = str(getattr(source, "parse_error", "") or "").casefold()
+        return "re-inspect" in parse_error or "reinspect" in parse_error
     for container in _biologic_mpr_header_containers(getattr(source, "header_meta", None)):
         capabilities = container.get("capabilities")
         if isinstance(capabilities, dict) and capabilities.get("requires_reinspection") is True:
@@ -685,15 +701,31 @@ def source_requires_biologic_mpr_reinspection(source: object) -> bool:
     return persisted_biologic_mpr_layout(source) != BIOLOGIC_MPR_VERIFIED_LAYOUT
 
 
-def source_record_metadata_only_message(source: object) -> str:
+def source_record_metadata_only_message(
+    source: object,
+    *,
+    include_header: bool = True,
+) -> str:
     """Return the persisted source's truthful metadata-only explanation."""
 
     if source_uses_retired_biologic_parser(source):
         return RETIRED_BIOLOGIC_MPR_WARNING
-    if source_requires_biologic_mpr_reinspection(source):
+    if source_requires_biologic_mpr_reinspection(
+        source,
+        include_header=include_header,
+    ):
+        if not include_header:
+            stored_error = getattr(source, "parse_error", None)
+            if stored_error:
+                return str(stored_error)
         return BIOLOGIC_MPR_REINSPECTION_WARNING
     if source_uses_pre_r8_biologic_parser(source):
         return BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING
+    if not include_header:
+        stored_error = getattr(source, "parse_error", None)
+        if stored_error:
+            return str(stored_error)
+        return source_metadata_only_message(None)
     header = getattr(source, "header_meta", None)
     return source_metadata_only_message({"raw": header} if isinstance(header, dict) else None)
 
@@ -813,32 +845,44 @@ def reclassify_pre_r8_biologic_source(source: object) -> bool:
     return True
 
 
-def source_record_metadata_only(source: object) -> bool:
+def source_record_metadata_only(
+    source: object,
+    *,
+    include_header: bool = True,
+) -> bool:
     """Return the persisted capability boundary without opening the source.
 
     Registered sources must be safe to inspect from database state alone. In
     particular, a metadata-only BioLogic source must never be reparsed merely
-    because a cache or preview consumer asks for cycling data.
+    because a cache or preview consumer asks for cycling data. Set
+    ``include_header=False`` for cache-hit capability checks where deferred
+    ``header_meta`` must remain unloaded.
     """
 
     if (
         source_uses_retired_biologic_parser(source)
         or source_uses_pre_r8_biologic_parser(source)
-        or source_requires_biologic_mpr_reinspection(source)
+        or getattr(source, "parse_status", None) == "metadata_only"
     ):
         return True
-    if getattr(source, "parse_status", None) == "metadata_only":
+    if not include_header:
+        return False
+    if source_requires_biologic_mpr_reinspection(source):
         return True
     header = getattr(source, "header_meta", None)
     return source_metadata_only({"raw": header} if isinstance(header, dict) else None)
 
 
-def source_record_capability(source: object) -> dict[str, object]:
+def source_record_capability(
+    source: object,
+    *,
+    include_header: bool = True,
+) -> dict[str, object]:
     """Describe the stable persisted scientific capability of one source."""
 
-    metadata_only = source_record_metadata_only(source)
+    metadata_only = source_record_metadata_only(source, include_header=include_header)
     warning = (
-        source_record_metadata_only_message(source)
+        source_record_metadata_only_message(source, include_header=include_header)
         if metadata_only
         else None
     )
@@ -847,7 +891,10 @@ def source_record_capability(source: object) -> dict[str, object]:
         "metadata_only": metadata_only,
         "canonical_cycling": not metadata_only,
         "warning": warning,
-        "requires_reinspection": source_requires_biologic_mpr_reinspection(source),
+        "requires_reinspection": source_requires_biologic_mpr_reinspection(
+            source,
+            include_header=include_header,
+        ),
     }
 
 

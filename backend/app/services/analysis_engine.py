@@ -322,10 +322,16 @@ def canonical_cycling_capability(db: Session, spec: dict) -> dict[str, object] |
     for unit in units:
         _hashes, files = cell_ordered_hashes(db, unit["cell"])
         for source in files:
-            if source.id in seen or not parsing.source_record_metadata_only(source):
+            if source.id in seen or not parsing.source_record_metadata_only(
+                source,
+                include_header=False,
+            ):
                 continue
             seen.add(source.id)
-            capability = parsing.source_record_capability(source)
+            # Capability guards run on cache-hit, artifact, and warmup paths.
+            # Use only persisted scalar state here; header_meta is intentionally
+            # deferred and belongs to an actual protocol reconstruction.
+            capability = parsing.source_record_capability(source, include_header=False)
             sources.append(
                 {
                     "source_file_id": source.id,

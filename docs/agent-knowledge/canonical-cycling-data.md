@@ -252,7 +252,10 @@ source as metadata-only with `requires_reinspection=true`. Old identity-keyed ca
 for later forensic cleanup, but the persisted capability gate blocks saved-artifact reads and
 writes, previews, recompute, warmup, and portable scientific export from consuming them. The
 warmup completion boundary repeats the check so a task admitted before retirement cannot inspect
-old thumbnails or record a prepared marker afterward. The same gate applies before startup
+old thumbnails or record a prepared marker afterward. Live capability checks use only persisted
+scalar identity/status/error fields and keep `SourceFile.header_meta` deferred; binary-layout
+evidence is read only by bounded reconciliation or an actual protocol reconstruction. The same
+gate applies before startup
 reconciliation, so an offline or interrupted upgrade cannot briefly expose an old cache through a
 pinned provenance. List/request capability checks do not reread every source, and this identity
 transition does not change `CALC_VERSION`.

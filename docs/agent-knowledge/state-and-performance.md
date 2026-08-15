@@ -419,7 +419,9 @@ database status fields (`analysis_engine.refresh_availability_badges`) whenever 
 is served. The persisted canonical-cycling capability gate also applies to saved-artifact and
 thumbnail reads/writes, warmup queue discovery, active-task admission, and completion: a source
 retired to metadata-only cannot expose old visual bytes or record a prepared marker, including
-when retirement races a browser render that was already admitted. Warmup tasks must never
+when retirement races a browser render that was already admitted. These cache-hit guards use the
+source's scalar parser identity/status/error state and leave the large deferred header untouched.
+Warmup tasks must never
 recompute a plot whose thumbnail or artifact is already cached; the background compute is gated
 exactly like the visible preview path.
 

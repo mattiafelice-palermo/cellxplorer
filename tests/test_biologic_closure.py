@@ -19,7 +19,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -427,6 +427,82 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
                 analysis_engine.compute(self.db, spec, provenance)
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
+
+    def test_capability_guard_keeps_deferred_headers_unloaded(self) -> None:
+        cells: list[Cell] = []
+        for index in range(8):
+            ext = "ndax" if index % 2 == 0 else "xlsx"
+            source = SourceFile(
+                hash=f"{index + 20:02x}" * 32,
+                path=str(self.root / f"canonical-{index}.{ext}"),
+                filename=f"canonical-{index}.{ext}",
+                size=1,
+                ext=ext,
+                parse_status="parsed",
+                parser_version=parsing.current_parser_identity_for_extension(ext),
+                header_meta={
+                    "capabilities": {"canonical_cycling": True},
+                    "large_protocol_payload": "x" * 10_000,
+                },
+            )
+            cell = Cell(name=f"canonical-{index}")
+            self.db.add_all([source, cell])
+            self.db.flush()
+            test = Test(cell_id=cell.id, name=f"canonical-{index}")
+            self.db.add(test)
+            self.db.flush()
+            self.db.add(TestFile(test_id=test.id, file_id=source.id, position=0))
+            cells.append(cell)
+
+        metadata_source = SourceFile(
+            hash="ab" * 32,
+            path=str(self.root / "metadata-only.mpr"),
+            filename="metadata-only.mpr",
+            size=1,
+            ext="mpr",
+            parse_status="metadata_only",
+            parser_version="bm:gcpl5:r1",
+            parse_error="metadata-only MPR",
+            header_meta={
+                "capabilities": {"canonical_cycling": False},
+                "large_protocol_payload": "y" * 10_000,
+            },
+        )
+        metadata_cell = Cell(name="metadata-only")
+        self.db.add_all([metadata_source, metadata_cell])
+        self.db.flush()
+        metadata_test = Test(cell_id=metadata_cell.id, name="metadata-only")
+        self.db.add(metadata_test)
+        self.db.flush()
+        self.db.add(TestFile(test_id=metadata_test.id, file_id=metadata_source.id, position=0))
+        self.db.commit()
+        self.db.expunge_all()
+
+        header_queries: list[str] = []
+
+        def capture_header_query(_conn, _cursor, statement, _parameters, _context, _executemany):
+            if "header_meta" in statement.casefold():
+                header_queries.append(statement)
+
+        event.listen(self.db.bind, "before_cursor_execute", capture_header_query)
+        canonical_spec = analysis_engine.default_spec("canonical cache hit")
+        canonical_spec["selection"]["entries"] = [
+            {"kind": "cell", "ref_id": cell.id} for cell in cells
+        ]
+        metadata_spec = analysis_engine.default_spec("metadata cache hit")
+        metadata_spec["selection"]["entries"] = [
+            {"kind": "cell", "ref_id": metadata_cell.id}
+        ]
+        try:
+            self.assertIsNone(
+                analysis_engine.canonical_cycling_capability(self.db, canonical_spec)
+            )
+            detail = analysis_engine.canonical_cycling_capability(self.db, metadata_spec)
+        finally:
+            event.remove(self.db.bind, "before_cursor_execute", capture_header_query)
+        self.assertIsNotNone(detail)
+        self.assertEqual(detail["code"], "canonical_cycling_unavailable")
+        self.assertEqual(header_queries, [])
 
     def test_retired_saved_artifacts_and_warmup_fail_closed_before_cache_access(self) -> None:
         source, cell = self._add_retired_source(hash_value="ef" * 32)
