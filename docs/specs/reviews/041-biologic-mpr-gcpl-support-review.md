@@ -8,9 +8,11 @@
 **Initial user-amendment checkpoint:** `befc0863de5b616d8d08de180afe8d909a9d8252`  
 **R3/R4 implementation checkpoint:** `29952b5b7d685897bc04f20ed605523345e95cab`  
 **R4/R5 correction checkpoint:** `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`  
-**Status:** **IMPLEMENTATION REVIEW CLEAN / SCIENTIFIC CLOSURE BLOCKED — not ready to merge**
+**Status:** **REOPENED FOR USER-REPORTED BUG — MPR/MPT PARITY DEFERRED**
 
 This is the cumulative Parent 041 review. R1/R2 were previously resolved and the implementation review was clean before the 2026-08-15 user amendment. The amendment deliberately adds one narrow cycle-identity exception for a declared, non-repeating charge/rest-only or discharge/rest-only MPR when decoded rows prove constant-zero half-cycle, monotonic `Ns`, one signed active-current direction and at least one active row. The inferred cycle `1` is source-local only.
+
+On 2026-08-16 the user explicitly amended the closure scope again: the same-experiment `.mpr` / `.mpt` parity work is deferred to a later implementation and must **not** block Parent 041 now. The previous parity gate is therefore historical, not a current acceptance requirement. The user also reported a newly found bug; no concrete bug description or implementation handoff is present in the live workflow yet, so this review remains open rather than declaring the parent complete.
 
 The reviewer used the live GitHub branch and performed static connector inspection only. The reviewer did **not** execute tests, preflight, builds, packaged-app smoke, browser/manual checks, or private MPR/MPT parity during this amendment review.
 
@@ -87,20 +89,19 @@ The implementation record now preserves the historical `gcpl5 → gcpl6` amendme
 
 It records the exact `29952b5b7d685897bc04f20ed605523345e95cab` R3/R4 implementation checkpoint and the implementer-reported 172-test / no-cache preflight evidence, while preserving `MPR/MPT semantic parity: NOT RUN` and packaged/manual/browser checks as NOT RUN.
 
-## External scientific closure gate — still BLOCKED
+## MPR/MPT parity — DEFERRED BY USER, no longer a Parent 041 closure gate
 
-This remains separate from the resolved R findings and is **not** an implementer-actionable code finding.
+The original Parent 041 acceptance criteria required a privacy-approved same-experiment `.mpr` / `.mpt` pair for general multi-cycle semantic parity. That validation was never run because no matching `.mpt` was available.
 
-The user amendment deliberately permits the narrow single-direction source-local cycle-1 fallback without a paired `.mpt`; it does **not** waive Parent 041's general same-experiment `.mpr` / `.mpt` validation requirement for multi-cycle scientific closure.
+On 2026-08-16 the user explicitly deferred that work to a later implementation. Therefore:
 
-Accordingly:
+- MPR/MPT semantic parity remains truthfully **NOT RUN**;
+- no parity claim is made for general multi-cycle GCPL semantics;
+- the currently implemented narrow charge-only/discharge-only source-local cycle-1 support remains bounded by its own decoded-row proof and regressions;
+- absence of a paired `.mpt` is **not** a blocker for closing or merging Parent 041;
+- future expansion to general multi-cycle MPR support must establish its own scientific validation requirements rather than retroactively treating Parent 041 as having proved parity.
 
-- real general MPR/MPT semantic parity remains **NOT RUN**;
-- the narrow single-direction exception is implementation-review clean without that missing pair;
-- synthetic single-direction fixtures are regression evidence for the exception, not substitute ground truth for general GCPL cycle semantics;
-- Parent 041 still cannot be marked `COMPLETE` or ready to merge under the current acceptance criteria unless the paired gate is satisfied or explicitly amended.
-
-The workflow helper currently has no distinct USER/BLOCKED state in the active JSON schema. The truthful repository state is therefore to remain `REVIEWER + FINAL_REVIEW` with no open implementation findings rather than falsely transitioning to `COMPLETE`.
+This amendment supersedes the earlier review text that kept Parent 041 in `FINAL_REVIEW` solely because the pair was unavailable.
 
 ## Verification record
 
@@ -148,8 +149,8 @@ Historical earlier checkpoint verification remains historical evidence and is no
 
 ## Decision
 
-**IMPLEMENTATION REVIEW CLEAN — no open R findings. SCIENTIFIC CLOSURE BLOCKED.**
+**REOPENED — waiting for the newly user-reported bug to enter the implementation/review workflow.**
 
-The narrow user-requested charge-only/discharge-only source-local cycle-1 exception is implementation-review clean at current head. R1-R5 are resolved, including the `gcpl7` candidate/verified boundary, declared/raw direction proof and offline legacy summary invalidation.
+The previously reviewed implementation through `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a` has no open R finding: R1-R5 are resolved, including the `gcpl7` candidate/verified boundary, declared/raw direction proof and offline legacy summary invalidation.
 
-The branch is nevertheless **not ready to merge under the current Parent 041 acceptance criteria** because the separate general same-experiment MPR/MPT semantic-parity gate remains NOT RUN. Keep the workflow in `REVIEWER + FINAL_REVIEW` with no open findings. Resume final scientific closure when paired evidence is available, or if the user explicitly amends that remaining parent-level requirement.
+The missing `.mpr/.mpt` pair is no longer a closure blocker by explicit user decision on 2026-08-16. Parent 041 is not marked complete yet only because the user has reported a new bug after the clean review and that bug has not yet been described/handed off in the live repository workflow. Once the bug is recorded and fixed, resume `FINAL_REVIEW` from that new delta; do not reintroduce MPR/MPT parity as a requirement for this parent.
