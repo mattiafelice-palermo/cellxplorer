@@ -50,7 +50,7 @@ Stay in this **ChatGPT Chat** conversation.
 **Do not switch to ChatGPT Work.**  
 **Do not create a scheduled task or automation.**
 
-Once polling begins, remain in the heartbeat/review cycle until `ACTION: COMPLETE`, unless the user explicitly tells you to stop.
+Once polling begins, remain in the heartbeat/review cycle until `ACTION: COMPLETE` or `ACTION: BLOCKED`, unless the user explicitly tells you to stop.
 
 While remote state says `TURN: IMPLEMENTER`:
 
@@ -122,7 +122,7 @@ Do not query GitHub after every short heartbeat.
 
 6. If `TURN: REVIEWER`, stop polling and act immediately according to `ACTION`.
 
-7. If `ACTION: COMPLETE`, stop.
+7. If `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
 
 The committed JSON state is always authoritative.
 
@@ -243,9 +243,11 @@ When `ACTION: FINAL_REVIEW`, perform a fresh cumulative review against the corre
 
 Use the review file corresponding to the parent spec itself, following the same filename rule. Update that same parent review file on later rounds.
 
-Use the same R-finding loop if needed.
+Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
 
-When clean, update the final review record and apply the equivalent of:
+### Final review clean and complete
+
+When the cumulative review is clean **and all required acceptance evidence is available**, update the final review record and apply the equivalent of:
 
 ```bash
 python docs/specs/workflow/spec_workflow.py complete \
@@ -254,4 +256,37 @@ python docs/specs/workflow/spec_workflow.py complete \
 
 Commit/push final review + JSON state + final timestamped coordination entry together.
 
-When `ACTION: COMPLETE`, stop.
+### Final review clean but externally blocked
+
+If there are no remaining implementation findings, but the parent cannot be completed because a required **external dependency or acceptance input is unavailable**, do not invent a finding and do not mark the workflow complete.
+
+Examples include required private/reference files that have not been provided, required external approvals, or required hardware/manual evidence that is not available to either agent in the current workflow.
+
+Record the blocked reason in the canonical parent review, then apply:
+
+```bash
+python docs/specs/workflow/spec_workflow.py block \
+  --message "Exact external dependency preventing completion."
+```
+
+Commit/push the parent review + JSON state + timestamped coordination entry together.
+
+`ACTION: BLOCKED` means:
+
+- no implementer finding is outstanding;
+- the feature is **not complete and not merge-ready**;
+- neither agent should keep polling or doing speculative work;
+- the current sessions stop until the external dependency is actually available.
+
+Do **not** search the user's File Library, unrelated storage, previous uploads, or other sources trying to satisfy an external gate unless the user explicitly asks you to search there or explicitly identifies the source to use. If the required evidence has not been supplied to this workflow, record `BLOCKED` rather than improvising a search.
+
+When the user later confirms that the required external dependency is available, resume with:
+
+```bash
+python docs/specs/workflow/spec_workflow.py resume-final-review \
+  --message "Required external dependency is now available."
+```
+
+Commit/push the resumed JSON state + timestamped coordination entry, re-read the newly available evidence, and continue the same cumulative `FINAL_REVIEW`. Do not skip directly from `BLOCKED` to `COMPLETE` without performing the resumed final review.
+
+When `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
