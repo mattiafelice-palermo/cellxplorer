@@ -53,10 +53,13 @@ EC-Lab `.mpt` text export is unavailable. This amends the general fail-closed
 cycle-identity boundary with one deliberately narrow exception:
 
 - the declared GCPL settings must contain at least one charge or discharge
-  sequence, all active sequences must use the same direction, and every other
-  sequence must be rest;
-- the settings must not declare a goto/repeat loop or an unresolved
-  C-rate/control direction;
+  sequence, and all active sequences must use the same direction. Ordinary
+  non-active sequences must be Rest, except that a setup/Control sequence may
+  be ignored for direction classification when its decoded/normalized current
+  is proven zero within the existing tolerance and it contributes no
+  unresolved active direction;
+- the settings must not declare a goto/repeat loop, an unresolved C-rate
+  direction, or a non-zero/unresolved Control direction;
 - decoded rows must have the verified constant-zero half-cycle value, a
   monotonic `Ns` sequence, at least one non-zero-current row, and must not
   contain both positive and negative current; and
