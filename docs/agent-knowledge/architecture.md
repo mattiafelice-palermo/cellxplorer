@@ -181,12 +181,11 @@ server-owned). Successes and failures are both applied only when the source path
 identity still match; stale or missing results are reported as discarded rather than changing a
 newer SourceFile. The scanner carries the same immutable identity in each job and applies stale
 guards before either success or failure mutation. Recognized BioLogic `.mpr` files in the verified
-GCPL family follow the normal canonical raw/protocol/cache path. When a source does not expose an
-explicit full-cycle field, `biologic_gcpl.py` uses its documented execution charge/discharge-pair
-convention; it does not numerically convert the half-cycle counter. Ambiguous flags or unsupported
-layouts still fail closed. `.mpt` remains excluded from user import, and the first implementation
-does not require a paired MPT export because the parent requirement was explicitly amended by the
-user.
+GCPL family expose bounded header/protocol metadata. They remain metadata-only when the source does
+not expose an independently verified full-cycle field: `biologic_gcpl.py` rejects unvalidated
+half-cycle progression and never assigns cycles from current direction or execution order. Ambiguous
+flags or unsupported layouts still fail closed. `.mpt` remains excluded from user import, while
+paired MPR/MPT evidence remains the real-file semantic-closure gate.
 
 A Cell's ordered sources may legitimately carry different parser identities (a binary source
 continued by a structured Excel export is the reference case, proven end to end by

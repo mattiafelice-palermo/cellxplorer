@@ -12,7 +12,9 @@ This is a compact orientation document. The authoritative technical sources are 
 
 CellXplorer is a local-first Windows application for battery scientists. It imports, organizes,
 inspects, analyses and exports Neware cycling data from binary `.nda` and `.ndax` files and from
-structured Neware `.xlsx` exports, plus supported BioLogic GCPL-family `.mpr` cycling sources.
+structured Neware `.xlsx` exports, plus supported BioLogic GCPL-family `.mpr` sources. The
+currently verified MPR layout is metadata-only until an independently verified full-cycle
+identity is available.
 `.mpt` files are validation artifacts and are not user-imported sources.
 
 Major user workflows include:

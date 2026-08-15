@@ -6,7 +6,9 @@ user-facing impact.
 
 ## 0.23.0-beta.1 - 2026-08-15
 
-- Add BioLogic GCPL MPR cycling support.
+- Add BioLogic GCPL MPR metadata inspection and lifecycle support. Canonical
+  cycling remains fail-closed until source cycle semantics and paired
+  ground-truth validation are available.
 
 ## 0.22.0-beta.8 - 2026-08-13
 

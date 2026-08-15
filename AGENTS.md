@@ -4,8 +4,9 @@
 
 CellXplorer is a local-first Windows application for battery scientists to import, organize,
 inspect, and analyze Neware `.nda`, `.ndax`, and structured Neware Excel `.xlsx` cycling data,
-plus supported BioLogic GCPL-family `.mpr` sources. BioLogic `.mpt` files remain validation
-artifacts rather than user-imported sources.
+plus supported BioLogic GCPL-family `.mpr` sources. The currently verified MPR layout is
+metadata-only until an independently verified full-cycle identity is available. BioLogic `.mpt`
+files remain validation artifacts rather than user-imported sources.
 The UI is React + Mantine, the API is FastAPI + SQLAlchemy, and the desktop installer is a Tauri
 shell that launches a bundled Python backend sidecar. Arbitrary Excel workbooks remain unsupported.
 

@@ -230,7 +230,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl3`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl4`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -247,14 +247,12 @@ Energy follows Policy C for this layout: no verified vendor energy counter is pr
 energy columns remain unavailable rather than being fabricated.
 
 The supplied sample's ID-468 half-cycle is constant zero, and the verified record layout does not
-expose a separate full-cycle field. The first implementation therefore follows the user's explicit
-no-MPT amendment to Parent 041: it validates the half-cycle counter as a monotonic execution
-boundary signal but never converts its numeric value into a cycle number. When no explicit full-cycle
-field is present, the adapter assigns cycle 1 to the first execution sequence and starts the next
-cycle when a charge execution begins after a completed discharge execution; rest and repeated
-same-direction steps remain in the current cycle. This convention is implemented only at the GCPL
-adapter boundary and is covered by the committed synthetic two-cycle corpus. It is not a claim of
-real MPR/MPT parity, and the private sample was not available in this rollout for acceptance.
+expose a separate full-cycle field. The production adapter therefore remains metadata-only for
+this layout: canonical rows require an independently decoded full-cycle field. Nonconstant or
+otherwise unvalidated half-cycle progression fails closed; current direction and execution order
+are not used to infer logical cycles. Synthetic tests may exercise explicit-cycle mapper behavior,
+but paired MPR/MPT evidence remains required for real-file semantic closure, and the private sample
+has not been accepted as a canonical cycling source.
 
 ### Electrode roles and primary voltage
 

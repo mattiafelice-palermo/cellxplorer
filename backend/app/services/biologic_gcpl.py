@@ -39,7 +39,7 @@ from .source_format_errors import (
 )
 
 
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl3"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl4"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
@@ -873,15 +873,16 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
     log_warnings = list(log.get("warnings") or [])
     protocol_warnings = list(declared_protocol.get("warnings") or []) + log_warnings
     protocol_warnings.append(
-        "BioLogic cycles use an explicit source cycle field when available; otherwise the "
-        "adapter assigns deterministic charge/discharge execution-pair cycles."
+        "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
+        "until an independently verified logical cycle identity (full-cycle field) is "
+        "available; this source is metadata-only."
     )
     capability_flags = dict(declared_protocol.get("capabilities") or {})
     capability_flags.update(
         {
-            "cycling_rows": True,
-            "canonical_cycling": True,
-            "metadata_only": False,
+            "cycling_rows": False,
+            "canonical_cycling": False,
+            "metadata_only": True,
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
             "primary_voltage": bool(
                 voltage_capabilities["capabilities"].get("primary_voltage")
@@ -1116,19 +1117,23 @@ def _validate_total_time(total_time_s: np.ndarray) -> None:
 
 
 def _validate_supported_half_cycle(half_cycle: np.ndarray) -> None:
-    """Validate the monotonic source execution counter.
+    """Accept only the observed single-segment half-cycle contract.
 
-    The user explicitly amended Parent 041 so the first implementation does
-    not depend on a paired MPT export.  The counter is therefore used only as
-    an executed-boundary signal here; it is never numerically converted into
-    a logical cycle by assuming a starting value or a ``floor(n / 2)`` rule.
-    Logical cycles are resolved from explicit cycle data when available, or
-    from the deterministic charge/discharge execution-pair convention below.
+    The verified private layout contains only zero-valued half-cycle records.
+    Without paired text-export evidence, the starting value, direction,
+    formation handling, and progression of a non-zero counter are not
+    independently established. It is safer to defer multi-half-cycle
+    canonical numbering than to publish a plausible but wrong cycle grouping.
     """
 
     if np.any(np.diff(half_cycle) < 0):
         raise UnsupportedBiologicGcplError(
-            "GCPL half-cycle counter regresses or resets in acquisition order"
+            "GCPL half-cycle counter regresses or resets; paired MPT evidence is required"
+        )
+    if np.any(half_cycle != 0):
+        raise UnsupportedBiologicGcplError(
+            "GCPL half-cycle progression is not independently validated; paired MPT evidence "
+            "is required before canonical cycle numbering can be emitted"
         )
 
 
@@ -1140,53 +1145,27 @@ def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
     return None
 
 
-def _cycle_column(records: np.ndarray) -> np.ndarray | None:
-    """Return an explicitly decoded full-cycle field when one is present.
+def _cycle_column(records: np.ndarray) -> np.ndarray:
+    """Return an explicitly decoded full-cycle field or fail closed.
 
-    The verified MPR layout does not expose a separate full-cycle column.  A
-    future verified layout may provide ``raw_cycle_index``; otherwise the
-    caller resolves cycles from executed charge/discharge pairs without
-    pretending that the source half-cycle counter has a known numeric base.
+    The verified MPR layout has no independently decoded logical-cycle field,
+    and its half-cycle counter has no paired MPT semantics yet. Semantic test
+    records may provide ``raw_cycle_index`` to exercise the canonical adapter;
+    the production MPR path must not invent a cycle label.
     """
 
     direct = _optional_column(records, "raw_cycle_index")
     if direct is None:
-        return None
+        raise UnsupportedBiologicGcplError(
+            "GCPL logical cycle identity is not independently resolved; paired MPT evidence "
+            "or an explicitly decoded full-cycle field is required"
+        )
     cycle = _validate_integer_column(direct, "cycle", positive=True)
     if len(cycle) > 1 and np.any(np.diff(cycle) < 0):
         raise UnsupportedBiologicGcplError(
             "GCPL logical cycle identity regresses or resets in acquisition order"
         )
     return cycle
-
-
-def _derive_execution_pair_cycles(
-    ranges: list[tuple[int, int]],
-    directions: list[int],
-    record_count: int,
-) -> np.ndarray:
-    """Assign deterministic logical cycles without treating half-cycle as one.
-
-    Parent 041's no-MPT first implementation uses the smallest source-neutral
-    convention that preserves the existing cycle model: the first executed
-    charge/discharge sequence belongs to cycle 1, and a new cycle begins at a
-    charge-side execution after a completed discharge-side execution. Rest
-    and same-direction repeated programmed steps stay in the current cycle.
-    This is intentionally an adapter boundary; downstream calculations still
-    consume only canonical ``cycle``/``step``/status fields.
-    """
-
-    cycles = np.empty(record_count, dtype=np.int64)
-    cycle_number = 1
-    discharge_seen = False
-    for direction, (start, end) in zip(directions, ranges):
-        if direction > 0 and discharge_seen:
-            cycle_number += 1
-            discharge_seen = False
-        elif direction < 0:
-            discharge_seen = True
-        cycles[start:end] = cycle_number
-    return cycles
 
 
 def _validate_ns_changed_flags(ns: np.ndarray, ns_changed: np.ndarray) -> None:
@@ -1581,7 +1560,7 @@ def map_gcpl_to_canonical(
     if np.any(half_cycle < 0):
         raise InvalidBiologicGcplError("GCPL half-cycle values cannot be negative")
     _validate_supported_half_cycle(half_cycle)
-    explicit_cycle = _cycle_column(records)
+    cycle = _cycle_column(records)
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
     step_time = _step_time_column(records)
@@ -1619,7 +1598,7 @@ def map_gcpl_to_canonical(
     boundaries = _step_boundaries(
         ns=ns,
         half_cycle=half_cycle,
-        cycle=explicit_cycle,
+        cycle=cycle,
         mode=mode,
         step_time=step_time,
     )
@@ -1641,11 +1620,6 @@ def map_gcpl_to_canonical(
         _classify_block(mode, direction, start, end)
         for direction, (start, end) in zip(directions, ranges)
     ]
-    cycle = (
-        explicit_cycle
-        if explicit_cycle is not None
-        else _derive_execution_pair_cycles(ranges, directions, len(records))
-    )
     charge_capacity, discharge_capacity = _capacity_columns(
         raw_capacity, directions, ranges
     )
@@ -1697,16 +1671,8 @@ def map_gcpl_to_canonical(
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
-        "cycle_source": (
-            "explicit full-cycle field"
-            if explicit_cycle is not None
-            else "execution charge/discharge pair"
-        ),
-        "cycle_formula": (
-            "copied from independently decoded raw_cycle_index"
-            if explicit_cycle is not None
-            else "increment after discharge when the next charge execution begins"
-        ),
+        "cycle_source": "explicit full-cycle field",
+        "cycle_formula": "copied from independently decoded raw_cycle_index",
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": start_timestamp is not None,

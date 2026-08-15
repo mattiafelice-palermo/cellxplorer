@@ -240,66 +240,43 @@ class ImportFlowTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "adapter defect"):
                 parsing.read_header_metadata("unexpected.mpr")
 
-    def test_biologic_preview_uses_the_canonical_cache_path(self):
+    def test_biologic_preview_is_unavailable_for_metadata_only_mpr(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.mpr"
             _write_importable_biologic_mpr(path)
-            cycles = pd.DataFrame(
-                {
-                    "cycle": [1],
-                    "charge_capacity_mah": [0.0],
-                    "discharge_capacity_mah": [0.0],
-                }
-            )
-            with patch.object(files.cache, "build_write_behind", return_value=cycles) as build:
+            with patch.object(files.cache, "build_write_behind") as build:
                 preview, error = files.build_capacity_preview(
                     path, file_hash="a" * 64
                 )
 
-        self.assertIsNone(error)
-        self.assertEqual(preview["x"], [1])
-        build.assert_called_once()
+        self.assertIsNone(preview)
+        self.assertIn("logical cycle identity", error)
+        build.assert_not_called()
         self.assertEqual(
             parsing.current_parser_identity_for_extension("mpr"),
             parsing.parser_identity("preview.mpr"),
         )
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):
-        """The deterministic execution-pair cycle convention is production-tested."""
+        """Synthetic MPR bytes remain metadata-only without an explicit cycle field."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "preview-without-explicit-cycle-field.mpr"
             _write_importable_biologic_mpr(path)
-            cache_root = root / "cache"
             fingerprint = parsing.capture_source_fingerprint(path)
-            def build_sync(file_hash, source_path, **kwargs):
-                files.cache.build(
-                    file_hash,
-                    source_path,
-                    expected_fingerprint=kwargs.get("expected_fingerprint"),
-                )
-                return files.cache.load_cycles(
-                    file_hash,
-                    parsing.parser_identity(source_path),
-                    files.cache.CALC_VERSION,
-                )
-
-            with patch.object(files.cache, "CACHE_DIR", cache_root), patch.object(
-                files.cache, "build_write_behind", side_effect=build_sync
-            ):
+            with patch.object(files.cache, "build_write_behind") as build:
                 preview, error = files.build_capacity_preview(
                     path,
                     file_hash=fingerprint.hash,
                     expected_size=fingerprint.size,
                     expected_mtime_ns=fingerprint.mtime_ns,
                 )
-                self.assertTrue(cache_root.exists())
 
-        self.assertIsNone(error)
-        self.assertEqual(preview["x"], [1])
-        self.assertEqual(preview["y"], [0.0])
+        self.assertIsNone(preview)
+        self.assertIn("logical cycle identity", error)
+        build.assert_not_called()
 
-    def test_biologic_registration_persists_source_header_and_canonical_capability(self):
+    def test_biologic_registration_persists_source_header_and_metadata_capability(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "register.mpr"
@@ -315,15 +292,15 @@ class ImportFlowTests(unittest.TestCase):
                     "size": inspected.size,
                     "mtime_ns": str(inspected.mtime_ns),
                 },
-                allow_metadata_only=False,
+                allow_metadata_only=True,
             )
             source_file = files._persist_prepared_import_source_file(db, prepared)
             db.flush()
 
         self.assertEqual(source_file.ext, "mpr")
         self.assertEqual(source_file.hash, inspected.hash)
-        self.assertEqual(source_file.parse_status, "parsing")
-        self.assertEqual(source_file.capacity_summary_status, "pending")
+        self.assertEqual(source_file.parse_status, "metadata_only")
+        self.assertEqual(source_file.capacity_summary_status, "unavailable")
         self.assertIn("settings", source_file.header_meta)
         self.assertIn("log", source_file.header_meta)
         capabilities = source_file.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]
@@ -338,26 +315,24 @@ class ImportFlowTests(unittest.TestCase):
         )
         self.assertEqual(db.query(SourceFile).count(), 1)
 
-    def test_biologic_registration_does_not_require_metadata_only_acknowledgement(self):
+    def test_biologic_registration_requires_metadata_only_acknowledgement(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "requires-ack.mpr"
             _write_importable_biologic_mpr(path)
             inspected = import_inspection.inspect_file(str(path))
-            prepared = files._prepare_import_source_file(
-                db,
-                source_path=path,
-                filename=path.name,
-                expected_hash=inspected.hash,
-                inspection={
-                    "hash": inspected.hash,
-                    "size": inspected.size,
-                    "mtime_ns": str(inspected.mtime_ns),
-                },
-            )
-
-        self.assertFalse(prepared["metadata_only"])
-        self.assertFalse(prepared["cache_ready"])
+            with self.assertRaisesRegex(HTTPException, "metadata_only_source_requires_acknowledgement"):
+                files._prepare_import_source_file(
+                    db,
+                    source_path=path,
+                    filename=path.name,
+                    expected_hash=inspected.hash,
+                    inspection={
+                        "hash": inspected.hash,
+                        "size": inspected.size,
+                        "mtime_ns": str(inspected.mtime_ns),
+                    },
+                )
 
     def test_scanner_discovers_and_registers_biologic_source(self):
         db = self.make_session()
@@ -368,7 +343,7 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(source_file.ext, "mpr")
         self.assertEqual(source_file.location_status, "online")
-        self.assertEqual(source_file.parse_status, "unparsed")
+        self.assertEqual(source_file.parse_status, "metadata_only")
 
     def test_xlsx_inspection_requires_the_neware_record_contract(self):
         with tempfile.TemporaryDirectory() as tmp:

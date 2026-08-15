@@ -23,13 +23,13 @@ that matches the change, then follow its links to the authoritative implementati
 - [`scientific-regression-testing.md`](scientific-regression-testing.md): golden analysis corpus,
   synthetic vs full-source regression layers, and golden update workflow.
 - [`canonical-cycling-data.md`](canonical-cycling-data.md): the canonical raw cycling-data
-  contract (Spec 040.1) — programmed vs. executed step identity, `time_s` vs. `total_time_s`,
+  contract (Spec 040.1) - programmed vs. executed step identity, `time_s` vs. `total_time_s`,
   the verified current sign convention, capacity/energy reset semantics, and the
   validator/adapter ownership boundary.
 
 The independently authored BioLogic MPR/GCPL reader contract is documented in
-[`../biologic-mpr-format.md`](../biologic-mpr-format.md), including the no-MPT first-implementation
-cycle convention and format/provenance evidence limits (Specs 041.1â€“041.6).
+[`../biologic-mpr-format.md`](../biologic-mpr-format.md), including the bounded metadata contract,
+the fail-closed cycle-identity rule, and format/provenance evidence limits (Specs 041.1-041.6).
 
 Existing specialist references:
 
