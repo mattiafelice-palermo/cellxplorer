@@ -182,6 +182,50 @@ For each finding, satisfy:
 
 The implementer does not edit, renumber, delete, or self-resolve reviewer findings.
 
+### Verification efficiency — mandatory sequence
+
+During implementation and review-fix work, use focused checks for the changed area. Before a normal handoff, use this sequence:
+
+```text
+focused tests/checks required by the active spec/review
+→ other focused checks such as compileall or git diff --check when relevant
+→ python scripts\preflight.py
+→ handoff
+```
+
+Canonical preflight already runs the complete backend suite through `scripts\run_backend_tests.py` and the complete frontend policy suite.
+
+Therefore:
+
+- do **not** run `python -m unittest discover tests` during the normal implementer workflow;
+- never insert a standalone full backend suite or complete frontend-policy suite immediately before canonical preflight;
+- if canonical preflight will run before the handoff, it is the aggregate full-suite evidence for that handoff.
+
+Before launching any standalone full backend/frontend-policy suite, apply this gate:
+
+```text
+Will canonical preflight be run before this handoff?
+
+YES → DO NOT run a standalone full backend/frontend-policy suite.
+NO  → run one only if the active spec/reviewer finding literally requires a separate full-suite invocation/result, or the user explicitly requests one.
+```
+
+Do not infer a separate full-suite requirement from the scientific importance, breadth, risk, or complexity of a change. Diagnose failures with focused tests first rather than using the entire suite as a default diagnostic command.
+
+If a standalone full backend run is literally required, prefer:
+
+```bash
+python scripts\run_backend_tests.py
+```
+
+unless an acceptance criterion or the user explicitly requires a different exact command.
+
+Use `python scripts\preflight.py --no-cache` only when the active spec/review/release instructions explicitly require a forced full run, when validating preflight cache behavior, or when current repository guidance explicitly requires it.
+
+Explicit scientific, migration, packaging, browser, and manual verification remains mandatory. This rule removes duplicate aggregate runs; it does not weaken acceptance requirements.
+
+In coding environments where Vite requires expanded repository filesystem access, request/use that access on the **first** Vite/preflight invocation. Do not deliberately perform a known restricted run first and then repeat it after the predictable traversal error.
+
 ### Handoff
 
 After verification:
