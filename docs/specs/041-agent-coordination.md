@@ -456,3 +456,21 @@ R3 is resolved. R4 remains open narrowly: offline legacy `bm:gcpl6:r1` rows are 
 R4/R5 are addressed. Offline or missing-path bm:gcpl5:r1/bm:gcpl6:r1 registrations now undergo a database-only fail-closed downgrade: parser-derived row/cycle/capacity scalars are cleared, capacity_summary_status becomes unavailable, requires_reinspection is recorded, and historical cache/source bytes remain untouched and relinkable. Online legacy sources still re-inspect through current gcpl7. The 041.6 implementation record now identifies the historical gcpl5-to-gcpl6 step, the current gcpl7 candidate/verified boundary, exact R3/R4 checkpoint 29952b5b7d685897bc04f20ed605523345e95cab, and truthful verification limits.
 
 ---
+
+### 2026-08-15T23:55:37+02:00 — REVIEWER — Parent 041 final review
+
+**Result:** Implementation review clean; scientific closure blocked
+
+**Findings**
+
+- None.
+
+**Review SHA**
+
+- `bc23072b89608960f4b46e98365725bb93fb6977`
+
+**Message**
+
+R4 and R5 are resolved after static re-review of `08381a5e5a94fdd0fdda9b1e9cc0fa1bc411aa3a`. The narrow charge-only/discharge-only source-local cycle-1 amendment is implementation-review clean, including the gcpl7 candidate/verified boundary, declared/raw direction proof and offline legacy summary invalidation. Reviewer independently ran no tests/builds/preflight. The branch remains in `REVIEWER + FINAL_REVIEW` with no open findings because the separate general same-experiment MPR/MPT semantic-parity gate remains NOT RUN; do not transition to COMPLETE or merge under the current Parent 041 acceptance criteria.
+
+---
