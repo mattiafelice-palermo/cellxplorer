@@ -68,22 +68,25 @@ The sample's encoded column identifiers, in order, are:
 1, 2, 3, 21, 31, 65, 131, 4, 7, 13, 5, 6, 9, 39, 211, 468
 ```
 
-The reader accepts exactly this identifier ordering and record layout, or exactly the same ordering
-with only the Ece channel (`9`) omitted, yielding a compact 49-byte two-electrode record. Unknown
-IDs, reordered fields, duplicate physical fields, and any other omission fail closed. The reader
+The production reader accepts exactly this independently observed identifier ordering and 53-byte
+record layout. Unknown IDs, reordered fields, duplicate physical fields, and any omission fail
+closed. A 15-ID/49-byte Ece-omitted arrangement was used by an earlier synthetic regression test,
+but no project-owned or privacy-approved binary evidence establishes its offsets or packed width;
+the reader therefore rejects it until such evidence exists. The reader
 validates the record-area multiplication and uses one NumPy structured dtype from the memory-mapped
 payload; it does not decode records with a Python per-row loop. The first six IDs, `1, 2, 3, 21, 31,
 65`, are logical flags sharing the one physical byte at offset 0. The remaining physical fields
 follow as `131` (sample sequence), `4` (elapsed time), `7` (incremental charge), `13` (charge
-relative to origin), `5` (control), `6` (Ewe-labeled potential), optional `9` (Ece-labeled
-potential), `39` (current range), `211` (charge/discharge quantity), and `468` (half-cycle index).
+relative to origin), `5` (control), `6` (Ewe-labeled potential), `9` (Ece-labeled potential),
+`39` (current range), `211` (charge/discharge quantity), and `468` (half-cycle index).
 The five flag IDs after the physical byte are validated as packed-flag aliases; they do not create
 synthetic duplicate byte ranges.
 
 The names `Ns`, `Ewe`, and `Ece` are source-label interpretations at the low-level boundary. The
 GCPL adapter in 041.3 assigns the canonical roles only after the source configuration is resolved:
-Ewe/Ece together are a synchronized three-electrode pair; Ewe without Ece is the measured primary
-two-electrode voltage.
+Ewe/Ece together are a synchronized three-electrode pair. The adapter also retains a semantic
+two-electrode contract for a future reader layout that independently verifies a primary Ewe channel,
+but the current binary reader does not claim or decode an Ece-omitted layout.
 
 ## Typed 53-byte record
 
@@ -270,8 +273,10 @@ with an absolute difference. Metadata records `voltage_v` as the `cell` role,
 `working_vs_reference` and `counter_vs_reference`. An explicit source reference-electrode string is
 preserved; no battery chemistry is used to invent one.
 
-For the bounded two-electrode layout, Ece is absent and the Ewe-labelled channel is used once as the
-measured primary `voltage_v`; auxiliary working/counter columns and capabilities are not fabricated.
+If a future independently verified two-electrode layout provides Ewe without Ece, the Ewe-labelled
+channel is used once as the measured primary `voltage_v`; auxiliary working/counter columns and
+capabilities are not fabricated. That semantic rule is not evidence that the current MPR reader
+accepts a 49-byte binary record.
 
 ### Timestamps and execution time
 
@@ -347,3 +352,7 @@ implementation input, and no package, source, comments, dtype table, mapping tab
 sample entered the repository or runtime. Static tests audit the reader, requirements, and
 production entry-point files for prohibited parser dependencies. No MPT file was available, so no
 MPT-derived claim is made here.
+
+No project-owned two-electrode MPR bytes are available. Consequently, the 15-ID/49-byte Ece-omitted
+layout is explicitly a future evidence target rather than a supported production format; only the
+observed 16-ID/53-byte three-electrode layout is decoded today.

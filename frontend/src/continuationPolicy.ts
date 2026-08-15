@@ -71,6 +71,36 @@ export function acknowledgementFindingIds(result: ContinuationInspectResult): st
     .map((finding) => finding.id);
 }
 
+export function acknowledgedMetadataOnlySourceKeys(
+  result: ContinuationInspectResult | null | undefined,
+  acknowledged: Iterable<string>,
+  currentSourceKeys?: Iterable<string>,
+): string[] {
+  if (!result) return [];
+  const acknowledgedIds = new Set(acknowledged);
+  const currentKeys = currentSourceKeys ? new Set(currentSourceKeys) : null;
+  const sourceKeys = new Set<string>();
+  for (const finding of result.findings) {
+    if (
+      finding.code !== "metadata_only_source" ||
+      finding.severity !== "confirmation" ||
+      !acknowledgedIds.has(finding.id)
+    ) {
+      continue;
+    }
+    for (const sourceKey of finding.source_keys) {
+      if (!currentKeys || currentKeys.has(sourceKey)) sourceKeys.add(sourceKey);
+    }
+  }
+  return Array.from(sourceKeys);
+}
+
+export function continuationSourceCanOpenRawData(
+  source: Pick<ContinuationInspectSource, "metadata_only" | "canonical_cycling">,
+): boolean {
+  return source.metadata_only !== true && source.canonical_cycling !== false;
+}
+
 export function applySuggestedOrder(
   currentOrder: string[],
   suggestedOrder: string[],

@@ -34,6 +34,7 @@ import {
 } from "../api";
 import {
   acknowledgementFindingIds,
+  acknowledgedMetadataOnlySourceKeys,
   applySuggestedOrder,
   blockingFindings,
   continuedImportCanSubmit,
@@ -134,7 +135,11 @@ export function ContinuedImportEditor({
   folderSelectData: { value: string; label: string }[];
   materialPresets: ActiveMaterialPresetSettings["presets"];
   areaPresets: ElectrodeAreaPresetSettings["presets"];
-  onImport: (order: string[], acknowledgedFindingIds: string[]) => void;
+  onImport: (
+    order: string[],
+    acknowledgedFindingIds: string[],
+    metadataOnlySourceKeys: string[],
+  ) => void;
   onRawData?: (stagedName: string) => void;
   onPreviewRequested?: (draft: DraftSource, retry?: boolean) => void;
   importing: boolean;
@@ -230,7 +235,11 @@ export function ContinuedImportEditor({
   const submit = () => {
     const frozen = [...order];
     setSubmittedOrder(frozen);
-    onImport(frozen, Array.from(acknowledged));
+    onImport(
+      frozen,
+      Array.from(acknowledged),
+      acknowledgedMetadataOnlySourceKeys(result, acknowledged, frozen),
+    );
   };
   const materialOptions = [
     { value: "custom", label: "Custom nominal capacity" },

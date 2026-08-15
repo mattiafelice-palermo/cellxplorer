@@ -124,8 +124,10 @@ GCPL adapter (Spec 041.3, revision `gcpl4`) exposes these roles in bounded heade
 metadata when the bounded Ewe/Ece layout is present. It computes the
 signed primary cell voltage as `working_potential_v - counter_potential_v`,
 preserves the source roles, and exposes a measured Ewe-labelled primary only
-for the exact Ece-omitted two-electrode layout. It does not fabricate either
-auxiliary channel when the source does not establish it. The end-to-end path
+if a future reader layout independently verifies an Ece-omitted two-electrode
+source. The current MPR reader accepts only the observed 16-ID/53-byte
+three-electrode binary layout and rejects the unverified 15-ID/49-byte variant.
+It does not fabricate either auxiliary channel when the source does not establish it. The end-to-end path
 remains canonical raw frame → Parquet cache → selective raw load →
 `stitch_raw` → Time/Capacity API/UI/export/saved-plot/portable path.
 

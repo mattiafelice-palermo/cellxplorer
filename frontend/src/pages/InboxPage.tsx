@@ -1348,6 +1348,7 @@ function ImportModal({
       mode: "separate" | "continued";
       order?: string[];
       acknowledgedFindingIds?: string[];
+      metadataOnlySourceKeys?: string[];
       continuedCellDraft?: ContinuedCellDraft;
       jobToken: string;
     }) => {
@@ -1378,7 +1379,8 @@ function ImportModal({
                   source_path: item.source_path,
                   filename: item.filename,
                   inspection: item.inspection,
-                  allow_metadata_only: item.metadata_only && item.metadata_only_acknowledged,
+                  allow_metadata_only: item.metadata_only &&
+                    variables.metadataOnlySourceKeys?.includes(item.staged_name) === true,
                 })),
               cell_name: variables.continuedCellDraft?.cell_name ?? "",
               description: variables.continuedCellDraft?.description || null,
@@ -1733,7 +1735,7 @@ function ImportModal({
                 folderSelectData={folderSelectData}
                 materialPresets={materialPresetsQuery.data?.presets ?? []}
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
-                onImport={(order, acknowledgedFindingIds) => {
+                onImport={(order, acknowledgedFindingIds, metadataOnlySourceKeys) => {
                   const jobToken = newImportJobToken();
                   registerStartedAt.current = Date.now();
                   setRegistrationAccepted(false);
@@ -1742,6 +1744,7 @@ function ImportModal({
                     mode: "continued",
                     order,
                     acknowledgedFindingIds,
+                    metadataOnlySourceKeys,
                     continuedCellDraft,
                     jobToken,
                   });

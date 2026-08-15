@@ -130,23 +130,6 @@ def _literal_record_bytes(
     return bytes(records)
 
 
-def _two_electrode_record_bytes() -> bytes:
-    """Encode one verified Ewe-primary record with the Ece field omitted."""
-
-    records = bytearray(49)
-    struct.pack_into("<B", records, 0, 0x21)
-    struct.pack_into("<H", records, 1, 1)
-    struct.pack_into("<d", records, 3, 2.5)
-    struct.pack_into("<d", records, 11, 0.0)
-    struct.pack_into("<d", records, 19, 0.0)
-    struct.pack_into("<f", records, 27, 1000.0)
-    struct.pack_into("<f", records, 31, 3.7)
-    struct.pack_into("<H", records, 35, 10)
-    struct.pack_into("<d", records, 37, 0.0)
-    struct.pack_into("<I", records, 45, 0)
-    return bytes(records)
-
-
 def _write_fixture(
     directory: Path,
     *,
@@ -236,21 +219,21 @@ class BiologicMprReaderTests(unittest.TestCase):
             with read_mpr(path) as document:
                 self.assertIsNone(document.vmp_log)
 
-    def test_bounded_two_electrode_subset_omits_ece_without_guessing_widths(self) -> None:
+    def test_rejects_unverified_ece_omitted_binary_layout(self) -> None:
         column_ids = tuple(column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id != 9)
         with tempfile.TemporaryDirectory() as temp:
             payload = _data_payload(
                 n_datapoints=1,
                 column_ids=column_ids,
                 record_itemsize=49,
-                record_bytes=_two_electrode_record_bytes(),
+                record_bytes=bytes(49),
             )
             path = _write_fixture(Path(temp), data_payload=payload)
-            with read_mpr(path) as document:
-                self.assertEqual(document.vmp_data.column_ids, column_ids)
-                self.assertEqual(document.vmp_data.record_itemsize, 49)
-                self.assertNotIn("raw_ece_v", document.vmp_data.records.dtype.names)
-                self.assertAlmostEqual(float(document.vmp_data.records["raw_ewe_v"][0]), 3.7)
+            with self.assertRaisesRegex(
+                UnsupportedMprColumn,
+                "only the verified 53-byte three-electrode sequence is supported",
+            ):
+                read_mpr(path)
 
     def test_rejects_bad_magic(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

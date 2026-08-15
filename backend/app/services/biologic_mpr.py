@@ -5,9 +5,10 @@ boundary.  GCPL semantics, protocol reconstruction, and user-facing source
 recognition belong to later Spec 041 children.
 
 The supported layout is the one independently observed in the supplied
-GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``. The only
-alternate layout accepted is that exact ordering with Ece omitted, so ordinary
-two-electrode GCPL does not require an invented auxiliary potential. Unknown
+GCPL6 sample and recorded in ``docs/biologic-mpr-format.md``: one exact
+16-column sequence with 53-byte records. Two-electrode semantic normalization
+is defined by the GCPL adapter, but no Ece-omitted packed binary layout is
+accepted until project-owned bytes establish its offsets and width. Unknown
 data layouts fail closed instead of being decoded by positional guesswork.
 """
 
@@ -72,15 +73,9 @@ SUPPORTED_GCPL_COLUMN_IDS = (
     468,
 )
 SUPPORTED_GCPL_COLUMN_ID_SET = frozenset(SUPPORTED_GCPL_COLUMN_IDS)
-# The reader accepts exactly the verified three-electrode layout or the same
-# layout with only Ece (ID 9) omitted.  Do not generalize this to arbitrary
-# order-preserving subsets: a missing field can change the packed record width
-# and the scientific meaning of the remaining bytes.
-SUPPORTED_TWO_ELECTRODE_COLUMN_IDS = tuple(
-    column_id for column_id in SUPPORTED_GCPL_COLUMN_IDS if column_id != 9
-)
-# These fields are needed by the canonical GCPL adapter.  Ece (ID 9) is the
-# only intentionally optional field in the bounded reader contract.
+# These fields are needed by the canonical GCPL adapter for the independently
+# observed three-electrode record.  The reader does not infer a compact
+# two-electrode record by removing an unverified field.
 REQUIRED_GCPL_COLUMN_IDS = (
     1,
     131,
@@ -202,8 +197,8 @@ def _record_dtype_for_columns(column_ids: tuple[int, ...]) -> np.dtype:
 
     Flag aliases share one physical byte. The remaining accepted fields are
     fixed-width and retain the source header order; no unknown width is ever
-    inferred. The full supplied-sample sequence still resolves to
-    ``MPR_RECORD_DTYPE``.
+    inferred. The production reader calls this only after the exact observed
+    full sequence has been accepted.
     """
 
     fields: list[tuple[str, str]] = []
@@ -500,12 +495,10 @@ def _decode_vmp_data(
             )
         if len(set(column_ids)) != len(column_ids):
             raise UnsupportedMprColumn(f"{_source_label(path)} repeats a VMP column ID")
-        if column_ids not in (
-            SUPPORTED_GCPL_COLUMN_IDS,
-            SUPPORTED_TWO_ELECTRODE_COLUMN_IDS,
-        ):
+        if column_ids != SUPPORTED_GCPL_COLUMN_IDS:
             raise UnsupportedMprColumn(
-                f"{_source_label(path)} uses an unsupported VMP column ordering/layout"
+                f"{_source_label(path)} uses an unsupported VMP column ordering/layout; "
+                "only the verified 53-byte three-electrode sequence is supported"
             )
         missing_required = sorted(set(REQUIRED_GCPL_COLUMN_IDS) - set(column_ids))
         if missing_required:
@@ -736,7 +729,6 @@ __all__ = [
     "MPR_READER_REVISION",
     "SUPPORTED_GCPL_COLUMN_IDS",
     "SUPPORTED_GCPL_COLUMN_ID_SET",
-    "SUPPORTED_TWO_ELECTRODE_COLUMN_IDS",
     "UnsupportedMprColumn",
     "UnsupportedMprError",
     "UnsupportedMprModuleVersion",

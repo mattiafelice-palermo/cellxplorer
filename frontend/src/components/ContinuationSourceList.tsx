@@ -11,6 +11,7 @@ import {
 
 import type { ContinuationFinding, ContinuationInspectSource } from "../api";
 import {
+  continuationSourceCanOpenRawData,
   findingSummary,
   sourceRoleLabel,
 } from "../continuationPolicy";
@@ -100,7 +101,7 @@ export function ContinuationSourceList({
                 <Text size="xs" c="dimmed">Time: {source.start_time ?? "—"} → {source.end_time ?? "—"}</Text>
                 <Text size="xs" c="dimmed">Protocol: {source.protocol_signature ?? "—"}</Text>
                 {source.hash && <Text size="xs" c="dimmed">Hash: {source.hash.slice(0, 12)}…</Text>}
-                {onOpenRawData && <Button size="compact-xs" variant="subtle" onClick={() => onOpenRawData(source.key)}>Raw data</Button>}
+                {onOpenRawData && continuationSourceCanOpenRawData(source) && <Button size="compact-xs" variant="subtle" onClick={() => onOpenRawData(source.key)}>Raw data</Button>}
                 {onUpdateSource && source.location_status === "changed" && <Button size="compact-xs" variant="default" leftSection={<IconRefresh size={13} />} disabled={updateDisabled} onClick={() => onUpdateSource(source.key)}>Update</Button>}
               </Group>
               {source.inspection_error && <Text size="xs" c="red" pl={26}>{source.inspection_error}</Text>}

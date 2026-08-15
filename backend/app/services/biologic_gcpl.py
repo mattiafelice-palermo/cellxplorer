@@ -839,10 +839,10 @@ def _voltage_capabilities_for_document(
             voltage_derived=True,
             voltage_origin="derived_working_minus_counter",
         )
-    # With Ece absent, ID 6 is the verified primary two-electrode voltage
-    # channel. It is deliberately not advertised a second time as an
-    # auxiliary Working potential because the canonical frame omits that
-    # column for this source configuration.
+    # If a future independently verified two-electrode reader layout supplies
+    # only Ewe, it will be the primary voltage channel. It must not be
+    # advertised a second time as an auxiliary Working potential because no
+    # counter-vs-reference channel establishes that role.
     return canonical_cycling.voltage_capabilities(
         working_potential_available=False,
         counter_potential_available=False,
@@ -1479,9 +1479,9 @@ def _primary_voltage(
         # taking an absolute value would erase electrode polarity information.
         return working - counter, True, working, counter, "derived_working_minus_counter"
     if working is not None:
-        # In the bounded two-electrode layout the Ewe-labelled channel is the
-        # measured primary cell voltage. It is not published again as a
-        # three-electrode auxiliary column because no counter-vs-reference
+        # In a future verified two-electrode layout the Ewe-labelled channel
+        # is the measured primary cell voltage. It is not published again as
+        # a three-electrode auxiliary column because no counter-vs-reference
         # channel is present to establish that role.
         return working, False, None, None, "measured"
     raise UnsupportedBiologicGcplError(
