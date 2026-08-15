@@ -109,6 +109,26 @@ def _write_importable_biologic_mpr(path: Path) -> None:
     )
 
 
+def _write_metadata_only_biologic_mpr(path: Path) -> None:
+    """Write a mixed-direction MPR that still lacks a verified cycle field."""
+    write_gcpl_mpr(
+        path,
+        [
+            {"total_time_s": 0.0, "ns": 0, "control": 1.0},
+            {"total_time_s": 1.0, "ns": 1, "control": -1.0},
+        ],
+        settings_payload=encode_gcpl_settings(
+            [
+                {"set_i_c": 0, "current": 1.0},
+                {"set_i_c": 0, "current": -1.0},
+            ],
+            reference_electrode="Ag/AgCl",
+        ),
+        log_payload=encode_gcpl_log(),
+        include_log=True,
+    )
+
+
 class ImportFlowTests(unittest.TestCase):
     def make_session(self):
         engine = create_engine(
@@ -243,7 +263,7 @@ class ImportFlowTests(unittest.TestCase):
     def test_biologic_preview_is_unavailable_for_metadata_only_mpr(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "preview.mpr"
-            _write_importable_biologic_mpr(path)
+            _write_metadata_only_biologic_mpr(path)
             with patch.object(files.cache, "build_write_behind") as build:
                 preview, error = files.build_capacity_preview(
                     path, file_hash="a" * 64
@@ -258,13 +278,20 @@ class ImportFlowTests(unittest.TestCase):
         )
 
     def test_biologic_mpr_synthetic_preview_builds_without_mpt(self):
-        """Synthetic MPR bytes remain metadata-only without an explicit cycle field."""
+        """A verified single-direction MPR can build a preview without an MPT."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "preview-without-explicit-cycle-field.mpr"
             _write_importable_biologic_mpr(path)
             fingerprint = parsing.capture_source_fingerprint(path)
-            with patch.object(files.cache, "build_write_behind") as build:
+            cycles = pd.DataFrame(
+                {"cycle": [1], "discharge_capacity_mah": [1.0]}
+            )
+            with patch.object(
+                files.cache,
+                "build_write_behind",
+                return_value=cycles,
+            ) as build:
                 preview, error = files.build_capacity_preview(
                     path,
                     file_hash=fingerprint.hash,
@@ -272,9 +299,10 @@ class ImportFlowTests(unittest.TestCase):
                     expected_mtime_ns=fingerprint.mtime_ns,
                 )
 
-        self.assertIsNone(preview)
-        self.assertIn("logical cycle identity", error)
-        build.assert_not_called()
+        self.assertEqual(preview["x"], [1])
+        self.assertEqual(preview["y"], [1.0])
+        self.assertIsNone(error)
+        build.assert_called_once()
 
     def test_biologic_registration_persists_source_header_and_metadata_capability(self):
         db = self.make_session()
@@ -299,13 +327,15 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(source_file.ext, "mpr")
         self.assertEqual(source_file.hash, inspected.hash)
-        self.assertEqual(source_file.parse_status, "metadata_only")
-        self.assertEqual(source_file.capacity_summary_status, "unavailable")
+        self.assertEqual(source_file.parse_status, "parsing")
+        self.assertEqual(source_file.capacity_summary_status, "pending")
+        self.assertIsNone(source_file.parser_version)
         self.assertIn("settings", source_file.header_meta)
         self.assertIn("log", source_file.header_meta)
         capabilities = source_file.header_meta[canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY]
         self.assertEqual(capabilities["voltage_roles"]["voltage_v"], "cell")
         self.assertTrue(capabilities["voltage_v_derived"])
+        self.assertFalse(source_file.header_meta["capabilities"]["metadata_only"])
         # The normalized capability block remains available even if the
         # original source later goes offline.
         path.unlink(missing_ok=True)
@@ -315,24 +345,24 @@ class ImportFlowTests(unittest.TestCase):
         )
         self.assertEqual(db.query(SourceFile).count(), 1)
 
-    def test_biologic_registration_requires_metadata_only_acknowledgement(self):
+    def test_biologic_registration_does_not_require_acknowledgement_for_single_direction(self):
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "requires-ack.mpr"
             _write_importable_biologic_mpr(path)
             inspected = import_inspection.inspect_file(str(path))
-            with self.assertRaisesRegex(HTTPException, "metadata_only_source_requires_acknowledgement"):
-                files._prepare_import_source_file(
-                    db,
-                    source_path=path,
-                    filename=path.name,
-                    expected_hash=inspected.hash,
-                    inspection={
-                        "hash": inspected.hash,
-                        "size": inspected.size,
-                        "mtime_ns": str(inspected.mtime_ns),
-                    },
-                )
+            prepared = files._prepare_import_source_file(
+                db,
+                source_path=path,
+                filename=path.name,
+                expected_hash=inspected.hash,
+                inspection={
+                    "hash": inspected.hash,
+                    "size": inspected.size,
+                    "mtime_ns": str(inspected.mtime_ns),
+                },
+            )
+        self.assertFalse(prepared["metadata_only"])
 
     def test_scanner_discovers_and_registers_biologic_source(self):
         db = self.make_session()
@@ -343,7 +373,8 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(source_file.ext, "mpr")
         self.assertEqual(source_file.location_status, "online")
-        self.assertEqual(source_file.parse_status, "metadata_only")
+        self.assertEqual(source_file.parse_status, "unparsed")
+        self.assertFalse(source_file.header_meta["capabilities"]["metadata_only"])
 
     def test_xlsx_inspection_requires_the_neware_record_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1302,8 +1333,8 @@ class ImportFlowTests(unittest.TestCase):
             self.assertEqual(db.query(TestFile).count(), 2)
         db.close()
 
-    def test_initial_continued_import_acknowledges_mpr_without_mpr_cache_job(self):
-        """The real multi-source registration path must preserve the MPR boundary."""
+    def test_initial_continued_import_includes_single_direction_mpr_cache_job(self):
+        """A canonical single-direction MPR follows the normal cache path."""
         background_jobs.clear_jobs()
         db = self.make_session()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1367,25 +1398,18 @@ class ImportFlowTests(unittest.TestCase):
 
             with patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for), \
                 patch.object(files.continuations, "enrich_source_timing", side_effect=ready_non_mpr):
-                with self.assertRaises(files.HTTPException) as raised:
-                    files._create_imported_cells_impl(request, db)
-                self.assertEqual(raised.exception.status_code, 422)
-                self.assertEqual(db.query(Cell).count(), 0)
                 analysis = files._inspect_cell_draft_chain(draft, db)
-
-            confirmation_ids = [
-                finding["id"]
-                for finding in analysis["findings"]
-                if finding["severity"] == "confirmation"
-            ]
-            self.assertTrue(
+            self.assertFalse(
                 any(
                     finding["code"] == "metadata_only_source"
                     for finding in analysis["findings"]
                 )
             )
-            draft.acknowledged_finding_ids = confirmation_ids
-            draft.sources[1].allow_metadata_only = True
+            draft.acknowledged_finding_ids = [
+                finding["id"]
+                for finding in analysis["findings"]
+                if finding["severity"] == "confirmation"
+            ]
 
             with patch.object(files.parsing, "read_header_metadata", side_effect=metadata_for), \
                 patch.object(files.continuations, "enrich_source_timing", side_effect=ready_non_mpr), \
@@ -1397,9 +1421,13 @@ class ImportFlowTests(unittest.TestCase):
             test = db.query(Test).one()
             links = sorted(test.file_links, key=lambda link: link.position)
             self.assertEqual([link.file.ext for link in links], ["ndax", "mpr"])
-            self.assertEqual(links[1].file.parse_status, "metadata_only")
+            self.assertEqual(links[1].file.parse_status, "parsing")
+            self.assertFalse(links[1].file.header_meta["capabilities"]["metadata_only"])
             jobs = start_cache.call_args.args[1]
-            self.assertEqual([job["staged_name"] for job in jobs], [neware_path.name])
+            self.assertEqual(
+                [job["staged_name"] for job in jobs],
+                [neware_path.name, mpr_path.name],
+            )
         db.close()
         background_jobs.clear_jobs()
 

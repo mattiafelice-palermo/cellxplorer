@@ -422,11 +422,15 @@ RAW_COLUMNS = {
 # vouch for their cycle labels.  ``gcpl4`` is a different upgrade boundary:
 # R8 withdrew a synthetic-only 15-ID/49-byte binary layout, so persisted
 # gcpl4 metadata must be reconciled from its stored data-header evidence
-# before it can receive the new identity. Keep these sets explicit so a later
-# BioLogic revision can add its own bounded migration decision without
-# changing unrelated source formats.
+# before it can receive the new identity. ``gcpl5`` is the immediately prior
+# current identity; the user-requested single-direction cycle-1 fallback
+# changes its canonical output, so it must be re-inspected rather than
+# silently reusing any old metadata-only registration. Keep these sets
+# explicit so a later BioLogic revision can add its own bounded migration
+# decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
 PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
+LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl5:r1"})
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
     RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES
     | PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES
@@ -449,6 +453,11 @@ BIOLOGIC_MPR_REINSPECTION_WARNING = (
     "This BioLogic MPR was registered under the pre-R8 parser identity, but its "
     "stored binary-layout evidence does not prove the observed 16-ID/53-byte "
     "layout. Re-inspect the source before using it; it remains metadata-only."
+)
+BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING = (
+    "This BioLogic MPR was registered under parser bm:gcpl5:r1 before the "
+    "single-direction cycle-1 fallback was added. Re-inspect the source before "
+    "using it; it remains metadata-only until the upgrade is verified."
 )
 
 
@@ -615,6 +624,24 @@ def source_uses_pre_r8_biologic_parser(source: object) -> bool:
     )
 
 
+def is_legacy_biologic_parser_identity(
+    ext: str | None,
+    parser_version: str | None,
+) -> bool:
+    suffix = str(ext or "").casefold().lstrip(".")
+    return (
+        suffix == "mpr"
+        and str(parser_version or "") in LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES
+    )
+
+
+def source_uses_legacy_biologic_parser(source: object) -> bool:
+    return is_legacy_biologic_parser_identity(
+        getattr(source, "ext", None),
+        getattr(source, "parser_version", None),
+    )
+
+
 def _biologic_mpr_header_containers(header_meta: object) -> list[dict]:
     if not isinstance(header_meta, dict):
         return []
@@ -686,6 +713,8 @@ def source_requires_biologic_mpr_reinspection(
 
     if str(getattr(source, "ext", "") or "").casefold().lstrip(".") != "mpr":
         return False
+    if source_uses_legacy_biologic_parser(source):
+        return True
     if source_uses_pre_r8_biologic_parser(source):
         if not include_header:
             return True
@@ -710,6 +739,8 @@ def source_record_metadata_only_message(
 
     if source_uses_retired_biologic_parser(source):
         return RETIRED_BIOLOGIC_MPR_WARNING
+    if source_uses_legacy_biologic_parser(source):
+        return BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING
     if source_requires_biologic_mpr_reinspection(
         source,
         include_header=include_header,
@@ -845,6 +876,26 @@ def reclassify_pre_r8_biologic_source(source: object) -> bool:
     return True
 
 
+def mark_biologic_mpr_reinspection_required(
+    source: object,
+    *,
+    detail: str | None = None,
+) -> None:
+    """Persist a failed adapter-upgrade reinspection without exposing caches."""
+
+    _mark_biologic_source_metadata_only(
+        source,
+        warning=BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING,
+        parser_version=None,
+        requires_reinspection=True,
+    )
+    if detail:
+        source.parse_error = (
+            f"{BIOLOGIC_MPR_LEGACY_REINSPECTION_WARNING} "
+            f"Last reinspection attempt failed: {detail}"
+        )
+
+
 def source_record_metadata_only(
     source: object,
     *,
@@ -862,6 +913,7 @@ def source_record_metadata_only(
     if (
         source_uses_retired_biologic_parser(source)
         or source_uses_pre_r8_biologic_parser(source)
+        or source_uses_legacy_biologic_parser(source)
         or getattr(source, "parse_status", None) == "metadata_only"
     ):
         return True

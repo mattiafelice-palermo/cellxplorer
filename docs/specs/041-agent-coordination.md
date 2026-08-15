@@ -18,6 +18,20 @@ Resume Parent 041 at child 041.6 under the implementer/reviewer workflow; prior 
 
 ---
 
+### 2026-08-15T22:29:26+02:00 — USER → IMPLEMENTER — 041.6
+
+**Result:** User-requested scope amendment
+
+**Message**
+
+The user confirmed that the target cell is discharge-only and explicitly requested that it remain
+plottable without a matching `.mpt` file. The requested exception is limited to a declared,
+non-repeating discharge/rest-only run whose decoded rows confirm constant-zero half-cycle,
+monotonic `Ns`, negative-only current and at least one active discharge row. General multi-cycle or
+ambiguous MPR support remains subject to the paired MPR/MPT scientific-closure gate.
+
+---
+
 ### 2026-08-15T17:42:11+02:00 — IMPLEMENTER → REVIEWER — 041.6
 
 **Result:** Implementation ready
@@ -327,5 +341,49 @@ Parent R2 implemented at ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3 and documented
 **Message**
 
 Parent R2 is resolved after static re-review of `ef4c8d113b0137324e1f4ba4106ad8c59fa5ecb3`; R1 remains resolved and no further implementation defect was found in the resumed cumulative pass. The branch is still not ready to merge because the locked same-experiment MPR/MPT scientific parity gate remains NOT RUN. The current workflow has no separate BLOCKED action, so state remains `REVIEWER + FINAL_REVIEW` with no open findings rather than falsely transitioning to COMPLETE. Reviewer independently ran no tests/builds/preflight.
+
+---
+
+### 2026-08-15T22:42:21+02:00 — USER → IMPLEMENTER — 041.6
+
+**Result:** User-requested scope amendment
+
+**Message**
+
+The user expanded the partial-run request: a cell with only a charge run must be plottable as well
+as a discharge-only run, and a partial charge or discharge recorded after many earlier cycles
+should remain usable even when no full-cycle field or matching `.mpt` export is available. The
+bounded exception therefore applies to a declared, non-repeating charge/rest-only or
+discharge/rest-only run whose decoded rows confirm constant-zero half-cycle, monotonic `Ns`, one
+signed current direction and at least one active row. The inferred cycle `1` is explicitly a
+source-local plotting label, not an absolute experiment cycle number. Mixed directions, loops,
+ambiguous directions and non-monotonic execution remain metadata-only; general MPR/MPT scientific
+closure remains a separate reviewer gate.
+
+---
+
+### 2026-08-15T22:47:42+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** User-requested amendment implementation ready
+
+**Verification**
+
+- Single-direction MPR mapper/import/cache focused suites: PASS (251 tests)
+- `python scripts\\preflight.py --no-cache`: PASS 5/5; all 68 backend modules, 541 frontend policy tests, TypeScript type check, and Vite production bundle passed
+- Vite completed with the existing chunk-size and static/dynamic-import warnings
+- `git diff --check`: PASS
+- MPR/MPT parity: NOT RUN; no paired `.mpt` is available
+- Browser/manual feature verification: NOT RUN; reserved for the user's reviewer/manual check
+
+**Message**
+
+The implementation now admits a declared, non-repeating charge/rest-only or discharge/rest-only
+MPR when decoded rows confirm constant-zero half-cycle, monotonic `Ns`, one signed current
+direction and at least one active row. The adapter assigns source-local cycle 1, records the
+inference, and sends the source through the normal preview, registration and cache path. Mixed
+directions, loops, ambiguous directions and non-monotonic execution remain fail-closed. The
+feature branch is ready for independent review; the workflow state remains reviewer-owned.
+
+---
 
 ---

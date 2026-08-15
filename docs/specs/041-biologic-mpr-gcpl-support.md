@@ -45,6 +45,33 @@ The work is divided into six children so binary-decoding defects can be separate
 
 Users must be able to import a supported BioLogic EC-Lab `.mpr` GCPL-family cycling file and use it as a normal CellXplorer source.
 
+## User-requested amendment — single-direction MPR without `.mpt`
+
+On 2026-08-15 the user explicitly requested that a cell recorded as a
+charge-only or discharge-only run remain plottable even when the matching
+EC-Lab `.mpt` text export is unavailable. This amends the general fail-closed
+cycle-identity boundary with one deliberately narrow exception:
+
+- the declared GCPL settings must contain at least one charge or discharge
+  sequence, all active sequences must use the same direction, and every other
+  sequence must be rest;
+- the settings must not declare a goto/repeat loop or an unresolved
+  C-rate/control direction;
+- decoded rows must have the verified constant-zero half-cycle value, a
+  monotonic `Ns` sequence, at least one non-zero-current row, and must not
+  contain both positive and negative current; and
+- the adapter assigns every validated row to canonical cycle `1` and records
+  that the cycle was inferred from the single-direction fallback.
+
+This lets a partial source remain usable even when it was recorded after many
+earlier cycles: the inferred `1` is a source-local plotting label, not a claim
+that the experiment's absolute cycle number was 1. The exception does not
+infer cycles for mixed charge/discharge files, repeated protocols, ambiguous
+directions, or non-monotonic execution. Those sources remain metadata-only
+until a verified full-cycle identity is available. It also does not claim
+MPR/MPT semantic parity; the paired-file gate remains required for general
+multi-cycle scientific closure.
+
 The intended flow is:
 
 ```text
@@ -482,7 +509,7 @@ A clear unsupported-format error is preferable to plausible but wrong battery da
 Parent 041 is complete only when all six children are review-clean and final cumulative review proves:
 
 1. `.mpr` is parsed by independently authored CellXplorer code with no GPL runtime dependency/copied implementation;
-2. supplied/paired MPR binary fields match EC-Lab `.mpt` ground truth within defined tolerances when a pair is available; if no pair is available, Parent 041 remains blocked from closure;
+2. supplied/paired MPR binary fields match EC-Lab `.mpt` ground truth within defined tolerances when a pair is available; if no pair is available, Parent 041 remains blocked from general scientific closure, while the explicitly amended single-direction cycle-1 path may still be used and reviewed without claiming parity;
 3. GCPL cycles, programmed steps and executed steps map deterministically to canonical semantics;
 4. current sign/capacity/energy/timestamp mappings are validated;
 5. three-electrode Ewe/Ece/Ecell mapping is correct and preserved through cache/API/Time-Capacity UI;

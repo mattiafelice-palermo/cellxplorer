@@ -17,6 +17,7 @@ from backend.app.services.biologic_gcpl import (
     UnsupportedBiologicGcplError,
     integrate_capacity_by_step,
     map_gcpl_to_canonical,
+    read_gcpl_header_metadata,
 )
 from backend.app.services.biologic_mpr import MPR_RECORD_DTYPE
 from tests.biologic_mpr_fixture import (
@@ -124,12 +125,132 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl5",
+                "adapter_revision": "gcpl6",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl5:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl6:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
+
+    def test_single_direction_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                ns=0,
+                control=-1.0,
+                q_mAh=1.0,
+                ns_changed=True,
+            ),
+            _row(
+                3600.0,
+                ns=0,
+                control=-1.0,
+                q_mAh=0.0,
+                dq_mAh=-1.0,
+            ),
+            _row(
+                3600.0,
+                mode=MPR_MODE_REST,
+                ns=1,
+                control=0.0,
+                q_mAh=0.0,
+                ns_changed=True,
+            ),
+            _row(
+                3660.0,
+                mode=MPR_MODE_REST,
+                ns=1,
+                control=0.0,
+                q_mAh=0.0,
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "single-discharge.mpr",
+                rows,
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": -1.0},
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                    ]
+                ),
+            )
+
+            metadata = read_gcpl_header_metadata(path)
+            capabilities = metadata["capabilities"]
+            self.assertTrue(capabilities["canonical_cycling"])
+            self.assertTrue(capabilities["cycling_rows"])
+            self.assertFalse(capabilities["metadata_only"])
+            self.assertEqual(
+                capabilities["cycle_identity_source"],
+                "single_direction_inferred",
+            )
+
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1, 1])
+        self.assertEqual(
+            frame["status"].tolist(),
+            ["CC_DChg", "CC_DChg", "Rest", "Rest"],
+        )
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["cycle_source"],
+            "single direction fallback",
+        )
+        canonical_cycling.validate_raw_timeseries(frame)
+
+    def test_single_charge_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:
+        rows = [
+            _row(
+                0.0,
+                ns=0,
+                control=1.0,
+                q_mAh=0.0,
+                ns_changed=True,
+            ),
+            _row(
+                3600.0,
+                ns=0,
+                control=1.0,
+                q_mAh=1.0,
+                dq_mAh=1.0,
+            ),
+            _row(
+                3600.0,
+                mode=MPR_MODE_REST,
+                ns=1,
+                control=0.0,
+                q_mAh=1.0,
+                ns_changed=True,
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_gcpl_mpr(
+                Path(temp) / "single-charge.mpr",
+                rows,
+                settings_payload=encode_gcpl_settings(
+                    [
+                        {"set_i_c": 0, "current": 1.0},
+                        {"set_i_c": 0, "current": 0.0, "rest_duration_s": 60.0},
+                    ]
+                ),
+            )
+            metadata = read_gcpl_header_metadata(path)
+            capabilities = metadata["capabilities"]
+            self.assertTrue(capabilities["canonical_cycling"])
+            self.assertEqual(
+                capabilities["cycle_identity_source"],
+                "single_direction_inferred",
+            )
+            frame = parsing.parse_timeseries(path)
+
+        self.assertEqual(frame["cycle"].tolist(), [1, 1, 1])
+        self.assertEqual(frame["status"].tolist(), ["CC_Chg", "CC_Chg", "Rest"])
+        self.assertEqual(
+            frame.attrs["biologic_gcpl"]["cycle_source"],
+            "single direction fallback",
+        )
+        canonical_cycling.validate_raw_timeseries(frame)
 
     def test_real_mpr_dispatch_fails_closed_without_verified_cycle_identity(self) -> None:
         rows = [

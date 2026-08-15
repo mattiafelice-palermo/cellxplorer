@@ -8,7 +8,10 @@ cache layer.
 
 Only the verified GCPL layout from Spec 041.1 is accepted.  A source with an
 ambiguous control mode, direction, elapsed-time sequence, or capacity counter
-is rejected rather than being made to look like a plausible battery test.
+is rejected rather than being made to look like a plausible battery test.  A
+declared single-direction run is the one narrow exception to the otherwise
+fail-closed cycle-identity rule: after the decoded rows confirm a monotonic,
+charge-only or discharge-only run, the source is represented as cycle 1.
 The adapter is direct-parser support for Spec 041.2; user-facing ``.mpr``
 extension recognition remains intentionally owned by Spec 041.4.
 """
@@ -39,7 +42,7 @@ from .source_format_errors import (
 )
 
 
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl5"
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl6"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by
@@ -593,6 +596,37 @@ def _format_gcpl_duration(seconds: float) -> str:
     return f"{seconds:g} s"
 
 
+def _is_single_direction_protocol(settings: Mapping[str, Any]) -> bool:
+    """Return whether settings declare one non-repeating single-direction run.
+
+    This is only a capability advertisement.  The canonical mapper still
+    checks the decoded rows, signed current and acquisition order before it
+    assigns cycle 1.  Unresolved C-rate/control directions, an opposite active
+    direction, and any repeat structure remain metadata-only because they
+    could describe multiple logical cycles.
+    """
+
+    sequences = list(settings.get("sequences") or [])
+    if not sequences:
+        return False
+    active_direction: str | None = None
+    for sequence in sequences:
+        direction = sequence.get("direction")
+        if direction in {"charge", "discharge"}:
+            if active_direction is None:
+                active_direction = direction
+            elif direction != active_direction:
+                return False
+        elif direction != "rest":
+            return False
+        if (
+            sequence.get("loop_start_step") is not None
+            or sequence.get("loop_count") is not None
+        ):
+            return False
+    return active_direction is not None
+
+
 def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
     """Map verified GCPL sequence settings into the shared protocol schema."""
 
@@ -770,6 +804,7 @@ def build_gcpl_protocol(settings: Mapping[str, Any]) -> dict[str, Any]:
         "operational_cutoffs_available": bool(operational_cutoffs),
         "loop_structure_available": bool(settings.get("layout")),
         "semantic_conditions_available": False,
+        "single_direction_cycle_inference": _is_single_direction_protocol(settings),
     }
     result = protocol.build_declared_protocol(
         steps,
@@ -872,17 +907,33 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
     )
     log_warnings = list(log.get("warnings") or [])
     protocol_warnings = list(declared_protocol.get("warnings") or []) + log_warnings
-    protocol_warnings.append(
-        "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
-        "until an independently verified logical cycle identity (full-cycle field) is "
-        "available; this source is metadata-only."
-    )
     capability_flags = dict(declared_protocol.get("capabilities") or {})
+    single_direction_inference = bool(
+        capability_flags.get("single_direction_cycle_inference")
+    )
+    if single_direction_inference:
+        protocol_warnings.append(
+            "This BioLogic MPR has no decoded full-cycle field, but its declared protocol "
+            "is a non-repeating single-direction run. The canonical adapter will verify the "
+            "decoded rows and represent the run as cycle 1; sources with both charge and "
+            "discharge phases, loops or ambiguous directions remain unavailable for cycling."
+        )
+    else:
+        protocol_warnings.append(
+            "BioLogic MPR metadata is readable, but canonical cycling rows remain unavailable "
+            "until an independently verified logical cycle identity (full-cycle field) is "
+            "available; this source is metadata-only."
+        )
     capability_flags.update(
         {
-            "cycling_rows": False,
-            "canonical_cycling": False,
-            "metadata_only": True,
+            "cycling_rows": single_direction_inference,
+            "canonical_cycling": single_direction_inference,
+            "metadata_only": not single_direction_inference,
+            "cycle_identity_source": (
+                "single_direction_inferred"
+                if single_direction_inference
+                else "unresolved"
+            ),
             "absolute_timestamps": bool(log.get("absolute_timestamps")),
             "primary_voltage": bool(
                 voltage_capabilities["capabilities"].get("primary_voltage")
@@ -1145,17 +1196,24 @@ def _optional_column(records: np.ndarray, *names: str) -> np.ndarray | None:
     return None
 
 
-def _cycle_column(records: np.ndarray) -> np.ndarray:
-    """Return an explicitly decoded full-cycle field or fail closed.
+def _cycle_column(
+    records: np.ndarray,
+    *,
+    allow_single_direction: bool = False,
+) -> np.ndarray:
+    """Return a decoded cycle field or the bounded single-direction fallback.
 
     The verified MPR layout has no independently decoded logical-cycle field,
     and its half-cycle counter has no paired MPT semantics yet. Semantic test
-    records may provide ``raw_cycle_index`` to exercise the canonical adapter;
-    the production MPR path must not invent a cycle label.
+    records may provide ``raw_cycle_index`` to exercise the canonical adapter.
+    A source may opt into cycle 1 only after the caller has independently
+    established the bounded single-direction conditions.
     """
 
     direct = _optional_column(records, "raw_cycle_index")
     if direct is None:
+        if allow_single_direction:
+            return np.ones(len(records), dtype=np.int64)
         raise UnsupportedBiologicGcplError(
             "GCPL logical cycle identity is not independently resolved; paired MPT evidence "
             "or an explicitly decoded full-cycle field is required"
@@ -1284,6 +1342,34 @@ def _raw_current_ma(
     # explicit factor visible so a later adapter revision cannot silently
     # change the global convention.
     return raw_current
+
+
+def _single_direction_cycle_is_safe(
+    raw_ns: np.ndarray,
+    mode: np.ndarray,
+    current_ma: np.ndarray,
+    *,
+    declared_protocol: bool,
+) -> bool:
+    """Confirm decoded rows support the cycle-1 single-direction fallback."""
+
+    if not declared_protocol:
+        return False
+    if len(raw_ns) > 1 and np.any(np.diff(raw_ns) < 0):
+        return False
+    positive = np.any(current_ma > _CURRENT_TOLERANCE_MA)
+    negative = np.any(current_ma < -_CURRENT_TOLERANCE_MA)
+    if positive and negative:
+        return False
+    if not positive and not negative:
+        return False
+    # The current adapter cannot classify this fallback when potentiostatic
+    # rows are present: the verified byte contract has no independently
+    # decoded measured-current field for those rows. Keep that existing
+    # fail-closed boundary instead of widening the mode contract here.
+    if np.any(mode == MPR_MODE_POTENTIOSTATIC):
+        return False
+    return True
 
 
 def _step_boundaries(
@@ -1529,8 +1615,9 @@ def map_gcpl_to_canonical(
 ) -> pd.DataFrame:
     """Map one supported MPR data source into the canonical raw frame."""
 
+    declared_settings: Mapping[str, Any] | None = None
     if isinstance(source, MprDocument):
-        _validate_document_settings(source)
+        declared_settings = _validate_document_settings(source)
     records, flags = _records_from_source(source)
     fields = _field_names(records)
     missing = [name for name in _REQUIRED_RECORD_FIELDS if name not in fields]
@@ -1560,7 +1647,6 @@ def map_gcpl_to_canonical(
     if np.any(half_cycle < 0):
         raise InvalidBiologicGcplError("GCPL half-cycle values cannot be negative")
     _validate_supported_half_cycle(half_cycle)
-    cycle = _cycle_column(records)
     total_time_s = _require_float_column(records, "elapsed_time_s")
     _validate_total_time(total_time_s)
     step_time = _step_time_column(records)
@@ -1576,6 +1662,21 @@ def map_gcpl_to_canonical(
             "GCPL counter-increment flag semantics are outside the verified adapter contract"
         )
     current_ma = _raw_current_ma(records, mode, control)
+    direct_cycle = _optional_column(records, "raw_cycle_index")
+    single_direction_inferred = direct_cycle is None and _single_direction_cycle_is_safe(
+        raw_ns,
+        mode,
+        current_ma,
+        declared_protocol=(
+            _is_single_direction_protocol(declared_settings)
+            if declared_settings is not None
+            else True
+        ),
+    )
+    cycle = _cycle_column(
+        records,
+        allow_single_direction=single_direction_inferred,
+    )
     voltage_v, voltage_v_derived, working, counter, voltage_origin = _primary_voltage(
         records
     )
@@ -1671,8 +1772,17 @@ def map_gcpl_to_canonical(
         "record_index_base": 1,
         "step_index_source": "Ns",
         "step_index_base_adjustment": GCPL_STEP_INDEX_BASE_ADJUSTMENT,
-        "cycle_source": "explicit full-cycle field",
-        "cycle_formula": "copied from independently decoded raw_cycle_index",
+        "cycle_source": (
+            "single direction fallback"
+            if single_direction_inferred
+            else "explicit full-cycle field"
+        ),
+        "cycle_formula": (
+            "inferred as cycle 1 after declared single-direction protocol and decoded "
+            "charge-only or discharge-only current with monotonic Ns"
+            if single_direction_inferred
+            else "copied from independently decoded raw_cycle_index"
+        ),
         "current_sign_factor": 1,
         "energy_policy": "C-unavailable",
         "absolute_timestamps": start_timestamp is not None,

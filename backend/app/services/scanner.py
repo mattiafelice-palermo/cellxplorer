@@ -138,7 +138,8 @@ def reconcile_retired_biologic_sources(db: Session) -> int:
     files, and it includes offline rows so a disconnected library receives
     the same truthful capability state as an online one. The gcpl3 retirement
     and the post-R8 gcpl4 layout reconciliation have separate state rules in
-    ``parsing``.
+    ``parsing``; the immediately prior gcpl5 identity is handled by the
+    source-reading upgrade pass below.
     """
 
     reconciliation_identities = parsing.BIOLOGIC_MPR_RECONCILIATION_IDENTITIES
@@ -161,6 +162,52 @@ def reconcile_retired_biologic_sources(db: Session) -> int:
     if changed:
         db.commit()
     return changed
+
+
+def reinspect_legacy_biologic_sources(db: Session) -> int:
+    """Rebuild registrations from the immediately prior BioLogic identity.
+
+    ``gcpl5`` sources were intentionally metadata-only.  The user-requested
+    single-direction fallback changes the canonical capability contract, so an
+    online source must pass the current header/full-parse path before it can
+    become usable.  Offline rows stay untouched and are retried when the user
+    relinks/imports the source again.
+    """
+
+    identities = parsing.LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES
+    if not identities:
+        return 0
+    sources = (
+        db.query(SourceFile)
+        .filter(
+            SourceFile.ext == "mpr",
+            SourceFile.parser_version.in_(identities),
+        )
+        .all()
+    )
+    refreshed = 0
+    for source in sources:
+        if source.location_status != "online":
+            continue
+        if not Path(source.path).exists():
+            source.location_status = "offline"
+            db.commit()
+            continue
+        try:
+            update_source_from_path(db, source)
+            refreshed += 1
+        except Exception as exc:
+            parsing.mark_biologic_mpr_reinspection_required(
+                source,
+                detail=str(exc),
+            )
+            db.commit()
+            logger.warning(
+                "BioLogic parser upgrade reinspection failed for %s: %s",
+                source.filename,
+                exc,
+            )
+    return refreshed
 
 
 def scientific_preparation_worker_count(
@@ -233,8 +280,9 @@ def start_capacity_summary_backfill(
     try:
         # Do this before selecting parsed sources. A withdrawn or pre-R8 row
         # can otherwise enter the normal identity path with stale capability
-        # state when the current gcpl5 build fails closed.
+        # state when the current gcpl6 build fails closed.
         reconcile_retired_biologic_sources(db)
+        reinspect_legacy_biologic_sources(db)
         preparation_state = scientific_preparation.get_state(db)
         copied_library_preparation = scientific_preparation.is_pending(preparation_state)
         prepare_all_missing = prepare_missing or copied_library_preparation
@@ -1041,6 +1089,17 @@ def ingest_path(db: Session, path: Path, parse_now: bool = False, job_id: int | 
             db.commit()
             if job_id is not None:
                 _bump(job_id, "relinked")
+        if (
+            target_ext == "mpr"
+            and (
+                parsing.source_uses_legacy_biologic_parser(existing)
+                or (
+                    existing.parser_version is None
+                    and parsing.source_requires_biologic_mpr_reinspection(existing)
+                )
+            )
+        ):
+            return update_source_from_path(db, existing)
         return existing
 
     # Mark an already-registered path as changed before validating the new
