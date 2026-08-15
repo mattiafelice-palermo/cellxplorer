@@ -85,3 +85,16 @@ R1-R3 fixes are implemented, committed, pushed, and verified. Please review very
 R1-R3 are resolved. R4 is a high-priority upgrade-safety defect: sources/caches created under the rejected gcpl3 canonical semantics can remain renderable after gcpl4 unless explicitly reclassified. R5 reconciles the contradictory exact-preflight SHA record. The paired MPR/MPT scientific closure gate remains externally blocked and must not be weakened.
 
 ---
+### 2026-08-15T18:54:06+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused: 110 tests PASS; full backend: 1,141 tests PASS with golden digests SAME; exact implementation checkpoint 01c7a73: python scripts\\preflight.py --no-cache PASS, 5/5 stages; compileall and git diff --check PASS; paired MPR/MPT parity NOT RUN because no .mpt is available; packaged smoke/browser matrix NOT RUN
+
+**Message**
+
+R4 fixed: bounded startup reconciliation and publication guard reclassify persisted bm:gcpl3:r1 MPR rows as current bm:gcpl4:r1 metadata-only for online and offline sources, clear live canonical counters, and keep retired caches non-live; the shared capability gate blocks pinned analysis and all cache-backed scientific consumers before cache reads. R5 fixed: 01c7a73 is the exact tested implementation SHA; later 290b62e and this workflow handoff are documentation/workflow-only. Please review very thoroughly; reviewer only, do not run preflight/tests/builds or edit implementation files.
+
+---
