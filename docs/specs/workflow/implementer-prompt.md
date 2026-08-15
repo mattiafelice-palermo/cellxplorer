@@ -89,40 +89,51 @@ For each review finding, satisfy its:
 
 Run the verification required by the active spec and repository guidance.
 
-### Verification efficiency
+### Verification efficiency — mandatory sequence
 
-Use the narrowest checks that provide the required evidence while developing, then run the canonical preflight once before handoff.
-
-Default pattern:
+Use focused checks while implementing or fixing findings. Before a normal handoff, the verification sequence is mechanical:
 
 ```text
 while implementing/fixing
 → focused tests/checks for the changed area
 
 before handoff
-→ focused checks required by the active spec/review
+→ focused checks explicitly required by the active spec/review
+→ other focused checks such as compileall or git diff --check when relevant
 → python scripts\preflight.py
+→ handoff
 ```
 
-The canonical preflight already runs the full backend suite through the repository's parallel backend runner and runs the frontend policy suite. Therefore, **do not immediately precede preflight with another full serial backend run such as `python -m unittest discover tests`, or another complete frontend-policy run, merely to duplicate the same coverage**.
+Canonical preflight already runs the complete backend suite through `scripts\run_backend_tests.py` and the complete frontend policy suite.
 
-Run a separate full suite only when one of these is true:
+**Do not run `python -m unittest discover tests` during the normal implementer workflow.**
 
-- the active spec or reviewer finding explicitly requires a standalone full-suite result;
-- you are diagnosing a failure and need an isolated run;
-- the canonical preflight implementation changed so its coverage must first be re-established.
+**Never insert a standalone full backend suite or complete frontend-policy suite between focused checks and canonical preflight.** Preflight is the required full-suite evidence for the handoff.
 
-If a standalone full backend run is required, prefer the repository's parallel runner:
+Before launching any standalone full backend or complete frontend-policy suite, apply this gate:
+
+```text
+Will canonical preflight be run before this handoff?
+
+YES → DO NOT run a standalone full backend/frontend-policy suite.
+NO  → run one only if the active spec/reviewer finding literally requires a separate full-suite invocation/result, or the user explicitly requests one.
+```
+
+Do not infer a separate full-suite requirement from the scientific importance, breadth, risk, or complexity of the change. Those are reasons to choose strong **focused** regression tests; they are not permission to duplicate preflight.
+
+Failure diagnosis is also not permission to run the whole suite by default. Diagnose failures with the narrowest relevant test/module first.
+
+If a separate full backend invocation is literally required, use:
 
 ```bash
 python scripts\run_backend_tests.py
 ```
 
-unless the exact command itself is an acceptance criterion.
+unless the active acceptance criterion or user explicitly requires a different exact command.
 
-Use `python scripts\preflight.py --no-cache` when the active spec/review/release instructions require a forced full frontend build, when validating preflight cache behavior, or when the normal repository guidance explicitly calls for it. Otherwise use normal canonical preflight and let its conservative cache rules apply.
+Use `python scripts\preflight.py --no-cache` only when the active spec/review/release instructions explicitly require a forced full run, when validating preflight cache behavior, or when current repository guidance explicitly requires it. Otherwise use normal canonical preflight and let its conservative cache rules apply.
 
-An explicit active-spec or review requirement overrides these efficiency rules. Do not weaken required scientific, migration, packaging, or manual verification to save time.
+Explicit scientific, migration, packaging, browser, and manual acceptance requirements still apply. This rule removes duplicate aggregate test runs; it does not weaken required verification.
 
 ### Windows/Vite filesystem access
 
