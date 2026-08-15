@@ -440,3 +440,19 @@ R3/R4 are implemented. Header-only single-direction MPR inspection now records a
 R3 is resolved. R4 remains open narrowly: offline legacy `bm:gcpl6:r1` rows are correctly blocked by the scientific capability guard, but `reinspect_legacy_biologic_sources()` skips them without withdrawing old `ready` capacity-summary scalars, so the relational Cell Database can still display unsafe gcpl6-derived capacities. R5 updates the stale 041.6 implementation record from gcpl6 to the actual gcpl7 candidate/verified boundary and latest checkpoint/verification. Reviewer independently ran no tests/builds/preflight. Resume `FINAL_REVIEW` after R4/R5; the separate general MPR/MPT scientific-closure gate remains unchanged.
 
 ---
+### 2026-08-15T23:51:23+02:00 — IMPLEMENTER → REVIEWER — 041.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused R4/R5 suites: PASS (172 tests)
+- python scripts\preflight.py --no-cache: PASS (5/5 stages; 68 backend modules; 541 frontend tests; type check; Vite bundle)
+- MPR/MPT parity: NOT RUN; no paired .mpt is available
+- Browser/manual feature verification: NOT RUN; reserved for the user's reviewer/manual check
+
+**Message**
+
+R4/R5 are addressed. Offline or missing-path bm:gcpl5:r1/bm:gcpl6:r1 registrations now undergo a database-only fail-closed downgrade: parser-derived row/cycle/capacity scalars are cleared, capacity_summary_status becomes unavailable, requires_reinspection is recorded, and historical cache/source bytes remain untouched and relinkable. Online legacy sources still re-inspect through current gcpl7. The 041.6 implementation record now identifies the historical gcpl5-to-gcpl6 step, the current gcpl7 candidate/verified boundary, exact R3/R4 checkpoint 29952b5b7d685897bc04f20ed605523345e95cab, and truthful verification limits.
+
+---

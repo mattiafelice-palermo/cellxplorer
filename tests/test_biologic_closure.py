@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base  # noqa: E402
 from app.models import Analysis, Cell, SourceFile, Test, TestFile  # noqa: E402
-from app.routers import analyses as analyses_router  # noqa: E402
+from app.routers import analyses as analyses_router, library as library_router  # noqa: E402
 from app.services import (  # noqa: E402
     analysis_cache,
     analysis_engine,
@@ -951,7 +951,7 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         offline.parse_status = "parsed"
         self.db.commit()
 
-        self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 1)
+        self.assertEqual(scanner.reinspect_legacy_biologic_sources(self.db), 2)
         self.db.expire_all()
         refreshed_online = self.db.get(SourceFile, online.id)
         refreshed_offline = self.db.get(SourceFile, offline.id)
@@ -959,9 +959,27 @@ class BiologicClosureIntegrationTests(unittest.TestCase):
         self.assertEqual(refreshed_online.parse_status, "parsed")
         self.assertTrue(old_raw.exists())
         self.assertTrue(old_cycles.exists())
-        self.assertEqual(refreshed_offline.parser_version, "bm:gcpl6:r1")
+        self.assertIsNone(refreshed_offline.parser_version)
+        self.assertEqual(refreshed_offline.parse_status, "metadata_only")
+        self.assertEqual(refreshed_offline.capacity_summary_status, "unavailable")
+        self.assertIsNone(refreshed_offline.row_count)
+        self.assertIsNone(refreshed_offline.cycle_count)
+        self.assertIsNone(refreshed_offline.total_charge_capacity_mah)
+        self.assertIsNone(refreshed_offline.total_discharge_capacity_mah)
+        self.assertIsNone(refreshed_offline.max_discharge_capacity_mah)
         self.assertTrue(parsing.source_record_metadata_only(refreshed_offline))
+        self.assertTrue(
+            refreshed_offline.header_meta["capabilities"]["requires_reinspection"]
+        )
         self.assertIn("previous parser identity", (parsing.source_record_metadata_only_message(refreshed_offline)).casefold())
+        self.assertEqual(
+            library_router.cell_capacity_totals(refreshed_offline.test_link.test.cell),
+            {
+                "total_charge_capacity_mah": None,
+                "total_discharge_capacity_mah": None,
+                "max_discharge_capacity_mah": None,
+            },
+        )
 
     def test_header_batch_is_bounded_with_single_direction_capability(self) -> None:
         paths = []

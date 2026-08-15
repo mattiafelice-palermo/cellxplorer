@@ -171,8 +171,9 @@ def reinspect_legacy_biologic_sources(db: Session) -> int:
     candidate/verified boundary. The user-requested
     single-direction fallback changes the canonical capability contract, so an
     online source must pass the current header/full-parse path before it can
-    become usable.  Offline rows stay untouched and are retried when the user
-    relinks/imports the source again.
+    become usable.  Offline rows are downgraded database-only so their old
+    relational summaries cannot remain live; they stay relinkable and are
+    retried when the user restores the source.
     """
 
     identities = parsing.LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES
@@ -189,10 +190,21 @@ def reinspect_legacy_biologic_sources(db: Session) -> int:
     refreshed = 0
     for source in sources:
         if source.location_status != "online":
+            parsing.mark_biologic_mpr_reinspection_required(
+                source,
+                detail="the previous BioLogic parser identity is offline and cannot be re-inspected",
+            )
+            db.commit()
+            refreshed += 1
             continue
         if not Path(source.path).exists():
             source.location_status = "offline"
+            parsing.mark_biologic_mpr_reinspection_required(
+                source,
+                detail="the previous BioLogic parser identity has no readable source path",
+            )
             db.commit()
+            refreshed += 1
             continue
         try:
             update_source_from_path(db, source)

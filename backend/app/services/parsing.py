@@ -804,10 +804,11 @@ def source_record_metadata_only_message(
         source,
         include_header=include_header,
     ):
+        stored_error = getattr(source, "parse_error", None)
+        if stored_error:
+            return str(stored_error)
         if not include_header:
-            stored_error = getattr(source, "parse_error", None)
-            if stored_error:
-                return str(stored_error)
+            return source_metadata_only_message(None)
         return BIOLOGIC_MPR_REINSPECTION_WARNING
     if source_uses_pre_r8_biologic_parser(source):
         return BIOLOGIC_MPR_VERIFIED_RECONCILIATION_WARNING
