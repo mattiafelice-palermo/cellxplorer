@@ -233,6 +233,39 @@ test("saved plot preview signature includes the thumbnail renderer version", () 
   );
 });
 
+test("saved auxiliary voltage plots restore their selected channel on cold open", () => {
+  const base = makeSpec([{ kind: "cell", ref_id: 1 }], []) as any;
+  base.computation.time_capacity = { voltage_channel: "working_potential" };
+  const savedPlot = {
+    id: "plot-working",
+    tab: "time_capacity",
+    name: "Working potential",
+    subtitle: "view",
+    description: null,
+    selection: { entries: [], exclusions: [] },
+    computation: structuredClone(base.computation),
+    aggregation: structuredClone(base.aggregation),
+    presentation: structuredClone(base.presentation),
+    created_at: "2026-01-01T00:00:00Z",
+    modified_at: "2026-01-01T00:00:00Z",
+  } as any;
+
+  const restored = specForSavedPlotView(base, savedPlot) as any;
+  const primaryPlot = {
+    ...savedPlot,
+    computation: {
+      ...savedPlot.computation,
+      time_capacity: { voltage_channel: "voltage" },
+    },
+  };
+
+  assert.equal(restored.computation.time_capacity.voltage_channel, "working_potential");
+  assert.notEqual(
+    savedPlotPreviewSignature(base, savedPlot),
+    savedPlotPreviewSignature(base, primaryPlot)
+  );
+});
+
 test("saved plot restore keeps global segment definitions and restores plot segment state", () => {
   const current = structuredClone(makeSpec([{ kind: "cell", ref_id: 1 }], []));
   current.protocol_segments = [

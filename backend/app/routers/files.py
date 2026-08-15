@@ -167,6 +167,7 @@ def _inspect_import_path(
             "nominal_capacity_mah": meta.get("nominal_capacity_mah"),
             "nda_version": _bounded_staged_text_or_none(meta.get("nda_version")),
             "source_format": _bounded_staged_text_or_none(meta.get("source_format")),
+            "technique": _bounded_staged_text_or_none(meta.get("technique")),
             "software_version": _bounded_staged_text_or_none(meta.get("software_version")),
             "reference_electrode": _bounded_staged_text_or_none(meta.get("reference_electrode")),
             "capability_warning": (
@@ -344,6 +345,7 @@ def _metadata_preview(meta: dict) -> dict[str, str]:
         "record_interval_s": meta.get("record_interval_s"),
         "nda_version": meta.get("nda_version"),
         "source_format": meta.get("source_format"),
+        "technique": meta.get("technique"),
         "software_version": meta.get("software_version"),
         "reference_electrode": meta.get("reference_electrode"),
         "voltage_capabilities": _voltage_capability_label(meta),
@@ -1200,6 +1202,7 @@ def raw_table_from_frame(df: pd.DataFrame, offset: int = 0, limit: int = 100) ->
 def file_dict(sf: SourceFile) -> dict:
     link = sf.test_link
     capability = parsing.source_record_capability(sf)
+    presentation = parsing.source_presentation(sf)
     return {
         "id": sf.id,
         "hash": sf.hash,
@@ -1222,6 +1225,13 @@ def file_dict(sf: SourceFile) -> dict:
         "canonical_cycling": capability["canonical_cycling"],
         "metadata_only": capability["metadata_only"],
         "capability_warning": capability["warning"],
+        "source_format": presentation["source_format"],
+        "technique": presentation["technique"],
+        "software_version": presentation["software_version"],
+        "reference_electrode": presentation["reference_electrode"],
+        "voltage_capabilities": presentation["voltage_capabilities"],
+        "voltage_v_origin": presentation["voltage_v_origin"],
+        "voltage_v_derived": presentation["voltage_v_derived"],
         "row_count": sf.row_count,
         "cycle_count": sf.cycle_count,
         "registered": link is not None,

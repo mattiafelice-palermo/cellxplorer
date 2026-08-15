@@ -202,6 +202,7 @@ export interface CacheWarmupTask {
   plot_title: string;
   tab: AnalysisTabKey;
   analysis_modified_at: string | null;
+  plot_modified_at: string | null;
   expected_data_signature: string;
 }
 
@@ -462,6 +463,19 @@ export interface SourceFile {
   metadata_only: boolean;
   canonical_cycling: boolean;
   capability_warning: string | null;
+  source_format: string | null;
+  technique: string | null;
+  software_version: string | null;
+  reference_electrode: string | null;
+  voltage_capabilities: {
+    capabilities?: Record<string, boolean>;
+    voltage_roles?: Record<string, string | null>;
+    reference_electrode?: string | null;
+    voltage_v_origin?: string | null;
+    voltage_v_derived?: boolean;
+  } | null;
+  voltage_v_origin: string | null;
+  voltage_v_derived: boolean | null;
   row_count: number | null;
   cycle_count: number | null;
   registered: boolean;
@@ -1460,6 +1474,7 @@ export interface SourceDescriptor {
   source_position: number;
   filename: string;
   source_hash: string;
+  parser_version?: string;
   status?: "ready" | "missing";
   tracked_tail: boolean;
   local_cycle_start: number | null;
@@ -1569,6 +1584,8 @@ export interface ComputeResult {
   group_metrics: GroupMetrics[];
   badges: Badge[];
   sources: Provenance["sources"];
+  /** Server-owned scientific result identity used for artifact persistence. */
+  data_signature?: string;
   cache_status?: "hit" | "miss";
 }
 
@@ -1614,6 +1631,10 @@ export interface TimeCapacityResult {
   settings: NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
   cell_traces: TimeCapacityTrace[];
   badges: Badge[];
+  /** Server-owned identity of the exact request/rendering result. */
+  data_signature?: string;
+  /** Stable source/capability identity shared by standard and full renders. */
+  source_data_signature?: string;
   cache_status?: "hit" | "miss";
   /**
    * Data-driven per-selection availability for each voltage quantity (Spec
@@ -1624,7 +1645,7 @@ export interface TimeCapacityResult {
    */
   voltage_channels?: Record<
     "voltage" | "working_potential" | "counter_potential",
-    { available: boolean; label: string; role: string }
+    { available: boolean; label: string; role: string; reference_electrode?: string | null }
   >;
   rendering?: {
     viewport_width: number;
@@ -1787,6 +1808,7 @@ export interface ImportPreview {
   nominal_capacity_mah: number | null;
   nda_version: string | null;
   source_format: string | null;
+  technique: string | null;
   software_version: string | null;
   reference_electrode: string | null;
   parser_version: string | null;

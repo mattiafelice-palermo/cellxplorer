@@ -52,6 +52,144 @@ export function voltageChannelShortLabel(channel: VoltageChannel): string {
 }
 
 /**
+ * A result is safe to render only when it was computed for the currently
+ * selected canonical voltage quantity. React Query may otherwise expose a
+ * previous result while a new channel request is in flight.
+ */
+export function timeCapacityResultMatchesVoltageChannel(
+  result: TimeCapacityResult | undefined,
+  selectedChannel: VoltageChannel,
+): boolean {
+  if (!result) return false;
+  return (result.settings?.voltage_channel ?? "voltage") === selectedChannel;
+}
+
+/**
+ * Stable identity for the source/capability part of a Time/Capacity result.
+ * Plot presentation and cycle-window changes may refetch the result without
+ * changing which voltage quantities the selected sources provide. Source
+ * hashes, parser identity, and the resolved capability map do change when
+ * that scientific input changes, so they are the correct availability-reset
+ * boundary.
+ */
+export function voltageChannelDataIdentity(
+  result: TimeCapacityResult | undefined,
+): string | undefined {
+  if (!result) return undefined;
+  if (result.source_data_signature) return result.source_data_signature;
+  const sources = result.cell_traces
+    .flatMap((trace) =>
+      (trace.source_descriptors ?? []).map((source) => ({
+        cell_id: trace.cell_id,
+        source_position: source.source_position,
+        source_hash: source.source_hash,
+        status: source.status ?? null,
+      }))
+    )
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return JSON.stringify({
+    parser_version: result.parser_version,
+    calc_version: result.calc_version,
+    sources,
+    voltage_channels: result.voltage_channels ?? null,
+  });
+}
+
+/** Guard a delayed full-resolution export against both channel races. */
+export function timeCapacityExportMatchesRequest(
+  currentDataSignature: string,
+  requestedDataSignature: string,
+  currentChannel: VoltageChannel,
+  requestedChannel: VoltageChannel,
+  result: TimeCapacityResult,
+  requestedSourceDataIdentity?: string,
+): boolean {
+  return (
+    currentDataSignature === requestedDataSignature &&
+    currentChannel === requestedChannel &&
+    timeCapacityResultMatchesVoltageChannel(result, requestedChannel) &&
+    (requestedSourceDataIdentity === undefined ||
+      voltageChannelDataIdentity(result) === requestedSourceDataIdentity)
+  );
+}
+
+/**
+ * `undefined` availability means that no current result has arrived yet. A
+ * channel becomes explicitly unavailable only when the current result says
+ * so; this preserves the pinned saved-plot choice during loading.
+ */
+export function voltageChannelUnavailable(
+  channel: VoltageChannel,
+  voltageChannels: VoltageChannelAvailability | undefined,
+): boolean {
+  return channel !== "voltage" && voltageChannels !== undefined && voltageChannels[channel]?.available === false;
+}
+
+export function voltageChannelUnavailableMessage(channel: VoltageChannel): string {
+  return `${voltageChannelShortLabel(channel)} is unavailable for the current selection.`;
+}
+
+/** Text supplied by source metadata must not become Plotly markup or a template token. */
+export function plotlySafeText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/%/g, "&#37;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Full-resolution request options used by scientific Time/Capacity exports. */
+export function timeCapacityExportOptions(viewportWidth: number) {
+  return {
+    viewport_width: viewportWidth,
+    precision: "full" as const,
+    compact: false,
+  };
+}
+
+/**
+ * Capability availability may be retained while only plot presentation or
+ * cycle filters refetch. Selection membership and the result's source/data
+ * identity are the safe reset boundaries.
+ */
+export function voltageChannelAvailabilitySignature(
+  spec: Pick<AnalysisSpec, "selection">,
+  sourceDataIdentity?: string | null,
+): string {
+  return JSON.stringify({
+    entries: spec.selection.entries ?? [],
+    exclusions: spec.selection.exclusions ?? [],
+    hidden_replicate_group_ids: spec.selection.hidden_replicate_group_ids ?? [],
+    source_data_identity: sourceDataIdentity ?? null,
+  });
+}
+
+export function shouldResetVoltageChannelAvailability(
+  previousSignature: string,
+  nextSignature: string,
+): boolean {
+  return previousSignature !== nextSignature;
+}
+
+/**
+ * Decide the callback sequence for one result publication. Keeping this
+ * identity-aware makes a structurally shared channel map publish again when
+ * the source identity changes, instead of leaving a cleared parent state.
+ */
+export function voltageChannelAvailabilityPublication(
+  previousSignature: string,
+  nextSignature: string,
+  channels: VoltageChannelAvailability | undefined,
+): { reset: boolean; channels: VoltageChannelAvailability | undefined } {
+  return {
+    reset: shouldResetVoltageChannelAvailability(previousSignature, nextSignature),
+    channels,
+  };
+}
+
+/**
  * The channel-option/visibility decision for the Time/Capacity voltage
  * quantity selector (Spec 040.4). Pure and explicit so the two-electrode
  * guarantee — an ordinary Neware source must never gain a working/counter

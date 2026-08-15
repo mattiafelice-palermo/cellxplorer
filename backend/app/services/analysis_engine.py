@@ -523,6 +523,7 @@ def source_descriptors(
     segments: list[dict],
     missing: list[str],
     frame: pd.DataFrame | None = None,
+    parser_versions: dict[str, str] | None = None,
 ) -> list[dict]:
     """Describe the one ordered Cell source chain without exposing paths.
 
@@ -556,6 +557,11 @@ def source_descriptors(
             "source_position": position,
             "filename": source_file.filename,
             "source_hash": source_file.hash,
+            **(
+                {"parser_version": parser_versions[source_file.hash]}
+                if parser_versions and source_file.hash in parser_versions
+                else {}
+            ),
             "status": "missing" if source_file.hash in missing_hashes else "ready",
             "tracked_tail": position == len(files),
             "local_cycle_start": segment.get("source_cycle_start"),
@@ -588,6 +594,106 @@ def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, li
         "source_filename": [by_hash.get(value).filename if value in by_hash else None for value in hashes],
         "source_hash": [value if value in by_hash else None for value in hashes],
     }
+
+
+def _persisted_voltage_capabilities(source_file: SourceFile) -> dict:
+    header = source_file.header_meta
+    if not isinstance(header, dict):
+        return {}
+    value = header.get(canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY)
+    if not isinstance(value, dict):
+        value = header.get("voltage_capabilities")
+    return value if isinstance(value, dict) else {}
+
+
+def _time_capacity_voltage_context(
+    raw: pd.DataFrame,
+    files: list[SourceFile],
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Resolve truthful role/reference context for the selected raw channels.
+
+    Availability is still data-driven from the stitched frame. Reference text
+    is appended only when every source contributing finite values for a given
+    auxiliary channel declares the same short, explicit reference. Mixed or
+    missing source metadata therefore falls back to the generic ``vs ref``
+    label instead of guessing from the experiment or filename.
+    """
+
+    default_roles = {
+        "voltage": "cell",
+        "working_potential": "working_vs_reference",
+        "counter_potential": "counter_vs_reference",
+    }
+    role_candidates: dict[str, set[str]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+    reference_candidates: dict[str, set[str | None]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+    files_by_hash = {source_file.hash: source_file for source_file in files}
+
+    for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+        if column not in raw.columns:
+            continue
+        values = pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
+        finite = np.isfinite(values)
+        if not finite.any():
+            continue
+
+        matched_files: list[SourceFile] = []
+        if "source_hash" in raw.columns:
+            hashes = raw.loc[finite, "source_hash"].dropna().unique().tolist()
+            matched_files = [
+                files_by_hash[value]
+                for value in hashes
+                if value in files_by_hash
+            ]
+            if len(matched_files) != len(hashes):
+                reference_candidates[quantity].add(None)
+        elif len(files) == 1:
+            matched_files = list(files)
+        else:
+            reference_candidates[quantity].add(None)
+
+        if not matched_files:
+            reference_candidates[quantity].add(None)
+            continue
+        for source_file in matched_files:
+            capability = _persisted_voltage_capabilities(source_file)
+            roles = capability.get("voltage_roles")
+            role = roles.get(column) if isinstance(roles, dict) else None
+            if isinstance(role, str) and role in {
+                "cell",
+                "working_vs_reference",
+                "counter_vs_reference",
+            }:
+                role_candidates[quantity].add(role)
+            else:
+                role_candidates[quantity].add(default_roles[quantity])
+            reference = canonical_cycling.normalized_voltage_reference(
+                capability.get("reference_electrode")
+            )
+            if reference is None:
+                reference_candidates[quantity].add(None)
+            else:
+                reference_candidates[quantity].add(reference)
+
+    resolved_roles: dict[str, str] = {}
+    for quantity, candidates in role_candidates.items():
+        if not candidates:
+            resolved_roles[quantity] = default_roles[quantity]
+        elif len(candidates) == 1:
+            resolved_roles[quantity] = next(iter(candidates))
+        else:
+            resolved_roles[quantity] = canonical_cycling.MIXED_VOLTAGE_ROLE
+    resolved_references: dict[str, str | None] = {}
+    for quantity, candidates in reference_candidates.items():
+        if len(candidates) == 1:
+            candidate = next(iter(candidates))
+            resolved_references[quantity] = candidate
+        else:
+            resolved_references[quantity] = None
+    return resolved_roles, resolved_references
 
 
 PROTOCOL_SEGMENT_MODES = ("excluded", "only", "hidden")
@@ -2474,6 +2580,12 @@ def compute_time_capacity(
     # verified Ewe/Ece layout. Checked against the full stitched raw frame (before cycle-range
     # filtering) so the offered options do not flicker as filters change.
     channel_availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
+    channel_role_candidates: dict[str, set[str]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+    channel_reference_candidates: dict[str, set[str | None]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
 
     for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
@@ -2503,7 +2615,21 @@ def compute_time_capacity(
                 continue
             if np.isfinite(pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")).any():
                 channel_availability[quantity] = True
-        descriptors = source_descriptors(files, segments, missing, raw)
+        local_roles, local_references = _time_capacity_voltage_context(raw, files)
+        for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+            if column not in raw.columns:
+                continue
+            values = pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
+            if np.isfinite(values).any():
+                channel_role_candidates[quantity].add(local_roles[quantity])
+                channel_reference_candidates[quantity].add(local_references[quantity])
+        descriptors = source_descriptors(
+            files,
+            segments,
+            missing,
+            raw,
+            parser_versions=source_versions,
+        )
         for h in missing:
             missing_identity = source_versions.get(h, "unknown")
             badges.append(
@@ -2645,7 +2771,10 @@ def compute_time_capacity(
         display_x = _time_capacity_display_x(
             raw, phases, capacity, capacity_g, capacity_area, settings
         )
-        if len(raw) > configured_max:
+        # A full, non-compact request is used by scientific data export. It
+        # must retain every selected-channel row even when the interactive
+        # setting intentionally limits the on-screen point count.
+        if len(raw) > configured_max and not (precision == "full" and not compact):
             envelope_series = (
                 [derivative_x, derivative_y]
                 if settings["view"] != "voltage_current"
@@ -2749,18 +2878,38 @@ def compute_time_capacity(
             }
         )
 
-    voltage_channels = {
-        quantity: {
-            "available": channel_availability[quantity],
-            "label": canonical_cycling.voltage_quantity_label(quantity),
-            "role": {
-                "voltage": "cell",
-                "working_potential": "working_vs_reference",
-                "counter_potential": "counter_vs_reference",
-            }[quantity],
-        }
-        for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    default_roles = {
+        "voltage": "cell",
+        "working_potential": "working_vs_reference",
+        "counter_potential": "counter_vs_reference",
     }
+    voltage_channels = {}
+    for quantity in canonical_cycling.VOLTAGE_QUANTITIES:
+        role_candidates = channel_role_candidates[quantity]
+        if not role_candidates:
+            role = default_roles[quantity]
+        elif len(role_candidates) == 1:
+            role = next(iter(role_candidates))
+        else:
+            role = canonical_cycling.MIXED_VOLTAGE_ROLE
+        references = channel_reference_candidates[quantity]
+        reference = (
+            next(iter(references))
+            if len(references) == 1 and next(iter(references)) is not None
+            else None
+        )
+        item = {
+            "available": channel_availability[quantity],
+            "label": canonical_cycling.voltage_quantity_label(
+                quantity,
+                role=role,
+                reference_electrode=reference,
+            ),
+            "role": role,
+        }
+        if reference is not None and role != canonical_cycling.MIXED_VOLTAGE_ROLE:
+            item["reference_electrode"] = reference
+        voltage_channels[quantity] = item
 
     return {
         "computed_at": now_iso(),

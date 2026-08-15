@@ -42,7 +42,17 @@ from ..models import (
     Test,
     TestFile,
 )
-from . import analysis_engine, cache, cache_maintenance, diagnostic_cycles, parsing, scanner
+from . import (
+    analysis_cache,
+    analysis_engine,
+    cache,
+    cache_maintenance,
+    chargeability,
+    diagnostic_cycles,
+    parsing,
+    rate_capability,
+    scanner,
+)
 from .activity_log import record_activity
 from .entity_ids import next_analysis_id
 
@@ -75,6 +85,13 @@ def _plotly_runtime_path() -> Path:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _database_datetime_identity(value: datetime | None) -> str | None:
+    """Normalize SQLite's timezone-naive round-trip for revision comparison."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=None).isoformat()
 
 
 def _json_bytes(value: object) -> bytes:
@@ -249,6 +266,114 @@ def _guard_portable_protocol_family(
         raise HTTPException(status_code=422, detail=detail)
 
 
+def _portable_result_kind(tab: str) -> str:
+    return {
+        "time_capacity": "time_capacity",
+        "steps": "steps",
+        "dcir": "dcir",
+        "chargeability": "chargeability",
+        "crate": "rate_capability",
+    }.get(tab, "cycles")
+
+
+def _portable_current_view_signature(
+    db: Session,
+    analysis: Analysis,
+    view: dict,
+) -> tuple[str, str | None]:
+    """Return the server identity and saved-plot revision for one snapshot.
+
+    Portable views are produced in the browser, but the final package is a
+    scientific artifact owned by the backend. Recompute only the cheap cache
+    identity here; the full numerical result is deliberately not recomputed
+    during the last packaging boundary.
+    """
+    view_id = str(view.get("id") or "")
+    saved_plot = next(
+        (
+            candidate
+            for candidate in (analysis.spec.get("saved_plots") or [])
+            if str(candidate.get("id")) == view_id
+        ),
+        None,
+    )
+    if saved_plot is not None:
+        server_tab = str(saved_plot.get("tab") or "cycles")
+        view_tab = str(view.get("tab") or "cycles")
+        if view_tab != server_tab:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "portable_plot_changed",
+                    "message": "A portable snapshot no longer matches its saved plot family.",
+                },
+            )
+        return (
+            analysis_cache.saved_plot_data_signature(db, analysis, saved_plot),
+            saved_plot.get("modified_at"),
+        )
+    if view_id != "current":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_plot_changed",
+                "message": f'Saved plot "{view_id}" no longer exists.',
+            },
+        )
+    if analysis.spec.get("saved_plots"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_snapshots_required",
+                "message": "A saved-plot analysis cannot be exported with a current-view snapshot.",
+            },
+        )
+    tab = str(view.get("tab") or "cycles")
+    kind = _portable_result_kind(tab)
+    request_options = (
+        {"viewport_width": 1200, "precision": "standard", "compact": True}
+        if kind == "time_capacity"
+        else None
+    )
+    return (
+        analysis_cache.result_key(
+            db,
+            kind,
+            analysis.spec,
+            analysis.provenance,
+            use_current_versions=False,
+            request_options=request_options,
+        ),
+        None,
+    )
+
+
+def _validate_portable_view_identity(
+    db: Session,
+    analysis: Analysis,
+    view: dict,
+) -> None:
+    expected_signature, expected_revision = _portable_current_view_signature(
+        db, analysis, view
+    )
+    if view.get("data_signature") != expected_signature:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_plot_changed",
+                "message": "A portable plot changed while the report was being prepared. Rebuild the report.",
+            },
+        )
+    if view.get("plot_revision") != expected_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_plot_revision_changed",
+                "message": "A saved plot changed while the report was being prepared. Rebuild the report.",
+            },
+        )
+
+
 def _report_views(db: Session, analysis: Analysis) -> list[dict]:
     views: list[dict] = []
     saved_plots = analysis.spec.get("saved_plots") or []
@@ -256,10 +381,22 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
         tab = plot.get("tab") or "cycles"
         _guard_portable_protocol_family(db, analysis, tab)
         spec = _portable_saved_plot_spec(analysis.spec, plot)
-        result = (
-            analysis_engine.compute_time_capacity(db, spec, analysis.provenance)
-            if tab == "time_capacity"
-            else analysis_engine.compute(db, spec, analysis.provenance)
+        if tab == "time_capacity":
+            result = analysis_engine.compute_time_capacity(
+                db, spec, analysis.provenance
+            )
+        elif tab == "steps":
+            result = analysis_engine.compute_steps(db, spec, analysis.provenance)
+        elif tab == "dcir":
+            result = analysis_engine.compute_dcir(db, spec, analysis.provenance)
+        elif tab == "chargeability":
+            result = chargeability.compute(db, spec, analysis.provenance)
+        elif tab == "crate":
+            result = rate_capability.compute(db, spec, analysis.provenance)
+        else:
+            result = analysis_engine.compute(db, spec, analysis.provenance)
+        result["data_signature"] = analysis_cache.saved_plot_data_signature(
+            db, analysis, plot
         )
         presentation = spec.get("presentation", {})
         # A filtered plot must declare what it removed. The result itself always
@@ -285,10 +422,20 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
                 "hidden_cycles": hidden_cycles,
                 "hidden_cycle_ranges": diagnostic_cycles.format_ranges(hidden_cycles),
                 "result": result,
+                "data_signature": result["data_signature"],
+                "plot_revision": plot.get("modified_at"),
             }
         )
     if not views:
         _guard_portable_protocol_family(db, analysis, "cycles")
+        result = analysis_engine.compute(db, analysis.spec, analysis.provenance)
+        result["data_signature"] = analysis_cache.result_key(
+            db,
+            "cycles",
+            analysis.spec,
+            analysis.provenance,
+            use_current_versions=False,
+        )
         views.append(
             {
                 "id": "current",
@@ -297,7 +444,9 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
                 "description": None,
                 "tab": "cycles",
                 "presentation": analysis.spec.get("presentation", {}),
-                "result": analysis_engine.compute(db, analysis.spec, analysis.provenance),
+                "result": result,
+                "data_signature": result["data_signature"],
+                "plot_revision": None,
             }
         )
     return views
@@ -333,6 +482,38 @@ def _source_document(source: SourceFile) -> dict:
         "canonical_cycling": capability["canonical_cycling"],
         "capability_warning": capability["warning"],
     }
+
+
+def _portable_document_fingerprint(
+    documents: Iterable[dict],
+) -> tuple[tuple[str, str], ...]:
+    """Return a stable fingerprint for the documents frozen into an export."""
+    def canonical(document: dict) -> dict:
+        value = dict(document)
+        created_at = value.get("created_at")
+        if isinstance(created_at, str):
+            try:
+                value["created_at"] = _database_datetime_identity(
+                    datetime.fromisoformat(created_at)
+                )
+            except ValueError:
+                pass
+        return value
+
+    return tuple(
+        sorted(
+            (
+                str(document.get("portable_id") or document.get("original_id")),
+                json.dumps(canonical(document), sort_keys=True, default=str),
+            )
+            for document in documents
+        )
+    )
+
+
+def _source_fingerprint(sources: Iterable[SourceFile]) -> tuple[tuple[str, str], ...]:
+    """Return a stable fingerprint for the source documents in an export."""
+    return _portable_document_fingerprint(_source_document(source) for source in sources)
 
 
 def _single_internal_test(cell: Cell) -> Test:
@@ -378,6 +559,14 @@ def _group_document(group: ReplicateGroup) -> dict:
             for link in sorted(group.cell_links, key=lambda item: item.position)
         ],
     }
+
+
+def _cell_fingerprint(cells: Iterable[Cell]) -> tuple[tuple[str, str], ...]:
+    return _portable_document_fingerprint(_cell_document(cell) for cell in cells)
+
+
+def _group_fingerprint(groups: Iterable[ReplicateGroup]) -> tuple[tuple[str, str], ...]:
+    return _portable_document_fingerprint(_group_document(group) for group in groups)
 
 
 def estimate_export(db: Session, analysis: Analysis) -> dict:
@@ -590,6 +779,74 @@ def update_original_sources(
     return result
 
 
+def _refresh_and_validate_export_revision(
+    db: Session,
+    analysis: Analysis,
+    effective_views: list[dict],
+    *,
+    initial_analysis_modified_at: str | None,
+    initial_source_fingerprint: tuple[tuple[str, str], ...],
+    initial_cell_fingerprint: tuple[tuple[str, str], ...],
+    initial_group_fingerprint: tuple[tuple[str, str], ...],
+) -> Analysis:
+    """Refresh and validate the server-owned snapshot at a publish boundary."""
+    # Flush local changes before expiring so a test or caller that mutates the
+    # same session is treated exactly like a separate-session update.
+    db.flush()
+    db.expire_all()
+    latest_analysis = db.get(Analysis, analysis.id)
+    if latest_analysis is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_export_changed",
+                "message": "The analysis was removed while the report was being prepared.",
+            },
+        )
+    latest_source_rows = _analysis_sources(latest_analysis, db)
+    latest_sources = [source for source, _cell in latest_source_rows]
+    latest_modified_at = _database_datetime_identity(latest_analysis.modified_at)
+    if (
+        latest_modified_at != initial_analysis_modified_at
+        or _source_fingerprint(latest_sources) != initial_source_fingerprint
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_export_changed",
+                "message": "Analysis or source data changed while the report was being prepared. Rebuild the report.",
+            },
+        )
+    latest_cells, latest_groups = _selected_entities(db, latest_analysis)
+    if (
+        _cell_fingerprint(latest_cells) != initial_cell_fingerprint
+        or _group_fingerprint(latest_groups) != initial_group_fingerprint
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_export_changed",
+                "message": "Cell or replicate-group metadata changed while the report was being prepared. Rebuild the report.",
+            },
+        )
+    for view in effective_views:
+        _guard_portable_protocol_family(
+            db, latest_analysis, str(view.get("tab") or "cycles")
+        )
+        _validate_portable_view_identity(db, latest_analysis, view)
+    return latest_analysis
+
+
+def _begin_portable_publish_boundary(db: Session) -> None:
+    """Hold the SQLite writer boundary only through validation and publication."""
+    db.flush()
+    db.commit()
+    if db.get_bind().dialect.name == "sqlite":
+        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        db.begin()
+
+
 def export_analysis_html(
     db: Session,
     analysis: Analysis,
@@ -605,8 +862,27 @@ def export_analysis_html(
     cells, groups = _selected_entities(db, analysis)
     source_rows = _analysis_sources(analysis, db)
     sources = [source for source, _cell in source_rows]
-    for view in views or []:
+    cell_documents = [_cell_document(cell) for cell in cells]
+    group_documents = [_group_document(group) for group in groups]
+    saved_plots = analysis.spec.get("saved_plots") or []
+    if not views and saved_plots:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portable_snapshots_required",
+                "message": "Saved-plot exports require browser-rendered snapshots.",
+            },
+        )
+    effective_views = views if views is not None else _report_views(db, analysis)
+    for view in effective_views:
         _guard_portable_protocol_family(db, analysis, str(view.get("tab") or "cycles"))
+        _validate_portable_view_identity(db, analysis, view)
+    initial_analysis_modified_at = (
+        _database_datetime_identity(analysis.modified_at)
+    )
+    initial_source_fingerprint = _source_fingerprint(sources)
+    initial_cell_fingerprint = _portable_document_fingerprint(cell_documents)
+    initial_group_fingerprint = _portable_document_fingerprint(group_documents)
     export_id = str(uuid.uuid4())
     warnings: list[str] = []
 
@@ -632,10 +908,10 @@ def export_analysis_html(
                 "created_at": analysis.created_at.isoformat(),
                 "modified_at": analysis.modified_at.isoformat(),
             },
-            "cells": [_cell_document(cell) for cell in cells],
-            "replicate_groups": [_group_document(group) for group in groups],
+            "cells": cell_documents,
+            "replicate_groups": group_documents,
             "sources": source_documents,
-            "views": views if views is not None else _report_views(db, analysis),
+            "views": effective_views,
             "warnings": warnings,
         }
         descriptor, path = _prepare_payload(
@@ -721,27 +997,49 @@ def export_analysis_html(
             ),
             "payloads": payloads,
         }
-        _write_html(destination, manifest, payload_paths)
-
-    record_activity(
-        db,
-        category="analysis",
-        action="export_portable_analysis",
-        message=f'Exported portable analysis "{analysis.title}".',
-        entity_type="analysis",
-        entity_id=analysis.id,
-        details={
-            "include_original_files": include_original_files,
-            "embedded_original_files": sum(
-                item["kind"] == "original_source" for item in manifest["payloads"]
-            ),
-            "cell_count": len(cells),
-            "source_count": len(sources),
-            "plot_count": len(package["views"]),
-            "warning_count": len(warnings),
-        },
-    )
-    db.commit()
+        publish_temp = destination.with_name(
+            f".{destination.name}.{export_id}.tmp"
+        )
+        try:
+            # HTML generation can stream and base64-encode the complete report.
+            # Keep it outside SQLite's writer reservation; only the final
+            # identity check and atomic publication need the short boundary.
+            _write_html(publish_temp, manifest, payload_paths)
+            _begin_portable_publish_boundary(db)
+            _refresh_and_validate_export_revision(
+                db,
+                analysis,
+                effective_views,
+                initial_analysis_modified_at=initial_analysis_modified_at,
+                initial_source_fingerprint=initial_source_fingerprint,
+                initial_cell_fingerprint=initial_cell_fingerprint,
+                initial_group_fingerprint=initial_group_fingerprint,
+            )
+            os.replace(publish_temp, destination)
+            record_activity(
+                db,
+                category="analysis",
+                action="export_portable_analysis",
+                message=f'Exported portable analysis "{analysis.title}".',
+                entity_type="analysis",
+                entity_id=analysis.id,
+                details={
+                    "include_original_files": include_original_files,
+                    "embedded_original_files": sum(
+                        item["kind"] == "original_source" for item in manifest["payloads"]
+                    ),
+                    "cell_count": len(cells),
+                    "source_count": len(sources),
+                    "plot_count": len(package["views"]),
+                    "warning_count": len(warnings),
+                },
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            publish_temp.unlink(missing_ok=True)
     return {"manifest": manifest, "warnings": warnings}
 
 

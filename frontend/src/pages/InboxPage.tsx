@@ -143,6 +143,50 @@ export type ImportDraft = ImportPreview & {
   electrode_area_preset_name: string | null;
 };
 
+function importSourceFormatLabel(value: string | null): string | null {
+  if (!value) return null;
+  return value === "biologic_mpr" ? "BioLogic EC-Lab" : value;
+}
+
+function importVoltageCapabilitySummary(
+  value: ImportPreview["voltage_capabilities"] | null | undefined,
+): string | null {
+  const capabilities = value?.capabilities;
+  if (!capabilities) return null;
+  const roleLabel = (role: string | undefined, fallback: string) => {
+    if (role === "cell") return "Cell";
+    if (role === "working_vs_reference") return `Working vs ${value?.reference_electrode || "ref"}`;
+    if (role === "counter_vs_reference") return `Counter vs ${value?.reference_electrode || "ref"}`;
+    if (role === "mixed") return "Voltage role ambiguous";
+    return fallback;
+  };
+  const roles = value?.voltage_roles;
+  const labels = [
+    capabilities.primary_voltage
+      ? roles?.voltage_v === "mixed"
+        ? "Voltage role ambiguous"
+        : roleLabel(roles?.voltage_v, "Cell")
+      : null,
+    capabilities.working_potential
+      ? roleLabel(roles?.working_potential_v, "Working vs ref")
+      : null,
+    capabilities.counter_potential
+      ? roleLabel(roles?.counter_potential_v, "Counter vs ref")
+      : null,
+  ].filter((item): item is string => item !== null);
+  return labels.length ? labels.join(" + ") : null;
+}
+
+function importVoltageOriginLabel(
+  value: ImportPreview["voltage_capabilities"] | null | undefined,
+): string | null {
+  if (value?.voltage_v_origin === "derived_working_minus_counter") {
+    return "Cell voltage derived from Working - Counter";
+  }
+  if (value?.voltage_v_origin === "measured") return "Cell voltage measured";
+  return null;
+}
+
 function useImportPreviewLoader(
   setDrafts: Dispatch<SetStateAction<ImportDraft[]>>,
 ) {
@@ -2093,6 +2137,31 @@ function ImportModal({
                   <Text size="xs" c="dimmed">
                     {formatBytes(draft.size)} - .{draft.ext}
                   </Text>
+                  {importSourceFormatLabel(draft.source_format) && (
+                    <Text size="xs" c="dimmed">
+                      Format: {importSourceFormatLabel(draft.source_format)}
+                    </Text>
+                  )}
+                  {draft.technique && (
+                    <Text size="xs" c="dimmed">
+                      Technique: {draft.technique}
+                    </Text>
+                  )}
+                  {draft.reference_electrode && (
+                    <Text size="xs" c="dimmed">
+                      Reference electrode: {draft.reference_electrode}
+                    </Text>
+                  )}
+                  {importVoltageCapabilitySummary(draft.voltage_capabilities) && (
+                    <Text size="xs" c="dimmed">
+                      Voltage channels: {importVoltageCapabilitySummary(draft.voltage_capabilities)}
+                    </Text>
+                  )}
+                  {importVoltageOriginLabel(draft.voltage_capabilities) && (
+                    <Text size="xs" c="dimmed">
+                      {importVoltageOriginLabel(draft.voltage_capabilities)}
+                    </Text>
+                  )}
                 </Stack>
               </Paper>
 

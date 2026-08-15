@@ -142,6 +142,7 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(inspected.ext, "mpr")
         self.assertEqual(preview["source_format"], "biologic_mpr")
+        self.assertEqual(preview["technique"], "GCPL")
         self.assertEqual(preview["reference_electrode"], "Ag/AgCl")
         self.assertTrue(preview["parser_version"].startswith("bm:"))
         self.assertNotIn("settings", preview["raw_metadata"])

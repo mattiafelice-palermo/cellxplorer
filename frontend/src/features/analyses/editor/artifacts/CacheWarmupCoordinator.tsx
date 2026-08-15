@@ -9,6 +9,10 @@ import {
   type CacheWarmupTask,
 } from "../../../../api";
 import { isTauriApp } from "../../../../downloads";
+import {
+  warmupAnalysisQueryKey,
+  warmupAnalysisRevisionsMatch,
+} from "../policies/warmupIdentityPolicy";
 import { AnalysisCacheWarmupRenderer } from "./AnalysisCacheWarmupRenderer";
 
 async function mainWindowIsHidden(): Promise<boolean> {
@@ -51,7 +55,11 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
     staleTime: 60_000,
   });
   const analysis = useQuery({
-    queryKey: ["analysis-cache-warmup", task?.analysis_id],
+    // A warmup task is a snapshot of both the scientific identity and the
+    // saved-plot presentation. Include all of that identity in the query key
+    // so a consecutive generation for the same analysis cannot reuse an
+    // earlier AnalysisFull response from React Query's cache.
+    queryKey: warmupAnalysisQueryKey(task),
     queryFn: () => get<AnalysisFull>(`/api/analyses/${task!.analysis_id}`),
     enabled: task !== null,
     staleTime: 60_000,
@@ -138,7 +146,11 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
     [analysis.data, task?.plot_id],
   );
 
-  const finish = useCallback(async (error?: string, detail?: string) => {
+  const finish = useCallback(async (
+    error?: string,
+    detail?: string,
+    disposition: "ready" | "skipped" = "ready",
+  ) => {
     // Idempotent per task: the watchdog and a late renderer callback must not
     // both report the same task.
     if (!task || finishedTaskId.current === task.id) return;
@@ -146,7 +158,7 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
     try {
       await post("/api/cache/warmup/complete", {
         task_id: task.id,
-        status: error ? "failed" : "ready",
+        status: error ? "failed" : disposition,
         detail: error ? undefined : detail ?? "Cached plot and thumbnail ready",
         error,
       });
@@ -176,10 +188,27 @@ export function CacheWarmupCoordinator({ enabled }: { enabled: boolean }) {
   }, [analysis.error, analysis.isError, finish, task]);
 
   useEffect(() => {
-    if (analysis.isSuccess && task && !plot) void finish("Saved plot no longer exists");
-  }, [analysis.isSuccess, finish, plot, task]);
+    if (!analysis.isSuccess || !task) return;
+    if (!plot) {
+      void finish("Saved plot no longer exists");
+      return;
+    }
+    if (!warmupAnalysisRevisionsMatch(task, analysis.data, plot.modified_at)) {
+      void finish("Warmup task was superseded by newer analysis settings");
+    }
+  }, [analysis.data?.modified_at, analysis.isSuccess, finish, plot, task]);
 
-  if (!task || !analysis.data || !plot) return null;
+  const revisionsMatch = warmupAnalysisRevisionsMatch(
+    task,
+    analysis.data,
+    plot?.modified_at,
+  );
+  if (
+    !task ||
+    !analysis.data ||
+    !plot ||
+    !revisionsMatch
+  ) return null;
   return (
     <div
       aria-hidden="true"

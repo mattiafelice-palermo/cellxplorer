@@ -80,7 +80,11 @@ test("the four pre-existing terminal branches are unchanged", () => {
   );
   assert.deepEqual(
     resolveWarmup(idle({ previewSucceeded: true, traceCount: 0 })),
-    { status: "done" },
+    {
+      status: "done",
+      disposition: "skipped",
+      detail: "No plottable data is available for this saved plot",
+    },
   );
 });
 

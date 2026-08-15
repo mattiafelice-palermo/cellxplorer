@@ -2331,6 +2331,7 @@ function AnalysisEditorView({
         .then(() => {
           qc.invalidateQueries({ queryKey: ["analysis", aid] });
           qc.invalidateQueries({ queryKey: ["analyses"] });
+          void invalidateAnalysisQueries(qc, aid);
           if (autosaveSignatureRef.current === signatureAtSchedule) {
             setDirty(false);
             setAutosaveStatus("saved");
@@ -2515,6 +2516,7 @@ function AnalysisEditorView({
         setAutosaveStatus("saved");
         qc.setQueryData(["analysis", aid], saved);
         qc.invalidateQueries({ queryKey: ["analyses"] });
+        void invalidateAnalysisQueries(qc, aid);
         if (wait) {
           setLeaveSaving(false);
           proceed();
@@ -3178,6 +3180,7 @@ function AnalysisEditorView({
           setAutosaveStatus("saved");
           qc.invalidateQueries({ queryKey: ["analysis", aid] });
           qc.invalidateQueries({ queryKey: ["analyses"] });
+          void invalidateAnalysisQueries(qc, aid);
           setLeaveSaving(false);
           setLeavePrompt(null);
           proceed();
@@ -3207,6 +3210,7 @@ function AnalysisEditorView({
         setAutosaveStatus("saved");
         qc.invalidateQueries({ queryKey: ["analysis", aid] });
         qc.invalidateQueries({ queryKey: ["analyses"] });
+        void invalidateAnalysisQueries(qc, aid);
         setLeaveSaving(false);
         setLeavePrompt(null);
         proceed();
@@ -3258,6 +3262,7 @@ function AnalysisEditorView({
         setPlotSessionActive(true);
         qc.invalidateQueries({ queryKey: ["analysis", aid] });
         qc.invalidateQueries({ queryKey: ["analyses"] });
+        void invalidateAnalysisQueries(qc, aid);
         const proceed = leavePrompt.proceed;
         setLeaveSaving(false);
         setLeavePrompt(null);

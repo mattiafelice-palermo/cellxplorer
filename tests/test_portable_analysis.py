@@ -19,7 +19,18 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Analysis, Cell, Folder, FolderCell, SourceFile, Test, TestFile
+from app.models import (
+    Analysis,
+    Cell,
+    CellMetadata,
+    Folder,
+    FolderCell,
+    ReplicateGroup,
+    ReplicateGroupCell,
+    SourceFile,
+    Test,
+    TestFile,
+)
 from app.routers.analyses import _portable_local_path
 from app.services import analysis_engine, cache, calc, parsing, portable_analysis
 
@@ -94,11 +105,17 @@ class PortableAnalysisTests(unittest.TestCase):
             include_saved_plots=include_saved_plots
         )
         destination = self.root / "portable.html"
+        views = (
+            portable_analysis._report_views(db, analysis)
+            if include_saved_plots
+            else None
+        )
         portable_analysis.export_analysis_html(
             db,
             analysis,
             destination,
             include_original_files=include_original_files,
+            views=views,
         )
         return destination, source_hash
 
@@ -742,6 +759,333 @@ class PortableAnalysisTests(unittest.TestCase):
         self.assertEqual(time_view["result"]["cell_traces"][0]["label"], "Portable cell")
         self.assertGreater(len(time_view["result"]["cell_traces"][0]["time_s"]), 0)
 
+    def test_portable_export_rejects_snapshot_with_stale_scientific_identity(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+        views = portable_analysis._report_views(db, analysis)
+        views[0]["data_signature"] = "stale-source-identity"
+
+        with self.assertRaises(HTTPException) as raised:
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                self.root / "stale-view.html",
+                include_original_files=False,
+                views=views,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_plot_changed")
+
+    def test_saved_plot_export_requires_browser_snapshots(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+
+        with self.assertRaises(HTTPException) as raised:
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                self.root / "missing-snapshots.html",
+                include_original_files=False,
+                views=[],
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_snapshots_required")
+
+    def test_saved_plot_export_rejects_forged_current_view_snapshot(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+        views = [
+            {
+                "id": "current",
+                "name": "Forged current view",
+                "subtitle": "",
+                "description": None,
+                "tab": "cycles",
+                "result": {},
+                "data_signature": "forged",
+                "plot_revision": None,
+            }
+        ]
+
+        with self.assertRaises(HTTPException) as raised:
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                self.root / "forged-current.html",
+                include_original_files=False,
+                views=views,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_snapshots_required")
+
+    def test_portable_server_view_fallback_dispatches_each_plot_family(self):
+        db, analysis, *_ = self.create_analysis()
+        spec = deepcopy(analysis.spec)
+        plots = []
+        for index, tab in enumerate(
+            ["cycles", "time_capacity", "steps", "dcir", "chargeability", "crate"]
+        ):
+            plots.append(
+                {
+                    "id": f"fallback-{index}",
+                    "tab": tab,
+                    "name": f"Fallback {tab}",
+                    "subtitle": "",
+                    "description": None,
+                    "selection": deepcopy(spec["selection"]),
+                    "computation": deepcopy(spec["computation"]),
+                    "aggregation": deepcopy(spec["aggregation"]),
+                    "presentation": deepcopy(spec["presentation"]),
+                }
+            )
+        spec["saved_plots"] = plots
+        analysis.spec = spec
+        db.commit()
+
+        with patch.object(
+            analysis_engine, "compute", return_value={"family": "cycles"}
+        ) as cycles, patch.object(
+            analysis_engine, "compute_time_capacity", return_value={"family": "time_capacity"}
+        ) as time_capacity, patch.object(
+            analysis_engine, "compute_steps", return_value={"family": "steps"}
+        ) as steps, patch.object(
+            analysis_engine, "compute_dcir", return_value={"family": "dcir"}
+        ) as dcir, patch.object(
+            portable_analysis.chargeability,
+            "compute",
+            return_value={"family": "chargeability"},
+        ) as chargeability_compute, patch.object(
+            portable_analysis.rate_capability,
+            "compute",
+            return_value={"family": "crate"},
+        ) as rate_compute:
+            views = portable_analysis._report_views(db, analysis)
+
+        self.assertEqual(
+            [view["result"]["family"] for view in views],
+            ["cycles", "time_capacity", "steps", "dcir", "chargeability", "crate"],
+        )
+        cycles.assert_called_once()
+        time_capacity.assert_called_once()
+        steps.assert_called_once()
+        dcir.assert_called_once()
+        chargeability_compute.assert_called_once()
+        rate_compute.assert_called_once()
+
+    def test_portable_export_rejects_snapshot_from_wrong_saved_plot_family(self):
+        db, analysis, *_ = self.create_analysis(include_saved_plots=True)
+        views = portable_analysis._report_views(db, analysis)
+        views[0]["tab"] = "time_capacity"
+
+        with self.assertRaises(HTTPException) as raised:
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                self.root / "wrong-family.html",
+                include_original_files=False,
+                views=views,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_plot_changed")
+
+    def test_portable_export_rechecks_state_after_separate_session_mutation(self):
+        db, analysis, *_ = self.create_analysis()
+        destination = self.root / "mutated-during-export.html"
+        real_prepare = portable_analysis._prepare_payload
+        calls = 0
+
+        def prepare_and_mutate(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            result = real_prepare(*args, **kwargs)
+            if calls == 2:
+                other = sessionmaker(
+                    bind=db.get_bind(),
+                    autoflush=False,
+                    expire_on_commit=False,
+                )()
+                try:
+                    other_analysis = other.get(Analysis, analysis.id)
+                    changed_spec = deepcopy(other_analysis.spec)
+                    changed_spec["selection"]["entries"] = []
+                    other_analysis.spec = changed_spec
+                    other_analysis.title = "Changed during export"
+                    other.commit()
+                finally:
+                    other.close()
+            return result
+
+        with patch.object(
+            portable_analysis, "_prepare_payload", side_effect=prepare_and_mutate
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                portable_analysis.export_analysis_html(
+                    db,
+                    analysis,
+                    destination,
+                    include_original_files=False,
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_export_changed")
+        self.assertFalse(destination.exists())
+
+    def test_portable_export_rechecks_state_after_final_html_write_mutation(self):
+        db, analysis, *_ = self.create_analysis()
+        destination = self.root / "mutated-during-final-write.html"
+        real_write = portable_analysis._write_html
+
+        def write_and_mutate(path, manifest, payload_paths):
+            changed_spec = deepcopy(analysis.spec)
+            changed_spec["selection"]["entries"] = []
+            analysis.spec = changed_spec
+            db.flush()
+            return real_write(path, manifest, payload_paths)
+
+        with patch.object(portable_analysis, "_write_html", side_effect=write_and_mutate):
+            with self.assertRaises(HTTPException) as raised:
+                portable_analysis.export_analysis_html(
+                    db,
+                    analysis,
+                    destination,
+                    include_original_files=False,
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_export_changed")
+        self.assertFalse(destination.exists())
+
+    def test_portable_export_generates_html_before_acquiring_writer_boundary(self):
+        db, analysis, *_ = self.create_analysis()
+        destination = self.root / "writer-order.html"
+        events: list[str] = []
+        writing = False
+        real_write = portable_analysis._write_html
+        real_begin = portable_analysis._begin_portable_publish_boundary
+
+        def write_and_record(path, manifest, payload_paths):
+            nonlocal writing
+            events.append("write-start")
+            writing = True
+            try:
+                return real_write(path, manifest, payload_paths)
+            finally:
+                writing = False
+                events.append("write-end")
+
+        def begin_and_record(session):
+            self.assertFalse(writing)
+            events.append("begin")
+            return real_begin(session)
+
+        with patch.object(
+            portable_analysis, "_write_html", side_effect=write_and_record
+        ), patch.object(
+            portable_analysis,
+            "_begin_portable_publish_boundary",
+            side_effect=begin_and_record,
+        ):
+            portable_analysis.export_analysis_html(
+                db,
+                analysis,
+                destination,
+                include_original_files=False,
+            )
+
+        self.assertEqual(events, ["write-start", "write-end", "begin"])
+        self.assertTrue(destination.exists())
+
+    def test_portable_export_rejects_cell_description_and_metadata_mutation(self):
+        db, analysis, *_ = self.create_analysis()
+        cell_id = analysis.spec["selection"]["entries"][0]["ref_id"]
+        destination = self.root / "mutated-cell.html"
+        destination.write_text("sentinel", encoding="utf-8")
+        real_write = portable_analysis._write_html
+
+        def write_and_mutate(path, manifest, payload_paths):
+            result = real_write(path, manifest, payload_paths)
+            other = sessionmaker(
+                bind=db.get_bind(),
+                autoflush=False,
+                expire_on_commit=False,
+            )()
+            try:
+                other_cell = other.get(Cell, cell_id)
+                other_cell.description = "Changed while exporting"
+                other.add(CellMetadata(cell_id=cell_id, key="operator_note", value="changed"))
+                other.commit()
+            finally:
+                other.close()
+            return result
+
+        with patch.object(portable_analysis, "_write_html", side_effect=write_and_mutate):
+            with self.assertRaises(HTTPException) as raised:
+                portable_analysis.export_analysis_html(
+                    db,
+                    analysis,
+                    destination,
+                    include_original_files=False,
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_export_changed")
+        self.assertEqual(destination.read_text(encoding="utf-8"), "sentinel")
+
+    def test_portable_export_rejects_replicate_group_description_and_membership_mutation(self):
+        db, analysis, *_ = self.create_analysis()
+        cell_id = analysis.spec["selection"]["entries"][0]["ref_id"]
+        second_cell = Cell(name="Unselected group member")
+        db.add(second_cell)
+        db.flush()
+        db.add(Test(cell_id=second_cell.id, name="Empty test"))
+        group = ReplicateGroup(name="Portable replicates", description="Initial group")
+        db.add(group)
+        db.flush()
+        db.add(ReplicateGroupCell(group_id=group.id, cell_id=cell_id, position=0))
+        spec = deepcopy(analysis.spec)
+        spec["selection"]["entries"] = [{"kind": "replicate_group", "ref_id": group.id}]
+        analysis.spec = spec
+        db.commit()
+        destination = self.root / "mutated-group.html"
+        destination.write_text("sentinel", encoding="utf-8")
+        real_write = portable_analysis._write_html
+
+        def write_and_mutate(path, manifest, payload_paths):
+            result = real_write(path, manifest, payload_paths)
+            other = sessionmaker(
+                bind=db.get_bind(),
+                autoflush=False,
+                expire_on_commit=False,
+            )()
+            try:
+                other_group = other.get(ReplicateGroup, group.id)
+                other_group.description = "Changed while exporting"
+                other.add(
+                    ReplicateGroupCell(
+                        group_id=group.id,
+                        cell_id=second_cell.id,
+                        position=1,
+                    )
+                )
+                other.commit()
+            finally:
+                other.close()
+            return result
+
+        with patch.object(portable_analysis, "_write_html", side_effect=write_and_mutate):
+            with self.assertRaises(HTTPException) as raised:
+                portable_analysis.export_analysis_html(
+                    db,
+                    analysis,
+                    destination,
+                    include_original_files=False,
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "portable_export_changed")
+        self.assertEqual(destination.read_text(encoding="utf-8"), "sentinel")
+
     def test_multi_source_portable_round_trip_preserves_cell_order_and_one_test(self):
         db = self.make_session()
         first_path = self.root / "first.ndax"
@@ -931,11 +1275,13 @@ class PortableAnalysisTests(unittest.TestCase):
         db.commit()
 
         destination = self.root / "draft-export.html"
+        views = portable_analysis._report_views(db, analysis)
         portable_analysis.export_analysis_html(
             db,
             analysis,
             destination,
             include_original_files=False,
+            views=views,
         )
         report = self.read_report(destination)
         self.assertNotIn("draft_plot", report["analysis"]["spec"])

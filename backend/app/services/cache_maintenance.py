@@ -420,12 +420,27 @@ class WarmupCoordinator:
                     and marker.get("plot_modified_at") == plot.get("modified_at")
                     and marker.get("thumbnail_cache_version")
                     == analysis_cache.THUMBNAIL_CACHE_VERSION
+                    and marker.get("disposition") == "unavailable"
+                ):
+                    continue
+                if (
+                    marker
+                    and marker.get("data_signature") == expected_signature
+                    and marker.get("plot_modified_at") == plot.get("modified_at")
+                    and marker.get("thumbnail_cache_version")
+                    == analysis_cache.THUMBNAIL_CACHE_VERSION
                     and analysis_cache.load_latest_thumbnail(
-                        analysis.id, str(plot.get("id")), "saved"
+                        analysis.id,
+                        str(plot.get("id")),
+                        "saved",
+                        expected_data_signature=expected_signature,
                     )
                     is not None
                     and analysis_cache.load_latest_thumbnail(
-                        analysis.id, str(plot.get("id")), "preview"
+                        analysis.id,
+                        str(plot.get("id")),
+                        "preview",
+                        expected_data_signature=expected_signature,
                     )
                     is not None
                 ):
@@ -821,10 +836,16 @@ class WarmupCoordinator:
             self._active = None
             if status == "ready" and not error:
                 has_saved = analysis_cache.load_latest_thumbnail(
-                    completed_task["analysis_id"], completed_task["plot_id"], "saved"
+                    completed_task["analysis_id"],
+                    completed_task["plot_id"],
+                    "saved",
+                    expected_data_signature=completed_task["expected_data_signature"],
                 )
                 has_preview = analysis_cache.load_latest_thumbnail(
-                    completed_task["analysis_id"], completed_task["plot_id"], "preview"
+                    completed_task["analysis_id"],
+                    completed_task["plot_id"],
+                    "preview",
+                    expected_data_signature=completed_task["expected_data_signature"],
                 )
                 if has_saved is None or has_preview is None:
                     status = "failed"
@@ -843,7 +864,7 @@ class WarmupCoordinator:
                     status=status,
                     detail=detail,
                     error=error,
-                    counter="failed" if error else "ready",
+                    counter="failed" if error else status,
                 )
                 if self._next_index >= len(self._tasks):
                     finished = True
@@ -859,15 +880,19 @@ class WarmupCoordinator:
                         status="paused",
                         description="Paused until CellXplorer is idle",
                     )
-        if status == "ready" and not error:
+        if status in {"ready", "skipped"} and not error:
             # Record what this plot was prepared for, so the next queue
             # build can skip it. Covers both fresh renders and tasks that
-            # completed straight from an existing cache entry.
+            # completed straight from an existing cache entry. A skipped
+            # result is durable only for the exact scientific identity and
+            # plot revision; if a later source gains the requested capability,
+            # the signature changes and the plot is queued again.
             analysis_cache.store_prepared_marker(
                 completed_task["analysis_id"],
                 completed_task["plot_id"],
                 completed_task["expected_data_signature"],
                 completed_task.get("plot_modified_at"),
+                disposition="unavailable" if status == "skipped" else "ready",
             )
         if finished:
             activity_db = db if db is not None else SessionLocal()

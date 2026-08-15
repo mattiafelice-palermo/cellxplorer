@@ -11,6 +11,7 @@ import {
   Stack,
   Switch,
   Text,
+  Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
@@ -32,9 +33,17 @@ import {
 import { DebouncedNumberInput, DebouncedTextInput } from "../../../../../components/DebouncedInputs";
 import {
   shouldShowVoltageChannelSelector,
+  plotlySafeText,
+  timeCapacityExportOptions,
+  timeCapacityExportMatchesRequest,
+  timeCapacityResultMatchesVoltageChannel,
+  voltageChannelAvailabilityPublication,
+  voltageChannelAvailabilitySignature,
+  voltageChannelDataIdentity,
+  voltageChannelUnavailable,
+  voltageChannelUnavailableMessage,
   voltageChannelLabel,
   voltageChannelSelectorOptions,
-  voltageChannelShortLabel,
   type VoltageChannel,
 } from "../../policies/voltageChannelPolicy";
 import Plot from "../../../../../components/Plot";
@@ -312,6 +321,10 @@ export function timeCapacityTracesForResult(
   const style = currentPlotStyle(spec, "time_capacity");
   const palette = plotPalette(style);
   const cfg = timeCapacityConfig(spec);
+  const selectedVoltageLabel = voltageChannelLabel(cfg.voltage_channel, result.voltage_channels);
+  const selectedVoltageHoverLabel = plotlySafeText(
+    selectedVoltageLabel.replace(/\s*\(V\)$/, "")
+  );
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
@@ -457,21 +470,25 @@ export function timeCapacityTracesForResult(
         },
         mode: seriesPlotlyMode(resolved),
         type: traceType,
-        connectgaps: false,
-        customdata: segmentCustomdata,
-        cellxplorer_export_columns: sourceExportColumns(
+         connectgaps: false,
+         customdata: segmentCustomdata,
+         cellxplorer_export_columns: sourceExportColumns(
           name,
           segment.cycle,
           segment.sourceCycle,
           segment.sourcePosition,
-          segment.sourceFilename,
-          segment.sourceHash,
-        ),
-        hovertemplate:
-          "%{y:.4f} V<br>%{x:.4f}<br>global cycle %{customdata[0]}<br>" +
-          "local cycle %{customdata[1]}<br>%{customdata[3]} (source %{customdata[2]})" +
-          `<extra>${name}</extra>`,
-      } as Plotly.Data);
+           segment.sourceFilename,
+           segment.sourceHash,
+         ),
+         meta: selectedVoltageHoverLabel,
+         cellxplorer_export_axis_labels: {
+           y: style.y_title ?? selectedVoltageLabel,
+         },
+         hovertemplate:
+           "%{meta} %{y:.4f} V<br>%{x:.4f}<br>global cycle %{customdata[0]}<br>" +
+           "local cycle %{customdata[1]}<br>%{customdata[3]} (source %{customdata[2]})" +
+           "<extra>%{fullData.name}</extra>",
+       } as Plotly.Data);
       if (cfg.stacked) {
         const left = cfg.current_left ?? "current_ma";
         const leftValues = currentAxisValues(segment, trace, left, cfg);
@@ -681,7 +698,9 @@ export function timeCapacityLayout(
     yaxis: {
       ...baseAxis(style.y_axis),
       title: {
-        text: style.y_title ?? voltageChannelLabel(cfg.voltage_channel, result?.voltage_channels),
+        text: plotlySafeText(
+          style.y_title ?? voltageChannelLabel(cfg.voltage_channel, result?.voltage_channels)
+        ),
         font: titleFont,
         standoff: style.y_axis.title_standoff,
       },
@@ -783,6 +802,7 @@ export function TimeCapacitySettings({
   // see frontend/tests/voltageChannelPolicy.test.ts — rather than logic
   // that lives only in this component.
   const voltageChannelOptions = voltageChannelSelectorOptions(cfg.voltage_channel, voltageChannels);
+  const selectedVoltageLabel = voltageChannelLabel(cfg.voltage_channel, voltageChannels);
   const showVoltageChannelSelector = shouldShowVoltageChannelSelector(voltageChannelOptions);
   const needsArea = cfg.current_left === "current_density" || cfg.current_right === "current_density";
   const updateTime = (fn: (cfg: TimeCapacityConfig) => void) =>
@@ -838,6 +858,15 @@ export function TimeCapacitySettings({
                   label="Voltage quantity"
                   data={voltageChannelOptions}
                   value={cfg.voltage_channel}
+                  title={selectedVoltageLabel}
+                  styles={{ input: { textOverflow: "ellipsis" } }}
+                  renderOption={({ option }) => (
+                    <Tooltip label={option.label} withArrow>
+                      <Text component="span" size="sm" truncate title={option.label}>
+                        {option.label}
+                      </Text>
+                    </Tooltip>
+                  )}
                   onChange={(value) =>
                     value &&
                     updateTime(
@@ -1094,6 +1123,7 @@ function TimeCapacityPlotCardView({
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
+  const [dataExporting, setDataExporting] = useState(false);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -1154,6 +1184,13 @@ function TimeCapacityPlotCardView({
       viewportWidth,
     ]
   );
+  const dataSignatureRef = useRef(dataSignature);
+  // Keep the latest request identity synchronous with render. A passive
+  // effect leaves a narrow window in which a delayed full-resolution export
+  // can resolve after a channel switch but before this ref catches up.
+  dataSignatureRef.current = dataSignature;
+  const voltageChannelRef = useRef(cfg.voltage_channel);
+  voltageChannelRef.current = cfg.voltage_channel;
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, dataSignature],
     queryFn: async () => {
@@ -1180,8 +1217,48 @@ function TimeCapacityPlotCardView({
     enabled: spec.selection.entries.length > 0,
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
-    placeholderData: (previous) => previous,
   });
+  const currentResult = timeCapacityResultMatchesVoltageChannel(
+    timeResult.data,
+    cfg.voltage_channel
+  )
+    ? timeResult.data
+    : undefined;
+  const selectedVoltageUnavailable = voltageChannelUnavailable(
+    cfg.voltage_channel,
+    currentResult?.voltage_channels
+  );
+  const voltageDataIdentity = voltageChannelDataIdentity(currentResult);
+  const lastVoltageDataIdentityRef = useRef<string | undefined>(undefined);
+  const effectiveVoltageDataIdentity =
+    voltageDataIdentity ?? lastVoltageDataIdentityRef.current;
+  const voltageCapabilitySignature = useMemo(
+    () => voltageChannelAvailabilitySignature(spec, effectiveVoltageDataIdentity),
+    [effectiveVoltageDataIdentity, spec.selection]
+  );
+  const voltageCapabilitySignatureRef = useRef(voltageCapabilitySignature);
+  useEffect(() => {
+    const publication = voltageChannelAvailabilityPublication(
+      voltageCapabilitySignatureRef.current,
+      voltageCapabilitySignature,
+      currentResult?.voltage_channels,
+    );
+    if (voltageDataIdentity !== undefined) {
+      lastVoltageDataIdentityRef.current = voltageDataIdentity;
+    }
+    if (publication.reset) {
+      voltageCapabilitySignatureRef.current = voltageCapabilitySignature;
+      onVoltageChannelsChange?.(undefined);
+    }
+    if (publication.channels !== undefined) {
+      onVoltageChannelsChange?.(publication.channels);
+    }
+  }, [
+    currentResult?.voltage_channels,
+    onVoltageChannelsChange,
+    voltageCapabilitySignature,
+    voltageDataIdentity,
+  ]);
   const computeJob = useQuery({
     queryKey: ["background-job-token", computeToken],
     queryFn: () => get<BackgroundJob | null>(`/api/background-jobs/by-token/${computeToken}`),
@@ -1190,13 +1267,13 @@ function TimeCapacityPlotCardView({
     refetchInterval: (query) =>
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
-  const showComputeProgress = useDelayedFlag(timeResult.isLoading);
+  const showComputeProgress = useDelayedFlag(
+    timeResult.isLoading || (timeResult.isFetching && !currentResult)
+  );
+  const loadingWithoutResult = timeResult.isLoading || (timeResult.isFetching && !currentResult);
   useEffect(() => {
     onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching);
   }, [onReadyChange, timeResult.isFetching, timeResult.isLoading]);
-  useEffect(() => {
-    onVoltageChannelsChange?.(timeResult.data?.voltage_channels);
-  }, [onVoltageChannelsChange, timeResult.data?.voltage_channels]);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -1208,17 +1285,20 @@ function TimeCapacityPlotCardView({
     [spec]
   );
   const exportTraces = useMemo(
-    () => (timeResult.data ? timeCapacityTracesForResult(timeResult.data, spec) : []),
+    () =>
+      currentResult && !selectedVoltageUnavailable
+        ? timeCapacityTracesForResult(currentResult, spec)
+        : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timeResult.data, viewSignature]
+    [currentResult, selectedVoltageUnavailable, viewSignature]
   );
   const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(timeResult.data, spec, exportTraces)),
+    () => zoom.apply(timeCapacityLayout(currentResult, spec, exportTraces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timeResult.data, viewSignature, exportTraces]
+    [currentResult, viewSignature, exportTraces]
   );
   const style = currentPlotStyle(spec, "time_capacity");
   const explainer = getTimeCapacityExplainer(
@@ -1275,14 +1355,49 @@ function TimeCapacityPlotCardView({
     });
   };
 
-  const handleDataExport = (baseName: string) => {
-    downloadDataExport(tracesToColumns(exportTraces, layout), style, baseName).catch(
-      (e: Error) => notifications.show({ message: e.message || "Data export failed.", color: "red" })
-    );
+  const handleDataExport = async (baseName: string) => {
+    if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
+    const requestedSignature = dataSignature;
+    const requestedVoltageChannel = cfg.voltage_channel;
+    const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
+    setDataExporting(true);
+    try {
+      const fullResult = await post<TimeCapacityResult>(
+        `/api/analyses/${analysisId}/time-capacity`,
+        {
+          spec,
+          ...timeCapacityExportOptions(viewportWidth),
+        }
+      );
+      if (
+        !timeCapacityExportMatchesRequest(
+          dataSignatureRef.current,
+          requestedSignature,
+          voltageChannelRef.current,
+          requestedVoltageChannel,
+          fullResult,
+          requestedSourceDataIdentity
+        )
+      ) {
+        throw new Error("The plot changed while the full-resolution export was prepared. Please try again.");
+      }
+      if (voltageChannelUnavailable(requestedVoltageChannel, fullResult.voltage_channels)) {
+        throw new Error(voltageChannelUnavailableMessage(requestedVoltageChannel));
+      }
+      const fullTraces = timeCapacityTracesForResult(fullResult, spec);
+      if (fullTraces.length === 0) {
+        throw new Error("No data is available for the selected voltage quantity.");
+      }
+      await downloadDataExport(tracesToColumns(fullTraces, layout), style, baseName);
+    } catch (e) {
+      notifications.show({ message: e instanceof Error ? e.message : "Data export failed.", color: "red" });
+    } finally {
+      setDataExporting(false);
+    }
   };
 
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
-    if (!plotDivRef.current || !timeResult.data) return;
+    if (!plotDivRef.current || !currentResult || selectedVoltageUnavailable) return;
     try {
       const plan = resolveExportPlan(style, currentViewSize(), layout);
       const ppi = Math.max(36, style.export_ppi ?? 96);
@@ -1332,7 +1447,9 @@ function TimeCapacityPlotCardView({
    */
   const buildSeriesPreview = useCallback(
     (draft: { overrides: Record<string, SeriesStyleOverride>; rules: SeriesStyleRule[]; styleOverlay?: Partial<PlotStyle> }) => {
-      if (!timeResult.data) return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      if (!currentResult || selectedVoltageUnavailable) {
+        return { data: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+      }
       // A shallow spec with only the scoped style swapped. structuredClone here
       // copied the whole selection, protocol segments and saved-plot state on
       // every keystroke, for the sake of two fields.
@@ -1351,11 +1468,11 @@ function TimeCapacityPlotCardView({
           },
         },
       };
-      const data = decimatePreviewTraces(timeCapacityTracesForResult(timeResult.data, draftSpec));
-      return { data, layout: timeCapacityLayout(timeResult.data, draftSpec, data) };
-    },
-    [timeResult.data, spec],
-  );
+       const data = decimatePreviewTraces(timeCapacityTracesForResult(currentResult, draftSpec));
+       return { data, layout: timeCapacityLayout(currentResult, draftSpec, data) };
+     },
+     [currentResult, selectedVoltageUnavailable, spec],
+   );
 
   return (
     <Group align="stretch" wrap="nowrap">
@@ -1376,9 +1493,9 @@ function TimeCapacityPlotCardView({
           tabName="Time / capacity"
           plotName={plotName}
           subtitle={subtitle}
-          quantityName={
-            cfg.view === "voltage_current"
-              ? `${voltageChannelShortLabel(cfg.voltage_channel)} and current`
+           quantityName={
+             cfg.view === "voltage_current"
+               ? `${voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)} and current`
               : cfg.view === "dqdv"
                 ? "dQ/dV"
                 : "dV/dQ"
@@ -1401,9 +1518,9 @@ function TimeCapacityPlotCardView({
           getExportPreview={getExportPreview}
           style={style}
           updateStyle={updatePlotStyle}
-          viewSize={plotSize}
-          layout={layout}
-          canExport={exportTraces.length > 0}
+           viewSize={plotSize}
+           layout={layout}
+           canExport={Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
           edited={edited}
           onNewPlot={onNewPlot}
           newPlotEnabled={newPlotEnabled}
@@ -1414,18 +1531,20 @@ function TimeCapacityPlotCardView({
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
         )}
-        {timeResult.isLoading ? (
+         {loadingWithoutResult ? (
           // Hold the space silently until the load is slow enough to mention.
           <Center h={500}>
             {showComputeProgress ? (
               <ComputeProgress job={computeJob.data ?? undefined} label="Preparing time/capacity plot" />
             ) : null}
           </Center>
-        ) : traces.length === 0 ? (
-          <Center h={500}>
-            <Text size="sm" c="dimmed">
-              Add cells or replicates, then choose cycles to plot raw voltage and current.
-            </Text>
+         ) : traces.length === 0 ? (
+           <Center h={500}>
+             <Text size="sm" c="dimmed">
+               {selectedVoltageUnavailable
+                 ? voltageChannelUnavailableMessage(cfg.voltage_channel)
+                 : "Add cells or replicates, then choose cycles to plot raw voltage and current."}
+             </Text>
           </Center>
         ) : (
           <Box
@@ -1466,13 +1585,13 @@ function TimeCapacityPlotCardView({
       <PlotStylePanel
         opened={stylePanelOpen}
         spec={spec}
-        result={timeResult.data}
+         result={currentResult}
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="time_capacity"
         buildSeriesPreview={buildSeriesPreview}
         timeCapacityStacked={cfg.stacked}
-        yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, timeResult.data?.voltage_channels)}
+         yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)}
       />
     </Group>
   );

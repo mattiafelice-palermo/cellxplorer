@@ -36,7 +36,7 @@ export interface WarmupSignals {
 
 export type WarmupResolution =
   | { status: "pending" }
-  | { status: "done"; error?: string; detail?: string };
+  | { status: "done"; error?: string; detail?: string; disposition?: "ready" | "skipped" };
 
 const PENDING: WarmupResolution = { status: "pending" };
 
@@ -86,7 +86,11 @@ export function resolveWarmup(signals: WarmupSignals): WarmupResolution {
     };
   }
   if (signals.previewSucceeded && signals.traceCount === 0) {
-    return { status: "done" };
+    return {
+      status: "done",
+      disposition: "skipped",
+      detail: "No plottable data is available for this saved plot",
+    };
   }
   return PENDING;
 }

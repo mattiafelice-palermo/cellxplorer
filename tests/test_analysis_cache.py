@@ -127,6 +127,45 @@ class AnalysisCacheTests(unittest.TestCase):
             "data:image/png;base64,iVBORw0KGgo=",
         )
 
+    def test_indexed_thumbnail_rejects_changed_scientific_data_signature(self):
+        thumbnail = "data:image/png;base64,iVBORw0KGgo="
+        preview = "data:image/webp;base64,UklGRg=="
+        analysis_cache.store_artifact(
+            9,
+            "plot-source-change",
+            "client-signature:source-old",
+            {
+                "svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+                "thumbnail": thumbnail,
+                "preview_thumbnail": preview,
+                "figure": {"data": [], "layout": {}, "config": {}},
+                "summary": [],
+            },
+            client_signature="client-signature",
+            data_signature="source-old",
+        )
+
+        self.assertEqual(
+            analysis_cache.load_indexed_thumbnail(
+                9,
+                "plot-source-change",
+                "client-signature",
+                expected_data_signature="source-old",
+            ),
+            thumbnail,
+        )
+        # The saved plot signature is unchanged, but a source hash/parser or
+        # capability change produces a new scientific data identity. The old
+        # image must not be served under that new identity.
+        self.assertIsNone(
+            analysis_cache.load_indexed_thumbnail(
+                9,
+                "plot-source-change",
+                "client-signature",
+                expected_data_signature="source-new",
+            )
+        )
+
     def test_webp_thumbnail_is_persisted(self):
         thumbnail = "data:image/webp;base64,UklGRg=="
         preview = "data:image/png;base64,iVBORw0KGgo="

@@ -1,10 +1,12 @@
 import hashlib
+import json
 import os
 import shutil
 import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -18,11 +20,12 @@ os.environ.setdefault("CELLXPLORER_DATA", str(ROOT / ".test-cellxplorer"))
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
-from app.models import Cell, CellMetadata, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
+from app.models import Analysis, Cell, CellMetadata, ReplicateGroup, ReplicateGroupCell, SourceFile, Test, TestFile
+from app.routers import analyses as analyses_router
 from app.routers.library import get_cell_protocol
 from app.services import analysis_cache
 from app.services import analysis_engine as engine
-from app.services import cache, calc, parsing, protocol, scanner
+from app.services import cache, calc, canonical_cycling, parsing, protocol, scanner
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -662,6 +665,167 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("current_ma", trace)
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
+
+    def test_full_time_capacity_export_request_keeps_all_points_and_precision(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": None,
+            "max_points_per_cell": 100,
+        }
+
+        compact = engine.compute_time_capacity(
+            self.db, spec, None, precision="standard", compact=True
+        )
+        full = engine.compute_time_capacity(
+            self.db, spec, None, precision="full", compact=False
+        )
+
+        compact_trace = compact["cell_traces"][0]
+        full_trace = full["cell_traces"][0]
+        self.assertEqual(compact["rendering"]["precision"], "standard")
+        self.assertTrue(compact["rendering"]["compact"])
+        self.assertEqual(full["rendering"]["precision"], "full")
+        self.assertFalse(full["rendering"]["compact"])
+        self.assertLess(len(compact_trace["voltage_v"]), len(full_trace["voltage_v"]))
+        self.assertEqual(len(full_trace["voltage_v"]), 200)
+        self.assertEqual(full_trace["voltage_v"][0], 3.5)
+
+    def test_time_capacity_data_signature_includes_unit_scientific_inputs(self):
+        cell = self.cells["c1"]
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        baseline = analysis_cache.time_capacity_data_signature(
+            self.db, spec, None, use_current_versions=True
+        )
+        original_name = cell.name
+        cell.name = "Renamed cell"
+        self.db.flush()
+        self.assertNotEqual(
+            baseline,
+            analysis_cache.time_capacity_data_signature(
+                self.db, spec, None, use_current_versions=True
+            ),
+            "cell label",
+        )
+        cell.name = original_name
+        self.db.flush()
+        self.assertEqual(
+            baseline,
+            analysis_cache.time_capacity_data_signature(
+                self.db, spec, None, use_current_versions=True
+            ),
+            "cell label restore",
+        )
+
+        for key, value in (
+            ("active_mass_mg", "10"),
+            ("nominal_capacity_mah", "2.5"),
+            ("electrode_area_cm2", "3"),
+        ):
+            metadata = CellMetadata(cell_id=cell.id, key=key, value=value)
+            self.db.add(metadata)
+            self.db.flush()
+            changed = analysis_cache.time_capacity_data_signature(
+                self.db, spec, None, use_current_versions=True
+            )
+            self.assertNotEqual(baseline, changed, key)
+            self.db.delete(metadata)
+            self.db.flush()
+            self.assertEqual(
+                baseline,
+                analysis_cache.time_capacity_data_signature(
+                    self.db, spec, None, use_current_versions=True
+                ),
+                f"{key} restore",
+            )
+
+    def test_time_capacity_route_source_signature_is_stable_across_render_modes_and_cache_paths(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Time route", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        stored_bodies: dict[str, bytes] = {}
+
+        def fake_compute(_db, _spec, _provenance, **options):
+            return {
+                "cell_traces": [],
+                "rendering": {
+                    "precision": options["precision"],
+                    "compact": options["compact"],
+                },
+            }
+
+        def fake_load_body(_kind, key):
+            body = stored_bodies.get(key)
+            return (body, []) if body is not None else None
+
+        def fake_store(_kind, key, result):
+            value = dict(result)
+            value.pop("cache_status", None)
+            value.pop("badges", None)
+            stored_bodies[key] = json.dumps(value, separators=(",", ":")).encode()
+
+        standard_request = analyses_router.ComputeRequest(
+            precision="standard", compact=True
+        )
+        full_request = analyses_router.ComputeRequest(
+            precision="full", compact=False
+        )
+        with patch.object(
+            analyses_router.engine,
+            "compute_time_capacity",
+            side_effect=fake_compute,
+        ), patch.object(analysis_cache, "load_result_body", side_effect=fake_load_body), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(analysis_cache, "store_result", side_effect=fake_store), patch.object(
+            analyses_router.engine, "availability_badges", return_value=[]
+        ):
+            standard_miss = analyses_router.compute_time_capacity_analysis(
+                analysis.id, standard_request, self.db
+            )
+            full_miss = analyses_router.compute_time_capacity_analysis(
+                analysis.id, full_request, self.db
+            )
+            standard_hit = analyses_router.compute_time_capacity_analysis(
+                analysis.id, standard_request, self.db
+            )
+            full_hit = analyses_router.compute_time_capacity_analysis(
+                analysis.id, full_request, self.db
+            )
+
+        standard_miss_body = json.loads(standard_miss.body)
+        full_miss_body = json.loads(full_miss.body)
+        standard_hit_body = json.loads(standard_hit.body)
+        full_hit_body = json.loads(full_hit.body)
+        self.assertNotEqual(
+            standard_miss_body["data_signature"], full_miss_body["data_signature"]
+        )
+        self.assertEqual(
+            standard_miss_body["source_data_signature"],
+            full_miss_body["source_data_signature"],
+        )
+        self.assertEqual(
+            standard_hit_body["source_data_signature"],
+            standard_miss_body["source_data_signature"],
+        )
+        self.assertEqual(
+            full_hit_body["source_data_signature"], full_miss_body["source_data_signature"]
+        )
+        self.assertEqual(
+            standard_hit_body["data_signature"], standard_miss_body["data_signature"]
+        )
+        self.assertEqual(
+            full_hit_body["data_signature"], full_miss_body["data_signature"]
+        )
+        self.assertNotEqual(
+            standard_hit_body["data_signature"], full_hit_body["data_signature"]
+        )
+        self.assertEqual(standard_hit_body["cache_status"], "hit")
+        self.assertEqual(full_hit_body["cache_status"], "hit")
+        self.assertNotEqual(
+            standard_hit_body["rendering"], full_hit_body["rendering"]
+        )
 
     def test_time_capacity_two_electrode_fixture_exposes_only_voltage_channel(self):
         # Spec 040.4 case 8: an ordinary two-electrode source must not gain
@@ -1436,7 +1600,7 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
     def setUpClass(cls):
         cls._orig_parse = parsing.parse_timeseries
         cls.FRAMES = {
-            cls.HASHES["three"]: synth_three_electrode_raw(5, 2.0, 0.005),
+            cls.HASHES["three"]: synth_three_electrode_raw(50, 2.0, 0.005),
             cls.HASHES["two"]: synth_raw(5, 2.0, 0.005),
         }
 
@@ -1496,6 +1660,200 @@ class MultiVoltageTimeCapacityTests(unittest.TestCase):
         for value in values:
             self.assertIn(round(value, 1), (3.3, 3.7))
         self.assertTrue(res["voltage_channels"]["working_potential"]["available"])
+
+    def test_full_auxiliary_export_request_keeps_exact_values_above_plot_limit(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {
+            "voltage_channel": "working_potential",
+            "max_points_per_cell": 100,
+        }
+
+        compact = engine.compute_time_capacity(
+            self.db, spec, None, precision="standard", compact=True
+        )
+        full = engine.compute_time_capacity(
+            self.db, spec, None, precision="full", compact=False
+        )
+
+        compact_values = [
+            value for value in compact["cell_traces"][0]["voltage_v"] if value is not None
+        ]
+        full_values = [
+            value for value in full["cell_traces"][0]["voltage_v"] if value is not None
+        ]
+        self.assertLess(len(compact_values), len(full_values))
+        self.assertEqual(len(full_values), 200)
+        self.assertEqual(full_values[0], 3.7)
+        self.assertEqual(full["settings"]["voltage_channel"], "working_potential")
+
+    def test_three_electrode_reference_context_is_reflected_in_generic_labels(self):
+        source = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["three"]).one()
+        source.header_meta = {
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                working_potential_available=True,
+                counter_potential_available=True,
+                reference_electrode="Ag/AgCl",
+                voltage_derived=True,
+                voltage_origin="derived_working_minus_counter",
+            )
+        }
+        self.db.commit()
+
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        spec["computation"]["time_capacity"] = {"voltage_channel": "working_potential"}
+
+        result = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(
+            result["voltage_channels"]["working_potential"]["label"],
+            "Working potential vs Ag/AgCl (V)",
+        )
+        self.assertEqual(
+            result["voltage_channels"]["counter_potential"]["label"],
+            "Counter potential vs Ag/AgCl (V)",
+        )
+        self.assertEqual(
+            result["voltage_channels"]["working_potential"]["reference_electrode"],
+            "Ag/AgCl",
+        )
+
+    def test_explicit_non_cell_primary_role_is_preserved_in_generic_channel_labels(self):
+        source = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["three"]).one()
+        source.header_meta = {
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                working_potential_available=True,
+                counter_potential_available=True,
+                voltage_role="working_vs_reference",
+                reference_electrode="Ag/AgCl",
+            )
+        }
+        self.db.commit()
+
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        result = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(
+            result["voltage_channels"]["voltage"]["label"],
+            "Working potential vs Ag/AgCl (V)",
+        )
+        self.assertEqual(
+            result["voltage_channels"]["voltage"]["role"],
+            "working_vs_reference",
+        )
+
+    def test_conflicting_primary_roles_are_neutral_not_relabelled_as_cell(self):
+        three = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["three"]).one()
+        two = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["two"]).one()
+        three.header_meta = {
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                voltage_role="cell"
+            )
+        }
+        two.header_meta = {
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                voltage_role="working_vs_reference"
+            )
+        }
+        self.db.commit()
+
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["three"].id},
+                {"kind": "cell", "ref_id": self.cells["two"].id},
+            ]
+        )
+        result = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(
+            result["voltage_channels"]["voltage"]["role"],
+            canonical_cycling.MIXED_VOLTAGE_ROLE,
+        )
+        self.assertEqual(
+            result["voltage_channels"]["voltage"]["label"],
+            "Voltage role ambiguous (V)",
+        )
+
+    def test_conflicting_source_references_fall_back_to_generic_label_context(self):
+        first = SimpleNamespace(
+            hash="first",
+            header_meta={
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                    working_potential_available=True,
+                    reference_electrode="Ag/AgCl",
+                )
+            },
+        )
+        second = SimpleNamespace(
+            hash="second",
+            header_meta={
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                    working_potential_available=True,
+                    reference_electrode="Hg/HgO",
+                )
+            },
+        )
+        raw = pd.DataFrame(
+            {
+                "working_potential_v": [1.0, 2.0],
+                "source_hash": ["first", "second"],
+            }
+        )
+
+        roles, references = engine._time_capacity_voltage_context(raw, [first, second])
+
+        self.assertEqual(roles["working_potential"], "working_vs_reference")
+        self.assertIsNone(references["working_potential"])
+
+    def test_missing_role_mixed_with_explicit_role_is_neutral(self):
+        missing = SimpleNamespace(
+            hash="missing-role",
+            header_meta={
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: {
+                    "capabilities": {"primary_voltage": True},
+                    "voltage_roles": {},
+                }
+            },
+        )
+        explicit = SimpleNamespace(
+            hash="explicit-role",
+            header_meta={
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                    voltage_role="working_vs_reference"
+                )
+            },
+        )
+        raw = pd.DataFrame(
+            {
+                "voltage_v": [3.0, 3.1],
+                "source_hash": ["missing-role", "explicit-role"],
+            }
+        )
+
+        roles, _references = engine._time_capacity_voltage_context(raw, [missing, explicit])
+
+        self.assertEqual(roles["voltage"], canonical_cycling.MIXED_VOLTAGE_ROLE)
+
+    def test_three_electrode_without_reference_keeps_generic_labels(self):
+        source = self.db.query(SourceFile).filter(SourceFile.hash == self.HASHES["three"]).one()
+        source.header_meta = {
+            canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                working_potential_available=True,
+                counter_potential_available=True,
+                reference_electrode=None,
+            )
+        }
+        self.db.commit()
+
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])
+        result = engine.compute_time_capacity(self.db, spec, None)
+
+        self.assertEqual(
+            result["voltage_channels"]["working_potential"]["label"],
+            "Working potential vs ref (V)",
+        )
+        self.assertNotIn(
+            "reference_electrode", result["voltage_channels"]["working_potential"]
+        )
 
     def test_counter_potential_request_returns_correct_values(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["three"].id}])

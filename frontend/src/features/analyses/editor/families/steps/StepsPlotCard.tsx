@@ -105,6 +105,7 @@ export interface StepsResult {
   cell_series: StepSeries[];
   steps: { series: StepsSeriesSpec[]; mode: "union" | "contiguous" };
   badges: StepsBadge[];
+  data_signature?: string;
 }
 
 const DEFAULT_VIEW: StepsViewSpec = {

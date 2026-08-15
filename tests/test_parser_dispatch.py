@@ -24,6 +24,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
@@ -299,6 +300,48 @@ class HeaderMetadataDispatchParityTests(unittest.TestCase):
             meta["voltage_capabilities"],
             canonical_cycling.voltage_capabilities(),
         )
+
+    def test_biologic_source_presentation_is_bounded_and_format_specific(self):
+        source = SimpleNamespace(
+            ext="mpr",
+            header_meta={
+                "settings": {"technique": "GCPL"},
+                "log": {"ec_lab_version": "11.60"},
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                    working_potential_available=True,
+                    counter_potential_available=True,
+                    reference_electrode="Ag/AgCl",
+                    voltage_derived=True,
+                    voltage_origin="derived_working_minus_counter",
+                ),
+            },
+        )
+
+        result = parsing.source_presentation(source)
+
+        self.assertEqual(result["source_format"], "BioLogic EC-Lab")
+        self.assertEqual(result["technique"], "GCPL")
+        self.assertEqual(result["software_version"], "11.60")
+        self.assertEqual(result["reference_electrode"], "Ag/AgCl")
+        self.assertEqual(result["voltage_v_origin"], "derived_working_minus_counter")
+        self.assertTrue(result["voltage_v_derived"])
+        self.assertEqual(
+            result["voltage_capabilities"]["capabilities"],
+            {"primary_voltage": True, "working_potential": True, "counter_potential": True},
+        )
+
+        long_reference = SimpleNamespace(
+            ext="mpr",
+            header_meta={
+                "settings": {"technique": "GCPL"},
+                canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY: canonical_cycling.voltage_capabilities(
+                    reference_electrode="Ag/AgCl " + ("x" * 160) + " %{y}<br>",
+                ),
+            },
+        )
+        bounded = parsing.source_presentation(long_reference)
+        self.assertLessEqual(len(bounded["reference_electrode"]), 96)
+        self.assertNotIn("%{y}", bounded["reference_electrode"])
 
 
 class MetadataDoesNotFullyParseTests(unittest.TestCase):

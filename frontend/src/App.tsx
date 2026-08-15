@@ -59,7 +59,10 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ANALYSIS_LEAVE_EVENT, type AnalysisLeaveRequestDetail } from "./navigationEvents";
 import { startupQueryPersistence } from "./startupQueryPersistence";
-import { invalidateAnalysisQueries } from "./features/analyses/workspace/analysisQueryCache";
+import {
+  invalidateAnalysisQueries,
+  invalidateSourceScientificQueries,
+} from "./features/analyses/workspace/analysisQueryCache";
 import { APP_BRANDING } from "./appChannel";
 import {
   backgroundImportRefreshPlan,
@@ -378,11 +381,14 @@ export default function App({
     // The list carries sources_changed, so it must refresh too — this is what
     // makes an analysis go bold right after an automatic source check.
     queryClient.invalidateQueries({ queryKey: ["analyses"] });
-    const activeAnalysisMatch = location.pathname.match(/^\/analyses\/(\d+)$/);
-    void invalidateAnalysisQueries(
-      queryClient,
-      activeAnalysisMatch ? Number(activeAnalysisMatch[1]) : null,
-    );
+    // Source adoption can affect any analysis that references the changed
+    // Cell, not only the currently visible tab.
+    void invalidateAnalysisQueries(queryClient);
+    if (job.update_after_check && job.ready_cell_ids?.length) {
+      void invalidateSourceScientificQueries(queryClient, {
+        cellIds: job.ready_cell_ids,
+      });
+    }
     if (job.status === "failed") {
       notifications.show({ message: job.error || "Source check failed.", color: "red" });
     } else {

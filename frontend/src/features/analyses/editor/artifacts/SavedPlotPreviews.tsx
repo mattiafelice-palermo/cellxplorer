@@ -39,6 +39,7 @@ import {
   type StepsResult,
 } from "../families/steps/StepsPlotCard";
 import {
+  timeCapacityConfig,
   timeCapacityLayout,
   timeCapacityTracesForResult,
 } from "../families/time-capacity/TimeCapacityPlotCard";
@@ -46,6 +47,17 @@ import {
   savedPlotPreviewSignature,
   specForSavedPlotView,
 } from "../policies/analysisPlotPolicy";
+import {
+  voltageChannelUnavailable,
+  voltageChannelUnavailableMessage,
+} from "../policies/voltageChannelPolicy";
+import { timeCapacityPreviewResult } from "../policies/timeCapacityPreviewPolicy";
+import {
+  artifactDataSignatureForWrite,
+  portableResultDataSignature,
+  previewQueryRootForPlot,
+  serverArtifactMatchesExpectedData,
+} from "../policies/plotArtifactPolicy";
 import { isDraftPreviewPlotId } from "../policies/analysisDraftPolicy";
 import {
   afterPaint,
@@ -69,6 +81,7 @@ type PortableSummaryRow = { label: string; cycles: number | null; status: string
 
 export type PlotArtifact = {
   signature: string;
+  data_signature?: string;
   svg: string;
   thumbnail?: string | null;
   preview_thumbnail?: string | null;
@@ -81,6 +94,44 @@ type PlotThumbnail = {
   thumbnail: string;
   preview_thumbnail?: string | null;
 };
+
+function invalidateFailedArtifactQueries(
+  qc: ReturnType<typeof useQueryClient>,
+  analysisId: number,
+  plotId: string,
+  previewSignature: string,
+  previewRoot: ReturnType<typeof previewQueryRootForPlot>,
+) {
+  // A server-side 409 means the figure was rendered from an obsolete source
+  // identity. Remove every local artifact variant, including warmup-scoped
+  // keys, so stale content cannot suppress the next current render.
+  qc.removeQueries({
+    queryKey: ["plot-thumbnail", analysisId, plotId, previewSignature],
+  });
+  qc.removeQueries({
+    queryKey: ["plot-artifact", analysisId, plotId, previewSignature],
+  });
+  const previewQueryKey = [previewRoot, analysisId, plotId, previewSignature] as const;
+  qc.removeQueries({ queryKey: previewQueryKey });
+  void qc.invalidateQueries({
+    queryKey: previewQueryKey,
+  });
+}
+
+function warmupQueryScope(
+  warmup: boolean,
+  warmupTask?: CacheWarmupTask,
+): string | undefined {
+  if (!warmup) return undefined;
+  return `warmup:${warmupTask?.id ?? "pending"}:${warmupTask?.expected_data_signature ?? ""}`;
+}
+
+function scopedQueryKey(
+  base: readonly unknown[],
+  scope: string | undefined,
+): readonly unknown[] {
+  return scope ? [...base, scope] : base;
+}
 
 async function lookupPlotThumbnail(
   analysisId: number,
@@ -135,7 +186,11 @@ export function SavedPlotPreview({
   plot: SavedAnalysisPlot;
   warmup?: boolean;
   warmupTask?: CacheWarmupTask;
-  onWarmupComplete?: (error?: string, detail?: string) => void;
+  onWarmupComplete?: (
+    error?: string,
+    detail?: string,
+    disposition?: "ready" | "skipped",
+  ) => void;
   allowGeneration?: boolean;
 }) {
   const previewSpec = useMemo(() => specForSavedPlotView(baseSpec, plot), [baseSpec, plot]);
@@ -146,17 +201,27 @@ export function SavedPlotPreview({
   const warmupReported = useRef(false);
   const renderedFresh = useRef(false);
   const rebuiltThumbnail = useRef(false);
+  const queryScope = warmupQueryScope(warmup, warmupTask);
+  const thumbnailQueryKey = scopedQueryKey(
+    ["plot-thumbnail", analysisId, plot.id, previewSignature],
+    queryScope,
+  );
+  const artifactQueryKey = scopedQueryKey(
+    ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryScope,
+  );
+  const previewQueryKey = scopedQueryKey(
+    ["saved-plot-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
+    queryScope,
+  );
   const thumbnail = useQuery({
-    queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
+    queryKey: thumbnailQueryKey,
     queryFn: async () => {
       if (draftPreview) {
         // Keep any client-rendered draft thumbnail; never ask the server.
         return (
           qc.getQueryData<PlotThumbnail>([
-            "plot-thumbnail",
-            analysisId,
-            plot.id,
-            previewSignature,
+            ...thumbnailQueryKey,
           ]) ?? null
         );
       }
@@ -171,15 +236,12 @@ export function SavedPlotPreview({
     thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
   );
   const artifact = useQuery({
-    queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryKey: artifactQueryKey,
     queryFn: async () => {
       if (draftPreview) {
         return (
           qc.getQueryData<PlotArtifact>([
-            "plot-artifact",
-            analysisId,
-            plot.id,
-            previewSignature,
+            ...artifactQueryKey,
           ]) ?? null
         );
       }
@@ -200,7 +262,7 @@ export function SavedPlotPreview({
     | ChargeabilityResult
     | RateCapabilityResult
   >({
-    queryKey: ["saved-plot-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
+    queryKey: previewQueryKey,
     queryFn: () =>
       plot.tab === "steps"
         ? post<StepsResult>(`/api/analyses/${analysisId}/steps`, {
@@ -332,55 +394,43 @@ export function SavedPlotPreview({
             cycles: series.metrics?.n_cycles ?? series.x.length,
             status: series.excluded ? "Hidden" : "Visible",
           }));
-    let generatedLocally = false;
     queuedPortableArtifactImages(figure)
       .then(({ svg, thumbnail, preview_thumbnail }) => {
         const generated: PlotArtifact = {
           signature: previewSignature,
+          data_signature: preview.data?.data_signature,
           svg,
           thumbnail,
           preview_thumbnail,
           figure,
           summary,
         };
-        generatedLocally = true;
         renderedFresh.current = true;
-        if (!cancelled && !warmup) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail,
-              preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            generated
-          );
-        }
         return storePlotArtifactWithRetry(analysisId, plot.id, generated, warmupTask);
       })
       .then((stored) => {
         if (!cancelled) {
           if (stored.thumbnail) {
-            qc.setQueryData(
-              ["plot-thumbnail", analysisId, plot.id, previewSignature],
-              {
-                signature: previewSignature,
-                thumbnail: stored.thumbnail,
-                preview_thumbnail: stored.preview_thumbnail,
-              }
-            );
+            qc.setQueryData(thumbnailQueryKey, {
+              signature: previewSignature,
+              thumbnail: stored.thumbnail,
+              preview_thumbnail: stored.preview_thumbnail,
+            });
           }
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            stored
-          );
+          qc.setQueryData(artifactQueryKey, stored);
         }
       })
       .catch((error) => {
-        if (!cancelled && (!generatedLocally || warmup)) setGenerationFailed(true);
+        if (!cancelled) {
+          setGenerationFailed(true);
+          invalidateFailedArtifactQueries(
+            qc,
+            analysisId,
+            plot.id,
+            previewSignature,
+            previewQueryRootForPlot(plot.tab),
+          );
+        }
         console.warn("Could not persist the saved plot preview", error);
       });
     return () => {
@@ -400,40 +450,29 @@ export function SavedPlotPreview({
       .then(({ thumbnail, preview_thumbnail }) => {
         const enriched = { ...current, thumbnail, preview_thumbnail };
         rebuiltThumbnail.current = true;
-        if (!cancelled && !warmup) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail,
-              preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            enriched
-          );
-        }
         return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
       .then((stored) => {
         if (!cancelled && stored.thumbnail) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail: stored.thumbnail,
-              preview_thumbnail: stored.preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            stored
-          );
+          qc.setQueryData(thumbnailQueryKey, {
+            signature: previewSignature,
+            thumbnail: stored.thumbnail,
+            preview_thumbnail: stored.preview_thumbnail,
+          });
+          qc.setQueryData(artifactQueryKey, stored);
         }
       })
       .catch((error) => {
-        if (!cancelled && warmup) setGenerationFailed(true);
+        if (!cancelled) {
+          setGenerationFailed(true);
+          invalidateFailedArtifactQueries(
+            qc,
+            analysisId,
+            plot.id,
+            previewSignature,
+            previewQueryRootForPlot(plot.tab),
+          );
+        }
         console.warn("Could not cache the plot thumbnail", error);
       });
     return () => {
@@ -478,7 +517,11 @@ export function SavedPlotPreview({
     });
     if (resolution.status !== "done") return;
     warmupReported.current = true;
-    onWarmupComplete(resolution.error, resolution.detail);
+    onWarmupComplete(
+      resolution.error,
+      resolution.detail,
+      resolution.disposition,
+    );
   }, [
     artifact.error,
     artifact.isError,
@@ -537,7 +580,11 @@ export function SavedTimeCapacityPreview({
   plot: SavedAnalysisPlot;
   warmup?: boolean;
   warmupTask?: CacheWarmupTask;
-  onWarmupComplete?: (error?: string, detail?: string) => void;
+  onWarmupComplete?: (
+    error?: string,
+    detail?: string,
+    disposition?: "ready" | "skipped",
+  ) => void;
   allowGeneration?: boolean;
 }) {
   const previewSpec = useMemo(() => specForSavedPlotView(baseSpec, plot), [baseSpec, plot]);
@@ -548,16 +595,26 @@ export function SavedTimeCapacityPreview({
   const warmupReported = useRef(false);
   const renderedFresh = useRef(false);
   const rebuiltThumbnail = useRef(false);
+  const queryScope = warmupQueryScope(warmup, warmupTask);
+  const thumbnailQueryKey = scopedQueryKey(
+    ["plot-thumbnail", analysisId, plot.id, previewSignature],
+    queryScope,
+  );
+  const artifactQueryKey = scopedQueryKey(
+    ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryScope,
+  );
+  const previewQueryKey = scopedQueryKey(
+    ["saved-time-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
+    queryScope,
+  );
   const thumbnail = useQuery({
-    queryKey: ["plot-thumbnail", analysisId, plot.id, previewSignature],
+    queryKey: thumbnailQueryKey,
     queryFn: async () => {
       if (draftPreview) {
         return (
           qc.getQueryData<PlotThumbnail>([
-            "plot-thumbnail",
-            analysisId,
-            plot.id,
-            previewSignature,
+            ...thumbnailQueryKey,
           ]) ?? null
         );
       }
@@ -572,15 +629,12 @@ export function SavedTimeCapacityPreview({
     thumbnail.data?.thumbnail && thumbnail.data?.preview_thumbnail
   );
   const artifact = useQuery({
-    queryKey: ["plot-artifact", analysisId, plot.id, previewSignature],
+    queryKey: artifactQueryKey,
     queryFn: async () => {
       if (draftPreview) {
         return (
           qc.getQueryData<PlotArtifact>([
-            "plot-artifact",
-            analysisId,
-            plot.id,
-            previewSignature,
+            ...artifactQueryKey,
           ]) ?? null
         );
       }
@@ -595,7 +649,7 @@ export function SavedTimeCapacityPreview({
     retry: draftPreview ? false : 1,
   });
   const preview = useQuery({
-    queryKey: ["saved-time-preview", analysisId, plot.id, previewSignature, warmup ? "warmup" : "visible"],
+    queryKey: previewQueryKey,
     queryFn: () =>
       post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
         spec: previewSpec,
@@ -615,9 +669,18 @@ export function SavedTimeCapacityPreview({
       artifact.data === null,
     staleTime: 5 * 60_000,
   });
+  const previewVoltageChannel = timeCapacityConfig(previewSpec).voltage_channel;
+  const previewResult = timeCapacityPreviewResult(preview.data, previewSpec);
+  const selectedVoltageUnavailable = voltageChannelUnavailable(
+    previewVoltageChannel,
+    preview.data?.voltage_channels
+  );
   const traces = useMemo(
-    () => (preview.data ? timeCapacityTracesForResult(preview.data, previewSpec) : []),
-    [preview.data, previewSpec]
+    () =>
+      previewResult
+        ? timeCapacityTracesForResult(previewResult, previewSpec)
+        : [],
+    [previewResult, previewSpec]
   );
 
   useEffect(() => {
@@ -637,55 +700,43 @@ export function SavedTimeCapacityPreview({
       cycles: new Set(trace.cycle.filter((cycle) => cycle !== null)).size,
       status: trace.excluded ? "Hidden" : "Visible",
     }));
-    let generatedLocally = false;
     queuedPortableArtifactImages(figure)
       .then(({ svg, thumbnail, preview_thumbnail }) => {
         const generated: PlotArtifact = {
           signature: previewSignature,
+          data_signature: preview.data?.data_signature,
           svg,
           thumbnail,
           preview_thumbnail,
           figure,
           summary,
         };
-        generatedLocally = true;
         renderedFresh.current = true;
-        if (!cancelled && !warmup) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail,
-              preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            generated
-          );
-        }
         return storePlotArtifactWithRetry(analysisId, plot.id, generated, warmupTask);
       })
       .then((stored) => {
         if (!cancelled) {
           if (stored.thumbnail) {
-            qc.setQueryData(
-              ["plot-thumbnail", analysisId, plot.id, previewSignature],
-              {
-                signature: previewSignature,
-                thumbnail: stored.thumbnail,
-                preview_thumbnail: stored.preview_thumbnail,
-              }
-            );
+            qc.setQueryData(thumbnailQueryKey, {
+              signature: previewSignature,
+              thumbnail: stored.thumbnail,
+              preview_thumbnail: stored.preview_thumbnail,
+            });
           }
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            stored
-          );
+          qc.setQueryData(artifactQueryKey, stored);
         }
       })
       .catch((error) => {
-        if (!cancelled && (!generatedLocally || warmup)) setGenerationFailed(true);
+        if (!cancelled) {
+          setGenerationFailed(true);
+          invalidateFailedArtifactQueries(
+            qc,
+            analysisId,
+            plot.id,
+            previewSignature,
+            previewQueryRootForPlot(plot.tab),
+          );
+        }
         console.warn("Could not persist the saved time/capacity preview", error);
       });
     return () => {
@@ -703,40 +754,29 @@ export function SavedTimeCapacityPreview({
       .then(({ thumbnail, preview_thumbnail }) => {
         const enriched = { ...current, thumbnail, preview_thumbnail };
         rebuiltThumbnail.current = true;
-        if (!cancelled && !warmup) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail,
-              preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            enriched
-          );
-        }
         return storePlotArtifactWithRetry(analysisId, plot.id, enriched, warmupTask);
       })
       .then((stored) => {
         if (!cancelled && stored.thumbnail) {
-          qc.setQueryData(
-            ["plot-thumbnail", analysisId, plot.id, previewSignature],
-            {
-              signature: previewSignature,
-              thumbnail: stored.thumbnail,
-              preview_thumbnail: stored.preview_thumbnail,
-            }
-          );
-          qc.setQueryData(
-            ["plot-artifact", analysisId, plot.id, previewSignature],
-            stored
-          );
+          qc.setQueryData(thumbnailQueryKey, {
+            signature: previewSignature,
+            thumbnail: stored.thumbnail,
+            preview_thumbnail: stored.preview_thumbnail,
+          });
+          qc.setQueryData(artifactQueryKey, stored);
         }
       })
       .catch((error) => {
-        if (!cancelled && warmup) setGenerationFailed(true);
+        if (!cancelled) {
+          setGenerationFailed(true);
+          invalidateFailedArtifactQueries(
+            qc,
+            analysisId,
+            plot.id,
+            previewSignature,
+            previewQueryRootForPlot(plot.tab),
+          );
+        }
         console.warn("Could not cache the time/capacity thumbnail", error);
       });
     return () => {
@@ -779,9 +819,15 @@ export function SavedTimeCapacityPreview({
       renderedFresh: renderedFresh.current,
       rebuiltThumbnail: rebuiltThumbnail.current,
     });
-    if (resolution.status !== "done") return;
-    warmupReported.current = true;
-    onWarmupComplete(resolution.error, resolution.detail);
+     if (resolution.status !== "done") return;
+     warmupReported.current = true;
+     onWarmupComplete(
+       resolution.error,
+       selectedVoltageUnavailable
+         ? voltageChannelUnavailableMessage(previewVoltageChannel)
+         : resolution.detail,
+       selectedVoltageUnavailable ? "skipped" : resolution.disposition,
+     );
   }, [
     artifact.error,
     artifact.isError,
@@ -790,6 +836,8 @@ export function SavedTimeCapacityPreview({
     preview.error,
     preview.isError,
     preview.isSuccess,
+    previewVoltageChannel,
+    selectedVoltageUnavailable,
     thumbnail.error,
     thumbnail.isError,
     thumbnailPairReady,
@@ -818,7 +866,9 @@ export function SavedTimeCapacityPreview({
     return (
       <Center h={120}>
         <Text size="xs" c="dimmed">
-          Preview unavailable
+          {selectedVoltageUnavailable
+            ? voltageChannelUnavailableMessage(previewVoltageChannel)
+            : "Preview unavailable"}
         </Text>
       </Center>
     );
@@ -880,7 +930,21 @@ type PortablePlotSnapshot = {
   figure: PortableFigure | null;
   svg: string | null;
   summary: PortableSummaryRow[];
+  /** Server-owned identity of the exact scientific data in this snapshot. */
+  data_signature: string | null;
+  /** Saved-plot revision used to bind the snapshot to the requested view. */
+  plot_revision: string | null;
 };
+
+function requireDataSignature(result: { data_signature?: string }): string {
+  return portableResultDataSignature(result.data_signature);
+}
+
+function snapshotPlotRevision(
+  view: { modified_at?: string } | Record<string, unknown>,
+): string | null {
+  return typeof view.modified_at === "string" ? view.modified_at : null;
+}
 
 function portableFigure(
   traces: Plotly.Data[],
@@ -1073,22 +1137,28 @@ async function storePlotArtifactWithRetry(
   // Draft cards keep thumbnails in React Query only; posting `__draft__:*`
   // always 404s (not in saved_plots) and previously retry-stormed the API.
   if (isDraftPreviewPlotId(plotId)) return artifact;
+  const expectedDataSignature = artifactDataSignatureForWrite(
+    artifact.data_signature,
+    warmupTask?.expected_data_signature,
+  );
   const delays = [0, 800, 1600, 2600];
   let lastError: unknown = null;
   for (const delay of delays) {
     if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
     try {
-      return await post<PlotArtifact>(
+      const stored = await post<PlotArtifact>(
         `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}`,
-        warmupTask
-          ? {
-              ...artifact,
-              warmup_task_id: warmupTask.id,
-              expected_data_signature: warmupTask.expected_data_signature,
-              expected_analysis_modified_at: warmupTask.analysis_modified_at,
-            }
-          : artifact
+        {
+          ...artifact,
+          warmup_task_id: warmupTask?.id,
+          expected_data_signature: expectedDataSignature,
+          expected_analysis_modified_at: warmupTask?.analysis_modified_at,
+        }
       );
+      if (!serverArtifactMatchesExpectedData(expectedDataSignature, stored.data_signature)) {
+        throw new Error("The server returned a mismatched scientific artifact identity.");
+      }
+      return stored;
     } catch (error) {
       lastError = error;
       if (!(error instanceof ApiError) || error.status !== 404) throw error;
@@ -1103,7 +1173,6 @@ export async function buildPortablePlotSnapshots(
   analysisTitle: string,
   selectedPlotIds: string[],
   onProgress?: (completed: number, total: number, stage: string) => void,
-  readMemoryArtifact?: (plotId: string, signature: string) => PlotArtifact | null
 ): Promise<PortablePlotSnapshot[]> {
   const saved = baseSpec.saved_plots ?? [];
   const views =
@@ -1133,9 +1202,6 @@ export async function buildPortablePlotSnapshots(
           : null;
       let cachedArtifact: PlotArtifact | null = null;
       if (artifactSignature) {
-        cachedArtifact = readMemoryArtifact?.(view.id, artifactSignature) ?? null;
-      }
-      if (artifactSignature && !cachedArtifact) {
         try {
           cachedArtifact = await post<PlotArtifact>(
             `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}/lookup`,
@@ -1155,6 +1221,8 @@ export async function buildPortablePlotSnapshots(
           figure: cachedArtifact.figure,
           svg: cachedArtifact.svg,
           summary: cachedArtifact.summary,
+          data_signature: cachedArtifact.data_signature ?? null,
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1174,7 +1242,10 @@ export async function buildPortablePlotSnapshots(
             compact: true,
           }
         );
-        const traces = timeCapacityTracesForResult(result, viewSpec);
+        const previewResult = timeCapacityPreviewResult(result, viewSpec);
+        const traces = previewResult
+          ? timeCapacityTracesForResult(previewResult, viewSpec)
+          : [];
         const layout = timeCapacityLayout(result, viewSpec, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
@@ -1190,6 +1261,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1198,7 +1270,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn("Could not cache the generated portable plot", error);
+            throw error;
           }
         }
         snapshots.push({
@@ -1210,6 +1282,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1239,6 +1313,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1247,7 +1322,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn("Could not cache the generated portable plot", error);
+            throw error;
           }
         }
         snapshots.push({
@@ -1259,6 +1334,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1288,6 +1365,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1296,7 +1374,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn("Could not cache the generated portable Steps plot", error);
+            throw error;
           }
         }
         snapshots.push({
@@ -1308,6 +1386,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1337,6 +1417,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1345,7 +1426,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn("Could not cache the generated portable DCIR plot", error);
+            throw error;
           }
         }
         snapshots.push({
@@ -1357,6 +1438,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1394,6 +1477,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1402,10 +1486,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn(
-              "Could not cache the generated portable Chargeability plot",
-              error
-            );
+            throw error;
           }
         }
         snapshots.push({
@@ -1417,6 +1498,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1454,6 +1537,7 @@ export async function buildPortablePlotSnapshots(
               `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(view.id)}`,
               {
                 signature: artifactSignature,
+                expected_data_signature: requireDataSignature(result),
                 svg,
                 thumbnail: images?.thumbnail ?? null,
                 preview_thumbnail: images?.preview_thumbnail ?? null,
@@ -1462,10 +1546,7 @@ export async function buildPortablePlotSnapshots(
               }
             );
           } catch (error) {
-            console.warn(
-              "Could not cache the generated portable rate-capability plot",
-              error
-            );
+            throw error;
           }
         }
         snapshots.push({
@@ -1477,6 +1558,8 @@ export async function buildPortablePlotSnapshots(
           figure,
           svg,
           summary,
+          data_signature: requireDataSignature(result),
+          plot_revision: snapshotPlotRevision(view),
         });
         onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
         continue;
@@ -1490,6 +1573,8 @@ export async function buildPortablePlotSnapshots(
         figure: null,
         svg: null,
         summary: [],
+        data_signature: null,
+        plot_revision: snapshotPlotRevision(view),
       });
       onProgress?.(index + 1, views.length, `Prepared ${view.name}`);
   }

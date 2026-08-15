@@ -150,6 +150,7 @@ export interface RateCapabilityResult {
   blocks: RateCapabilityBlock[];
   detected_blocks: Omit<RateCapabilityBlock, "points">[];
   points: RateCapabilityPoint[];
+  data_signature?: string;
   available: {
     charge_rates_c: number[];
     discharge_rates_c: number[];

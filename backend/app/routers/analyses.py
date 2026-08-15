@@ -653,7 +653,10 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
             _finish_job(req.job_id, cached=True)
             return Response(
                 content=analysis_cache.splice_result_body(
-                    body, kept + engine.availability_badges(db, spec), "hit"
+                    body,
+                    kept + engine.availability_badges(db, spec),
+                    "hit",
+                    {"data_signature": key},
                 ),
                 media_type="application/json",
             )
@@ -682,7 +685,9 @@ def compute_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depend
                     progress=_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
             analysis_cache.store_result("cycles", key, result)
+        result["data_signature"] = key
         _finish_job(job_id, cached=cached)
     except Exception as exc:
         _finish_job(job_id, error=str(exc))
@@ -731,7 +736,9 @@ def compute_steps_analysis(analysis_id: int, req: ComputeRequest, db: Session = 
                     progress=_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
             analysis_cache.store_result("steps", key, result)
+        result["data_signature"] = key
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -853,7 +860,9 @@ def compute_dcir_analysis(
                     progress=_recognition_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
             analysis_cache.store_result("dcir", key, result)
+        result["data_signature"] = key
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -908,7 +917,9 @@ def compute_chargeability_analysis(
                     progress=_recognition_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
             analysis_cache.store_result("chargeability", key, result)
+        result["data_signature"] = key
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -967,7 +978,9 @@ def compute_rate_capability_analysis(
                     progress=_recognition_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
             analysis_cache.store_result("rate_capability", key, result)
+        result["data_signature"] = key
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -987,6 +1000,12 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         "precision": req.precision,
         "compact": req.compact,
     }
+    source_data_signature = analysis_cache.time_capacity_data_signature(
+        db,
+        spec,
+        a.provenance,
+        use_current_versions=req.recompute,
+    )
     key = analysis_cache.result_key(
         db,
         "time_capacity",
@@ -1002,7 +1021,13 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
             _finish_job(req.job_id, cached=True)
             return Response(
                 content=analysis_cache.splice_result_body(
-                    body, kept + engine.availability_badges(db, spec), "hit"
+                    body,
+                    kept + engine.availability_badges(db, spec),
+                    "hit",
+                    {
+                        "data_signature": key,
+                        "source_data_signature": source_data_signature,
+                    },
                 ),
                 media_type="application/json",
             )
@@ -1029,7 +1054,11 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
                     progress=_progress_callback(job_id),
                 )
             result["cache_status"] = "miss"
+            result["data_signature"] = key
+            result["source_data_signature"] = source_data_signature
             analysis_cache.store_result("time_capacity", key, result)
+        result["data_signature"] = key
+        result["source_data_signature"] = source_data_signature
         _finish_job(job_id, cached=cached)
         return fast_json(result)
     except Exception as exc:
@@ -1045,7 +1074,7 @@ class PlotArtifactRequest(BaseModel):
     figure: dict
     summary: list[dict] = Field(default_factory=list)
     warmup_task_id: str | None = Field(default=None, max_length=500)
-    expected_data_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    expected_data_signature: str = Field(min_length=1, max_length=128)
     expected_analysis_modified_at: str | None = Field(default=None, max_length=100)
 
 
@@ -1075,17 +1104,6 @@ def _guard_saved_plot_protocol_analysis(
     return saved_plot
 
 
-def _plot_artifact_signature(
-    db: Session,
-    analysis: Analysis,
-    plot_id: str,
-    client_signature: str,
-) -> str:
-    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
-    data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
-    return f"{client_signature}:{data_signature}"
-
-
 @router.get("/analyses/{analysis_id}/plot-artifacts/{plot_id}")
 def get_plot_artifact(
     analysis_id: int,
@@ -1096,12 +1114,22 @@ def get_plot_artifact(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
-    cache_signature = _plot_artifact_signature(db, analysis, plot_id, signature)
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
+    current_data_signature = analysis_cache.saved_plot_data_signature(
+        db, analysis, saved_plot
+    )
+    cache_signature = f"{signature}:{current_data_signature}"
     artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
     if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
     # An artifact carries the full SVG plus the portable figure — megabytes.
-    return fast_json({"signature": signature, **artifact})
+    return fast_json(
+        {
+            "signature": signature,
+            "data_signature": current_data_signature,
+            **artifact,
+        }
+    )
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/lookup")
@@ -1114,11 +1142,21 @@ def lookup_plot_artifact(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
-    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
+    current_data_signature = analysis_cache.saved_plot_data_signature(
+        db, analysis, saved_plot
+    )
+    cache_signature = f"{req.signature}:{current_data_signature}"
     artifact = analysis_cache.load_artifact(analysis_id, plot_id, cache_signature)
     if artifact is None:
         raise HTTPException(404, "No cached plot artifact")
-    return fast_json({"signature": req.signature, **artifact})
+    return fast_json(
+        {
+            "signature": req.signature,
+            "data_signature": current_data_signature,
+            **artifact,
+        }
+    )
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}/thumbnail/lookup")
@@ -1131,18 +1169,22 @@ def lookup_plot_thumbnail(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
-    _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
+    current_data_signature = analysis_cache.saved_plot_data_signature(
+        db, analysis, saved_plot
+    )
     thumbnail = analysis_cache.load_indexed_thumbnail(
         analysis_id,
         plot_id,
         req.signature,
+        current_data_signature,
     )
     if thumbnail is not None:
         return {
             "signature": req.signature,
             "thumbnail": thumbnail,
             "preview_thumbnail": analysis_cache.load_indexed_preview_thumbnail(
-                analysis_id, plot_id, req.signature
+                analysis_id, plot_id, req.signature, current_data_signature
             ),
         }
 
@@ -1155,10 +1197,17 @@ def lookup_plot_thumbnail(
     # Adopt caches written before the direct index existed. Plot ids are
     # stable and a refreshed saved plot always writes a newer thumbnail, so
     # this is a constant-time disk lookup rather than a 25-cell fingerprint.
-    thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id)
+    thumbnail = analysis_cache.load_latest_thumbnail(
+        analysis_id,
+        plot_id,
+        expected_data_signature=current_data_signature,
+    )
     if thumbnail is not None:
         preview_thumbnail = analysis_cache.load_latest_thumbnail(
-            analysis_id, plot_id, "preview"
+            analysis_id,
+            plot_id,
+            "preview",
+            expected_data_signature=current_data_signature,
         )
         analysis_cache.store_indexed_thumbnail(
             analysis_id,
@@ -1166,6 +1215,7 @@ def lookup_plot_thumbnail(
             req.signature,
             thumbnail,
             preview_thumbnail,
+            current_data_signature,
         )
         return {
             "signature": req.signature,
@@ -1173,7 +1223,7 @@ def lookup_plot_thumbnail(
             "preview_thumbnail": preview_thumbnail,
         }
 
-    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    cache_signature = f"{req.signature}:{current_data_signature}"
     thumbnail = analysis_cache.load_thumbnail(analysis_id, plot_id, cache_signature)
     preview_thumbnail = analysis_cache.load_preview_thumbnail(
         analysis_id, plot_id, cache_signature
@@ -1194,6 +1244,7 @@ def lookup_plot_thumbnail(
         req.signature,
         thumbnail,
         preview_thumbnail,
+        current_data_signature,
     )
     return {
         "signature": req.signature,
@@ -1213,11 +1264,23 @@ def latest_plot_thumbnail(
     analysis = db.get(Analysis, analysis_id)
     if analysis is None:
         raise HTTPException(404, "No such analysis")
-    _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
-    thumbnail = analysis_cache.load_latest_thumbnail(analysis_id, plot_id, variant)
+    saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
+    current_data_signature = analysis_cache.saved_plot_data_signature(
+        db, analysis, saved_plot
+    )
+    thumbnail = analysis_cache.load_latest_thumbnail(
+        analysis_id,
+        plot_id,
+        variant,
+        expected_data_signature=current_data_signature,
+    )
     if thumbnail is None:
         raise HTTPException(404, "No cached plot thumbnail")
-    return {"thumbnail": thumbnail}
+    return {
+        "thumbnail": thumbnail,
+        "data_signature": current_data_signature,
+        "plot_modified_at": saved_plot.get("modified_at"),
+    }
 
 
 @router.post("/analyses/{analysis_id}/plot-artifacts/{plot_id}")
@@ -1245,10 +1308,7 @@ def store_plot_artifact(
         raise HTTPException(422, "Only WebP or PNG plot previews are accepted")
     saved_plot = _guard_saved_plot_protocol_analysis(db, analysis, plot_id)
     current_data_signature = analysis_cache.saved_plot_data_signature(db, analysis, saved_plot)
-    if (
-        req.expected_data_signature is not None
-        and req.expected_data_signature != current_data_signature
-    ):
+    if req.expected_data_signature != current_data_signature:
         raise HTTPException(409, "This cache task was superseded by newer source data")
     if req.expected_analysis_modified_at is not None:
         current_modified_at = analysis.modified_at.isoformat() if analysis.modified_at else None
@@ -1261,11 +1321,16 @@ def store_plot_artifact(
             req.warmup_task_id,
             analysis_id,
             plot_id,
-            req.expected_data_signature or "",
+            req.expected_data_signature,
             req.expected_analysis_modified_at,
         ):
             raise HTTPException(409, "This cache task is no longer active")
-    cache_signature = _plot_artifact_signature(db, analysis, plot_id, req.signature)
+    # The validated request identity is the cache key. Do not recompute a
+    # second signature after the check: if source data changes immediately
+    # afterward, this artifact remains safely under the older identity and can
+    # never be served for the newer one.
+    validated_data_signature = req.expected_data_signature
+    cache_signature = f"{req.signature}:{validated_data_signature}"
     artifact = {
         "svg": req.svg,
         "thumbnail": req.thumbnail,
@@ -1279,6 +1344,7 @@ def store_plot_artifact(
         cache_signature,
         artifact,
         client_signature=req.signature,
+        data_signature=validated_data_signature,
     )
     # This plot is now prepared for its current data signature and revision;
     # idle warmup can leave it out of future queues.
@@ -1286,14 +1352,18 @@ def store_plot_artifact(
         analysis_cache.store_prepared_marker(
             analysis_id,
             plot_id,
-            current_data_signature,
+            validated_data_signature,
             saved_plot.get("modified_at"),
         )
     if req.warmup_task_id is None:
         from ..services import cache_maintenance
 
         cache_maintenance.warmup.foreground_ready(analysis_id, plot_id)
-    return {"signature": req.signature, **artifact}
+    return {
+        "signature": req.signature,
+        "data_signature": validated_data_signature,
+        **artifact,
+    }
 
 
 class AnalysisDuplicateRequest(BaseModel):

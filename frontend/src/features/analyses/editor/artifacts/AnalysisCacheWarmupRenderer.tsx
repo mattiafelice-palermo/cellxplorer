@@ -15,15 +15,21 @@ import {
   SavedTimeCapacityPreview,
 } from "./SavedPlotPreviews";
 
+type WarmupCompletion = (
+  error?: string,
+  detail?: string,
+  disposition?: "ready" | "skipped",
+) => void;
+
 function BlockedWarmupNotice({
   onComplete,
   detail,
 }: {
-  onComplete: (error?: string, detail?: string) => void;
+  onComplete: WarmupCompletion;
   detail: string;
 }) {
   useEffect(() => {
-    onComplete(undefined, detail);
+    onComplete(undefined, detail, "skipped");
   }, [detail, onComplete]);
   return null;
 }
@@ -37,7 +43,7 @@ export function AnalysisCacheWarmupRenderer({
   analysis: AnalysisFull;
   plot: SavedAnalysisPlot;
   task: CacheWarmupTask;
-  onComplete: (error?: string, detail?: string) => void;
+  onComplete: WarmupCompletion;
 }) {
   const selectedCells = selectedSourceCountCellsForSpec(analysis, analysis.spec);
   if (hasMetadataOnlySources(selectedCells)) {

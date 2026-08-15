@@ -130,6 +130,7 @@ export interface ChargeabilityResult {
   matches: ChargeabilityMatch[];
   candidates: ChargeabilityCandidate[];
   cells: ChargeabilityCellResult[];
+  data_signature?: string;
   available_filters: {
     initial_soc_pct: number[];
     final_soc_pct: number[];

@@ -600,6 +600,7 @@ class CacheMaintenanceTests(unittest.TestCase):
                 "probe-short-circuit-test",
                 self._THUMBNAIL,
                 self._THUMBNAIL,
+                task["expected_data_signature"],
             )
             coordinator.complete(task["id"], status="ready", detail=None, error=None, db=db)
             after_first = calls["count"]
@@ -650,6 +651,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             "force-refresh-test",
             self._THUMBNAIL,
             self._THUMBNAIL,
+            task["expected_data_signature"],
         )
         coordinator.complete(task["id"], status="ready", detail="Ready", error=None, db=db)
         self.assertEqual(coordinator.start(db)["id"], first["id"])
@@ -735,6 +737,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             "prepared-test",
             self._THUMBNAIL,
             self._THUMBNAIL,
+            old_signature,
         )
 
         coordinator = cache_maintenance.WarmupCoordinator()
@@ -769,6 +772,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             "upgrade-test",
             self._THUMBNAIL,
             self._THUMBNAIL,
+            signature,
         )
         marker_path = cache_maintenance.analysis_cache._prepared_marker_path(
             analysis.id, "old"
@@ -807,6 +811,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             "probe-test",
             self._THUMBNAIL,
             self._THUMBNAIL,
+            signature,
         )
 
         coordinator = cache_maintenance.WarmupCoordinator()
@@ -846,6 +851,7 @@ class CacheMaintenanceTests(unittest.TestCase):
             "completion-test",
             self._THUMBNAIL,
             self._THUMBNAIL,
+            task["expected_data_signature"],
         )
         coordinator.complete(task["id"], status="ready", detail="Already cached", error=None, db=db)
 
@@ -973,6 +979,102 @@ class CacheMaintenanceTests(unittest.TestCase):
             analyses_router.store_plot_artifact(analysis.id, "plot", request, db)
 
         self.assertEqual(raised.exception.status_code, 409)
+
+    def test_artifact_write_uses_the_validated_signature_without_recomputing(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Validated artifact",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "name": "Plot", "tab": "time_capacity"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        request = analyses_router.PlotArtifactRequest(
+            signature="client-signature",
+            svg='<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+            figure={"data": [], "layout": {}},
+            expected_data_signature="validated-source",
+        )
+
+        with (
+            patch.object(
+                analyses_router.analysis_cache,
+                "saved_plot_data_signature",
+                return_value="validated-source",
+            ) as signature,
+            patch.object(analyses_router.analysis_cache, "store_artifact") as store,
+            patch.object(cache_maintenance.warmup, "foreground_ready"),
+        ):
+            response = analyses_router.store_plot_artifact(
+                analysis.id, "plot", request, db
+            )
+
+        self.assertEqual(signature.call_count, 1)
+        self.assertEqual(response["data_signature"], "validated-source")
+        store.assert_called_once()
+        self.assertEqual(store.call_args.args[2], "client-signature:validated-source")
+        self.assertEqual(store.call_args.kwargs["data_signature"], "validated-source")
+
+    def test_saved_plot_signatures_use_each_plot_family_result_kind(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Family identities",
+            spec={"selection": {"entries": []}},
+            provenance=None,
+        )
+        db.add(analysis)
+        db.commit()
+
+        expected = {
+            "cycles": "cycles",
+            "time_capacity": "time_capacity",
+            "steps": "steps",
+            "dcir": "dcir",
+            "chargeability": "chargeability",
+            "crate": "rate_capability",
+        }
+        for tab, kind in expected.items():
+            with self.subTest(tab=tab):
+                plot = {"id": f"{tab}-plot", "tab": tab}
+                with patch.object(
+                    cache_maintenance.analysis_cache,
+                    "result_key",
+                    return_value=f"{kind}-signature",
+                ) as result_key:
+                    signature = cache_maintenance.analysis_cache.saved_plot_data_signature(
+                        db, analysis, plot
+                    )
+                self.assertEqual(signature, f"{kind}-signature")
+                self.assertEqual(result_key.call_args.args[1], kind)
+
+    def test_skipped_unavailable_warmup_is_durable_for_current_identity(self):
+        db = self.make_session()
+        analysis = Analysis(
+            title="Unavailable auxiliary plot",
+            spec={
+                "selection": {"entries": []},
+                "saved_plots": [{"id": "plot", "tab": "time_capacity", "name": "Plot"}],
+            },
+        )
+        db.add(analysis)
+        db.commit()
+        coordinator = cache_maintenance.WarmupCoordinator()
+        coordinator.start(db)
+        task = coordinator.next_task(db)
+        result = coordinator.complete(
+            task["id"],
+            status="skipped",
+            detail="Working potential is unavailable",
+            error=None,
+            db=db,
+        )
+
+        self.assertTrue(result["ok"])
+        marker = cache_maintenance.analysis_cache.load_prepared_marker(analysis.id, "plot")
+        self.assertEqual(marker["disposition"], "unavailable")
+        self.assertEqual(coordinator._tasks_for_analyses(db, [analysis]), [])
 
     def test_invalidation_supports_continuation_reason_labels(self):
         db = self.make_session()

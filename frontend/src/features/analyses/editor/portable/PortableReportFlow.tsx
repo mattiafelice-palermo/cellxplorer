@@ -40,11 +40,13 @@ import {
 } from "../../../../api";
 import { saveDownload, shareDownload } from "../../../../downloads";
 import { sanitizeExportFilename } from "../../../../exportFilenames";
-import { invalidateAnalysisQueries } from "../../workspace/analysisQueryCache";
+import {
+  invalidateAnalysisQueries,
+  invalidateSourceScientificQueries,
+} from "../../workspace/analysisQueryCache";
 import {
   CachedSavedPlotPreview,
   buildPortablePlotSnapshots,
-  type PlotArtifact,
 } from "../artifacts/SavedPlotPreviews";
 import { specForSavedPlotView } from "../policies/analysisPlotPolicy";
 import {
@@ -211,13 +213,6 @@ export function PortableReportFlow({
         portablePlotIds,
         (completed, total, stage) =>
           setPortableProgress({ completed, total, stage, phase: "plots" }),
-        (plotId, signature) =>
-          qc.getQueryData<PlotArtifact>([
-            "plot-artifact",
-            analysisId,
-            plotId,
-            signature,
-          ]) ?? null,
       );
       setPortableProgress({
         completed: portablePlotIds.length,
@@ -480,14 +475,21 @@ export function PortableReportFlow({
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["cells"] }),
         qc.invalidateQueries({ queryKey: ["cell"] }),
-        qc.invalidateQueries({ queryKey: ["cell-cycles"] }),
         qc.invalidateQueries({ queryKey: ["replicate-groups"] }),
-        qc.invalidateQueries({ queryKey: ["replicate-preview"] }),
         qc.invalidateQueries({ queryKey: ["files"] }),
         qc.invalidateQueries({ queryKey: ["tree"] }),
         qc.invalidateQueries({ queryKey: ["analyses"] }),
         qc.invalidateQueries({ queryKey: ["activity"] }),
-        invalidateAnalysisQueries(qc, analysisId),
+        ...Array.from(affectedIds, (affectedAnalysisId) =>
+          invalidateAnalysisQueries(qc, affectedAnalysisId),
+        ),
+        ...(result.updated_cell_ids.length
+          ? [
+              invalidateSourceScientificQueries(qc, {
+                cellIds: result.updated_cell_ids,
+              }),
+            ]
+          : []),
       ]);
       if (!result.preflight.ready) {
         setPortableSourceDecision(result.preflight);

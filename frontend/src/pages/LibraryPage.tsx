@@ -82,7 +82,11 @@ import { FolderTree } from "../components/FolderTree";
 import { PlaceInFoldersModal } from "../components/PlaceInFoldersModal";
 import { ReplicatePreviewPanel } from "../components/ReplicatePreviewPanel";
 import { nominalCapacityFromMass } from "../scientificMetadata";
-import { invalidateAnalysisQueries } from "../features/analyses/workspace/analysisQueryCache";
+import {
+  invalidateAnalysisQueries,
+  invalidateSourceScientificQueries,
+  sourceUpdateCellId,
+} from "../features/analyses/workspace/analysisQueryCache";
 import { ImportCellsLauncher } from "./InboxPage";
 import {
   buildCellLibraryRows,
@@ -633,9 +637,9 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["analyses"] });
+      void invalidateAnalysisQueries(qc);
       qc.invalidateQueries({ queryKey: ["activity"] });
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
-      void invalidateAnalysisQueries(qc);
       qc.invalidateQueries({ queryKey: ["analyses"] });
       qc.invalidateQueries({ queryKey: ["files"] });
     },
@@ -786,15 +790,27 @@ export function LibraryPage() {
   const updateSource = useMutation({
     mutationFn: (file: Pick<SourceFile, "id" | "filename">) =>
       post<SourceFile>(`/api/files/${file.id}/update-from-source`, {}),
-    onSuccess: (_, file) => {
+    onSuccess: (updated, file) => {
+      const updatedCellId = sourceUpdateCellId(updated);
       notifications.show({ message: `Updated ${file.filename} from source`, color: "teal" });
       qc.invalidateQueries({ queryKey: ["cells"] });
-      qc.invalidateQueries({ queryKey: ["cell", selectedId] });
-      if (selectedId !== null) qc.invalidateQueries({ queryKey: ["cell-cycles", selectedId] });
+      if (updatedCellId !== null && updatedCellId !== undefined) {
+        qc.invalidateQueries({ queryKey: ["cell", updatedCellId] });
+        qc.invalidateQueries({ queryKey: ["cell-cycles", updatedCellId] });
+      } else {
+        qc.invalidateQueries({ queryKey: ["cell"] });
+      }
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["replicate-preview"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["analyses"] });
+      void invalidateAnalysisQueries(qc);
+      void invalidateSourceScientificQueries(qc, {
+        cellIds:
+          updatedCellId === null || updatedCellId === undefined
+            ? undefined
+            : [updatedCellId],
+      });
       qc.invalidateQueries({ queryKey: ["activity"] });
       qc.invalidateQueries({ queryKey: ["background-jobs"] });
     },
@@ -848,6 +864,8 @@ export function LibraryPage() {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["replicate-groups"] });
       qc.invalidateQueries({ queryKey: ["analysis"] });
+      void invalidateSourceScientificQueries(qc, { cellIds: [updated.id] });
+      void invalidateAnalysisQueries(qc);
       qc.invalidateQueries({ queryKey: ["activity"] });
     },
     onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),

@@ -124,6 +124,7 @@ VOLTAGE_QUANTITIES: dict[str, str] = {
     "counter_potential": "counter_potential_v",
 }
 DEFAULT_VOLTAGE_QUANTITY = "voltage"
+MIXED_VOLTAGE_ROLE = "mixed"
 
 # Default, source-neutral role/label vocabulary for `voltage_capabilities()`
 # below. Adapters pass non-default role/capability facts only when the source
@@ -132,7 +133,36 @@ _DEFAULT_VOLTAGE_ROLE_LABELS: dict[str, str] = {
     "cell": "Cell voltage (V)",
     "working_vs_reference": "Working potential vs ref (V)",
     "counter_vs_reference": "Counter potential vs ref (V)",
+    MIXED_VOLTAGE_ROLE: "Voltage role ambiguous (V)",
 }
+
+# Reference-electrode text is source metadata, not an arbitrary user label.
+# Keep it compact when it crosses into a selector, axis title, or tooltip and
+# treat the common EC-Lab placeholders as absent so the UI never implies a
+# chemistry that the source did not establish.
+MAX_VOLTAGE_REFERENCE_LABEL_CHARS = 64
+_MISSING_VOLTAGE_REFERENCE_TEXT = frozenset(
+    {"", "none", "n/a", "na", "unknown", "unspecified", "(unspecified)"}
+)
+
+
+def normalized_voltage_reference(value: object) -> str | None:
+    """Return short, explicit reference text safe for user-facing labels.
+
+    The original header remains authoritative and is not changed by this
+    presentation helper. A long or placeholder value deliberately falls back
+    to the generic ``vs ref`` label instead of being guessed or silently
+    truncated.
+    """
+
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if text.casefold() in _MISSING_VOLTAGE_REFERENCE_TEXT:
+        return None
+    if len(text) > MAX_VOLTAGE_REFERENCE_LABEL_CHARS:
+        return None
+    return text
 
 
 def voltage_capabilities(
@@ -185,7 +215,12 @@ def voltage_capabilities(
     return result
 
 
-def voltage_quantity_label(quantity: str, *, role: str | None = None) -> str:
+def voltage_quantity_label(
+    quantity: str,
+    *,
+    role: str | None = None,
+    reference_electrode: object = None,
+) -> str:
     """Default truthful label for a stable voltage quantity ID.
 
     ``role`` lets a caller with real capability metadata (e.g. a future
@@ -201,6 +236,10 @@ def voltage_quantity_label(quantity: str, *, role: str | None = None) -> str:
     }.get(quantity)
     chosen_role = role or default_role
     if chosen_role and chosen_role in _DEFAULT_VOLTAGE_ROLE_LABELS:
+        reference = normalized_voltage_reference(reference_electrode)
+        if reference and chosen_role in {"working_vs_reference", "counter_vs_reference"}:
+            prefix = "Working" if chosen_role == "working_vs_reference" else "Counter"
+            return f"{prefix} potential vs {reference} (V)"
         return _DEFAULT_VOLTAGE_ROLE_LABELS[chosen_role]
     return _DEFAULT_VOLTAGE_ROLE_LABELS.get(default_role or "", quantity)
 

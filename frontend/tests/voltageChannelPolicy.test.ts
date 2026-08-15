@@ -2,10 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  plotlySafeText,
   shouldShowVoltageChannelSelector,
+  shouldResetVoltageChannelAvailability,
+  timeCapacityExportOptions,
+  timeCapacityExportMatchesRequest,
+  timeCapacityResultMatchesVoltageChannel,
+  voltageChannelAvailabilitySignature,
+  voltageChannelAvailabilityPublication,
+  voltageChannelDataIdentity,
+  voltageChannelLabel,
   voltageChannelSelectorOptions,
+  voltageChannelUnavailable,
+  voltageChannelUnavailableMessage,
   type VoltageChannelAvailability,
 } from "../src/features/analyses/editor/policies/voltageChannelPolicy.ts";
+import { timeCapacityPreviewResult } from "../src/features/analyses/editor/policies/timeCapacityPreviewPolicy.ts";
 
 function availability(
   overrides: Partial<Record<"working_potential" | "counter_potential", boolean>> = {}
@@ -101,4 +113,187 @@ test("no result yet still retains a pinned electrode-potential selection rather 
     { value: "working_potential", label: "Working potential vs ref (V)" },
   ]);
   assert.equal(shouldShowVoltageChannelSelector(options), true);
+});
+
+test("backend-provided reference text is used verbatim in the auxiliary label", () => {
+  const channels = availability({ working_potential: true });
+  channels.working_potential.reference_electrode = "Ag/AgCl";
+  channels.working_potential.label = "Working potential vs Ag/AgCl (V)";
+
+  assert.equal(
+    voltageChannelLabel("working_potential", channels),
+    "Working potential vs Ag/AgCl (V)"
+  );
+});
+
+test("missing reference text keeps the generic truthful auxiliary label", () => {
+  assert.equal(
+    voltageChannelLabel("counter_potential", availability({ counter_potential: true })),
+    "Counter potential vs ref (V)"
+  );
+});
+
+test("a result computed for another channel is rejected during a channel switch", () => {
+  const primary = { settings: { voltage_channel: "voltage" } } as any;
+  assert.equal(timeCapacityResultMatchesVoltageChannel(primary, "voltage"), true);
+  assert.equal(timeCapacityResultMatchesVoltageChannel(primary, "working_potential"), false);
+  assert.equal(timeCapacityResultMatchesVoltageChannel(undefined, "voltage"), false);
+});
+
+test("full-resolution export rejects delayed results for either auxiliary channel after a race", () => {
+  for (const channel of ["working_potential", "counter_potential"] as const) {
+    const result = {
+      settings: { voltage_channel: channel },
+      source_data_signature: "source-a",
+    } as any;
+    assert.equal(
+      timeCapacityExportMatchesRequest("data-a", "data-a", channel, channel, result),
+      true
+    );
+    assert.equal(
+      timeCapacityExportMatchesRequest(
+        "data-a",
+        "data-a",
+        channel,
+        channel,
+        result,
+        "source-b"
+      ),
+      false
+    );
+    assert.equal(
+      timeCapacityExportMatchesRequest("data-a", "data-a", "voltage", channel, result),
+      false
+    );
+    assert.equal(
+      timeCapacityExportMatchesRequest("data-b", "data-a", channel, channel, result),
+      false
+    );
+  }
+});
+
+test("source identity changes reset availability even when selection is unchanged", () => {
+  const result = {
+    parser_version: "mpr:1",
+    calc_version: "calc:1",
+    cell_traces: [
+      {
+        cell_id: 4,
+        source_descriptors: [
+          { source_position: 1, source_hash: "hash-a", status: "ready" },
+        ],
+      },
+    ],
+    voltage_channels: availability({ working_potential: true }),
+  } as any;
+  const changed = {
+    ...result,
+    cell_traces: [
+      {
+        ...result.cell_traces[0],
+        source_descriptors: [
+          { source_position: 1, source_hash: "hash-b", status: "ready" },
+        ],
+      },
+    ],
+  };
+  const selection = {
+    entries: [{ kind: "cell", ref_id: 4 }],
+    exclusions: [],
+    hidden_replicate_group_ids: [],
+  } as any;
+  const first = voltageChannelAvailabilitySignature(
+    { selection },
+    voltageChannelDataIdentity(result)
+  );
+  const same = voltageChannelAvailabilitySignature(
+    { selection },
+    voltageChannelDataIdentity(result)
+  );
+  const next = voltageChannelAvailabilitySignature(
+    { selection },
+    voltageChannelDataIdentity(changed)
+  );
+
+  assert.equal(shouldResetVoltageChannelAvailability(first, same), false);
+  assert.equal(shouldResetVoltageChannelAvailability(first, next), true);
+  const publication = voltageChannelAvailabilityPublication(first, next, result.voltage_channels);
+  assert.equal(publication.reset, true);
+  assert.strictEqual(publication.channels, result.voltage_channels);
+});
+
+test("saved-artifact and portable-preview gates never fall back to primary data", () => {
+  const result = {
+    settings: { voltage_channel: "working_potential" },
+    cell_traces: [],
+    voltage_channels: availability({ working_potential: true }),
+  } as any;
+  const workingSpec = {
+    computation: { time_capacity: { voltage_channel: "working_potential" } },
+  } as any;
+  const counterSpec = {
+    computation: { time_capacity: { voltage_channel: "counter_potential" } },
+  } as any;
+  const unavailableResult = {
+    ...result,
+    voltage_channels: availability({ working_potential: false }),
+  };
+  const primaryResult = {
+    ...result,
+    settings: { voltage_channel: "voltage" },
+  };
+
+  assert.equal(timeCapacityPreviewResult(result, workingSpec), result);
+  assert.equal(timeCapacityPreviewResult(unavailableResult, workingSpec), undefined);
+  assert.equal(timeCapacityPreviewResult(primaryResult, workingSpec), undefined);
+  assert.equal(timeCapacityPreviewResult(result, counterSpec), undefined);
+});
+
+test("explicit unavailable auxiliary results produce a named state without loading fallback", () => {
+  const channels = availability({ working_potential: false });
+  assert.equal(voltageChannelUnavailable("working_potential", channels), true);
+  assert.equal(voltageChannelUnavailable("working_potential", undefined), false);
+  assert.equal(
+    voltageChannelUnavailableMessage("working_potential"),
+    "Working potential is unavailable for the current selection."
+  );
+});
+
+test("source-controlled labels are safe for fixed Plotly templates", () => {
+  assert.equal(
+    plotlySafeText("Ag/AgCl %{y}<br><extra>"),
+    "Ag/AgCl &#37;{y}&lt;br&gt;&lt;extra&gt;"
+  );
+});
+
+test("scientific Time/Capacity exports request full precision and no compact downsampling", () => {
+  assert.deepEqual(timeCapacityExportOptions(1200), {
+    viewport_width: 1200,
+    precision: "full",
+    compact: false,
+  });
+});
+
+test("availability is retained across plot-only refetches but reset for selection changes", () => {
+  const selection = {
+    entries: [{ kind: "cell", ref_id: 1 }],
+    exclusions: [],
+    hidden_replicate_group_ids: [],
+  } as any;
+  const sameSelection = {
+    entries: [{ kind: "cell", ref_id: 1 }],
+    exclusions: [],
+    hidden_replicate_group_ids: [],
+  } as any;
+  const changedSelection = {
+    entries: [{ kind: "cell", ref_id: 2 }],
+    exclusions: [],
+    hidden_replicate_group_ids: [],
+  } as any;
+  const first = voltageChannelAvailabilitySignature({ selection });
+  const same = voltageChannelAvailabilitySignature({ selection: sameSelection });
+  const changed = voltageChannelAvailabilitySignature({ selection: changedSelection });
+
+  assert.equal(shouldResetVoltageChannelAvailability(first, same), false);
+  assert.equal(shouldResetVoltageChannelAvailability(first, changed), true);
 });

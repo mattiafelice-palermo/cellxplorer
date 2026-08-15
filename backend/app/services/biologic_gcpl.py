@@ -918,6 +918,7 @@ def _gcpl_metadata_from_document(document: MprDocument) -> dict[str, Any]:
     channel_number = log.get("channel_number")
     return {
         "source_format": "biologic_mpr",
+        "technique": settings.get("technique"),
         "raw": {
             "modules": module_headers,
             "settings": settings,

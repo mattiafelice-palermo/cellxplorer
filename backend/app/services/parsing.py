@@ -559,6 +559,98 @@ def source_record_capability(source: object) -> dict[str, object]:
     }
 
 
+def _bounded_source_presentation_text(value: object, limit: int = 96) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if not text:
+        return None
+    return text[:limit] if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def source_presentation(source: object) -> dict[str, object]:
+    """Return bounded BioLogic facts for source-list/detail presentation.
+
+    ``SourceFile.header_meta`` is the persisted raw header document. This
+    helper reads only the small normalized settings/log/capability facts that
+    the UI needs and never returns the full decoded settings payload. Other
+    formats retain the existing source-detail shape by receiving null facts.
+    """
+
+    empty = {
+        "source_format": None,
+        "technique": None,
+        "software_version": None,
+        "reference_electrode": None,
+        "voltage_capabilities": None,
+        "voltage_v_origin": None,
+        "voltage_v_derived": None,
+    }
+    ext = str(getattr(source, "ext", "") or "").casefold().lstrip(".")
+    if ext != "mpr":
+        return empty
+
+    header = getattr(source, "header_meta", None)
+    if not isinstance(header, dict):
+        return {**empty, "source_format": "BioLogic EC-Lab"}
+
+    voltage = header.get(canonical_cycling.VOLTAGE_CAPABILITIES_METADATA_KEY)
+    if not isinstance(voltage, dict):
+        voltage = header.get("voltage_capabilities")
+    voltage = voltage if isinstance(voltage, dict) else {}
+    raw_capabilities = voltage.get("capabilities")
+    capabilities = (
+        {
+            key: bool(raw_capabilities.get(key))
+            for key in (
+                "primary_voltage",
+                "working_potential",
+                "counter_potential",
+            )
+            if key in raw_capabilities
+        }
+        if isinstance(raw_capabilities, dict)
+        else {}
+    )
+    raw_roles = voltage.get("voltage_roles")
+    roles = (
+        {
+            key: _bounded_source_presentation_text(raw_roles.get(key), 64)
+            for key in (
+                "voltage_v",
+                "working_potential_v",
+                "counter_potential_v",
+            )
+            if isinstance(raw_roles.get(key), str) and raw_roles.get(key).strip()
+        }
+        if isinstance(raw_roles, dict)
+        else {}
+    )
+    settings = header.get("settings")
+    settings = settings if isinstance(settings, dict) else {}
+    log = header.get("log")
+    log = log if isinstance(log, dict) else {}
+    reference = _bounded_source_presentation_text(voltage.get("reference_electrode"))
+    origin = _bounded_source_presentation_text(voltage.get("voltage_v_origin"), 64)
+    return {
+        "source_format": "BioLogic EC-Lab",
+        "technique": _bounded_source_presentation_text(settings.get("technique"), 64),
+        "software_version": _bounded_source_presentation_text(
+            log.get("ec_lab_version"), 64
+        ),
+        "reference_electrode": reference,
+        "voltage_capabilities": {
+            "capabilities": capabilities,
+            "voltage_roles": roles,
+            "reference_electrode": reference,
+            "voltage_v_origin": origin,
+            "voltage_v_derived": bool(voltage.get("voltage_v_derived")),
+        },
+        "voltage_v_origin": origin,
+        "voltage_v_derived": bool(voltage.get("voltage_v_derived")),
+    }
+
+
 def parse_timeseries(path: str | Path) -> pd.DataFrame:
     """Full parse of a supported cycling source into a normalized DataFrame.
 

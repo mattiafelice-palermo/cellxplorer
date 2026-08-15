@@ -36,18 +36,21 @@ RESULT_SCHEMA_VERSIONS = {
     # array (per-source {hash, position, parser_version}), so a legacy
     # cached payload missing that array must not be served as if it had it.
     "cycles": 3,
-    # Spec 040.4: the payload gained a top-level "voltage_channels"
-    # availability map and "settings" gained "voltage_channel"; a legacy
-    # cached payload from before this child does not carry either, so it
-    # must not be served as if the new selector/availability data existed.
-    "time_capacity": 3,
+    # Specs 040.4/041.5: the payload gained a top-level "voltage_channels"
+    # availability map, "settings" gained "voltage_channel", and the channel
+    # entries now carry resolved role/reference presentation context. Legacy
+    # payloads must not be served as if those semantics existed.
+    "time_capacity": 4,
     "steps": 3,
     "dcir": 2,
     "chargeability": 2,
     "rate_capability": 4,
 }
 PLOT_ARTIFACT_CACHE_VERSION = 2
-THUMBNAIL_CACHE_VERSION = 5
+# Spec 041.5: thumbnail records now carry the scientific data signature that
+# produced them.  A client plot signature alone is not enough to prevent an
+# old auxiliary-channel image from surviving a source/capability change.
+THUMBNAIL_CACHE_VERSION = 7
 DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES = 1024 * 1024 * 1024
 ANALYSIS_CACHE_LIMIT_BYTES: int | None = DEFAULT_ANALYSIS_CACHE_LIMIT_BYTES
 _ROOT = CACHE_DIR / "analysis"
@@ -244,6 +247,10 @@ def saved_plot_data_signature(db: Session, analysis: Any, saved_plot: dict) -> s
         if tab == "steps"
         else "dcir"
         if tab == "dcir"
+        else "chargeability"
+        if tab == "chargeability"
+        else "rate_capability"
+        if tab == "crate"
         else "cycles"
     )
     request_options = (
@@ -258,6 +265,30 @@ def saved_plot_data_signature(db: Session, analysis: Any, saved_plot: dict) -> s
         analysis.provenance,
         use_current_versions=False,
         request_options=request_options,
+    )
+
+
+def time_capacity_data_signature(
+    db: Session,
+    spec: dict,
+    provenance: dict | None,
+    *,
+    use_current_versions: bool,
+) -> str:
+    """Return Time/Capacity identity with rendering options deliberately removed.
+
+    This is the same scientific result-key payload used by the normal
+    Time/Capacity cache, including unit metadata and labels. Only viewport,
+    precision, and compact/downsampling options are omitted so standard and
+    full-resolution renders share one scientific identity.
+    """
+    return result_key(
+        db,
+        "time_capacity",
+        spec,
+        provenance,
+        use_current_versions=use_current_versions,
+        request_options=None,
     )
 
 
@@ -378,7 +409,12 @@ def upgrade_result_format(kind: str, key: str, result: dict) -> None:
         pass  # The slow path already produced a correct response.
 
 
-def splice_result_body(body: bytes, badges: list[dict], cache_status: str) -> bytes:
+def splice_result_body(
+    body: bytes,
+    badges: list[dict],
+    cache_status: str,
+    extra_fields: dict[str, object] | None = None,
+) -> bytes:
     """Prepend the volatile keys to a stored body without parsing it.
 
     The stored body is a JSON object that deliberately lacks ``badges`` and
@@ -390,7 +426,14 @@ def splice_result_body(body: bytes, badges: list[dict], cache_status: str) -> by
     if not rest.startswith(b"{"):
         raise ValueError("cached result body is not a JSON object")
     rest = rest[1:].lstrip()
-    head = b'{"cache_status":' + _json_bytes(cache_status) + b',"badges":' + _json_bytes(badges)
+    head = b'{"cache_status":' + _json_bytes(cache_status)
+    for name, value in (extra_fields or {}).items():
+        # Existing modern bodies already contain these immutable fields. Do
+        # not emit duplicate JSON keys when the fast path serves them.
+        if (b'"' + name.encode("utf-8") + b'":') in rest:
+            continue
+        head += b',' + _json_bytes(name) + b':' + _json_bytes(value)
+    head += b',"badges":' + _json_bytes(badges)
     if rest.startswith(b"}"):
         # The stored object held nothing but the keys we just re-added.
         return head + b"}"
@@ -421,7 +464,12 @@ def _thumbnail_index_path(analysis_id: int, plot_id: str, client_signature: str)
     )
 
 
-def _load_thumbnail_value(path: Path, field: str) -> str | None:
+def _load_thumbnail_value(
+    path: Path,
+    field: str,
+    *,
+    expected_data_signature: str | None = None,
+) -> str | None:
     """Read one derivative from a versioned thumbnail cache record."""
     if not path.is_file():
         return None
@@ -430,6 +478,14 @@ def _load_thumbnail_value(path: Path, field: str) -> str | None:
             value = json.loads(source.read())
         if value.get("cache_version") != THUMBNAIL_CACHE_VERSION:
             path.unlink(missing_ok=True)
+            return None
+        if (
+            expected_data_signature is not None
+            and value.get("data_signature") != expected_data_signature
+        ):
+            # Keep the old record: it may still be useful for the exact
+            # scientific cache signature that produced it, but it is not safe
+            # to serve for the current source data.
             return None
         thumbnail = value.get(field)
         if not _valid_thumbnail_data_url(thumbnail):
@@ -465,6 +521,7 @@ def store_thumbnail(
     signature: str,
     thumbnail: str,
     preview_thumbnail: str | None = None,
+    data_signature: str | None = None,
 ) -> None:
     with _lock:
         _atomic_gzip(
@@ -474,6 +531,11 @@ def store_thumbnail(
                     "cache_version": THUMBNAIL_CACHE_VERSION,
                     "thumbnail": thumbnail,
                     "preview_thumbnail": preview_thumbnail,
+                    **(
+                        {"data_signature": data_signature}
+                        if data_signature is not None
+                        else {}
+                    ),
                 }
             ),
         )
@@ -484,11 +546,24 @@ def load_indexed_thumbnail(
     analysis_id: int,
     plot_id: str,
     client_signature: str,
+    expected_data_signature: str | None = None,
 ) -> str | None:
     """Load a saved-plot thumbnail without rebuilding its scientific key."""
     path = _thumbnail_index_path(analysis_id, plot_id, client_signature)
-    thumbnail = _load_thumbnail_value(path, "thumbnail")
-    if thumbnail is None or _load_thumbnail_value(path, "preview_thumbnail") is None:
+    thumbnail = _load_thumbnail_value(
+        path,
+        "thumbnail",
+        expected_data_signature=expected_data_signature,
+    )
+    if (
+        thumbnail is None
+        or _load_thumbnail_value(
+            path,
+            "preview_thumbnail",
+            expected_data_signature=expected_data_signature,
+        )
+        is None
+    ):
         return None
     return thumbnail
 
@@ -497,10 +572,12 @@ def load_indexed_preview_thumbnail(
     analysis_id: int,
     plot_id: str,
     client_signature: str,
+    expected_data_signature: str | None = None,
 ) -> str | None:
     return _load_thumbnail_value(
         _thumbnail_index_path(analysis_id, plot_id, client_signature),
         "preview_thumbnail",
+        expected_data_signature=expected_data_signature,
     )
 
 
@@ -510,6 +587,7 @@ def store_indexed_thumbnail(
     client_signature: str,
     thumbnail: str,
     preview_thumbnail: str | None = None,
+    data_signature: str | None = None,
 ) -> None:
     with _lock:
         _atomic_gzip(
@@ -519,6 +597,11 @@ def store_indexed_thumbnail(
                     "cache_version": THUMBNAIL_CACHE_VERSION,
                     "thumbnail": thumbnail,
                     "preview_thumbnail": preview_thumbnail,
+                    **(
+                        {"data_signature": data_signature}
+                        if data_signature is not None
+                        else {}
+                    ),
                 }
             ),
         )
@@ -552,6 +635,8 @@ def store_prepared_marker(
     plot_id: str,
     data_signature: str,
     plot_modified_at: str | None,
+    *,
+    disposition: str = "ready",
 ) -> None:
     path = _prepared_marker_path(analysis_id, plot_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -562,6 +647,7 @@ def store_prepared_marker(
                 {
                     "data_signature": data_signature,
                     "plot_modified_at": plot_modified_at,
+                    "disposition": disposition,
                     "thumbnail_cache_version": THUMBNAIL_CACHE_VERSION,
                 }
             )
@@ -589,6 +675,8 @@ def load_latest_thumbnail(
     analysis_id: int,
     plot_id: str,
     variant: str = "saved",
+    *,
+    expected_data_signature: str | None = None,
 ) -> str | None:
     """Adopt the newest legacy thumbnail when its direct index is absent."""
     safe_plot = "".join(character if character.isalnum() or character in "_-" else "_" for character in plot_id)
@@ -612,6 +700,10 @@ def load_latest_thumbnail(
             )
             if (
                 value.get("cache_version") == THUMBNAIL_CACHE_VERSION
+                and (
+                    expected_data_signature is None
+                    or value.get("data_signature") == expected_data_signature
+                )
                 and _valid_thumbnail_data_url(thumbnail)
                 and _valid_thumbnail_data_url(counterpart)
             ):
@@ -662,6 +754,7 @@ def store_artifact(
     artifact: dict,
     *,
     client_signature: str | None = None,
+    data_signature: str | None = None,
 ) -> None:
     with _lock:
         # Some callers refresh the serialized figure/SVG without rendering a
@@ -682,6 +775,7 @@ def store_artifact(
                 signature,
                 thumbnail,
                 preview_thumbnail if isinstance(preview_thumbnail, str) else None,
+                data_signature,
             )
             if client_signature is not None:
                 store_indexed_thumbnail(
@@ -690,6 +784,7 @@ def store_artifact(
                     client_signature,
                     thumbnail,
                     preview_thumbnail if isinstance(preview_thumbnail, str) else None,
+                    data_signature,
                 )
         # The saved-plot rows only need the small thumbnail. Keep it in its
         # own file so page reloads never decompress the full Plotly figure.

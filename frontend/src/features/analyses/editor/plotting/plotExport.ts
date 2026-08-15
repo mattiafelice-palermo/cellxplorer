@@ -62,8 +62,11 @@ export function tracesToColumns(traces: Plotly.Data[], layout: Partial<Plotly.La
     const layoutRec = layout as Record<string, unknown>;
     const yKey = t.yaxis === "y3" ? "yaxis3" : t.yaxis === "y2" ? "yaxis2" : "yaxis";
     const xKey = t.xaxis === "x2" ? "xaxis2" : "xaxis";
-    const xLabel = axisTitle(layoutRec[xKey]) || "x";
-    const yLabel = axisTitle(layoutRec[yKey]) || "y";
+    const exportAxisLabels = t.cellxplorer_export_axis_labels as
+      | { x?: string; y?: string }
+      | undefined;
+    const xLabel = exportAxisLabels?.x || axisTitle(layoutRec[xKey]) || "x";
+    const yLabel = exportAxisLabels?.y || axisTitle(layoutRec[yKey]) || "y";
     columns.push({ header: `${name} | ${xLabel}`, values: xs });
     columns.push({ header: `${name} | ${yLabel}`, values: ys });
   }

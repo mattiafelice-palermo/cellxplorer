@@ -31,6 +31,10 @@ import {
   reorderCellSources,
 } from "../api";
 import { acknowledgementFindingIds, findingSummary, moveSource, preserveAcknowledgements } from "../continuationPolicy";
+import {
+  invalidateAnalysisQueries,
+  invalidateSourceScientificQueries,
+} from "../features/analyses/workspace/analysisQueryCache";
 import { ImportFilesystemPickerModal, ImportSourceSelection } from "./ImportFilesystemPickerModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 
@@ -197,6 +201,13 @@ export function ContinuationManagementPanel({
           canonical_cycling: !source.metadata_only,
           metadata_only: source.metadata_only,
           capability_warning: source.capability_warning,
+          source_format: source.source_format,
+          technique: source.technique,
+          software_version: source.software_version,
+          reference_electrode: source.reference_electrode,
+          voltage_capabilities: source.voltage_capabilities,
+          voltage_v_origin: source.voltage_capabilities?.voltage_v_origin ?? null,
+          voltage_v_derived: source.voltage_capabilities?.voltage_v_derived ?? null,
         }),
         key: source.staged_name,
         kind: "staged" as const,
@@ -239,9 +250,11 @@ export function ContinuationManagementPanel({
         message: action.mode === "attach" ? `Added ${result.sources.length} source${result.sources.length === 1 ? "" : "s"} to ${result.cell.name}` : action.mode === "reorder" ? `Saved source order for ${result.cell.name}` : `Detached source from ${result.cell.name}`,
         color: "teal",
       });
-      for (const key of ["cell", "cells", "files", "tree", "analyses", "activity", "background-jobs", "source-check-job"]) {
+      for (const key of ["cell", "cells", "files", "tree", "analyses", "analysis-database-thumbnail", "activity", "background-jobs", "source-check-job"]) {
         void queryClient.invalidateQueries({ queryKey: key === "cell" ? [key, cell.id] : [key] });
       }
+      void invalidateAnalysisQueries(queryClient);
+      void invalidateSourceScientificQueries(queryClient, { cellIds: [cell.id] });
       closeProposal();
       onChanged();
     },

@@ -348,6 +348,32 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
     if (key === "voltage_lower_v") return "protection_voltage_lower_v (legacy key)";
     return key;
   };
+  const sourceVoltageRoleLabel = (role: string | null | undefined, reference: string | null, fallback: string) => {
+    if (role === "cell") return "Cell";
+    if (role === "working_vs_reference") return `Working vs ${reference || "ref"}`;
+    if (role === "counter_vs_reference") return `Counter vs ${reference || "ref"}`;
+    if (role === "mixed") return "Voltage role ambiguous";
+    return fallback;
+  };
+  const sourceVoltageChannels = (file: CellSource): string | null => {
+    const voltage = file.voltage_capabilities;
+    const capabilities = voltage?.capabilities;
+    if (!capabilities) return null;
+    const roles = voltage?.voltage_roles;
+    const reference = file.reference_electrode ?? voltage?.reference_electrode ?? null;
+    const labels = [
+      capabilities.primary_voltage
+        ? sourceVoltageRoleLabel(roles?.voltage_v, reference, "Cell")
+        : null,
+      capabilities.working_potential
+        ? sourceVoltageRoleLabel(roles?.working_potential_v, reference, "Working vs ref")
+        : null,
+      capabilities.counter_potential
+        ? sourceVoltageRoleLabel(roles?.counter_potential_v, reference, "Counter vs ref")
+        : null,
+    ].filter((value): value is string => value !== null);
+    return labels.length ? labels.join(" + ") : null;
+  };
   const sourceMetadata = cell.sources.flatMap((file, index) =>
       [
         ["file", file.filename], ["path", file.path], ["channel", file.channel],
@@ -355,6 +381,18 @@ function MetadataPanel({ cell }: { cell: CellDetail }) {
         ["nda_version", file.nda_version], ["barcode", file.barcode], ["remarks", file.remarks],
         ["active_mass_mg", file.active_mass_mg], ["nominal_capacity_mah", file.nominal_capacity_mah],
         ["parser_version", file.parser_version],
+        ["format", file.source_format], ["technique", file.technique],
+        ["software_version", file.software_version],
+        ["reference_electrode", file.reference_electrode],
+        ["voltage_channels", sourceVoltageChannels(file)],
+        [
+          "cell_voltage",
+          file.voltage_v_origin === "derived_working_minus_counter"
+            ? "derived from Working - Counter"
+            : file.voltage_v_origin === "measured"
+              ? "measured"
+              : null,
+        ],
         ...(file.metadata_only
           ? [["capability", file.capability_warning ?? "Canonical cycling rows are unavailable"] as const]
           : []),

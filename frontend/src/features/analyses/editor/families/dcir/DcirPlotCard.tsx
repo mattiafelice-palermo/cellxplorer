@@ -139,6 +139,7 @@ export interface DcirResultSeries {
 export interface DcirResult {
   cell_series: DcirResultSeries[];
   badges: { kind: string; series_id?: string; detail: string }[];
+  data_signature?: string;
 }
 
 const DEFAULT_VIEW: DcirViewSpec = {

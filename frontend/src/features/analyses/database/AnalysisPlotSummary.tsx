@@ -9,12 +9,15 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { get, type AnalysisSavedPlotSummary } from "../../../api";
+import { ApiError, get, type AnalysisSavedPlotSummary } from "../../../api";
+import { normalizeCachedPlotThumbnailResponse } from "../editor/policies/plotThumbnailResponsePolicy";
 
 export type AnalysisPlotPreviewSource = {
   id: number;
   title: string;
   saved_plots: AnalysisSavedPlotSummary[];
+  modified_at?: string | null;
+  sources_changed?: boolean;
 };
 
 function humanize(value: string): string {
@@ -29,14 +32,46 @@ function formatTab(value: string): string {
   return humanize(value);
 }
 
-function CachedPlotThumbnail({ analysisId, plotId }: { analysisId: number; plotId: string }) {
+function CachedPlotThumbnail({
+  analysisId,
+  plotId,
+  analysisModifiedAt,
+  sourcesChanged,
+}: {
+  analysisId: number;
+  plotId: string;
+  analysisModifiedAt?: string | null;
+  sourcesChanged?: boolean;
+}) {
   const thumbnail = useQuery({
-    queryKey: ["analysis-database-thumbnail", analysisId, plotId],
-    queryFn: () =>
-      get<{ thumbnail: string }>(
-        `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}/thumbnail/latest`
-          + "?variant=preview"
-      ),
+    queryKey: [
+      "analysis-database-thumbnail",
+      analysisId,
+      plotId,
+      analysisModifiedAt ?? null,
+      Boolean(sourcesChanged),
+    ],
+    queryFn: async () => {
+      try {
+        const response = await get<{
+          thumbnail: string;
+          data_signature?: string;
+          plot_modified_at?: string | null;
+        }>(
+          `/api/analyses/${analysisId}/plot-artifacts/${encodeURIComponent(plotId)}/thumbnail/latest`
+            + "?variant=preview"
+        );
+        return normalizeCachedPlotThumbnailResponse(response);
+      } catch (error) {
+        // A changed source or saved-plot revision makes the previous asset
+        // unavailable. Resolve that state to null so React Query cannot keep
+        // rendering the old image after the server returns 404.
+        if (error instanceof ApiError && error.status === 404) {
+          return normalizeCachedPlotThumbnailResponse(undefined, 404);
+        }
+        throw error;
+      }
+    },
     staleTime: Infinity,
     retry: false,
     refetchInterval: (query) => query.state.data?.thumbnail ? false : 3_000,
@@ -140,7 +175,12 @@ export function AnalysisPlotSummary<T extends AnalysisPlotPreviewSource>({
               }}
             >
               {hoveredPlot ? (
-                <CachedPlotThumbnail analysisId={analysis.id} plotId={hoveredPlot.id} />
+                <CachedPlotThumbnail
+                  analysisId={analysis.id}
+                  plotId={hoveredPlot.id}
+                  analysisModifiedAt={analysis.modified_at}
+                  sourcesChanged={analysis.sources_changed}
+                />
               ) : null}
             </Box>
             <Text size="xs" c="dimmed" mt={6} truncate>{hoveredPlot?.name}</Text>
