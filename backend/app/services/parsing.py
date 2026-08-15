@@ -422,15 +422,19 @@ RAW_COLUMNS = {
 # vouch for their cycle labels.  ``gcpl4`` is a different upgrade boundary:
 # R8 withdrew a synthetic-only 15-ID/49-byte binary layout, so persisted
 # gcpl4 metadata must be reconciled from its stored data-header evidence
-# before it can receive the new identity. ``gcpl5`` and ``gcpl6`` are both
-# previous identities whose MPR fallback output must be re-inspected after
-# the candidate/verified boundary and declared-direction checks changed.
+# before it can receive the new identity. ``gcpl5`` and ``gcpl6`` are previous
+# identities whose MPR fallback output must be re-inspected after the
+# candidate/verified boundary and declared-direction checks changed. ``gcpl7``
+# is also historical now: gcpl8 widened the accepted contract for a
+# header-proven neutral setup/control preamble, so both previously canonical
+# and previously failed gcpl7 rows must pass the current source-reading path
+# before receiving gcpl8.
 # Keep these sets explicit so a later BioLogic revision can add its own
 # bounded migration decision without changing unrelated source formats.
 RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl3:r1"})
 PRE_R8_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset({"bm:gcpl4:r1"})
 LEGACY_BIOLOGIC_MPR_PARSER_IDENTITIES = frozenset(
-    {"bm:gcpl5:r1", "bm:gcpl6:r1"}
+    {"bm:gcpl5:r1", "bm:gcpl6:r1", "bm:gcpl7:r1"}
 )
 BIOLOGIC_MPR_RECONCILIATION_IDENTITIES = (
     RETIRED_BIOLOGIC_MPR_PARSER_IDENTITIES

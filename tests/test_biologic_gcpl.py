@@ -125,11 +125,11 @@ class BiologicGcplMappingTests(unittest.TestCase):
             parsing.source_parser_descriptor("source.mpr"),
             {
                 "format_id": parsing.FORMAT_BIOLOGIC_MPR,
-                "adapter_revision": "gcpl7",
+                "adapter_revision": "gcpl8",
                 "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
             },
         )
-        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl7:r1")
+        self.assertEqual(parsing.parser_identity("source.mpr"), "bm:gcpl8:r1")
         self.assertTrue(parsing.source_filename_allowed("source.mpr"))
 
     def test_single_direction_mpr_infers_cycle_one_without_full_cycle_field(self) -> None:

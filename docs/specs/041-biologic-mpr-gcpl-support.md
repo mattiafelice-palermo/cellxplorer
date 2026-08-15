@@ -69,8 +69,20 @@ that the experiment's absolute cycle number was 1. The exception does not
 infer cycles for mixed charge/discharge files, repeated protocols, ambiguous
 directions, or non-monotonic execution. Those sources remain metadata-only
 until a verified full-cycle identity is available. It also does not claim
-MPR/MPT semantic parity; the paired-file gate remains required for general
-multi-cycle scientific closure.
+MPR/MPT semantic parity. The user has deferred paired parity to future work;
+its absence is not a Parent 041 merge blocker, and general or repeating
+multi-cycle support must not be claimed without that later evidence.
+
+## User-requested amendment - defer MPR/MPT parity
+
+On 2026-08-16 the user explicitly deferred same-experiment `.mpr`/`.mpt`
+semantic parity until a matching `.mpt` is available. The current closure
+record must therefore say `MPR/MPT semantic parity: NOT RUN`, make no general
+multi-cycle parity claim, and treat the missing pair as **not** a Parent 041
+merge or closure blocker. The narrow source-local single-direction cycle-1
+exception remains bounded as specified above. Any future repeating or general
+multi-cycle support must have its own paired-data validation gate before it is
+claimed scientifically.
 
 The intended flow is:
 
@@ -215,7 +227,13 @@ This is a software-engineering provenance rule, not formal legal advice. If dist
 
 A text `.mpt` export of the **same experiment** is the preferred scientific ground truth because it lets the implementation compare decoded binary fields to EC-Lab's own text export.
 
-Parent 041 may start low-level work using the supplied `.mpr`, but **041.2 may not be considered fully review-clean for real-file semantic parity, and 041.6 may not close the parent, without at least one privacy-approved paired `.mpr`/`.mpt` GCPL-family dataset** unless the user explicitly amends this requirement.
+Parent 041 may start low-level work using the supplied `.mpr`. The paired
+file remains the preferred ground truth and is required for future general or
+repeating multi-cycle semantic parity, but the user explicitly amended this
+requirement on 2026-08-16: for the current Parent 041 scope, 041.6 records the
+parity status as NOT RUN and the absence of a pair does not block review,
+closure, or merge. No general parity claim may be made until that future gate
+is completed.
 
 The paired file does not have to be committed. It may be used locally/read-only and its verification results recorded.
 
@@ -426,10 +444,13 @@ Use Parent 040's generic multi-voltage capability to expose Cell/Working/Counter
 
 ### 041.6 — Scientific regression, real-file parity and feature closure
 
-Run direct binary-vs-MPT parity when a paired file is available; if no paired file is available,
-record parity as not run and keep the parent blocked from closure. The implementation must still
-cover the metadata-only import/source lifecycle, fail-closed cycle identity, performance, existing
-Neware golden regressions, documentation/context and cumulative review.
+Run direct binary-vs-MPT parity when a paired file is available. If no paired
+file is available, record parity as NOT RUN, make no general multi-cycle parity
+claim, and continue the current Parent 041 review because the user deferred
+that gate; future general/repeating support must complete it separately. The
+implementation must still cover the metadata-only import/source lifecycle,
+fail-closed cycle identity, performance, existing Neware golden regressions,
+documentation/context and cumulative review.
 
 ```text
 041.1 low-level MPR reader
@@ -509,7 +530,7 @@ A clear unsupported-format error is preferable to plausible but wrong battery da
 Parent 041 is complete only when all six children are review-clean and final cumulative review proves:
 
 1. `.mpr` is parsed by independently authored CellXplorer code with no GPL runtime dependency/copied implementation;
-2. supplied/paired MPR binary fields match EC-Lab `.mpt` ground truth within defined tolerances when a pair is available; if no pair is available, Parent 041 remains blocked from general scientific closure, while the explicitly amended single-direction cycle-1 path may still be used and reviewed without claiming parity;
+2. supplied/paired MPR binary fields match EC-Lab `.mpt` ground truth within defined tolerances when a pair is available; if no pair is available, record `MPR/MPT semantic parity: NOT RUN` and make no general multi-cycle parity claim. Under the user's 2026-08-16 amendment, the absent pair is not a Parent 041 merge blocker; future general/repeating support owns that validation gate, while the explicitly amended single-direction cycle-1 path may be used and reviewed without claiming parity;
 3. GCPL cycles, programmed steps and executed steps map deterministically to canonical semantics;
 4. current sign/capacity/energy/timestamp mappings are validated;
 5. three-electrode Ewe/Ece/Ecell mapping is correct and preserved through cache/API/Time-Capacity UI;

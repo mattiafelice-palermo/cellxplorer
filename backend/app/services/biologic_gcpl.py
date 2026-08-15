@@ -42,7 +42,11 @@ from .source_format_errors import (
 )
 
 
-BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl7"
+# gcpl8 widens the single-direction contract to accept a header-proven
+# zero-current setup/control preamble. Keep this as a new parser identity so
+# registrations that failed under gcpl7 are explicitly re-inspected rather
+# than remaining stranded as current-identity metadata-only rows.
+BIOLOGIC_GCPL_ADAPTER_REVISION = "gcpl8"
 
 # Spec 041.3's supported settings contract is deliberately narrow.  The
 # supplied EC-Lab 11.60 sample identifies the modern GCPL parameter layout by

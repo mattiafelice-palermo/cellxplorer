@@ -233,7 +233,7 @@ as `NaT`; file modification time is never used.
 
 ## GCPL canonical mapping (Specs 041.2/041.3)
 
-The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl7`)
+The direct adapter in `backend/app/services/biologic_gcpl.py` (current adapter revision `gcpl8`)
 maps the verified records into the
 Parent 040 canonical frame. Acquisition order is preserved; `record_index` is the one-based ordinal
 `1..n`. The ID-131 value (`raw_sample_index`) is the BioLogic `Ns` programmed-sequence identity and
@@ -256,9 +256,13 @@ confirm the declared per-`Ns` charge/discharge/rest semantics, constant-zero hal
 monotonic `Ns`, and one signed active direction before it promotes the source to canonical cycle
 1. A candidate that fails that proof is persisted as metadata-only with no live canonical cache;
 general multi-phase or repeated runs remain metadata-only. The inferred `1` is a source-local
-plotting label and does not claim an absolute experiment cycle number. This bounded fallback does
-not claim MPR/MPT semantic parity, and paired evidence remains required for general real-file
-scientific closure. Synthetic tests may exercise either the explicit-cycle mapper behavior or the
+plotting label and does not claim an absolute experiment cycle number. A
+header-proven zero-current setup/control preamble is ignored before the active
+single-direction sequence; unresolved or non-zero control steps remain
+fail-closed. This bounded fallback does not claim MPR/MPT semantic parity.
+Paired evidence remains future validation for general or repeating multi-cycle
+support, but the user-deferred parity gate is not a Parent 041 merge blocker.
+Synthetic tests may exercise either the explicit-cycle mapper behavior or the
 single-direction fallback.
 
 ### Electrode roles and primary voltage
@@ -327,14 +331,20 @@ classified as invalid.
 
 ## Header-only performance evidence
 
-The private sample's header/full-read observations remain recorded above, but that file was not
-available in the 041.6 workspace and was not re-run for closure. The committed closure test instead
-generates 50 bounded MPR files, reads all 50 through `read_gcpl_header_metadata()`, then full-parses
-the two-cycle fixture through the normal cache/parser path. The absolute batch timing is descriptive
-and machine-specific; the relevant invariants are that header inspection does not construct a
-record-sized array, full `np.frombuffer` decoding occurs only on the full-parse path, and the reader
-does not create an inner process pool. The focused reader tests patch the decode operation to fail if
-the header path attempts a full decode.
+The supplied private sample and its four discharge parts were re-read on
+2026-08-16 through the production header reader, canonical parser, isolated
+cache builder and stitching path. The exact acceptance and stitch evidence is
+recorded in `docs/specs/041.6-scientific-regression-real-file-parity-and-closure.md`.
+No paired `.mpt` was available, so `MPR/MPT semantic parity: NOT RUN`; this
+does not block the current Parent 041 scope under the user's amendment. The
+committed closure test additionally generates 50 bounded MPR files, reads all
+50 through `read_gcpl_header_metadata()`, then full-parses the two-cycle
+fixture through the normal cache/parser path. The absolute batch timing is
+descriptive and machine-specific; the relevant invariants are that header
+inspection does not construct a record-sized array, full `np.frombuffer`
+decoding occurs only on the full-parse path, and the reader does not create an
+inner process pool. The focused reader tests patch the decode operation to
+fail if the header path attempts a full decode.
 
 ## Provenance and licensing
 
