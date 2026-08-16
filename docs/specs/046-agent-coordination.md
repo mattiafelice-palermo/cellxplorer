@@ -50,3 +50,20 @@ Implement 046.1 exactly as specified, verify, hand off for review, and stop repo
 Fix only R1-R4 in the canonical 046.1 review file, verify, hand back to REVIEWER, and do not begin 046.2.
 
 ---
+### 2026-08-16T04:30:00+02:00 — IMPLEMENTER → REVIEWER — 046.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts (47 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- preflight: PASS - python scripts\preflight.py
+- manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
+
+**Message**
+
+R1-R4 fixed: descendant keyboard isolation, linked-secondary bulk colour gating, surviving active-key repair, and truthful empty-selection messaging. Do not begin 046.2 until review approves.
+
+---

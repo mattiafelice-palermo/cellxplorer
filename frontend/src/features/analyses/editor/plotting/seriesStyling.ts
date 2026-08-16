@@ -255,6 +255,28 @@ export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
 }
 
 /**
+ * Selected secondary series whose colour is currently inherited from their
+ * primary. A bulk colour edit cannot truthfully include one of these series:
+ * the explicit colour override would be accepted but immediately replaced by
+ * the linked primary colour during resolution.
+ */
+export function linkedSecondarySeriesKeys(
+  descriptors: SeriesDescriptor[],
+  selectedKeys: Iterable<string>,
+  overrides: Record<string, SeriesStyleOverride> | undefined,
+  linkSecondaryColors = false,
+): string[] {
+  const selected = new Set(selectedKeys);
+  return descriptors
+    .filter((descriptor) => selected.has(descriptor.key) && isSecondarySeries(descriptor))
+    .filter(
+      (descriptor) =>
+        (overrides?.[descriptor.key]?.link_color ?? linkSecondaryColors) === true,
+    )
+    .map((descriptor) => descriptor.key);
+}
+
+/**
  * Which palette slot each series draws its default colour from.
  *
  * The trace builders hand out palette colours per cell/replicate group, so a

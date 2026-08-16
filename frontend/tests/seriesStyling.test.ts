@@ -10,6 +10,7 @@ import {
   emptySeriesRule,
   isEmptyOverride,
   isSecondarySeries,
+  linkedSecondarySeriesKeys,
   matchingRules,
   primarySeriesKeyFor,
   pruneOverrides,
@@ -440,6 +441,42 @@ test("isSecondarySeries is true only for y2 axis or a named measure", () => {
   assert.equal(isSecondarySeries(cell({ sourceKey: "c1", axis: "y", measure: null })), false);
   assert.equal(isSecondarySeries(cell({ sourceKey: "c1", axis: "y2" })), true);
   assert.equal(isSecondarySeries(cell({ sourceKey: "c1", measure: "coulombic_efficiency" })), true);
+});
+
+test("bulk colour policy identifies only selected linked secondary series", () => {
+  const primary = cell({ key: "c1", sourceKey: "c1" });
+  const linked = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+  });
+  const independent = cell({
+    key: "y2:ce:c2",
+    sourceKey: "c2",
+    axis: "y2",
+    measure: "ce",
+  });
+
+  assert.deepEqual(
+    linkedSecondarySeriesKeys(
+      [primary, linked, independent],
+      ["c1", "y2:ce:c1", "y2:ce:c2"],
+      { "y2:ce:c2": { link_color: false } },
+      true,
+    ),
+    ["y2:ce:c1"],
+  );
+  assert.deepEqual(
+    linkedSecondarySeriesKeys([primary, linked], ["c1"], {}, true),
+    [],
+    "unselected secondary series must not disable a bulk colour edit",
+  );
+  assert.deepEqual(
+    linkedSecondarySeriesKeys([primary, linked], ["y2:ce:c1"], {}, false),
+    [],
+    "the plot-wide link default is the same default used by the editor",
+  );
 });
 
 // --- resolveAllSeriesStyles ----------------------------------------------

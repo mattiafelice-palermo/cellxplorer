@@ -87,6 +87,7 @@ import {
   emptySeriesRule,
   isEmptyOverride,
   isSecondarySeries,
+  linkedSecondarySeriesKeys,
   matchingRules,
   pruneOverrides,
   resolveAllSeriesStyles,
@@ -389,19 +390,27 @@ export function SeriesStyleModal({
 
   // Descriptor lists can change when a result refreshes. Keep concrete
   // selection honest without turning an empty selection into the All series
-  // base-style editor.
+  // base-style editor. If exactly one selected key survives, make it the
+  // active key as well so single-series actions still target it.
   useEffect(() => {
+    const validSelectedKeys = new Set(
+      Array.from(selectedKeys).filter((key) => descriptorKeySet.has(key)),
+    );
     setSelectedKeys((current) => {
-      const next = new Set(Array.from(current).filter((key) => descriptorKeySet.has(key)));
-      if (next.size === current.size && Array.from(next).every((key) => current.has(key))) return current;
-      return next;
+      if (
+        validSelectedKeys.size === current.size &&
+        Array.from(validSelectedKeys).every((key) => current.has(key))
+      ) {
+        return current;
+      }
+      return validSelectedKeys;
     });
     setSelectionAnchor((current) => (current && descriptorKeySet.has(current) ? current : null));
-    setActiveKey((current) =>
-      current === ALL_SERIES_KEY || (current && descriptorKeySet.has(current) && selectedKeys.has(current))
-        ? current
-        : null,
-    );
+    setActiveKey((current) => {
+      if (validSelectedKeys.size === 1) return Array.from(validSelectedKeys)[0];
+      if (validSelectedKeys.size > 1) return null;
+      return current === ALL_SERIES_KEY ? current : null;
+    });
   }, [descriptorKeySet, selectedKeys]);
 
   /** Restores the scratch palette to the plot's currently-applied one. */
@@ -764,6 +773,23 @@ export function SeriesStyleModal({
     }),
     [selectedResolvedStyles],
   );
+
+  const linkedBulkColourKeys = useMemo(
+    () =>
+      linkedSecondarySeriesKeys(
+        descriptors,
+        selectedKeys,
+        draftOverrides,
+        draftBaseStyle.link_secondary_colors ?? false,
+      ),
+    [
+      descriptors,
+      selectedKeys,
+      draftOverrides,
+      draftBaseStyle.link_secondary_colors,
+    ],
+  );
+  const bulkColourEnabled = linkedBulkColourKeys.length === 0;
 
   const setOverride = (key: string, patch: SeriesStyleOverride) =>
     commit(
@@ -1225,6 +1251,7 @@ export function SeriesStyleModal({
                           justify={seriesCollapsed ? "center" : undefined}
                           onClick={(event) => selectSeries(descriptor.key, event)}
                           onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) return;
                             if (event.key !== "Enter" && event.key !== " ") return;
                             event.preventDefault();
                             selectConcreteKeys([descriptor.key], descriptor.key);
@@ -1923,10 +1950,17 @@ export function SeriesStyleModal({
                       size="xs"
                       format="hex"
                       aria-label="Bulk colour"
+                      disabled={!bulkColourEnabled}
                       placeholder={bulkResolved.color.mixed ? "Mixed" : "Colour"}
                       value={bulkResolved.color.mixed ? "" : bulkResolved.color.value ?? ""}
                       onChange={(value) => applySelectedPatch({ color: value || null })}
                     />
+                    {!bulkColourEnabled && (
+                      <Text size="9px" c="dimmed" mt={2}>
+                        Bulk colour editing is disabled because colour is linked from the primary
+                        series for {linkedBulkColourKeys.length === 1 ? "one" : linkedBulkColourKeys.length} selected secondary series.
+                      </Text>
+                    )}
                   </div>
                   <div>
                     <Group gap={4} mb={4}>
@@ -2153,7 +2187,9 @@ export function SeriesStyleModal({
             </ScrollArea>
           ) : !active ? (
             <Alert color="gray" m="xs">
-              This plot has no series to style yet.
+              {descriptors.length === 0
+                ? "This plot has no series to style yet."
+                : "No series selected. Select a series or All series to edit its appearance."}
             </Alert>
           ) : (
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
