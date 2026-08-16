@@ -126,11 +126,9 @@ import {
 import Plot from "../../../../components/Plot";
 import {
   buildLegendPreview,
-  expandLegendPreview,
-  LEGEND_PREVIEW_CONFIG,
-  LEGEND_PREVIEW_EXPANDED_WIDTH,
-  LEGEND_PREVIEW_MIN_HEIGHT,
-  LEGEND_PREVIEW_WIDTH,
+  legendPreviewEntries,
+  type LegendPreviewEntry,
+  type LegendPreviewFigure,
 } from "./legendPreview";
 import {
   PALETTE_PREVIEW_HEIGHT,
@@ -1133,14 +1131,6 @@ export function SeriesStyleModal({
     () => ({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
     [],
   );
-  const legendPreviewConfig = LEGEND_PREVIEW_CONFIG;
-  const legendPreviewStyle = useMemo(() => {
-    const height =
-      typeof legendPreview.layout.height === "number"
-        ? legendPreview.layout.height
-        : LEGEND_PREVIEW_MIN_HEIGHT;
-    return { width: LEGEND_PREVIEW_WIDTH, height };
-  }, [legendPreview.layout]);
 
   const activeOverride = active ? draftOverrides[active.key] ?? {} : {};
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
@@ -1176,8 +1166,6 @@ export function SeriesStyleModal({
           previewConfig={previewConfig}
           previewStyle={previewStyle}
           legendPreview={legendPreview}
-          legendPreviewConfig={legendPreviewConfig}
-          legendPreviewStyle={legendPreviewStyle}
         />
 
         <PanelShell
@@ -3155,7 +3143,7 @@ const PalettePreview = memo(function PalettePreview({
   );
 });
 
-/** Fixed scientific preview with a separate passive Plotly legend preview. */
+/** Fixed scientific preview with a passive, content-adaptive legend list. */
 function PreviewPanel({
   opened,
   preview,
@@ -3163,32 +3151,16 @@ function PreviewPanel({
   previewConfig,
   previewStyle,
   legendPreview,
-  legendPreviewConfig,
-  legendPreviewStyle,
 }: {
   opened: boolean;
   preview: { data: unknown[]; layout: Record<string, unknown> };
   previewLayout: Record<string, unknown>;
   previewConfig: Record<string, unknown>;
   previewStyle: React.CSSProperties;
-  legendPreview: { data: readonly unknown[]; layout: Readonly<Record<string, unknown>> };
-  legendPreviewConfig: Record<string, unknown>;
-  legendPreviewStyle: React.CSSProperties;
+  legendPreview: LegendPreviewFigure;
 }) {
   const [legendExpanded, setLegendExpanded] = useState(false);
-  const legendHeight =
-    typeof legendPreview.layout.height === "number"
-      ? legendPreview.layout.height
-      : LEGEND_PREVIEW_MIN_HEIGHT;
-  const expandedLegendPreview = useMemo(() => expandLegendPreview(legendPreview), [legendPreview]);
-  const expandedLegendHeight =
-    typeof expandedLegendPreview.layout.height === "number"
-      ? expandedLegendPreview.layout.height
-      : LEGEND_PREVIEW_MIN_HEIGHT;
-  const expandedLegendStyle = useMemo(
-    () => ({ width: LEGEND_PREVIEW_EXPANDED_WIDTH, height: expandedLegendHeight }),
-    [expandedLegendHeight],
-  );
+  const legendEntries = useMemo(() => legendPreviewEntries(legendPreview), [legendPreview]);
 
   useEffect(() => {
     if (!opened) setLegendExpanded(false);
@@ -3196,7 +3168,16 @@ function PreviewPanel({
 
   return (
     <>
-      <Stack gap="sm" style={{ width: PREVIEW_WIDTH, flex: "none", minWidth: 0, minHeight: 0 }}>
+      <Stack
+        gap="sm"
+        style={{
+          width: PREVIEW_WIDTH,
+          height: "100%",
+          flex: "none",
+          minWidth: 0,
+          minHeight: 0,
+        }}
+      >
         <PanelShell
           title="Preview"
           style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
@@ -3215,37 +3196,17 @@ function PreviewPanel({
             <Button
               size="compact-xs"
               variant="subtle"
-              disabled={legendPreview.data.length === 0}
+              disabled={legendEntries.length === 0}
               aria-label="Open full legend preview"
               onClick={() => setLegendExpanded(true)}
             >
               Open full legend
             </Button>
           }
-          style={{ width: PREVIEW_WIDTH, height: legendHeight + 56, flex: "none" }}
+          style={{ width: PREVIEW_WIDTH, flex: "1 1 auto", minHeight: 132 }}
           bodyPadding={0}
         >
-          {legendPreview.data.length > 0 ? (
-            <Plot
-              data={legendPreview.data as never}
-              layout={legendPreview.layout as never}
-              config={legendPreviewConfig as never}
-              style={legendPreviewStyle}
-            />
-          ) : (
-            <Box
-              style={{
-                height: legendHeight,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Text size="xs" c="dimmed">
-                No legend entries
-              </Text>
-            </Box>
-          )}
+          <LegendPreviewList entries={legendEntries} />
         </PanelShell>
       </Stack>
 
@@ -3255,22 +3216,210 @@ function PreviewPanel({
         title="Full legend preview"
         size="xl"
         centered
-        styles={{ body: { maxHeight: "calc(100vh - 180px)", overflow: "auto" } }}
+        styles={{
+          body: {
+            maxHeight: "calc(100vh - 180px)",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          },
+        }}
       >
-        {expandedLegendPreview.data.length > 0 ? (
-          <Plot
-            data={expandedLegendPreview.data as never}
-            layout={expandedLegendPreview.layout as never}
-            config={legendPreviewConfig as never}
-            style={expandedLegendStyle}
-          />
-        ) : (
-          <Text size="sm" c="dimmed">
-            No legend entries
-          </Text>
-        )}
+        <LegendPreviewList entries={legendEntries} expanded />
       </Modal>
     </>
+  );
+}
+
+function LegendPreviewList({
+  entries,
+  expanded = false,
+}: {
+  entries: readonly LegendPreviewEntry[];
+  expanded?: boolean;
+}) {
+  if (entries.length === 0) {
+    return (
+      <Box
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Text size="xs" c="dimmed">
+          No legend entries
+        </Text>
+      </Box>
+    );
+  }
+
+  return (
+    <ScrollArea
+      type="auto"
+      offsetScrollbars
+      style={{
+        flex: 1,
+        minHeight: 0,
+        maxHeight: expanded ? "calc(100vh - 220px)" : undefined,
+      }}
+    >
+      <Stack gap={expanded ? "sm" : 4} p={expanded ? "md" : "sm"} style={{ minWidth: "100%" }}>
+        {entries.map((entry, index) => (
+          <Group
+            key={`${entry.name}-${index}`}
+            gap={expanded ? "sm" : 6}
+            wrap="nowrap"
+            align="center"
+            style={{ width: "100%", minHeight: expanded ? 34 : 30 }}
+          >
+            <LegendEntrySwatch entry={entry} expanded={expanded} />
+            <Text
+              size={expanded ? "sm" : "xs"}
+              truncate
+              title={entry.name}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              {entry.name || "Unnamed series"}
+            </Text>
+          </Group>
+        ))}
+      </Stack>
+    </ScrollArea>
+  );
+}
+
+function LegendEntrySwatch({
+  entry,
+  expanded,
+}: {
+  entry: LegendPreviewEntry;
+  expanded: boolean;
+}) {
+  const lineColor = entry.line.color ?? entry.marker.color ?? "var(--mantine-color-dimmed)";
+  const markerColor = entry.marker.color ?? entry.line.color ?? lineColor;
+  const mode = entry.mode.toLowerCase();
+  const lineVisible = mode.includes("line") || (mode === "" && entry.line.color !== null);
+  const markerVisible = mode.includes("marker") || (mode === "" && entry.marker.color !== null);
+  const width = expanded ? 124 : 108;
+
+  return (
+    <svg
+      width={width}
+      height={28}
+      viewBox="0 0 108 28"
+      aria-hidden="true"
+      style={{ width, height: 28, flex: "none", overflow: "visible" }}
+    >
+      <g opacity={entry.opacity}>
+        {lineVisible && (
+          <line
+            x1={8}
+            y1={14}
+            x2={100}
+            y2={14}
+            stroke={lineColor}
+            strokeWidth={Math.max(1, Math.min(6, entry.line.width))}
+            strokeDasharray={legendStrokeDasharray(entry.line.dash)}
+            strokeLinecap="round"
+          />
+        )}
+        {markerVisible ? (
+          <LegendMarker
+            symbol={entry.marker.symbol}
+            color={markerColor}
+            size={entry.marker.size}
+          />
+        ) : !lineVisible ? (
+          <rect x={45} y={9} width={18} height={10} rx={2} fill={lineColor} />
+        ) : null}
+      </g>
+    </svg>
+  );
+}
+
+function legendStrokeDasharray(dash: string): string | undefined {
+  switch (dash.toLowerCase()) {
+    case "dot":
+      return "1 6";
+    case "dash":
+      return "9 6";
+    case "longdash":
+      return "15 6";
+    case "dashdot":
+      return "9 5 2 5";
+    case "longdashdot":
+      return "15 5 2 5";
+    default:
+      return undefined;
+  }
+}
+
+function LegendMarker({
+  symbol,
+  color,
+  size,
+}: {
+  symbol: string | number | null;
+  color: string;
+  size: number;
+}) {
+  const raw = typeof symbol === "string" ? symbol.toLowerCase() : "circle";
+  const open = raw.includes("open");
+  const dot = raw.includes("dot");
+  const base = raw.replace(/-open/g, "").replace(/-dot/g, "");
+  const radius = Math.max(4, Math.min(10, size / 2));
+  const fill = open ? "var(--mantine-color-body)" : color;
+  const strokeWidth = open ? 1.8 : 1;
+  const common = { fill, stroke: color, strokeWidth };
+
+  let marker: React.ReactNode;
+  if (base.includes("square")) {
+    const side = radius * 1.65;
+    marker = <rect x={54 - side / 2} y={14 - side / 2} width={side} height={side} rx={1} {...common} />;
+  } else if (base.includes("diamond")) {
+    marker = <polygon points={`54,${14 - radius} ${54 + radius},14 54,${14 + radius} ${54 - radius},14`} {...common} />;
+  } else if (base.includes("triangle-up")) {
+    marker = <polygon points={`54,${14 - radius} ${54 + radius},${14 + radius} ${54 - radius},${14 + radius}`} {...common} />;
+  } else if (base.includes("triangle-down")) {
+    marker = <polygon points={`54,${14 + radius} ${54 + radius},${14 - radius} ${54 - radius},${14 - radius}`} {...common} />;
+  } else if (base.includes("triangle")) {
+    marker = <polygon points={`54,${14 - radius} ${54 + radius},${14 + radius} ${54 - radius},${14 + radius}`} {...common} />;
+  } else if (base.includes("cross")) {
+    marker = (
+      <path
+        d={`M ${54 - radius} 14 H ${54 + radius} M 54 ${14 - radius} V ${14 + radius}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={Math.max(2, strokeWidth + 1)}
+        strokeLinecap="round"
+      />
+    );
+  } else if (base === "x" || base.includes("x-thin")) {
+    marker = (
+      <path
+        d={`M ${54 - radius} ${14 - radius} L ${54 + radius} ${14 + radius} M ${54 + radius} ${14 - radius} L ${54 - radius} ${14 + radius}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={Math.max(2, strokeWidth + 1)}
+        strokeLinecap="round"
+      />
+    );
+  } else if (base.includes("star")) {
+    marker = <polygon points="54,4 56.8,11 64,11.2 58.2,15.5 60.3,22.5 54,18.5 47.7,22.5 49.8,15.5 44,11.2 51.2,11" {...common} />;
+  } else if (base.includes("hexagon")) {
+    marker = <polygon points="48,6 60,6 66,14 60,22 48,22 42,14" {...common} />;
+  } else {
+    marker = <circle cx={54} cy={14} r={radius} {...common} />;
+  }
+
+  return (
+    <g>
+      {marker}
+      {dot && <circle cx={54} cy={14} r={2} fill={color} stroke="none" />}
+    </g>
   );
 }
 

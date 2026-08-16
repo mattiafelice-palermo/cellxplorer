@@ -465,3 +465,21 @@ R5 now routes row and checkbox gestures through one inclusive endpoint policy an
 R5 captures pointer-down modifier intent for row and checkbox gestures and preserves inclusive Shift selection. R11 makes the full legend content-adaptive and lets the outer modal body scroll long content. R12 is unchanged and remains code-review clean pending user browser confirmation. Only R5 and R11 changed; browser matrix unclaimed.
 
 ---
+### 2026-08-16T12:57:10+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (65 tests)
+- TypeScript: PASS
+- Vite build: PASS
+- git diff --check: PASS
+- canonical preflight: PASS (4/4 stages; 128 backend/frontend modules)
+- manual/browser checks: NOT RUN (user-owned cumulative acceptance)
+
+**Message**
+
+R11 replaces the sparse embedded Plotly legend surface with a passive, single-column React/Mantine list derived from buildLegendPreview trace data, preserving filtering, rank order, names, opacity, line dash/width, and marker shape/open state. The embedded section flexes into the remaining space below the scientific preview and scrolls only on actual overflow; Open full legend uses the same entry model in a roomier scrollable modal. Only R11 changed; R5 and R12 remain repository-clean pending user runtime confirmation, and the browser matrix is unclaimed.
+
+---

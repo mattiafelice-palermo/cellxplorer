@@ -5,6 +5,7 @@ import {
   buildLegendPreview,
   expandLegendPreview,
   expandedLegendPreviewHeight,
+  legendPreviewEntries,
   LEGEND_PREVIEW_CONFIG,
   LEGEND_PREVIEW_EXPANDED_WIDTH,
   LEGEND_PREVIEW_MAX_HEIGHT,
@@ -66,6 +67,47 @@ test("legend preview preserves effective Plotly styling without retaining curve 
   assert.equal("customdata" in trace, false);
   assert.equal("hovertemplate" in trace, false);
   assert.equal(source.x.length, 10_000);
+});
+
+test("legend entry rows reuse the built preview order and effective trace styling", () => {
+  const preview = buildLegendPreview({
+    data: [
+      {
+        name: "second by rank",
+        showlegend: true,
+        legendrank: 2,
+        mode: "lines+markers",
+        opacity: 0.45,
+        line: { color: "#12b886", width: 4, dash: "dash" },
+        marker: { color: "#12b886", size: 10, symbol: "diamond-open" },
+        x: [1],
+        y: [2],
+      },
+      {
+        name: "first by rank",
+        showlegend: true,
+        legendrank: 1,
+        mode: "markers",
+        marker: { color: "#228be6", size: 8, symbol: "circle" },
+        x: [1],
+        y: [2],
+      },
+    ],
+    layout: {},
+  });
+
+  assert.deepEqual(
+    legendPreviewEntries(preview).map((entry) => entry.name),
+    ["first by rank", "second by rank"],
+  );
+  assert.deepEqual(legendPreviewEntries(preview)[1], {
+    name: "second by rank",
+    type: "",
+    mode: "lines+markers",
+    opacity: 0.45,
+    line: { color: "#12b886", width: 4, dash: "dash" },
+    marker: { color: "#12b886", size: 10, symbol: "diamond-open" },
+  });
 });
 
 test("legend preview uses rank order, keeps legend styling, and owns local placement", () => {

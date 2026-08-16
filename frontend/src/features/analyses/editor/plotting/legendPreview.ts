@@ -13,6 +13,23 @@ export type LegendPreviewFigure = {
   layout: Readonly<Record<string, unknown>>;
 };
 
+export type LegendPreviewEntry = {
+  name: string;
+  type: string;
+  mode: string;
+  opacity: number;
+  line: {
+    color: string | null;
+    width: number;
+    dash: string;
+  };
+  marker: {
+    color: string | null;
+    size: number;
+    symbol: string | number | null;
+  };
+};
+
 export const LEGEND_PREVIEW_WIDTH = 620;
 export const LEGEND_PREVIEW_MIN_HEIGHT = 84;
 export const LEGEND_PREVIEW_MAX_HEIGHT = 220;
@@ -108,6 +125,46 @@ function copyValue(value: unknown): unknown {
   if (Array.isArray(value)) return [...value];
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copyValue(child)]));
+}
+
+function stringColor(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return null;
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Project the already-filtered, already-ordered trace presentation into UI rows. */
+export function legendPreviewEntries(preview: LegendPreviewFigure): LegendPreviewEntry[] {
+  return preview.data.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const line = isRecord(value.line) ? value.line : {};
+    const marker = isRecord(value.marker) ? value.marker : {};
+    return [
+      {
+        name: typeof value.name === "string" ? value.name : "",
+        type: typeof value.type === "string" ? value.type : "",
+        mode: typeof value.mode === "string" ? value.mode : "",
+        opacity: Math.max(0, Math.min(1, finiteOr(value.opacity, 1))),
+        line: {
+          color: stringColor(line.color),
+          width: Math.max(0, finiteOr(line.width, 2)),
+          dash: typeof line.dash === "string" ? line.dash : "solid",
+        },
+        marker: {
+          color: stringColor(marker.color),
+          size: Math.max(0, finiteOr(marker.size, 6)),
+          symbol:
+            typeof marker.symbol === "string" || typeof marker.symbol === "number"
+              ? marker.symbol
+              : null,
+        },
+      },
+    ];
+  });
 }
 
 function hasLegendEntry(trace: Record<string, unknown>): boolean {
