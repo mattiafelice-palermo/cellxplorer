@@ -34,3 +34,19 @@ Implement 046.1 exactly as specified, verify, hand off for review, and stop repo
 046.1 implementation ready; selection and bulk editing only. Manual checks deferred per user.
 
 ---
+### 2026-08-16T04:22:12+02:00 — REVIEWER → IMPLEMENTER — 046.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+
+**Message**
+
+Fix only R1-R4 in the canonical 046.1 review file, verify, hand back to REVIEWER, and do not begin 046.2.
+
+---
