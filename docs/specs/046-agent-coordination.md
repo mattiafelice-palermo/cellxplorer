@@ -588,3 +588,26 @@ The user has explicitly authorized browser reproduction, instrumentation, and re
 R5 is the sole canonical finding. The user has now explicitly authorized browser reproduction and verification; implement the smallest event/state fix, then return with the required browser evidence and full verification.
 
 ---
+### 2026-08-16T16:29:51+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- browser: Chromium via Codex In-app Browser, http://127.0.0.1:8643/analyses/28, viewport 1440x900
+- browser reproduction: first primary row, then Shift-click fifth primary row; before fix all five row buttons were pressed but clicked checkbox remained unchecked
+- browser post-fix: forward row-body ranges 10/10 and reverse row-body ranges 10/10; all five rows and all five native checkboxes selected after each gesture
+- browser post-fix: forward selection-checkbox ranges 10/10 and reverse selection-checkbox ranges 10/10; no endpoint loss
+- browser post-fix: Shift+ControlOrMeta, Shift+Control, and Shift+Meta all preserve inclusive range; plain ControlOrMeta toggles only the clicked row for row and checkbox paths
+- browser interaction boundaries: eye preview toggle leaves selection unchanged; Shift-right-click leaves selection unchanged and opens no menu; no text selection; row order unchanged; browser console warnings/errors empty
+- focused frontend tests: PASS (65 tests)
+- TypeScript: PASS
+- Vite build: PASS (7529 modules transformed)
+- git diff --check: PASS
+- canonical preflight: PASS (4/4 stages; 128 backend/frontend modules)
+
+**Message**
+
+R5 fixed with the smallest event-path change. Reproduction showed the checkbox onClick selected the inclusive range, then event.preventDefault() rolled back the native checkbox visual state while the row selection stayed updated. Removed only that default prevention; modified checkbox change remains suppressed, so the native toggle is not a second selection transition. The browser matrix now passes repeatedly for forward/reverse row and checkbox paths, modifiers, and interaction boundaries. Ready for independent final review.
+
+---

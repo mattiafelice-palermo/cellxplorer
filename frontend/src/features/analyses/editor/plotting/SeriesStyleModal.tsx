@@ -2553,10 +2553,10 @@ function SortableSeriesRow({
               const modifiers = selectionGesture.current ?? seriesSelectionModifiers(event);
               selectionGesture.current = null;
               if (!modifiers.shiftKey && !modifiers.toggleKey) return;
-              // The checkbox is only a visual selection affordance. Modified
-              // gestures follow the row's selection policy, and preventing the
-              // native click keeps it from applying a second transition.
-              event.preventDefault();
+              // Modified gestures follow the row's selection policy. Keep the
+              // native toggle so the controlled checkbox reflects the same
+              // selection immediately; the change handler below suppresses the
+              // native toggle from becoming a second selection transition.
               suppressNativeCheckboxChange.current = true;
               onSelect(modifiers);
             }}
