@@ -5,58 +5,53 @@ Branch: `feature/series-appearance-manager`
 Merge base: `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`  
 Final-child review-clean checkpoint: `1096c744d878bfc495be3ab9aefbf332b261e877`  
 Closure-fix commit: `f3471eedb39d33396d98c582369cb971ed869a52`  
-Latest reviewer-inspected implementation commit: `fcca1660fa2b842fc880b0eea4ba7cb5a577c6bc`  
-Status: **CHANGES REQUIRED — R5, R11**
+Latest reviewer-inspected implementation commit: `9a9dab9c6bfd820b1e626f16862bc29bb0e5d33d`  
+Status: **CHANGES REQUIRED — R11**
 
 ## Current cumulative status
 
 - R1/R2 repository closure remains resolved.
-- R3 All-series aggregate/homogenization remains resolved, including linked-secondary colour behavior.
-- R4 palette preview is user-accepted after the latest browser pass.
-- R5 remains open. The new pure selection policy is inclusive, but the live checkbox/row event path still loses modifier intent depending on pointer/key release timing; the user reports intermittent omission of the second/endpoint series, including Shift/Ctrl-modified selection.
+- R3 All-series aggregate/homogenization remains resolved.
+- R4 palette preview is user-accepted.
+- R5 modifier/range selection is **code-review clean in `9a9dab9c...` but requires user browser recheck**. The previous runtime failure came from reading modifier keys from a later click event after pointer-down; `9a9dab9c...` now captures modifier intent at pointer-down and feeds that explicit snapshot into the single selection policy for both row and checkbox paths.
 - R6/R7/R8/R9 remain accepted/resolved.
-- R10 detached Legend preview is user-accepted and visibly renders.
-- R11 is implemented structurally, but the user's screenshot exposes poor expanded-view geometry: a short four-entry legend is forced into a 520 px Plotly surface, leaving a very large empty body while still showing an internal scrollbar.
-- R12 is code-review clean in `fcca1660...`: local `useDeferredValue` lag was removed and only parent persistence remains debounced at 250 ms. This still needs the user's browser recheck after the next handoff.
-- The broader cumulative manual/browser matrix is not yet declared complete.
+- R10 detached legend rendering is user-accepted.
+- R11 remains open. The implementer correctly improved the **expanded** full-legend modal, but the user clarified that the visual defect being discussed is primarily the **embedded Legend preview inside the Series appearance modal**. The embedded preview remains a small Plotly legend floating at the upper-left of a large panel with awkward empty width/height and Plotly scrollbar behavior.
+- R12 local scientific-preview latency is code-review clean in `fcca1660...` and still requires user browser confirmation.
+- The broader cumulative manual/browser matrix remains incomplete.
 
 ## Verification record
 
-### Implementer-reported — R5/R11/R12 pass (`fcca1660...`)
+### Implementer-reported — latest R5/R11 pass (`9a9dab9c...`)
 
-- focused frontend tests: PASS — 62 tests;
+- focused frontend tests: PASS — 64 tests;
 - TypeScript: PASS;
 - Vite build: PASS;
 - `git diff --check`: PASS;
-- canonical preflight: PASS — 4/4 stages;
+- canonical preflight: PASS — 4/4 stages, 128 backend/frontend modules;
 - manual/browser checks: NOT RUN by implementer.
-
-### User browser/manual evidence after `fcca1660...`
-
-- Full legend modal opens, but the supplied screenshot shows a short legend occupying only the top of a very tall blank Plotly area, with an internal scrollbar still present.
-- Shift/Ctrl-modified selection still intermittently omits the second/clicked endpoint series.
 
 ### Reviewer-independent
 
 I independently inspected:
 
-- `fcca1660...` against its reviewer handoff base;
-- `seriesSelectionResult(...)`, the row/checkbox pointer/click/change event wiring, and the focused selection tests;
-- `expandLegendPreview(...)`, the nested full-legend modal, and the expanded legend tests;
-- the local preview path after removal of `useDeferredValue` and the retained 250 ms parent persistence debounce;
-- the user's latest screenshot and runtime report.
+- the new pointer-down modifier snapshot used by row and checkbox selection;
+- Shift-over-Ctrl/Cmd precedence in `seriesSelectionResult(...)`;
+- suppression of the checkbox's second native selection transition;
+- the content-adaptive expanded legend change;
+- the unchanged embedded legend layout visible in the user's screenshot.
 
-I did **not** independently execute test/build/preflight commands or browser/manual checks.
+I did **not** independently execute the test/build/preflight commands or browser/manual checks.
 
 ## Findings
 
 ### R1 — Medium: Completed user-facing feature has no required version/changelog closure
 
-**Resolution: RESOLVED in `f3471eedb39d33396d98c582369cb971ed869a52`.**
+**Resolution: RESOLVED.**
 
 ### R2 — Low: Spec lifecycle/status documentation still describes Parent 046 as unimplemented
 
-**Resolution: RESOLVED in `f3471eedb39d33396d98c582369cb971ed869a52`.**
+**Resolution: RESOLVED.**
 
 ### R3 — Medium: `All series` must aggregate effective appearance and homogenize mixed concrete series
 
@@ -66,33 +61,15 @@ I did **not** independently execute test/build/preflight commands or browser/man
 
 **Resolution: USER-ACCEPTED.**
 
-### R5 — Medium: Modifier selection still intermittently loses the clicked endpoint
+### R5 — Medium: Modifier selection intermittently lost the clicked endpoint
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
-- `frontend/src/features/analyses/editor/plotting/seriesStyling.ts` only if the selection-policy API is adjusted
-- focused frontend tests
+**Resolution state: CODE REVIEW CLEAN in `9a9dab9c6bfd820b1e626f16862bc29bb0e5d33d`; USER BROWSER RECHECK REQUIRED.**
 
-**Current**
+The root cause was the event lifecycle, not the range algorithm. The inclusive pure helper was already correct, but the UI previously decided the gesture partly at pointer-down and then passed a later raw click event into the selection policy. Releasing Shift/Ctrl between pointer-down and click—or checkbox native change ordering—could therefore reinterpret the same gesture and omit/toggle the endpoint.
 
-`seriesSelectionResult(...)` itself returns an inclusive range, but the UI still passes a raw React click event into `selectSeries(...)`. The checkbox stores Shift intent on pointer-down (`shiftCheckboxClick.current`) only to decide that the later click is a range gesture; it then calls `onSelect(event)`, whose `event.shiftKey` can already be false if the user released Shift between pointer-down and click. The row body has the same timing dependency because it does not persist modifier intent from pointer-down at all. This explains why the pure test passes while browser behavior remains intermittent.
+`9a9dab9c...` now captures `{ shiftKey, toggleKey }` once at pointer-down for row and checkbox gestures and passes that explicit snapshot into `seriesSelectionResult(...)`. Shift remains higher priority than Ctrl/Cmd, and the checkbox suppresses its native second transition for modified gestures.
 
-The user's latest report also mentions Shift/Ctrl-modified selection, so modifier precedence must be deterministic rather than dependent on which modifier remains present on the eventual click event.
-
-**Target**
-
-Capture the selection gesture's modifier intent explicitly and feed explicit modifier state into one selection policy. Do not infer a range/toggle from a later raw click event after already deciding differently at pointer-down. Preserve current locked semantics: Shift means same-group contiguous range; Ctrl/Cmd means arbitrary toggle; when Shift is present together with Ctrl/Cmd, Shift range behavior takes precedence and remains inclusive.
-
-**Acceptance criteria**
-
-- Click A, Shift-click D → A/B/C/D selected, including when Shift is released between mouse-down and click/up.
-- The same is true through the selection checkbox/control.
-- Reverse range D → Shift-click B gives B/C/D.
-- Shift+Ctrl/Cmd on the second gesture follows the documented Shift-range precedence and includes the endpoint.
-- Plain Ctrl/Cmd toggling continues to add/remove exactly the clicked series.
-- Repeated operations do not randomly omit the second/clicked element.
-- Checkbox native `onChange`, row click, drag activation and preview-eye interactions cannot apply a second conflicting selection transition.
-- Focused tests cover the modifier-intent/endpoint policy, and the final browser recheck must exercise realistic pointer-down/click timing.
+Browser acceptance still requires repeated forward/reverse Shift ranges, Shift+Ctrl/Cmd ranges, and ordinary Ctrl/Cmd toggles without intermittently losing the clicked endpoint.
 
 ### R6 — Low: Multi-selection legend membership presentation
 
@@ -114,39 +91,50 @@ Capture the selection gesture's modifier intent explicitly and feed explicit mod
 
 **Resolution: USER-ACCEPTED.**
 
-### R11 — Low: Expanded full-legend view wastes most of its surface and still presents an internal scrollbar for a short legend
+### R11 — Medium: Embedded Legend preview still has poor geometry and Plotly-scrollbar presentation
 
 Affected files:
 - `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
-- `frontend/src/features/analyses/editor/plotting/legendPreview.ts`
-- `frontend/tests/legendPreview.test.ts`
+- `frontend/src/features/analyses/editor/plotting/legendPreview.ts` or a focused legend-list renderer/helper extracted from it
+- focused frontend tests
 
 **Current**
 
-The new `Open full legend` action and nested passive modal are structurally correct and reuse the same legend-preview data. However, `expandLegendPreview(...)` hard-codes `LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT = 520`. The user's screenshot shows the resulting defect directly: four vertically ordered entries occupy only a small strip at the top of a 520 px Plotly canvas, the rest is blank, and a scrollbar is still visible. This defeats the purpose of the expanded view.
+The `Open full legend` action is useful and the expanded modal is now content-adaptive, but that fixed the wrong surface. In the main Series appearance modal, the embedded Legend preview still renders as Plotly's own compact legend inside a much larger fixed panel. With only a few entries it occupies a small strip in the upper-left while most of the panel is unused; when entries overflow, Plotly's narrow internal scrollbar appears inside that sparse surface. This is the visual problem shown by the user's screenshot.
 
 **Target**
 
-Make the expanded legend content-adaptive while preserving the preferred top-to-bottom reading order. The Plotly legend surface should be tall enough to show all ordinary entries without its own cramped internal scrollbar, but should not impose a large minimum height when only a few entries exist. For genuinely long legends, let the expanded content grow up to a sensible viewport/modal cap; if overflow remains, prefer scrolling the expanded modal/body around the complete legend surface rather than recreating the tiny embedded Plotly scrollbar experience.
+Redesign the **embedded Legend preview itself** around the user's accepted Option-C direction:
+
+- preserve a single-column, top-to-bottom reading order;
+- use the available width intentionally rather than leaving the legend as a narrow Plotly block on the left;
+- let the legend section use the remaining vertical space beneath the fixed scientific preview instead of leaving unused modal space below it;
+- for ordinary short legends, show all entries with no scrollbar;
+- for longer legends, use a normal bounded `ScrollArea`/modal-body overflow only when content truly exceeds the available area;
+- keep `Open full legend` as the escape hatch for very long legends, using the same entries/order/styles;
+- preserve passive/read-only behavior and exact effective legend presentation (name/order/colour/opacity/line dash+width/marker shape+open state/legend visibility).
+
+The original child spec required a detached Plotly legend preview, but the user's final manual-design decision supersedes the renderer detail if Plotly's built-in legend layout prevents this UX. It is acceptable—and likely preferable—to render a dedicated React/Mantine vertical legend list **derived from the existing `buildLegendPreview(...)` trace presentation data**, so there is still one styling/order source of truth rather than a second styling model. Do not hardcode a separate list of series or recompute styling independently.
 
 **Acceptance criteria**
 
-- Four entries produce a compact full-legend view with no large blank lower half.
-- Ordinary legends that fit the expanded viewport show all entries without an internal Plotly legend scrollbar.
-- Entries remain single-column/top-to-bottom in the same effective order as the embedded preview.
-- Long legends can use substantially more vertical space than the embedded preview and remain reachable when they exceed the viewport.
-- The expanded view continues to reuse the same legend data/styles and remains passive/read-only.
-- Closing it preserves the parent modal's selection and draft state.
-- Focused tests assert content-adaptive expanded height rather than a fixed 520 px minimum and preserve data/order identity.
+- With 4–5 entries, the embedded preview looks deliberately laid out across the available panel width and does not show an internal scrollbar.
+- The legend section grows/fills the available space below the scientific preview rather than leaving a large unused area at the bottom of the modal.
+- Entries flow only top-to-bottom in one column and preserve exact effective order.
+- A long legend scrolls only after the available embedded area is genuinely exhausted.
+- `Open full legend` displays the same entry model in a roomier surface; closing it preserves all selection/draft state.
+- Marker-only, line-only and line+marker entries visibly represent the effective colour, opacity, dash, line width, marker symbol and open/filled state closely enough to judge appearance.
+- `show_in_legend:false` and helper/non-legend traces remain absent; the preview eye remains independent.
+- Focused tests cover entry extraction/order/style mapping and overflow/layout policy where practical.
+- TypeScript, Vite build, `git diff --check`, and canonical `python scripts\\preflight.py` pass.
+- Browser/manual confirmation remains required; do not claim Parent 046 complete from code checks alone.
 
 ### R12 — Low: Local scientific preview visibly lags behind appearance edits
 
-**Resolution state: CODE REVIEW CLEAN in `fcca1660fa2b842fc880b0eea4ba7cb5a577c6bc`; USER BROWSER RECHECK REQUIRED.**
+**Resolution state: CODE REVIEW CLEAN; USER BROWSER RECHECK REQUIRED.**
 
-The implementation now feeds `draftOverrides` and `draftRules` directly into the scientific and detached-legend preview builders. The 250 ms debounce remains only on parent/spec persistence, so the intentional stale local frame has been removed without forcing the parent analysis state to rebuild synchronously on every drag/spinner event.
-
-Acceptance still requires the user to confirm that single/bulk appearance edits now feel immediate and that colour dragging/spinners remain responsive.
+The local preview now consumes the current draft directly; the 250 ms debounce remains on parent persistence only.
 
 ## Decision
 
-**CHANGES REQUIRED — fix only R5 and R11. R12 is repository-clean pending user browser confirmation. Run focused frontend verification plus TypeScript, Vite build, `git diff --check`, and canonical `python scripts\\preflight.py`, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not claim the remaining browser/manual matrix complete.**
+**CHANGES REQUIRED — fix only R11. R5 and R12 are repository-clean pending user browser confirmation. After R11 verification, hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not claim the remaining browser/manual matrix complete.**
