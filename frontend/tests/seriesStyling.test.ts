@@ -6,6 +6,7 @@ import {
   decimatePreviewTraces,
   cyclesSeriesDescriptors,
   timeCapacitySeriesDescriptors,
+  applySeriesOverridePatch,
   emptySeriesRule,
   isEmptyOverride,
   isSecondarySeries,
@@ -193,6 +194,40 @@ test("empty overrides are recognised and pruned", () => {
   assert.deepEqual(pruneOverrides({ c1: {}, c2: { color: "#fff" }, c3: { line_width: null } }), {
     c2: { color: "#fff" },
   });
+});
+
+test("bulk override patches every selected key and leaves other series untouched", () => {
+  const next = applySeriesOverridePatch(
+    {
+      c1: { color: "#111111", line_width: 2 },
+      c2: { marker_symbol: "square" },
+      c9: { opacity: 0.4 },
+    },
+    new Set(["c2", "c1"]),
+    { color: "#abcdef", opacity: 0.8 },
+  );
+
+  assert.deepEqual(next, {
+    c1: { color: "#abcdef", line_width: 2, opacity: 0.8 },
+    c2: { marker_symbol: "square", color: "#abcdef", opacity: 0.8 },
+    c9: { opacity: 0.4 },
+  });
+});
+
+test("bulk override null patches preserve unrelated fields and prune fall-through entries", () => {
+  const next = applySeriesOverridePatch(
+    {
+      c1: { color: "#111111", line_width: 2 },
+      c2: { marker_symbol: "square" },
+    },
+    ["c1", "c2"],
+    { color: null, line_width: null },
+  );
+
+  assert.deepEqual(next, {
+    c2: { marker_symbol: "square", color: null, line_width: null },
+  });
+  assert.equal("c1" in next, false);
 });
 
 // The editor shipped once listing zero series because the panel discarded the

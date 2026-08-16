@@ -584,6 +584,30 @@ export function pruneOverrides(
   return next;
 }
 
+/**
+ * Apply one explicit override patch to a concrete selection.
+ *
+ * Selection is deliberately an iterable so callers can keep their native
+ * Set state. Keys are sorted before new entries are written, which keeps the
+ * resulting object deterministic without mutating either input. `null` is
+ * retained as the existing fall-through sentinel until the complete entry is
+ * pruned.
+ */
+export function applySeriesOverridePatch(
+  overrides: Record<string, SeriesStyleOverride>,
+  keys: Iterable<string>,
+  patch: SeriesStyleOverride,
+): Record<string, SeriesStyleOverride> {
+  const next = { ...overrides };
+  const selectedKeys = Array.from(new Set(keys)).sort();
+  for (const key of selectedKeys) {
+    const merged = { ...(next[key] ?? {}), ...patch };
+    if (isEmptyOverride(merged)) delete next[key];
+    else next[key] = merged;
+  }
+  return next;
+}
+
 export function newSeriesRuleId(): string {
   return `rule-${Math.random().toString(36).slice(2, 10)}`;
 }

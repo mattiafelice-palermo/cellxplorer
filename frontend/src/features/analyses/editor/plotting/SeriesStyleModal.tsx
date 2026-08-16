@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   ColorInput,
   ColorPicker,
   Divider,
@@ -67,6 +68,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
@@ -81,6 +83,7 @@ import type {
 import {
   SERIES_RULE_FIELDS,
   SERIES_RULE_OPERATORS,
+  applySeriesOverridePatch,
   emptySeriesRule,
   isEmptyOverride,
   isSecondarySeries,
@@ -178,6 +181,20 @@ const NEW_PALETTE_COLOR = "#868e96";
 
 /** Maximum number of colours a palette can hold. */
 export const MAX_PALETTE_COLOURS = 20;
+
+type SharedValue<T> = {
+  value: T | undefined;
+  mixed: boolean;
+};
+
+function sharedValue<T>(values: T[]): SharedValue<T> {
+  if (values.length === 0) return { value: undefined, mixed: false };
+  const first = values[0];
+  return {
+    value: values.every((value) => Object.is(value, first)) ? first : undefined,
+    mixed: values.some((value) => !Object.is(value, first)),
+  };
+}
 
 /**
  * Which preset the plot's current palette corresponds to, for seeding the
@@ -280,6 +297,8 @@ export function SeriesStyleModal({
   onRenamePalette?: (id: string, name: string) => void;
 }) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>("series");
   const [seriesCollapsed, setSeriesCollapsed] = useState(false);
   const [paletteSaveName, setPaletteSaveName] = useState("");
@@ -349,11 +368,9 @@ export function SeriesStyleModal({
     setDraftOverrides(overrides);
     setDraftRules(rules);
     setDraftBaseStyle(baseStyle);
-    setActiveKey((current) =>
-      current === ALL_SERIES_KEY || (current && descriptors.some((d) => d.key === current))
-        ? current
-        : ALL_SERIES_KEY,
-    );
+    setSelectedKeys(new Set());
+    setSelectionAnchor(null);
+    setActiveKey(ALL_SERIES_KEY);
     setScratchColors(plotPalette(baseStyle));
     setSwatchIds(genSwatchIds(plotPalette(baseStyle).length));
     setPaletteSelection(currentPaletteSelection(baseStyle, palettes));
@@ -364,6 +381,28 @@ export function SeriesStyleModal({
     // the debounce and undo edits mid-typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened]);
+
+  const descriptorKeySet = useMemo(
+    () => new Set(descriptors.map((descriptor) => descriptor.key)),
+    [descriptors],
+  );
+
+  // Descriptor lists can change when a result refreshes. Keep concrete
+  // selection honest without turning an empty selection into the All series
+  // base-style editor.
+  useEffect(() => {
+    setSelectedKeys((current) => {
+      const next = new Set(Array.from(current).filter((key) => descriptorKeySet.has(key)));
+      if (next.size === current.size && Array.from(next).every((key) => current.has(key))) return current;
+      return next;
+    });
+    setSelectionAnchor((current) => (current && descriptorKeySet.has(current) ? current : null));
+    setActiveKey((current) =>
+      current === ALL_SERIES_KEY || (current && descriptorKeySet.has(current) && selectedKeys.has(current))
+        ? current
+        : null,
+    );
+  }, [descriptorKeySet, selectedKeys]);
 
   /** Restores the scratch palette to the plot's currently-applied one. */
   const resetScratchPalette = useCallback(() => {
@@ -569,12 +608,14 @@ export function SeriesStyleModal({
     onClose();
   };
 
-  const isAllSeries = activeKey === ALL_SERIES_KEY;
+  const isAllSeries = activeKey === ALL_SERIES_KEY && selectedKeys.size === 0;
 
   const active = useMemo(
     () =>
-      isAllSeries ? null : descriptors.find((d) => d.key === activeKey) ?? descriptors[0] ?? null,
-    [descriptors, activeKey, isAllSeries],
+      selectedKeys.size === 1
+        ? descriptors.find((descriptor) => selectedKeys.has(descriptor.key)) ?? null
+        : null,
+    [descriptors, selectedKeys],
   );
 
   const resolvedByKey = useMemo(
@@ -640,11 +681,100 @@ export function SeriesStyleModal({
     }));
   }, [descriptors]);
 
+  const selectConcreteKeys = (keys: Iterable<string>, anchor: string | null) => {
+    const next = new Set(keys);
+    setSelectedKeys(next);
+    setSelectionAnchor(anchor);
+    setActiveKey(next.size === 1 ? Array.from(next)[0] : null);
+    setTab("series");
+  };
+
+  const selectSeries = (key: string, event: ReactMouseEvent<HTMLElement>) => {
+    const group = seriesGroups.find((candidate) => candidate.items.some((item) => item.key === key));
+    const anchorGroup = selectionAnchor
+      ? seriesGroups.find((candidate) => candidate.items.some((item) => item.key === selectionAnchor))
+      : undefined;
+
+    if (event.shiftKey && group && anchorGroup?.key === group.key) {
+      const anchorIndex = group.items.findIndex((item) => item.key === selectionAnchor);
+      const clickedIndex = group.items.findIndex((item) => item.key === key);
+      const start = Math.min(anchorIndex, clickedIndex);
+      const end = Math.max(anchorIndex, clickedIndex);
+      selectConcreteKeys(
+        group.items.slice(start, end + 1).map((item) => item.key),
+        selectionAnchor,
+      );
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      const next = new Set(selectedKeys);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      selectConcreteKeys(next, key);
+      return;
+    }
+
+    selectConcreteKeys([key], key);
+  };
+
+  const toggleSeriesCheckbox = (key: string) => {
+    const next = new Set(selectedKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    selectConcreteKeys(next, key);
+  };
+
+  const toggleQuantitySelection = (items: SeriesDescriptor[]) => {
+    const keys = items.map((item) => item.key);
+    const allSelected = keys.length > 0 && keys.every((key) => selectedKeys.has(key));
+    const next = new Set(selectedKeys);
+    if (allSelected) keys.forEach((key) => next.delete(key));
+    else keys.forEach((key) => next.add(key));
+    selectConcreteKeys(next, allSelected ? null : keys[0] ?? null);
+  };
+
+  const selectAllSeriesBase = () => {
+    setSelectedKeys(new Set());
+    setSelectionAnchor(null);
+    setActiveKey(ALL_SERIES_KEY);
+    setTab("series");
+  };
+
+  const selectedResolvedStyles = useMemo(
+    () =>
+      Array.from(selectedKeys)
+        .map((key) => resolvedByKey.get(key))
+        .filter((style): style is ResolvedSeriesStyle => Boolean(style)),
+    [selectedKeys, resolvedByKey],
+  );
+
+  const bulkResolved = useMemo(
+    () => ({
+      color: sharedValue(selectedResolvedStyles.map((style) => style.color)),
+      opacity: sharedValue(selectedResolvedStyles.map((style) => style.opacity)),
+      markerMode: sharedValue(selectedResolvedStyles.map((style) => style.markerMode)),
+      lineDash: sharedValue(selectedResolvedStyles.map((style) => style.lineDash)),
+      lineWidth: sharedValue(selectedResolvedStyles.map((style) => style.lineWidth)),
+      lineShape: sharedValue(selectedResolvedStyles.map((style) => style.lineShape)),
+      markerSymbol: sharedValue(selectedResolvedStyles.map((style) => style.markerSymbol)),
+      markerSize: sharedValue(selectedResolvedStyles.map((style) => style.markerSize)),
+      markerOpen: sharedValue(selectedResolvedStyles.map((style) => style.markerOpen)),
+      showInLegend: sharedValue(selectedResolvedStyles.map((style) => style.showInLegend)),
+    }),
+    [selectedResolvedStyles],
+  );
+
   const setOverride = (key: string, patch: SeriesStyleOverride) =>
     commit(
-      pruneOverrides({ ...draftOverrides, [key]: { ...(draftOverrides[key] ?? {}), ...patch } }),
+      applySeriesOverridePatch(draftOverrides, [key], patch),
       draftRules,
     );
+
+  const applySelectedPatch = (patch: SeriesStyleOverride) => {
+    if (selectedKeys.size === 0) return;
+    commit(applySeriesOverridePatch(draftOverrides, selectedKeys, patch), draftRules);
+  };
 
   // The legend input is memoized so background/query-driven parent renders do
   // not make Mantine reconcile the controlled input while a key is repeating.
@@ -663,6 +793,13 @@ export function SeriesStyleModal({
   const clearOverride = (key: string) => {
     const next = { ...draftOverrides };
     delete next[key];
+    commit(next, draftRules);
+  };
+
+  const clearSelectedOverrides = () => {
+    if (selectedKeys.size === 0) return;
+    const next = { ...draftOverrides };
+    for (const key of selectedKeys) delete next[key];
     commit(next, draftRules);
   };
 
@@ -912,6 +1049,10 @@ export function SeriesStyleModal({
   const activeLinkColor = active
     ? draftOverrides[active.key]?.link_color ?? draftBaseStyle.link_secondary_colors ?? false
     : false;
+  const bulkLineEnabled =
+    bulkResolved.markerMode.mixed || bulkResolved.markerMode.value !== "points";
+  const bulkMarkersEnabled =
+    bulkResolved.markerMode.mixed || bulkResolved.markerMode.value !== "none";
 
   return (
     <Modal
@@ -978,7 +1119,15 @@ export function SeriesStyleModal({
                   px={6}
                   py={4}
                   justify={seriesCollapsed ? "center" : undefined}
-                  onClick={() => setActiveKey(ALL_SERIES_KEY)}
+                  onClick={selectAllSeriesBase}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    selectAllSeriesBase();
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isAllSeries}
                   style={{
                     borderRadius: 4,
                     cursor: "pointer",
@@ -991,25 +1140,39 @@ export function SeriesStyleModal({
                 </Group>
               </Tooltip>
               <Divider my={2} />
-              {seriesGroups.map((group) => (
-                <Fragment key={group.key}>
-                  {group.heading && !seriesCollapsed && (
-                    <Text
-                      size="9px"
-                      fw={700}
-                      c="dimmed"
-                      tt="uppercase"
-                      px={6}
-                      pt={6}
-                      pb={2}
-                      style={{ letterSpacing: 0.4 }}
-                    >
-                      {group.heading}
-                    </Text>
-                  )}
-                  {group.items.map((descriptor) => {
+              {seriesGroups.map((group) => {
+                const selectedCount = group.items.filter((item) => selectedKeys.has(item.key)).length;
+                const allSelected = group.items.length > 0 && selectedCount === group.items.length;
+                const partiallySelected = selectedCount > 0 && !allSelected;
+                const heading = group.heading ?? "Plotted series";
+                return (
+                  <Fragment key={group.key}>
+                    {!seriesCollapsed && (
+                      <Group gap={6} wrap="nowrap" px={6} pt={6} pb={2}>
+                        <Checkbox
+                          size="xs"
+                          checked={allSelected}
+                          indeterminate={partiallySelected}
+                          aria-label={`Select all ${heading}`}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleQuantitySelection(group.items)}
+                        />
+                        <Text
+                          size="9px"
+                          fw={700}
+                          c="dimmed"
+                          tt="uppercase"
+                          truncate
+                          style={{ letterSpacing: 0.4, flex: 1 }}
+                        >
+                          {heading} ({group.items.length})
+                        </Text>
+                      </Group>
+                    )}
+                    {group.items.map((descriptor) => {
                     const style = resolvedByKey.get(descriptor.key);
                     const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
+                    const selected = selectedKeys.has(descriptor.key);
                     const swatch = (
                       <div
                         aria-hidden="true"
@@ -1060,17 +1223,34 @@ export function SeriesStyleModal({
                           px={6}
                           py={4}
                           justify={seriesCollapsed ? "center" : undefined}
-                          onClick={() => setActiveKey(descriptor.key)}
+                          onClick={(event) => selectSeries(descriptor.key, event)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            selectConcreteKeys([descriptor.key], descriptor.key);
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-pressed={selected}
                           style={{
                             borderRadius: 4,
                             cursor: "pointer",
                             background:
-                              descriptor.key === active?.key
+                              selected
                                 ? "var(--mantine-primary-color-light)"
                                 : undefined,
                             opacity: isPreviewHidden ? 0.5 : 1,
                           }}
                         >
+                          {!seriesCollapsed && (
+                            <Checkbox
+                              size="xs"
+                              checked={selected}
+                              aria-label={`Select ${style?.name ?? descriptor.label}`}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={() => toggleSeriesCheckbox(descriptor.key)}
+                            />
+                          )}
                           {swatch}
                           {!seriesCollapsed && (
                             <>
@@ -1091,8 +1271,9 @@ export function SeriesStyleModal({
                       </Tooltip>
                     );
                   })}
-                </Fragment>
-              ))}
+                  </Fragment>
+                );
+              })}
             </Stack>
           </ScrollArea>
         </PanelShell>
@@ -1110,7 +1291,16 @@ export function SeriesStyleModal({
                 <Tabs.Tab value="rules">
                   Rules{draftRules.length ? ` (${draftRules.length})` : ""}
                 </Tabs.Tab>
-                {onApplyPalette && <Tabs.Tab value="palettes">Palettes</Tabs.Tab>}
+                {onApplyPalette && (
+                  <Tabs.Tab value="palettes" title="Palettes apply globally to all series">
+                    <Group gap={4} wrap="nowrap">
+                      <span>Palettes</span>
+                      <Badge size="xs" variant="light" color="gray">
+                        Global
+                      </Badge>
+                    </Group>
+                  </Tabs.Tab>
+                )}
               </Tabs.List>
             </Tabs>
           }
@@ -1693,6 +1883,272 @@ export function SeriesStyleModal({
                     />
                   </>
                 )}
+              </Stack>
+            </ScrollArea>
+          ) : selectedKeys.size > 1 ? (
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+              <Stack gap="sm" p="xs">
+                <Group justify="space-between" wrap="nowrap" align="start">
+                  <div>
+                    <Text size="sm" fw={700}>
+                      {selectedKeys.size} series selected
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      Changes apply to all selected series.
+                    </Text>
+                  </div>
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    leftSection={<IconRotate size={13} />}
+                    onClick={clearSelectedOverrides}
+                  >
+                    Reset selected
+                  </Button>
+                </Group>
+
+                <Group grow align="start">
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Colour
+                      </Text>
+                      {bulkResolved.color.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <ColorInput
+                      size="xs"
+                      format="hex"
+                      aria-label="Bulk colour"
+                      placeholder={bulkResolved.color.mixed ? "Mixed" : "Colour"}
+                      value={bulkResolved.color.mixed ? "" : bulkResolved.color.value ?? ""}
+                      onChange={(value) => applySelectedPatch({ color: value || null })}
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Opacity
+                      </Text>
+                      {bulkResolved.opacity.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      decimalScale={2}
+                      aria-label="Bulk opacity"
+                      placeholder={bulkResolved.opacity.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.opacity.mixed ? "" : bulkResolved.opacity.value ?? ""}
+                      onChange={(value) =>
+                        applySelectedPatch({ opacity: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                </Group>
+
+                <div>
+                  <Group gap={4} mb={4}>
+                    <Text size="xs" fw={500}>
+                      Line style
+                    </Text>
+                    {bulkResolved.markerMode.mixed && (
+                      <Badge size="xs" variant="light" color="gray">
+                        Mixed
+                      </Badge>
+                    )}
+                  </Group>
+                  <SegmentedControl
+                    size="xs"
+                    fullWidth
+                    data={MARKER_MODE_OPTIONS}
+                    value={bulkResolved.markerMode.mixed ? "" : bulkResolved.markerMode.value ?? ""}
+                    onChange={(value) => applySelectedPatch({ marker_mode: value as PlotMarkerMode })}
+                  />
+                </div>
+
+                <Divider label="Line" labelPosition="left" />
+                <Group grow align="start">
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Dash
+                      </Text>
+                      {bulkResolved.lineDash.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={DASH_OPTIONS}
+                      allowDeselect={false}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineDash.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineDash.mixed ? null : bulkResolved.lineDash.value ?? null}
+                      onChange={(value) => value && applySelectedPatch({ line_dash: value as PlotLineDash })}
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Width
+                      </Text>
+                      {bulkResolved.lineWidth.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={0.5}
+                      max={12}
+                      step={0.5}
+                      decimalScale={1}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineWidth.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineWidth.mixed ? "" : bulkResolved.lineWidth.value ?? ""}
+                      onChange={(value) =>
+                        applySelectedPatch({ line_width: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Shape
+                      </Text>
+                      {bulkResolved.lineShape.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={[
+                        { value: "linear", label: "Straight" },
+                        { value: "spline", label: "Smoothed" },
+                        { value: "hv", label: "Stepped" },
+                      ]}
+                      allowDeselect={false}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineShape.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineShape.mixed ? null : bulkResolved.lineShape.value ?? null}
+                      onChange={(value) =>
+                        value && applySelectedPatch({ line_shape: value as "linear" | "spline" | "hv" })
+                      }
+                    />
+                  </div>
+                </Group>
+
+                <Divider label="Markers" labelPosition="left" />
+                <Group grow align="start">
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Symbol
+                      </Text>
+                      {bulkResolved.markerSymbol.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={SYMBOL_OPTIONS}
+                      allowDeselect={false}
+                      disabled={!bulkMarkersEnabled}
+                      placeholder={bulkResolved.markerSymbol.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.markerSymbol.mixed ? null : bulkResolved.markerSymbol.value ?? null}
+                      onChange={(value) =>
+                        value && applySelectedPatch({ marker_symbol: value as PlotMarkerSymbol })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Size
+                      </Text>
+                      {bulkResolved.markerSize.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={1}
+                      max={30}
+                      disabled={!bulkMarkersEnabled}
+                      placeholder={bulkResolved.markerSize.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.markerSize.mixed ? "" : bulkResolved.markerSize.value ?? ""}
+                      onChange={(value) =>
+                        applySelectedPatch({ marker_size: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                  <Checkbox
+                    size="xs"
+                    mt={22}
+                    label="Open"
+                    disabled={!bulkMarkersEnabled}
+                    indeterminate={bulkResolved.markerOpen.mixed}
+                    checked={bulkResolved.markerOpen.value ?? false}
+                    onChange={(event) =>
+                      applySelectedPatch({ marker_open: event.currentTarget.checked })
+                    }
+                  />
+                </Group>
+
+                <Divider label="Legend" labelPosition="left" />
+                <Group gap="xs" wrap="wrap">
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    onClick={() => applySelectedPatch({ show_in_legend: true })}
+                  >
+                    Show in legend
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    onClick={() => applySelectedPatch({ show_in_legend: false })}
+                  >
+                    Hide from legend
+                  </Button>
+                  {bulkResolved.showInLegend.mixed && (
+                    <Badge size="xs" variant="light" color="gray">
+                      Legend membership: Mixed
+                    </Badge>
+                  )}
+                  {!bulkResolved.showInLegend.mixed && (
+                    <Checkbox
+                      size="xs"
+                      label="Show in legend"
+                      checked={bulkResolved.showInLegend.value ?? true}
+                      onChange={(event) =>
+                        applySelectedPatch({ show_in_legend: event.currentTarget.checked })
+                      }
+                    />
+                  )}
+                </Group>
+
+                <Text size="xs" c="dimmed">
+                  Legend name is available when exactly one series is selected.
+                </Text>
               </Stack>
             </ScrollArea>
           ) : !active ? (
