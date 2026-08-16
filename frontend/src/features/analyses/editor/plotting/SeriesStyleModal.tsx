@@ -65,7 +65,6 @@ import {
   Fragment,
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -95,7 +94,7 @@ import {
   orderedSeriesDescriptors,
   pruneOverrides,
   resolveAllSeriesStyles,
-  seriesSelectionRange,
+  seriesSelectionResult,
   seriesRuleError,
   sharedValue,
   type BaseSeriesStyle,
@@ -126,7 +125,10 @@ import {
 import Plot from "../../../../components/Plot";
 import {
   buildLegendPreview,
+  expandLegendPreview,
   LEGEND_PREVIEW_CONFIG,
+  LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT,
+  LEGEND_PREVIEW_EXPANDED_WIDTH,
   LEGEND_PREVIEW_MIN_HEIGHT,
   LEGEND_PREVIEW_WIDTH,
 } from "./legendPreview";
@@ -748,27 +750,15 @@ export function SeriesStyleModal({
       ? seriesGroups.find((candidate) => candidate.items.some((item) => item.key === selectionAnchor))
       : undefined;
 
-    if (event.shiftKey) {
-      event.preventDefault();
-      const range =
-        group && anchorGroup?.key === group.key
-          ? seriesSelectionRange(group.items, selectionAnchor, key)
-          : null;
-      if (range) {
-        selectConcreteKeys(range, selectionAnchor);
-        return;
-      }
-    }
-
-    if (event.ctrlKey || event.metaKey) {
-      const next = new Set(selectedKeys);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      selectConcreteKeys(next, key);
-      return;
-    }
-
-    selectConcreteKeys([key], key);
+    if (event.shiftKey) event.preventDefault();
+    const selection = seriesSelectionResult(
+      group && anchorGroup?.key === group.key ? group.items : [],
+      selectedKeys,
+      selectionAnchor,
+      key,
+      { shiftKey: event.shiftKey, toggleKey: event.ctrlKey || event.metaKey },
+    );
+    selectConcreteKeys(selection.keys, selection.anchor);
   };
 
   const toggleSeriesCheckbox = (key: string) => {
@@ -1041,16 +1031,18 @@ export function SeriesStyleModal({
     setRules(next);
   };
 
-  // Deferred so dragging a colour or holding a spinner stays responsive: the
-  // controls update immediately and the plot catches up a frame later.
-  const previewOverrides = useDeferredValue(draftOverrides);
-  const previewRules = useDeferredValue(draftRules);
+  // The modal preview must use the current local draft. Parent persistence is
+  // still debounced below, but deferring these inputs made the visible plot
+  // lag behind a colour drag, spinner change, or rule edit by an intentional
+  // stale render.
+  const previewOverrides = draftOverrides;
+  const previewRules = draftRules;
 
   /**
-   * Layers the preview-only eye toggle on top of the deferred draft, without
-   * mutating it. Only the modal's own preview plot sees this merged object —
-   * `onChange`/the committed draft (and hence the real analysis plot) only
-   * ever receives `draftOverrides`/`previewOverrides` unmerged.
+   * Layers the preview-only eye toggle on top of the current local draft,
+   * without mutating it. Only the modal's own preview plot sees this merged
+   * object; parent persistence still receives the unmerged draft through the
+   * bounded commit debounce.
    */
   const previewOverridesWithHiding = useMemo(() => {
     if (previewHidden.size === 0) return previewOverrides;
@@ -1179,6 +1171,7 @@ export function SeriesStyleModal({
             flexible panels, so switching to Rules — whose controls are wider —
             resized the plot and forced Plotly to relayout on every tab change. */}
         <PreviewPanel
+          opened={opened}
           preview={preview}
           previewLayout={previewLayout}
           previewConfig={previewConfig}
@@ -2546,9 +2539,6 @@ function SortableSeriesRow({
               event.preventDefault();
               shiftCheckboxClick.current = true;
               onSelect(event);
-              window.setTimeout(() => {
-                shiftCheckboxClick.current = false;
-              }, 0);
             }}
             onChange={() => {
               // React may surface checkbox changes from the native click before
@@ -2556,6 +2546,14 @@ function SortableSeriesRow({
               // changes still use the ordinary checkbox toggle path.
               if (shiftCheckboxClick.current) return;
               onCheckboxChange();
+            }}
+            onKeyDown={(event) => {
+              // A keyboard toggle is independent from a prior mouse gesture.
+              // Clear the mouse guard before Shift+Space can reach onChange.
+              if (event.key === " " || event.key === "Enter") shiftCheckboxClick.current = false;
+            }}
+            onBlur={() => {
+              shiftCheckboxClick.current = false;
             }}
           />
         )}
@@ -3144,6 +3142,7 @@ const PalettePreview = memo(function PalettePreview({
 
 /** Fixed scientific preview with a separate passive Plotly legend preview. */
 function PreviewPanel({
+  opened,
   preview,
   previewLayout,
   previewConfig,
@@ -3152,6 +3151,7 @@ function PreviewPanel({
   legendPreviewConfig,
   legendPreviewStyle,
 }: {
+  opened: boolean;
   preview: { data: unknown[]; layout: Record<string, unknown> };
   previewLayout: Record<string, unknown>;
   previewConfig: Record<string, unknown>;
@@ -3160,53 +3160,102 @@ function PreviewPanel({
   legendPreviewConfig: Record<string, unknown>;
   legendPreviewStyle: React.CSSProperties;
 }) {
+  const [legendExpanded, setLegendExpanded] = useState(false);
   const legendHeight =
     typeof legendPreview.layout.height === "number"
       ? legendPreview.layout.height
       : LEGEND_PREVIEW_MIN_HEIGHT;
+  const expandedLegendPreview = useMemo(() => expandLegendPreview(legendPreview), [legendPreview]);
+  const expandedLegendHeight =
+    typeof expandedLegendPreview.layout.height === "number"
+      ? Math.max(LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT, expandedLegendPreview.layout.height)
+      : LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT;
+  const expandedLegendStyle = useMemo(
+    () => ({ width: LEGEND_PREVIEW_EXPANDED_WIDTH, height: expandedLegendHeight }),
+    [expandedLegendHeight],
+  );
+
+  useEffect(() => {
+    if (!opened) setLegendExpanded(false);
+  }, [opened]);
 
   return (
-    <Stack gap="sm" style={{ width: PREVIEW_WIDTH, flex: "none", minWidth: 0, minHeight: 0 }}>
-      <PanelShell
-        title="Preview"
-        style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
-        bodyPadding={0}
-      >
-        <Plot
-          data={preview.data as never}
-          layout={previewLayout as never}
-          config={previewConfig as never}
-          style={previewStyle}
-        />
-      </PanelShell>
-      <PanelShell
-        title="Legend preview"
-        style={{ width: PREVIEW_WIDTH, height: legendHeight + 56, flex: "none" }}
-        bodyPadding={0}
-      >
-        {legendPreview.data.length > 0 ? (
+    <>
+      <Stack gap="sm" style={{ width: PREVIEW_WIDTH, flex: "none", minWidth: 0, minHeight: 0 }}>
+        <PanelShell
+          title="Preview"
+          style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
+          bodyPadding={0}
+        >
           <Plot
-            data={legendPreview.data as never}
-            layout={legendPreview.layout as never}
+            data={preview.data as never}
+            layout={previewLayout as never}
+            config={previewConfig as never}
+            style={previewStyle}
+          />
+        </PanelShell>
+        <PanelShell
+          title="Legend preview"
+          right={
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              disabled={legendPreview.data.length === 0}
+              aria-label="Open full legend preview"
+              onClick={() => setLegendExpanded(true)}
+            >
+              Open full legend
+            </Button>
+          }
+          style={{ width: PREVIEW_WIDTH, height: legendHeight + 56, flex: "none" }}
+          bodyPadding={0}
+        >
+          {legendPreview.data.length > 0 ? (
+            <Plot
+              data={legendPreview.data as never}
+              layout={legendPreview.layout as never}
+              config={legendPreviewConfig as never}
+              style={legendPreviewStyle}
+            />
+          ) : (
+            <Box
+              style={{
+                height: legendHeight,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text size="xs" c="dimmed">
+                No legend entries
+              </Text>
+            </Box>
+          )}
+        </PanelShell>
+      </Stack>
+
+      <Modal
+        opened={legendExpanded}
+        onClose={() => setLegendExpanded(false)}
+        title="Full legend preview"
+        size="xl"
+        centered
+        styles={{ body: { overflow: "auto" } }}
+      >
+        {expandedLegendPreview.data.length > 0 ? (
+          <Plot
+            data={expandedLegendPreview.data as never}
+            layout={expandedLegendPreview.layout as never}
             config={legendPreviewConfig as never}
-            style={legendPreviewStyle}
+            style={expandedLegendStyle}
           />
         ) : (
-          <Box
-            style={{
-              height: legendHeight,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text size="xs" c="dimmed">
-              No legend entries
-            </Text>
-          </Box>
+          <Text size="sm" c="dimmed">
+            No legend entries
+          </Text>
         )}
-      </PanelShell>
-    </Stack>
+      </Modal>
+    </>
   );
 }
 

@@ -27,6 +27,7 @@ import {
   seriesLegendRanks,
   seriesQuantityGroupKey,
   seriesSelectionRange,
+  seriesSelectionResult,
   sharedValue,
   shortSourceName,
   type BaseSeriesStyle,
@@ -314,6 +315,21 @@ test("series selection ranges stay anchored and bounded to one ordered group", (
   assert.deepEqual(seriesSelectionRange(items, "c1", "c3"), ["c1", "c2", "c3"]);
   assert.deepEqual(seriesSelectionRange(items, "c3", "c2"), ["c2", "c3"]);
   assert.equal(seriesSelectionRange(items, "missing", "c2"), null);
+});
+
+test("row and checkbox range gestures share an inclusive endpoint policy", () => {
+  const items = [{ key: "c1" }, { key: "c2" }, { key: "c3" }, { key: "c4" }];
+  const forward = seriesSelectionResult(items, ["c1"], "c1", "c4", {
+    shiftKey: true,
+    toggleKey: false,
+  });
+  const reverse = seriesSelectionResult(items, ["c4"], "c4", "c2", {
+    shiftKey: true,
+    toggleKey: false,
+  });
+
+  assert.deepEqual(forward, { keys: ["c1", "c2", "c3", "c4"], anchor: "c1" });
+  assert.deepEqual(reverse, { keys: ["c2", "c3", "c4"], anchor: "c4" });
 });
 
 // The editor shipped once listing zero series because the panel discarded the

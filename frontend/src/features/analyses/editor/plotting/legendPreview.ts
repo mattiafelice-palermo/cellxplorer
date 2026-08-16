@@ -16,6 +16,8 @@ export type LegendPreviewFigure = {
 export const LEGEND_PREVIEW_WIDTH = 620;
 export const LEGEND_PREVIEW_MIN_HEIGHT = 84;
 export const LEGEND_PREVIEW_MAX_HEIGHT = 220;
+export const LEGEND_PREVIEW_EXPANDED_WIDTH = 860;
+export const LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT = 520;
 /** Plotly drops zero-length traces before creating their legend entries. */
 export const LEGEND_PREVIEW_SENTINEL_X = 0;
 export const LEGEND_PREVIEW_SENTINEL_Y = null;
@@ -27,6 +29,26 @@ export const LEGEND_PREVIEW_CONFIG = {
   displayModeBar: false,
   responsive: true,
 } as const;
+
+/**
+ * Enlarge the same passive legend figure for the optional full-size viewer.
+ * The data array and nested legend object are intentionally reused, so the
+ * expanded surface cannot drift from the embedded ordering or styling.
+ */
+export function expandLegendPreview(preview: LegendPreviewFigure): LegendPreviewFigure {
+  const sourceLayout = isRecord(preview.layout) ? preview.layout : {};
+  const sourceHeight = typeof sourceLayout.height === "number" ? sourceLayout.height : 0;
+  return {
+    data: preview.data,
+    layout: {
+      ...sourceLayout,
+      autosize: false,
+      width: LEGEND_PREVIEW_EXPANDED_WIDTH,
+      height: Math.max(LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT, sourceHeight),
+      margin: { l: 24, r: 24, t: 16, b: 16 },
+    },
+  };
+}
 
 const TRACE_PRESENTATION_FIELDS = [
   "type",

@@ -101,6 +101,33 @@ export function seriesSelectionRange(
 }
 
 /**
+ * Resolve one concrete-series selection gesture. Row clicks and their
+ * selection checkboxes both call this same policy, so the endpoint-inclusive
+ * range cannot diverge between the two interaction paths.
+ */
+export function seriesSelectionResult(
+  items: readonly Pick<SeriesDescriptor, "key">[],
+  selectedKeys: Iterable<string>,
+  anchorKey: string | null,
+  clickedKey: string,
+  modifiers: { shiftKey: boolean; toggleKey: boolean },
+): { keys: string[]; anchor: string | null } {
+  if (modifiers.shiftKey) {
+    const range = seriesSelectionRange(items, anchorKey, clickedKey);
+    if (range) return { keys: range, anchor: anchorKey };
+  }
+
+  if (modifiers.toggleKey) {
+    const next = new Set(selectedKeys);
+    if (next.has(clickedKey)) next.delete(clickedKey);
+    else next.add(clickedKey);
+    return { keys: Array.from(next), anchor: clickedKey };
+  }
+
+  return { keys: [clickedKey], anchor: clickedKey };
+}
+
+/**
  * Minimal shapes the descriptor builders need. Structural rather than the full
  * API types so they can be unit tested without a compute result.
  */

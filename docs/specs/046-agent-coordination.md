@@ -429,3 +429,21 @@ R4, R5 and R10 are code-clean at `14c9c89046dea4af029478fa1f8b948dca3e996f`. The
 The latest user browser pass confirms the detached Legend preview now renders and the other previously reported fixes are working, but Shift range selection still excludes the final clicked endpoint. The user also selected the vertically flowing legend design and requested a compact Legend-preview header action that opens a larger read-only full-legend modal, and reported perceptible lag between Series appearance edits and the scientific preview. Fix only Parent-review R5, R11 and R12. R5 must be inclusive of anchor and clicked endpoint for both row and checkbox paths. R11 must reuse the same vertically ordered legend-preview data in a substantially larger passive modal/overlay. R12 must make the modal scientific/legend preview consume the current draft without intentional deferred/debounce lag while allowing parent persistence to remain bounded/debounced if needed. Preserve all previously accepted behavior, run focused frontend verification, TypeScript, Vite build, `git diff --check`, and canonical `python scripts\preflight.py`, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not claim the remaining manual/browser matrix complete.
 
 ---
+### 2026-08-16T12:24:47+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (62 tests)
+- TypeScript: PASS
+- Vite build: PASS
+- git diff --check: PASS
+- canonical preflight: PASS (4/4 stages)
+- manual/browser checks: NOT RUN (user-owned cumulative acceptance)
+
+**Message**
+
+R5 now routes row and checkbox gestures through one inclusive endpoint policy and suppresses late native checkbox toggles; R11 adds compact Open full legend header action and a larger passive modal reusing the same legend preview data/layout; R12 removes local useDeferredValue lag while retaining 250ms parent persistence debounce. Only R5, R11, R12 changed; remaining browser matrix unclaimed.
+
+---
