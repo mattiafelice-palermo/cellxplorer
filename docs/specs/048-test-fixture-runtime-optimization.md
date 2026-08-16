@@ -525,10 +525,14 @@ skipping/caching:
   the existing ignored `.preflight-cache.json`, queues unknown tasks first, then known tasks
   longest-first, and preserves one subprocess/private backend data root per task. Timing history
   affects ordering only; `--no-cache` still executes every task. Malformed/missing histories fail
-  closed and successful task failure attribution is unchanged. Controlled restored-topology A/B
-  timing improved from 100.088 s with empty history to 80.767 s with populated history; the
-  bounded same-machine worker sweep selected the new default of 8 workers (4/8/12/16: 117.098 /
-  79.917 / 93.313 / 88.433 s).
+  closed and successful task failure attribution is unchanged. The reviewer-requested clean
+  Windows benchmark ran all 68 backend modules in a warm-up plus counterbalanced
+  ordered/unordered/unordered/ordered passes in [GitHub Actions run 31964460774](https://github.com/mattiafelice-palermo/cellxplorer/actions/runs/31964460774).
+  The hosted runner reported four logical CPUs, so requested 16 workers resolved to four in every
+  pass; ordered timings were 61.808/55.815 s and unordered timings were 51.013/49.882 s, with
+  every module passing. Because the runner could not distinguish 8 from 16 workers, the local
+  worker sweep is not used to select the default; both defaults restore `min(16, CPU budget)` and
+  `CELLXPLORER_PREFLIGHT_JOBS` remains an explicit override.
 - **R2:** the initial nine-way partition preserved all 34 portable-analysis and 67 Neware Excel
   cases exactly once, but its complete focused set regressed from the original 35.573 s checkpoint
   to 56.149 s. A coarser four-wrapper experiment measured 43.888 s for its 101 target cases but
@@ -544,11 +548,10 @@ skipping/caching:
   direct/package builds retain normal clean-output behavior.
 
 The returned R1/R2 checkpoint was not accepted because its test-side measurements mixed a changed
-partition topology with resource contention. The controlled restored-topology measurements above
-separate those effects: successful timing history reduced the same 68-module runner from 100.088 s
-to 80.767 s, and 8 workers was the fastest bounded choice. The focused restored topology still
-measured 51.414 s under the current background load; the earlier 35.573 s value remains the
-original-scope checkpoint used for the reversion decision.
+partition topology with resource contention. The local restored-topology measurements remain useful
+for diagnosis but are not authoritative for the worker default: the clean hosted runner could only
+exercise four effective workers. The retained timing history changes task order only, preserves all
+coverage and private data roots, and does not establish a whole-preflight sub-ten-second path.
 
 ### Original-scope checkpoint verification
 
@@ -590,10 +593,11 @@ remove only measured redundant fixture/setup work.
 - Browser/manual UI checks: **NOT REQUIRED** (test/tooling-only change).
 
 The full-preflight sub-ten-second target remains unattainable without skipping/caching required
-backend/frontend verification or changing the global scheduler. R1 improves repeat ordering and
-the measured worker default without changing coverage; the R2 partition experiment was reverted
-because it regressed aggregate timing; R3 materially reduces the direct frontend bundle, while all
-scientific assertions and full verification gates remain active.
+backend/frontend verification or changing the global scheduler. R1's timing-history experiment
+remains coverage-preserving and ordering-only; the clean runner did not justify a worker-default
+change. The R2 partition experiment was reverted because it regressed aggregate timing; R3
+materially reduces the direct frontend bundle, while all scientific assertions and full verification
+gates remain active.
 
 ### Final controlled R1-R2 verification
 
@@ -603,19 +607,29 @@ scientific assertions and full verification gates remain active.
 - Controlled R1 A/B on the restored 68-module topology: **PASS** with empty timing history in
   100.088 s and populated longest-first history in 80.767 s. Both runs used fresh private data
   roots and all 68 modules passed.
-- Controlled worker sweep on that same topology: **PASS** at 4/8/12/16 workers in
-  117.098/79.917/93.313/88.433 s. The default is therefore 8 workers; explicit `--jobs` values
-  remain available.
-- `python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages, 102.09 s total with 68 backend
-  modules and 60 frontend policy files. The 8-worker test stage took 101.12 s, type check 6.54 s,
-  and Vite 8/Rolldown bundle 21.53 s.
-- `python scripts\preflight.py`: **PASS**, 4/4 stages, 80.04 s total; all 68 backend modules
-  passed in 79.19 s and unchanged frontend stages were correctly skipped.
+- Local worker sweep on that same topology: **PASS** at 4/8/12/16 workers in
+  117.098/79.917/93.313/88.433 s, but the workstation was too variable for default selection.
+  The clean hosted benchmark exposed four logical CPUs and resolved requested 16 workers to four;
+  the defaults therefore retain `min(16, CPU budget)` and explicit `--jobs`/
+  `CELLXPLORER_PREFLIGHT_JOBS` overrides remain available.
+- Reviewer-requested clean Windows CI run: **PASS**, run 31964460774. All 68 modules passed in
+  each warm-up/ordered/unordered/unordered/ordered pass; effective workers were 4 throughout.
+  Ordered runs measured 61.808 s and 55.815 s; unordered runs measured 51.013 s and 49.882 s.
+- `python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages, 78.92 s total with the
+  restored 16-worker default. All 68 backend modules and 60 frontend policy files passed; the
+  backend/frontend stage took 78.56 s, type check 8.34 s, and Vite 8/Rolldown bundle 28.21 s.
+- `CELLXPLORER_PREFLIGHT_JOBS=8 python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages,
+  79.98 s total; all 128 backend/frontend tasks passed.
+- `python scripts\preflight.py`: **PASS**, 4/4 stages, 78.59 s total; all 68 backend modules
+  passed in 77.99 s and unchanged frontend stages were correctly skipped.
+- `CELLXPLORER_PREFLIGHT_JOBS=8 python scripts\preflight.py`: **PASS**, 4/4 stages, 74.25 s
+  total; all 68 backend modules passed and unchanged frontend stages were correctly skipped.
 - The reviewer-requested partition experiment was reverted after the complete nine-way topology
   regressed the comparable focused checkpoint (56.149 s versus 35.573 s); the original module
   topology is the retained R2 result.
-- `python -m compileall -q backend tests scripts`: **PASS**; `git diff --check`: **PASS**; golden
-  source/manifest files: **NO CHANGES**; browser/manual UI checks: **NOT REQUIRED**.
+- `python -m compileall -q backend tests scripts`: **PASS**; `python scripts\check_versions.py`:
+  **PASS**; `git diff --check`: **PASS**; golden source/manifest files: **NO CHANGES**; temporary
+  benchmark workflow: **REMOVED**; browser/manual UI checks: **NOT REQUIRED**.
 
 The whole preflight remains above ten seconds because the required backend and frontend stages still
 execute. Meeting that target would require backend test skipping/caching or a broader scheduler/build

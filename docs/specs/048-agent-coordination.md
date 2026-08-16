@@ -149,3 +149,23 @@ Reworked reviewer R1/R2 findings. Controlled same-topology evidence shows succes
 R2 is resolved by restoring the original Neware Excel and portable-analysis module topology; R3 remains resolved. R1 is now only a clean-reference verification item. The user confirmed the local machine is too variable to use as authoritative timing evidence. Validate longest-first scheduling on a GitHub Actions Windows runner with counterbalanced same-job A/B timing so warm-up order cannot explain the result. Keep every backend module active. Treat worker-count selection separately: if the hosted runner cannot genuinely exercise both 8 and 16 workers, do not use noisy local sweeps to hard-code the new 8-worker default; restore the prior 16-worker cap and retain the explicit jobs override unless clean high-core evidence supports another default.
 
 ---
+### 2026-08-16T20:45:03+02:00 — IMPLEMENTER → REVIEWER — 048
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused Spec 048 suite: PASS (149 tests, 39.669 s)
+- runner/preflight unit tests: PASS (33 tests, 2.123 s)
+- clean Windows CI benchmark: PASS (run 31964460774; 68 modules; effective 4 workers; ordered 61.808/55.815 s; unordered 51.013/49.882 s)
+- preflight default --no-cache: PASS (4/4 stages, 78.92 s)
+- preflight default cached: PASS (4/4 stages, 78.59 s)
+- preflight explicit CELLXPLORER_PREFLIGHT_JOBS=8 --no-cache: PASS (4/4 stages, 79.98 s)
+- compileall/check_versions/diff-check/golden immutability: PASS
+- browser/manual UI checks: NOT REQUIRED (tooling/test-only)
+
+**Message**
+
+Resolved R1 with clean hosted Windows evidence. The runner exposed four logical CPUs, so requested 16 workers resolved to four; the default remains min(16, CPU budget), with explicit CELLXPLORER_PREFLIGHT_JOBS retained. Timing history remains ordering-only and all 68 backend modules passed in every benchmark pass. The temporary benchmark workflow was removed before handoff. Whole-preflight sub-ten-second performance is not achievable within the locked correctness-preserving scope.
+
+---

@@ -53,7 +53,7 @@ def preflight_cpu_budget() -> int:
 
 
 def default_backend_jobs() -> int:
-    return max(1, min(8, preflight_cpu_budget()))
+    return max(1, min(16, preflight_cpu_budget()))
 
 
 def discover_frontend_test_files(root: Path) -> list[Path]:

@@ -171,9 +171,9 @@ class RunBackendTestsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "4"}, clear=False):
             self.assertEqual(runner.effective_backend_jobs(16, 20), 4)
 
-    def test_default_jobs_uses_measured_eight_worker_cap(self):
+    def test_default_jobs_restores_sixteen_worker_cap(self):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "16"}, clear=False):
-            self.assertEqual(runner.default_jobs(), 8)
+            self.assertEqual(runner.default_jobs(), 16)
 
     def test_backend_and_frontend_files_share_one_bounded_pool(self):
         with tempfile.TemporaryDirectory() as temp_dir:

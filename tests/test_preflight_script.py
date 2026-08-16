@@ -116,9 +116,9 @@ class PreflightScriptTests(unittest.TestCase):
             r"C:\Node\node.exe",
         )
 
-    def test_default_backend_jobs_uses_measured_eight_worker_cap(self):
+    def test_default_backend_jobs_restores_sixteen_worker_cap(self):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "16"}, clear=False):
-            self.assertEqual(preflight.default_backend_jobs(), 8)
+            self.assertEqual(preflight.default_backend_jobs(), 16)
 
     def test_frontend_build_cache_skips_repeat_run(self):
         first_code, first_stdout, _stderr = self.run_preflight(no_cache=True)

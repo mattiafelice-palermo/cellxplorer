@@ -126,7 +126,7 @@ def cpu_budget() -> int:
 
 
 def default_jobs() -> int:
-    return max(1, min(8, cpu_budget()))
+    return max(1, min(16, cpu_budget()))
 
 
 def effective_test_jobs(requested: int, task_count: int) -> int:
@@ -226,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         "--jobs",
         type=int,
         default=default_jobs(),
-        help="Maximum parallel backend/frontend test tasks (default: min(8, CPU count)).",
+        help="Maximum parallel backend/frontend test tasks (default: min(16, CPU count)).",
     )
     parser.add_argument(
         "--data-root",
