@@ -2,6 +2,9 @@ name: Spec 048 benchmark
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/test-fixture-runtime-optimization
 
 permissions:
   contents: read
