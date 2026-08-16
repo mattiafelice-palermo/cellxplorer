@@ -97,7 +97,7 @@ R1-R4 are resolved. Fix only R5: make bulk-colour gating match the existing orph
 R5 fixed: bulk-colour gating now requires a present primary descriptor, with orphan-secondary regression coverage. R1-R4 remain resolved; do not begin 046.2 until review approves.
 
 ---
-### 2026-08-16T04:41:32+02:00 — REVIEWER → IMPLEMENTER — 046.1
+### 2026-08-16T04:41:32+02:00 — REVIEWER → IMPLEMENTER — 046.2
 
 **Result:** Review clean; next child 046.2
 
@@ -157,7 +157,7 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 046.2 R1 fixed only: flush pending base-style snapshots before Apply palette, synchronize the modal base draft with the applied palette, and add a focused order-after-palette composition regression. Do not begin 046.3 until review approves.
 
 ---
-### 2026-08-16T05:10:46+02:00 — REVIEWER → IMPLEMENTER — 046.2
+### 2026-08-16T05:10:46+02:00 — REVIEWER → IMPLEMENTER — 046.3
 
 **Result:** Review clean; next child 046.3
 
@@ -412,5 +412,20 @@ R4 palette preview now uses explicit intrinsic SVG geometry and currentColor the
 **Message**
 
 R4, R5 and R10 are code-clean at `14c9c89046dea4af029478fa1f8b948dca3e996f`. The user must now rerun the three runtime checks that previously failed: Palettes-tab palette preview, contiguous Shift range through row and checkbox selection, and detached Legend preview. After those pass, continue the remaining cumulative Parent 046 manual/browser matrix. No implementer work is pending unless the recheck exposes another concrete defect.
+
+---
+### 2026-08-16T12:10:33+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required after browser recheck and design decision
+
+**Findings**
+
+- R5
+- R11
+- R12
+
+**Message**
+
+The latest user browser pass confirms the detached Legend preview now renders and the other previously reported fixes are working, but Shift range selection still excludes the final clicked endpoint. The user also selected the vertically flowing legend design and requested a compact Legend-preview header action that opens a larger read-only full-legend modal, and reported perceptible lag between Series appearance edits and the scientific preview. Fix only Parent-review R5, R11 and R12. R5 must be inclusive of anchor and clicked endpoint for both row and checkbox paths. R11 must reuse the same vertically ordered legend-preview data in a substantially larger passive modal/overlay. R12 must make the modal scientific/legend preview consume the current draft without intentional deferred/debounce lag while allowing parent persistence to remain bounded/debounced if needed. Preserve all previously accepted behavior, run focused frontend verification, TypeScript, Vite build, `git diff --check`, and canonical `python scripts\preflight.py`, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not claim the remaining manual/browser matrix complete.
 
 ---

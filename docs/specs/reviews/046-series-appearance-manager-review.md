@@ -5,18 +5,21 @@ Branch: `feature/series-appearance-manager`
 Merge base: `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`  
 Final-child review-clean checkpoint: `1096c744d878bfc495be3ab9aefbf332b261e877`  
 Closure-fix commit: `f3471eedb39d33396d98c582369cb971ed869a52`  
-User-acceptance fixes reviewed: `269f6f56a5f6430f106a2875a5a964440f06efa3`, `9c9c87ea18dae2efcc0b12050f15ec0f468057fa`, `14c9c89046dea4af029478fa1f8b948dca3e996f`  
+Latest runtime-fix checkpoint reviewed: `14c9c89046dea4af029478fa1f8b948dca3e996f`  
 Additional user-directed UI commit preserved: `25ccd1ff370f1ba73cb0b194807d36f5e7faaf39`  
-Status: **CODE/REPOSITORY REVIEW CLEAN; BLOCKED ON USER BROWSER RECHECK AND REMAINING MANUAL MATRIX**
+Status: **CHANGES REQUIRED — R5, R11, R12**
 
 ## Current cumulative status
 
 - R1/R2 repository closure remains resolved.
 - R3 All-series aggregate/homogenization remains resolved, including linked-secondary colour behavior.
-- R6/R8 retain the user's later mixed-switch/Open presentation adjustment from `25ccd1ff...`; R7 and R9 remain code-clean.
-- The user's second browser pass reopened R4 and R5 and exposed R10 from the supplied screenshot.
-- `14c9c890...` addresses all three runtime failure paths directly. I found no further repository defect in that fix commit, but all three require the user's browser confirmation because the prior code-only fixes had already demonstrated that source inspection alone was insufficient.
-- The remaining cumulative 33-item browser/manual matrix is still incomplete.
+- R4 palette preview is now accepted by the user in the latest browser pass; the user reports the remaining previously failing preview behavior works.
+- R5 remains open: Shift range selection now mostly works, but the last Shift-clicked series is excluded. The range must be inclusive of both anchor and endpoint.
+- R6/R8 retain the user's later mixed-switch/Open presentation adjustment from `25ccd1ff...`; R7 and R9 remain accepted by the user as part of the statement that everything else works well.
+- R10 detached Legend preview is now accepted by the user: the latest screenshot shows the legend entries rendering.
+- The user selected the vertically flowing legend design and requested an explicit full-size legend expansion path (R11).
+- The user also reports a perceptible delay between appearance edits and the scientific preview updating (R12).
+- The broader cumulative manual/browser matrix is still not declared complete; after these fixes the affected paths must be rerun before any merge-ready decision.
 
 ## Verification record
 
@@ -28,26 +31,26 @@ Status: **CODE/REPOSITORY REVIEW CLEAN; BLOCKED ON USER BROWSER RECHECK AND REMA
 - canonical preflight: PASS — 4/4 stages;
 - browser/manual checks: NOT RUN by implementer.
 
-Earlier implementation/fix passes also reported focused tests, TypeScript, Vite build and canonical preflight passing as recorded in the coordination log and child review files.
+### User browser/manual acceptance — latest round
 
-### User browser/manual acceptance — round 2
+PASS:
+- detached Legend preview now visibly renders;
+- palette preview and the other previously reported UI fixes are reported working well.
 
-FAIL before `14c9c890...`:
-- Shift+click selected only the two endpoints rather than the contiguous range;
-- the Palettes-tab palette preview remained blank;
-- the supplied screenshot showed the detached `Legend preview` blank while five plotted series were present.
+FAIL / change requested:
+- Shift-click contiguous selection excludes the final clicked endpoint;
+- preview styling changes have a noticeable delay before appearing in the plot;
+- long vertically ordered legends would benefit from an explicit larger read-only legend view rather than relying only on the embedded scrollbar.
 
 ### Reviewer-independent
 
 I independently inspected:
-- `14c9c890...` against the exact reviewer handoff base;
-- current Shift row/checkbox event ordering and the existing `seriesSelectionRange(...)` path;
-- the new intrinsic palette-preview geometry module and current SVG rendering contract;
-- the detached legend transformation, including the finite/null sentinel representation and `scattergl` → `scatter` compatibility conversion;
-- the focused legend/palette tests;
-- preservation of the user's `25ccd1ff...` mixed-switch/Open UI changes.
+- the current Shift row/checkbox event path and `seriesSelectionRange(...)` use;
+- the current modal preview path, including `useDeferredValue(draftOverrides)` / `useDeferredValue(draftRules)` and the separate 250 ms parent commit debounce;
+- the current detached legend transformation and embedded Plotly preview;
+- the latest user screenshots and stated acceptance results.
 
-I did **not** independently execute the test/build/preflight commands or the real browser checks.
+I did **not** independently execute test/build/preflight commands or browser/manual checks.
 
 ## Findings
 
@@ -63,55 +66,109 @@ I did **not** independently execute the test/build/preflight commands or the rea
 
 **Resolution: RESOLVED across `269f6f56...` and `9c9c87ea...`.**
 
-### R4 — Medium: Palette preview remains blank in the real browser
+### R4 — Medium: Palette preview blank in browser
 
-**Resolution state: CODE REVIEW CLEAN in `14c9c89046dea4af029478fa1f8b948dca3e996f`; USER BROWSER RECHECK REQUIRED.**
+**Resolution: USER-ACCEPTED after `14c9c89046dea4af029478fa1f8b948dca3e996f`.**
 
-The previous attempted fix changed theme-token placement but left the runtime blank. The new fix addresses two concrete renderer risks instead: the SVG now has explicit intrinsic `width`/`height` plus a matching fixed `viewBox`, and all chart chrome uses `currentColor`/ordinary CSS variables rather than `light-dark(...)`. The curve/geometry model was extracted to `palettePreview.ts` with focused tests. This is a materially different fix, but only the user's WebView can close the runtime finding.
+### R5 — Medium: Shift-click contiguous range excludes the final clicked series
 
-Acceptance still requires the preview to be visibly populated and updating in light/dark mode.
+Affected files:
+- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+- `frontend/src/features/analyses/editor/plotting/seriesStyling.ts` only if the pure range helper needs correction
+- focused frontend tests
 
-### R5 — Medium: Shift+click selects only endpoints instead of a contiguous range
+**Current**
 
-**Resolution state: CODE REVIEW CLEAN in `14c9c89046dea4af029478fa1f8b948dca3e996f`; USER BROWSER RECHECK REQUIRED.**
+The latest browser pass shows that Shift selection now forms a range, but the final Shift-clicked row is not selected. If the anchor is A and the user Shift-clicks D, the UI effectively selects A/B/C rather than A/B/C/D.
 
-The follow-up now handles the concrete bypass identified by the user's behavior: Shift-pointer-down on a series checkbox marks the range gesture, Shift-click is prevented from performing the checkbox's native endpoint toggle, and the checkbox explicitly calls the same `selectSeries(...)` range path as the row. Plain checkbox toggles remain on the ordinary `onChange` route; row-body Shift and drag isolation remain intact.
+The pure helper is intended to be inclusive, so the implementer must trace the real row/checkbox event path and controlled-checkbox state rather than assuming the helper alone proves correctness.
 
-Acceptance still requires: select A, Shift-click D (row or checkbox) → A/B/C/D selected, repeatedly and without native text/context leakage.
+**Target**
+
+Shift range selection must be inclusive of both the established anchor and the clicked endpoint, for both row-body and selection-checkbox gestures, while preserving the same-group boundary and existing browser-native suppression.
+
+**Acceptance criteria**
+
+- Click A, Shift-click D → A/B/C/D are all selected.
+- The same inclusive result holds when D is activated through its checkbox/selection control.
+- Reverse ranges are inclusive as well (D then Shift-click B → B/C/D).
+- Repeated range operations keep a predictable anchor.
+- Ctrl/Cmd selection, ordinary checkbox toggles, preview eye and drag activation remain isolated.
+- Focused tests cover inclusive endpoint behavior through the interaction helper/path; final browser confirmation remains required.
 
 ### R6 — Low: Multi-selection legend membership presentation
 
-**Resolution: RESOLVED; latest user-directed mixed-switch presentation from `25ccd1ff...` is preserved.**
+**Resolution: RESOLVED; latest user-directed mixed-switch presentation is preserved.**
 
 ### R7 — Low: Reordering depends on hitting the drag handle
 
-**Resolution state: CODE REVIEW CLEAN; USER BROWSER ACCEPTANCE STILL PART OF FINAL MATRIX.**
+**Resolution: USER-ACCEPTED in the latest browser pass.**
 
 ### R8 — Low: `Open` marker control alignment/presentation
 
-**Resolution: RESOLVED; latest user-directed mixed-switch/Open presentation from `25ccd1ff...` is preserved.**
+**Resolution: RESOLVED; latest user-directed presentation is preserved.**
 
 ### R9 — Low: `Palettes · Global` needs stronger separation
 
-**Resolution: RESOLVED in `269f6f56...`.**
+**Resolution: USER-ACCEPTED in the latest browser pass.**
 
 ### R10 — Medium: Detached Legend preview is blank with visible legend-eligible series
 
-**Resolution state: CODE REVIEW CLEAN in `14c9c89046dea4af029478fa1f8b948dca3e996f`; USER BROWSER RECHECK REQUIRED.**
+**Resolution: USER-ACCEPTED after `14c9c89046dea4af029478fa1f8b948dca3e996f`.**
 
-The zero-length trace representation was the key runtime assumption disproved by the screenshot. The detached legend now replaces source arrays with a one-record sentinel (`x=[0]`, `y=[null]`) so Plotly materializes the trace/legend entry while the null ordinate prevents a curve/marker from drawing. `scattergl` is normalized to SVG-compatible `scatter` for this legend-only surface. Scientific arrays/customdata are still not retained, and the existing style/rank/group fields remain copied.
+The latest user screenshot visibly shows the detached legend entries.
 
-Acceptance still requires the detached Legend preview to visibly show the eligible entries, preserve their effective appearance/order, remain independent of the preview eye, and stay bounded for large legends.
+### R11 — Low: Long vertically ordered legends need an explicit full-size inspection view
 
-## External acceptance still pending
+Affected files:
+- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+- `frontend/src/features/analyses/editor/plotting/legendPreview.ts` only if reusable sizing/config helpers are appropriate
+- focused frontend tests
 
-Please rerun first:
-1. R4 — Palettes-tab preview visibly renders and updates;
-2. R5 — contiguous Shift range via both row body and checkbox;
-3. R10 — detached Legend preview visibly contains the plotted legend entries.
+**Current**
 
-Then continue the remaining Parent 046 cumulative manual/browser matrix. Any failure reopens the corresponding finding; passing these three does not by itself complete Parent 046 unless the remaining required checks are also completed.
+The embedded Legend preview now works and the user prefers the simple top-to-bottom reading order. However, long legends still rely on the relatively small embedded Plotly scroll area, while the overall modal has room for a clearer dedicated inspection path.
+
+**Target**
+
+Keep the existing embedded vertically ordered legend preview, and add a clear action in the `Legend preview` header (for example `Expand` / `Open full legend`) that opens a larger dedicated read-only legend modal/overlay. It must reuse the same legend-preview data and ordering rather than creating a parallel hardcoded rendering path.
+
+**Acceptance criteria**
+
+- A visible, compact action exists in the Legend preview header.
+- Activating it opens a substantially larger legend-only modal/overlay.
+- The expanded view preserves the same top-to-bottom entry order, effective labels, colours, line/marker styles, legend membership and ordering as the embedded preview.
+- The expanded view remains passive/read-only; it does not toggle traces or mutate styling.
+- Ordinary legends should be inspectable without the cramped embedded scrollbar; very large legends may still scroll inside the expanded view.
+- Closing the expanded view returns to the Series appearance modal without losing selection or draft edits.
+- Light/dark behavior and keyboard accessibility match existing Mantine modal patterns.
+- Focused tests cover open/close behavior and confirm the expanded view consumes the same legend-preview data source.
+
+### R12 — Low: Local scientific preview visibly lags behind appearance edits
+
+Affected files:
+- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+- focused frontend tests/policy coverage where practical
+
+**Current**
+
+The user perceives a noticeable delay between editing one or multiple series and seeing the change in the scientific preview on the left. The modal currently sets draft state immediately but then feeds the scientific/legend preview through `useDeferredValue(draftOverrides)` and `useDeferredValue(draftRules)`. Separately, parent persistence uses a 250 ms commit debounce.
+
+**Target**
+
+The modal's own scientific preview should reflect current draft appearance changes immediately, with no intentional debounce/deferred-value lag. The heavier parent/spec persistence path may remain debounced if needed for performance, as long as the local preview uses the current draft and remains responsive during colour drags/spinner changes.
+
+Do not solve this by forcing synchronous heavyweight parent rebuilds on every pointer event if the same UX can be achieved by decoupling local preview state from persisted commits.
+
+**Acceptance criteria**
+
+- Single-series and bulk appearance changes update the modal scientific preview on the same interaction/render cycle, without an intentional ~250 ms pause or deferred stale frame.
+- Local preview uses current draft overrides/rules/base style; parent persistence may retain a bounded debounce.
+- Colour dragging and numeric spinner/held-key interactions remain responsive.
+- Detached legend preview stays in sync with the same current draft.
+- No regression to saved/autosave state, palette application, order composition or close/flush behavior.
+- Implementer explains which defer/debounce remains and why.
 
 ## Decision
 
-**BLOCKED ON REQUIRED USER BROWSER/MANUAL ACCEPTANCE — repository-side fixes R4/R5/R10 are review-clean at `14c9c89046dea4af029478fa1f8b948dca3e996f`; no implementer work is pending until the user browser recheck supplies evidence.**
+**CHANGES REQUIRED — fix only R5, R11 and R12, run focused frontend verification plus TypeScript, Vite build, `git diff --check`, and canonical `python scripts\\preflight.py`, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not claim the remaining browser/manual matrix complete.**
