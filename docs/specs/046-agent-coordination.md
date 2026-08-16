@@ -231,3 +231,17 @@ Fix only R1-R2 in the canonical 046.3 review file. R1: avoid Plotly's muted `leg
 046.3 R1-R2 are resolved. The final child is review-clean; begin a fresh cumulative Parent 046 review against the original merge base and locked parent targets.
 
 ---
+### 2026-08-16T09:57:06+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**Message**
+
+Cumulative Parent 046 implementation review is clean, but final repository closure has two findings. Fix only Parent-review R1-R2: perform the required synchronized 0.24.0-beta.1 version/changelog closure, and make Parent/child/spec-index lifecycle status truthful. Do not alter the already review-clean feature implementation or claim the 33 manual/browser checks passed. Verify and hand back to REVIEWER for FINAL_REVIEW.
+
+---
