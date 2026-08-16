@@ -417,7 +417,7 @@ represented.
 At minimum, run the modified target modules directly after each change. The final verification is:
 
 ```powershell
-python -m unittest --quiet tests.test_fast_neware tests.test_beta_bootstrap tests.test_portable_analysis_sources tests.test_portable_analysis_imports tests.test_portable_analysis_integrity tests.test_portable_analysis_mutations tests.test_portable_analysis_presentation tests.test_neware_excel_records tests.test_neware_excel_metadata tests.test_neware_excel_protocol tests.test_neware_excel_analysis
+python -m unittest --quiet tests.test_fast_neware tests.test_beta_bootstrap tests.test_neware_excel tests.test_portable_analysis
 python scripts\preflight.py --no-cache
 python scripts\preflight.py
 ```
@@ -521,18 +521,20 @@ The reviewer returned the original implementation clean and, following the user'
 whole-preflight goal, authorized three performance follow-ups without adding backend test
 skipping/caching:
 
-- **R1:** `scripts/run_backend_tests.py` now persists successful backend/frontend task durations in
+- **R1:** `scripts/run_backend_tests.py` persists successful backend/frontend task durations in
   the existing ignored `.preflight-cache.json`, queues unknown tasks first, then known tasks
   longest-first, and preserves one subprocess/private backend data root per task. Timing history
   affects ordering only; `--no-cache` still executes every task. Malformed/missing histories fail
-  closed and successful task failure attribution is unchanged.
-- **R2:** the original portable-analysis and Neware Excel test bodies remain the source of truth,
-  while disjoint `load_tests` partition modules run them in separate runner processes. The two
-  source modules are excluded from runner discovery so no zero-test support process is counted;
-  the final partition set contains all 34 portable and 67 Excel tests exactly once. Final
-  standalone partition measurements were portable sources/imports 8.32/8.06 s,
-  integrity/mutations 9.24/5.72 s, presentation 5.25 s, and Excel
-  records/metadata/protocol/analysis 6.44/3.77/7.28/3.85 s.
+  closed and successful task failure attribution is unchanged. Controlled restored-topology A/B
+  timing improved from 100.088 s with empty history to 80.767 s with populated history; the
+  bounded same-machine worker sweep selected the new default of 8 workers (4/8/12/16: 117.098 /
+  79.917 / 93.313 / 88.433 s).
+- **R2:** the initial nine-way partition preserved all 34 portable-analysis and 67 Neware Excel
+  cases exactly once, but its complete focused set regressed from the original 35.573 s checkpoint
+  to 56.149 s. A coarser four-wrapper experiment measured 43.888 s for its 101 target cases but
+  was not a complete comparable suite. Following the review fallback, the partition topology was
+  reverted: the original two source modules are again discovered and run as single processes, so
+  every assertion remains in its original process boundary and no partition support files remain.
 - **R3:** the reversible build experiment upgraded Vite 5.4.21 plus React plugin 4.3.4 to
   Vite 8.2.1/Rolldown plus React plugin 6.0.5. The clean direct build baseline was 42.79 s;
   the retained clean `npm ci` installation and direct Rolldown build were compatible, with the
@@ -541,11 +543,12 @@ skipping/caching:
   keeps the ignored assets mount available during the existing parallel backend/build wave;
   direct/package builds retain normal clean-output behavior.
 
-The same-machine worker sweep before the split passed at approximately 61/90/54/52 s for
-4/8/12/16 workers; 16 remained the fastest measured choice. Post-split validation measured
-approximately 131.90 s at 4 workers and 72.18 s at 16 workers, so the default remains 16. The
-large variation is attributable to the existing local `run.py` app process and concurrent
-verification resource contention, not a change to scientific assertions.
+The returned R1/R2 checkpoint was not accepted because its test-side measurements mixed a changed
+partition topology with resource contention. The controlled restored-topology measurements above
+separate those effects: successful timing history reduced the same 68-module runner from 100.088 s
+to 80.767 s, and 8 workers was the fastest bounded choice. The focused restored topology still
+measured 51.414 s under the current background load; the earlier 35.573 s value remains the
+original-scope checkpoint used for the reversion decision.
 
 ### Original-scope checkpoint verification
 
@@ -566,11 +569,11 @@ Those actions would violate the locked decisions and the explicit out-of-scope b
 scientific and parser correctness gates therefore remain intact; the optimized target modules
 remove only measured redundant fixture/setup work.
 
-### Final R1-R3 verification
+### Returned R1-R3 checkpoint (superseded by the controlled R1/R2 rerun)
 
-- The corrected partitioned focused command above: **PASS**, 149 tests, 56.149 s. All 34
-  portable-analysis and 67 Neware Excel cases ran exactly once; the source modules remain the
-  single test-body source of truth and their partition wrappers are the discovery entry points.
+- The partitioned focused command: **PASS**, 149 tests, 56.149 s. All 34 portable-analysis and 67
+  Neware Excel cases ran exactly once, but the aggregate regression caused the topology to be
+  reverted in the controlled follow-up.
 - `python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages, 82.07 s total. The complete
   135-task backend/frontend pool passed in 81.29 s; the frontend type check took 11.48 s and the
   Vite 8/Rolldown production bundle took 24.56 s. A prior concurrent run had one existing
@@ -588,5 +591,32 @@ remove only measured redundant fixture/setup work.
 
 The full-preflight sub-ten-second target remains unattainable without skipping/caching required
 backend/frontend verification or changing the global scheduler. R1 improves repeat ordering and
-R2 keeps long target suites independently runnable; R3 materially reduces the direct frontend
-bundle, while all scientific assertions and full verification gates remain active.
+the measured worker default without changing coverage; the R2 partition experiment was reverted
+because it regressed aggregate timing; R3 materially reduces the direct frontend bundle, while all
+scientific assertions and full verification gates remain active.
+
+### Final controlled R1-R2 verification
+
+- Restored focused command above: **PASS**, 149 tests; unittest reported 50.824 s and a
+  `Measure-Command` rerun reported 51.414 s. The runner/preflight unit tests also passed: 33 tests
+  in 3.558 s.
+- Controlled R1 A/B on the restored 68-module topology: **PASS** with empty timing history in
+  100.088 s and populated longest-first history in 80.767 s. Both runs used fresh private data
+  roots and all 68 modules passed.
+- Controlled worker sweep on that same topology: **PASS** at 4/8/12/16 workers in
+  117.098/79.917/93.313/88.433 s. The default is therefore 8 workers; explicit `--jobs` values
+  remain available.
+- `python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages, 102.09 s total with 68 backend
+  modules and 60 frontend policy files. The 8-worker test stage took 101.12 s, type check 6.54 s,
+  and Vite 8/Rolldown bundle 21.53 s.
+- `python scripts\preflight.py`: **PASS**, 4/4 stages, 80.04 s total; all 68 backend modules
+  passed in 79.19 s and unchanged frontend stages were correctly skipped.
+- The reviewer-requested partition experiment was reverted after the complete nine-way topology
+  regressed the comparable focused checkpoint (56.149 s versus 35.573 s); the original module
+  topology is the retained R2 result.
+- `python -m compileall -q backend tests scripts`: **PASS**; `git diff --check`: **PASS**; golden
+  source/manifest files: **NO CHANGES**; browser/manual UI checks: **NOT REQUIRED**.
+
+The whole preflight remains above ten seconds because the required backend and frontend stages still
+execute. Meeting that target would require backend test skipping/caching or a broader scheduler/build
+change, both outside the locked Spec 048 correctness boundary.

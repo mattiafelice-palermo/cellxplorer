@@ -26,11 +26,6 @@ from app.models import Cell, SourceFile, Test, TestFile
 from app.services import analysis_engine, cache, calc, chargeability, dcir, neware_excel, parsing, protocol, rate_capability
 
 
-def load_tests(_loader, _tests, _pattern):
-    """The concrete cases run from the coherent partition modules."""
-    return unittest.TestSuite()
-
-
 RECORD_HEADERS = [
     "DataPoint",
     "Cycle Index",

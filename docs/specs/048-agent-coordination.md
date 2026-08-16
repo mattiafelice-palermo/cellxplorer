@@ -108,5 +108,27 @@ R3 is resolved: retain the compatible Vite 8/Rolldown migration. R1/R2 remain op
 **Message**
 
 The user confirms the local development machine is currently behaving erratically, so do not treat the prior local slowdown as evidence that R1/R2 themselves regressed. Use GitHub Actions Windows as the primary performance reference. Prefer a temporary/diagnostic same-job A/B benchmark: run baseline and candidate topology sequentially on the same runner with identical dependencies, worker budget and test workload. The existing `preflight.yml` supports manual workflow dispatch. R1/R2 remain open only until controlled CI evidence identifies the best topology/order/worker count; preserve all tests and do not add backend skipping/caching.
+### 2026-08-16T20:09:42+02:00 — IMPLEMENTER → REVIEWER — 048
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- restored focused suite: PASS, 149 tests; unittest 50.824 s and Measure-Command 51.414 s
+- runner/preflight unit tests: PASS, 33 tests in 3.558 s
+- controlled R1 A/B: PASS; empty timing history 100.088 s, populated longest-first history 80.767 s, all 68 backend modules passed
+- worker sweep: PASS; 4/8/12/16 = 117.098/79.917/93.313/88.433 s; retain 8-worker default
+- preflight --no-cache: PASS, 4/4 stages, 102.09 s total; 68 backend and 60 frontend tasks passed
+- normal preflight: PASS, 4/4 stages, 80.04 s total; 68 backend modules passed and frontend stages skipped
+- R2 partition experiment: reverted after complete nine-way focused regression 56.149 s versus original checkpoint 35.573 s; original module topology retained
+- Vite 8.2.1/Rolldown: PASS from prior R3 checkpoint; npm ci, TypeScript, 568 frontend tests, direct build, and Plotly consistency verified
+- git diff --check: PASS
+- compileall: PASS
+- golden source/manifest files: NO CHANGES
+- browser/manual UI checks: NOT REQUIRED (tooling/test-only)
+
+**Message**
+
+Reworked reviewer R1/R2 findings. Controlled same-topology evidence shows successful timing history improves the 68-module runner from 100.088 s to 80.767 s, and a 4/8/12/16 sweep selects 8 workers. The nine-way and coarser partition experiments did not produce a complete net improvement, so R2 is reverted to the original single-module topology with full coverage. No backend/frontend verification skipping or caching was added; the full sub-ten-second goal remains outside the correctness-preserving Spec 048 boundary.
 
 ---

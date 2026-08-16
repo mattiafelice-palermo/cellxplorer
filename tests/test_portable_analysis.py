@@ -35,11 +35,6 @@ from app.routers.analyses import _portable_local_path
 from app.services import analysis_engine, cache, calc, parsing, portable_analysis
 
 
-def load_tests(_loader, _tests, _pattern):
-    """The concrete cases run from the coherent partition modules."""
-    return unittest.TestSuite()
-
-
 def raw_frame() -> pd.DataFrame:
     return pd.DataFrame(
         [

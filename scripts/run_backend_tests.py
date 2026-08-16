@@ -21,10 +21,6 @@ FRONTEND_POLICY_SKIP_MESSAGE = (
 )
 PREFLIGHT_CACHE_FILE = ".preflight-cache.json"
 TEST_TIMINGS_KEY = "test_timings"
-PARTITION_SUPPORT_FILES = {
-    "test_neware_excel.py",
-    "test_portable_analysis.py",
-}
 
 
 @dataclass(frozen=True)
@@ -42,11 +38,7 @@ def repo_root(start: Path | None = None) -> Path:
 
 
 def discover_test_modules(tests_dir: Path) -> list[str]:
-    return sorted(
-        f"tests.{path.stem}"
-        for path in tests_dir.glob("test_*.py")
-        if path.name not in PARTITION_SUPPORT_FILES
-    )
+    return sorted(f"tests.{path.stem}" for path in tests_dir.glob("test_*.py"))
 
 
 def discover_frontend_test_files(tests_dir: Path) -> list[Path]:
@@ -134,7 +126,7 @@ def cpu_budget() -> int:
 
 
 def default_jobs() -> int:
-    return max(1, min(16, cpu_budget()))
+    return max(1, min(8, cpu_budget()))
 
 
 def effective_test_jobs(requested: int, task_count: int) -> int:
@@ -234,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         "--jobs",
         type=int,
         default=default_jobs(),
-        help="Maximum parallel backend/frontend test tasks (default: min(16, CPU count)).",
+        help="Maximum parallel backend/frontend test tasks (default: min(8, CPU count)).",
     )
     parser.add_argument(
         "--data-root",

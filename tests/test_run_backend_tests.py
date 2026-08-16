@@ -171,24 +171,9 @@ class RunBackendTestsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "4"}, clear=False):
             self.assertEqual(runner.effective_backend_jobs(16, 20), 4)
 
-    def test_discovery_excludes_partition_source_modules(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            tests_dir = Path(temp_dir)
-            for name in (
-                "test_neware_excel.py",
-                "test_neware_excel_records.py",
-                "test_portable_analysis.py",
-                "test_portable_analysis_sources.py",
-            ):
-                (tests_dir / name).write_text("", encoding="utf-8")
-
-            self.assertEqual(
-                runner.discover_test_modules(tests_dir),
-                [
-                    "tests.test_neware_excel_records",
-                    "tests.test_portable_analysis_sources",
-                ],
-            )
+    def test_default_jobs_uses_measured_eight_worker_cap(self):
+        with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "16"}, clear=False):
+            self.assertEqual(runner.default_jobs(), 8)
 
     def test_backend_and_frontend_files_share_one_bounded_pool(self):
         with tempfile.TemporaryDirectory() as temp_dir:
