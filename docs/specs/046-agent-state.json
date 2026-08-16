@@ -2,17 +2,15 @@
   "version": 1,
   "spec": "046",
   "branch": "feature/series-appearance-manager",
-  "active_child": "046.2",
+  "active_child": "046.3",
   "children": [
     "046.1",
     "046.2",
     "046.3"
   ],
-  "turn": "REVIEWER",
-  "action": "REVIEW",
-  "findings": [
-    "R1"
-  ],
-  "resume_review": "REVIEW",
-  "updated_at": "2026-08-16T05:08:09+02:00"
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-16T05:10:46+02:00"
 }
