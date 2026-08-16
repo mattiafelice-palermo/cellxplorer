@@ -369,3 +369,18 @@ R3/R8 follow-up only: All-series Colour stays actionable when linked secondaries
 R3 and R8 are resolved on code inspection at `9c9c87ea18dae2efcc0b12050f15ec0f468057fa`; all repository-side findings are now clean. Parent 046 remains blocked only on the user's browser/manual acceptance: rerun the affected R3-R9 checks (especially palette preview, repeated Shift-click and row-body drag) and continue the remaining cumulative 33-item matrix. No implementer work is pending unless that user pass exposes another concrete defect.
 
 ---
+### 2026-08-16T11:23:00+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required after browser recheck
+
+**Findings**
+
+- R4
+- R5
+- R10
+
+**Message**
+
+The user's second browser pass disproves the code-only closure of R4 and R5: the Palettes-tab preview remains blank, and Shift+click still selects only the two endpoints instead of the contiguous range. The supplied screenshot also shows the separate detached Legend preview blank with five plotted series, recorded as R10. Fix only R4, R5 and R10 from the canonical Parent 046 review. Preserve the current user-directed `25ccd1ff...` mixed-switch/Open UI changes and all previously resolved behavior. Verify focused paths plus canonical preflight, hand back to REVIEWER for the same FINAL_REVIEW, and do not claim the remaining manual/browser matrix complete.
+
+---
