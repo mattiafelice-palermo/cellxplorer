@@ -221,3 +221,16 @@ Resolved final R1 by fully removing the CI-rejected timing-history scheduler, ti
 Child 048 is review-clean. Begin `048.1-release-ci-runtime-optimization.md` now. Preserve every release verification/signing/publication guarantee while reducing wall time through exact-SHA preflight reuse, effective Rust cache reuse, removal of duplicate frontend work, and safe GitHub Actions parallelism. Measure the resulting workflow on GitHub Actions and hand it back for independent review before any merge decision.
 
 ---
+### 2026-08-16T23:23:14+02:00 — IMPLEMENTER → REVIEWER — 048.1
+
+**Result:** Implementation ready
+
+**Verification**
+
+- 84 focused tests; PyYAML workflow parse; compileall; git diff --check; preflight --no-cache PASS 115.25s (4/4, 128 modules); normal preflight PASS 105.20s (4/4, 68 backend modules); hosted rehearsal unavailable (gh absent and no dispatch connector)
+
+**Message**
+
+Child 048.1 implementation is pushed at 3a9eb01. Exact-SHA canonical Windows preflight reuse is fail-closed; missing/skipped/cancelled results use the complete release-local no-cache fallback; failed canonical jobs block release. Main preflight remains unsuppressed, shared main-owned Rust cache is restore-only in release, native parallel groups cover independent installs and exact-reuse frontend/sidecar builds, and fallback stamps the preflight-built channel without a second Vite build. All publication, signing, updater, smoke, draft, and channel-pointer barriers remain ordered. The whole preflight remains above 10 seconds because required backend/scientific verification dominates; no coverage was skipped. GitHub cold/warm rehearsal could not be dispatched from this environment.
+
+---
