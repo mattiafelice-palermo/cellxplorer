@@ -1,102 +1,66 @@
 # Spec 048 implementation review — Test fixture runtime optimization
 
-Status: **Changes requested — R1 open; R2/R3 resolved**  
+Status: **Review clean — child 048 complete**  
 Branch: `feature/test-fixture-runtime-optimization`  
 Merge base: `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6`  
-Reviewed implementation: `dad22243446e4f6c171cda05d0025b9243bd0c88`
+Reviewed implementation: `2f6c8b8a45ded698234c1cc5ad6f00cafb403805`
 
 ## Review scope and result
 
-The original Spec 048 fixture/setup implementation remains review-clean. R2 remains resolved by
-reverting the unsuccessful test partition experiment, and R3 remains resolved by the compatible
-Vite 8/Rolldown migration.
+Child 048 is review-clean.
 
-This round reviews the final R1 evidence requested after the user identified the local workstation as
-an unreliable timing reference.
+The original fixture/setup optimizations remain accepted: Fast Neware replaces the repeated long optional-file matrix with compact exact-parity coverage plus a committed real-source smoke; Beta bootstrap reuses an immutable migrated database template while preserving per-test writable isolation; portable-analysis removes repeated valid-export setup without weakening import/inspection failure assertions; Neware Excel remains unchanged because profiling did not justify a shortcut.
 
-The implementer supplied a clean Windows GitHub Actions benchmark in run `31964460774`. The
-benchmark used the restored 68-module topology, a warm-up, and counterbalanced
-ordered/unordered/unordered/ordered passes on the same hosted runner. The runner exposed four logical
-CPUs, so requested 16 workers resolved to four in every pass. All 68 modules passed every measured
-run.
+The reviewer-authorized performance experiments were also resolved conservatively:
 
-Measured wall times were:
+- **R1 resolved:** the timing-history/longest-first scheduler was rejected by clean Windows CI and has now been fully removed. In run `31964460774`, ordered passes measured **61.808 s / 55.815 s**, while ordinary unordered discovery measured **51.013 s / 49.882 s** on the same four-CPU hosted runner. The runner again uses deterministic discovery order, retains one subprocess/private data root per backend module, keeps slow-task reporting and bounded parallelism, and restores the prior `min(16, CPU budget)` default with explicit job overrides.
+- **R2 resolved:** the Neware Excel and portable-analysis partition experiment was reverted because it did not improve aggregate wall time. The original single-module topology is retained, so all original test cases remain in their original process ownership.
+- **R3 resolved:** the Vite 8.2.1 / Rolldown migration remains accepted. The prior verification showed successful install, TypeScript, frontend policy tests, Plotly consistency and production build, with a material direct-build reduction.
 
-- timing-history longest-first: **61.808 s**, **55.815 s**;
-- no timing history / ordinary discovery order: **51.013 s**, **49.882 s**.
+No scientific calculation, parser semantics, migration, golden corpus expectation, tolerance or application behavior was weakened to obtain these gains.
 
-The clean reference therefore shows a repeatable **regression** from longest-first scheduling. The
-implementer correctly restored the previous `min(16, CPU budget)` worker default because the hosted
-runner could not distinguish 8 from 16 workers. However, `scripts/run_backend_tests.py` still reads,
-persists, and applies timing history, so the measured slower scheduling behavior is still active.
+## Verification record
 
-Reviewer independently inspected the benchmark workflow/run metadata, current runner code, restored
-worker default, and removal of the temporary benchmark workflow.
+### Implementer-reported final checkpoint
 
-## R1 — High — OPEN: remove the timing-history scheduler that clean CI showed is slower
+- focused Spec 048 suite: **PASS**, 149 tests, 38.454 s;
+- runner/preflight unit tests: **PASS**, 30 tests, 2.539 s;
+- `python scripts\\preflight.py --no-cache`: **PASS**, 4/4 stages, 79.73 s; all 128 backend/frontend tasks executed;
+- `python scripts\\preflight.py`: **PASS**, 4/4 stages, 71.21 s; all 68 backend modules executed and unchanged frontend stages were skipped by the existing conservative cache;
+- `compileall`, `check_versions`, `git diff --check`: **PASS**;
+- golden source/manifest files: **NO CHANGES**;
+- browser/manual UI checks: **NOT REQUIRED** for this tooling/test-only child.
 
-Affected files:
+### Reviewer-independent
 
-- `scripts/run_backend_tests.py`
-- `scripts/preflight.py` only for stale timing-history/cache coupling if applicable
-- `tests/test_run_backend_tests.py`
-- `tests/test_preflight_script.py`
-- `docs/specs/048-test-fixture-runtime-optimization.md`
+I independently inspected through the GitHub connector:
 
-### Current
+- the final R1 revert commit `2f6c8b8a45ded698234c1cc5ad6f00cafb403805`;
+- current `scripts/run_backend_tests.py` and confirmed timing-history read/order/persistence logic is gone;
+- current `scripts/preflight.py` and confirmed `.preflight-cache.json` is again only the established frontend build/policy cache rather than a test-ordering input;
+- the hosted benchmark metadata and counterbalanced timing result used to reject longest-first scheduling;
+- removal of the temporary benchmark workflow and the unsuccessful partition wrappers.
 
-`run_backend_tests.py` still contains `TEST_TIMINGS_KEY`, `read_timing_history()`,
-`task_order_key()`, `order_task_names()`, `persist_timing_history()`, reads the history before task
-submission, sorts tasks by it, and writes successful durations back to `.preflight-cache.json`.
+I did **not** independently execute local commands in this Chat + GitHub-only reviewer session.
 
-That behavior is now contradicted by the clean CI result: both ordered passes were slower than both
-unordered passes on the same runner. The local result that previously favored longest-first is not
-authoritative because the user confirmed substantial workstation variability.
+## Findings
 
-### Target
+No open findings.
 
-Revert the R1 timing-history scheduling experiment completely:
+### R1 — RESOLVED: timing-history scheduler reverted
 
-1. Restore ordinary deterministic discovery/submission ordering for backend modules and frontend
-   policy files.
-2. Remove timing-history reads, task-ordering logic, and timing-history persistence from the runner.
-3. Remove tests that exist only to prove the now-rejected timing-history feature; preserve all
-   existing isolation, failure attribution, bounded parallelism, slow-task reporting, frontend cache
-   behavior, and `--jobs`/`CELLXPLORER_PREFLIGHT_JOBS` overrides.
-4. Keep the restored worker default `min(16, CPU budget)`; the clean four-CPU runner could not support
-   a valid 8-vs-16 default decision.
-5. Update the implementation record so it states clearly that the CI experiment **rejected**
-   longest-first scheduling and the feature was reverted. Retain the CI run ID and measured values as
-   evidence.
-6. The ignored `.preflight-cache.json` may tolerate an old unused `test_timings` field; no migration
-   of developer-local cache files is required. New code must simply stop consuming/writing it.
+Clean hosted evidence showed the scheduler was slower. The implementation now removes its timing-history reads, ordering, persistence, cache coupling and dedicated tests, while retaining deterministic task discovery and all verification coverage.
 
-### Acceptance criteria
+### R2 — RESOLVED: partition experiment reverted
 
-- No timing-history value can affect task order or whether a test executes.
-- Runner task order is deterministic without `.preflight-cache.json` timing data.
-- The prior one-subprocess/private-data-root-per-backend-module contract remains unchanged.
-- Worker default is again `min(16, CPU budget)` and explicit overrides remain supported.
-- Focused runner/preflight tests pass.
-- Canonical `python scripts\\preflight.py --no-cache` and normal `python scripts\\preflight.py` pass.
-- Golden source/manifest files remain unchanged.
-- The implementation record documents the clean CI rejection: ordered 61.808/55.815 s versus
-  unordered 51.013/49.882 s in run 31964460774.
+The original Neware Excel and portable-analysis module topology is restored. No partition support files or discovery exclusions remain.
 
-## R2 — High — RESOLVED: partition experiment reverted
+### R3 — RESOLVED: Rolldown-powered Vite migration
 
-The Neware Excel and portable-analysis partition wrappers/discovery exclusions are removed. The
-original modules again own and run their complete suites directly. No partition-related change
-remains to review.
+The compatible Vite 8 / Rolldown migration remains retained based on the prior successful verification and direct-build speedup.
 
-## R3 — Medium — RESOLVED: Rolldown-powered Vite migration
+## Decision
 
-The retained Vite 8.2.1 / `@vitejs/plugin-react` 6.0.5 migration remains accepted based on the prior
-successful dependency installation, TypeScript, frontend policy, Plotly consistency and production
-build verification, with a material direct-build reduction.
+**REVIEW CLEAN — child 048 is complete.**
 
-## Merge readiness
-
-**Not ready to merge.** The only remaining change is to revert the R1 timing-history scheduling
-experiment that the clean CI benchmark disproved. Once that is removed and canonical verification is
-green, child 048 can advance to queued child 048.1.
+The queued child `048.1-release-ci-runtime-optimization.md` may begin on the same branch. The branch is **not yet ready to merge** because child 048.1 still requires implementation and independent review.
