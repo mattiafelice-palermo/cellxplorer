@@ -47,3 +47,22 @@ Unified backend/frontend test pool, per-task and stage timing, slowest-task repo
 Implementation logic is review-clean so far; R1 is the missing Spec 045 before/after timing matrix required for acceptance.
 
 ---
+### 2026-08-16T02:37:16+02:00 — IMPLEMENTER → REVIEWER — 045
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 fixed: separate merge-base/current timing matrix for full --no-cache, immediate unchanged normal, and backend-only normal repeat
+- merge base 218146446b738bc6359a35cbf344a4e362617f35: 70.39 s / 74.62 s / 71.86 s; all passed
+- Spec 045 checkout: 84.24 s / 71.37 s / 85.72 s; all passed
+- frontend cache evidence: no-cache policy/type/Vite RUN; normal and backend-only policy/type/Vite SKIP; backend modules RUN
+- focused tooling tests: PASS (27 tests)
+- py_compile and git diff --check: PASS
+- browser checks: NOT RUN (tooling-only change)
+
+**Message**
+
+R1 resolved with comparable before/after evidence on the same Windows machine. The backend-only rows used only a temporary comment in tests/test_preflight_script.py after each seeded successful run; no frontend input changed, and generated artifacts were restored. No implementation logic changed.
+
+---

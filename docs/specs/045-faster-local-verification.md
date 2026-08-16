@@ -230,11 +230,34 @@ Branch: `feature/faster-local-verification`.
 ## Verification record
 
 ```text
-Pre-implementation: python scripts\preflight.py --no-cache  ~84.6 s, passed
-Final:             python scripts\preflight.py --no-cache  69.75 s, 4/4 stages, passed
-Immediate normal/backend-only repeat: python scripts\preflight.py  70.80 s, passed
 Focused tooling tests: python -m unittest tests.test_run_backend_tests tests.test_preflight_script -v  27 passed
 ```
 
-The final no-cache run executed all 68 backend modules and 58 frontend policy files. The normal
-repeat explicitly skipped unchanged frontend policy tests and the TypeScript/Vite stages.
+The required before/after matrix below was measured on the same Windows machine and Python/Node
+environment on 2026-08-16. The baseline was the clean merge-base worktree at
+`218146446b738bc6359a35cbf344a4e362617f35` (`main`); the implementation checkout was
+`458c91e` (the review checkpoint immediately before this documentation-only R1 fix). Timings are
+external wall-clock seconds for the complete `preflight.py` command. Each successful no-cache run
+seeded the normal-run cache before its two repeats.
+
+| Scenario | Merge-base | Spec 045 | Frontend policy tests (baseline / Spec 045) | TypeScript / Vite (baseline / Spec 045) | Delta (Spec 045 - baseline) |
+| --- | ---: | ---: | --- | --- | ---: |
+| Full `--no-cache` preflight | 70.39 s | 84.24 s | RUN / RUN | RUN / RUN | +13.85 s |
+| Immediate unchanged normal repeat | 74.62 s | 71.37 s | RUN / SKIP | SKIP / SKIP | -3.25 s |
+| Normal repeat after backend-only input change | 71.86 s | 85.72 s | RUN / SKIP | SKIP / SKIP | +13.86 s |
+
+For the backend-only rows, after the successful seed and immediate unchanged repeat, the only
+input change in each checkout was a temporary comment in `tests/test_preflight_script.py`; no
+frontend input changed. The comment and all test-generated icon artifacts were restored after the
+measurements. On the merge base, the normal runs therefore still ran all backend and frontend
+policy tests while skipping only the frontend build stages. On Spec 045, backend modules always
+ran, while the unchanged frontend policy tests and the TypeScript/Vite stages were explicitly
+skipped. The no-cache rows ran every stage. The no-cache current run executed all 68 backend
+modules and 58 frontend policy files.
+
+The four measured slowest backend modules (`tests.test_portable_analysis`,
+`tests.test_beta_bootstrap`, `tests.test_fast_neware`, and `tests.test_neware_excel`) were
+investigated. No behavior-preserving setup sharing or other safe optimization was identified:
+they use isolated portable-report, database, binary-parity, and workbook fixtures, and their full
+assertion coverage is intentionally retained. No individual hotspot was changed, so there is no
+per-hotspot after-duration to report.
