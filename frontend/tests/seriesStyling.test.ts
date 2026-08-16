@@ -26,6 +26,8 @@ import {
   seriesRuleError,
   seriesLegendRanks,
   seriesQuantityGroupKey,
+  seriesSelectionRange,
+  sharedValue,
   shortSourceName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
@@ -234,6 +236,34 @@ test("bulk override null patches preserve unrelated fields and prune fall-throug
     c2: { marker_symbol: "square", color: null, line_width: null },
   });
   assert.equal("c1" in next, false);
+});
+
+test("shared values report mixed effective fields instead of a base default", () => {
+  assert.deepEqual(sharedValue(["circle", "circle"]), { value: "circle", mixed: false });
+  assert.deepEqual(sharedValue(["circle", "square"]), { value: undefined, mixed: true });
+});
+
+test("all-series homogenization applies the chosen old default in one explicit patch", () => {
+  const descriptors = [cell({ key: "c1" }), cell({ key: "c2", label: "Cell 2" })];
+  const mixedOverrides = { c2: { marker_symbol: "square" as const } };
+  const before = resolveAllSeriesStyles({ descriptors, baseFor, overrides: mixedOverrides });
+  assert.equal(sharedValue(descriptors.map((descriptor) => before.get(descriptor.key)!.markerSymbol)).mixed, true);
+
+  const nextOverrides = applySeriesOverridePatch(mixedOverrides, ["c1", "c2"], {
+    marker_symbol: "circle",
+  });
+  const after = resolveAllSeriesStyles({ descriptors, baseFor, overrides: nextOverrides });
+  assert.equal(after.get("c1")!.markerSymbol, "circle");
+  assert.equal(after.get("c2")!.markerSymbol, "circle");
+  assert.equal(nextOverrides.c1.marker_symbol, "circle");
+  assert.equal(nextOverrides.c2.marker_symbol, "circle");
+});
+
+test("series selection ranges stay anchored and bounded to one ordered group", () => {
+  const items = [{ key: "c1" }, { key: "c2" }, { key: "c3" }, { key: "c4" }];
+  assert.deepEqual(seriesSelectionRange(items, "c1", "c3"), ["c1", "c2", "c3"]);
+  assert.deepEqual(seriesSelectionRange(items, "c3", "c2"), ["c2", "c3"]);
+  assert.equal(seriesSelectionRange(items, "missing", "c2"), null);
 });
 
 // The editor shipped once listing zero series because the panel discarded the

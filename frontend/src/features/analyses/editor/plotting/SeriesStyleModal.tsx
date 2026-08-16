@@ -94,7 +94,9 @@ import {
   orderedSeriesDescriptors,
   pruneOverrides,
   resolveAllSeriesStyles,
+  seriesSelectionRange,
   seriesRuleError,
+  sharedValue,
   type BaseSeriesStyle,
   type ResolvedSeriesStyle,
   type SeriesDescriptor,
@@ -192,20 +194,6 @@ const NEW_PALETTE_COLOR = "#868e96";
 
 /** Maximum number of colours a palette can hold. */
 export const MAX_PALETTE_COLOURS = 20;
-
-type SharedValue<T> = {
-  value: T | undefined;
-  mixed: boolean;
-};
-
-function sharedValue<T>(values: T[]): SharedValue<T> {
-  if (values.length === 0) return { value: undefined, mixed: false };
-  const first = values[0];
-  return {
-    value: values.every((value) => Object.is(value, first)) ? first : undefined,
-    mixed: values.some((value) => !Object.is(value, first)),
-  };
-}
 
 /**
  * Which preset the plot's current palette corresponds to, for seeding the
@@ -741,16 +729,16 @@ export function SeriesStyleModal({
       ? seriesGroups.find((candidate) => candidate.items.some((item) => item.key === selectionAnchor))
       : undefined;
 
-    if (event.shiftKey && group && anchorGroup?.key === group.key) {
-      const anchorIndex = group.items.findIndex((item) => item.key === selectionAnchor);
-      const clickedIndex = group.items.findIndex((item) => item.key === key);
-      const start = Math.min(anchorIndex, clickedIndex);
-      const end = Math.max(anchorIndex, clickedIndex);
-      selectConcreteKeys(
-        group.items.slice(start, end + 1).map((item) => item.key),
-        selectionAnchor,
-      );
-      return;
+    if (event.shiftKey) {
+      event.preventDefault();
+      const range =
+        group && anchorGroup?.key === group.key
+          ? seriesSelectionRange(group.items, selectionAnchor, key)
+          : null;
+      if (range) {
+        selectConcreteKeys(range, selectionAnchor);
+        return;
+      }
     }
 
     if (event.ctrlKey || event.metaKey) {
@@ -787,41 +775,46 @@ export function SeriesStyleModal({
     setTab("series");
   };
 
-  const selectedResolvedStyles = useMemo(
+  const bulkTargetKeys = useMemo(
+    () => (isAllSeries ? descriptors.map((descriptor) => descriptor.key) : Array.from(selectedKeys)),
+    [descriptors, isAllSeries, selectedKeys],
+  );
+
+  const bulkResolvedStyles = useMemo(
     () =>
-      Array.from(selectedKeys)
+      bulkTargetKeys
         .map((key) => resolvedByKey.get(key))
         .filter((style): style is ResolvedSeriesStyle => Boolean(style)),
-    [selectedKeys, resolvedByKey],
+    [bulkTargetKeys, resolvedByKey],
   );
 
   const bulkResolved = useMemo(
     () => ({
-      color: sharedValue(selectedResolvedStyles.map((style) => style.color)),
-      opacity: sharedValue(selectedResolvedStyles.map((style) => style.opacity)),
-      markerMode: sharedValue(selectedResolvedStyles.map((style) => style.markerMode)),
-      lineDash: sharedValue(selectedResolvedStyles.map((style) => style.lineDash)),
-      lineWidth: sharedValue(selectedResolvedStyles.map((style) => style.lineWidth)),
-      lineShape: sharedValue(selectedResolvedStyles.map((style) => style.lineShape)),
-      markerSymbol: sharedValue(selectedResolvedStyles.map((style) => style.markerSymbol)),
-      markerSize: sharedValue(selectedResolvedStyles.map((style) => style.markerSize)),
-      markerOpen: sharedValue(selectedResolvedStyles.map((style) => style.markerOpen)),
-      showInLegend: sharedValue(selectedResolvedStyles.map((style) => style.showInLegend)),
+      color: sharedValue(bulkResolvedStyles.map((style) => style.color)),
+      opacity: sharedValue(bulkResolvedStyles.map((style) => style.opacity)),
+      markerMode: sharedValue(bulkResolvedStyles.map((style) => style.markerMode)),
+      lineDash: sharedValue(bulkResolvedStyles.map((style) => style.lineDash)),
+      lineWidth: sharedValue(bulkResolvedStyles.map((style) => style.lineWidth)),
+      lineShape: sharedValue(bulkResolvedStyles.map((style) => style.lineShape)),
+      markerSymbol: sharedValue(bulkResolvedStyles.map((style) => style.markerSymbol)),
+      markerSize: sharedValue(bulkResolvedStyles.map((style) => style.markerSize)),
+      markerOpen: sharedValue(bulkResolvedStyles.map((style) => style.markerOpen)),
+      showInLegend: sharedValue(bulkResolvedStyles.map((style) => style.showInLegend)),
     }),
-    [selectedResolvedStyles],
+    [bulkResolvedStyles],
   );
 
   const linkedBulkColourKeys = useMemo(
     () =>
       linkedSecondarySeriesKeys(
         descriptors,
-        selectedKeys,
+        bulkTargetKeys,
         draftOverrides,
         draftBaseStyle.link_secondary_colors ?? false,
       ),
     [
       descriptors,
-      selectedKeys,
+      bulkTargetKeys,
       draftOverrides,
       draftBaseStyle.link_secondary_colors,
     ],
@@ -834,9 +827,9 @@ export function SeriesStyleModal({
       draftRules,
     );
 
-  const applySelectedPatch = (patch: SeriesStyleOverride) => {
-    if (selectedKeys.size === 0) return;
-    commit(applySeriesOverridePatch(draftOverrides, selectedKeys, patch), draftRules);
+  const applyBulkPatch = (patch: SeriesStyleOverride) => {
+    if (bulkTargetKeys.length === 0) return;
+    commit(applySeriesOverridePatch(draftOverrides, bulkTargetKeys, patch), draftRules);
   };
 
   // The legend input is memoized so background/query-driven parent renders do
@@ -859,10 +852,10 @@ export function SeriesStyleModal({
     commit(next, draftRules);
   };
 
-  const clearSelectedOverrides = () => {
-    if (selectedKeys.size === 0) return;
+  const clearBulkOverrides = () => {
+    if (bulkTargetKeys.length === 0) return;
     const next = { ...draftOverrides };
-    for (const key of selectedKeys) delete next[key];
+    for (const key of bulkTargetKeys) delete next[key];
     commit(next, draftRules);
   };
 
@@ -1144,8 +1137,6 @@ export function SeriesStyleModal({
   const markerMode = activeResolved?.markerMode ?? "none";
   const lineEnabled = markerMode !== "points";
   const markersEnabled = markerMode !== "none";
-  const baseLineEnabled = draftBaseStyle.marker_mode !== "points";
-  const baseMarkersEnabled = draftBaseStyle.marker_mode !== "none";
   const activeIsSecondary = active ? isSecondarySeries(active) : false;
   const activeLinkColor = active
     ? draftOverrides[active.key]?.link_color ?? draftBaseStyle.link_secondary_colors ?? false
@@ -1325,14 +1316,26 @@ export function SeriesStyleModal({
                   Rules{draftRules.length ? ` (${draftRules.length})` : ""}
                 </Tabs.Tab>
                 {onApplyPalette && (
-                  <Tabs.Tab value="palettes" title="Palettes apply globally to all series">
-                    <Group gap={4} wrap="nowrap">
-                      <span>Palettes</span>
-                      <Badge size="xs" variant="light" color="gray">
-                        Global
-                      </Badge>
-                    </Group>
-                  </Tabs.Tab>
+                  <>
+                    <Box
+                      component="span"
+                      aria-hidden="true"
+                      style={{
+                        alignSelf: "stretch",
+                        width: 1,
+                        marginInline: 4,
+                        background: "var(--mantine-color-default-border)",
+                      }}
+                    />
+                    <Tabs.Tab value="palettes" title="Palettes apply globally to all series">
+                      <Group gap={4} wrap="nowrap">
+                        <span>Palettes</span>
+                        <Badge size="xs" variant="light" color="gray">
+                          Global
+                        </Badge>
+                      </Group>
+                    </Tabs.Tab>
+                  </>
                 )}
               </Tabs.List>
             </Tabs>
@@ -1787,98 +1790,270 @@ export function SeriesStyleModal({
                 </Button>
               </Group>
             </Box>
-          ) : isAllSeries ? (
+          ) : isAllSeries || selectedKeys.size > 1 ? (
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="sm" p="xs">
-                <Text size="sm" fw={700}>
-                  All series
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Applies to every series that has not been given its own setting.
-                </Text>
+                <Group justify="space-between" wrap="nowrap" align="start">
+                  <div>
+                    <Text size="sm" fw={700}>
+                      {isAllSeries ? "All series" : `${selectedKeys.size} series selected`}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {isAllSeries
+                        ? "Shows the effective values across every current series. Choosing a value applies it to all of them."
+                        : "Changes apply to all selected series."}
+                    </Text>
+                  </div>
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    leftSection={<IconRotate size={13} />}
+                    onClick={clearBulkOverrides}
+                  >
+                    {isAllSeries ? "Reset all series" : "Reset selected"}
+                  </Button>
+                </Group>
 
-                {/* Chosen before the line and marker groups because it decides
-                    which of them apply. */}
+                <Group grow align="start">
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Colour
+                      </Text>
+                      {bulkResolved.color.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <ColorInput
+                      size="xs"
+                      format="hex"
+                      aria-label="Bulk colour"
+                      disabled={!bulkColourEnabled}
+                      placeholder={bulkResolved.color.mixed ? "Mixed" : "Colour"}
+                      value={bulkResolved.color.mixed ? "" : bulkResolved.color.value ?? ""}
+                      onChange={(value) => applyBulkPatch({ color: value || null })}
+                    />
+                    {!bulkColourEnabled && (
+                      <Text size="9px" c="dimmed" mt={2}>
+                        Bulk colour editing is disabled because colour is linked from the primary
+                        series for {linkedBulkColourKeys.length === 1 ? "one" : linkedBulkColourKeys.length} selected secondary series.
+                      </Text>
+                    )}
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Opacity
+                      </Text>
+                      {bulkResolved.opacity.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      decimalScale={2}
+                      aria-label="Bulk opacity"
+                      placeholder={bulkResolved.opacity.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.opacity.mixed ? "" : bulkResolved.opacity.value ?? ""}
+                      onChange={(value) =>
+                        applyBulkPatch({ opacity: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                </Group>
+
                 <div>
-                  <Text size="xs" fw={500} mb={4}>
-                    Line style
-                  </Text>
+                  <Group gap={4} mb={4}>
+                    <Text size="xs" fw={500}>
+                      Line style
+                    </Text>
+                    {bulkResolved.markerMode.mixed && (
+                      <Badge size="xs" variant="light" color="gray">
+                        Mixed
+                      </Badge>
+                    )}
+                  </Group>
                   <SegmentedControl
                     size="xs"
                     fullWidth
                     data={MARKER_MODE_OPTIONS}
-                    value={draftBaseStyle.marker_mode}
-                    onChange={(value) => patchBaseStyle({ marker_mode: value as PlotMarkerMode })}
+                    value={bulkResolved.markerMode.mixed ? "" : bulkResolved.markerMode.value ?? ""}
+                    onChange={(value) => applyBulkPatch({ marker_mode: value as PlotMarkerMode })}
                   />
                 </div>
 
                 <Divider label="Line" labelPosition="left" />
                 <Group grow align="start">
-                  <Select
-                    size="xs"
-                    label="Dash"
-                    data={DASH_OPTIONS}
-                    allowDeselect={false}
-                    disabled={!baseLineEnabled}
-                    value={draftBaseStyle.line_dash}
-                    onChange={(value) => value && patchBaseStyle({ line_dash: value as PlotLineDash })}
-                  />
-                  <NumberInput
-                    size="xs"
-                    label="Width"
-                    min={0.5}
-                    max={12}
-                    step={0.5}
-                    decimalScale={1}
-                    disabled={!baseLineEnabled}
-                    value={draftBaseStyle.line_width}
-                    onChange={(value) => {
-                      if (value === "") return;
-                      patchBaseStyle({ line_width: Number(value) });
-                    }}
-                  />
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Dash
+                      </Text>
+                      {bulkResolved.lineDash.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={DASH_OPTIONS}
+                      allowDeselect={false}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineDash.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineDash.mixed ? null : bulkResolved.lineDash.value ?? null}
+                      onChange={(value) => value && applyBulkPatch({ line_dash: value as PlotLineDash })}
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Width
+                      </Text>
+                      {bulkResolved.lineWidth.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={0.5}
+                      max={12}
+                      step={0.5}
+                      decimalScale={1}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineWidth.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineWidth.mixed ? "" : bulkResolved.lineWidth.value ?? ""}
+                      onChange={(value) =>
+                        applyBulkPatch({ line_width: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Shape
+                      </Text>
+                      {bulkResolved.lineShape.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={[
+                        { value: "linear", label: "Straight" },
+                        { value: "spline", label: "Smoothed" },
+                        { value: "hv", label: "Stepped" },
+                      ]}
+                      allowDeselect={false}
+                      disabled={!bulkLineEnabled}
+                      placeholder={bulkResolved.lineShape.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.lineShape.mixed ? null : bulkResolved.lineShape.value ?? null}
+                      onChange={(value) =>
+                        value && applyBulkPatch({ line_shape: value as "linear" | "spline" | "hv" })
+                      }
+                    />
+                  </div>
                 </Group>
 
                 <Divider label="Markers" labelPosition="left" />
                 <Group grow align="start">
-                  <Select
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Symbol
+                      </Text>
+                      {bulkResolved.markerSymbol.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Select
+                      size="xs"
+                      data={SYMBOL_OPTIONS}
+                      allowDeselect={false}
+                      disabled={!bulkMarkersEnabled}
+                      placeholder={bulkResolved.markerSymbol.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.markerSymbol.mixed ? null : bulkResolved.markerSymbol.value ?? null}
+                      onChange={(value) =>
+                        value && applyBulkPatch({ marker_symbol: value as PlotMarkerSymbol })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Size
+                      </Text>
+                      {bulkResolved.markerSize.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <NumberInput
+                      size="xs"
+                      min={1}
+                      max={30}
+                      disabled={!bulkMarkersEnabled}
+                      placeholder={bulkResolved.markerSize.mixed ? "Mixed" : undefined}
+                      value={bulkResolved.markerSize.mixed ? "" : bulkResolved.markerSize.value ?? ""}
+                      onChange={(value) =>
+                        applyBulkPatch({ marker_size: value === "" ? null : Number(value) })
+                      }
+                    />
+                  </div>
+                  <Checkbox
                     size="xs"
-                    label="Symbol"
-                    data={SYMBOL_OPTIONS}
-                    allowDeselect={false}
-                    disabled={!baseMarkersEnabled}
-                    value={draftBaseStyle.marker_symbol}
-                    onChange={(value) =>
-                      value && patchBaseStyle({ marker_symbol: value as PlotMarkerSymbol })
-                    }
-                  />
-                  <NumberInput
-                    size="xs"
-                    label="Size"
-                    min={1}
-                    max={30}
-                    disabled={!baseMarkersEnabled}
-                    value={draftBaseStyle.marker_size}
-                    onChange={(value) => {
-                      if (value === "") return;
-                      patchBaseStyle({ marker_size: Number(value) });
-                    }}
-                  />
-                  <Switch
-                    size="xs"
-                    mt={22}
                     label="Open"
-                    disabled={!baseMarkersEnabled}
-                    checked={draftBaseStyle.marker_open}
+                    disabled={!bulkMarkersEnabled}
+                    indeterminate={bulkResolved.markerOpen.mixed}
+                    checked={bulkResolved.markerOpen.value ?? false}
                     onChange={(event) =>
-                      patchBaseStyle({ marker_open: event.currentTarget.checked })
+                      applyBulkPatch({ marker_open: event.currentTarget.checked })
                     }
                   />
                 </Group>
 
-                {descriptors.some((d) => isSecondarySeries(d)) && (
+                <Divider label="Legend" labelPosition="left" />
+                <Group gap="xs" wrap="wrap">
+                  <Checkbox
+                    size="xs"
+                    label="Show in legend"
+                    indeterminate={bulkResolved.showInLegend.mixed}
+                    checked={
+                      bulkResolved.showInLegend.mixed
+                        ? false
+                        : bulkResolved.showInLegend.value ?? true
+                    }
+                    onChange={(event) =>
+                      applyBulkPatch({
+                        show_in_legend: bulkResolved.showInLegend.mixed
+                          ? true
+                          : event.currentTarget.checked,
+                      })
+                    }
+                  />
+                </Group>
+
+                <Text size="xs" c="dimmed">
+                  Legend name is available when exactly one series is selected.
+                </Text>
+
+                {isAllSeries && descriptors.some((d) => isSecondarySeries(d)) && (
                   <>
-                    <Divider label="Secondary axis" labelPosition="left" />
+                    <Divider label="Global secondary-axis defaults" labelPosition="left" />
                     <Switch
                       size="xs"
                       label="Link colours to the primary series"
@@ -1916,279 +2091,6 @@ export function SeriesStyleModal({
                     />
                   </>
                 )}
-              </Stack>
-            </ScrollArea>
-          ) : selectedKeys.size > 1 ? (
-            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
-              <Stack gap="sm" p="xs">
-                <Group justify="space-between" wrap="nowrap" align="start">
-                  <div>
-                    <Text size="sm" fw={700}>
-                      {selectedKeys.size} series selected
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      Changes apply to all selected series.
-                    </Text>
-                  </div>
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    leftSection={<IconRotate size={13} />}
-                    onClick={clearSelectedOverrides}
-                  >
-                    Reset selected
-                  </Button>
-                </Group>
-
-                <Group grow align="start">
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Colour
-                      </Text>
-                      {bulkResolved.color.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <ColorInput
-                      size="xs"
-                      format="hex"
-                      aria-label="Bulk colour"
-                      disabled={!bulkColourEnabled}
-                      placeholder={bulkResolved.color.mixed ? "Mixed" : "Colour"}
-                      value={bulkResolved.color.mixed ? "" : bulkResolved.color.value ?? ""}
-                      onChange={(value) => applySelectedPatch({ color: value || null })}
-                    />
-                    {!bulkColourEnabled && (
-                      <Text size="9px" c="dimmed" mt={2}>
-                        Bulk colour editing is disabled because colour is linked from the primary
-                        series for {linkedBulkColourKeys.length === 1 ? "one" : linkedBulkColourKeys.length} selected secondary series.
-                      </Text>
-                    )}
-                  </div>
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Opacity
-                      </Text>
-                      {bulkResolved.opacity.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <NumberInput
-                      size="xs"
-                      min={0.05}
-                      max={1}
-                      step={0.05}
-                      decimalScale={2}
-                      aria-label="Bulk opacity"
-                      placeholder={bulkResolved.opacity.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.opacity.mixed ? "" : bulkResolved.opacity.value ?? ""}
-                      onChange={(value) =>
-                        applySelectedPatch({ opacity: value === "" ? null : Number(value) })
-                      }
-                    />
-                  </div>
-                </Group>
-
-                <div>
-                  <Group gap={4} mb={4}>
-                    <Text size="xs" fw={500}>
-                      Line style
-                    </Text>
-                    {bulkResolved.markerMode.mixed && (
-                      <Badge size="xs" variant="light" color="gray">
-                        Mixed
-                      </Badge>
-                    )}
-                  </Group>
-                  <SegmentedControl
-                    size="xs"
-                    fullWidth
-                    data={MARKER_MODE_OPTIONS}
-                    value={bulkResolved.markerMode.mixed ? "" : bulkResolved.markerMode.value ?? ""}
-                    onChange={(value) => applySelectedPatch({ marker_mode: value as PlotMarkerMode })}
-                  />
-                </div>
-
-                <Divider label="Line" labelPosition="left" />
-                <Group grow align="start">
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Dash
-                      </Text>
-                      {bulkResolved.lineDash.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <Select
-                      size="xs"
-                      data={DASH_OPTIONS}
-                      allowDeselect={false}
-                      disabled={!bulkLineEnabled}
-                      placeholder={bulkResolved.lineDash.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.lineDash.mixed ? null : bulkResolved.lineDash.value ?? null}
-                      onChange={(value) => value && applySelectedPatch({ line_dash: value as PlotLineDash })}
-                    />
-                  </div>
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Width
-                      </Text>
-                      {bulkResolved.lineWidth.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <NumberInput
-                      size="xs"
-                      min={0.5}
-                      max={12}
-                      step={0.5}
-                      decimalScale={1}
-                      disabled={!bulkLineEnabled}
-                      placeholder={bulkResolved.lineWidth.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.lineWidth.mixed ? "" : bulkResolved.lineWidth.value ?? ""}
-                      onChange={(value) =>
-                        applySelectedPatch({ line_width: value === "" ? null : Number(value) })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Shape
-                      </Text>
-                      {bulkResolved.lineShape.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <Select
-                      size="xs"
-                      data={[
-                        { value: "linear", label: "Straight" },
-                        { value: "spline", label: "Smoothed" },
-                        { value: "hv", label: "Stepped" },
-                      ]}
-                      allowDeselect={false}
-                      disabled={!bulkLineEnabled}
-                      placeholder={bulkResolved.lineShape.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.lineShape.mixed ? null : bulkResolved.lineShape.value ?? null}
-                      onChange={(value) =>
-                        value && applySelectedPatch({ line_shape: value as "linear" | "spline" | "hv" })
-                      }
-                    />
-                  </div>
-                </Group>
-
-                <Divider label="Markers" labelPosition="left" />
-                <Group grow align="start">
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Symbol
-                      </Text>
-                      {bulkResolved.markerSymbol.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <Select
-                      size="xs"
-                      data={SYMBOL_OPTIONS}
-                      allowDeselect={false}
-                      disabled={!bulkMarkersEnabled}
-                      placeholder={bulkResolved.markerSymbol.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.markerSymbol.mixed ? null : bulkResolved.markerSymbol.value ?? null}
-                      onChange={(value) =>
-                        value && applySelectedPatch({ marker_symbol: value as PlotMarkerSymbol })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Group gap={4} mb={4}>
-                      <Text size="xs" fw={500}>
-                        Size
-                      </Text>
-                      {bulkResolved.markerSize.mixed && (
-                        <Badge size="xs" variant="light" color="gray">
-                          Mixed
-                        </Badge>
-                      )}
-                    </Group>
-                    <NumberInput
-                      size="xs"
-                      min={1}
-                      max={30}
-                      disabled={!bulkMarkersEnabled}
-                      placeholder={bulkResolved.markerSize.mixed ? "Mixed" : undefined}
-                      value={bulkResolved.markerSize.mixed ? "" : bulkResolved.markerSize.value ?? ""}
-                      onChange={(value) =>
-                        applySelectedPatch({ marker_size: value === "" ? null : Number(value) })
-                      }
-                    />
-                  </div>
-                  <Checkbox
-                    size="xs"
-                    mt={22}
-                    label="Open"
-                    disabled={!bulkMarkersEnabled}
-                    indeterminate={bulkResolved.markerOpen.mixed}
-                    checked={bulkResolved.markerOpen.value ?? false}
-                    onChange={(event) =>
-                      applySelectedPatch({ marker_open: event.currentTarget.checked })
-                    }
-                  />
-                </Group>
-
-                <Divider label="Legend" labelPosition="left" />
-                <Group gap="xs" wrap="wrap">
-                  <Button
-                    size="compact-xs"
-                    variant="default"
-                    onClick={() => applySelectedPatch({ show_in_legend: true })}
-                  >
-                    Show in legend
-                  </Button>
-                  <Button
-                    size="compact-xs"
-                    variant="default"
-                    onClick={() => applySelectedPatch({ show_in_legend: false })}
-                  >
-                    Hide from legend
-                  </Button>
-                  {bulkResolved.showInLegend.mixed && (
-                    <Badge size="xs" variant="light" color="gray">
-                      Legend membership: Mixed
-                    </Badge>
-                  )}
-                  {!bulkResolved.showInLegend.mixed && (
-                    <Checkbox
-                      size="xs"
-                      label="Show in legend"
-                      checked={bulkResolved.showInLegend.value ?? true}
-                      onChange={(event) =>
-                        applySelectedPatch({ show_in_legend: event.currentTarget.checked })
-                      }
-                    />
-                  )}
-                </Group>
-
-                <Text size="xs" c="dimmed">
-                  Legend name is available when exactly one series is selected.
-                </Text>
               </Stack>
             </ScrollArea>
           ) : !active ? (
@@ -2362,7 +2264,6 @@ export function SeriesStyleModal({
                   />
                   <Switch
                     size="xs"
-                    mt={22}
                     label="Open"
                     disabled={!markersEnabled}
                     checked={activeResolved?.markerOpen ?? false}
@@ -2515,7 +2416,19 @@ function SortableSeriesRow({
         px={6}
         py={4}
         justify={seriesCollapsed ? "center" : undefined}
-        onClick={onSelect}
+        onPointerDown={(event) => {
+          if (event.shiftKey && event.button === 0) {
+            return;
+          }
+          listeners?.onPointerDown?.(event);
+        }}
+        onClick={(event) => {
+          if (event.shiftKey) event.preventDefault();
+          onSelect(event);
+        }}
+        onContextMenu={(event) => {
+          if (event.shiftKey) event.preventDefault();
+        }}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key !== "Enter" && event.key !== " ") return;
@@ -2533,6 +2446,7 @@ function SortableSeriesRow({
           transform: CSS.Transform.toString(transform),
           transition,
           zIndex: isDragging ? 1 : undefined,
+          userSelect: "none",
         }}
       >
         {!seriesCollapsed && (
@@ -2540,6 +2454,7 @@ function SortableSeriesRow({
             size="xs"
             checked={selected}
             aria-label={`Select ${label}`}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
             onChange={onCheckboxChange}
           />
@@ -2554,6 +2469,10 @@ function SortableSeriesRow({
             title={`Reorder ${label}`}
             {...attributes}
             {...listeners}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              listeners?.onPointerDown?.(event);
+            }}
             onClick={(event) => event.stopPropagation()}
           >
             <IconGripVertical size={14} />
@@ -2590,6 +2509,7 @@ function SortableSeriesRow({
           aria-label={
             previewHidden ? `Show ${label} in the preview` : `Hide ${label} in the preview`
           }
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             onTogglePreview();
@@ -3090,7 +3010,7 @@ const PalettePreview = memo(function PalettePreview({
               y1={line.y1}
               x2={line.x2}
               y2={line.y2}
-              stroke="light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))"
+              style={{ stroke: "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))" }}
               strokeWidth={1.2}
               vectorEffect="non-scaling-stroke"
             />
@@ -3101,7 +3021,7 @@ const PalettePreview = memo(function PalettePreview({
               y1={line.y1}
               x2={line.x2}
               y2={line.y2}
-              stroke="light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))"
+              style={{ stroke: "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))" }}
               strokeWidth={1.2}
               vectorEffect="non-scaling-stroke"
             />
@@ -3117,7 +3037,7 @@ const PalettePreview = memo(function PalettePreview({
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              stroke="light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))"
+              style={{ stroke: "light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))" }}
               strokeWidth={1.6}
               vectorEffect="non-scaling-stroke"
             />
@@ -3128,7 +3048,7 @@ const PalettePreview = memo(function PalettePreview({
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              stroke="light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))"
+              style={{ stroke: "light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))" }}
               strokeWidth={1.6}
               vectorEffect="non-scaling-stroke"
             />
@@ -3142,7 +3062,7 @@ const PalettePreview = memo(function PalettePreview({
             x={label.x}
             y={label.y}
             fontSize={18}
-            fill="light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))"
+            style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
             textAnchor="end"
             dominantBaseline="middle"
           >
@@ -3157,7 +3077,7 @@ const PalettePreview = memo(function PalettePreview({
             x={label.x}
             y={label.y}
             fontSize={18}
-            fill="light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))"
+            style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
             textAnchor="middle"
             dominantBaseline="middle"
           >
@@ -3169,7 +3089,7 @@ const PalettePreview = memo(function PalettePreview({
         <text
           transform="translate(26,149) rotate(-90)"
           fontSize={20}
-          fill="light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))"
+          style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -3181,7 +3101,7 @@ const PalettePreview = memo(function PalettePreview({
           x={362}
           y={PREVIEW_PLOT.bottom + 62}
           fontSize={20}
-          fill="light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))"
+          style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -3225,7 +3145,12 @@ const PalettePreview = memo(function PalettePreview({
                   x={712}
                   y={legendY}
                   fontSize={18}
-                  fill={entry.color === "transparent" ? "var(--mantine-color-dimmed)" : "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))"}
+                  style={{
+                    fill:
+                      entry.color === "transparent"
+                        ? "var(--mantine-color-dimmed)"
+                        : "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))",
+                  }}
                   dominantBaseline="middle"
                 >
                   {entry.label}

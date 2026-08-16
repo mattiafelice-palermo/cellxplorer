@@ -70,6 +70,36 @@ export interface BaseSeriesStyle {
   opacity: number;
 }
 
+export type SharedValue<T> = {
+  value: T | undefined;
+  mixed: boolean;
+};
+
+/** Summarise a concrete series field without hiding disagreement behind a default. */
+export function sharedValue<T>(values: readonly T[]): SharedValue<T> {
+  if (values.length === 0) return { value: undefined, mixed: false };
+  const first = values[0];
+  return {
+    value: values.every((value) => Object.is(value, first)) ? first : undefined,
+    mixed: values.some((value) => !Object.is(value, first)),
+  };
+}
+
+/** Return the inclusive range between two rows, or null when either key is absent. */
+export function seriesSelectionRange(
+  items: readonly Pick<SeriesDescriptor, "key">[],
+  anchorKey: string | null,
+  clickedKey: string,
+): string[] | null {
+  if (!anchorKey) return null;
+  const anchorIndex = items.findIndex((item) => item.key === anchorKey);
+  const clickedIndex = items.findIndex((item) => item.key === clickedKey);
+  if (anchorIndex === -1 || clickedIndex === -1) return null;
+  const start = Math.min(anchorIndex, clickedIndex);
+  const end = Math.max(anchorIndex, clickedIndex);
+  return items.slice(start, end + 1).map((item) => item.key);
+}
+
 /**
  * Minimal shapes the descriptor builders need. Structural rather than the full
  * API types so they can be unit tested without a compute result.

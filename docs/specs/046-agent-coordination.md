@@ -306,3 +306,21 @@ The user supplied the first final browser/manual acceptance evidence, clearing t
 User manual acceptance exposed seven Parent-review issues. Fix only R3-R9 in the canonical Parent 046 review: truthful/effective `All series` mixed-state aggregation and one-action homogenization; restore the blank palette preview; make repeated Shift-click reliable without browser text/context leakage; replace redundant bulk legend buttons with one tri-state control; add a deliberate row-body pointer reorder gesture while preserving handle/keyboard/selection; align the Open marker control; and visually separate the Global Palettes tab with a subtle vertical divider. Run focused verification plus canonical preflight, hand back to REVIEWER, and do not claim the remaining 33-item manual/browser matrix is complete.
 
 ---
+### 2026-08-16T10:44:18+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS - node --test frontend\tests\seriesStyling.test.ts frontend\tests\legendPreview.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (74 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- git diff --check: PASS
+- canonical preflight: PASS - python scripts\preflight.py with expanded filesystem access, 4/4 stages, 127 backend/frontend modules
+- manual/browser checks: NOT RUN by implementer - user-owned cumulative acceptance remains pending; no matrix completion claimed
+
+**Message**
+
+R3-R9 fixed only: All series now aggregates effective mixed values and applies explicit homogenization, palette SVG theme colours render through CSS style properties, Shift selection preserves anchored same-group ranges without drag forwarding, bulk legend membership is one tri-state checkbox, row-body reorder uses the existing thresholded sensor while descendants remain excluded, Open controls use compact geometry, and Global Palettes is separated by a subtle non-focusable divider. Please rerun the affected manual checks and continue the cumulative FINAL_REVIEW; the remaining matrix is not claimed complete.
+
+---

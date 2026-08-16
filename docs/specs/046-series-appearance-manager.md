@@ -40,7 +40,7 @@ Series | Rules | Palettes
 
 Already owns:
 
-- `activeKey` and the separate `ALL_SERIES_KEY` base-style mode;
+- `activeKey` and the separate `ALL_SERIES_KEY` aggregate/global-settings mode;
 - `tab` (`series`, `rules`, `palettes`);
 - `seriesGroups`, grouped by plot and quantity/axis;
 - preview-only `previewHidden`;
@@ -113,9 +113,15 @@ No warning/banner is required.
 
 Ctrl/Cmd selection may span quantities. Shift must not.
 
-### 4. `All series` is not the same as selecting all concrete rows
+### 4. `All series` aggregates effective appearance without selecting rows
 
-`ALL_SERIES_KEY` keeps its current meaning: edit the base style. Selecting all concrete rows writes explicit overrides to those current series. Do not merge the two concepts.
+`ALL_SERIES_KEY` remains a separate entry from selecting all concrete rows, but its per-series
+appearance controls now aggregate the effective styles of every current concrete series. Homogeneous
+values display normally; disagreement displays `Mixed`, and choosing a value writes one explicit
+override to every current series so it takes effect immediately, including when it matches the old
+base/default value. Global-only settings such as secondary-axis linking and secondary legend-name
+policy remain base-style controls. Selecting concrete rows still writes explicit overrides only to
+those selected keys.
 
 ### 5. Bulk edits use the existing explicit override layer
 
@@ -230,6 +236,7 @@ Parent 046 is complete when:
 - deliberate selection always opens Series;
 - a selected set can be bulk-styled and bulk-shown/hidden in the legend;
 - mixed values are represented honestly;
+- `All series` reports effective mixed values and homogenizes each per-series appearance field in one action;
 - Legend name remains single-series only;
 - rows reorder only within their quantity and the order persists;
 - reorder does not recolour series or alter scientific trace meaning;
