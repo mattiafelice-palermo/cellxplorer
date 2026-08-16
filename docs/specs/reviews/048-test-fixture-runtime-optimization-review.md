@@ -29,10 +29,19 @@ configuration and the implementation timing record. I did not independently reru
 Chat + GitHub-only reviewer session.
 
 The key result is that R3 produced a useful direct-build improvement, but the R1/R2 test-side changes
-have not yet demonstrated the required end-to-end performance improvement. The latest canonical test
-pool is substantially slower than the original-scope checkpoint, and the implementation record says
-those measurements were affected by an existing `run.py` process/resource contention. That makes
-those measurements unsuitable as the required comparable before/after proof.
+have not yet demonstrated the required end-to-end performance improvement. The latest local canonical
+test-pool measurements are substantially slower than the original-scope checkpoint, but the user
+confirmed that the development machine is currently behaving erratically and can vary materially in
+performance. Therefore those local values are no longer treated as reliable evidence that the
+implementation itself regressed. R1/R2 remain open only because they still need a controlled reference
+measurement.
+
+For R1/R2 timing acceptance, prefer a **clean GitHub Actions Windows runner**. The existing
+`preflight.yml` supports manual `workflow_dispatch`, and manual dispatch always runs preflight. For the
+strongest A/B evidence, benchmark baseline and candidate sequentially inside the same Windows Actions
+job/runner when practical, using the same dependency environment, worker budget and benchmark command.
+A small temporary/diagnostic benchmark workflow or script is acceptable and need not become a permanent
+required CI gate.
 
 ## R1 — High — OPEN: provide controlled evidence for cost-aware scheduling and worker tuning
 
@@ -49,32 +58,25 @@ The implementation now persists successful task durations in `.preflight-cache.j
 tasks first and known tasks longest-first, and preserves the per-module subprocess/data-root model.
 The worker sweep also measured 4/8/12/16 workers and retained 16.
 
-The tooling implementation itself is coherent, but the acceptance evidence is not. The original-scope
-checkpoint measured:
-
-- normal backend pool: **36.54 s**;
-- no-cache backend/frontend pool: **42.42 s**.
-
-The returned implementation measured:
-
-- normal backend pool: **78.62 s**;
-- no-cache backend/frontend pool: **81.29 s**.
-
-The implementation record attributes the large variation to an existing local `run.py` process and
-resource contention. Because the background conditions changed, the measurements do not establish
-whether longest-first scheduling improves the pool, whether it is neutral, or whether another worker
-count would be preferable under a clean comparable run. R2 also changes the task topology at the same
-time, so its cost is currently mixed into the R1 evidence.
+The tooling implementation itself is coherent. The remaining gap is only trustworthy acceptance
+evidence: the previous local measurements were taken under materially changing workstation load, so
+they cannot distinguish implementation cost from unrelated machine contention. R2 also changes the
+task topology, so R1 must be measured on the final retained topology.
 
 ### Target
 
-After R2 is corrected, obtain a controlled same-machine comparison with equivalent background load:
+After R2 is corrected/finalized, obtain a controlled GitHub Actions Windows comparison:
 
-1. run the same task topology with no/empty timing history and with populated timing history;
-2. repeat the bounded worker sweep on that same topology and environment;
+1. use the same final task topology with no/empty timing history and with populated timing history;
+2. repeat a bounded worker sweep on the same runner environment/topology (for example 4/8/12/16 when
+   within the runner CPU budget);
 3. retain the measured best worker default/heuristic;
 4. retain duration-based ordering only if it improves wall time or controlled evidence shows it is
    effectively neutral and not the remaining limiter.
+
+Prefer running the A/B variants sequentially in one Actions job so both measurements share the same
+runner. If separate workflow runs are used instead, record enough repeated measurements to avoid
+mistaking normal hosted-runner variation for a meaningful difference.
 
 Timing history must continue to affect ordering only. No backend/frontend test may be skipped or
 cached as part of R1.
@@ -83,10 +85,11 @@ cached as part of R1.
 
 - Existing runner tests for malformed/missing history, ordering, isolation and failure attribution
   remain green.
-- Controlled A/B measurements use the same checkout, task topology and comparable background load.
-- The chosen worker count is the best measured bounded option for that environment.
-- The final canonical test-pool timing is not materially regressed by R1 relative to the
-  original-scope checkpoint under comparable conditions.
+- Controlled A/B measurements use the same code topology and equivalent GitHub Windows runner setup;
+  same-job sequential measurement is preferred.
+- The chosen worker count is the best measured bounded option for that CI environment.
+- The final canonical test-pool timing is not materially regressed by R1 under controlled CI
+  conditions.
 - The implementation record states the controlled before/after values and what conclusion they
   support.
 
@@ -103,25 +106,24 @@ Affected files:
 ### Current
 
 The partition wrappers keep the original test bodies as the source of truth and the implementer
-reports all 34 portable-analysis and 67 Neware Excel cases exactly once. The individual partition
+reports all 34 portable-analysis and 67 Neware Excel cases exactly once. The individual local partition
 measurements are all at or below about 9.24 s, satisfying the narrow longest-task objective.
 
-However, aggregate performance regressed materially:
-
-- the focused 149-test set increased from **35.573 s** at the original checkpoint to **56.149 s**;
-- normal canonical backend execution increased from **36.54 s** to **78.62 s**;
-- the no-cache test pool increased from **42.42 s** to **81.29 s**.
-
-Therefore the current split does not satisfy the actual performance objective. Reducing each module's
-reported duration is not useful if repeated process/import/setup/resource costs make the complete
-verification path slower.
+The previous local aggregate measurements cannot be used to decide whether this topology is actually
+faster because the user confirmed substantial unrelated workstation performance variation during the
+benchmark period.
 
 ### Target
 
-Redesign or revert the partition strategy so it produces a **net canonical wall-time reduction** under
-controlled comparable conditions. Reasonable outcomes include fewer/coarser partitions, a different
-ownership split, or returning one/both suites to their original single-module discovery if splitting
-cannot beat the original checkpoint.
+Measure the retained partition strategy against the original single-module topology on a clean GitHub
+Actions Windows runner and keep the topology that gives the lower **aggregate canonical wall time**.
+Reasonable outcomes include the current split, fewer/coarser partitions, a different ownership split,
+or returning one/both suites to their original single-module discovery if splitting does not help.
+
+Prefer an A/B benchmark inside one Actions job: run the baseline topology and candidate topology
+sequentially with the same installed dependencies, worker budget and environment. The benchmark may
+use a temporary diagnostic checkout/worktree or benchmark-only discovery switch; do not weaken or
+sample the tests themselves.
 
 Do not optimize toward an arbitrary number of partition files. The correct granularity is the one
 that minimizes the complete bounded runner wall time while preserving coverage and isolation.
@@ -131,12 +133,12 @@ that minimizes the complete bounded runner wall time while preserving coverage a
 - All 34 portable-analysis and 67 Neware Excel tests remain represented exactly once with equivalent
   assertions, tolerances, dialects and failure cases.
 - Every test still receives private mutable DB/workbook/cache/report/data-root state where required.
-- A controlled same-machine A/B comparison demonstrates that the retained topology reduces, rather
-  than increases, the canonical backend/test-pool wall time.
+- A controlled GitHub Actions A/B comparison demonstrates whether the retained topology reduces the
+  canonical backend/test-pool wall time relative to the original topology.
 - Long individual tasks should remain below roughly 8-10 s only where doing so does not worsen the
   aggregate critical path.
-- If no partition topology beats the original modules, revert the split rather than keeping a
-  performance regression.
+- If no partition topology beats the original modules in controlled CI, revert the split rather than
+  keeping complexity with no demonstrated benefit.
 - The final implementation record includes per-task durations and aggregate backend/test-pool timing.
 
 ## R3 — Medium — RESOLVED: Rolldown-powered Vite migration
@@ -158,6 +160,7 @@ Do not reopen or modify R3 merely to address R1/R2 unless a direct interaction i
 
 ## Merge readiness
 
-**Not ready to merge.** R1 and R2 remain open. R3 is resolved. Once the test-side performance
-extension has controlled, non-regressing evidence, review child 048 again; if clean, the workflow can
-advance to queued child 048.1.
+**Not ready to merge.** R1 and R2 remain open only for controlled CI performance evidence and any
+resulting topology/worker adjustments. R3 is resolved. Once that evidence is available and the
+retained test topology is non-regressing, review child 048 again; if clean, the workflow can advance
+to queued child 048.1.
