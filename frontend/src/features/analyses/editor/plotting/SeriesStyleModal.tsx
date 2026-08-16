@@ -1153,9 +1153,29 @@ export function SeriesStyleModal({
       onClose={handleClose}
       title="Series appearance"
       size="94rem"
-      styles={{ content: { height: "min(58rem, 94vh)", display: "flex", flexDirection: "column" } }}
+      styles={{
+        content: {
+          height: "min(58rem, 94vh)",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        },
+        body: {
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        },
+      }}
     >
-      <Group align="stretch" gap="sm" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
+      <Group
+        align="stretch"
+        gap="sm"
+        wrap="nowrap"
+        style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
+      >
         {/* The plot is deliberately fixed width and height. It used to share the row with
             flexible panels, so switching to Rules — whose controls are wider —
             resized the plot and forced Plotly to relayout on every tab change. */}
@@ -3203,7 +3223,7 @@ function PreviewPanel({
               Open full legend
             </Button>
           }
-          style={{ width: PREVIEW_WIDTH, flex: "1 1 auto", minHeight: 132 }}
+          style={{ width: PREVIEW_WIDTH, flex: "1 1 auto", minHeight: 132, overflow: "hidden" }}
           bodyPadding={0}
         >
           <LegendPreviewList entries={legendEntries} />
@@ -3266,14 +3286,14 @@ function LegendPreviewList({
         maxHeight: expanded ? "calc(100vh - 220px)" : undefined,
       }}
     >
-      <Stack gap={expanded ? "sm" : 4} p={expanded ? "md" : "sm"} style={{ minWidth: "100%" }}>
+      <Stack gap={expanded ? 4 : 0} p={expanded ? "sm" : 6} style={{ minWidth: "100%" }}>
         {entries.map((entry, index) => (
           <Group
             key={`${entry.name}-${index}`}
-            gap={expanded ? "sm" : 6}
+            gap={expanded ? 6 : 4}
             wrap="nowrap"
             align="center"
-            style={{ width: "100%", minHeight: expanded ? 34 : 30 }}
+            style={{ width: "100%", minHeight: expanded ? 28 : 24 }}
           >
             <LegendEntrySwatch entry={entry} expanded={expanded} />
             <Text
@@ -3304,14 +3324,15 @@ function LegendEntrySwatch({
   const lineVisible = mode.includes("line") || (mode === "" && entry.line.color !== null);
   const markerVisible = mode.includes("marker") || (mode === "" && entry.marker.color !== null);
   const width = expanded ? 124 : 108;
+  const height = expanded ? 24 : 22;
 
   return (
     <svg
       width={width}
-      height={28}
+      height={height}
       viewBox="0 0 108 28"
       aria-hidden="true"
-      style={{ width, height: 28, flex: "none", overflow: "visible" }}
+      style={{ width, height, flex: "none", overflow: "visible" }}
     >
       <g opacity={entry.opacity}>
         {lineVisible && (
