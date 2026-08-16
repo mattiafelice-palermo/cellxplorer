@@ -401,3 +401,16 @@ The user's second browser pass disproves the code-only closure of R4 and R5: the
 R4 palette preview now uses explicit intrinsic SVG geometry and currentColor theme-safe chrome; R5 shift-clicking a series checkbox follows the row range-selection path; R10 detached legend uses Plotly-visible null sentinels and SVG-compatible scatter traces. Only R4, R5, and R10 were changed.
 
 ---
+### 2026-08-16T11:53:00+02:00 — REVIEWER — 046.3
+
+**Result:** Final review blocked on user browser recheck
+
+**Findings**
+
+- None.
+
+**Message**
+
+R4, R5 and R10 are code-clean at `14c9c89046dea4af029478fa1f8b948dca3e996f`. The user must now rerun the three runtime checks that previously failed: Palettes-tab palette preview, contiguous Shift range through row and checkbox selection, and detached Legend preview. After those pass, continue the remaining cumulative Parent 046 manual/browser matrix. No implementer work is pending unless the recheck exposes another concrete defect.
+
+---
