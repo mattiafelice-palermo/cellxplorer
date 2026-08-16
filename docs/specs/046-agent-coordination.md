@@ -67,3 +67,16 @@ Fix only R1-R4 in the canonical 046.1 review file, verify, hand back to REVIEWER
 R1-R4 fixed: descendant keyboard isolation, linked-secondary bulk colour gating, surviving active-key repair, and truthful empty-selection messaging. Do not begin 046.2 until review approves.
 
 ---
+### 2026-08-16T04:34:15+02:00 — REVIEWER → IMPLEMENTER — 046.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+
+**Message**
+
+R1-R4 are resolved. Fix only R5: make bulk-colour gating match the existing orphan-secondary resolver semantics, add the focused regression test, verify, and hand back to REVIEWER. Do not begin 046.2.
+
+---
