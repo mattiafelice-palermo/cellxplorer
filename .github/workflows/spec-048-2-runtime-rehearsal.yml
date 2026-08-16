@@ -1,0 +1,87 @@
+name: Spec 048.2 test runner rehearsal
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/test-fixture-runtime-optimization
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Windows exhaustive profile and A/B/C benchmark
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out exact branch commit
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies once
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip check
+          npm --prefix frontend ci
+
+      - name: Profile every backend unittest case
+        shell: pwsh
+        run: |
+          $profileRoot = Join-Path $env:RUNNER_TEMP "cellxplorer-0482-profile"
+          New-Item -ItemType Directory -Force -Path $profileRoot | Out-Null
+          python scripts/profile_test_suite.py `
+            --backend `
+            --output (Join-Path $profileRoot "backend.json") `
+            --data-root (Join-Path $profileRoot "b") `
+            --jobs 1
+
+      - name: Profile every frontend Node test case
+        shell: pwsh
+        run: |
+          $profileRoot = Join-Path $env:RUNNER_TEMP "cellxplorer-0482-profile"
+          python scripts/profile_test_suite.py `
+            --frontend `
+            --output (Join-Path $profileRoot "frontend.json") `
+            --jobs 4
+
+      - name: Benchmark counterbalanced A/B/C architectures
+        shell: pwsh
+        run: |
+          $benchmarkRoot = Join-Path $env:RUNNER_TEMP "cellxplorer-0482-benchmark"
+          New-Item -ItemType Directory -Force -Path $benchmarkRoot | Out-Null
+          python scripts/benchmark_test_runners.py `
+            --output-dir $benchmarkRoot `
+            --order A,B,C,C,B,A
+
+      - name: Run final canonical no-cache preflight
+        run: python scripts/preflight.py --no-cache
+
+      - name: Run final canonical normal preflight
+        run: python scripts/preflight.py
+
+      - name: Upload exhaustive reports and benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: spec-048-2-runtime-evidence
+          path: |
+            ${{ runner.temp }}/cellxplorer-0482-profile
+            ${{ runner.temp }}/cellxplorer-0482-benchmark
+          if-no-files-found: error

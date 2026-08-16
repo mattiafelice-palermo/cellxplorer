@@ -276,7 +276,9 @@ Cellxplorer/
 │   ├── test_release_notes_script.py Release-note parser tests (Spec 019)
 │   ├── test_release_tag_script.py  Exact Stable/Beta tag parser tests
 │   ├── test_release_workflow.py    Release/channel workflow contract tests
-│   └── test_preflight_script.py    Preflight command unit tests
+│   ├── test_preflight_script.py    Preflight command unit tests
+│   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
+│   └── test_benchmark_test_runners.py Persistent-runner isolation tests (Spec 048.2)
 ├── docs/
 │   ├── biologic-mpr-format.md      Independent MPR binary-format notebook (Spec 041.1)
 │   ├── specs/                      Numbered feature specs (`NNN-*.md`) and `reviews/` follow-ups
@@ -288,9 +290,11 @@ Cellxplorer/
 ├── scripts/                        Development and Windows build launchers
 │   ├── build_beta_icons.py         Derive Beta icon assets from Stable source art (Spec 021)
 │   ├── build_golden_analysis_corpus.py  Export/refresh-expected/verify golden corpus (Spec 015)
+│   ├── benchmark_test_runners.py  Diagnostic A/B/C backend runner benchmark (Spec 048.2)
 │   ├── check_versions.py           Read-only version declaration consistency check
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
+│   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
 │   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
 │   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
