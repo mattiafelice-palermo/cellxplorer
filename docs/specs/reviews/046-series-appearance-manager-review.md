@@ -6,42 +6,42 @@ Merge base: `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`
 Final-child review-clean checkpoint: `1096c744d878bfc495be3ab9aefbf332b261e877`  
 Closure-fix commit: `f3471eedb39d33396d98c582369cb971ed869a52`  
 Latest reviewer-inspected implementation commit: `9ec962623b5ccd307e3a48ff3d848896347f1b6e`  
-Status: **CODE CLEAN — USER BROWSER RECHECK REQUIRED**
+Status: **CHANGES REQUIRED — R5**
 
 ## Current cumulative status
 
 - R1/R2 repository closure remains resolved.
 - R3 All-series aggregate/homogenization remains resolved.
 - R4 palette preview is user-accepted.
-- R5 modifier/range selection is **code-review clean in `9a9dab9c...` but requires user browser recheck**. Modifier intent is now captured once at pointer-down for both row and checkbox paths and fed to one inclusive selection policy.
+- R5 modifier/range selection is **REOPENED from user browser evidence**. The latest implementation is still not behaviorally correct: Shift-click consistently omits the second/clicked endpoint in the user's real browser.
 - R6/R7/R8/R9 remain accepted/resolved.
 - R10 detached legend rendering is user-accepted.
-- R11 embedded legend presentation is **code-review clean in `9ec96262...` but requires user browser recheck**. The embedded legend uses the accepted single-column React/Mantine list, root modal overflow is now contained, only the legend list owns legend overflow, and embedded rows are denser.
-- R12 local scientific-preview latency is code-review clean and requires user browser confirmation.
+- R11 embedded legend presentation is **USER-ACCEPTED**: the parent modal no longer scrolls because of legend overflow and the denser legend layout is accepted.
+- R12 local scientific-preview latency is **USER-ACCEPTED**: appearance editing now feels responsive.
 - The broader cumulative manual/browser matrix remains incomplete.
 
 ## Verification record
 
-### Implementer-reported — latest R11 pass (`9ec96262...`)
+### Implementer-reported — latest repository pass
 
 - focused frontend tests: PASS — 65 tests;
 - TypeScript: PASS;
 - Vite build: PASS;
 - `git diff --check`: PASS;
 - canonical preflight: PASS — 4/4 stages, 128 backend/frontend modules;
-- manual/browser checks: NOT RUN by implementer.
+- implementer browser check: NOT RUN.
+
+### User browser/manual evidence
+
+- R11 modal/legend scroll ownership: PASS.
+- R12 preview responsiveness: PASS.
+- R5 Shift-click range: FAIL. The second/clicked endpoint is still omitted in the real browser.
 
 ### Reviewer-independent
 
-I independently inspected:
+I independently inspected the current pure range policy and the current pointer-down/click/checkbox event wiring. The pure range helper is inclusive; therefore another code-only rewrite without browser reproduction is not sufficient evidence for R5.
 
-- the root Series appearance `Modal` content/body now using `flex: 1`, `minHeight: 0`, and `overflow: hidden`;
-- the main three-panel row now constraining overflow;
-- the embedded Legend preview panel retaining its own `ScrollArea`;
-- embedded legend density reduced from 30 px rows / 28 px swatches / 4 px row gap to 24 px rows / 22 px swatches / zero row gap;
-- the preceding R5 pointer-down modifier snapshot and single selection-policy path.
-
-I did **not** independently execute test/build/preflight commands or browser/manual checks.
+I did **not** independently execute browser automation or local application commands.
 
 ## Findings
 
@@ -61,13 +61,47 @@ I did **not** independently execute test/build/preflight commands or browser/man
 
 **Resolution: USER-ACCEPTED.**
 
-### R5 — Medium: Modifier selection intermittently lost the clicked endpoint
+### R5 — Medium: Shift-click range selection still omits the clicked endpoint in the real browser
 
-**Resolution state: CODE REVIEW CLEAN in `9a9dab9c6bfd820b1e626f16862bc29bb0e5d33d`; USER BROWSER RECHECK REQUIRED.**
+Affected files:
+- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+- `frontend/src/features/analyses/editor/plotting/seriesStyling.ts` only if the selection-policy API genuinely needs adjustment
+- focused interaction/browser tests where practical
 
-The browser failure was caused by event timing, not by `seriesSelectionRange(...)`. The old UI could read Shift/Ctrl from a later click event after the gesture started. The current implementation captures `{ shiftKey, toggleKey }` at pointer-down and uses that explicit snapshot for both row and checkbox selection. Shift takes precedence over Ctrl/Cmd; checkbox native change is suppressed for modified gestures.
+**Current**
 
-Browser acceptance still requires repeated forward/reverse Shift ranges, Shift+Ctrl/Cmd ranges, and ordinary Ctrl/Cmd toggles without intermittently omitting the clicked endpoint.
+The pure `seriesSelectionRange(...)` / `seriesSelectionResult(...)` policy is endpoint-inclusive in unit tests, and the UI now snapshots modifiers at pointer-down. Nevertheless, the user has retested the actual application and reports that Shift-click still consistently leaves the second/clicked row out of the final visible selection.
+
+This means the remaining defect is in the live interaction/state/event path, not proven fixed by the pure policy test. Possible causes include a second selection transition from browser/React checkbox semantics, row/click bubbling, sortable pointer handling, or a subsequent state update that removes the endpoint. Do not assume which one: reproduce it first and inspect the actual event/state sequence.
+
+**Target**
+
+Make one browser gesture produce exactly one deterministic selection-state transition. Click A, then Shift-click D must leave A/B/C/D selected after all pointer/click/change/focus/sortable handlers have finished. The same must hold for reverse ranges and for both row-body and checkbox interaction paths.
+
+**Mandatory browser-debug requirement**
+
+This finding has already survived multiple code-only fixes. The implementer must use an actual browser/runtime for this pass, if their environment provides browser tooling. Before changing more code:
+
+1. reproduce the failure in the running frontend/application;
+2. instrument or otherwise inspect the row/checkbox pointer-down → click → change/state-update sequence as needed;
+3. identify which handler/update removes or fails to add the endpoint;
+4. apply the smallest fix;
+5. rerun the browser scenario repeatedly after the fix.
+
+Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code inspection. If the implementer environment cannot launch/use a browser, report that limitation explicitly and leave R5 unresolved rather than claiming success.
+
+**Acceptance criteria**
+
+- In a real browser: click A, Shift-click D → A/B/C/D remain selected after the gesture completes.
+- In a real browser: click D, Shift-click B → B/C/D remain selected.
+- Repeat both directions at least 10 times without intermittently losing the endpoint.
+- Exercise both row-body Shift-click and selection-checkbox Shift-click.
+- Shift+Ctrl/Cmd on the second gesture follows Shift-range precedence and includes the endpoint.
+- Plain Ctrl/Cmd still toggles exactly the clicked series.
+- Browser text selection, context-menu behavior, drag activation, preview-eye actions and native checkbox changes do not create a second conflicting selection transition.
+- Add/adjust focused automated coverage for the confirmed root cause where practical.
+- Record the browser/runtime used, exact reproduction steps, observed root cause, and post-fix browser result in the implementer handoff.
+- Also run focused frontend tests, TypeScript, Vite build, `git diff --check`, and canonical `python scripts\\preflight.py`.
 
 ### R6 — Low: Multi-selection legend membership presentation
 
@@ -89,27 +123,14 @@ Browser acceptance still requires repeated forward/reverse Shift ranges, Shift+C
 
 **Resolution: USER-ACCEPTED.**
 
-### R11 — Medium: Embedded legend overflow escaped to the whole modal and rows were too loose
+### R11 — Medium: Embedded legend overflow/presentation
 
-**Resolution state: CODE REVIEW CLEAN in `9ec962623b5ccd307e3a48ff3d848896347f1b6e`; USER BROWSER RECHECK REQUIRED.**
-
-The implementation now:
-
-- constrains the root modal content and body with `minHeight: 0` and `overflow: hidden`;
-- constrains the main three-panel row so legend overflow cannot escape to the modal;
-- keeps the embedded legend panel flexing into the remaining space below the fixed scientific preview;
-- leaves overflow ownership with the legend's `ScrollArea`;
-- tightens embedded rows to 24 px minimum height, zero inter-row stack gap, 4 px swatch/text gap, and 22 px swatch height;
-- preserves the same single-column canonical legend-entry model for embedded and full-legend views.
-
-Browser acceptance requires confirming that the Series appearance modal itself no longer scrolls because of the legend, that only the embedded legend box scrolls on genuine overflow, and that the denser row spacing is visually appropriate.
+**Resolution: USER-ACCEPTED.** The user confirms the parent modal no longer scrolls and the application/layout behavior is now acceptable.
 
 ### R12 — Low: Local scientific preview visibly lagged behind appearance edits
 
-**Resolution state: CODE REVIEW CLEAN; USER BROWSER RECHECK REQUIRED.**
-
-The local preview now consumes the current draft directly; the 250 ms debounce remains only on parent persistence.
+**Resolution: USER-ACCEPTED.** The user confirms the application is now responsive.
 
 ## Decision
 
-**REPOSITORY/CODE REVIEW CLEAN — BLOCKED ON USER BROWSER ACCEPTANCE.** Recheck R5 (modifier selection), R11 (modal-vs-legend scroll ownership and row density), and R12 (immediate preview response), then continue the remaining cumulative Parent 046 manual/browser matrix. Do not declare merge readiness until that evidence is supplied.
+**CHANGES REQUIRED — fix only R5. This pass requires real-browser reproduction and post-fix verification; do not return a code-only claim of success. After the browser-verified fix, run the normal focused verification and hand back to REVIEWER for the same cumulative FINAL_REVIEW.**
