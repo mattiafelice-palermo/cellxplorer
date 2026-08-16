@@ -127,3 +127,16 @@ R5 fixed: bulk-colour gating now requires a present primary descriptor, with orp
 046.2 implemented: persisted group-local series order, accessible dnd-kit reordering, deterministic Plotly legendrank propagation across supported Series-appearance families, and palette/z-order preservation. Do not begin 046.3 until review approves.
 
 ---
+### 2026-08-16T05:01:49+02:00 — REVIEWER → IMPLEMENTER — 046.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Message**
+
+Fix only R1 in the canonical 046.2 review file: ensure a pending debounced series-order commit cannot overwrite a palette applied immediately after reordering. Preserve both order and palette state, verify, and do not begin 046.3.
+
+---
