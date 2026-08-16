@@ -74,4 +74,10 @@ jobs:
       - name: Compile release dependency graph on cache miss
         if: steps.rust_cache.outputs.cache-hit != 'true'
         shell: pwsh
-        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+        run: |
+          # The production sidecar is an ignored build artifact and is absent from a clean checkout.
+          # Tauri merges this JSON patch for the cache-only compile; release packaging still uses the
+          # repository config and verifies the real sidecar before Tauri runs.
+          $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
+          cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

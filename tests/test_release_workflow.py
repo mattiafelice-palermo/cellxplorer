@@ -306,6 +306,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('add-job-id-key: "false"', self.preflight)
         self.assertIn("steps.rust_cache.outputs.cache-hit", self.preflight)
         self.assertIn("cargo build --release --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
+        self.assertIn("$env:TAURI_CONFIG = '{\"bundle\":{\"resources\":[]}}'", self.preflight)
+        self.assertIn("release packaging still uses the", self.preflight)
         self.assertIn("shared-key: cellxplorer-windows-release", self.release)
         self.assertIn('add-job-id-key: "false"', self.release)
         self.assertIn('save-if: "false"', self.release)
