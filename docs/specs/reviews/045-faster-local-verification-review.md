@@ -30,8 +30,14 @@ Status: **FINAL REVIEW CLEAN — READY TO MERGE**
 - R1 same-machine matrix, all PASS:
   - merge base: 70.39 s no-cache / 74.62 s unchanged normal / 71.86 s backend-only normal;
   - Spec 045: 84.24 s no-cache / 71.37 s unchanged normal / 85.72 s backend-only normal.
+- R2 balanced triplets completed before further timing was stopped by user direction:
+  - full no-cache merge base: 68.04 / 78.76 / 68.02 s;
+  - full no-cache Spec 045: 82.96 / 82.82 / 78.71 s;
+  - unchanged normal merge base: 63.42 / 66.62 / 67.39 s;
+  - unchanged normal Spec 045: 67.30 / 66.09 / 71.92 s.
+- All completed R2 runs passed. Full no-cache ran frontend policy tests, TypeScript and Vite on both checkouts. Unchanged-normal merge-base runs ran frontend policy tests while skipping build; Spec 045 unchanged-normal runs skipped frontend policy tests and build.
+- The backend-only triplet was intentionally not completed; only one baseline run (66.36 s, PASS) exists and is not treated as a paired performance result.
 - In cache-hit Spec 045 normal/backend-only runs, backend modules ran while unchanged frontend policy tests and TypeScript/Vite were explicitly skipped.
-- Additional R2 exercise completed passing full/no-cache runs on both checkouts and passing unchanged-normal cache-hit triplets; the requested backend-only triplet was stopped at explicit user direction and is not claimed complete.
 - Current Spec 045 no-cache verification included all 68 backend modules and 58 frontend policy files.
 - `py_compile` and `git diff --check`: PASS.
 - Browser checks: NOT RUN; this is tooling-only work.
@@ -47,6 +53,8 @@ Using ChatGPT Chat + the GitHub connector, I independently inspected:
 - `tests/test_run_backend_tests.py`;
 - the relevant nested NDAX worker-budget interaction;
 - frontend-policy cache inputs and failure safety;
+- the slow-test fixture patterns in `tests/test_fast_neware.py`, `tests/test_portable_analysis.py`, `tests/test_beta_bootstrap.py`, and `tests/test_neware_excel.py`;
+- the locked scientific-regression contract in `docs/agent-knowledge/scientific-regression-testing.md` and `tests/test_golden_analysis.py`;
 - Spec 045, workflow state/coordination, and all review follow-ups.
 
 I did **not** independently execute repository test commands, preflight, or browser/manual checks.
@@ -61,9 +69,21 @@ The verification record now distinguishes full no-cache, immediate unchanged nor
 
 The one-shot timing matrix is noisy and does **not** establish a reproducible performance delta: it includes both faster and slower Spec 045 runs, and the earlier no-cache handoff showed the opposite direction from the later matrix. I therefore requested repeated paired measurements in final review.
 
-During the R2 follow-up, the implementer recorded explicit user direction that exhaustive timing repetitions were not needed; the priority was correct complete verification without the former super-long local workflow. Passing full/no-cache and unchanged-normal repetitions had already been completed, and the backend-only triplet was intentionally stopped.
+The later balanced triplets confirm that complete local verification is operating in roughly the same minute-scale range rather than exposing a multi-minute regression, but they still do not establish a robust speedup for every scenario. During the R2 follow-up, the user explicitly prioritized correct complete verification and avoiding super-long local runs over exhaustive timing characterization; the backend-only triplet was therefore intentionally stopped.
 
 Accordingly, the extra repeated-timing requirement is no longer a merge gate. This is a scope override, **not** experimental proof that every scenario is reproducibly faster. The existing timing variability remains documented rather than being converted into a stronger performance claim.
+
+### Post-completion user follow-up — reducing slow tests by subsetting source data
+
+Replacing the long scientific fixtures with arbitrary fractions such as the first 1/10 of each file is **not recommended for canonical preflight** and does not reopen Spec 045.
+
+- `tests/test_fast_neware.py` deliberately performs full-file equality between original `NewareNDA.read` and the optimized path across both committed NDAX samples, three cycle modes, and both software-cycle settings. Truncating or replacing those files with small extracts would weaken coverage of container/block boundaries, late-file status/cycle transitions, and exact whole-file DataFrame parity. It would also contradict Spec 045's locked decision not to sample or weaken existing tests.
+- The golden scientific layer is explicitly defined as complete committed Neware binaries exercised through production parsing, cache construction, and analysis. It verifies source SHA-256, parses each unique source once, and the durable guidance explicitly says not to trim or rewrite those binaries. Subsetting those fixtures would weaken the end-to-end scientific-regression guarantee.
+- `tests/test_portable_analysis.py` already uses a tiny two-row synthetic cycling frame for its portable-report logic; its cost is packaging/database/round-trip behavior, so reducing data volume would not materially target the expensive boundary.
+- `tests/test_neware_excel.py` already constructs compact synthetic workbooks designed around edge cases such as repeated programmed steps, charge/CV/discharge transitions and dialect variations. A 1/10 reduction would mostly remove cases rather than remove bulk data.
+- `tests/test_beta_bootstrap.py` is dominated by isolated SQLite/bootstrap/migration scenarios, not large scientific files. File-data subsetting is not relevant to its main cost.
+
+Potential future speed work should therefore preserve the scientific inputs and target measured setup overhead instead: for example, reuse immutable prebuilt workbook/report/database templates by copying them into each test's private temporary directory, or avoid repeated migrations/setup where the individual test does not need to exercise migration itself. Any such change must preserve per-test isolation and first be shown by timing to attack a real hotspot. It should be a separate follow-up/spec rather than silently weakening Spec 045's completed verification contract.
 
 ## Final decision
 
@@ -71,4 +91,4 @@ Accordingly, the extra repeated-timing requirement is no longer a merge gate. Th
 
 There are no open implementation defects or spec-behavior findings. The shared runner, isolation, bounded concurrency, failure attribution, timing instrumentation, cache invalidation/safety, and complete `--no-cache` path are consistent with Spec 045 and the focused tests. Required preflight executions are implementer-reported passing. Branch scope is clean and the branch is not behind its merge base.
 
-Known non-blocking limitation: the available wall-clock measurements are noisy, and repeated backend-only performance characterization was explicitly waived by the user. Do not interpret this review as claiming a statistically robust speedup for every measured scenario.
+Known non-blocking limitation: the available wall-clock measurements remain noisy. Do not interpret this review as claiming a statistically robust speedup for every measured scenario. The user follow-up does not change merge readiness: arbitrary fixture subsetting would weaken the verification contract, while setup-level optimization remains a safe candidate for future work if measurement justifies it.
