@@ -478,3 +478,55 @@ Reviewer preparation only:
 - Rebuilt `feature/test-fixture-runtime-optimization` onto `main` at
   `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6` before implementation.
 - No implementation or production code was changed during this preparation.
+
+### Baseline before implementation
+
+Measured on the Windows development checkout with Python 3.14.4, using
+`python -m unittest -v --durations 0` for each target module. The repository-root Neware samples
+were present for the Fast Neware baseline.
+
+| Module | Tests | Module duration | Dominant method/setup signal |
+| --- | ---: | ---: | --- |
+| `tests.test_fast_neware` | 7 | 14.883 s | `FastNdaxReadTests.test_sample_files_identical`: 14.825 s |
+| `tests.test_beta_bootstrap` | 37 | 32.485 s | `test_preparation_background_rejects_when_no_copied_job_is_active`: 2.063 s; many ordinary methods repeatedly call `_create_migrated_database` |
+| `tests.test_neware_excel` | 67 | 16.556 s | `test_cycle_summary_identity_capacity_energy_and_time_mismatches_fail`: 1.910 s; no broad workbook-construction hotspot established yet |
+| `tests.test_portable_analysis` | 34 | 31.479 s | `test_malformed_portable_chains_fail_identically_before_import_writes`: 8.510 s |
+
+The first implementation target is the Fast Neware repeated full-file matrix. Excel remains
+unchanged because its measured construction/parsing costs were not the module's dominant expense;
+portable analysis is changed only at the measured repeated-export setup hotspot.
+
+### Focused after measurements
+
+| Module | Tests | After duration | Changed hotspot |
+| --- | ---: | ---: | --- |
+| `tests.test_fast_neware` | 11 | 1.454 s | Compact six-combination parity: 0.337 s; committed real-source smoke: 0.660 s; explicit decoder-field assertions retained |
+| `tests.test_beta_bootstrap` | 37 | 4.365 s | Immutable current-schema template plus private writable copies; ordinary stage tests now stay below 0.20 s each except the router setup case at 1.546 s |
+| `tests.test_neware_excel` | 67 | 16.556 s | Unchanged; workbook construction measured at about 0.044 s/write and parsing at about 0.055 s/read, so no template shortcut was justified |
+| `tests.test_portable_analysis` | 34 | 18.978 s | Malformed-chain rejection: 3.921 s after reusing one immutable valid export/report |
+
+### Coverage-preservation audit
+
+| Old expensive behavior/assertion | New fixture/setup path | Where the same semantic condition is asserted |
+| --- | --- | --- |
+| Twelve full-file `.ndax` parses across two optional git-ignored samples and six parameter combinations | One independently encoded multi-page `.ndax` fixture is parsed for all six `(cycle_mode, software_cycle_number)` combinations, plus one committed golden `.ndax` full-source smoke | `FastNdaxReadTests.test_compact_fixture_all_combinations_identical`, `test_committed_real_source_identical`, and the unchanged cycle-number semantic tests |
+| Fast decoder correctness entrusted to long-file parity | Independent NDC bytes retain two pages, valid/invalid records, multiple statuses/ranges, decoded scalar fields, exact dtypes/columns, and partial/unknown fallback cases | `FastNdaxDecoderTests` compares each successful compact frame to the saved original decoder and asserts fallback delegation |
+| Every ordinary Beta session recreated the current schema through migrations | One class-level template is built through the real migration path; each Stable/Beta root receives its own copied writable database and WAL setup | Existing revision/corruption/inspection tests mutate or replace their private files; staging tests still perform real filesystem copies and production fresh-instance-ID rewriting |
+| Malformed portable-chain subcases exported the same valid report repeatedly | One immutable valid export/report is deep-copied into each independently rewritten malformed HTML package | Every mutation still runs both inspection and import and asserts identical failure details plus zero imported rows |
+| Neware Excel synthetic workbook setup | Unchanged | Baseline profiling found no broad redundant serialization hotspot; all existing protocol/dialect/summary assertions remain untouched |
+
+### Final required verification
+
+- Focused command `python -m unittest tests.test_fast_neware tests.test_beta_bootstrap tests.test_neware_excel tests.test_portable_analysis -v`: **PASS**, 149 tests, 35.573 s.
+- `python scripts\\preflight.py --no-cache`: **PASS**, 4/4 stages, 45.42 s total. The required production bundle stage was 45.16 s; the complete backend/frontend test pool was 42.42 s and all 128 tasks passed.
+- `python scripts\\preflight.py`: **PASS**, 4/4 stages, 36.89 s total. The complete backend test pool was 36.54 s and all 68 backend modules passed; the unchanged frontend policy/type-check/bundle stages were correctly skipped by the existing cache.
+- `git diff --check`: **PASS**.
+- Golden analysis source and manifest files: **NO CHANGES**.
+- Browser/manual UI checks: **NOT REQUIRED** (test/tooling-only change).
+
+The request to bring the **whole preflight** below ten seconds was assessed against these final
+measurements. It cannot be achieved within Spec 048 without skipping or caching a required full
+backend/frontend verification stage, or changing the global preflight scheduler/frontend build.
+Those actions would violate the locked decisions and the explicit out-of-scope boundary. The
+scientific and parser correctness gates therefore remain intact; the optimized target modules
+remove only measured redundant fixture/setup work.

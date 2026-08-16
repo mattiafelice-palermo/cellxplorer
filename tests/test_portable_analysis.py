@@ -1226,10 +1226,13 @@ class PortableAnalysisTests(unittest.TestCase):
                 ),
             ),
         }
+        source_html, _ = self.create_export()
+        base_report = self.read_report(source_html)
         for case, mutate in mutations.items():
             with self.subTest(case=case):
-                source_html, _ = self.create_export()
-                report = self.read_report(source_html)
+                # The valid export is immutable setup shared by these
+                # subcases; each mutated report and database remains private.
+                report = deepcopy(base_report)
                 cell = report["cells"][0]
                 second_source = deepcopy(report["sources"][0])
                 second_source.update(

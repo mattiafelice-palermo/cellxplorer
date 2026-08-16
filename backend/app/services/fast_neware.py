@@ -79,6 +79,11 @@ def _fast_read_ndc_5_filetype_1(mm):
     if not _KNOWN_STATUS[status_codes].all() or not np.isin(
         np.unique(ranges), np.array(list(multiplier_dict))
     ).all():
+        # Release every view backed by the mmap before the original decoder
+        # runs.  This keeps the fallback byte-identical while allowing a
+        # caller that owns the mmap to close it even when the original raises
+        # for an unknown status or range.
+        del pages, payload, recs, status_codes, ranges
         return _ORIG_READ_5_1(mm)  # unknown code → original raises its KeyError
 
     uniq_ranges, inverse = np.unique(ranges, return_inverse=True)

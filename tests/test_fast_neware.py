@@ -1,17 +1,13 @@
+import mmap
 import os
+import struct
 import sys
+import tempfile
 import unittest
-from concurrent.futures import ProcessPoolExecutor
-
-try:
-    from concurrent.futures.process import BrokenProcessPool
-except ImportError:  # pragma: no cover - older Python builds
-    class BrokenProcessPool(RuntimeError):
-        pass
-
-
-POOL_INFRA_ERRORS = (OSError, PermissionError, RuntimeError, BrokenProcessPool)
+import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -24,76 +20,158 @@ import NewareNDA
 
 from app.services import fast_neware
 
-SAMPLE_FILES = [
-    ROOT / "NG_20260317_LFP_LP_MoL_530_FM+CY.ndax",
-    ROOT / "AI_NMC_B50D50_004_1_LP30_Crate_25C_1.ndax",
-]
+FULL_PARITY_SOURCE = ROOT / "tests" / "fixtures" / "golden_analysis" / "sources" / "cycles_time_steps.ndax"
+
+_NDC_PAGE_SIZE = 4096
+_NDC_RECORD_SIZE = 87
+_NDC_PAYLOAD_OFFSET = 125
+_NDC_TRAILER_SIZE = 56
 
 
-def _compare_ndax_combination(task: tuple[str, str, str, bool]) -> tuple[str, str, bool, str | None]:
-    root_str, path_str, mode, softcyc = task
-    root = Path(root_str)
-    path = Path(path_str)
-    local_root = str(root / "backend")
-    if local_root not in sys.path:
-        sys.path.insert(0, local_root)
-    os.environ.setdefault("CELLXPLORER_DATA", str(root / ".test-cellxplorer"))
+def _compact_ndc_rows() -> list[dict[str, object]]:
+    """Return semantically selected records for the compact binary fixture.
 
-    import NewareNDA as worker_neware
-    from app.services import fast_neware as worker_fast_neware
+    The rows deliberately cross the page boundary and retain charge/discharge,
+    rest, SIM, pause, CCCV, CP, and multiple current-range paths.  The final
+    invalid row proves the decoder's validity filter without introducing an
+    unknown valid status into the compact success fixture.
+    """
 
-    worker_fast_neware.uninstall()
-    orig = worker_neware.read(
-        str(path),
-        software_cycle_number=softcyc,
-        cycle_mode=mode,
-        log_level="ERROR",
+    pattern = [
+        (4, 1, 0),       # Rest
+        (2, 2, -1000),   # CC_DChg
+        (1, 3, 1000),    # CC_Chg
+        (3, 3, 10),      # CV_Chg
+        (4, 4, 0),       # Rest
+        (7, 5, 100),     # CCCV_Chg
+        (8, 6, -100),    # CP_DChg
+        (9, 7, 100),     # CP_Chg
+        (13, 8, 0),      # Pause
+        (17, 9, 0),      # SIM
+        (20, 10, -1000), # CCCV_DChg
+    ]
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    rows: list[dict[str, object]] = []
+    index = 1
+    for cycle in range(5):
+        for status_code, step_index, current_range in pattern:
+            rows.append(
+                {
+                    "index": index,
+                    "cycle": cycle,
+                    "step_index": step_index,
+                    "status_code": status_code,
+                    "time_ms": index * 1000,
+                    "voltage_raw": 35000 + index * 10,
+                    "current_raw": 100 + index,
+                    "charge_capacity_raw": index * 10,
+                    "discharge_capacity_raw": index * 5,
+                    "charge_energy_raw": index * 20,
+                    "discharge_energy_raw": index * 9,
+                    "timestamp": base + timedelta(seconds=index),
+                    "current_range": current_range,
+                }
+            )
+            index += 1
+
+    rows.append(
+        {
+            "index": index,
+            "cycle": 5,
+            "step_index": 99,
+            "status_code": 255,
+            "time_ms": index * 1000,
+            "voltage_raw": 36000,
+            "current_raw": 999,
+            "charge_capacity_raw": 999,
+            "discharge_capacity_raw": 999,
+            "charge_energy_raw": 999,
+            "discharge_energy_raw": 999,
+            "timestamp": base + timedelta(seconds=index),
+            "current_range": 123456,
+            "valid": 0,
+        }
     )
-    worker_fast_neware.install()
-    try:
-        fast = worker_neware.read(
-            str(path),
-            software_cycle_number=softcyc,
-            cycle_mode=mode,
-            log_level="ERROR",
-        )
-    finally:
-        worker_fast_neware.uninstall()
-
-    if list(orig.columns) != list(fast.columns):
-        return path.name, mode, softcyc, f"columns differ: {list(orig.columns)} vs {list(fast.columns)}"
-    if not (orig.dtypes == fast.dtypes).all():
-        return (
-            path.name,
-            mode,
-            softcyc,
-            f"dtypes differ: {orig.dtypes} vs {fast.dtypes}",
-        )
-    if not orig.equals(fast):
-        return path.name, mode, softcyc, f"{path.name} mode={mode} soft={softcyc}"
-    return path.name, mode, softcyc, None
+    return rows
 
 
-def ndax_worker_count(task_count: int) -> int:
-    override = os.environ.get("CELLXPLORER_NDAX_MAX_WORKERS")
-    if override:
-        try:
-            return max(1, min(task_count, int(override)))
-        except ValueError:
-            pass
-    if os.environ.get("CELLXPLORER_BACKEND_TEST_PARALLEL"):
-        jobs = max(1, int(os.environ.get("CELLXPLORER_BACKEND_TEST_JOBS", "1")))
-        cpu = os.cpu_count() or 1
-        return max(1, min(task_count, max(1, cpu // jobs)))
-    return max(1, min(task_count, os.cpu_count() or 1))
+def _encode_ndc_record(row: dict[str, object]) -> bytes:
+    record = bytearray(_NDC_RECORD_SIZE)
+    record[7] = int(row.get("valid", 0x55))
+    struct.pack_into(
+        "<IIBB",
+        record,
+        8,
+        int(row["index"]),
+        int(row["cycle"]),
+        int(row["step_index"]),
+        int(row["status_code"]),
+    )
+    struct.pack_into(
+        "<Qii",
+        record,
+        23,
+        int(row["time_ms"]),
+        int(row["voltage_raw"]),
+        int(row["current_raw"]),
+    )
+    struct.pack_into(
+        "<qqqq",
+        record,
+        43,
+        int(row["charge_capacity_raw"]),
+        int(row["discharge_capacity_raw"]),
+        int(row["charge_energy_raw"]),
+        int(row["discharge_energy_raw"]),
+    )
+    timestamp = row["timestamp"]
+    assert isinstance(timestamp, datetime)
+    struct.pack_into(
+        "<HBBBBB",
+        record,
+        75,
+        timestamp.year,
+        timestamp.month,
+        timestamp.day,
+        timestamp.hour,
+        timestamp.minute,
+        timestamp.second,
+    )
+    struct.pack_into("<i", record, 82, int(row["current_range"]))
+    return bytes(record)
 
 
-def _run_sample_comparisons_serial(test_case, found) -> None:
-    for path in found:
-        for mode in ("chg", "dchg", "auto"):
-            for softcyc in (True, False):
-                with test_case.subTest(file=path.name, mode=mode, soft=softcyc):
-                    test_case.compare(path, mode, softcyc)
+def _ndc_bytes(rows: list[dict[str, object]], *, trailing: bytes = b"") -> bytes:
+    header = bytearray(_NDC_PAGE_SIZE)
+    header[0] = 1  # filetype
+    header[2] = 5  # NDC version
+    pages: list[bytes] = []
+    records_per_page = (_NDC_PAGE_SIZE - _NDC_PAYLOAD_OFFSET - _NDC_TRAILER_SIZE) // _NDC_RECORD_SIZE
+    for offset in range(0, len(rows), records_per_page):
+        page = bytearray(_NDC_PAGE_SIZE)
+        for slot, row in enumerate(rows[offset : offset + records_per_page]):
+            start = _NDC_PAYLOAD_OFFSET + slot * _NDC_RECORD_SIZE
+            page[start : start + _NDC_RECORD_SIZE] = _encode_ndc_record(row)
+        pages.append(bytes(page))
+    if not pages:
+        pages.append(bytes(_NDC_PAGE_SIZE))
+    return bytes(header) + b"".join(pages) + trailing
+
+
+def _write_compact_ndax(path: Path) -> None:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data.ndc", _ndc_bytes(_compact_ndc_rows()))
+
+
+def _read_ndc(path: Path, reader):
+    with path.open("rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+        return reader(mapped)
+
+
+def _assert_exact_frame(test_case: unittest.TestCase, expected: pd.DataFrame, actual: pd.DataFrame) -> None:
+    test_case.assertEqual(list(expected.columns), list(actual.columns))
+    test_case.assertTrue((expected.dtypes == actual.dtypes).all())
+    test_case.assertTrue(expected.equals(actual))
 
 
 class FastCycleNumberTests(unittest.TestCase):
@@ -140,9 +218,105 @@ class FastCycleNumberTests(unittest.TestCase):
             fast_neware._fast_generate_cycle_number(df, "bogus")
 
 
+class FastNdaxDecoderTests(unittest.TestCase):
+    """Direct parity tests for the compact, independently encoded NDC pages."""
+
+    def test_compact_pages_match_original_and_preserve_decoded_contract(self):
+        rows = _compact_ndc_rows()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "compact.ndc"
+            path.write_bytes(_ndc_bytes(rows))
+            self.assertGreater(path.stat().st_size, _NDC_PAGE_SIZE * 2)
+
+            original = _read_ndc(path, fast_neware._ORIG_READ_5_1)
+            fast = _read_ndc(path, fast_neware._fast_read_ndc_5_filetype_1)
+
+        _assert_exact_frame(self, original, fast)
+        self.assertEqual(
+            list(fast.columns),
+            [
+                "Index",
+                "Cycle",
+                "Step_Index",
+                "Status",
+                "Time",
+                "Voltage",
+                "Current(mA)",
+                "Charge_Capacity(mAh)",
+                "Discharge_Capacity(mAh)",
+                "Charge_Energy(mWh)",
+                "Discharge_Energy(mWh)",
+                "Timestamp",
+                "Step",
+            ],
+        )
+        self.assertEqual(len(fast), len(rows) - 1)
+        self.assertEqual(
+            set(fast["Status"]),
+            {
+                "Rest",
+                "CC_DChg",
+                "CC_Chg",
+                "CV_Chg",
+                "CCCV_Chg",
+                "CP_DChg",
+                "CP_Chg",
+                "Pause",
+                "SIM",
+                "CCCV_DChg",
+            },
+        )
+        self.assertEqual(int(fast.iloc[0]["Index"]), 1)
+        self.assertEqual(int(fast.iloc[-1]["Index"]), 55)
+        second = fast.iloc[1]
+        self.assertEqual(int(second["Cycle"]), 1)
+        self.assertEqual(int(second["Step_Index"]), 2)
+        self.assertEqual(int(second["Step"]), 2)
+        self.assertEqual(float(second["Time"]), 2.0)
+        self.assertAlmostEqual(float(second["Voltage"]), 3.502)
+        self.assertAlmostEqual(float(second["Current(mA)"]), 1.02)
+        self.assertAlmostEqual(float(second["Charge_Capacity(mAh)"]), 20 * 0.01 / 3600)
+        self.assertAlmostEqual(float(second["Discharge_Energy(mWh)"]), 18 * 0.01 / 3600)
+        self.assertEqual(
+            second["Timestamp"],
+            pd.Timestamp("2026-01-01T12:00:02"),
+        )
+
+    def test_partial_trailing_page_delegates_to_original(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "partial.ndc"
+            path.write_bytes(_ndc_bytes(_compact_ndc_rows()[:3], trailing=b"partial"))
+            expected = _read_ndc(path, fast_neware._ORIG_READ_5_1)
+            with patch.object(
+                fast_neware,
+                "_ORIG_READ_5_1",
+                wraps=fast_neware._ORIG_READ_5_1,
+            ) as original:
+                actual = _read_ndc(path, fast_neware._fast_read_ndc_5_filetype_1)
+
+        _assert_exact_frame(self, expected, actual)
+        original.assert_called_once()
+
+    def test_unknown_status_and_range_delegate_to_original(self):
+        for field, value in (("status_code", 255), ("current_range", 123456)):
+            with self.subTest(field=field):
+                row = dict(_compact_ndc_rows()[0])
+                row[field] = value
+                with tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / f"unknown-{field}.ndc"
+                    path.write_bytes(_ndc_bytes([row]))
+                    with patch.object(
+                        fast_neware,
+                        "_ORIG_READ_5_1",
+                        wraps=fast_neware._ORIG_READ_5_1,
+                    ) as original:
+                        with self.assertRaises(KeyError):
+                            _read_ndc(path, fast_neware._fast_read_ndc_5_filetype_1)
+                original.assert_called_once()
+
+
 class FastNdaxReadTests(unittest.TestCase):
-    """Full-file comparison: NewareNDA.read with and without the fast paths
-    must produce identical DataFrames (values, dtypes, column order)."""
+    """End-to-end NewareNDA.read parity at compact and real-source boundaries."""
 
     def compare(self, path, mode, softcyc):
         fast_neware.uninstall()
@@ -159,31 +333,17 @@ class FastNdaxReadTests(unittest.TestCase):
                         f"dtypes differ: {orig.dtypes} vs {fast.dtypes}")
         self.assertTrue(orig.equals(fast), f"{path.name} mode={mode} soft={softcyc}")
 
-    def test_sample_files_identical(self):
-        found = [p for p in SAMPLE_FILES if p.exists()]
-        if not found:
-            self.skipTest("no sample .ndax files present")
-        tasks = [
-            (str(ROOT), str(path), mode, softcyc)
-            for path in found
-            for mode in ("chg", "dchg", "auto")
-            for softcyc in (True, False)
-        ]
-        workers = ndax_worker_count(len(tasks))
-        if workers <= 1:
-            _run_sample_comparisons_serial(self, found)
-            return
+    def test_compact_fixture_all_combinations_identical(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "compact.ndax"
+            _write_compact_ndax(path)
+            for mode in ("chg", "dchg", "auto"):
+                for softcyc in (True, False):
+                    with self.subTest(file=path.name, mode=mode, soft=softcyc):
+                        self.compare(path, mode, softcyc)
 
-        try:
-            with ProcessPoolExecutor(max_workers=workers) as pool:
-                results = list(pool.map(_compare_ndax_combination, tasks))
-        except POOL_INFRA_ERRORS:
-            _run_sample_comparisons_serial(self, found)
-            return
-
-        for path_name, mode, softcyc, error in results:
-            with self.subTest(file=path_name, mode=mode, soft=softcyc):
-                self.assertIsNone(error, error)
+    def test_committed_real_source_identical(self):
+        self.compare(FULL_PARITY_SOURCE, "chg", True)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,39 @@ def _create_migrated_database(root: Path) -> tuple[sessionmaker, object]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False), engine
 
 
+def _create_database_from_template(
+    root: Path,
+    template: bytes,
+) -> tuple[sessionmaker, object]:
+    """Open a private writable current-schema copy without rerunning migrations."""
+
+    root.mkdir(parents=True, exist_ok=True)
+    db_path = root / "cellxplorer.db"
+    db_path.write_bytes(template)
+    engine = create_engine(
+        f"sqlite:///{db_path.as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    event.listen(engine, "connect", _set_sqlite_pragma)
+    _enable_write_ahead_logging(engine)
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False), engine
+
+
 class BetaBootstrapTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._schema_template_directory = tempfile.TemporaryDirectory(
+            prefix="cellxplorer-beta-schema-template-"
+        )
+        cls.addClassCleanup(cls._schema_template_directory.cleanup)
+        template_root = Path(cls._schema_template_directory.name) / "template"
+        _, template_engine = _create_migrated_database(template_root)
+        template_engine.dispose()
+        # The migration path above is the source of truth for this immutable
+        # setup input. Each test still receives a fresh writable database file.
+        cls._current_schema_template = (template_root / "cellxplorer.db").read_bytes()
+
     def setUp(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmpdir.cleanup)
@@ -82,12 +114,18 @@ class BetaBootstrapTests(unittest.TestCase):
         self._engines.clear()
 
     def beta_session(self):
-        factory, engine = _create_migrated_database(self.beta_root)
+        factory, engine = _create_database_from_template(
+            self.beta_root,
+            self._current_schema_template,
+        )
         self._engines.append(engine)
         return factory()
 
     def stable_session(self):
-        factory, engine = _create_migrated_database(self.stable_root)
+        factory, engine = _create_database_from_template(
+            self.stable_root,
+            self._current_schema_template,
+        )
         self._engines.append(engine)
         return factory()
 
