@@ -187,3 +187,17 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 046.3 implemented: detached bounded passive Plotly Legend preview derived from the unhidden effective family preview; helper traces filtered, style/rank/group metadata preserved, curve arrays stripped, staticPlot interaction disabled, and local base/order/palette drafts included before debounce. Existing fixed scientific preview remains legend-free. Supported-family integration audit found existing Cycles, Time/Capacity, Steps, DCIR, Chargeability, and Rate capability propagation already complete from 046.2. Cumulative manual/browser matrix items 1-32 remain NOT RUN per user instruction; do not begin unrelated work.
 
 ---
+### 2026-08-16T05:28:31+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**Message**
+
+Fix only R1-R2 in the canonical 046.3 review file. R1: avoid Plotly's muted `legendonly` visual state while still stripping scientific drawing/data. R2: make large legends reachable in the bundled Plotly 2.35.3 runtime without relying on unsupported `legend.maxheight` or `staticPlot`-disabled scrolling. Preserve passive legend interactions, verify, and hand back to REVIEWER.
+
+---
