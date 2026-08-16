@@ -1,0 +1,125 @@
+name: Spec 048 benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  counterbalanced-runner:
+    name: Counterbalanced backend scheduling benchmark
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip check
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: npm --prefix frontend ci
+
+      - name: Run counterbalanced benchmark
+        shell: pwsh
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Location $env:GITHUB_WORKSPACE
+
+          $requestedJobs = 16
+          $cpuBudget = [Environment]::ProcessorCount
+          $moduleCount = (Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "tests") -Filter "test_*.py" -File).Count
+          $benchmarkRoot = Join-Path $env:RUNNER_TEMP "spec048"
+          New-Item -ItemType Directory -Force -Path $benchmarkRoot | Out-Null
+          $cachePath = Join-Path $env:GITHUB_WORKSPACE ".preflight-cache.json"
+          $templatePath = Join-Path $benchmarkRoot "timing-cache-template.json"
+          $summaryPath = Join-Path $benchmarkRoot "summary.txt"
+          $summary = [System.Collections.Generic.List[string]]::new()
+
+          Remove-Item -LiteralPath $cachePath -Force -ErrorAction SilentlyContinue
+          $warmupLog = Join-Path $benchmarkRoot "warmup.log"
+          & python scripts/run_backend_tests.py --jobs $requestedJobs --skip-frontend-tests --data-root (Join-Path $benchmarkRoot "warmup-data") *> $warmupLog
+          $warmupExit = $LASTEXITCODE
+          Get-Content -LiteralPath $warmupLog
+          if ($warmupExit -ne 0) {
+            throw "Spec 048 warm-up failed with exit code $warmupExit."
+          }
+          Copy-Item -LiteralPath $cachePath -Destination $templatePath -Force
+
+          function Invoke-Benchmark {
+            param(
+              [Parameter(Mandatory = $true)][string]$Label,
+              [Parameter(Mandatory = $true)][bool]$Ordered
+            )
+
+            if ($Ordered) {
+              Copy-Item -LiteralPath $templatePath -Destination $cachePath -Force
+            } else {
+              Remove-Item -LiteralPath $cachePath -Force -ErrorAction SilentlyContinue
+            }
+
+            $logPath = Join-Path $benchmarkRoot ($Label + ".log")
+            $dataPath = Join-Path $benchmarkRoot ($Label + "-data")
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            & python scripts/run_backend_tests.py --jobs $requestedJobs --skip-frontend-tests --data-root $dataPath *> $logPath
+            $exitCode = $LASTEXITCODE
+            $timer.Stop()
+            Get-Content -LiteralPath $logPath
+            if ($exitCode -ne 0) {
+              throw "Spec 048 benchmark '$Label' failed with exit code $exitCode."
+            }
+
+            $header = Select-String -LiteralPath $logPath -Pattern "^Running " | Select-Object -First 1
+            $effectiveJobs = "unknown"
+            $reportedCpu = "unknown"
+            if ($header -and $header.Line -match "with (\d+) workers \(CPU budget (\d+)") {
+              $effectiveJobs = $Matches[1]
+              $reportedCpu = $Matches[2]
+            }
+            $elapsed = [Math]::Round($timer.Elapsed.TotalSeconds, 3)
+            $line = "SPEC048_RESULT label=$Label ordered=$Ordered requested_jobs=$requestedJobs effective_jobs=$effectiveJobs reported_cpu_budget=$reportedCpu host_cpu_count=$cpuBudget seconds=$elapsed backend_modules=$moduleCount"
+            Write-Output $line
+            $summary.Add($line)
+          }
+
+          Write-Output "SPEC048_ENV requested_jobs=$requestedJobs host_cpu_count=$cpuBudget backend_modules=$moduleCount"
+          $summary.Add("SPEC048_ENV requested_jobs=$requestedJobs host_cpu_count=$cpuBudget backend_modules=$moduleCount")
+          Invoke-Benchmark -Label "ordered-a" -Ordered $true
+          Invoke-Benchmark -Label "unordered-b" -Ordered $false
+          Invoke-Benchmark -Label "unordered-c" -Ordered $false
+          Invoke-Benchmark -Label "ordered-d" -Ordered $true
+          $summary | Set-Content -LiteralPath $summaryPath -Encoding utf8
+          Get-Content -LiteralPath $summaryPath
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-048-benchmark-evidence
+          path: |
+            ${{ runner.temp }}/spec048/*.log
+            ${{ runner.temp }}/spec048/summary.txt
+          if-no-files-found: warn
