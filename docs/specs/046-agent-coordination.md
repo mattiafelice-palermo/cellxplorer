@@ -501,3 +501,19 @@ R11 replaces the sparse embedded Plotly legend surface with a passive, single-co
 R11 now constrains the Series appearance modal content/body and three-panel row with min-height:0 and overflow hidden, so the root modal cannot become the legend overflow owner. The embedded legend panel flexes below the fixed scientific preview, owns its ScrollArea, and uses denser rows/swatches; only that list scrolls on overflow. The full legend modal remains the same passive entry model. Only R11 changed; R5 and R12 remain repository-clean pending user runtime confirmation, and the browser matrix is unclaimed.
 
 ---
+### 2026-08-16T15:53:23+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- browser reproduction/instrumentation: NOT RUN (user explicitly prohibits browser use)
+- R5 code changes: NONE; unresolved and unclaimed
+- focused frontend tests: NOT rerun (no code changes in this pass)
+- TypeScript/Vite/preflight: NOT rerun (no code changes in this pass)
+
+**Message**
+
+R5 remains unresolved. The reviewer requires real-browser reproduction, event/state instrumentation, and repeated post-fix browser checks; the user has explicitly prohibited browser use, so the implementer cannot perform or claim that evidence. No code-only fix was attempted and no new code changes were made. Leave R5 blocked pending the user’s browser acceptance or an explicit change to the browser-use instruction; do not claim COMPLETE.
+
+---
