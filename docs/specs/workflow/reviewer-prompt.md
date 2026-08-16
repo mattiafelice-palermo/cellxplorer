@@ -50,93 +50,56 @@ Stay in this **ChatGPT Chat** conversation.
 **Do not switch to ChatGPT Work.**  
 **Do not create a scheduled task or automation.**
 
-Once polling begins, remain in the heartbeat/review cycle until `ACTION: COMPLETE`, unless the user explicitly tells you to stop.
+Once polling begins, remain in the heartbeat/review cycle until `ACTION: COMPLETE` or `ACTION: BLOCKED`, unless the user explicitly tells you to stop.
 
-While remote state says `TURN: IMPLEMENTER`:
+While remote state says `TURN: IMPLEMENTER`, use this fixed polling cycle:
 
-1. Use the Chat Python tool for a sequence of short heartbeat calls. Each call must remain safely below the Python execution timeout.
-
-For the first six calls, use approximately:
-
-```python
-import time
-from datetime import datetime
-
-time.sleep(45)
-print(
-    datetime.now().astimezone().isoformat(timespec="seconds")
-    + " — heartbeat X/7 — elapsed ~Ys",
-    flush=True,
-)
-```
-
-where:
+1. Run **4 sequential Python heartbeats of approximately 45 seconds**.
+2. Each heartbeat prints only:
 
 ```text
-heartbeat 1/7 → elapsed ~45s
-heartbeat 2/7 → elapsed ~90s
-heartbeat 3/7 → elapsed ~135s
-heartbeat 4/7 → elapsed ~180s
-heartbeat 5/7 → elapsed ~225s
-heartbeat 6/7 → elapsed ~270s
+timestamp | heartbeat X/4 | elapsed
 ```
 
-Then run one final approximately 30-second call:
-
-```python
-import time
-from datetime import datetime
-
-time.sleep(30)
-print(
-    datetime.now().astimezone().isoformat(timespec="seconds")
-    + " — heartbeat 7/7 — elapsed ~300s",
-    flush=True,
-)
-```
-
-2. The heartbeat timestamp/counter is the feedback mechanism for the polling cadence.
-
-After every heartbeat, inspect the printed counter and elapsed time:
+3. Heartbeats must progress strictly:
 
 ```text
-elapsed clearly below ~5 minutes
-→ next action MUST be another Python heartbeat call
-
-elapsed approximately ~5 minutes
-→ next action MUST be one GitHub check
+1/4 → 2/4 → 3/4 → 4/4
 ```
 
-Do not query GitHub after every short heartbeat.
+Immediately after one heartbeat returns, the **next action must be the next heartbeat**. Do not reason, narrate, inspect repository state, or perform other work between heartbeats.
 
-3. After roughly five minutes, use the **GitHub connector in Chat** to refresh the shared feature branch.
-
-4. Re-read:
+4. After `4/4`, immediately use the **GitHub connector in Chat** to refresh the shared feature branch and re-read:
    - `docs/specs/NNN-agent-state.json`;
    - latest entries in `docs/specs/NNN-agent-coordination.md`.
-
-5. If still `TURN: IMPLEMENTER`:
-   - reset the heartbeat counter;
-   - immediately begin another ~5-minute heartbeat cycle;
-   - do not send a normal response saying that you are still waiting.
-
+5. If still `TURN: IMPLEMENTER`, reset to `1/4` and immediately repeat the cycle.
 6. If `TURN: REVIEWER`, stop polling and act immediately according to `ACTION`.
-
-7. If `ACTION: COMPLETE`, stop.
+7. If `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
 
 The committed JSON state is always authoritative.
 
+### Recovery/watchdog rule
+
+If any of the following occurs:
+
+- a heartbeat number repeats;
+- more than approximately 90 seconds unexpectedly passes between heartbeat outputs;
+- the current polling counter/state is uncertain;
+- the ChatGPT turn is interrupted and later resumed;
+
+**do not wait further and do not try to reconstruct the old counter. Check the live GitHub state immediately.**
+
+After that state check:
+
+- if `TURN: IMPLEMENTER`, start a fresh cycle at `1/4`;
+- if `TURN: REVIEWER`, act on the current `ACTION` immediately;
+- if `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
+
+When uncertain, prefer an immediate GitHub state check over additional waiting.
+
 ### Waiting output discipline
 
-During heartbeat waiting, keep visible output minimal.
-
-Each heartbeat should print only its timestamp, heartbeat counter, and approximate elapsed time, for example:
-
-```text
-2026-08-15T19:04:12+02:00 — heartbeat 1/7 — elapsed ~45s
-```
-
-Do not add prose such as:
+During heartbeat waiting, visible output must contain only the timestamp, heartbeat counter, and elapsed time. Do not add prose such as:
 
 - “Still waiting.”
 - “The implementer is still working.”
@@ -150,19 +113,15 @@ Do not repeatedly explain the polling mechanism.
 
 A user message may interrupt the current heartbeat turn.
 
-If that happens:
-
 1. Process the user's new instruction.
 2. If the user explicitly asks you to stop polling, stop.
-3. Otherwise, **do not treat the interruption as the end of the heartbeat workflow**.
-4. Inspect the latest visible heartbeat counter/elapsed time.
-5. Resume from that point:
-   - if the cycle has not yet reached approximately five minutes, the next action must be another Python heartbeat call;
-   - if approximately five minutes have elapsed, perform the GitHub check and then continue normally.
+3. Otherwise, **check live GitHub state immediately** rather than resuming the old heartbeat counter.
+4. Continue from the authoritative state:
+   - `TURN: IMPLEMENTER` → start a fresh `1/4` cycle;
+   - `TURN: REVIEWER` → act immediately;
+   - `ACTION: COMPLETE` or `ACTION: BLOCKED` → stop.
 
-Do not merely reply that you will resume polling and then stop.
-
-**Replying that you will continue the heartbeat is not the same as continuing it. You must actually execute the next heartbeat or GitHub-check action.**
+Do not merely reply that you will resume polling and then stop. You must actually execute the required GitHub check or next workflow action.
 
 ## Review
 
@@ -190,15 +149,20 @@ Report only concrete defects, spec deviations, regression risks, or required ver
 
 ### Verification evidence
 
-Treat canonical preflight as the repository's aggregate verification command. When an implementer reports a successful `python scripts\preflight.py` run, do not request an additional standalone full backend or frontend-policy run merely to duplicate coverage that preflight already executed.
+Canonical `python scripts\preflight.py` is the aggregate full-suite verification for a normal implementer handoff. It already includes the complete backend suite and complete frontend policy suite.
 
-Require a separate full-suite result only when:
+Do **not** request, require, or treat as missing an additional standalone full backend/frontend-policy run when canonical preflight will be or has been run for the same handoff.
 
-- the active spec explicitly requires that standalone command/result;
-- a finding specifically needs isolated full-suite evidence;
-- preflight or its test coverage changed and needs independent confirmation.
+A separate full-suite invocation is justified only when:
 
-Focused tests remain useful evidence for attribution to the changed subsystem and may still be required by the active spec. Never waive explicit scientific, migration, packaging, browser, or manual acceptance checks merely because preflight passed.
+- the active spec/reviewer acceptance criterion **literally requires a separate full-suite command/result**; or
+- the user explicitly requests one.
+
+Do not create a separate full-suite requirement merely because a change is scientific, broad, high-risk, or complex. Require strong focused regression tests for those risks instead.
+
+If a failure needs diagnosis, expect the implementer to use focused tests/modules first rather than rerunning the entire suite by default.
+
+Focused tests remain useful evidence for attribution to the changed subsystem and may still be explicitly required by the active spec. Never waive scientific, migration, packaging, browser, or manual acceptance checks merely because preflight passed.
 
 If Vite/preflight is reported blocked by a known coding-environment filesystem restriction, distinguish that environment limitation from a product defect. The implementer should request the required filesystem access on the first invocation rather than intentionally failing once and retrying. A blocked build is still unverified and must be recorded as such.
 
@@ -238,9 +202,11 @@ When `ACTION: FINAL_REVIEW`, perform a fresh cumulative review against the corre
 
 Use the review file corresponding to the parent spec itself, following the same filename rule. Update that same parent review file on later rounds.
 
-Use the same R-finding loop if needed.
+Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
 
-When clean, update the final review record and apply the equivalent of:
+### Final review clean and complete
+
+When the cumulative review is clean **and all required acceptance evidence is available**, update the final review record and apply the equivalent of:
 
 ```bash
 python docs/specs/workflow/spec_workflow.py complete \
@@ -249,4 +215,37 @@ python docs/specs/workflow/spec_workflow.py complete \
 
 Commit/push final review + JSON state + final timestamped coordination entry together.
 
-When `ACTION: COMPLETE`, stop.
+### Final review clean but externally blocked
+
+If there are no remaining implementation findings, but the parent cannot be completed because a required **external dependency or acceptance input is unavailable**, do not invent a finding and do not mark the workflow complete.
+
+Examples include required private/reference files that have not been provided, required external approvals, or required hardware/manual evidence that is not available to either agent in the current workflow.
+
+Record the blocked reason in the canonical parent review, then apply:
+
+```bash
+python docs/specs/workflow/spec_workflow.py block \
+  --message "Exact external dependency preventing completion."
+```
+
+Commit/push the parent review + JSON state + timestamped coordination entry together.
+
+`ACTION: BLOCKED` means:
+
+- no implementer finding is outstanding;
+- the feature is **not complete and not merge-ready**;
+- neither agent should keep polling or doing speculative work;
+- the current sessions stop until the external dependency is actually available.
+
+Do **not** search the user's File Library, unrelated storage, previous uploads, or other sources trying to satisfy an external gate unless the user explicitly asks you to search there or explicitly identifies the source to use. If the required evidence has not been supplied to this workflow, record `BLOCKED` rather than improvising a search.
+
+When the user later confirms that the required external dependency is available, resume with:
+
+```bash
+python docs/specs/workflow/spec_workflow.py resume-final-review \
+  --message "Required external dependency is now available."
+```
+
+Commit/push the resumed JSON state + timestamped coordination entry, re-read the newly available evidence, and continue the same cumulative `FINAL_REVIEW`. Do not skip directly from `BLOCKED` to `COMPLETE` without performing the resumed final review.
+
+When `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
