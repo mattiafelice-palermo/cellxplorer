@@ -259,6 +259,56 @@ test("all-series homogenization applies the chosen old default in one explicit p
   assert.equal(nextOverrides.c2.marker_symbol, "circle");
 });
 
+test("all-series colour homogenization follows linked secondaries through their primaries", () => {
+  const primaryA = cell({ key: "c1", sourceKey: "c1", label: "Cell 1" });
+  const secondaryA = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell 1 CE",
+  });
+  const primaryB = cell({ key: "c2", sourceKey: "c2", label: "Cell 2" });
+  const secondaryB = cell({
+    key: "y2:ce:c2",
+    sourceKey: "c2",
+    axis: "y2",
+    measure: "ce",
+    label: "Cell 2 CE",
+  });
+  const descriptors = [primaryA, secondaryA, primaryB, secondaryB];
+  const secondaryBase: BaseSeriesStyle = { ...base, color: "#00ff00" };
+  const beforeOverrides = {
+    c1: { color: "#ff0000" },
+    c2: { color: "#0000ff" },
+  };
+  const resolve = (overrides: typeof beforeOverrides) =>
+    resolveAllSeriesStyles({
+      descriptors,
+      baseFor: (descriptor) => (isSecondarySeries(descriptor) ? secondaryBase : base),
+      overrides,
+      linkSecondaryColors: true,
+    });
+
+  const before = resolve(beforeOverrides);
+  assert.equal(sharedValue(descriptors.map((descriptor) => before.get(descriptor.key)!.color)).mixed, true);
+
+  const nextOverrides = applySeriesOverridePatch(
+    beforeOverrides,
+    descriptors.map((descriptor) => descriptor.key),
+    { color: "#abcdef" },
+  );
+  const after = resolve(nextOverrides);
+  assert.deepEqual(
+    descriptors.map((descriptor) => after.get(descriptor.key)!.color),
+    ["#abcdef", "#abcdef", "#abcdef", "#abcdef"],
+  );
+  assert.deepEqual(
+    linkedSecondarySeriesKeys(descriptors, descriptors.map((descriptor) => descriptor.key), nextOverrides, true),
+    ["y2:ce:c1", "y2:ce:c2"],
+  );
+});
+
 test("series selection ranges stay anchored and bounded to one ordered group", () => {
   const items = [{ key: "c1" }, { key: "c2" }, { key: "c3" }, { key: "c4" }];
   assert.deepEqual(seriesSelectionRange(items, "c1", "c3"), ["c1", "c2", "c3"]);

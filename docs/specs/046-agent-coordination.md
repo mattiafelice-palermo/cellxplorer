@@ -338,3 +338,21 @@ R3-R9 fixed only: All series now aggregates effective mixed values and applies e
 The first R3-R9 fix pass is code-clean for R4-R7 and R9, pending the user's browser recheck, but two acceptance gaps remain. R3: `All series` must not disable colour just because a linked secondary is present when its primary is also in the all-series target; homogenize through the primary/non-linked targets while preserving link semantics. R8: give Open the same labelled-field geometry/control baseline as Symbol and Size in both single- and multi-series views rather than merely removing the previous top margin. Fix only these two follow-ups, add focused coverage for the linked-secondary all-series colour case where practical, run focused verification plus canonical preflight, and hand back to REVIEWER for the same FINAL_REVIEW.
 
 ---
+### 2026-08-16T10:57:47+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS - node --test frontend\tests\seriesStyling.test.ts (55 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- git diff --check: PASS
+- canonical preflight: PASS - python scripts\preflight.py with expanded filesystem access, 4/4 stages, 127 backend/frontend modules
+- manual/browser checks: NOT RUN by implementer - user-owned cumulative acceptance remains pending; no matrix completion claimed
+
+**Message**
+
+R3/R8 follow-up only: All-series Colour stays actionable when linked secondaries have present primaries, with focused mixed-colour homogenization coverage and link semantics preserved. Single and bulk Open controls now use labelled-field wrappers with aligned control geometry; bulk Mixed state remains indeterminate and accessible. Please continue the cumulative FINAL_REVIEW; R4-R7/R9 still require user browser recheck and the manual matrix is not claimed complete.
+
+---

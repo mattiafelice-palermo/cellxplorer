@@ -820,6 +820,7 @@ export function SeriesStyleModal({
     ],
   );
   const bulkColourEnabled = linkedBulkColourKeys.length === 0;
+  const allSeriesColourEnabled = isAllSeries || bulkColourEnabled;
 
   const setOverride = (key: string, patch: SeriesStyleOverride) =>
     commit(
@@ -1830,12 +1831,12 @@ export function SeriesStyleModal({
                       size="xs"
                       format="hex"
                       aria-label="Bulk colour"
-                      disabled={!bulkColourEnabled}
+                      disabled={!allSeriesColourEnabled}
                       placeholder={bulkResolved.color.mixed ? "Mixed" : "Colour"}
                       value={bulkResolved.color.mixed ? "" : bulkResolved.color.value ?? ""}
                       onChange={(value) => applyBulkPatch({ color: value || null })}
                     />
-                    {!bulkColourEnabled && (
+                    {!allSeriesColourEnabled && (
                       <Text size="9px" c="dimmed" mt={2}>
                         Bulk colour editing is disabled because colour is linked from the primary
                         series for {linkedBulkColourKeys.length === 1 ? "one" : linkedBulkColourKeys.length} selected secondary series.
@@ -2014,16 +2015,28 @@ export function SeriesStyleModal({
                       }
                     />
                   </div>
-                  <Checkbox
-                    size="xs"
-                    label="Open"
-                    disabled={!bulkMarkersEnabled}
-                    indeterminate={bulkResolved.markerOpen.mixed}
-                    checked={bulkResolved.markerOpen.value ?? false}
-                    onChange={(event) =>
-                      applyBulkPatch({ marker_open: event.currentTarget.checked })
-                    }
-                  />
+                  <Box>
+                    <Group gap={4} mb={4}>
+                      <Text size="xs" fw={500}>
+                        Open
+                      </Text>
+                      {bulkResolved.markerOpen.mixed && (
+                        <Badge size="xs" variant="light" color="gray">
+                          Mixed
+                        </Badge>
+                      )}
+                    </Group>
+                    <Checkbox
+                      size="xs"
+                      aria-label="Open"
+                      disabled={!bulkMarkersEnabled}
+                      indeterminate={bulkResolved.markerOpen.mixed}
+                      checked={bulkResolved.markerOpen.value ?? false}
+                      onChange={(event) =>
+                        applyBulkPatch({ marker_open: event.currentTarget.checked })
+                      }
+                    />
+                  </Box>
                 </Group>
 
                 <Divider label="Legend" labelPosition="left" />
@@ -2262,15 +2275,20 @@ export function SeriesStyleModal({
                       setOverride(active.key, { marker_size: value === "" ? null : Number(value) })
                     }
                   />
-                  <Switch
-                    size="xs"
-                    label="Open"
-                    disabled={!markersEnabled}
-                    checked={activeResolved?.markerOpen ?? false}
-                    onChange={(event) =>
-                      setOverride(active.key, { marker_open: event.currentTarget.checked })
-                    }
-                  />
+                  <Box>
+                    <Text size="xs" fw={500} mb={4}>
+                      Open
+                    </Text>
+                    <Switch
+                      size="xs"
+                      aria-label="Open"
+                      disabled={!markersEnabled}
+                      checked={activeResolved?.markerOpen ?? false}
+                      onChange={(event) =>
+                        setOverride(active.key, { marker_open: event.currentTarget.checked })
+                      }
+                    />
+                  </Box>
                 </Group>
 
                 <Divider label="Legend" labelPosition="left" />
