@@ -1,6 +1,6 @@
 # 046 — Series appearance manager
 
-**Status:** Plan  
+**Status:** Implementation complete; final acceptance pending the cumulative manual/browser matrix.
 **Repository:** `mattiafelice-palermo/cellxplorer`  
 **Authoring baseline / merge base:** `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`  
 **Shared feature branch:** `feature/series-appearance-manager`  

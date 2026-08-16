@@ -4,6 +4,22 @@
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend
   policy tests. **Implementation ready for review.**
+- [`046-series-appearance-manager.md`](046-series-appearance-manager.md)
+  turns the Series appearance modal into a multi-selection and bulk-edit manager, adds persisted
+  group-local ordering and real Plotly legend order, and provides a detached legend preview while
+  keeping the scientific preview fixed. **Implementation complete; final acceptance pending the
+  cumulative manual/browser matrix.**
+  - [`046.1-series-selection-and-bulk-editing.md`](046.1-series-selection-and-bulk-editing.md)
+    — multi-selection, mixed-value bulk styling, legend membership, and Reset selected.
+    **Implemented — review-clean.**
+  - [`046.2-series-ordering-and-legend-order.md`](046.2-series-ordering-and-legend-order.md)
+    — persisted group-local ordering, accessible reorder controls, and deterministic Plotly
+    legend order. **Implemented — review-clean.**
+  - [`046.3-detached-legend-preview-and-integration.md`](046.3-detached-legend-preview-and-integration.md)
+    — detached passive Plotly legend preview and cumulative supported-family integration.
+    **Implemented — review-clean.**
+  Coordination: [`046-agent-coordination.md`](046-agent-coordination.md); the 33-item manual/browser
+  acceptance matrix remains pending.
 - [`043-context-sync-and-cache-reclamation.md`](043-context-sync-and-cache-reclamation.md)
   two independent maintenance parts, to be done in separate sessions. Part A folds Parent 040 into the
   project-context architecture file and closes the process gap that let those files drift 405 commits.

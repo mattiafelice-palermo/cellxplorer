@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.24.0-beta.1 - 2026-08-16
+
+### New features
+
+- Add the Series appearance manager for multi-series selection and bulk style edits, persistent group-local ordering, and a detached legend preview that keeps scientific plots fixed.
+
 ## 0.23.0-beta.1 - 2026-08-16
 
 ### New features
