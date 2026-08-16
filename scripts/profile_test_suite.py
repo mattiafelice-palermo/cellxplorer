@@ -271,6 +271,7 @@ def _summarize_backend(
     cases = [case for payload in module_payloads for case in payload["case_timings"]]
     durations = [float(case["duration_seconds"]) for case in cases]
     total_case_seconds = sum(durations)
+    total_body_seconds = sum(float(case["body_seconds"]) for case in cases)
     module_rows = []
     for payload in sorted(module_payloads, key=lambda item: item["module"]):
         module_cases = payload["case_timings"]
@@ -298,7 +299,7 @@ def _summarize_backend(
         )
     top = sorted(cases, key=lambda item: float(item["duration_seconds"]), reverse=True)
     concentrations = {
-        str(limit): (sum(float(case["duration_seconds"]) for case in top[:limit]) / total_case_seconds if total_case_seconds else 0.0)
+        str(limit): (sum(float(case["body_seconds"]) for case in top[:limit]) / total_body_seconds if total_body_seconds else 0.0)
         for limit in (10, 25, 50)
     }
     return {
@@ -312,10 +313,20 @@ def _summarize_backend(
         "sum_module_wall_seconds": sum(float(item["module_wall_seconds"]) for item in module_payloads),
         "sum_module_cpu_seconds": sum(float(item.get("module_cpu_seconds", 0.0)) for item in module_payloads),
         "sum_process_wall_seconds": sum(float(item["process_wall_seconds"]) for item in module_payloads),
-        "case_body_seconds": total_case_seconds,
+        "case_duration_seconds": total_case_seconds,
+        "case_body_seconds": total_body_seconds,
         "case_duration_statistics": duration_statistics(durations),
         "top_50_cases": top[:50],
         "top_case_concentration": concentrations,
+        "top_case_duration_concentration": {
+            str(limit): (
+                sum(float(case["duration_seconds"]) for case in top[:limit])
+                / total_case_seconds
+                if total_case_seconds
+                else 0.0
+            )
+            for limit in (10, 25, 50)
+        },
         "modules": module_rows,
         "failures": [
             {

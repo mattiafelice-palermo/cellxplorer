@@ -123,6 +123,8 @@ not ok 2 - beta
         self.assertEqual(summary["module_count"], 1)
         self.assertEqual(summary["discovered_case_count"], 2)
         self.assertEqual(summary["recorded_case_count"], 2)
+        self.assertEqual(summary["case_duration_seconds"], 0.5)
+        self.assertEqual(summary["case_body_seconds"], 0.43)
         self.assertEqual(summary["modules"][0]["case_body_seconds"], 0.43)
         self.assertEqual(summary["sum_module_cpu_seconds"], 0.7)
         self.assertIn("top_50_cases", summary)
