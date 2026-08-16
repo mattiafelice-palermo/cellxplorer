@@ -51,3 +51,12 @@ Implemented measured fixture/setup reductions for Fast Neware, Beta bootstrap, a
 Original Spec 048 implementation is review-clean. Per the user's explicit expanded performance goal, continue beyond original scope: remove test-pool tail latency/worker inefficiency, parallelize the two remaining large serial test modules without weakening coverage, then measure a reversible Rolldown-powered Vite migration against the ~45 s bundle bottleneck. Aim toward ~10 s normal preflight; do not add backend test skipping/caching yet.
 
 ---
+### 2026-08-16T19:16:20+02:00 — REVIEWER → IMPLEMENTER — 048.1
+
+**Result:** Follow-on child queued; current active child unchanged
+
+**Message**
+
+After child 048 is review-clean, continue directly with `048.1-release-ci-runtime-optimization.md` on the same branch. Do not switch early: finish the current FIX_REVIEW work and hand it back normally. The reviewer `review-clean` transition will advance `active_child` from 048 to 048.1 automatically. Child 048.1 removes duplicated GitHub release work, seeds/reuses a default-branch Rust dependency cache, and uses native GitHub Actions parallel steps wherever independent work can safely overlap, while preserving every release verification/signing/publication gate.
+
+---
