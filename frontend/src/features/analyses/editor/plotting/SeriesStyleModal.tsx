@@ -35,6 +35,7 @@ import {
   IconEye,
   IconEyeOff,
   IconGripVertical,
+  IconMinus,
   IconPencil,
   IconPlus,
   IconRotate,
@@ -194,6 +195,16 @@ const NEW_PALETTE_COLOR = "#868e96";
 
 /** Maximum number of colours a palette can hold. */
 export const MAX_PALETTE_COLOURS = 20;
+
+const MIXED_SWITCH_STYLES = {
+  track: {
+    backgroundColor: "var(--mantine-color-orange-light)",
+    borderColor: "var(--mantine-color-orange-outline)",
+  },
+  thumb: {
+    borderColor: "var(--mantine-color-orange-outline)",
+  },
+};
 
 /**
  * Which preset the plot's current palette corresponds to, for seeding the
@@ -2026,39 +2037,39 @@ export function SeriesStyleModal({
                         </Badge>
                       )}
                     </Group>
-                    <Checkbox
-                      size="xs"
-                      aria-label="Open"
-                      disabled={!bulkMarkersEnabled}
-                      indeterminate={bulkResolved.markerOpen.mixed}
-                      checked={bulkResolved.markerOpen.value ?? false}
-                      onChange={(event) =>
-                        applyBulkPatch({ marker_open: event.currentTarget.checked })
-                      }
-                    />
+                    <Box style={{ minHeight: 30, display: "flex", alignItems: "center" }}>
+                      <MixedStateSwitch
+                        ariaLabel="Open"
+                        mixed={bulkResolved.markerOpen.mixed}
+                        checked={bulkResolved.markerOpen.value ?? false}
+                        disabled={!bulkMarkersEnabled}
+                        mixedAction="turn Open on for all selected series"
+                        onChange={(checked) => applyBulkPatch({ marker_open: checked })}
+                      />
+                    </Box>
+                    {bulkResolved.markerOpen.mixed && (
+                      <Text size="9px" c="orange" mt={2}>
+                        Mixed — click to turn Open on for all selected series.
+                      </Text>
+                    )}
                   </Box>
                 </Group>
 
                 <Divider label="Legend" labelPosition="left" />
-                <Group gap="xs" wrap="wrap">
-                  <Checkbox
-                    size="xs"
+                <Box>
+                  <MixedStateSwitch
                     label="Show in legend"
-                    indeterminate={bulkResolved.showInLegend.mixed}
-                    checked={
-                      bulkResolved.showInLegend.mixed
-                        ? false
-                        : bulkResolved.showInLegend.value ?? true
-                    }
-                    onChange={(event) =>
-                      applyBulkPatch({
-                        show_in_legend: bulkResolved.showInLegend.mixed
-                          ? true
-                          : event.currentTarget.checked,
-                      })
-                    }
+                    mixed={bulkResolved.showInLegend.mixed}
+                    checked={bulkResolved.showInLegend.value ?? true}
+                    mixedAction="show all selected series in the legend"
+                    onChange={(checked) => applyBulkPatch({ show_in_legend: checked })}
                   />
-                </Group>
+                  {bulkResolved.showInLegend.mixed && (
+                    <Text size="9px" c="orange" mt={2}>
+                      Mixed — click to show all selected series in the legend.
+                    </Text>
+                  )}
+                </Box>
 
                 <Text size="xs" c="dimmed">
                   Legend name is available when exactly one series is selected.
@@ -2279,15 +2290,17 @@ export function SeriesStyleModal({
                     <Text size="xs" fw={500} mb={4}>
                       Open
                     </Text>
-                    <Switch
-                      size="xs"
-                      aria-label="Open"
-                      disabled={!markersEnabled}
-                      checked={activeResolved?.markerOpen ?? false}
-                      onChange={(event) =>
-                        setOverride(active.key, { marker_open: event.currentTarget.checked })
-                      }
-                    />
+                    <Box style={{ minHeight: 30, display: "flex", alignItems: "center" }}>
+                      <Switch
+                        size="xs"
+                        aria-label="Open"
+                        disabled={!markersEnabled}
+                        checked={activeResolved?.markerOpen ?? false}
+                        onChange={(event) =>
+                          setOverride(active.key, { marker_open: event.currentTarget.checked })
+                        }
+                      />
+                    </Box>
                   </Box>
                 </Group>
 
@@ -2306,6 +2319,43 @@ export function SeriesStyleModal({
         </PanelShell>
       </Group>
     </Modal>
+  );
+}
+
+function MixedStateSwitch({
+  label,
+  ariaLabel,
+  mixed,
+  checked,
+  disabled,
+  mixedAction,
+  onChange,
+}: {
+  label?: ReactNode;
+  ariaLabel?: string;
+  mixed: boolean;
+  checked: boolean;
+  disabled?: boolean;
+  mixedAction: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const mixedHint = `Mixed — click to ${mixedAction}`;
+  return (
+    <Switch
+      size="xs"
+      label={label}
+      aria-label={ariaLabel}
+      title={mixed ? mixedHint : undefined}
+      disabled={disabled}
+      checked={mixed ? false : checked}
+      thumbIcon={
+        mixed ? (
+          <IconMinus size={11} stroke={3} color="var(--mantine-color-orange-light-color)" />
+        ) : undefined
+      }
+      styles={mixed ? MIXED_SWITCH_STYLES : undefined}
+      onChange={(event) => onChange(mixed ? true : event.currentTarget.checked)}
+    />
   );
 }
 
