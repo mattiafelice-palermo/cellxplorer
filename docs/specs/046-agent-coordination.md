@@ -562,3 +562,16 @@ R5 remains unresolved after the repeated browser-only gate. The reviewer require
 R5 remains unresolved because the reviewer requires real-browser reproduction, instrumentation, and repeated post-fix checks. The user’s direct instruction still prohibits browser use, so the implementer cannot perform or claim that evidence. The same blocker recurred across three resumed workflow turns; no further code-only fix is authorized.
 
 ---
+### 2026-08-16T16:06:50+02:00 — REVIEWER — 046.3
+
+**Result:** External dependency available; resuming final parent review
+
+**Findings**
+
+- None.
+
+**Message**
+
+The user has explicitly authorized browser reproduction, instrumentation, and repeated verification for R5; this supersedes the earlier no-browser instruction.
+
+---
