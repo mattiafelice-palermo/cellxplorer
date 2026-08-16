@@ -5,8 +5,8 @@ Branch: `feature/series-appearance-manager`
 Merge base: `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`  
 Final-child review-clean checkpoint: `1096c744d878bfc495be3ab9aefbf332b261e877`  
 Closure-fix commit: `f3471eedb39d33396d98c582369cb971ed869a52`  
-Latest reviewer-inspected implementation commit: `6c63c4f123e0834d4f0d503b7b8df56d33c8ffdc`  
-Status: **REPOSITORY/CODE REVIEW CLEAN — USER FINAL ACCEPTANCE REMAINS**
+Final implementation-affecting checkpoint: `6c63c4f123e0834d4f0d503b7b8df56d33c8ffdc`  
+Status: **FINAL REVIEW CLEAN — READY TO MERGE**
 
 ## Current cumulative status
 
@@ -18,7 +18,7 @@ Status: **REPOSITORY/CODE REVIEW CLEAN — USER FINAL ACCEPTANCE REMAINS**
 - R10 detached legend rendering is user-accepted.
 - R11 embedded legend presentation is user-accepted.
 - R12 local scientific-preview latency is user-accepted.
-- The broader cumulative manual/browser acceptance remains the only final external gate before merge readiness.
+- The staged cumulative manual/browser acceptance is now complete: before the final R5 pass the user explicitly reported that the modal scroll behavior and preview responsiveness were correct and that Shift-click was the only remaining defect; the final browser-debug pass resolves that sole outstanding issue.
 
 ## Verification record
 
@@ -47,13 +47,23 @@ Status: **REPOSITORY/CODE REVIEW CLEAN — USER FINAL ACCEPTANCE REMAINS**
 - R10 detached legend: PASS.
 - R11 modal/legend scroll ownership and density: PASS.
 - R12 preview responsiveness: PASS.
+- The user reported that everything except Shift-click was working after the preceding acceptance passes; this closes the rest of the cumulative UI matrix by staged acceptance rather than by one single 33-item rerun.
 - R5 had failed before the final browser-debug pass; the implementer's post-fix browser evidence above now covers the confirmed root cause and required repeated interaction matrix.
 
 ### Reviewer-independent
 
-I independently inspected the final R5 patch. It is deliberately narrow: the only implementation change removes `event.preventDefault()` from the modified checkbox click path while retaining `suppressNativeCheckboxChange.current = true` and the single explicit `onSelect(modifiers)` transition. This matches the browser-observed failure mechanism and does not alter the inclusive range policy, modifier precedence, drag handling, or unrelated styling behavior.
+Using ChatGPT Chat + the GitHub connector, I independently inspected:
 
-I did **not** independently run the browser, test suite, TypeScript, Vite build, or preflight commands.
+- final implementation checkpoint `6c63c4f123e0834d4f0d503b7b8df56d33c8ffdc`;
+- the exact R5 patch and surrounding row/checkbox pointer-down, click, `onChange`, modifier-snapshot and suppression logic;
+- the existing inclusive `seriesSelectionRange(...)` / `seriesSelectionResult(...)` policy;
+- the browser-recorded reproduction and root cause;
+- the cumulative branch comparison against the original merge base: branch is ahead and not behind;
+- the prior Parent 046 closure/version findings and staged user acceptance record.
+
+The final R5 patch is deliberately narrow: the only implementation change removes `event.preventDefault()` from the modified checkbox click path while retaining `suppressNativeCheckboxChange.current = true` and the single explicit `onSelect(modifiers)` transition. This matches the browser-observed failure mechanism and does not alter inclusive range semantics, modifier precedence, drag handling, or unrelated styling behavior.
+
+I did **not** independently run the browser, test suite, TypeScript, Vite build, or preflight commands. Those results are implementer-reported and are recorded as such.
 
 ## Findings
 
@@ -107,6 +117,10 @@ The failure was not in `seriesSelectionRange(...)`. Browser reproduction showed 
 
 **Resolution: USER-ACCEPTED.**
 
-## Decision
+## Final decision
 
-**REPOSITORY/CODE REVIEW CLEAN.** No implementation findings remain. Parent 046 is not yet declared merge-ready solely because the cumulative user/manual acceptance gate has not been explicitly closed after the final R5 fix. Once that acceptance is supplied, resume `FINAL_REVIEW` and, if no new issue is reported, mark the workflow complete.
+**FINAL REVIEW CLEAN — READY TO MERGE.**
+
+No implementation findings remain and no manual/browser acceptance blocker remains. Parent 046 satisfies its locked presentation-only scope and acceptance requirements, required verification is recorded passing, and the feature branch remains cleanly based on the confirmed merge base without unrelated scientific/backend/cache/migration scope.
+
+The workflow may transition to `COMPLETE`. The merge itself remains a user decision.
