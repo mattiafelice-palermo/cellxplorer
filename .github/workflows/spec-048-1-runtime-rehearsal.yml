@@ -35,9 +35,9 @@ jobs:
         run: |
           Write-Host "rust_cache_hit=${{ steps.rust_cache.outputs.cache-hit }}"
           $timer = [System.Diagnostics.Stopwatch]::StartNew()
-          # The production sidecar is ignored and absent from a clean checkout. This Tauri merge
-          # patch is only for cache warming; release-input verification still requires the real sidecar.
-          $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
+          # The production sidecar and frontend dist are absent from a clean checkout. This Tauri
+          # merge patch is only for cache warming; release-input verification requires both real inputs.
+          $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
           cargo build --release --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $timer.Stop()
@@ -71,7 +71,7 @@ jobs:
           Write-Host "rust_cache_hit=${{ steps.rust_cache.outputs.cache-hit }}"
           $timer = [System.Diagnostics.Stopwatch]::StartNew()
           # Match the main cache warmer's dependency-only Tauri configuration.
-          $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
+          $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
           cargo build --release --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $timer.Stop()

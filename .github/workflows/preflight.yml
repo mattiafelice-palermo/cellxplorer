@@ -77,7 +77,7 @@ jobs:
         run: |
           # The production sidecar is an ignored build artifact and is absent from a clean checkout.
           # Tauri merges this JSON patch for the cache-only compile; release packaging still uses the
-          # repository config and verifies the real sidecar before Tauri runs.
-          $env:TAURI_CONFIG = '{"bundle":{"resources":[]}}'
+          # repository config and verifies the real frontend/sidecar before Tauri runs.
+          $env:TAURI_CONFIG = '{"bundle":{"resources":[]},"build":{"frontendDist":null}}'
           cargo build --release --locked --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
