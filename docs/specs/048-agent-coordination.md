@@ -100,3 +100,13 @@ Resolved reviewer findings R1-R3: persist successful task timing history for ord
 R3 is resolved: retain the compatible Vite 8/Rolldown migration. R1/R2 remain open because the returned test-side optimization has not demonstrated a comparable net speedup: the focused set rose from 35.573 s to 56.149 s and the canonical test pool rose from the original-scope 36.54/42.42 s checkpoint to 78.62/81.29 s. The implementation record attributes this to changed background load/resource contention, so the timing evidence is not comparable. Rework or revert the partition topology as needed, then perform controlled same-machine A/B timing for task ordering and worker count. Preserve all tests; do not add backend skipping/caching.
 
 ---
+
+### 2026-08-16T19:47:05+02:00 — REVIEWER → IMPLEMENTER — 048
+
+**Result:** Timing acceptance clarified after user input
+
+**Message**
+
+The user confirms the local development machine is currently behaving erratically, so do not treat the prior local slowdown as evidence that R1/R2 themselves regressed. Use GitHub Actions Windows as the primary performance reference. Prefer a temporary/diagnostic same-job A/B benchmark: run baseline and candidate topology sequentially on the same runner with identical dependencies, worker budget and test workload. The existing `preflight.yml` supports manual workflow dispatch. R1/R2 remain open only until controlled CI evidence identifies the best topology/order/worker count; preserve all tests and do not add backend skipping/caching.
+
+---
