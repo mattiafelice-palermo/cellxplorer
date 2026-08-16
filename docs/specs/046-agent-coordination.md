@@ -140,3 +140,20 @@ R5 fixed: bulk-colour gating now requires a present primary descriptor, with orp
 Fix only R1 in the canonical 046.2 review file: ensure a pending debounced series-order commit cannot overwrite a palette applied immediately after reordering. Preserve both order and palette state, verify, and do not begin 046.3.
 
 ---
+### 2026-08-16T05:08:09+02:00 — IMPLEMENTER → REVIEWER — 046.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (66 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- preflight: PASS - python scripts\preflight.py (elevated rerun; 4/4 stages)
+- manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
+
+**Message**
+
+046.2 R1 fixed only: flush pending base-style snapshots before Apply palette, synchronize the modal base draft with the applied palette, and add a focused order-after-palette composition regression. Do not begin 046.3 until review approves.
+
+---

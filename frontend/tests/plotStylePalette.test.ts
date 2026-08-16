@@ -4,6 +4,7 @@ import test from "node:test";
 import type { PlotStyle } from "../src/api.ts";
 import {
   DEFAULT_PLOT_STYLE,
+  applyAllSeriesStylePatch,
   applyPaletteToStyle,
   normalizePlotStyle,
   plotPalette,
@@ -30,6 +31,24 @@ test("applying a palette preserves the persisted series order", () => {
   const style = styleWith({ series_order: ["c2", "c1"] });
   applyPaletteToStyle(style, OKABE_ITO, null);
   assert.deepEqual(style.series_order, ["c2", "c1"]);
+});
+
+test("an order patch composed after palette application keeps both states", () => {
+  const style = styleWith({
+    palette: "app",
+    palette_id: "old-palette",
+    palette_colors: ["#111111"],
+    series_order: ["c1", "c2"],
+  });
+
+  applyPaletteToStyle(style, OKABE_ITO, "new-palette");
+  const reordered = applyAllSeriesStylePatch(style, { series_order: ["c2", "c1"] });
+
+  assert.deepEqual(reordered.series_order, ["c2", "c1"]);
+  assert.equal(reordered.palette, "custom");
+  assert.equal(reordered.palette_id, "new-palette");
+  assert.deepEqual(reordered.palette_colors, OKABE_ITO);
+  assert.deepEqual(reordered.custom_colors, {});
 });
 
 test("plot-style normalization round-trips series order without sharing its array", () => {

@@ -104,6 +104,7 @@ import {
   PALETTE_OPTIONS,
   PLOT_PALETTES,
   applyAllSeriesStylePatch,
+  applyPaletteToStyle,
   plotPalette,
   withoutSeriesColors,
 } from "./plotStyle";
@@ -554,6 +555,18 @@ export function SeriesStyleModal({
   };
 
   const applyScratchPalette = () => {
+    // A series reorder is held as a complete base-style snapshot until its
+    // debounce fires. Flush that snapshot before applying a palette so it
+    // cannot land afterward with stale palette/custom-colour fields.
+    flush();
+    // Keep the local base draft at the same palette as the parent. The next
+    // order patch is built from this draft, so palette-then-reorder composes
+    // with the already-applied palette instead of resurrecting its old one.
+    setDraftBaseStyle((current) => {
+      const next = { ...current };
+      applyPaletteToStyle(next, scratchColors, paletteSelection.palette_id);
+      return next;
+    });
     onApplyPalette?.(scratchColors, paletteSelection.palette_id);
     // The parent drops per-series colours so the palette reaches every series.
     // This draft is only synced from the spec on open, so mirror that here or
