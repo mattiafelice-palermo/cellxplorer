@@ -384,3 +384,20 @@ R3 and R8 are resolved on code inspection at `9c9c87ea18dae2efcc0b12050f15ec0f46
 The user's second browser pass disproves the code-only closure of R4 and R5: the Palettes-tab preview remains blank, and Shift+click still selects only the two endpoints instead of the contiguous range. The supplied screenshot also shows the separate detached Legend preview blank with five plotted series, recorded as R10. Fix only R4, R5 and R10 from the canonical Parent 046 review. Preserve the current user-directed `25ccd1ff...` mixed-switch/Open UI changes and all previously resolved behavior. Verify focused paths plus canonical preflight, hand back to REVIEWER for the same FINAL_REVIEW, and do not claim the remaining manual/browser matrix complete.
 
 ---
+### 2026-08-16T11:48:00+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS (62 targeted frontend tests)
+- frontend typecheck: PASS
+- frontend production bundle: PASS
+- preflight: PASS (4/4 stages)
+- browser checks: NOT RUN (user will perform manual checks)
+
+**Message**
+
+R4 palette preview now uses explicit intrinsic SVG geometry and currentColor theme-safe chrome; R5 shift-clicking a series checkbox follows the row range-selection path; R10 detached legend uses Plotly-visible null sentinels and SVG-compatible scatter traces. Only R4, R5, and R10 were changed.
+
+---

@@ -35,7 +35,7 @@ test("legend preview preserves effective Plotly styling without retaining curve 
     showlegend: true,
     legendgroup: "cell-1",
     legendrank: 2,
-    type: "scatter",
+    type: "scattergl",
     mode: "lines+markers",
     line,
     marker,
@@ -52,13 +52,14 @@ test("legend preview preserves effective Plotly styling without retaining curve 
   assert.equal(trace.name, "Styled series");
   assert.equal(trace.legendgroup, "cell-1");
   assert.equal(trace.legendrank, 2);
+  assert.equal(trace.type, "scatter", "legend preview keeps SVG-compatible scatter styling");
   assert.equal(trace.mode, "lines+markers");
   assert.deepEqual(trace.line, line);
   assert.deepEqual(trace.marker, marker);
   assert.equal(trace.opacity, 0.7);
   assert.equal("visible" in trace, false);
-  assert.deepEqual(trace.x, []);
-  assert.deepEqual(trace.y, []);
+  assert.deepEqual(trace.x, [0]);
+  assert.deepEqual(trace.y, [null]);
   assert.equal("customdata" in trace, false);
   assert.equal("hovertemplate" in trace, false);
   assert.equal(source.x.length, 10_000);

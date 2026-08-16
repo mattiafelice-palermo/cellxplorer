@@ -3,8 +3,9 @@
  *
  * The source figure is the same family-specific preview used by the real plot.
  * Only traces that Plotly would expose in its legend survive; their scientific
- * data is replaced with empty positional arrays so the detached instance can
- * render authentic Plotly symbols without retaining or drawing the curves.
+ * data is replaced with one null-valued sentinel point so the detached
+ * instance materialises authentic Plotly symbols without retaining or drawing
+ * the curves.
  */
 
 export type LegendPreviewFigure = {
@@ -15,6 +16,9 @@ export type LegendPreviewFigure = {
 export const LEGEND_PREVIEW_WIDTH = 620;
 export const LEGEND_PREVIEW_MIN_HEIGHT = 84;
 export const LEGEND_PREVIEW_MAX_HEIGHT = 220;
+/** Plotly drops zero-length traces before creating their legend entries. */
+export const LEGEND_PREVIEW_SENTINEL_X = 0;
+export const LEGEND_PREVIEW_SENTINEL_Y = null;
 /**
  * Keep Plotly live enough to expose its bounded legend scrollbar, while the
  * legend's own item click settings below make the surface passive.
@@ -112,16 +116,21 @@ export function buildLegendPreview(preview: LegendPreviewFigure): LegendPreviewF
       for (const field of TRACE_PRESENTATION_FIELDS) {
         if (field in trace) legendTrace[field] = copyValue(trace[field]);
       }
+      // The interactive preview may upgrade ordinary scatter traces to
+      // scattergl. The detached surface is a legend-only SVG/HTML widget, so
+      // preserve the effective line/marker style but avoid a WebGL-only trace
+      // type that has no benefit with sentinel data.
+      if (legendTrace.type === "scattergl") legendTrace.type = "scatter";
       legendTrace.name = trace.name ?? "";
       legendTrace.showlegend = true;
       // Keep the normal visible state so Plotly does not apply its muted
-      // `legendonly` opacity; empty positional arrays prevent curve drawing.
-      // Plotly still needs valid positional fields to construct a trace, but
-      // empty arrays ensure the detached chart never retains or draws the
-      // scientific curves.
-      legendTrace.x = [];
-      legendTrace.y = [];
-      if ("z" in trace) legendTrace.z = [];
+      // `legendonly` opacity. A zero-length trace is discarded before Plotly
+      // builds its legend; the finite/null sentinel gives it one trace record
+      // while the null ordinate prevents any marker, line, or bar from being
+      // drawn. These are new scalar arrays, never slices of source data.
+      legendTrace.x = [LEGEND_PREVIEW_SENTINEL_X];
+      legendTrace.y = [LEGEND_PREVIEW_SENTINEL_Y];
+      if ("z" in trace) legendTrace.z = [LEGEND_PREVIEW_SENTINEL_Y];
       return { trace: legendTrace, index };
     })
     .sort((left, right) => {

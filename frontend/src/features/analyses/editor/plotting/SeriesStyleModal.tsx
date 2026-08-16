@@ -130,6 +130,14 @@ import {
   LEGEND_PREVIEW_MIN_HEIGHT,
   LEGEND_PREVIEW_WIDTH,
 } from "./legendPreview";
+import {
+  PALETTE_PREVIEW_HEIGHT,
+  PALETTE_PREVIEW_PLOT,
+  PALETTE_PREVIEW_VIEWBOX,
+  PALETTE_PREVIEW_WIDTH,
+  generatePalettePreviewChartElements,
+  palettePreviewPath,
+} from "./palettePreview";
 
 /** The real plot, rebuilt with the draft styling applied. */
 export type SeriesPreviewBuilder = (draft: {
@@ -2461,7 +2469,7 @@ function SortableSeriesRow({
   selected: boolean;
   seriesCollapsed: boolean;
   previewHidden: boolean;
-  onSelect: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
   onKeyboardSelect: () => void;
   onCheckboxChange: () => void;
   onTogglePreview: () => void;
@@ -2469,6 +2477,7 @@ function SortableSeriesRow({
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: descriptor.key });
   const label = resolvedStyle?.name ?? descriptor.label;
+  const shiftCheckboxClick = useRef(false);
 
   return (
     <Tooltip
@@ -2522,9 +2531,32 @@ function SortableSeriesRow({
             size="xs"
             checked={selected}
             aria-label={`Select ${label}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-            onChange={onCheckboxChange}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              shiftCheckboxClick.current = event.shiftKey && event.button === 0;
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              const rangeClick = event.shiftKey || shiftCheckboxClick.current;
+              if (!rangeClick) return;
+              // The checkbox is only a visual selection affordance. Shift-click
+              // must follow the row's range-selection path, and preventing the
+              // native click keeps the controlled checkbox from toggling one
+              // endpoint before the range is applied.
+              event.preventDefault();
+              shiftCheckboxClick.current = true;
+              onSelect(event);
+              window.setTimeout(() => {
+                shiftCheckboxClick.current = false;
+              }, 0);
+            }}
+            onChange={() => {
+              // React may surface checkbox changes from the native click before
+              // the click handler runs. Suppress that one shift-click; keyboard
+              // changes still use the ordinary checkbox toggle path.
+              if (shiftCheckboxClick.current) return;
+              onCheckboxChange();
+            }}
           />
         )}
         {!seriesCollapsed && (
@@ -2770,144 +2802,8 @@ function SortablePaletteSwatch({
   );
 }
 
-/** Plot-area geometry for the palette preview, in viewBox units. */
-const PREVIEW_PLOT = { left: 78, right: 646, top: 26, bottom: 272 };
-const PREVIEW_DATA_MIN = -1.5;
-const PREVIEW_DATA_MAX = 1.5;
-
 /** Height, in px, of the palette preview's empty placeholder. */
-const PALETTE_PREVIEW_HEIGHT = 220;
-
-/**
- * A deterministic sample curve for preview line `index` of `count`.
- *
- * Amplitude, vertical offset and period are all spread deterministically so
- * ten lines read as ten different measurements rather than one braided rope.
- * `cos(phase)` is symmetric about zero, which keeps the band of curves centred
- * instead of bunched in the top half.
- */
-function palettePreviewValue(x: number, index: number, count: number): number {
-  const n = Math.max(1, count);
-  const spread = ((index * 7) % n) / Math.max(1, n - 1);
-  const tempo = ((index * 3) % n) / Math.max(1, n - 1);
-  const phase = (index / n) * Math.PI * 2;
-  const amp = 0.30 + 0.46 * spread;
-  const drift = 0.62 * Math.cos(phase);
-  const freq = 0.48 + 0.38 * tempo;
-  return (
-    drift +
-    amp * Math.sin(2 * Math.PI * freq * x + phase) +
-    0.14 * amp * Math.sin(2 * Math.PI * (2.1 * freq) * x + phase * 1.7)
-  );
-}
-
-/**
- * A smooth path for one preview line.
- *
- * Catmull-Rom converted to cubic Bezier. The control points must stay inside
- * the segment being drawn; an earlier version placed the second control point
- * past the endpoint, so every one of the 80 segments overshot and doubled
- * back, which is what made the lines look dotted.
- */
-function palettePreviewPath(index: number, count: number): string {
-  const steps = 64;
-  const pts: Array<[number, number]> = [];
-  for (let step = 0; step <= steps; step += 1) {
-    const x = step / steps;
-    const v = palettePreviewValue(x, index, count);
-    const y =
-      PREVIEW_PLOT.bottom -
-      ((v - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) *
-        (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
-    pts.push([
-      PREVIEW_PLOT.left + x * (PREVIEW_PLOT.right - PREVIEW_PLOT.left),
-      Math.max(PREVIEW_PLOT.top, Math.min(PREVIEW_PLOT.bottom, y)),
-    ]);
-  }
-  let d = `M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const p0 = i > 0 ? pts[i - 1] : pts[i];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = i + 2 < pts.length ? pts[i + 2] : p2;
-    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
-    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
-    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
-    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
-    d += ` C${c1x.toFixed(2)},${c1y.toFixed(2)},${c2x.toFixed(2)},${c2y.toFixed(2)},${p2[0].toFixed(2)},${p2[1].toFixed(2)}`;
-  }
-  return d;
-}
-
-/**
- * Generate grid, axis, and legend elements for the palette preview chart.
- * Uses PREVIEW_PLOT geometry so the grid can never drift from the curves.
- */
-function generatePreviewChartElements(colors: string[]) {
-  const gridLines: Array<{
-    type: "vertical" | "horizontal";
-    x1?: number;
-    y1?: number;
-    x2?: number;
-    y2?: number;
-  }> = [];
-
-  // Vertical gridlines at x ticks 0,2,4,6,8,10
-  const xTicks = [0, 2, 4, 6, 8, 10];
-  for (const tick of xTicks) {
-    const x = PREVIEW_PLOT.left + (tick / 10) * (PREVIEW_PLOT.right - PREVIEW_PLOT.left);
-    gridLines.push({ type: "vertical", x1: x, y1: PREVIEW_PLOT.top, x2: x, y2: PREVIEW_PLOT.bottom });
-  }
-
-  // Horizontal gridlines at y ticks -1.5,-1.0,-0.5,0,0.5,1.0,1.5
-  const yTicks = [-1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5];
-  for (const tick of yTicks) {
-    const yNorm = (tick - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN);
-    const y = PREVIEW_PLOT.bottom - yNorm * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
-    gridLines.push({ type: "horizontal", x1: PREVIEW_PLOT.left, y1: y, x2: PREVIEW_PLOT.right, y2: y });
-  }
-
-  // Axes: left (y), bottom (x), and baseline (y=0)
-  const axes = [
-    { type: "left", x1: PREVIEW_PLOT.left, y1: PREVIEW_PLOT.top, x2: PREVIEW_PLOT.left, y2: PREVIEW_PLOT.bottom }, // Y axis
-    { type: "bottom", x1: PREVIEW_PLOT.left, y1: PREVIEW_PLOT.bottom, x2: PREVIEW_PLOT.right, y2: PREVIEW_PLOT.bottom }, // X axis
-    // Zero line at y = 0
-    {
-      type: "baseline",
-      x1: PREVIEW_PLOT.left,
-      y1: PREVIEW_PLOT.bottom - ((0 - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top),
-      x2: PREVIEW_PLOT.right,
-      y2: PREVIEW_PLOT.bottom - ((0 - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN)) * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top),
-    },
-  ];
-
-  // Y axis tick labels: right-aligned at x=(PREVIEW_PLOT.left - 12), vertically centered
-  const yTickLabels: Array<{ x: number; y: number; text: string }> = [];
-  for (const tick of yTicks) {
-    const yNorm = (tick - PREVIEW_DATA_MIN) / (PREVIEW_DATA_MAX - PREVIEW_DATA_MIN);
-    const y = PREVIEW_PLOT.bottom - yNorm * (PREVIEW_PLOT.bottom - PREVIEW_PLOT.top);
-    yTickLabels.push({ x: PREVIEW_PLOT.left - 12, y, text: tick.toFixed(1) });
-  }
-
-  // X axis tick labels at y=(PREVIEW_PLOT.bottom + 28), centered at each x tick position
-  const xTickLabels: Array<{ x: number; y: number; text: string }> = [];
-  for (const tick of xTicks) {
-    const x = PREVIEW_PLOT.left + (tick / 10) * (PREVIEW_PLOT.right - PREVIEW_PLOT.left);
-    xTickLabels.push({ x, y: PREVIEW_PLOT.bottom + 28, text: tick.toFixed(0) });
-  }
-
-  // Legend: line sample from x=676 to x=702, label at x=710, first entry at y=40, step 24
-  const legendEntries: Array<{ color: string; label: string }> = [];
-  const maxLegendItems = 12;
-  for (let i = 0; i < Math.min(colors.length, maxLegendItems); i++) {
-    legendEntries.push({ color: colors[i], label: `Series ${i + 1}` });
-  }
-  if (colors.length > maxLegendItems) {
-    legendEntries.push({ color: "transparent", label: `+${colors.length - maxLegendItems} more` });
-  }
-
-  return { gridLines, axes, yTickLabels, xTickLabels, legendEntries };
-}
+const PALETTE_PREVIEW_EMPTY_HEIGHT = 220;
 
 /**
  * The palette preview's heading: the current palette's name, with an inline
@@ -3030,7 +2926,7 @@ const PalettePreview = memo(function PalettePreview({
     [colors],
   );
 
-  const chartElements = useMemo(() => generatePreviewChartElements(colors), [colors]);
+  const chartElements = useMemo(() => generatePalettePreviewChartElements(colors), [colors]);
 
   if (strokes.length === 0) {
     return (
@@ -3043,7 +2939,7 @@ const PalettePreview = memo(function PalettePreview({
         <div
           style={{
             width: "100%",
-            height: PALETTE_PREVIEW_HEIGHT,
+            height: PALETTE_PREVIEW_EMPTY_HEIGHT,
             borderRadius: 4,
             border: "1px solid var(--mantine-color-default-border)",
             background: "transparent",
@@ -3064,10 +2960,18 @@ const PalettePreview = memo(function PalettePreview({
         {`Preview of ${strokes.length} colour${strokes.length === 1 ? "" : "s"}, one curve per colour.`}
       </VisuallyHidden>
       <svg
-        viewBox="0 0 812 356"
-        width="100%"
-        style={{ display: "block", height: "auto" }}
-        aria-hidden="true"
+        viewBox={PALETTE_PREVIEW_VIEWBOX}
+        width={PALETTE_PREVIEW_WIDTH}
+        height={PALETTE_PREVIEW_HEIGHT}
+        preserveAspectRatio="xMidYMid meet"
+        style={{
+          display: "block",
+          width: "100%",
+          height: "auto",
+          color: "var(--mantine-color-text, #495057)",
+        }}
+        role="img"
+        aria-label={`Preview of ${strokes.length} palette colour${strokes.length === 1 ? "" : "s"}`}
       >
         {/* Gridlines */}
         {chartElements.gridLines.map((line, idx) =>
@@ -3078,7 +2982,8 @@ const PalettePreview = memo(function PalettePreview({
               y1={line.y1}
               x2={line.x2}
               y2={line.y2}
-              style={{ stroke: "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))" }}
+              stroke="currentColor"
+              opacity={0.22}
               strokeWidth={1.2}
               vectorEffect="non-scaling-stroke"
             />
@@ -3089,7 +2994,8 @@ const PalettePreview = memo(function PalettePreview({
               y1={line.y1}
               x2={line.x2}
               y2={line.y2}
-              style={{ stroke: "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3))" }}
+              stroke="currentColor"
+              opacity={0.22}
               strokeWidth={1.2}
               vectorEffect="non-scaling-stroke"
             />
@@ -3105,7 +3011,8 @@ const PalettePreview = memo(function PalettePreview({
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              style={{ stroke: "light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))" }}
+              stroke="currentColor"
+              opacity={0.48}
               strokeWidth={1.6}
               vectorEffect="non-scaling-stroke"
             />
@@ -3116,7 +3023,8 @@ const PalettePreview = memo(function PalettePreview({
               y1={axis.y1}
               x2={axis.x2}
               y2={axis.y2}
-              style={{ stroke: "light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))" }}
+              stroke="currentColor"
+              opacity={0.48}
               strokeWidth={1.6}
               vectorEffect="non-scaling-stroke"
             />
@@ -3130,7 +3038,8 @@ const PalettePreview = memo(function PalettePreview({
             x={label.x}
             y={label.y}
             fontSize={18}
-            style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
+            fill="currentColor"
+            opacity={0.82}
             textAnchor="end"
             dominantBaseline="middle"
           >
@@ -3145,7 +3054,8 @@ const PalettePreview = memo(function PalettePreview({
             x={label.x}
             y={label.y}
             fontSize={18}
-            style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
+            fill="currentColor"
+            opacity={0.82}
             textAnchor="middle"
             dominantBaseline="middle"
           >
@@ -3157,7 +3067,8 @@ const PalettePreview = memo(function PalettePreview({
         <text
           transform="translate(26,149) rotate(-90)"
           fontSize={20}
-          style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
+          fill="currentColor"
+          opacity={0.82}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -3167,9 +3078,10 @@ const PalettePreview = memo(function PalettePreview({
         {/* X axis title */}
         <text
           x={362}
-          y={PREVIEW_PLOT.bottom + 62}
+          y={PALETTE_PREVIEW_PLOT.bottom + 62}
           fontSize={20}
-          style={{ fill: "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))" }}
+          fill="currentColor"
+          opacity={0.82}
           textAnchor="middle"
           dominantBaseline="middle"
         >
@@ -3214,11 +3126,9 @@ const PalettePreview = memo(function PalettePreview({
                   y={legendY}
                   fontSize={18}
                   style={{
-                    fill:
-                      entry.color === "transparent"
-                        ? "var(--mantine-color-dimmed)"
-                        : "light-dark(var(--mantine-color-gray-8), var(--mantine-color-dark-0))",
+                    fill: "currentColor",
                   }}
+                  opacity={entry.color === "transparent" ? 0.62 : 0.82}
                   dominantBaseline="middle"
                 >
                   {entry.label}
