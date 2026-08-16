@@ -23,6 +23,21 @@
     profiles the complete backend/frontend test population, compares isolated runner architectures,
     and records the evidence-backed canonical runner decision.
     **Implemented — review-clean.**
+- [`047-continued-cell-import-workspace.md`](047-continued-cell-import-workspace.md)
+  redesigns Step 3's **One continued cell** mode as a compact three-column source-chain / preview /
+  Cell-draft workspace while preserving continuation validation, lazy import performance, and the
+  existing `Cell -> ordered SourceFiles` model. Implement sequentially on
+  `feature/continued-cell-import-workspace`:
+  - [`047.1-continued-cell-workspace-and-source-chain.md`](047.1-continued-cell-workspace-and-source-chain.md)
+    — compact draggable source rows, stable per-source colors, three-pane geometry, and one
+    footer-owned import action.
+  - [`047.2-source-colored-combined-continuation-preview.md`](047.2-source-colored-combined-continuation-preview.md)
+    — one bounded source-colored combined preview using authoritative backend global-cycle stitching,
+    with no Plotly legend and Raw data kept on demand.
+  - [`047.3-continuity-review-and-context-closure.md`](047.3-continuity-review-and-context-closure.md)
+    — secondary continuity review, final regression/integration closure, performance-documentation
+    update, and correction of the stale Project architecture mirror.
+  **Plan.**
 - [`045-faster-local-verification.md`](045-faster-local-verification.md)
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend
@@ -722,6 +737,20 @@ Rules:
   forward, distinguishing that from a deliberately cleaned cache purely relationally (`parser_version`
   equality, never cache-file presence) and never touching the `analysis_engine` pinned-cache reparse
   gate. **Implemented.** Branch `feature/spec-042-parser-identity-upgrade-preparation`.
+- [047-continued-cell-import-workspace.md](047-continued-cell-import-workspace.md)
+  — parent plan for replacing the current One continued cell Step-3 editor with a compact
+  source-chain / combined-preview / Cell-draft workspace while preserving scientific continuation
+  semantics and import performance. Implement sequentially on `feature/continued-cell-import-workspace`:
+  - [047.1-continued-cell-workspace-and-source-chain.md](047.1-continued-cell-workspace-and-source-chain.md)
+    — compact draggable source rows, stable source identity colors, three-pane layout, and footer-owned
+    submission.
+  - [047.2-source-colored-combined-continuation-preview.md](047.2-source-colored-combined-continuation-preview.md)
+    — bounded backend-stitched global-cycle preview with one colored segment per physical source and
+    no plot legend.
+  - [047.3-continuity-review-and-context-closure.md](047.3-continuity-review-and-context-closure.md)
+    — secondary continuity review, regression/integration closure, durable performance docs, and
+    project-context reconciliation.
+  **Plan.**
 
 ## Assets
 
