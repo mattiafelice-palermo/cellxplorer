@@ -5,74 +5,41 @@ Branch: `feature/series-appearance-manager`
 Merge base: `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`  
 Final-child review-clean checkpoint: `1096c744d878bfc495be3ab9aefbf332b261e877`  
 Closure-fix commit: `f3471eedb39d33396d98c582369cb971ed869a52`  
-Status: **Changes required — user manual/browser acceptance found R3–R9**
+User-acceptance fix commit reviewed: `269f6f56a5f6430f106a2875a5a964440f06efa3`  
+Status: **Changes required — R3 and R8 remain open after the first user-acceptance fix pass**
 
 ## Confirmed
 
-- The feature branch remains based directly on `main` at `6a8266bbbca2cc511d54be75c1c9d28710a82eab`, is ahead only, and contains no unrelated parser, migration, cache, or scientific-calculation changes.
-- 046.1, 046.2 and 046.3 each completed an independent child review and all prior child findings are resolved.
-- Preview-only visibility remains local modal state and is not persisted as legend membership.
-- `series_order` is additive `PlotStyle` presentation state. Stored known keys are normalized safely, quantity-group order is fixed, cross-group moves are rejected, and palette-slot identity is not derived from reordered rows.
-- The supported Cycles, Time/Capacity, Steps, DCIR, Chargeability and Rate capability builders propagate deterministic `legendrank` values without reordering scientific trace arrays.
-- The main scientific preview remains fixed at its existing geometry and explicitly legend-free.
-- The detached legend is derived from the real unhidden family-specific Plotly preview, filters `showlegend: false` helper traces, preserves effective name/style/group/rank presentation, and strips scientific positional/customdata payloads before the second Plotly instance.
-- The final legend-preview fix is compatible with the bundled Plotly 2.35.3 runtime: empty positional arrays suppress curve drawing, normal trace visibility avoids the `legendonly` muted style, and disabling item/double-click while leaving Plotly otherwise interactive permits its bounded internal legend scrolling.
-- Final repository closure is present: all maintained version declarations are `0.24.0-beta.1`, `CHANGELOG.md` contains the Series appearance manager feature entry, all child specs are marked implemented/review-clean, Parent 046 records implementation complete with manual acceptance pending, and the spec index includes the complete 046 family.
-- No durable architecture or project-context ownership boundary changes were introduced by Parent 046.
+- Parent 046 remains frontend presentation/state work only; no parser, migration, scientific calculation, cache-version or backend behavior is mixed into this feature.
+- R1/R2 repository-closure findings remain resolved.
+- The first user browser pass produced R3–R9.
+- Commit `269f6f56a5f6430f106a2875a5a964440f06efa3` addresses the requested areas without unrelated implementation scope and updates the Parent/046.1 wording for the user's amended `All series` semantics.
+- Effective-value aggregation is now shared through `sharedValue(...)`; `All series` targets all current descriptor keys and writes explicit per-series overrides for homogenization.
+- Shift range selection now uses a bounded pure `seriesSelectionRange(...)`, suppresses row text selection, excludes Shift pointer-down from drag activation, and blocks Shift context-menu leakage on the row.
+- Multi-selection legend membership is now one indeterminate-capable `Show in legend` checkbox.
+- Pointer reordering can start from the non-interactive row body with the existing 4 px PointerSensor threshold; checkbox/eye/handle pointer-down paths remain isolated, and handle/keyboard reorder remain available.
+- `Palettes · Global` now has a subtle non-focusable divider before it.
+- Palette-preview theme chrome moved from SVG presentation attributes to CSS style properties. This is a plausible browser-compatibility fix, but the original user-reported blank-preview failure still requires the user's browser recheck before final acceptance.
 
 ## Verification record
 
-### Implementer-reported
+### Implementer-reported — R3–R9 fix pass
 
-046.1 final follow-up:
-
-- `node --test frontend\\tests\\seriesStyling.test.ts`: PASS — 47 tests.
+- `node --test frontend\\tests\\seriesStyling.test.ts frontend\\tests\\legendPreview.test.ts frontend\\tests\\plotStylePalette.test.ts frontend\\tests\\plotStylePresets.test.ts`: PASS — 74 tests.
 - `npx.cmd tsc --noEmit`: PASS.
 - `npx.cmd vite build`: PASS.
-- `python scripts\\preflight.py`: PASS.
+- `git diff --check`: PASS.
+- `python scripts\\preflight.py`: PASS — expanded filesystem access, 4/4 stages, 127 backend/frontend modules.
+- Manual/browser checks: NOT RUN by implementer; user-owned cumulative acceptance remains pending.
 
-046.2 final follow-up:
-
-- `node --test frontend\\tests\\seriesStyling.test.ts frontend\\tests\\plotStylePalette.test.ts frontend\\tests\\plotStylePresets.test.ts`: PASS — 66 tests.
-- `npx.cmd tsc --noEmit`: PASS.
-- `npx.cmd vite build`: PASS.
-- `python scripts\\preflight.py`: PASS — elevated rerun, 4/4 stages.
-
-046.3 final follow-up:
-
-- `node --test frontend\\tests\\legendPreview.test.ts frontend\\tests\\seriesStyling.test.ts frontend\\tests\\plotStylePalette.test.ts frontend\\tests\\plotStylePresets.test.ts`: PASS — 71 tests.
-- `npx.cmd tsc --noEmit`: PASS.
-- `npx.cmd vite build`: PASS.
-- `python scripts\\preflight.py`: PASS — elevated, 4/4 stages, 127 backend/frontend modules.
-
-Parent closure follow-up:
-
-- `python scripts\\check_versions.py --expected-version 0.24.0-beta.1`: PASS.
-- `python scripts\\preflight.py`: PASS — 4/4 stages, 127 backend/frontend modules.
-- `git diff --check`: PASS — exit 0; line-ending notices only.
-
-### User manual/browser acceptance — round 1
-
-The user resumed the required final browser pass and found the concrete issues recorded as R3–R9 below. The rest of the 33-item cumulative matrix is not yet considered complete; after these fixes, the affected checks and the remaining matrix must be rerun/continued rather than treating this partial pass as final acceptance.
-
-### Reviewer-independent
+### Reviewer-independent — this round
 
 I independently inspected:
 
-- the complete cumulative branch scope against the original merge base;
-- all three final child review records and their resolved findings;
-- selection, pruning, bulk editing, effective mixed values, legend-membership and Reset wiring in `SeriesStyleModal.tsx`;
-- the current `ALL_SERIES_KEY` base-style semantics versus the user's final acceptance expectation;
-- the current multi-selection legend controls shown in the user screenshot and source;
-- the current shift-selection row event wiring and row text/selectability boundary;
-- the current handle-only `useSortable` activation in `SortableSeriesRow`;
-- marker `Open` layout in both single- and multi-series editors;
-- the Palettes tab label/Global badge composition;
-- the hand-built SVG `PalettePreview`, including its theme-dependent SVG presentation attributes;
-- group-local ordering, `legendrank`, palette-slot and linked-secondary helpers in `seriesStyling.ts`;
-- fixed scientific-preview versus unhidden detached-legend preview construction;
-- `legendPreview.ts`, including trace membership, style/rank copying, bounded geometry, payload stripping and passive interaction configuration;
-- current repository lifecycle/versioning guidance.
+- the complete `ca906042… -> 269f6f56…` fix diff;
+- current `SeriesStyleModal.tsx` selection, aggregate, colour-link, drag, legend, marker-alignment, palette-preview and tab-label wiring;
+- `sharedValue(...)`, `seriesSelectionRange(...)`, linked-secondary semantics and focused tests in `seriesStyling.ts` / `seriesStyling.test.ts`;
+- the amended Parent 046 and 046.1 wording.
 
 I did **not** independently execute test/build/preflight commands or browser/manual checks.
 
@@ -82,172 +49,94 @@ I did **not** independently execute test/build/preflight commands or browser/man
 
 **Resolution: RESOLVED in `f3471eedb39d33396d98c582369cb971ed869a52`.**
 
-All maintained declarations now use `0.24.0-beta.1`, `CHANGELOG.md` has a concise `New features` entry for the Series appearance manager, and the implementer reports both the exact version-consistency command and canonical preflight passing after the change. No release tag or publishing work was added.
-
 ### R2 — Low: Spec lifecycle/status documentation still describes Parent 046 as unimplemented
 
 **Resolution: RESOLVED in `f3471eedb39d33396d98c582369cb971ed869a52`.**
 
-046.1–046.3 now record `Implemented — review-clean`; Parent 046 records implementation complete with final acceptance pending the cumulative manual/browser matrix; and `docs/specs/README.md` lists Parent 046 and all three children with the same truthful state. The documentation does not claim the unrun manual matrix passed.
-
-### R3 — Medium: `All series` shows base defaults instead of the effective aggregate, so it cannot directly homogenize mixed series
+### R3 — Medium: `All series` effective aggregation/homogenization is incomplete for linked secondary colours
 
 Affected files:
 - `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
-- `frontend/src/features/analyses/editor/plotting/seriesStyling.ts` if a pure aggregate helper is appropriate
-- focused frontend tests
-- `docs/specs/046-series-appearance-manager.md` / related child text where the original `All series` distinction is now superseded by the user's final acceptance decision
+- focused frontend tests, preferably `frontend/tests/seriesStyling.test.ts` or a small pure helper test if extraction is useful
 
 **Current**
 
-`ALL_SERIES_KEY` enters a pure base-style editor. If some concrete series have explicit/rule-resolved squares and others circles, `All series` still displays the base marker symbol (for example Circle) instead of `Mixed`. Selecting Circle again therefore produces no change, so the user must first choose another value and then return to Circle to force a visible result.
+The main R3 redesign is present: `All series` aggregates effective concrete values and bulk-patches every descriptor. However, colour still uses the multi-selection guard unchanged:
 
-The same semantic problem applies to every per-series appearance field where current effective values differ: showing the base/default value is not an honest representation of the current set.
+- `linkedBulkColourKeys` is computed over `bulkTargetKeys`;
+- when `isAllSeries`, `bulkTargetKeys` contains every descriptor;
+- `bulkColourEnabled = linkedBulkColourKeys.length === 0`.
+
+Therefore, as soon as any present secondary series inherits colour from its primary, the entire `All series` Colour control is disabled. This violates the amended acceptance criterion that `All series` can homogenize **colour** in one action.
+
+This case is solvable without breaking linked-colour semantics because `All series` also contains every present primary. Applying the chosen colour to the non-linked concrete targets/primaries makes the linked secondaries resolve to that same colour automatically. The existing stricter behavior may remain for an arbitrary multi-selection where the required primary is not part of the target set.
 
 **Target**
 
-For per-series appearance controls, `All series` must behave as a true aggregate/homogenizer over the current concrete series: homogeneous effective values display normally; heterogeneous values display `Mixed`/indeterminate; choosing a value makes every current concrete series resolve to that value in one action.
-
-This user acceptance decision supersedes Parent 046's earlier locked distinction **for the per-series appearance controls**. Genuinely base/global-only settings that do not have a per-series equivalent (for example secondary-link/name policy) may remain global/default controls and must not be conflated with the aggregate fields.
-
-Do not introduce another style-precedence layer. Reuse base/rules/explicit overrides in a way that leaves the effective result truthful and deterministic.
+`All series` must keep the Colour aggregate actionable even when one or more secondary series inherit from present primaries. Homogenization must respect the link rather than writing an ineffective secondary override or disabling the whole operation.
 
 **Acceptance criteria**
 
-- In `All series`, colour, opacity, line/points mode, dash, width, line shape, marker symbol, marker size, open/filled state and legend membership report `Mixed`/indeterminate whenever the effective concrete series disagree.
-- If all current concrete series resolve to the same value, that value is shown.
-- From a mixed state, choosing a value once makes all current concrete series resolve to that value immediately; choosing the value that happens to equal the old base/default must still work on the first action.
-- Legend name remains unavailable as an all-series bulk field.
-- Base/global-only controls remain available without pretending they are aggregate per-series fields.
-- Update the Parent 046 decision/acceptance wording so repository documentation reflects this explicit user amendment.
-- Add focused tests for mixed detection and one-action homogenization, including a value equal to the prior base default.
+- `All series` Colour remains enabled when linked secondaries have their present primaries in the all-series target set.
+- Choosing one colour makes every current concrete series, including linked secondaries, resolve to that colour in one action.
+- Do not silently disable or break `link_color` / global `link_secondary_colors`.
+- Ordinary arbitrary multi-selection may retain the existing fail-safe disable behavior where a selected linked secondary cannot truthfully be recoloured through the selected target set.
+- Add focused coverage for an all-series set containing primary + linked secondary, including mixed starting colours and one-action homogenization.
 
 ### R4 — Medium: Palette preview renders as blank white space
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
-- focused palette-preview/policy tests as practical
+**Resolution state: CODE CHANGE ACCEPTED FOR RECHECK; browser acceptance still pending.**
 
-**Current**
-
-During the user's final browser pass, the `Current palette` scientific preview area is blank white space: no sample curves, axes, grid or legend are visible. The source currently uses a hand-built SVG preview and passes Mantine `light-dark(...)` expressions directly through several SVG `stroke`/`fill` presentation attributes; the implementer must verify the actual browser failure rather than assuming the pure path-generation code proves the rendered preview works.
-
-**Target**
-
-The palette preview must visibly render its scientific sample chart in the real app and update as the scratch palette changes, in both light and dark themes.
-
-**Acceptance criteria**
-
-- A non-empty palette visibly renders sample curves in every palette colour plus readable axes/grid/legend chrome.
-- Preset selection, reverse, colour edit, reorder, add/remove/duplicate all update the preview.
-- The preview is not blank in light or dark mode and uses browser-valid SVG/CSS colour values.
-- Empty-palette handling remains safe even though the normal editor prevents an invalid zero-colour palette.
-- Add focused coverage for the render model/theme-token policy where practical; final browser confirmation remains required.
+The fix moves Mantine `light-dark(...)` values into CSS style properties on the SVG grid/axis/text chrome. No additional repository defect is proven in this pass. Because the original failure was visual/runtime-only and the implementer did not run the user browser matrix, the user must recheck the palette preview in light and dark mode before R4 can be finally closed.
 
 ### R5 — Medium: Shift-click range selection is unreliable and leaks into browser-native text/context behaviour
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
-- focused selection interaction/policy tests where practical
+**Resolution: CODE REVIEW CLEAN in `269f6f56a5f6430f106a2875a5a964440f06efa3`; user browser recheck required.**
 
-**Current**
-
-The user reports Shift-click worked once, selected page text/opened native contextual browser behaviour, and then stopped behaving reliably. The row currently relies on ordinary clickable DOM text plus `event.shiftKey`, without a clear prevention boundary for browser text selection while performing range selection.
-
-**Target**
-
-Shift-click must be repeatable and deterministic within one quantity group, without selecting text, opening native context behaviour, or corrupting the selection anchor. Normal text-selection/browser gestures elsewhere in the modal should not be globally disabled.
-
-**Acceptance criteria**
-
-- Repeated Shift-click operations within the same quantity continue to select the intended contiguous range.
-- The range uses the established anchor predictably after prior plain/Ctrl/checkbox/range operations.
-- Shift-click on a series row does not highlight row text or trigger native context behaviour.
-- Shift across quantities retains the existing no-cross-group policy.
-- Checkbox, preview-eye and drag interactions remain isolated from row range selection.
-- Add focused interaction/policy coverage where practical and rerun the manual Shift-selection checks.
+The row now uses `userSelect: "none"`, prevents Shift-click default/context behavior, excludes Shift pointer-down from row-body drag activation, and delegates bounded inclusive ranges to `seriesSelectionRange(...)` with focused tests.
 
 ### R6 — Low: Multi-selection exposes redundant legend controls instead of one honest tri-state control
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+**Resolution: RESOLVED in `269f6f56a5f6430f106a2875a5a964440f06efa3`.**
 
-**Current**
-
-For multiple selected series, the Legend section shows separate `Show in legend` and `Hide from legend` buttons and, when homogeneous, an additional `Show in legend` checkbox. This is redundant and visually heavier than the single-series control. In mixed state the checkbox disappears and a `Legend membership: Mixed` badge appears instead.
-
-**Target**
-
-Use one legend-membership control for multi-selection. An indeterminate-capable checkbox is preferred because it can truthfully represent true / false / mixed in one compact control. Do not keep duplicate Show/Hide buttons merely to resolve the mixed case.
-
-**Acceptance criteria**
-
-- Multi-selection shows exactly one `Show in legend` membership control.
-- All shown → checked; all hidden → unchecked; mixed → indeterminate.
-- Activating an indeterminate control sets a deterministic whole-selection value (prefer checked/show on first activation), after which it toggles normally.
-- No duplicate Show/Hide buttons remain.
-- Single- and multi-series Legend sections remain visually consistent.
+The duplicate Show/Hide buttons are removed. One `Show in legend` checkbox represents checked / unchecked / indeterminate, and the mixed-state first action deterministically sets the full target to shown.
 
 ### R7 — Low: Reordering is unnecessarily dependent on hitting the small drag handle
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+**Resolution: CODE REVIEW CLEAN in `269f6f56a5f6430f106a2875a5a964440f06efa3`; user browser recheck required.**
 
-**Current**
+Non-interactive row-body pointer-down now forwards to the existing sortable listener under the 4 px activation threshold. Interactive descendants stop propagation; Shift pointer-down is excluded; the visible handle and keyboard path remain.
 
-Pointer reordering can start only from the dedicated grip handle. The user would like the row itself to offer a deliberate drag gesture so reordering does not require precise handle targeting.
-
-**Target**
-
-Keep the visible handle and keyboard reorder path, but also allow pointer drag activation from the non-interactive row body after a deliberate hold/movement threshold. This is preferred over a literal double-click-and-hold gesture because it is more standard and avoids adding another click-count state machine to a row that already owns click/Ctrl/Shift selection.
-
-**Acceptance criteria**
-
-- Pressing/holding and moving on a non-interactive part of the row can begin the same group-local reorder operation without first targeting the grip.
-- An ordinary click still selects the row and does not reorder it.
-- Checkbox, preview-eye, drag handle and other interactive descendants do not accidentally start row-body dragging.
-- Shift/Ctrl selection remains reliable after this change.
-- Cross-quantity moves remain rejected and keyboard/handle reordering remains available.
-
-### R8 — Low: `Open` marker control is vertically misaligned with adjacent marker fields
+### R8 — Low: `Open` marker control remains structurally misaligned with adjacent labelled fields
 
 Affected files:
 - `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
 
 **Current**
 
-The `Open` marker control uses a hard-coded top margin (`mt={22}`) and appears visibly off-centre relative to the adjacent Symbol/Size controls in the user's browser. The same pattern exists in both single- and multi-series marker rows.
+The fix removes the previous hard-coded `mt={22}` from both single- and multi-series Open controls, but does not give Open the same labelled-control geometry as its neighbours.
+
+In the single-series row, `Symbol` and `Size` are Mantine inputs with labels rendered above their controls, while `Switch label="Open"` renders its label inline beside the switch. With `Group align="start"`, the switch now starts at the top/label line rather than aligning with the Select/NumberInput control row.
+
+The multi-series row has the same structural mismatch: Symbol/Size each render a top label block plus the input below it, while the direct `Checkbox label="Open"` begins at the group's top edge.
 
 **Target**
 
-Align `Open` with the adjacent marker controls using the normal compact form-control geometry rather than an approximate hard-coded offset.
+Use equivalent form-field geometry for Open instead of either a guessed margin or no alignment structure. The visual label may stay `Open`, but the toggle itself should sit on the same control baseline as Symbol and Size in both single- and multi-selection views.
 
 **Acceptance criteria**
 
-- Symbol, Size and Open read as one aligned marker-control row in both single- and multi-selection views.
-- Alignment remains correct at normal desktop scaling in light/dark themes.
-- No regression to compact spacing or wrapping.
+- Single-series Symbol, Size and Open controls share the same labelled-field vertical rhythm and control baseline.
+- Multi-series Symbol, Size and Open controls share the same labelled-field vertical rhythm and control baseline, including the indeterminate state.
+- Do not restore a magic top-margin approximation.
+- Preserve compact Mantine sizing, disabled behavior and keyboard accessibility.
 
 ### R9 — Low: `Palettes · Global` needs stronger separation from the per-selection tabs
 
-Affected files:
-- `frontend/src/features/analyses/editor/plotting/SeriesStyleModal.tsx`
+**Resolution: RESOLVED in `269f6f56a5f6430f106a2875a5a964440f06efa3`.**
 
-**Current**
-
-The `Global` badge correctly communicates scope, but `Palettes · Global` sits immediately beside `Series` and `Rules`, so its global scope is still visually grouped too tightly with the selection-scoped tabs.
-
-**Target**
-
-Add a restrained vertical separator/gap immediately before the Palettes tab while retaining the existing `Global` badge and the compact Mantine tab row.
-
-**Acceptance criteria**
-
-- A subtle vertical divider or equivalent border visually separates `Series | Rules` from `Palettes · Global`.
-- The separator works in light and dark themes and does not look like another clickable tab.
-- Tab keyboard navigation/accessibility is preserved.
-- The actual Palettes editor contents remain unchanged except for fixes required by R4.
+A restrained `aria-hidden` one-pixel divider now separates Series/Rules from Palettes while preserving the existing Global badge and tab interaction.
 
 ## Decision
 
-**CHANGES REQUIRED — fix R3–R9, verify the affected focused paths and canonical preflight, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. Do not mark the remaining manual/browser matrix complete; the user will continue/rerun acceptance after these fixes.**
+**CHANGES REQUIRED — fix only the remaining R3 linked-secondary all-series colour case and R8 form-control alignment, run focused verification plus canonical preflight, then hand back to REVIEWER for the same cumulative FINAL_REVIEW. R4/R5/R7 still require user browser recheck after the next reviewer-clean code pass; do not claim the cumulative manual matrix complete.**

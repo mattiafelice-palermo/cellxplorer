@@ -58,7 +58,7 @@ Fix only R1-R4 in the canonical 046.1 review file, verify, hand back to REVIEWER
 
 - focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts (47 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py
 - manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
 
@@ -88,7 +88,7 @@ R1-R4 are resolved. Fix only R5: make bulk-colour gating match the existing orph
 
 - focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts (47 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py
 - manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
 
@@ -118,7 +118,7 @@ R5 fixed: bulk-colour gating now requires a present primary descriptor, with orp
 
 - focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (65 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py
 - manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
 
@@ -148,7 +148,7 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 
 - focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (66 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py (elevated rerun; 4/4 stages)
 - manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
 
@@ -178,7 +178,7 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 
 - focused tests: PASS - node --test frontend\tests\legendPreview.test.ts frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (70 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py (elevated; 4/4 stages, 127 backend/frontend modules)
 - manual/browser checks: NOT RUN - user explicitly deferred the full cumulative matrix for their manual check at the end
 
@@ -209,7 +209,7 @@ Fix only R1-R2 in the canonical 046.3 review file. R1: avoid Plotly's muted `leg
 
 - focused tests: PASS - node --test frontend\tests\legendPreview.test.ts frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (71 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - preflight: PASS - python scripts\preflight.py (elevated; 4/4 stages, 127 backend/frontend modules)
 - manual/browser checks: NOT RUN - user explicitly deferred the full cumulative matrix for their manual check at the end
 
@@ -314,7 +314,7 @@ User manual acceptance exposed seven Parent-review issues. Fix only R3-R9 in the
 
 - focused frontend tests: PASS - node --test frontend\tests\seriesStyling.test.ts frontend\tests\legendPreview.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (74 tests)
 - TypeScript: PASS - npx.cmd tsc --noEmit
-- Vite build: PASS - npx.cmd vite build
+- Vite build: PASS.
 - git diff --check: PASS
 - canonical preflight: PASS - python scripts\preflight.py with expanded filesystem access, 4/4 stages, 127 backend/frontend modules
 - manual/browser checks: NOT RUN by implementer - user-owned cumulative acceptance remains pending; no matrix completion claimed
@@ -322,5 +322,19 @@ User manual acceptance exposed seven Parent-review issues. Fix only R3-R9 in the
 **Message**
 
 R3-R9 fixed only: All series now aggregates effective mixed values and applies explicit homogenization, palette SVG theme colours render through CSS style properties, Shift selection preserves anchored same-group ranges without drag forwarding, bulk legend membership is one tri-state checkbox, row-body reorder uses the existing thresholded sensor while descendants remain excluded, Open controls use compact geometry, and Global Palettes is separated by a subtle non-focusable divider. Please rerun the affected manual checks and continue the cumulative FINAL_REVIEW; the remaining matrix is not claimed complete.
+
+---
+### 2026-08-16T10:50:25+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+- R8
+
+**Message**
+
+The first R3-R9 fix pass is code-clean for R4-R7 and R9, pending the user's browser recheck, but two acceptance gaps remain. R3: `All series` must not disable colour just because a linked secondary is present when its primary is also in the all-series target; homogenize through the primary/non-linked targets while preserving link semantics. R8: give Open the same labelled-field geometry/control baseline as Symbol and Size in both single- and multi-series views rather than merely removing the previous top margin. Fix only these two follow-ups, add focused coverage for the linked-secondary all-series colour case where practical, run focused verification plus canonical preflight, and hand back to REVIEWER for the same FINAL_REVIEW.
 
 ---
