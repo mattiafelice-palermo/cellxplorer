@@ -16,8 +16,8 @@ Status: **CHANGES REQUIRED — R5**
 - R5 modifier/range selection is **REOPENED from user browser evidence**. The latest implementation is still not behaviorally correct: Shift-click consistently omits the second/clicked endpoint in the user's real browser.
 - R6/R7/R8/R9 remain accepted/resolved.
 - R10 detached legend rendering is user-accepted.
-- R11 embedded legend presentation is **USER-ACCEPTED**: the parent modal no longer scrolls because of legend overflow and the denser legend layout is accepted.
-- R12 local scientific-preview latency is **USER-ACCEPTED**: appearance editing now feels responsive.
+- R11 embedded legend presentation is **USER-ACCEPTED**.
+- R12 local scientific-preview latency is **USER-ACCEPTED**.
 - The broader cumulative manual/browser matrix remains incomplete.
 
 ## Verification record
@@ -78,17 +78,21 @@ This means the remaining defect is in the live interaction/state/event path, not
 
 Make one browser gesture produce exactly one deterministic selection-state transition. Click A, then Shift-click D must leave A/B/C/D selected after all pointer/click/change/focus/sortable handlers have finished. The same must hold for reverse ranges and for both row-body and checkbox interaction paths.
 
+**Explicit browser authorization for this pass**
+
+The user's current instruction explicitly authorizes the implementer to use browser tooling for R5 and supersedes the older project-session instruction that browser use was prohibited. For this finding, browser reproduction/debugging is not only permitted but required if the implementer environment provides it.
+
 **Mandatory browser-debug requirement**
 
-This finding has already survived multiple code-only fixes. The implementer must use an actual browser/runtime for this pass, if their environment provides browser tooling. Before changing more code:
+This finding has already survived multiple code-only fixes. Before changing more code:
 
-1. reproduce the failure in the running frontend/application;
+1. reproduce the failure in the running frontend/application using an actual browser/runtime;
 2. instrument or otherwise inspect the row/checkbox pointer-down → click → change/state-update sequence as needed;
 3. identify which handler/update removes or fails to add the endpoint;
 4. apply the smallest fix;
 5. rerun the browser scenario repeatedly after the fix.
 
-Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code inspection. If the implementer environment cannot launch/use a browser, report that limitation explicitly and leave R5 unresolved rather than claiming success.
+Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code inspection. If browser tooling is genuinely unavailable in the implementer environment, report that environment limitation explicitly and leave R5 unresolved rather than claiming success.
 
 **Acceptance criteria**
 
@@ -125,12 +129,12 @@ Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code i
 
 ### R11 — Medium: Embedded legend overflow/presentation
 
-**Resolution: USER-ACCEPTED.** The user confirms the parent modal no longer scrolls and the application/layout behavior is now acceptable.
+**Resolution: USER-ACCEPTED.**
 
 ### R12 — Low: Local scientific preview visibly lagged behind appearance edits
 
-**Resolution: USER-ACCEPTED.** The user confirms the application is now responsive.
+**Resolution: USER-ACCEPTED.**
 
 ## Decision
 
-**CHANGES REQUIRED — fix only R5. This pass requires real-browser reproduction and post-fix verification; do not return a code-only claim of success. After the browser-verified fix, run the normal focused verification and hand back to REVIEWER for the same cumulative FINAL_REVIEW.**
+**CHANGES REQUIRED — fix only R5. Browser use is explicitly authorized by the user for this pass. This pass requires real-browser reproduction and post-fix verification; do not return a code-only claim of success. After the browser-verified fix, run the normal focused verification and hand back to REVIEWER for the same cumulative FINAL_REVIEW.**
