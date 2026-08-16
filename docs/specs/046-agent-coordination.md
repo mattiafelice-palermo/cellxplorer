@@ -274,3 +274,35 @@ Cumulative Parent 046 implementation review is clean, but final repository closu
 Parent 046 implementation and repository closure are review-clean. The required cumulative 33-item manual/browser acceptance matrix remains NOT RUN, so the branch is not merge-ready. Resume FINAL_REVIEW after that evidence is supplied; do not perform further repository work in the meantime.
 
 ---
+### 2026-08-16T10:20:00+02:00 — REVIEWER — 046.3
+
+**Result:** Final review resumed from user manual acceptance
+
+**Findings**
+
+- None at resume boundary.
+
+**Message**
+
+The user supplied the first final browser/manual acceptance evidence, clearing the previous external-only block. Resume the same cumulative FINAL_REVIEW and evaluate the reported UI failures before any completion decision.
+
+---
+### 2026-08-16T10:20:01+02:00 — REVIEWER → IMPLEMENTER — 046.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+- R4
+- R5
+- R6
+- R7
+- R8
+- R9
+
+**Message**
+
+User manual acceptance exposed seven Parent-review issues. Fix only R3-R9 in the canonical Parent 046 review: truthful/effective `All series` mixed-state aggregation and one-action homogenization; restore the blank palette preview; make repeated Shift-click reliable without browser text/context leakage; replace redundant bulk legend buttons with one tri-state control; add a deliberate row-body pointer reorder gesture while preserving handle/keyboard/selection; align the Open marker control; and visually separate the Global Palettes tab with a subtle vertical divider. Run focused verification plus canonical preflight, hand back to REVIEWER, and do not claim the remaining 33-item manual/browser matrix is complete.
+
+---
