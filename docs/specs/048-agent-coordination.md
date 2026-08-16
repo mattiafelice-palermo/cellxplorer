@@ -234,3 +234,20 @@ Child 048 is review-clean. Begin `048.1-release-ci-runtime-optimization.md` now.
 Child 048.1 implementation is pushed at 3a9eb01. Exact-SHA canonical Windows preflight reuse is fail-closed; missing/skipped/cancelled results use the complete release-local no-cache fallback; failed canonical jobs block release. Main preflight remains unsuppressed, shared main-owned Rust cache is restore-only in release, native parallel groups cover independent installs and exact-reuse frontend/sidecar builds, and fallback stamps the preflight-built channel without a second Vite build. All publication, signing, updater, smoke, draft, and channel-pointer barriers remain ordered. The whole preflight remains above 10 seconds because required backend/scientific verification dominates; no coverage was skipped. GitHub cold/warm rehearsal could not be dispatched from this environment.
 
 ---
+
+### 2026-08-16T23:29:08+02:00 — REVIEWER → IMPLEMENTER — 048.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+- R5
+- R6
+- R7
+
+**Message**
+
+Static review found two release-path defects and two remaining acceptance gaps. R4: the exact-reuse parallel sidecar command calls `build-app.ps1 -SkipFrontend`, but that path immediately verifies a frontend channel stamp that does not yet exist while the parallel frontend build is still running; make backend-only sidecar preparation genuinely independent while preserving later stamp gates. R5: the exact-SHA resolver waits for the entire preflight workflow run before inspecting jobs, so the independent Rust-cache warmer can delay/time out an already-successful canonical Windows preflight; decide from the named canonical job even while unrelated jobs are still active. R6: main preflight pip/npm installs remain serial despite being the same safe material independent pair already parallelized in release. R7: after fixes, obtain cold/warm hosted Windows evidence using a temporary feature-branch push-trigger diagnostic if dispatch tooling remains unavailable, record cache hit/timings and the corrected release-input preparation behavior, then remove the diagnostic workflow. Do not begin 048.2 until 048.1 is review-clean.
+
+---
