@@ -182,30 +182,6 @@ class PreflightScriptTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("--skip-frontend-tests", self.command_for("run_backend_tests.py"))
 
-    def test_preflight_cache_write_preserves_task_timing_history(self):
-        cache_path = self.repo / preflight.PREFLIGHT_CACHE_FILE
-        cache_path.write_text(
-            json.dumps(
-                {
-                    "test_timings": {
-                        "tests.test_portable_analysis": 18.9,
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        preflight.write_preflight_cache(
-            self.repo,
-            frontend_hash=preflight.frontend_build_input_hash(self.repo),
-            frontend_policy_hash=preflight.frontend_policy_input_hash(self.repo),
-            passed=True,
-        )
-
-        cache = json.loads(cache_path.read_text(encoding="utf-8"))
-        self.assertEqual(cache["test_timings"]["tests.test_portable_analysis"], 18.9)
-        self.assertTrue(cache["last_run_passed"])
-
     def test_no_cache_forces_frontend_build(self):
         cache_path = self.repo / preflight.PREFLIGHT_CACHE_FILE
         cache_path.write_text(

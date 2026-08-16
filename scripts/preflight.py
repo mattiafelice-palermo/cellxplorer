@@ -208,7 +208,7 @@ def write_preflight_cache(
     frontend_policy_hash: str | None = None,
 ) -> None:
     path = root / PREFLIGHT_CACHE_FILE
-    payload = read_preflight_cache(root) or {}
+    payload: dict[str, object] = {}
     payload.update(
         {
             "frontend_build_hash": frontend_hash,

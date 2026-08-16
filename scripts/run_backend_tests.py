@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import math
 import os
 import shutil
 import subprocess
@@ -19,8 +17,6 @@ from pathlib import Path
 FRONTEND_POLICY_SKIP_MESSAGE = (
     "SKIP: frontend policy tests (unchanged since last successful run)"
 )
-PREFLIGHT_CACHE_FILE = ".preflight-cache.json"
-TEST_TIMINGS_KEY = "test_timings"
 
 
 @dataclass(frozen=True)
@@ -43,76 +39,6 @@ def discover_test_modules(tests_dir: Path) -> list[str]:
 
 def discover_frontend_test_files(tests_dir: Path) -> list[Path]:
     return sorted(tests_dir.glob("*.test.ts"))
-
-
-def read_timing_history(root: Path) -> dict[str, float]:
-    """Read valid prior durations, failing closed for missing or malformed cache data."""
-    path = root / PREFLIGHT_CACHE_FILE
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    raw_history = payload.get(TEST_TIMINGS_KEY)
-    if not isinstance(raw_history, dict):
-        return {}
-
-    history: dict[str, float] = {}
-    for name, duration in raw_history.items():
-        if not isinstance(name, str) or isinstance(duration, bool):
-            continue
-        if not isinstance(duration, (int, float)):
-            continue
-        numeric_duration = float(duration)
-        if math.isfinite(numeric_duration) and numeric_duration >= 0:
-            history[name] = numeric_duration
-    return history
-
-
-def task_order_key(name: str, timing_history: dict[str, float]) -> tuple[int, float, str]:
-    """Put unknown tasks in the first wave, then known tasks longest-first."""
-    duration = timing_history.get(name)
-    if duration is None:
-        return (0, 0.0, name)
-    return (1, -duration, name)
-
-
-def order_task_names(names: list[str], timing_history: dict[str, float]) -> list[str]:
-    return sorted(names, key=lambda name: task_order_key(name, timing_history))
-
-
-def persist_timing_history(root: Path, results: list["TaskResult"]) -> None:
-    """Persist only successful task durations without affecting cache pass state."""
-    successful = {
-        result.name: result.duration
-        for result in results
-        if result.exit_code == 0 and math.isfinite(result.duration) and result.duration >= 0
-    }
-    if not successful:
-        return
-
-    cache_path = root / PREFLIGHT_CACHE_FILE
-    try:
-        payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-
-    timing_history = read_timing_history(root)
-    timing_history.update(successful)
-    payload[TEST_TIMINGS_KEY] = dict(sorted(timing_history.items()))
-
-    temporary_path = cache_path.with_name(f".{cache_path.name}.{os.getpid()}.tmp")
-    try:
-        temporary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        os.replace(temporary_path, cache_path)
-    finally:
-        try:
-            temporary_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def cpu_budget() -> int:
@@ -278,7 +204,6 @@ def main(argv: list[str] | None = None) -> int:
 
     task_count = len(modules) + len(frontend_files)
     jobs = effective_test_jobs(args.jobs, task_count)
-    timing_history = read_timing_history(root)
     task_specs: list[tuple[str, str, Path | None]] = [
         ("backend", module, None) for module in modules
     ]
@@ -290,7 +215,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         for test_path in frontend_files
     )
-    task_specs.sort(key=lambda task: task_order_key(task[1], timing_history))
     print(
         f"Running {len(modules)} backend modules and {len(frontend_files)} frontend test files "
         f"with {jobs} workers (CPU budget {cpu_budget()}, "
@@ -336,8 +260,6 @@ def main(argv: list[str] | None = None) -> int:
                     f"FAIL {result.name} (exit {result.exit_code}, {result.duration:.2f} s)",
                     file=sys.stderr,
                 )
-
-    persist_timing_history(root, results)
 
     _print_slowest(results)
 

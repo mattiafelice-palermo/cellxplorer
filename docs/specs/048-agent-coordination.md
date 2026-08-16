@@ -184,3 +184,22 @@ Resolved R1 with clean hosted Windows evidence. The runner exposed four logical 
 The clean hosted benchmark rejects the timing-history scheduler: both ordered runs were slower (61.808/55.815 s) than both unordered runs (51.013/49.882 s) on the same four-CPU Windows runner. Remove the timing-history ordering/persistence experiment and its dedicated tests/docs, restoring ordinary deterministic task order. Keep the restored min(16, CPU budget) worker default and explicit jobs override. R2 and R3 remain resolved; this is the final narrow child-048 fix before advancing to 048.1.
 
 ---
+### 2026-08-16T20:59:29+02:00 — IMPLEMENTER → REVIEWER — 048
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused Spec 048 suite: PASS (149 tests, 38.454 s)
+- runner/preflight unit tests: PASS (30 tests, 2.539 s)
+- canonical preflight --no-cache: PASS (4/4 stages, 79.73 s; all 128 backend/frontend tasks)
+- canonical preflight normal: PASS (4/4 stages, 71.21 s; all 68 backend modules; frontend stages correctly skipped)
+- compileall/check_versions/diff-check/golden immutability: PASS
+- timing-history code/tests/cache coupling: REMOVED
+- browser/manual UI checks: NOT REQUIRED (tooling/test-only)
+
+**Message**
+
+Resolved final R1 by fully removing the CI-rejected timing-history scheduler, timing persistence, and dedicated tests/cache coupling. The runner now submits sorted backend and frontend discovery lists deterministically, while preserving per-module subprocess/data isolation, slow-task reporting, bounded parallelism, frontend cache behavior, min(16, CPU budget), and explicit CELLXPLORER_PREFLIGHT_JOBS overrides. The CI run 31964460774 remains documented as the rejection evidence. Whole-preflight sub-ten-second performance remains outside the correctness-preserving scope.
+
+---
