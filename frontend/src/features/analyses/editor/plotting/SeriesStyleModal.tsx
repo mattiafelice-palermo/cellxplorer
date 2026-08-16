@@ -35,7 +35,6 @@ import {
   IconEye,
   IconEyeOff,
   IconGripVertical,
-  IconList,
   IconPencil,
   IconPlus,
   IconRotate,
@@ -122,6 +121,11 @@ import {
   type PaletteSelection,
 } from "./paletteDraft";
 import Plot from "../../../../components/Plot";
+import {
+  buildLegendPreview,
+  LEGEND_PREVIEW_MIN_HEIGHT,
+  LEGEND_PREVIEW_WIDTH,
+} from "./legendPreview";
 
 /** The real plot, rebuilt with the draft styling applied. */
 export type SeriesPreviewBuilder = (draft: {
@@ -1057,17 +1061,47 @@ export function SeriesStyleModal({
         : undefined,
     [tab, scratchPaletteDirty, scratchColors],
   );
-  const preview = useMemo(
+  // Include the local base draft so drag-order and All-series edits reach both
+  // Plotly previews before their debounced parent commit. A scratch palette is
+  // layered last because it is intentionally not persisted until Apply.
+  const previewStyleOverlay = useMemo<Partial<PlotStyle>>(
+    () => ({ ...draftBaseStyle, ...(paletteOverlay ?? {}) }),
+    [draftBaseStyle, paletteOverlay],
+  );
+  // Build one unhidden figure for the detached legend. The scientific preview
+  // may omit traces when the modal eye is used, but that eye is deliberately
+  // independent from persisted legend membership.
+  const unhiddenPreview = useMemo(
     () =>
       opened
         ? buildPreview({
-            overrides: previewOverridesWithHiding,
+            overrides: previewOverrides,
             rules: previewRules,
-            styleOverlay: paletteOverlay,
+            styleOverlay: previewStyleOverlay,
           })
         : { data: [], layout: {} },
-    [opened, buildPreview, previewOverridesWithHiding, previewRules, paletteOverlay],
+    [opened, buildPreview, previewOverrides, previewRules, previewStyleOverlay],
   );
+  const preview = useMemo(
+    () =>
+      !opened || previewHidden.size === 0
+        ? unhiddenPreview
+        : buildPreview({
+            overrides: previewOverridesWithHiding,
+            rules: previewRules,
+            styleOverlay: previewStyleOverlay,
+          }),
+    [
+      opened,
+      buildPreview,
+      previewOverridesWithHiding,
+      previewRules,
+      previewStyleOverlay,
+      previewHidden,
+      unhiddenPreview,
+    ],
+  );
+  const legendPreview = useMemo(() => buildLegendPreview(unhiddenPreview), [unhiddenPreview]);
 
   /**
    * Stable object identities for Plotly.
@@ -1094,6 +1128,17 @@ export function SeriesStyleModal({
     () => ({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
     [],
   );
+  const legendPreviewConfig = useMemo(
+    () => ({ displayModeBar: false, responsive: true, staticPlot: true }),
+    [],
+  );
+  const legendPreviewStyle = useMemo(() => {
+    const height =
+      typeof legendPreview.layout.height === "number"
+        ? legendPreview.layout.height
+        : LEGEND_PREVIEW_MIN_HEIGHT;
+    return { width: LEGEND_PREVIEW_WIDTH, height };
+  }, [legendPreview.layout]);
 
   const activeOverride = active ? draftOverrides[active.key] ?? {} : {};
   const activeResolved = active ? resolvedByKey.get(active.key) : null;
@@ -1129,8 +1174,9 @@ export function SeriesStyleModal({
           previewLayout={previewLayout}
           previewConfig={previewConfig}
           previewStyle={previewStyle}
-          resolvedByKey={resolvedByKey}
-          descriptors={descriptors}
+          legendPreview={legendPreview}
+          legendPreviewConfig={legendPreviewConfig}
+          legendPreviewStyle={legendPreviewStyle}
         />
 
         <PanelShell
@@ -3195,110 +3241,71 @@ const PalettePreview = memo(function PalettePreview({
   );
 });
 
-/**
- * Preview panel with fixed dimensions and optional legend popover.
- */
+/** Fixed scientific preview with a separate passive Plotly legend preview. */
 function PreviewPanel({
   preview,
   previewLayout,
   previewConfig,
   previewStyle,
-  resolvedByKey,
-  descriptors,
+  legendPreview,
+  legendPreviewConfig,
+  legendPreviewStyle,
 }: {
   preview: { data: unknown[]; layout: Record<string, unknown> };
   previewLayout: Record<string, unknown>;
   previewConfig: Record<string, unknown>;
   previewStyle: React.CSSProperties;
-  resolvedByKey: Map<string, ResolvedSeriesStyle>;
-  descriptors: SeriesDescriptor[];
+  legendPreview: { data: readonly unknown[]; layout: Readonly<Record<string, unknown>> };
+  legendPreviewConfig: Record<string, unknown>;
+  legendPreviewStyle: React.CSSProperties;
 }) {
-  const [legendOpened, setLegendOpened] = useState(false);
-
-  // Build the list of visible series in draw order for the legend popover
-  const visibleSeries = useMemo(() => {
-    return descriptors
-      .map((descriptor) => ({
-        descriptor,
-        resolved: resolvedByKey.get(descriptor.key),
-      }))
-      .filter(({ resolved }) => resolved && !resolved.hidden && resolved.showInLegend);
-  }, [descriptors, resolvedByKey]);
+  const legendHeight =
+    typeof legendPreview.layout.height === "number"
+      ? legendPreview.layout.height
+      : LEGEND_PREVIEW_MIN_HEIGHT;
 
   return (
-    <Popover opened={legendOpened} onClose={() => setLegendOpened(false)} position="bottom-start">
-      <Popover.Target>
-        <PanelShell
-          title="Preview"
-          right={
-            <Tooltip label="Show legend" disabled={visibleSeries.length === 0}>
-              <ActionIcon
-                size="sm"
-                variant={legendOpened ? "filled" : "subtle"}
-                color={legendOpened ? "gray" : "gray"}
-                aria-label="Toggle legend"
-                disabled={visibleSeries.length === 0}
-                onClick={() => setLegendOpened((prev) => !prev)}
-              >
-                <IconList size={15} />
-              </ActionIcon>
-            </Tooltip>
-          }
-          style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
-          bodyPadding={0}
-        >
+    <Stack gap="sm" style={{ width: PREVIEW_WIDTH, flex: "none", minWidth: 0, minHeight: 0 }}>
+      <PanelShell
+        title="Preview"
+        style={{ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT + 56, flex: "none" }}
+        bodyPadding={0}
+      >
+        <Plot
+          data={preview.data as never}
+          layout={previewLayout as never}
+          config={previewConfig as never}
+          style={previewStyle}
+        />
+      </PanelShell>
+      <PanelShell
+        title="Legend preview"
+        style={{ width: PREVIEW_WIDTH, height: legendHeight + 56, flex: "none" }}
+        bodyPadding={0}
+      >
+        {legendPreview.data.length > 0 ? (
           <Plot
-            data={preview.data as never}
-            layout={previewLayout as never}
-            config={previewConfig as never}
-            style={previewStyle}
+            data={legendPreview.data as never}
+            layout={legendPreview.layout as never}
+            config={legendPreviewConfig as never}
+            style={legendPreviewStyle}
           />
-        </PanelShell>
-      </Popover.Target>
-      <Popover.Dropdown p="xs">
-        <Stack gap={6} style={{ maxWidth: 320 }}>
-          {visibleSeries.length === 0 ? (
+        ) : (
+          <Box
+            style={{
+              height: legendHeight,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
             <Text size="xs" c="dimmed">
-              No visible series
+              No legend entries
             </Text>
-          ) : (
-            <Stack gap={4}>
-              {visibleSeries.map(({ descriptor, resolved }) => (
-                <Group
-                  key={descriptor.key}
-                  gap={6}
-                  wrap="nowrap"
-                  style={{
-                    borderRadius: 4,
-                    padding: "4px 6px",
-                    background: "var(--mantine-color-default-hover)",
-                  }}
-                >
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 2,
-                      flex: "none",
-                      background: resolved?.color ?? "#888",
-                    }}
-                  />
-                  <Text
-                    size="xs"
-                    truncate
-                    title={resolved?.name ?? descriptor.label}
-                    style={{ flex: 1 }}
-                  >
-                    {resolved?.name ?? descriptor.label}
-                  </Text>
-                </Group>
-              ))}
-            </Stack>
-          )}
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
+          </Box>
+        )}
+      </PanelShell>
+    </Stack>
   );
 }
 

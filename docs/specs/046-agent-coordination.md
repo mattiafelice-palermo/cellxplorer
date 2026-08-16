@@ -170,3 +170,20 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 046.2 is review-clean. Implement 046.3 exactly as specified, run the required final verification, hand off for review, and stop repository work while TURN is REVIEWER.
 
 ---
+### 2026-08-16T05:22:10+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused tests: PASS - node --test frontend\tests\legendPreview.test.ts frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (70 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- preflight: PASS - python scripts\preflight.py (elevated; 4/4 stages, 127 backend/frontend modules)
+- manual/browser checks: NOT RUN - user explicitly deferred the full cumulative matrix for their manual check at the end
+
+**Message**
+
+046.3 implemented: detached bounded passive Plotly Legend preview derived from the unhidden effective family preview; helper traces filtered, style/rank/group metadata preserved, curve arrays stripped, staticPlot interaction disabled, and local base/order/palette drafts included before debounce. Existing fixed scientific preview remains legend-free. Supported-family integration audit found existing Cycles, Time/Capacity, Steps, DCIR, Chargeability, and Rate capability propagation already complete from 046.2. Cumulative manual/browser matrix items 1-32 remain NOT RUN per user instruction; do not begin unrelated work.
+
+---
