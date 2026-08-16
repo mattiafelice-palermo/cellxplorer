@@ -75,6 +75,23 @@ export type SharedValue<T> = {
   mixed: boolean;
 };
 
+export type SeriesSelectionModifiers = {
+  shiftKey: boolean;
+  toggleKey: boolean;
+};
+
+/** Read modifier intent once from the pointer gesture that starts a selection. */
+export function seriesSelectionModifiers(event: {
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}): SeriesSelectionModifiers {
+  return {
+    shiftKey: event.shiftKey,
+    toggleKey: event.ctrlKey || event.metaKey,
+  };
+}
+
 /** Summarise a concrete series field without hiding disagreement behind a default. */
 export function sharedValue<T>(values: readonly T[]): SharedValue<T> {
   if (values.length === 0) return { value: undefined, mixed: false };
@@ -110,7 +127,7 @@ export function seriesSelectionResult(
   selectedKeys: Iterable<string>,
   anchorKey: string | null,
   clickedKey: string,
-  modifiers: { shiftKey: boolean; toggleKey: boolean },
+  modifiers: SeriesSelectionModifiers,
 ): { keys: string[]; anchor: string | null } {
   if (modifiers.shiftKey) {
     const range = seriesSelectionRange(items, anchorKey, clickedKey);

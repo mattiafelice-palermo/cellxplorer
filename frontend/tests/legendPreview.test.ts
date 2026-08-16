@@ -4,8 +4,8 @@ import test from "node:test";
 import {
   buildLegendPreview,
   expandLegendPreview,
+  expandedLegendPreviewHeight,
   LEGEND_PREVIEW_CONFIG,
-  LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT,
   LEGEND_PREVIEW_EXPANDED_WIDTH,
   LEGEND_PREVIEW_MAX_HEIGHT,
   LEGEND_PREVIEW_MIN_HEIGHT,
@@ -120,7 +120,13 @@ test("legend preview keeps Plotly scrolling enabled while disabling legend mutat
 
 test("expanded legend preview reuses the same data and enlarges the passive layout", () => {
   const preview = buildLegendPreview({
-    data: [{ name: "one", showlegend: true, type: "scatter", x: [1], y: [2] }],
+    data: Array.from({ length: 4 }, (_, index) => ({
+      name: `series-${index + 1}`,
+      showlegend: true,
+      type: "scatter",
+      x: [1],
+      y: [index + 1],
+    })),
     layout: { legend: { orientation: "v" } },
   });
   const expanded = expandLegendPreview(preview);
@@ -128,10 +134,15 @@ test("expanded legend preview reuses the same data and enlarges the passive layo
 
   assert.equal(expanded.data, preview.data, "expanded view must consume the embedded data source");
   assert.equal((expanded.layout as Record<string, unknown>).width, LEGEND_PREVIEW_EXPANDED_WIDTH);
-  assert.ok(expandedHeight >= LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT);
+  assert.equal(expandedHeight, expandedLegendPreviewHeight(4, "v"));
+  assert.ok(expandedHeight < 520, "short legends must not retain the old fixed canvas height");
   assert.equal(
     (expanded.layout as Record<string, unknown>).legend,
     (preview.layout as Record<string, unknown>).legend,
     "expanded view must preserve the same legend ordering and styling object",
   );
+});
+
+test("expanded legend height grows with long content for outer-modal scrolling", () => {
+  assert.ok(expandedLegendPreviewHeight(30, "v") > expandedLegendPreviewHeight(4, "v"));
 });

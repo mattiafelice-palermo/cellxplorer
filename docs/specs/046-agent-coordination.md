@@ -447,3 +447,21 @@ The latest user browser pass confirms the detached Legend preview now renders an
 R5 now routes row and checkbox gestures through one inclusive endpoint policy and suppresses late native checkbox toggles; R11 adds compact Open full legend header action and a larger passive modal reusing the same legend preview data/layout; R12 removes local useDeferredValue lag while retaining 250ms parent persistence debounce. Only R5, R11, R12 changed; remaining browser matrix unclaimed.
 
 ---
+### 2026-08-16T12:44:40+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (64 tests)
+- TypeScript: PASS
+- Vite build: PASS (standalone exact-tree build)
+- git diff --check: PASS
+- canonical preflight: PASS (4/4 stages; 128 backend/frontend modules)
+- manual/browser checks: NOT RUN (user-owned cumulative acceptance)
+
+**Message**
+
+R5 captures pointer-down modifier intent for row and checkbox gestures and preserves inclusive Shift selection. R11 makes the full legend content-adaptive and lets the outer modal body scroll long content. R12 is unchanged and remains code-review clean pending user browser confirmation. Only R5 and R11 changed; browser matrix unclaimed.
+
+---

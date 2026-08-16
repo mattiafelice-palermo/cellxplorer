@@ -19,6 +19,7 @@ import {
   pruneOverrides,
   resolveAllSeriesStyles,
   resolveSeriesStyle,
+  seriesSelectionModifiers,
   seriesMatchesRule,
   seriesPaletteSlots,
   seriesPlotlyMode,
@@ -319,17 +320,40 @@ test("series selection ranges stay anchored and bounded to one ordered group", (
 
 test("row and checkbox range gestures share an inclusive endpoint policy", () => {
   const items = [{ key: "c1" }, { key: "c2" }, { key: "c3" }, { key: "c4" }];
-  const forward = seriesSelectionResult(items, ["c1"], "c1", "c4", {
-    shiftKey: true,
-    toggleKey: false,
+  const pointerGesture = seriesSelectionModifiers({ shiftKey: true, ctrlKey: false, metaKey: false });
+  const releasedBeforeClick = seriesSelectionModifiers({
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
   });
+  const forward = seriesSelectionResult(items, ["c1"], "c1", "c4", pointerGesture);
   const reverse = seriesSelectionResult(items, ["c4"], "c4", "c2", {
     shiftKey: true,
     toggleKey: false,
   });
 
+  assert.deepEqual(releasedBeforeClick, { shiftKey: false, toggleKey: false });
   assert.deepEqual(forward, { keys: ["c1", "c2", "c3", "c4"], anchor: "c1" });
+  assert.deepEqual(
+    seriesSelectionResult(items, ["c1"], "c1", "c4", releasedBeforeClick),
+    { keys: ["c4"], anchor: "c4" },
+  );
   assert.deepEqual(reverse, { keys: ["c2", "c3", "c4"], anchor: "c4" });
+});
+
+test("selection modifiers give Shift precedence over Ctrl/Cmd and preserve plain toggles", () => {
+  const items = [{ key: "c1" }, { key: "c2" }, { key: "c3" }];
+  const shiftAndToggle = seriesSelectionModifiers({ shiftKey: true, ctrlKey: true, metaKey: false });
+  const plainToggle = seriesSelectionModifiers({ shiftKey: false, ctrlKey: false, metaKey: true });
+
+  assert.deepEqual(
+    seriesSelectionResult(items, ["c1"], "c1", "c3", shiftAndToggle),
+    { keys: ["c1", "c2", "c3"], anchor: "c1" },
+  );
+  assert.deepEqual(
+    seriesSelectionResult(items, ["c1"], "c1", "c2", plainToggle),
+    { keys: ["c1", "c2"], anchor: "c2" },
+  );
 });
 
 // The editor shipped once listing zero series because the panel discarded the

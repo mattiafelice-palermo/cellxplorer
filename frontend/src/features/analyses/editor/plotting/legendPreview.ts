@@ -17,7 +17,7 @@ export const LEGEND_PREVIEW_WIDTH = 620;
 export const LEGEND_PREVIEW_MIN_HEIGHT = 84;
 export const LEGEND_PREVIEW_MAX_HEIGHT = 220;
 export const LEGEND_PREVIEW_EXPANDED_WIDTH = 860;
-export const LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT = 520;
+export const LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT = LEGEND_PREVIEW_MIN_HEIGHT;
 /** Plotly drops zero-length traces before creating their legend entries. */
 export const LEGEND_PREVIEW_SENTINEL_X = 0;
 export const LEGEND_PREVIEW_SENTINEL_Y = null;
@@ -30,6 +30,19 @@ export const LEGEND_PREVIEW_CONFIG = {
   responsive: true,
 } as const;
 
+function legendEntryRows(entryCount: number, orientation: "h" | "v"): number {
+  return orientation === "v" ? entryCount : Math.max(1, Math.ceil(entryCount / 4));
+}
+
+/** Size a full legend to its content so the outer modal, not Plotly, owns overflow. */
+export function expandedLegendPreviewHeight(entryCount: number, orientation: "h" | "v"): number {
+  if (entryCount <= 0) return LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT;
+  return Math.max(
+    LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT,
+    48 + legendEntryRows(entryCount, orientation) * 24,
+  );
+}
+
 /**
  * Enlarge the same passive legend figure for the optional full-size viewer.
  * The data array and nested legend object are intentionally reused, so the
@@ -38,13 +51,18 @@ export const LEGEND_PREVIEW_CONFIG = {
 export function expandLegendPreview(preview: LegendPreviewFigure): LegendPreviewFigure {
   const sourceLayout = isRecord(preview.layout) ? preview.layout : {};
   const sourceHeight = typeof sourceLayout.height === "number" ? sourceLayout.height : 0;
+  const sourceLegend = isRecord(sourceLayout.legend) ? sourceLayout.legend : {};
+  const orientation = sourceLegend.orientation === "v" ? "v" : "h";
   return {
     data: preview.data,
     layout: {
       ...sourceLayout,
       autosize: false,
       width: LEGEND_PREVIEW_EXPANDED_WIDTH,
-      height: Math.max(LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT, sourceHeight),
+      height: Math.max(
+        sourceHeight,
+        expandedLegendPreviewHeight(preview.data.length, orientation),
+      ),
       margin: { l: 24, r: 24, t: 16, b: 16 },
     },
   };
@@ -114,7 +132,7 @@ function legendRank(trace: Record<string, unknown>, index: number): [number, num
  */
 export function legendPreviewHeight(entryCount: number, orientation: "h" | "v"): number {
   if (entryCount <= 0) return LEGEND_PREVIEW_MIN_HEIGHT;
-  const rows = orientation === "v" ? entryCount : Math.max(1, Math.ceil(entryCount / 4));
+  const rows = legendEntryRows(entryCount, orientation);
   return Math.min(
     LEGEND_PREVIEW_MAX_HEIGHT,
     Math.max(LEGEND_PREVIEW_MIN_HEIGHT, 48 + rows * 24),

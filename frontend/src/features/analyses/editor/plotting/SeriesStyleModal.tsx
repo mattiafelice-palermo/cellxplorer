@@ -69,7 +69,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
@@ -94,12 +93,14 @@ import {
   orderedSeriesDescriptors,
   pruneOverrides,
   resolveAllSeriesStyles,
+  seriesSelectionModifiers,
   seriesSelectionResult,
   seriesRuleError,
   sharedValue,
   type BaseSeriesStyle,
   type ResolvedSeriesStyle,
   type SeriesDescriptor,
+  type SeriesSelectionModifiers,
 } from "./seriesStyling";
 import {
   PALETTE_OPTIONS,
@@ -127,7 +128,6 @@ import {
   buildLegendPreview,
   expandLegendPreview,
   LEGEND_PREVIEW_CONFIG,
-  LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT,
   LEGEND_PREVIEW_EXPANDED_WIDTH,
   LEGEND_PREVIEW_MIN_HEIGHT,
   LEGEND_PREVIEW_WIDTH,
@@ -744,19 +744,18 @@ export function SeriesStyleModal({
     setTab("series");
   };
 
-  const selectSeries = (key: string, event: ReactMouseEvent<HTMLElement>) => {
+  const selectSeries = (key: string, modifiers: SeriesSelectionModifiers) => {
     const group = seriesGroups.find((candidate) => candidate.items.some((item) => item.key === key));
     const anchorGroup = selectionAnchor
       ? seriesGroups.find((candidate) => candidate.items.some((item) => item.key === selectionAnchor))
       : undefined;
 
-    if (event.shiftKey) event.preventDefault();
     const selection = seriesSelectionResult(
       group && anchorGroup?.key === group.key ? group.items : [],
       selectedKeys,
       selectionAnchor,
       key,
-      { shiftKey: event.shiftKey, toggleKey: event.ctrlKey || event.metaKey },
+      modifiers,
     );
     selectConcreteKeys(selection.keys, selection.anchor);
   };
@@ -1293,7 +1292,7 @@ export function SeriesStyleModal({
                             selected={selectedKeys.has(descriptor.key)}
                             seriesCollapsed={seriesCollapsed}
                             previewHidden={previewHidden.has(descriptor.key)}
-                            onSelect={(event) => selectSeries(descriptor.key, event)}
+                            onSelect={(modifiers) => selectSeries(descriptor.key, modifiers)}
                             onKeyboardSelect={() => selectConcreteKeys([descriptor.key], descriptor.key)}
                             onCheckboxChange={() => toggleSeriesCheckbox(descriptor.key)}
                             onTogglePreview={() =>
@@ -2462,7 +2461,7 @@ function SortableSeriesRow({
   selected: boolean;
   seriesCollapsed: boolean;
   previewHidden: boolean;
-  onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
+  onSelect: (modifiers: SeriesSelectionModifiers) => void;
   onKeyboardSelect: () => void;
   onCheckboxChange: () => void;
   onTogglePreview: () => void;
@@ -2470,7 +2469,8 @@ function SortableSeriesRow({
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: descriptor.key });
   const label = resolvedStyle?.name ?? descriptor.label;
-  const shiftCheckboxClick = useRef(false);
+  const selectionGesture = useRef<SeriesSelectionModifiers | null>(null);
+  const suppressNativeCheckboxChange = useRef(false);
 
   return (
     <Tooltip
@@ -2487,14 +2487,19 @@ function SortableSeriesRow({
         py={4}
         justify={seriesCollapsed ? "center" : undefined}
         onPointerDown={(event) => {
-          if (event.shiftKey && event.button === 0) {
-            return;
+          if (event.button === 0) {
+            selectionGesture.current = seriesSelectionModifiers(event);
+            if (selectionGesture.current.shiftKey) return;
+          } else {
+            selectionGesture.current = null;
           }
           listeners?.onPointerDown?.(event);
         }}
         onClick={(event) => {
-          if (event.shiftKey) event.preventDefault();
-          onSelect(event);
+          const modifiers = selectionGesture.current ?? seriesSelectionModifiers(event);
+          selectionGesture.current = null;
+          if (modifiers.shiftKey) event.preventDefault();
+          onSelect(modifiers);
         }}
         onContextMenu={(event) => {
           if (event.shiftKey) event.preventDefault();
@@ -2526,34 +2531,44 @@ function SortableSeriesRow({
             aria-label={`Select ${label}`}
             onPointerDown={(event) => {
               event.stopPropagation();
-              shiftCheckboxClick.current = event.shiftKey && event.button === 0;
+              if (event.button === 0) {
+                selectionGesture.current = seriesSelectionModifiers(event);
+                suppressNativeCheckboxChange.current =
+                  selectionGesture.current.shiftKey || selectionGesture.current.toggleKey;
+              } else {
+                selectionGesture.current = null;
+                suppressNativeCheckboxChange.current = false;
+              }
             }}
             onClick={(event) => {
               event.stopPropagation();
-              const rangeClick = event.shiftKey || shiftCheckboxClick.current;
-              if (!rangeClick) return;
-              // The checkbox is only a visual selection affordance. Shift-click
-              // must follow the row's range-selection path, and preventing the
-              // native click keeps the controlled checkbox from toggling one
-              // endpoint before the range is applied.
+              const modifiers = selectionGesture.current ?? seriesSelectionModifiers(event);
+              selectionGesture.current = null;
+              if (!modifiers.shiftKey && !modifiers.toggleKey) return;
+              // The checkbox is only a visual selection affordance. Modified
+              // gestures follow the row's selection policy, and preventing the
+              // native click keeps it from applying a second transition.
               event.preventDefault();
-              shiftCheckboxClick.current = true;
-              onSelect(event);
+              suppressNativeCheckboxChange.current = true;
+              onSelect(modifiers);
             }}
             onChange={() => {
-              // React may surface checkbox changes from the native click before
-              // the click handler runs. Suppress that one shift-click; keyboard
-              // changes still use the ordinary checkbox toggle path.
-              if (shiftCheckboxClick.current) return;
+              // React may surface the native change before or after click. The
+              // pointer-down guard covers both orders for modified gestures;
+              // keyboard changes clear it first and retain normal toggling.
+              if (suppressNativeCheckboxChange.current) return;
               onCheckboxChange();
             }}
             onKeyDown={(event) => {
               // A keyboard toggle is independent from a prior mouse gesture.
-              // Clear the mouse guard before Shift+Space can reach onChange.
-              if (event.key === " " || event.key === "Enter") shiftCheckboxClick.current = false;
+              if (event.key === " " || event.key === "Enter") {
+                selectionGesture.current = null;
+                suppressNativeCheckboxChange.current = false;
+              }
             }}
             onBlur={() => {
-              shiftCheckboxClick.current = false;
+              selectionGesture.current = null;
+              suppressNativeCheckboxChange.current = false;
             }}
           />
         )}
@@ -3168,8 +3183,8 @@ function PreviewPanel({
   const expandedLegendPreview = useMemo(() => expandLegendPreview(legendPreview), [legendPreview]);
   const expandedLegendHeight =
     typeof expandedLegendPreview.layout.height === "number"
-      ? Math.max(LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT, expandedLegendPreview.layout.height)
-      : LEGEND_PREVIEW_EXPANDED_MIN_HEIGHT;
+      ? expandedLegendPreview.layout.height
+      : LEGEND_PREVIEW_MIN_HEIGHT;
   const expandedLegendStyle = useMemo(
     () => ({ width: LEGEND_PREVIEW_EXPANDED_WIDTH, height: expandedLegendHeight }),
     [expandedLegendHeight],
@@ -3240,7 +3255,7 @@ function PreviewPanel({
         title="Full legend preview"
         size="xl"
         centered
-        styles={{ body: { overflow: "auto" } }}
+        styles={{ body: { maxHeight: "calc(100vh - 180px)", overflow: "auto" } }}
       >
         {expandedLegendPreview.data.length > 0 ? (
           <Plot
