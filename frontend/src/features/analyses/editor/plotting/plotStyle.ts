@@ -151,6 +151,7 @@ export function normalizePlotStyle(style: Partial<PlotStyle> | undefined): PlotS
     ce_custom_colors: { ...(style?.ce_custom_colors ?? {}) },
     palette_colors: [...(style?.palette_colors ?? [])],
     ce_palette_colors: [...(style?.ce_palette_colors ?? [])],
+    series_order: style?.series_order ? [...style.series_order] : undefined,
     x_axis: xAxis,
     y_axis: yAxis,
     y2_axis: y2Axis,

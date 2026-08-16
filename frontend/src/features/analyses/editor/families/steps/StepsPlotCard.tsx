@@ -75,6 +75,7 @@ import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
@@ -745,6 +746,7 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
   const visibleSeries = stepsVisibleSeries(result, spec);
   const descriptors = stepsSeriesDescriptors(visibleSeries);
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
   return visibleSeries
     .map((item, index) => {
       const descriptor = descriptors[index];
@@ -778,6 +780,7 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
         y: item.quantities[column] ?? [],
         name: resolved.name,
         showlegend: resolved.showInLegend,
+        legendrank: legendRanks.get(descriptor.key),
         opacity: resolved.opacity,
         line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
         marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },

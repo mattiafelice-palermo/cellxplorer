@@ -87,6 +87,7 @@ import {
   composeSeriesKey,
   decimatePreviewTraces,
   resolveAllSeriesStyles,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   shortSourceName,
@@ -534,6 +535,7 @@ export function cycleTracesForResult(
     secondaryNameMode: style.secondary_name_mode ?? "independent",
     secondaryNameSuffix: style.secondary_name_suffix ?? null,
   });
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
 
   for (const agg of result.aggregates) {
     const aggKey = `g${agg.group_id}`;
@@ -570,6 +572,7 @@ export function cycleTracesForResult(
       },
       opacity: aggResolved.opacity,
       showlegend: aggResolved.showInLegend,
+      legendrank: legendRanks.get(aggKey),
       type: "scatter",
       mode: compact ? mode : seriesPlotlyMode(aggResolved),
       customdata: q.n,
@@ -635,6 +638,9 @@ export function cycleTracesForResult(
           mode: seriesPlotlyMode(ceResolved),
           opacity: ceResolved.opacity,
           showlegend: ceResolved.showInLegend,
+          legendrank: legendRanks.get(
+            composeSeriesKey({ sourceKey: aggKey, axis: "y2", measure: "coulombic_efficiency" }),
+          ),
         } as Plotly.Data);
       }
     }
@@ -684,6 +690,7 @@ export function cycleTracesForResult(
       type: "scatter",
       mode: compact ? mode : seriesPlotlyMode(resolved),
       showlegend: !compact && !grouped && resolved.showInLegend,
+      legendrank: legendRanks.get(cellKey),
       customdata,
       cellxplorer_export_columns: sourceColumns,
       hovertemplate:
@@ -737,6 +744,9 @@ export function cycleTracesForResult(
           mode: seriesPlotlyMode(ceResolved),
           opacity: ceResolved.opacity,
           showlegend: ceResolved.showInLegend,
+          legendrank: legendRanks.get(
+            composeSeriesKey({ sourceKey: cellKey, axis: "y2", measure: "coulombic_efficiency" }),
+          ),
         } as Plotly.Data);
       }
     }

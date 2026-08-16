@@ -1119,6 +1119,8 @@ export interface PlotStyle {
   secondary_name_mode?: "derive" | "independent";
   /** Suffix appended to the primary's name when deriving a secondary's name; null falls back to the descriptor's own suffix. */
   secondary_name_suffix?: string | null;
+  /** Presentation order within each existing quantity/axis group. */
+  series_order?: string[];
 }
 
 export interface AnalysisSpec {

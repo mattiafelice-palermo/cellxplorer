@@ -87,9 +87,11 @@ import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   shortSourceName,
+  timeCapacitySeriesDescriptors,
   timeCapacitySeriesDescriptor,
 } from "../../plotting/seriesStyling";
 import { sourceExportColumns } from "../../plotting/sourceChainPlot";
@@ -328,6 +330,10 @@ export function timeCapacityTracesForResult(
   const out: Plotly.Data[] = [];
   const colorFor = new Map<string, string>();
   const legendShown = new Set<string>();
+  const legendRanks = seriesLegendRanks(
+    timeCapacitySeriesDescriptors(result.cell_traces),
+    style.series_order,
+  );
   const traceType = interactiveWebGl ? "scattergl" : "scatter";
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   let ci = 0;
@@ -398,6 +404,7 @@ export function timeCapacityTracesForResult(
             name: resolved.name,
             legendgroup: seriesKey,
             showlegend: showlegend && resolved.showInLegend,
+            legendrank: legendRanks.get(seriesKey),
             opacity: resolved.opacity,
             line: {
               color: resolved.color,
@@ -454,9 +461,10 @@ export function timeCapacityTracesForResult(
         x: segment.x,
         y: segment.voltage,
         name,
-        legendgroup: seriesKey,
-        showlegend,
-        opacity: resolved.opacity,
+         legendgroup: seriesKey,
+         showlegend,
+         legendrank: legendRanks.get(seriesKey),
+         opacity: resolved.opacity,
         line: {
           color: resolved.color,
           width: resolved.lineWidth,

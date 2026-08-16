@@ -52,6 +52,7 @@ import { paletteColorAt, paletteOverflowMode } from "../../plotting/paletteDraft
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
@@ -316,6 +317,7 @@ export function chargeabilityTracesForResult(
     );
   });
   const descriptors = chargeabilitySeriesDescriptors(visibleMatches, result);
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
   return visibleMatches
     .map((match, index) => {
       const descriptor = descriptors[index];
@@ -346,6 +348,7 @@ export function chargeabilityTracesForResult(
         y: match.y[view.y_axis],
         name: resolved.name,
         showlegend: resolved.showInLegend,
+        legendrank: legendRanks.get(descriptor.key),
         opacity: resolved.opacity,
         line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
         marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },

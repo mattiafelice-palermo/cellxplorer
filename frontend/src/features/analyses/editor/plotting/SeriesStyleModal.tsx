@@ -34,6 +34,7 @@ import {
   IconCopy,
   IconEye,
   IconEyeOff,
+  IconGripVertical,
   IconList,
   IconPencil,
   IconPlus,
@@ -55,6 +56,7 @@ import {
   SortableContext,
   rectSortingStrategy,
   sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -89,6 +91,8 @@ import {
   isSecondarySeries,
   linkedSecondarySeriesKeys,
   matchingRules,
+  moveSeriesWithinGroup,
+  orderedSeriesDescriptors,
   pruneOverrides,
   resolveAllSeriesStyles,
   seriesRuleError,
@@ -509,6 +513,10 @@ export function SeriesStyleModal({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const seriesSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   /**
    * Loads a saved palette's colours into the scratch palette being composed.
@@ -686,9 +694,20 @@ export function SeriesStyleModal({
             group.measureLabel ?? (group.axis === "y2" ? "Right axis" : "Left axis")
           }`
         : null,
-      items: group.items,
+      items: orderedSeriesDescriptors(group.items, draftBaseStyle.series_order),
     }));
-  }, [descriptors]);
+  }, [descriptors, draftBaseStyle.series_order]);
+
+  const handleSeriesDragEnd = (event: DragEndEvent) => {
+    if (!event.over) return;
+    const nextOrder = moveSeriesWithinGroup(
+      descriptors,
+      draftBaseStyle.series_order,
+      String(event.active.id),
+      String(event.over.id),
+    );
+    if (nextOrder) patchBaseStyle({ series_order: nextOrder });
+  };
 
   const selectConcreteKeys = (keys: Iterable<string>, anchor: string | null) => {
     const next = new Set(keys);
@@ -1166,141 +1185,71 @@ export function SeriesStyleModal({
                 </Group>
               </Tooltip>
               <Divider my={2} />
-              {seriesGroups.map((group) => {
-                const selectedCount = group.items.filter((item) => selectedKeys.has(item.key)).length;
-                const allSelected = group.items.length > 0 && selectedCount === group.items.length;
-                const partiallySelected = selectedCount > 0 && !allSelected;
-                const heading = group.heading ?? "Plotted series";
-                return (
-                  <Fragment key={group.key}>
-                    {!seriesCollapsed && (
-                      <Group gap={6} wrap="nowrap" px={6} pt={6} pb={2}>
-                        <Checkbox
-                          size="xs"
-                          checked={allSelected}
-                          indeterminate={partiallySelected}
-                          aria-label={`Select all ${heading}`}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={() => toggleQuantitySelection(group.items)}
-                        />
-                        <Text
-                          size="9px"
-                          fw={700}
-                          c="dimmed"
-                          tt="uppercase"
-                          truncate
-                          style={{ letterSpacing: 0.4, flex: 1 }}
-                        >
-                          {heading} ({group.items.length})
-                        </Text>
-                      </Group>
-                    )}
-                    {group.items.map((descriptor) => {
-                    const style = resolvedByKey.get(descriptor.key);
-                    const customised = !isEmptyOverride(draftOverrides[descriptor.key]);
-                    const selected = selectedKeys.has(descriptor.key);
-                    const swatch = (
-                      <div
-                        aria-hidden="true"
-                        style={{
-                          width: 14,
-                          height: 3,
-                          borderRadius: 2,
-                          flex: "none",
-                          background: style?.color ?? "#888",
-                        }}
-                      />
-                    );
-                    const isPreviewHidden = previewHidden.has(descriptor.key);
-                    const visibility = (
-                      <ActionIcon
-                        size="xs"
-                        variant="subtle"
-                        color="gray"
-                        aria-label={
-                          isPreviewHidden
-                            ? `Show ${descriptor.label} in the preview`
-                            : `Hide ${descriptor.label} in the preview`
-                        }
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setPreviewHidden((current) => {
-                            const next = new Set(current);
-                            if (next.has(descriptor.key)) next.delete(descriptor.key);
-                            else next.add(descriptor.key);
-                            return next;
-                          });
-                        }}
-                      >
-                        {isPreviewHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                      </ActionIcon>
-                    );
-                    return (
-                      <Tooltip
-                        key={descriptor.key}
-                        label={style?.name ?? descriptor.label}
-                        disabled={!seriesCollapsed}
-                        position="right"
-                        withArrow
-                      >
-                        <Group
-                          gap={6}
-                          wrap="nowrap"
-                          px={6}
-                          py={4}
-                          justify={seriesCollapsed ? "center" : undefined}
-                          onClick={(event) => selectSeries(descriptor.key, event)}
-                          onKeyDown={(event) => {
-                            if (event.target !== event.currentTarget) return;
-                            if (event.key !== "Enter" && event.key !== " ") return;
-                            event.preventDefault();
-                            selectConcreteKeys([descriptor.key], descriptor.key);
-                          }}
-                          role="button"
-                          tabIndex={0}
-                          aria-pressed={selected}
-                          style={{
-                            borderRadius: 4,
-                            cursor: "pointer",
-                            background:
-                              selected
-                                ? "var(--mantine-primary-color-light)"
-                                : undefined,
-                            opacity: isPreviewHidden ? 0.5 : 1,
-                          }}
-                        >
-                          {!seriesCollapsed && (
-                            <Checkbox
-                              size="xs"
-                              checked={selected}
-                              aria-label={`Select ${style?.name ?? descriptor.label}`}
-                              onClick={(event) => event.stopPropagation()}
-                              onChange={() => toggleSeriesCheckbox(descriptor.key)}
-                            />
-                          )}
-                          {swatch}
-                          {!seriesCollapsed && (
-                            <>
-                              <Text size="xs" truncate style={{ flex: 1 }} title={style?.name}>
-                                {style?.name ?? descriptor.label}
-                              </Text>
-                              {customised && (
-                                <Tooltip label="Has its own settings">
-                                  <Badge size="xs" variant="light" color="grape" circle>
-                                    {" "}
-                                  </Badge>
-                                </Tooltip>
-                              )}
-                            </>
-                          )}
-                          {visibility}
+              <DndContext
+                sensors={seriesSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleSeriesDragEnd}
+              >
+                {seriesGroups.map((group) => {
+                  const selectedCount = group.items.filter((item) => selectedKeys.has(item.key)).length;
+                  const allSelected = group.items.length > 0 && selectedCount === group.items.length;
+                  const partiallySelected = selectedCount > 0 && !allSelected;
+                  const heading = group.heading ?? "Plotted series";
+                  return (
+                    <Fragment key={group.key}>
+                      {!seriesCollapsed && (
+                        <Group gap={6} wrap="nowrap" px={6} pt={6} pb={2}>
+                          <Checkbox
+                            size="xs"
+                            checked={allSelected}
+                            indeterminate={partiallySelected}
+                            aria-label={`Select all ${heading}`}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={() => toggleQuantitySelection(group.items)}
+                          />
+                          <Text
+                            size="9px"
+                            fw={700}
+                            c="dimmed"
+                            tt="uppercase"
+                            truncate
+                            style={{ letterSpacing: 0.4, flex: 1 }}
+                          >
+                            {heading} ({group.items.length})
+                          </Text>
                         </Group>
-                      </Tooltip>
-                    );
-                  })}
-                  </Fragment>
-                );
-              })}
+                      )}
+                      <SortableContext
+                        items={group.items.map((item) => item.key)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {group.items.map((descriptor) => (
+                          <SortableSeriesRow
+                            key={descriptor.key}
+                            descriptor={descriptor}
+                            resolvedStyle={resolvedByKey.get(descriptor.key)}
+                            customised={!isEmptyOverride(draftOverrides[descriptor.key])}
+                            selected={selectedKeys.has(descriptor.key)}
+                            seriesCollapsed={seriesCollapsed}
+                            previewHidden={previewHidden.has(descriptor.key)}
+                            onSelect={(event) => selectSeries(descriptor.key, event)}
+                            onKeyboardSelect={() => selectConcreteKeys([descriptor.key], descriptor.key)}
+                            onCheckboxChange={() => toggleSeriesCheckbox(descriptor.key)}
+                            onTogglePreview={() =>
+                              setPreviewHidden((current) => {
+                                const next = new Set(current);
+                                if (next.has(descriptor.key)) next.delete(descriptor.key);
+                                else next.add(descriptor.key);
+                                return next;
+                              })
+                            }
+                          />
+                        ))}
+                      </SortableContext>
+                    </Fragment>
+                  );
+                })}
+              </DndContext>
             </Stack>
           </ScrollArea>
         </PanelShell>
@@ -2466,6 +2415,135 @@ const LegendNameInput = memo(function LegendNameInput({
     />
   );
 });
+
+/** A concrete Series-panel row with an accessible, group-local drag handle. */
+function SortableSeriesRow({
+  descriptor,
+  resolvedStyle,
+  customised,
+  selected,
+  seriesCollapsed,
+  previewHidden,
+  onSelect,
+  onKeyboardSelect,
+  onCheckboxChange,
+  onTogglePreview,
+}: {
+  descriptor: SeriesDescriptor;
+  resolvedStyle: ResolvedSeriesStyle | undefined;
+  customised: boolean;
+  selected: boolean;
+  seriesCollapsed: boolean;
+  previewHidden: boolean;
+  onSelect: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  onKeyboardSelect: () => void;
+  onCheckboxChange: () => void;
+  onTogglePreview: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: descriptor.key });
+  const label = resolvedStyle?.name ?? descriptor.label;
+
+  return (
+    <Tooltip
+      label={label}
+      disabled={!seriesCollapsed}
+      position="right"
+      withArrow
+    >
+      <Group
+        ref={setNodeRef}
+        gap={6}
+        wrap="nowrap"
+        px={6}
+        py={4}
+        justify={seriesCollapsed ? "center" : undefined}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onKeyboardSelect();
+        }}
+        role="button"
+        tabIndex={0}
+        aria-pressed={selected}
+        style={{
+          borderRadius: 4,
+          cursor: "pointer",
+          background: selected ? "var(--mantine-primary-color-light)" : undefined,
+          opacity: previewHidden ? 0.5 : 1,
+          transform: CSS.Transform.toString(transform),
+          transition,
+          zIndex: isDragging ? 1 : undefined,
+        }}
+      >
+        {!seriesCollapsed && (
+          <Checkbox
+            size="xs"
+            checked={selected}
+            aria-label={`Select ${label}`}
+            onClick={(event) => event.stopPropagation()}
+            onChange={onCheckboxChange}
+          />
+        )}
+        {!seriesCollapsed && (
+          <ActionIcon
+            ref={setActivatorNodeRef}
+            size="xs"
+            variant="subtle"
+            color="gray"
+            aria-label={`Reorder ${label}`}
+            title={`Reorder ${label}`}
+            {...attributes}
+            {...listeners}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconGripVertical size={14} />
+          </ActionIcon>
+        )}
+        <div
+          aria-hidden="true"
+          style={{
+            width: 14,
+            height: 3,
+            borderRadius: 2,
+            flex: "none",
+            background: resolvedStyle?.color ?? "#888",
+          }}
+        />
+        {!seriesCollapsed && (
+          <>
+            <Text size="xs" truncate style={{ flex: 1 }} title={label}>
+              {label}
+            </Text>
+            {customised && (
+              <Tooltip label="Has its own settings">
+                <Badge size="xs" variant="light" color="grape" circle>
+                  {" "}
+                </Badge>
+              </Tooltip>
+            )}
+          </>
+        )}
+        <ActionIcon
+          size="xs"
+          variant="subtle"
+          color="gray"
+          aria-label={
+            previewHidden ? `Show ${label} in the preview` : `Hide ${label} in the preview`
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePreview();
+          }}
+        >
+          {previewHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+        </ActionIcon>
+      </Group>
+    </Tooltip>
+  );
+}
 
 /**
  * One colour in the palette being composed: its 1-based index, a large

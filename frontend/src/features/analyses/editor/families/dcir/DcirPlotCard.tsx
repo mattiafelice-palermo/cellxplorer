@@ -74,6 +74,7 @@ import {
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
@@ -230,6 +231,7 @@ export function dcirTracesForResult(
   const defaultXTitle = dcirXTitle(view.x_axis);
   const visibleSeries = dcirVisibleSeries(result, spec);
   const descriptors = dcirSeriesDescriptors(visibleSeries);
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   return visibleSeries
     .map((item, index) => {
@@ -267,6 +269,7 @@ export function dcirTracesForResult(
         y: item.quantities[yColumn],
         name: resolved.name,
         showlegend: resolved.showInLegend,
+        legendrank: legendRanks.get(descriptor.key),
         opacity: resolved.opacity,
         line: { color: resolved.color, width: resolved.lineWidth, dash: resolved.lineDash, shape: resolved.lineShape },
         marker: { color: resolved.color, size: resolved.markerSize, symbol: seriesPlotlySymbol(resolved) },

@@ -5,6 +5,7 @@ import type { PlotStyle } from "../src/api.ts";
 import {
   DEFAULT_PLOT_STYLE,
   applyPaletteToStyle,
+  normalizePlotStyle,
   plotPalette,
   withoutSeriesColors,
 } from "../src/features/analyses/editor/plotting/plotStyle.ts";
@@ -23,6 +24,19 @@ test("applying a palette records its colours", () => {
   applyPaletteToStyle(style, OKABE_ITO, null);
   assert.deepEqual(style.palette_colors, OKABE_ITO);
   assert.deepEqual(plotPalette(style), OKABE_ITO);
+});
+
+test("applying a palette preserves the persisted series order", () => {
+  const style = styleWith({ series_order: ["c2", "c1"] });
+  applyPaletteToStyle(style, OKABE_ITO, null);
+  assert.deepEqual(style.series_order, ["c2", "c1"]);
+});
+
+test("plot-style normalization round-trips series order without sharing its array", () => {
+  const input = { series_order: ["c2", "c1"] };
+  const normalized = normalizePlotStyle(input);
+  assert.deepEqual(normalized.series_order, ["c2", "c1"]);
+  assert.notEqual(normalized.series_order, input.series_order);
 });
 
 test("a saved palette id marks the palette custom; a built-in leaves the key alone", () => {

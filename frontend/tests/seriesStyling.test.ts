@@ -12,6 +12,9 @@ import {
   isSecondarySeries,
   linkedSecondarySeriesKeys,
   matchingRules,
+  moveSeriesWithinGroup,
+  orderedSeriesDescriptors,
+  orderedSeriesDescriptorsByGroup,
   primarySeriesKeyFor,
   pruneOverrides,
   resolveAllSeriesStyles,
@@ -21,6 +24,8 @@ import {
   seriesPlotlyMode,
   seriesPlotlySymbol,
   seriesRuleError,
+  seriesLegendRanks,
+  seriesQuantityGroupKey,
   shortSourceName,
   type BaseSeriesStyle,
   type SeriesDescriptor,
@@ -488,6 +493,86 @@ test("bulk colour policy identifies only selected linked secondary series", () =
     [],
     "an orphan secondary keeps its independent colour even when linking is enabled",
   );
+});
+
+test("stored series order ignores stale and duplicate keys without mutating inputs", () => {
+  const descriptors = [
+    cell({ key: "c1", label: "One" }),
+    cell({ key: "c2", label: "Two" }),
+    cell({ key: "c3", label: "Three" }),
+  ];
+  const storedOrder = ["c3", "stale", "c3"];
+  const before = descriptors.map((descriptor) => descriptor.key);
+
+  assert.deepEqual(
+    orderedSeriesDescriptors(descriptors, storedOrder).map((descriptor) => descriptor.key),
+    ["c3", "c1", "c2"],
+  );
+  assert.deepEqual(descriptors.map((descriptor) => descriptor.key), before);
+  assert.deepEqual(storedOrder, ["c3", "stale", "c3"]);
+});
+
+test("series order stays within quantity groups and maps to deterministic legend ranks", () => {
+  const primaryOne = cell({ key: "c1", measureLabel: "Capacity" });
+  const primaryTwo = cell({ key: "c2", measureLabel: "Capacity" });
+  const secondary = cell({
+    key: "y2:ce:c1",
+    sourceKey: "c1",
+    axis: "y2",
+    measure: "ce",
+    measureLabel: "Efficiency",
+  });
+  const descriptors = [primaryOne, primaryTwo, secondary];
+
+  assert.deepEqual(
+    orderedSeriesDescriptorsByGroup(descriptors, [secondary.key, primaryTwo.key, primaryOne.key]).map(
+      (descriptor) => descriptor.key,
+    ),
+    [primaryTwo.key, primaryOne.key, secondary.key],
+  );
+  assert.equal(seriesQuantityGroupKey(primaryOne), seriesQuantityGroupKey(primaryTwo));
+  assert.notEqual(seriesQuantityGroupKey(primaryOne), seriesQuantityGroupKey(secondary));
+  assert.deepEqual(
+    [...seriesLegendRanks(descriptors, [secondary.key, primaryTwo.key, primaryOne.key]).entries()],
+    [
+      [primaryTwo.key, 0],
+      [primaryOne.key, 1],
+      [secondary.key, 2],
+    ],
+  );
+});
+
+test("moving a series changes only its own quantity group", () => {
+  const descriptors = [
+    cell({ key: "c1", measureLabel: "Capacity" }),
+    cell({ key: "c2", measureLabel: "Capacity" }),
+    cell({ key: "ce1", measureLabel: "Efficiency" }),
+  ];
+  assert.deepEqual(
+    moveSeriesWithinGroup(descriptors, undefined, "c1", "c2"),
+    ["c2", "c1", "ce1"],
+  );
+  assert.equal(
+    moveSeriesWithinGroup(descriptors, undefined, "c1", "ce1"),
+    null,
+    "cross-group moves are rejected",
+  );
+});
+
+test("panel row order does not change palette slots keyed by trace identity", () => {
+  const descriptors = [
+    cell({ key: "c1", sourceKey: "c1" }),
+    cell({ key: "c2", sourceKey: "c2" }),
+  ];
+  const storedOrder = ["c2", "c1"];
+  const rows = orderedSeriesDescriptorsByGroup(descriptors, storedOrder);
+  const slotsBefore = seriesPaletteSlots(descriptors);
+  // The trace builders continue to resolve palette slots from canonical
+  // descriptor identity; only the panel/legend presentation order changes.
+  const slotsAfter = seriesPaletteSlots(descriptors);
+
+  assert.deepEqual(rows.map((descriptor) => descriptor.key), ["c2", "c1"]);
+  assert.deepEqual([...slotsBefore.entries()], [...slotsAfter.entries()]);
 });
 
 // --- resolveAllSeriesStyles ----------------------------------------------

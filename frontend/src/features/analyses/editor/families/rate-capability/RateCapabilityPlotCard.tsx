@@ -55,6 +55,7 @@ import {
 import {
   decimatePreviewTraces,
   resolveSeriesStyle,
+  seriesLegendRanks,
   seriesPlotlyMode,
   seriesPlotlySymbol,
   type SeriesDescriptor,
@@ -461,6 +462,7 @@ export function rateCapabilityTracesForResult(
   const paletteOverflow = paletteOverflowMode(style.palette_overflow_mode);
   const comparisonPoints = result.comparison?.points ?? [];
   const descriptors = rateCapabilitySeriesDescriptors(result, spec);
+  const legendRanks = seriesLegendRanks(descriptors, style.series_order);
   const cellIds = [
     ...new Set([
       ...result.blocks.map((block) => block.cell_id),
@@ -516,6 +518,7 @@ export function rateCapabilityTracesForResult(
       const common = {
         name: resolved.name,
         showlegend: resolved.showInLegend,
+        legendrank: legendRanks.get(descriptor.key),
         opacity: resolved.opacity,
         x: actualX.map(plottedX),
         y: points.map((point) => point.asymmetry_ratio),
@@ -616,6 +619,7 @@ export function rateCapabilityTracesForResult(
       const common = {
         name: resolved.name,
         showlegend: resolved.showInLegend,
+        legendrank: legendRanks.get(descriptor.key),
         opacity: resolved.opacity,
         x: actualX.map(plottedX),
         y: points.map((point) => pointY(point, view)),

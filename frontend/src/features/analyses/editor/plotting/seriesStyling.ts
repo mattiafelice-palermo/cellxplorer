@@ -254,6 +254,110 @@ export function isSecondarySeries(descriptor: SeriesDescriptor): boolean {
   return typeof descriptor.measure === "string" && descriptor.measure.length > 0;
 }
 
+/** Stable grouping key used by the Series panel and legend-order policy. */
+export function seriesQuantityGroupKey(descriptor: SeriesDescriptor): string {
+  return `${descriptor.plot ?? 0}:${descriptor.measureLabel ?? descriptor.axis ?? "y"}`;
+}
+
+/**
+ * Apply a stored presentation order to one descriptor list.
+ *
+ * The descriptor array remains the source of truth for new rows, while the
+ * stored list only supplies a preference for keys that still exist. A map and
+ * a seen set make stale and duplicate stored keys harmless without mutating
+ * either input.
+ */
+export function orderedSeriesDescriptors(
+  descriptors: SeriesDescriptor[],
+  storedOrder?: readonly string[],
+): SeriesDescriptor[] {
+  const byKey = new Map<string, SeriesDescriptor>();
+  for (const descriptor of descriptors) {
+    if (!byKey.has(descriptor.key)) byKey.set(descriptor.key, descriptor);
+  }
+
+  const ordered: SeriesDescriptor[] = [];
+  const seen = new Set<string>();
+  for (const key of storedOrder ?? []) {
+    const descriptor = byKey.get(key);
+    if (!descriptor || seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(descriptor);
+  }
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.key)) continue;
+    seen.add(descriptor.key);
+    ordered.push(descriptor);
+  }
+  return ordered;
+}
+
+/** Apply stored order inside each existing quantity group, never across groups. */
+export function orderedSeriesDescriptorsByGroup(
+  descriptors: SeriesDescriptor[],
+  storedOrder?: readonly string[],
+): SeriesDescriptor[] {
+  const groups = new Map<string, SeriesDescriptor[]>();
+  const seen = new Set<string>();
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.key)) continue;
+    seen.add(descriptor.key);
+    const groupKey = seriesQuantityGroupKey(descriptor);
+    const group = groups.get(groupKey);
+    if (group) group.push(descriptor);
+    else groups.set(groupKey, [descriptor]);
+  }
+  return Array.from(groups.values()).flatMap((group) =>
+    orderedSeriesDescriptors(group, storedOrder),
+  );
+}
+
+/**
+ * Move one series within its current quantity group. A null result means the
+ * keys are missing, identical, or belong to different groups.
+ */
+export function moveSeriesWithinGroup(
+  descriptors: SeriesDescriptor[],
+  storedOrder: readonly string[] | undefined,
+  activeKey: string,
+  overKey: string,
+): string[] | null {
+  const active = descriptors.find((descriptor) => descriptor.key === activeKey);
+  const over = descriptors.find((descriptor) => descriptor.key === overKey);
+  if (!active || !over) return null;
+  const groupKey = seriesQuantityGroupKey(active);
+  if (groupKey !== seriesQuantityGroupKey(over) || activeKey === overKey) return null;
+
+  const ordered = orderedSeriesDescriptorsByGroup(descriptors, storedOrder);
+  const group = ordered.filter((descriptor) => seriesQuantityGroupKey(descriptor) === groupKey);
+  const from = group.findIndex((descriptor) => descriptor.key === activeKey);
+  const to = group.findIndex((descriptor) => descriptor.key === overKey);
+  if (from === -1 || to === -1) return null;
+
+  const moved = [...group];
+  const [item] = moved.splice(from, 1);
+  moved.splice(to, 0, item);
+  let groupIndex = 0;
+  return ordered.map((descriptor) =>
+    seriesQuantityGroupKey(descriptor) === groupKey
+      ? moved[groupIndex++].key
+      : descriptor.key,
+  );
+}
+
+/** Map each series key to a deterministic Plotly legend rank. */
+export function seriesLegendRanks(
+  descriptors: SeriesDescriptor[],
+  storedOrder?: readonly string[],
+): Map<string, number> {
+  return new Map(
+    orderedSeriesDescriptorsByGroup(descriptors, storedOrder).map((descriptor, index) => [
+      descriptor.key,
+      index,
+    ]),
+  );
+}
+
 /**
  * Selected secondary series whose colour is currently inherited from their
  * primary. A bulk colour edit cannot truthfully include one of these series:

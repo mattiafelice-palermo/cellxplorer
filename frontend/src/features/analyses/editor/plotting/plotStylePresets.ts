@@ -37,6 +37,13 @@ export function applyPlotStylePreset(
     ce_custom_colors: { ...preset.ce_custom_colors },
     palette_colors: [...(preset.palette_colors ?? [])],
     ce_palette_colors: [...(preset.ce_palette_colors ?? [])],
+    // Series ordering is presentation state tied to the current plot, not a
+    // palette/style preset. Applying a preset must not erase it.
+    series_order: current.series_order
+      ? [...current.series_order]
+      : preset.series_order
+        ? [...preset.series_order]
+        : undefined,
     axis_scopes: { ...(preset.axis_scopes ?? {}) },
     x_axis: preserveAxisFields(preset.x_axis, current.x_axis, applyRanges, applyTicks),
     y_axis: preserveAxisFields(preset.y_axis, current.y_axis, applyRanges, applyTicks),

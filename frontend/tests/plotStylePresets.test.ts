@@ -40,6 +40,12 @@ test("preset can preserve current ranges and ticks independently", () => {
   assert.equal(applied.x_axis.dtick, 0.2);
 });
 
+test("applying a style preset preserves the current series order", () => {
+  const current = { ...style, series_order: ["c2", "c1"] } as PlotStyle;
+  const applied = applyPlotStylePreset(current, style, false, false);
+  assert.deepEqual(applied.series_order, ["c2", "c1"]);
+});
+
 test("preset applies ranges and ticks when requested", () => {
   const preset = {
     ...style,
