@@ -7,8 +7,8 @@
 - [`046-series-appearance-manager.md`](046-series-appearance-manager.md)
   turns the Series appearance modal into a multi-selection and bulk-edit manager, adds persisted
   group-local ordering and real Plotly legend order, and provides a detached legend preview while
-  keeping the scientific preview fixed. **Implementation complete; final acceptance pending the
-  cumulative manual/browser matrix.**
+  keeping the scientific preview fixed. **Parent 046 complete/review-clean; cumulative manual/browser
+  acceptance and final review complete.**
   - [`046.1-series-selection-and-bulk-editing.md`](046.1-series-selection-and-bulk-editing.md)
     — multi-selection, mixed-value bulk styling, legend membership, and Reset selected.
     **Implemented — review-clean.**
@@ -18,8 +18,7 @@
   - [`046.3-detached-legend-preview-and-integration.md`](046.3-detached-legend-preview-and-integration.md)
     — detached passive Plotly legend preview and cumulative supported-family integration.
     **Implemented — review-clean.**
-  Coordination: [`046-agent-coordination.md`](046-agent-coordination.md); the 33-item manual/browser
-  acceptance matrix remains pending.
+  Coordination: [`046-agent-coordination.md`](046-agent-coordination.md); workflow complete.
 - [`043-context-sync-and-cache-reclamation.md`](043-context-sync-and-cache-reclamation.md)
   two independent maintenance parts, to be done in separate sessions. Part A folds Parent 040 into the
   project-context architecture file and closes the process gap that let those files drift 405 commits.
@@ -72,17 +71,17 @@
   raw/protocol/cache model rather than creating an Excel-specific scientific path. Implement only
   through four sequential children on the shared `feature/neware-excel-support` branch:
   - [`039.1-neware-excel-timeseries-parser.md`](039.1-neware-excel-timeseries-parser.md)
-    — workbook recognition, canonical point-level mapping, executed-step reconstruction, status
-    normalization, energy counters, and independent `step`-summary validation.
+    — point-level record mapping, executed-step reconstruction, status normalization, energy
+    reconstruction, and step-summary validation.
   - [`039.2-neware-excel-metadata-protocol-and-cache.md`](039.2-neware-excel-metadata-protocol-and-cache.md)
-    — metadata/test-plan reconstruction, parser dispatch/bundle versioning, cache integration, and
-    independent cycle-summary validation.
+    — metadata/test-plan reconstruction, parser dispatch/versioning, cache integration, and
+    cycle-summary validation.
   - [`039.3-neware-excel-import-and-source-lifecycle.md`](039.3-neware-excel-import-and-source-lifecycle.md)
-    — bounded inspection, file/folder selection, registration, scanner/source updates, frontend
-    format exposure, and packaged runtime integration.
+    — bounded import inspection, selection/scanning, Cell/source registration, source updates,
+    frontend format exposure, and packaged runtime.
   - [`039.4-neware-excel-analysis-regression-and-closure.md`](039.4-neware-excel-analysis-regression-and-closure.md)
-    — Cycles/Time-Capacity/Steps/DCIR/Rate Capability/Chargeability regression, portable/source
-    audit, real-workbook acceptance, docs/version/package closure, and final parent review.
+    — end-to-end analysis regression, format-neutral scientific verification, portable/source
+    audit, real-workbook acceptance, release documentation, and final cumulative review.
   **Parent 039 complete/review-clean; 039.1–039.4 implemented and review-clean, with final cumulative review complete.** Coordination: [`039-agent-coordination.md`](039-agent-coordination.md).
 - [`038-analyses-feature-modularization.md`](038-analyses-feature-modularization.md)
   moves all frontend Analysis Database, workspace, editor-family, plotting, saved-artifact, warmup,
@@ -108,7 +107,7 @@
     extracts saved previews/artifacts and moves draft and background-warmup modules.
     **Implemented; review-clean.**
   - [`038.7-portable-report-flow-extraction.md`](038.7-portable-report-flow-extraction.md)
-    extracts portable estimate, source preflight/update, snapshot, export, and share orchestration.
+    extracts portable estimate, source preflight/update, snapshots, export, and share orchestration.
     **Implemented; review-clean.**
   - [`038.8-analysis-editor-integration.md`](038.8-analysis-editor-integration.md)
     extracts `AnalysisEditor`, removes compatibility paths, makes `AnalysisPage` thin, reconciles
@@ -193,7 +192,7 @@ Implement features **one at a time** on dedicated branches:
    branch from current `main`. Record the branch name in the spec's implementation record when
    work begins.
 3. **Push for review.** After each reviewable checkpoint (spec implementation complete, or a
-   logical milestone the user should see), commit on the feature branch and push to `origin`:
+   logical milestone the user should see), commit on the feature branch and push it to `origin`:
    `git push -u origin HEAD` the first time, then `git push`. Other agents and reviewers depend
    on the remote branch; do not leave finished work local-only unless the user explicitly opts out.
 4. **Stay sequential.** Finish branch A → merge to `main` → start branch B. Parallel feature
@@ -489,7 +488,7 @@ Rules:
   — `python scripts/preflight.py` runs version consistency, backend tests, frontend policy tests,
   and the frontend production build in order with isolated `CELLXPLORER_DATA`. Developer tooling
   only. **Implemented.**
-- [009-automatic-clean-environment-preflight.md](009-automatic-clean-environment-preflight.md)
+- [009-automatic-clean-environment-preflight.md`](009-automatic-clean-environment-preflight.md)
   — automatically runs the canonical CellXplorer preflight on a clean Windows environment
   whenever `main` changes, when a version tag is pushed, or when manually requested.
   **Implemented.**
@@ -534,7 +533,7 @@ Rules:
   — power-menu update indicator, modal, download progress, and installer launch via Spec 017
   commands. Review: [018-in-app-update-experience-review.md](reviews/018-in-app-update-experience-review.md)
   (**Implemented**; review follow-ups addressed). Branch `feature/updater-017-019`.
-- [019-automated-github-release-publishing.md](019-automated-github-release-publishing.md)
+- [019-automated-github-release-publishing.md`](019-automated-github-release-publishing.md)
   — tag-triggered GitHub release workflow, signed `latest.json`, and combined minor version bump to
   0.15.0. Review: [019-automated-github-release-publishing-review.md](reviews/019-automated-github-release-publishing-review.md)
   (**Implemented**; review follow-ups addressed — do not push `v0.15.0` until repo is public and
@@ -619,21 +618,21 @@ Rules:
   safety, and portable round-trip. Implement only through these sequential children:
   - [034.1-scientific-stitching-and-boundaries.md](034.1-scientific-stitching-and-boundaries.md)
     — one dense observed-cycle mapping for per-cycle and raw data, with explicit source boundaries.
-  - [034.2-continuation-compatibility-and-ordering.md](034.2-continuation-compatibility-and-ordering.md)
+  - [034.2-continuation-compatibility-and-ordering.md`](034.2-continuation-compatibility-and-ordering.md)
     — read-only compatibility findings, chronological suggestion, and acknowledgement policy.
   - [034.3-atomic-multi-source-lifecycle-apis.md](034.3-atomic-multi-source-lifecycle-apis.md)
     — validated atomic import, attach, reorder, detach, invalidation, and activity contracts.
-  - [034.4-initial-multi-source-import.md](034.4-initial-multi-source-import.md)
+  - [034.4-initial-multi-source-import.md`](034.4-initial-multi-source-import.md)
     — Inbox workflow for importing separate Cells or one ordered continued Cell.
-  - [034.5-existing-cell-continuation-management.md](034.5-existing-cell-continuation-management.md)
+  - [034.5-existing-cell-continuation-management.md`](034.5-existing-cell-continuation-management.md)
     — existing-Cell add/reorder/detach management and tracked-tail presentation.
-  - [034.6-tracked-tail-source-monitoring.md](034.6-tracked-tail-source-monitoring.md)
+  - [034.6-tracked-tail-source-monitoring.md`](034.6-tracked-tail-source-monitoring.md)
     — scheduled checks for only the final source, with explicit all-source integrity operations.
-  - [034.7-cycles-time-capacity-and-exports.md](034.7-cycles-time-capacity-and-exports.md)
+  - [034.7-cycles-time-capacity-and-exports.md`](034.7-cycles-time-capacity-and-exports.md)
     — complete Cycles and Time / capacity plotting, boundaries, thumbnails, and data exports.
-  - [034.8-protocol-derived-analysis-safety.md](034.8-protocol-derived-analysis-safety.md)
+  - [034.8-protocol-derived-analysis-safety.md`](034.8-protocol-derived-analysis-safety.md)
     — fail-closed Steps/DCIR/Chargeability/C-rate behavior until semantic mappings exist.
-  - [034.9-portable-roundtrip-and-regression.md](034.9-portable-roundtrip-and-regression.md)
+  - [034.9-portable-roundtrip-and-regression.md`](034.9-portable-roundtrip-and-regression.md)
     — exact portable hierarchy, synthetic regression corpus, documentation, and final matrix.
   **Parent 038 complete/review-clean; 038.1–038.8 implemented and review-clean.**
 - [038-analyses-feature-modularization.md](038-analyses-feature-modularization.md)
@@ -669,7 +668,7 @@ Rules:
   - [039.2-neware-excel-metadata-protocol-and-cache.md](039.2-neware-excel-metadata-protocol-and-cache.md)
     — metadata/test-plan reconstruction, parser dispatch/versioning, cache integration, and
     cycle-summary validation.
-  - [039.3-neware-excel-import-and-source-lifecycle.md](039.3-neware-excel-import-and-source-lifecycle.md)
+  - [039.3-neware-excel-import-and-source-lifecycle.md`](039.3-neware-excel-import-and-source-lifecycle.md)
     — bounded import inspection, selection/scanning, Cell/source registration, source updates,
     frontend format exposure, and packaged runtime.
   - [039.4-neware-excel-analysis-regression-and-closure.md](039.4-neware-excel-analysis-regression-and-closure.md)
