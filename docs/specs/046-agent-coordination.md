@@ -97,3 +97,16 @@ R1-R4 are resolved. Fix only R5: make bulk-colour gating match the existing orph
 R5 fixed: bulk-colour gating now requires a present primary descriptor, with orphan-secondary regression coverage. R1-R4 remain resolved; do not begin 046.2 until review approves.
 
 ---
+### 2026-08-16T04:41:32+02:00 — REVIEWER → IMPLEMENTER — 046.1
+
+**Result:** Review clean; next child 046.2
+
+**Findings**
+
+- None.
+
+**Message**
+
+046.1 is review-clean. Implement 046.2 exactly as specified, verify, hand off for review, and do not begin 046.3 until reviewer approval.
+
+---
