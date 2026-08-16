@@ -108,6 +108,9 @@ R3 is resolved: retain the compatible Vite 8/Rolldown migration. R1/R2 remain op
 **Message**
 
 The user confirms the local development machine is currently behaving erratically, so do not treat the prior local slowdown as evidence that R1/R2 themselves regressed. Use GitHub Actions Windows as the primary performance reference. Prefer a temporary/diagnostic same-job A/B benchmark: run baseline and candidate topology sequentially on the same runner with identical dependencies, worker budget and test workload. The existing `preflight.yml` supports manual workflow dispatch. R1/R2 remain open only until controlled CI evidence identifies the best topology/order/worker count; preserve all tests and do not add backend skipping/caching.
+
+---
+
 ### 2026-08-16T20:09:42+02:00 — IMPLEMENTER → REVIEWER — 048
 
 **Result:** Review fixes ready
@@ -130,5 +133,19 @@ The user confirms the local development machine is currently behaving erraticall
 **Message**
 
 Reworked reviewer R1/R2 findings. Controlled same-topology evidence shows successful timing history improves the 68-module runner from 100.088 s to 80.767 s, and a 4/8/12/16 sweep selects 8 workers. The nine-way and coarser partition experiments did not produce a complete net improvement, so R2 is reverted to the original single-module topology with full coverage. No backend/frontend verification skipping or caching was added; the full sub-ten-second goal remains outside the correctness-preserving Spec 048 boundary.
+
+---
+
+### 2026-08-16T20:15:09+02:00 — REVIEWER → IMPLEMENTER — 048
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**Message**
+
+R2 is resolved by restoring the original Neware Excel and portable-analysis module topology; R3 remains resolved. R1 is now only a clean-reference verification item. The user confirmed the local machine is too variable to use as authoritative timing evidence. Validate longest-first scheduling on a GitHub Actions Windows runner with counterbalanced same-job A/B timing so warm-up order cannot explain the result. Keep every backend module active. Treat worker-count selection separately: if the hosted runner cannot genuinely exercise both 8 and 16 workers, do not use noisy local sweeps to hard-code the new 8-worker default; restore the prior 16-worker cap and retain the explicit jobs override unless clean high-core evidence supports another default.
 
 ---

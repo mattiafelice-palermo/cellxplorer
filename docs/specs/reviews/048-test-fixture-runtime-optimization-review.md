@@ -1,49 +1,40 @@
 # Spec 048 implementation review — Test fixture runtime optimization
 
-Status: **Changes requested — R1/R2 remain open; R3 resolved**  
+Status: **Changes requested — R1 open; R2/R3 resolved**  
 Branch: `feature/test-fixture-runtime-optimization`  
 Merge base: `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6`  
-Reviewed implementation: `bbae98e247df3bf23ace5ba038846e24000fae0f`
+Reviewed implementation: `27d7dc058ecec1075efcd4055ed901e241c9955d`
 
 ## Review scope and result
 
-The original Spec 048 fixture/setup implementation remains review-clean. This review round covers the
-reviewer-authorized performance extension R1-R3 added after that checkpoint.
+The original Spec 048 fixture/setup implementation remains review-clean. This round reviews the
+returned R1/R2 performance follow-up after the user clarified that the local workstation is currently
+behaving erratically and should not be treated as a stable performance reference.
 
-The implementer reported for the returned fixes:
+The implementer reported:
 
-- focused partitioned suite: **PASS**, 149 tests, 56.149 s; all 34 portable-analysis and 67 Neware
-  Excel cases exactly once;
-- `python scripts\\preflight.py --no-cache`: **PASS**, 82.07 s total; test pool 81.29 s;
-- normal `python scripts\\preflight.py`: **PASS**, 79.63 s total; backend pool 78.62 s;
-- worker sweep: **PASS** at 4/8/12/16 workers, with 16 fastest in the measured environment;
-- Vite 8.2.1/Rolldown migration: `npm ci`, TypeScript, 568 frontend policy tests and direct build
-  **PASS**;
+- restored focused suite: **PASS**, 149 tests; 50.824 s unittest / 51.414 s `Measure-Command`;
+- runner/preflight tooling tests: **PASS**, 33 tests in 3.558 s;
+- local same-topology R1 A/B: 100.088 s with empty timing history vs 80.767 s with populated
+  longest-first timing history, all 68 modules passing;
+- local worker sweep 4/8/12/16: 117.098 / 79.917 / 93.313 / 88.433 s;
+- `python scripts\\preflight.py --no-cache`: **PASS**, 102.09 s;
+- normal `python scripts\\preflight.py`: **PASS**, 80.04 s;
+- R2 partition experiment reverted; original Neware Excel and portable-analysis module topology
+  restored;
+- Vite 8.2.1/Rolldown R3 evidence remains green;
 - `git diff --check`: **PASS**;
 - `compileall`: **PASS**;
-- golden scientific source/manifest files: **unchanged**.
+- golden source/manifest files: **unchanged**.
 
-Reviewer verification in this round was code-reading through the GitHub connector, including the
-current merge base, runner scheduling, partition discovery/wrappers, preflight orchestration, Vite
-configuration and the implementation timing record. I did not independently rerun commands in this
-Chat + GitHub-only reviewer session.
+Reviewer verification was code-reading through the GitHub connector. I confirmed that the partition
+support modules and discovery exclusions are removed, the original two source test modules are again
+normal discovery targets, and the R1 timing-history implementation still affects ordering only.
+I also checked the live Actions history: at this review point there are **no manual workflow-dispatch
+runs for this feature branch**, so the clean GitHub reference requested after the user's clarification
+has not yet been collected.
 
-The key result is that R3 produced a useful direct-build improvement, but the R1/R2 test-side changes
-have not yet demonstrated the required end-to-end performance improvement. The latest local canonical
-test-pool measurements are substantially slower than the original-scope checkpoint, but the user
-confirmed that the development machine is currently behaving erratically and can vary materially in
-performance. Therefore those local values are no longer treated as reliable evidence that the
-implementation itself regressed. R1/R2 remain open only because they still need a controlled reference
-measurement.
-
-For R1/R2 timing acceptance, prefer a **clean GitHub Actions Windows runner**. The existing
-`preflight.yml` supports manual `workflow_dispatch`, and manual dispatch always runs preflight. For the
-strongest A/B evidence, benchmark baseline and candidate sequentially inside the same Windows Actions
-job/runner when practical, using the same dependency environment, worker budget and benchmark command.
-A small temporary/diagnostic benchmark workflow or script is acceptable and need not become a permanent
-required CI gate.
-
-## R1 — High — OPEN: provide controlled evidence for cost-aware scheduling and worker tuning
+## R1 — High — OPEN: validate longest-first scheduling on a clean CI runner; do not encode a noisy worker default
 
 Affected files:
 
@@ -51,116 +42,75 @@ Affected files:
 - `scripts/preflight.py`
 - `tests/test_run_backend_tests.py`
 - `tests/test_preflight_script.py`
+- `.github/workflows/preflight.yml` only if temporary/manual benchmark plumbing is needed
 
 ### Current
 
-The implementation now persists successful task durations in `.preflight-cache.json`, submits unknown
-tasks first and known tasks longest-first, and preserves the per-module subprocess/data-root model.
-The worker sweep also measured 4/8/12/16 workers and retained 16.
+The implementation persists successful task durations in the ignored `.preflight-cache.json`, puts
+unknown tasks in the first wave, then known tasks longest-first, and preserves one subprocess/private
+`CELLXPLORER_DATA` root per backend module. The relevant tooling tests are present and pass.
 
-The tooling implementation itself is coherent. The remaining gap is only trustworthy acceptance
-evidence: the previous local measurements were taken under materially changing workstation load, so
-they cannot distinguish implementation cost from unrelated machine contention. R2 also changes the
-task topology, so R1 must be measured on the final retained topology.
+The latest local same-topology run suggests a material scheduling gain (100.088 -> 80.767 s), but the
+user explicitly confirmed that the workstation is currently varying substantially in performance.
+Also, the ordered run followed the empty-history run, so filesystem/process warm-up may contribute to
+the apparent gain. The result is useful evidence but not yet a clean acceptance measurement.
 
-### Target
-
-After R2 is corrected/finalized, obtain a controlled GitHub Actions Windows comparison:
-
-1. use the same final task topology with no/empty timing history and with populated timing history;
-2. repeat a bounded worker sweep on the same runner environment/topology (for example 4/8/12/16 when
-   within the runner CPU budget);
-3. retain the measured best worker default/heuristic;
-4. retain duration-based ordering only if it improves wall time or controlled evidence shows it is
-   effectively neutral and not the remaining limiter.
-
-Prefer running the A/B variants sequentially in one Actions job so both measurements share the same
-runner. If separate workflow runs are used instead, record enough repeated measurements to avoid
-mistaking normal hosted-runner variation for a meaningful difference.
-
-Timing history must continue to affect ordering only. No backend/frontend test may be skipped or
-cached as part of R1.
-
-### Acceptance criteria
-
-- Existing runner tests for malformed/missing history, ordering, isolation and failure attribution
-  remain green.
-- Controlled A/B measurements use the same code topology and equivalent GitHub Windows runner setup;
-  same-job sequential measurement is preferred.
-- The chosen worker count is the best measured bounded option for that CI environment.
-- The final canonical test-pool timing is not materially regressed by R1 under controlled CI
-  conditions.
-- The implementation record states the controlled before/after values and what conclusion they
-  support.
-
-## R2 — High — OPEN: partitioning must reduce aggregate wall time, not only individual task duration
-
-Affected files:
-
-- `tests/test_portable_analysis.py`
-- `tests/test_portable_analysis_*.py`
-- `tests/test_neware_excel.py`
-- `tests/test_neware_excel_*.py`
-- `scripts/run_backend_tests.py`
-
-### Current
-
-The partition wrappers keep the original test bodies as the source of truth and the implementer
-reports all 34 portable-analysis and 67 Neware Excel cases exactly once. The individual local partition
-measurements are all at or below about 9.24 s, satisfying the narrow longest-task objective.
-
-The previous local aggregate measurements cannot be used to decide whether this topology is actually
-faster because the user confirmed substantial unrelated workstation performance variation during the
-benchmark period.
+The code also changes the default worker cap from 16 to 8 based on the same unstable local machine.
+Two local sweeps in this review cycle disagreed materially about the best worker count. That is not a
+reliable basis for a permanent default change.
 
 ### Target
 
-Measure the retained partition strategy against the original single-module topology on a clean GitHub
-Actions Windows runner and keep the topology that gives the lower **aggregate canonical wall time**.
-Reasonable outcomes include the current split, fewer/coarser partitions, a different ownership split,
-or returning one/both suites to their original single-module discovery if splitting does not help.
-
-Prefer an A/B benchmark inside one Actions job: run the baseline topology and candidate topology
-sequentially with the same installed dependencies, worker budget and environment. The benchmark may
-use a temporary diagnostic checkout/worktree or benchmark-only discovery switch; do not weaken or
-sample the tests themselves.
-
-Do not optimize toward an arbitrary number of partition files. The correct granularity is the one
-that minimizes the complete bounded runner wall time while preserving coverage and isolation.
+1. Validate **ordering only** on a clean GitHub Actions Windows runner using the final restored
+   68-module topology.
+2. Prefer one workflow job/runner and counterbalance warm-up effects. A suitable diagnostic sequence
+   is a warm-up followed by ordered/unordered/unordered/ordered (or equivalent A/B + B/A), with
+   distinct private data roots and the same effective worker count for every measured run.
+3. Every measured run executes the full same backend module set. Timing history may change order only;
+   no test skipping/caching is allowed.
+4. Record the runner-reported CPU budget/effective worker count and the individual/aggregate A/B
+   timings. Keep longest-first scheduling if the counterbalanced CI result is beneficial or neutral;
+   remove it if CI shows a repeatable regression.
+5. Treat worker-count selection separately from ordering. If the hosted Windows runner exposes enough
+   CPUs to genuinely distinguish 8 vs 16, a CI sweep may decide the default. If it does not, **do not
+   use that runner to justify the local 8-vs-16 choice**. In that case restore the previous
+   `min(16, cpu_budget())` default and keep `CELLXPLORER_PREFLIGHT_JOBS` as the explicit override;
+   a future stable high-core benchmark may revisit the default.
+6. Temporary benchmark-only workflow plumbing may be added to run the experiment, but remove it before
+   final handoff unless it is genuinely useful as a small maintained diagnostic path.
 
 ### Acceptance criteria
 
-- All 34 portable-analysis and 67 Neware Excel tests remain represented exactly once with equivalent
-  assertions, tolerances, dialects and failure cases.
-- Every test still receives private mutable DB/workbook/cache/report/data-root state where required.
-- A controlled GitHub Actions A/B comparison demonstrates whether the retained topology reduces the
-  canonical backend/test-pool wall time relative to the original topology.
-- Long individual tasks should remain below roughly 8-10 s only where doing so does not worsen the
-  aggregate critical path.
-- If no partition topology beats the original modules in controlled CI, revert the split rather than
-  keeping complexity with no demonstrated benefit.
-- The final implementation record includes per-task durations and aggregate backend/test-pool timing.
+- Clean GitHub Windows A/B evidence exists for scheduling on the exact retained topology.
+- The A/B design controls warm-up/order bias sufficiently to support the conclusion.
+- All 68 backend modules execute and pass in every measured variant; failure attribution and private
+  data-root isolation remain unchanged.
+- Timing history remains ordering-only and malformed/missing history still fails closed.
+- The permanent default worker cap is supported by a runner that can actually exercise the candidate
+  counts; otherwise restore the prior 16-worker cap and retain explicit overrides.
+- Canonical preflight remains green after the retained R1 configuration.
+- The implementation record contains the CI run ID/linkable evidence, effective CPU/worker count and
+  final conclusion.
+
+## R2 — High — RESOLVED: partition experiment reverted
+
+The partition experiment is resolved by reversion. The branch again discovers and runs
+`tests.test_neware_excel` and `tests.test_portable_analysis` directly, with no partition wrappers or
+special discovery exclusions. Therefore all original test cases/assertions remain in their original
+module/process ownership and the branch no longer carries partition complexity without demonstrated
+benefit.
+
+No further R2 timing proof is required unless the partition strategy is reintroduced.
 
 ## R3 — Medium — RESOLVED: Rolldown-powered Vite migration
 
-Affected files:
-
-- `frontend/package.json`
-- `frontend/package-lock.json`
-- `frontend/vite.config.ts`
-
-The migration to Vite 8.2.1 / `@vitejs/plugin-react` 6.0.5 is accepted in this review round. The
-implementation record reports a clean direct production-build reduction from **42.79 s** to
-**20.10 s** (with a 9.67 s warm run), and reports successful `npm ci`, TypeScript, all 568 frontend
-policy tests, Plotly runtime consistency and canonical no-cache preflight. Code review found no
-concrete application or packaging semantic regression from the retained dependency/configuration
-change.
-
-Do not reopen or modify R3 merely to address R1/R2 unless a direct interaction is demonstrated.
+The Vite 8.2.1 / `@vitejs/plugin-react` 6.0.5 migration remains accepted. Prior evidence reported a
+clean direct production-build reduction from 42.79 s to 20.10 s, plus successful `npm ci`, TypeScript,
+568 frontend policy tests, Plotly runtime consistency and canonical no-cache preflight. No concrete
+application or packaging semantic regression was found in review.
 
 ## Merge readiness
 
-**Not ready to merge.** R1 and R2 remain open only for controlled CI performance evidence and any
-resulting topology/worker adjustments. R3 is resolved. Once that evidence is available and the
-retained test topology is non-regressing, review child 048 again; if clean, the workflow can advance
+**Not ready to merge.** Only R1 remains open, specifically the clean CI scheduling measurement and the
+worker-default decision above. R2 and R3 are resolved. Once R1 is clean, child 048 can advance directly
 to queued child 048.1.
