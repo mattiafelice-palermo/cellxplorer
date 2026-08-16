@@ -201,3 +201,20 @@ Fix only R1 in the canonical 046.2 review file: ensure a pending debounced serie
 Fix only R1-R2 in the canonical 046.3 review file. R1: avoid Plotly's muted `legendonly` visual state while still stripping scientific drawing/data. R2: make large legends reachable in the bundled Plotly 2.35.3 runtime without relying on unsupported `legend.maxheight` or `staticPlot`-disabled scrolling. Preserve passive legend interactions, verify, and hand back to REVIEWER.
 
 ---
+### 2026-08-16T05:33:48+02:00 — IMPLEMENTER → REVIEWER — 046.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS - node --test frontend\tests\legendPreview.test.ts frontend\tests\seriesStyling.test.ts frontend\tests\plotStylePalette.test.ts frontend\tests\plotStylePresets.test.ts (71 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- preflight: PASS - python scripts\preflight.py (elevated; 4/4 stages, 127 backend/frontend modules)
+- manual/browser checks: NOT RUN - user explicitly deferred the full cumulative matrix for their manual check at the end
+
+**Message**
+
+046.3 R1-R2 fixed only: legend traces now use normal Plotly visibility with empty positional arrays, avoiding the muted legendonly state; the detached config keeps Plotly scrolling enabled, removes unsupported legend.maxheight, and retains passive item/double-click settings. Added focused coverage for normal visual state, unsupported-attribute absence, and scroll-capable config. Cumulative manual/browser matrix items 1-32 remain NOT RUN per user instruction.
+
+---

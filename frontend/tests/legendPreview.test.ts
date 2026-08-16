@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildLegendPreview,
+  LEGEND_PREVIEW_CONFIG,
   LEGEND_PREVIEW_MAX_HEIGHT,
   LEGEND_PREVIEW_MIN_HEIGHT,
   legendPreviewHeight,
@@ -55,7 +56,7 @@ test("legend preview preserves effective Plotly styling without retaining curve 
   assert.deepEqual(trace.line, line);
   assert.deepEqual(trace.marker, marker);
   assert.equal(trace.opacity, 0.7);
-  assert.equal(trace.visible, "legendonly");
+  assert.equal("visible" in trace, false);
   assert.deepEqual(trace.x, []);
   assert.deepEqual(trace.y, []);
   assert.equal("customdata" in trace, false);
@@ -98,10 +99,17 @@ test("legend preview uses rank order, keeps legend styling, and owns local place
   assert.equal(layout.paper_bgcolor, "#101820");
   assert.equal(legend.itemclick, false);
   assert.equal(legend.itemdoubleclick, false);
+  assert.equal("maxheight" in legend, false);
 });
 
 test("legend preview height stays compact for ordinary and bounded for large legends", () => {
   assert.equal(legendPreviewHeight(0, "h"), LEGEND_PREVIEW_MIN_HEIGHT);
   assert.ok(legendPreviewHeight(5, "h") < LEGEND_PREVIEW_MAX_HEIGHT);
   assert.equal(legendPreviewHeight(100, "v"), LEGEND_PREVIEW_MAX_HEIGHT);
+});
+
+test("legend preview keeps Plotly scrolling enabled while disabling legend mutations", () => {
+  assert.equal(LEGEND_PREVIEW_CONFIG.displayModeBar, false);
+  assert.equal(LEGEND_PREVIEW_CONFIG.responsive, true);
+  assert.equal("staticPlot" in LEGEND_PREVIEW_CONFIG, false);
 });

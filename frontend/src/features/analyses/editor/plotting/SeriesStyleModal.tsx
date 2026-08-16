@@ -123,6 +123,7 @@ import {
 import Plot from "../../../../components/Plot";
 import {
   buildLegendPreview,
+  LEGEND_PREVIEW_CONFIG,
   LEGEND_PREVIEW_MIN_HEIGHT,
   LEGEND_PREVIEW_WIDTH,
 } from "./legendPreview";
@@ -1128,10 +1129,7 @@ export function SeriesStyleModal({
     () => ({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT }),
     [],
   );
-  const legendPreviewConfig = useMemo(
-    () => ({ displayModeBar: false, responsive: true, staticPlot: true }),
-    [],
-  );
+  const legendPreviewConfig = LEGEND_PREVIEW_CONFIG;
   const legendPreviewStyle = useMemo(() => {
     const height =
       typeof legendPreview.layout.height === "number"

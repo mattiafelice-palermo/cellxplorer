@@ -15,6 +15,14 @@ export type LegendPreviewFigure = {
 export const LEGEND_PREVIEW_WIDTH = 620;
 export const LEGEND_PREVIEW_MIN_HEIGHT = 84;
 export const LEGEND_PREVIEW_MAX_HEIGHT = 220;
+/**
+ * Keep Plotly live enough to expose its bounded legend scrollbar, while the
+ * legend's own item click settings below make the surface passive.
+ */
+export const LEGEND_PREVIEW_CONFIG = {
+  displayModeBar: false,
+  responsive: true,
+} as const;
 
 const TRACE_PRESENTATION_FIELDS = [
   "type",
@@ -75,7 +83,8 @@ function legendRank(trace: Record<string, unknown>, index: number): [number, num
 
 /**
  * Height that keeps ordinary legends compact while bounding large ones.
- * Plotly's own `maxheight` handles overflow inside the bounded surface.
+ * Plotly 2.35.3 supplies the scrollbar when its content exceeds this surface;
+ * do not rely on newer legend attributes that are absent from that runtime.
  */
 export function legendPreviewHeight(entryCount: number, orientation: "h" | "v"): number {
   if (entryCount <= 0) return LEGEND_PREVIEW_MIN_HEIGHT;
@@ -105,9 +114,11 @@ export function buildLegendPreview(preview: LegendPreviewFigure): LegendPreviewF
       }
       legendTrace.name = trace.name ?? "";
       legendTrace.showlegend = true;
-      legendTrace.visible = "legendonly";
+      // Keep the normal visible state so Plotly does not apply its muted
+      // `legendonly` opacity; empty positional arrays prevent curve drawing.
       // Plotly still needs valid positional fields to construct a trace, but
-      // empty arrays ensure the detached chart never retains scientific data.
+      // empty arrays ensure the detached chart never retains or draws the
+      // scientific curves.
       legendTrace.x = [];
       legendTrace.y = [];
       if ("z" in trace) legendTrace.z = [];
@@ -132,7 +143,6 @@ export function buildLegendPreview(preview: LegendPreviewFigure): LegendPreviewF
     itemclick: false,
     itemdoubleclick: false,
     groupclick: "toggleitem",
-    maxheight: LEGEND_PREVIEW_MAX_HEIGHT - 24,
   };
   for (const field of LEGEND_STYLE_FIELDS) {
     if (field in sourceLegend) legend[field] = copyValue(sourceLegend[field]);
