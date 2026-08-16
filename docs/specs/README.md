@@ -1,5 +1,12 @@
 # Feature specs
 
+- [`048-test-fixture-runtime-optimization.md`](048-test-fixture-runtime-optimization.md)
+  reduces redundant backend fixture/setup work and release/CI orchestration cost without changing
+  application or scientific behavior. Child 048 is review-clean; child 048.1 is in progress on the
+  shared `feature/test-fixture-runtime-optimization` branch.
+  - [`048.1-release-ci-runtime-optimization.md`](048.1-release-ci-runtime-optimization.md)
+    reuses trusted exact-SHA Windows preflight results, warms shared main-branch Rust dependencies,
+    and parallelizes independent release work while preserving every publication gate.
 - [`045-faster-local-verification.md`](045-faster-local-verification.md)
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend

@@ -4,6 +4,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -14,6 +15,7 @@ RELEASE_TAG_PATH = ROOT / "scripts" / "release_tag.py"
 VERIFY_MANIFEST_PATH = ROOT / "scripts" / "verify_updater_manifest.py"
 RELEASE_CHANNELS_PATH = ROOT / "scripts" / "release_channels.py"
 RELEASE_CHANNEL_POLICY_PATH = ROOT / "scripts" / "release_channel_policy.py"
+RESOLVE_PREFLIGHT_PATH = ROOT / "scripts" / "resolve_preflight_reuse.py"
 
 TAURI_ACTION_SHA = "1deb371b0cd8bd54025b384f1cd735e725c4060f"
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -34,6 +36,9 @@ verify_updater_manifest = load_module(VERIFY_MANIFEST_PATH, "verify_updater_mani
 release_channels = load_module(RELEASE_CHANNELS_PATH, "release_channels")
 release_channel_policy = load_module(
     RELEASE_CHANNEL_POLICY_PATH, "release_channel_policy"
+)
+resolve_preflight_reuse = load_module(
+    RESOLVE_PREFLIGHT_PATH, "resolve_preflight_reuse"
 )
 
 
@@ -275,26 +280,72 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('tags:\n      - "v*"', self.release)
         self.assertNotIn("tags:", self.preflight)
 
-    def test_preflight_skips_when_release_tag_points_at_commit(self):
-        self.assertIn("name: Release-tag gate", self.preflight)
-        self.assertIn('git tag --points-at "${GITHUB_SHA}"', self.preflight)
-        self.assertIn("needs: gate", self.preflight)
-        self.assertIn("needs.gate.outputs.should_run == 'true'", self.preflight)
-        self.assertIn("Manual dispatch always runs preflight.", self.preflight)
+    def test_main_preflight_is_not_suppressed_for_release_tags(self):
+        self.assertIn("name: Clean Windows preflight", self.preflight)
+        self.assertIn("branches:\n      - main", self.preflight)
+        self.assertNotIn("Release-tag gate", self.preflight)
+        self.assertNotIn('git tag --points-at "${GITHUB_SHA}"', self.preflight)
+        self.assertNotIn("needs: gate", self.preflight)
 
-    def test_release_cancels_redundant_main_preflight(self):
-        self.assertIn("actions: write", self.release)
-        self.assertIn("Cancel redundant main preflight for this commit", self.release)
+    def test_release_uses_exact_sha_preflight_reuse_without_cancellation(self):
+        self.assertIn("actions: read", self.release)
+        self.assertNotIn("actions: write", self.release)
+        self.assertNotIn("Cancel redundant main preflight", self.release)
+        self.assertNotIn("gh run cancel", self.release)
+        self.assertIn("Resolve exact-SHA canonical main preflight", self.release)
+        self.assertIn("scripts/resolve_preflight_reuse.py", self.release)
+        self.assertIn("--repository", self.release)
+        self.assertIn("--sha", self.release)
+        self.assertIn("reuse_preflight", self.release)
+        self.assertIn("Run canonical release-local preflight fallback", self.release)
+
+    def test_shared_rust_cache_is_seeded_on_main_and_restore_only_in_release(self):
+        self.assertIn("name: Warm Windows release Rust cache", self.preflight)
+        self.assertIn("continue-on-error: true", self.preflight)
+        self.assertIn("shared-key: cellxplorer-windows-release", self.preflight)
+        self.assertIn('add-job-id-key: "false"', self.preflight)
+        self.assertIn("steps.rust_cache.outputs.cache-hit", self.preflight)
+        self.assertIn("cargo build --release --locked --manifest-path src-tauri/Cargo.toml", self.preflight)
+        self.assertIn("shared-key: cellxplorer-windows-release", self.release)
+        self.assertIn('add-job-id-key: "false"', self.release)
+        self.assertIn('save-if: "false"', self.release)
+
+    def test_dependency_installation_uses_native_parallel_group(self):
+        self.assertIn("      - parallel:\n", self.release)
+        parallel = self.release.split("      - parallel:\n", 1)[1]
+        parallel = parallel.split("      - name: Resolve release channel", 1)[0]
+        self.assertIn("Install backend dependencies", parallel)
+        self.assertIn("python -m pip install -r backend/requirements.txt", parallel)
+        self.assertIn("python -m pip install pyinstaller", parallel)
+        self.assertIn("Install frontend and Tauri CLI dependencies", parallel)
+        self.assertIn("npm ci", parallel)
+        self.assertIn("npm --prefix frontend ci", parallel)
+
+    def test_reused_preflight_builds_release_inputs_in_parallel_before_verification(self):
+        self.assertIn("Build requested frontend channel", self.release)
+        self.assertIn("Build Python sidecar", self.release)
+        self.assertIn("github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'", self.release)
+        parallel = self.release.split("      - parallel:\n", 1)[1]
+        parallel = parallel.split("      - name: Build Python sidecar (release-local preflight fallback)", 1)[0]
+        self.assertIn("Build requested frontend channel", parallel)
+        self.assertIn("Build Python sidecar", parallel)
+        verify = step_index(self.release, "Verify requested frontend channel stamp")
+        sidecar_fallback = step_index(self.release, "Build Python sidecar (release-local preflight fallback)")
+        self.assertLess(sidecar_fallback, verify)
+        self.assertLess(verify, step_index(self.release, "Smoke test the packaged backend"))
         self.assertLess(
-            step_index(self.release, "Cancel redundant main preflight for this commit"),
-            step_index(self.release, "Check out repository"),
+            step_index(self.release, "Run canonical release-local preflight fallback"),
+            step_index(self.release, "Stamp release-local preflight frontend"),
         )
-        self.assertIn("gh run cancel", self.release)
-        self.assertIn("--workflow preflight.yml", self.release)
-        cancel_block = self.release.split("Cancel redundant main preflight for this commit", 1)[1]
-        cancel_block = cancel_block.split("- name:", 1)[0]
-        self.assertIn("continue-on-error: true", cancel_block)
-        self.assertIn("exit 0", cancel_block)
+        self.assertLess(
+            step_index(self.release, "Stamp release-local preflight frontend"),
+            sidecar_fallback,
+        )
+        fallback_preflight = self.release.split(
+            "Run canonical release-local preflight fallback", 1
+        )[1].split("Stamp release-local preflight frontend", 1)[0]
+        self.assertIn("VITE_CELLXPLORER_CHANNEL", fallback_preflight)
+        self.assertIn("python scripts/preflight.py --no-cache", fallback_preflight)
 
     def test_manual_dispatch_accepts_channel_input(self):
         self.assertIn("workflow_dispatch:", self.release)
@@ -498,6 +549,128 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(name, self.release)
             self.assertNotIn(f"{name}=", self.release)
+
+
+class PreflightReuseResolutionTests(unittest.TestCase):
+    SHA = "a" * 40
+
+    def run_row(self, run_id: int, **overrides) -> dict:
+        row = {
+            "id": run_id,
+            "path": ".github/workflows/preflight.yml",
+            "name": "CellXplorer preflight",
+            "head_sha": self.SHA,
+            "event": "push",
+            "head_branch": "main",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": f"2026-08-16T12:00:{run_id:02d}Z",
+        }
+        row.update(overrides)
+        return row
+
+    def jobs(self, conclusion: str = "success", **overrides) -> dict:
+        job = {
+            "id": 123,
+            "name": "Clean Windows preflight",
+            "status": "completed",
+            "conclusion": conclusion,
+        }
+        job.update(overrides)
+        return {"jobs": [job]}
+
+    def test_trusted_runs_require_exact_path_name_sha_push_and_main(self):
+        valid = self.run_row(1)
+        rows = [
+            valid,
+            self.run_row(2, path=".github/workflows/other.yml"),
+            self.run_row(3, name="Other workflow"),
+            self.run_row(4, head_sha="b" * 40),
+            self.run_row(5, event="workflow_dispatch"),
+            self.run_row(6, head_branch="feature/test"),
+        ]
+        result = resolve_preflight_reuse.trusted_runs(
+            {"workflow_runs": rows}, sha=self.SHA
+        )
+        self.assertEqual([row["id"] for row in result], [1])
+
+    def test_completed_job_success_is_reusable_even_if_cache_helper_failed(self):
+        outcome, reason = resolve_preflight_reuse.classify_completed_run(
+            self.run_row(1, conclusion="failure"), self.jobs()
+        )
+        self.assertEqual(outcome, "success")
+        self.assertIn("canonical job succeeded", reason)
+
+    def test_failed_canonical_job_blocks_release(self):
+        outcome, reason = resolve_preflight_reuse.classify_completed_run(
+            self.run_row(1), self.jobs("failure")
+        )
+        self.assertEqual(outcome, "failure")
+        self.assertIn("failure", reason)
+
+    def test_cancelled_or_missing_canonical_job_uses_full_fallback(self):
+        cancelled, _ = resolve_preflight_reuse.classify_completed_run(
+            self.run_row(1), self.jobs("cancelled")
+        )
+        missing, _ = resolve_preflight_reuse.classify_completed_run(
+            self.run_row(1), {"jobs": []}
+        )
+        self.assertEqual(cancelled, "fallback")
+        self.assertEqual(missing, "fallback")
+
+    def test_active_run_is_polled_until_the_canonical_job_succeeds(self):
+        active = self.run_row(1, status="in_progress", conclusion=None)
+        completed = self.run_row(1, status="completed", conclusion="success")
+        run_payloads = [{"workflow_runs": [active]}, {"workflow_runs": [completed]}]
+
+        def api(endpoint: str):
+            if "/jobs?" in endpoint:
+                return self.jobs()
+            return run_payloads.pop(0)
+
+        result = resolve_preflight_reuse.resolve_preflight(
+            repository="owner/repo",
+            sha=self.SHA,
+            wait_seconds=30,
+            poll_seconds=1,
+            api_call=api,
+            sleep=lambda _seconds: None,
+            clock=lambda: 0.0,
+        )
+        self.assertEqual(result["reuse_preflight"], "true")
+        self.assertEqual(result["preflight_run_id"], "1")
+
+    def test_active_run_timeout_is_fail_closed(self):
+        active = self.run_row(1, status="in_progress", conclusion=None)
+
+        with self.assertRaises(resolve_preflight_reuse.PreflightResolutionError):
+            resolve_preflight_reuse.resolve_preflight(
+                repository="owner/repo",
+                sha=self.SHA,
+                wait_seconds=0,
+                api_call=lambda _endpoint: {"workflow_runs": [active]},
+                sleep=lambda _seconds: None,
+                clock=lambda: 0.0,
+            )
+
+    def test_missing_trusted_run_uses_full_fallback(self):
+        result = resolve_preflight_reuse.resolve_preflight(
+            repository="owner/repo",
+            sha=self.SHA,
+            api_call=lambda _endpoint: {"workflow_runs": []},
+        )
+        self.assertEqual(result["reuse_preflight"], "false")
+        self.assertIn("no trusted main-push preflight run", result["preflight_reason"])
+
+    def test_missing_github_cli_fails_closed(self):
+        with mock.patch.object(
+            resolve_preflight_reuse.subprocess,
+            "run",
+            side_effect=FileNotFoundError("gh"),
+        ):
+            with self.assertRaises(resolve_preflight_reuse.PreflightResolutionError) as error:
+                resolve_preflight_reuse.github_api("owner/repo", "repos/owner/repo")
+        self.assertIn("GitHub CLI is unavailable", str(error.exception))
 
 
 class VerifyUpdaterManifestTests(unittest.TestCase):

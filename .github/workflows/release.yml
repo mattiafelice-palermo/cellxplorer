@@ -29,7 +29,7 @@ on:
 
 permissions:
   contents: write
-  actions: write
+  actions: read
 
 concurrency:
   group: cellxplorer-release-${{ github.ref }}
@@ -42,37 +42,6 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Cancel redundant main preflight for this commit
-        if: github.ref_type == 'tag'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: pwsh
-        run: |
-          # Best-effort only: main pushes often finish the preflight gate before cancel runs.
-          $ErrorActionPreference = "Continue"
-          $sha = $env:GITHUB_SHA
-          $ids = [System.Collections.Generic.HashSet[string]]::new()
-          foreach ($status in @("queued", "pending", "waiting", "requested", "in_progress")) {
-            $json = gh run list --workflow preflight.yml --commit $sha --status $status --json databaseId 2>$null
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) {
-              continue
-            }
-            foreach ($row in @($json | ConvertFrom-Json)) {
-              if ($null -ne $row.databaseId) {
-                [void]$ids.Add([string]$row.databaseId)
-              }
-            }
-          }
-          foreach ($id in $ids) {
-            Write-Host "Canceling CellXplorer preflight run $id for $sha (release preflight covers this commit)."
-            gh run cancel $id
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "Cancel of run $id returned $LASTEXITCODE (ignored)."
-            }
-          }
-          exit 0
-
       - name: Check out repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -101,20 +70,24 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           workspaces: src-tauri -> target
+          shared-key: cellxplorer-windows-release
+          add-job-id-key: "false"
+          save-if: "false"
 
-      - name: Install backend dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements.txt
-          python -m pip install pyinstaller
-          python -m pip check
+      - parallel:
+          - name: Install backend dependencies
+            shell: pwsh
+            run: |
+              python -m pip install --upgrade pip
+              python -m pip install -r backend/requirements.txt
+              python -m pip install pyinstaller
+              python -m pip check
 
-      - name: Install frontend and Tauri CLI dependencies
-        shell: pwsh
-        run: |
-          npm ci
-          npm --prefix frontend ci
+          - name: Install frontend and Tauri CLI dependencies
+            shell: pwsh
+            run: |
+              npm ci
+              npm --prefix frontend ci
 
       - name: Resolve release channel
         id: channel
@@ -330,21 +303,49 @@ jobs:
             exit 1
           }
 
-      - name: Run canonical preflight
+      - name: Resolve exact-SHA canonical main preflight
+        if: github.ref_type == 'tag'
+        id: preflight_reuse
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/resolve_preflight_reuse.py `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --sha "$env:GITHUB_SHA" `
+            --output "$env:GITHUB_OUTPUT"
+
+      - name: Run canonical release-local preflight fallback
+        if: github.ref_type != 'tag' || steps.preflight_reuse.outputs.reuse_preflight != 'true'
+        shell: pwsh
+        env:
+          VITE_CELLXPLORER_CHANNEL: ${{ steps.channel.outputs.channel }}
         run: python scripts/preflight.py --no-cache
 
-      - name: Build requested frontend channel
+      - name: Stamp release-local preflight frontend
+        if: github.ref_type != 'tag' || steps.preflight_reuse.outputs.reuse_preflight != 'true'
         shell: pwsh
-        run: python scripts/build_frontend_channel.py "${{ steps.channel.outputs.channel }}"
+        run: python scripts/frontend_channel.py write --channel "${{ steps.channel.outputs.channel }}"
+
+      - parallel:
+          - name: Build requested frontend channel
+            if: github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'
+            shell: pwsh
+            run: python scripts/build_frontend_channel.py "${{ steps.channel.outputs.channel }}"
+
+          - name: Build Python sidecar
+            if: github.ref_type == 'tag' && steps.preflight_reuse.outputs.reuse_preflight == 'true'
+            shell: pwsh
+            run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
+
+      - name: Build Python sidecar (release-local preflight fallback)
+        if: github.ref_type != 'tag' || steps.preflight_reuse.outputs.reuse_preflight != 'true'
+        shell: pwsh
+        run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
 
       - name: Verify requested frontend channel stamp
         shell: pwsh
         run: python scripts/frontend_channel.py verify --channel "${{ steps.channel.outputs.channel }}"
-
-      - name: Build Python sidecar
-        shell: pwsh
-        run: .\scripts\build-app.ps1 -Channel "${{ steps.channel.outputs.channel }}" -SkipInstall -SkipFrontend -SkipInstaller -ForceBackend
 
       - name: Verify packaged inputs exist
         shell: pwsh

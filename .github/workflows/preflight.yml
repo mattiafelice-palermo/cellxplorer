@@ -10,42 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  gate:
-    name: Release-tag gate
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.check.outputs.should_run }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Decide whether main preflight is needed
-        id: check
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            echo "Manual dispatch always runs preflight."
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git fetch --force --tags
-          tags="$(git tag --points-at "${GITHUB_SHA}" | grep -E '^v' || true)"
-          if [ -n "${tags}" ]; then
-            echo "Skipping main preflight; release tag(s) point at this commit:"
-            echo "${tags}"
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "No release tag on this commit; running main preflight."
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          fi
-
   preflight:
     name: Clean Windows preflight
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -78,3 +44,31 @@ jobs:
 
       - name: Run CellXplorer preflight
         run: python scripts/preflight.py
+
+  rust-cache-warm:
+    name: Warm Windows release Rust cache
+    if: github.ref == 'refs/heads/main'
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable 2026-06-30
+
+      - name: Restore or seed shared release Rust cache
+        id: rust_cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: cellxplorer-windows-release
+          add-job-id-key: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Compile release dependency graph on cache miss
+        if: steps.rust_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: cargo build --release --locked --manifest-path src-tauri/Cargo.toml

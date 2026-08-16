@@ -232,6 +232,20 @@ identity and body-click restore/focus/modal behavior in an **installed** NSIS pa
 (`tauri dev`) builds may show PowerShell branding/name instead of CellXplorer, so do not treat
 dev-only branding as final proof.
 
+## Release preflight reuse and Rust cache ownership
+
+The main `preflight.yml` workflow always runs its named Windows preflight for a pushed `main`
+commit, including commits that receive a release tag. Before a tagged release publishes, the
+release workflow verifies that the exact SHA has a trusted main-push preflight whose named Windows
+job completed successfully. A failed canonical job blocks the release; a missing, skipped, or
+cancelled result runs the complete local `preflight.py --no-cache` fallback. The fallback passes
+the selected channel into Vite and stamps that already-verified `frontend/dist` instead of building
+the frontend a second time.
+
+The independent main workflow owns the shared production Rust dependency cache. Release jobs use
+the same stable workspace/environment key in restore-only mode, so a cache miss still performs the
+normal Cargo/Tauri build and a tag cannot create an unusable tag-scoped cache for a future release.
+
 ## Production GitHub release
 
 Stable and Beta releases are published by pushing exact SemVer tags:

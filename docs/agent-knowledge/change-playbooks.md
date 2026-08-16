@@ -200,9 +200,12 @@ the separate Beta product and never changes Stable self-update acceptance. Disab
 non-protected Beta availability/error UI and notification eligibility without interrupting an
 explicit download/launch. Beta installations update themselves.
 
-On release days, `preflight.yml` skips its Windows job when a `v*` tag already points at the
-pushed `main` commit, and `release.yml` cancels any still-running main preflight for that SHA so
-only the release job's `--no-cache` preflight runs.
+On release days, `preflight.yml` always runs its named Windows preflight for a pushed `main`
+commit, even when a release tag is created for that SHA. `release.yml` verifies the exact-SHA
+trusted `main` push result and reuses it only when the named Windows job completed successfully;
+failed results block publication, while missing, skipped, or cancelled results use the complete
+release-local `--no-cache` fallback. The independent main workflow also owns the shared production
+Rust dependency cache; release jobs restore it without saving a tag-scoped replacement.
 
 ### Tag and release checklist
 
