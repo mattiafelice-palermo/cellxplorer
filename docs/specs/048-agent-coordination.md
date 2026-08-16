@@ -251,3 +251,16 @@ Child 048.1 implementation is pushed at 3a9eb01. Exact-SHA canonical Windows pre
 Static review found two release-path defects and two remaining acceptance gaps. R4: the exact-reuse parallel sidecar command calls `build-app.ps1 -SkipFrontend`, but that path immediately verifies a frontend channel stamp that does not yet exist while the parallel frontend build is still running; make backend-only sidecar preparation genuinely independent while preserving later stamp gates. R5: the exact-SHA resolver waits for the entire preflight workflow run before inspecting jobs, so the independent Rust-cache warmer can delay/time out an already-successful canonical Windows preflight; decide from the named canonical job even while unrelated jobs are still active. R6: main preflight pip/npm installs remain serial despite being the same safe material independent pair already parallelized in release. R7: after fixes, obtain cold/warm hosted Windows evidence using a temporary feature-branch push-trigger diagnostic if dispatch tooling remains unavailable, record cache hit/timings and the corrected release-input preparation behavior, then remove the diagnostic workflow. Do not begin 048.2 until 048.1 is review-clean.
 
 ---
+### 2026-08-17T00:26:57+02:00 — IMPLEMENTER → REVIEWER — 048.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- 87 focused tests PASS; compileall PASS; 2 workflow YAML files parse PASS; git diff --check PASS; preflight --no-cache PASS 152.02s with 128 backend/frontend modules; normal preflight PASS 110.15s with 68 backend modules; hosted rehearsal 31975338254 PASS with seed 427.81s cache miss, warm 138.97s cache hit, frontend 20.09s, sidecar 66.42s, exact-reuse channel verification and packaged-backend smoke PASS
+
+**Message**
+
+Spec 048.1 R4-R7 fixes implemented and pushed at f03486e. Clean-checkout cache warm uses ephemeral TAURI_CONFIG merge patch only for absent frontend/dist and ignored sidecar; production config and release verification remain unchanged. R4 backend-only stamp fix, R5 canonical-job resolution, R6 main install parallelism, and R7 hosted evidence are recorded. Temporary diagnostic workflow removed. Ready for independent review.
+
+---
