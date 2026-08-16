@@ -1,15 +1,15 @@
 {
-  "version": "0.23.0-beta.1",
-  "notes": "### New features\n\n- Add BioLogic GCPL-family `.mpr` import, metadata inspection, source lifecycle,\n  canonical cycling caches, and provenance through the normal CellXplorer\n  analysis pipeline.\n- Make supported charge-only and discharge-only MPR sources plottable as a\n  source-local cycle, including files with a proven zero-current setup/control\n  preamble before the active sequence.\n- Expose verified BioLogic three-electrode working and counter potentials in\n  the generic Time/Capacity channel workflow while preserving the derived\n  full-cell voltage.\n\n### Bug fixes\n\n- Reinspect sources registered under older BioLogic parser identities so the\n  neutral-preamble correction upgrades online sources safely and keeps offline\n  sources fail-closed and relinkable.\n- Clear stale parser-derived row, cycle, and capacity summaries when an\n  offline legacy MPR source can no longer be revalidated, without deleting its\n  historical cache bytes.\n- Automatically bring source registrations and scientific previews forward\n  after parser-identity upgrades instead of requiring manual cache preparation.",
-  "pub_date": "2026-08-15T23:30:07.929Z",
+  "version": "0.24.0-beta.1",
+  "notes": "### New features\n\n- Add the Series appearance manager for multi-series selection and bulk style edits, persistent group-local ordering, and a detached legend preview that keeps scientific plots fixed.",
+  "pub_date": "2026-08-16T15:22:41.402Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVUMGFEOGdKNUE1TG5EZURPK1RCVDg2WTZyclFsNGkrVWhxcUxVZ3orMjJyTk5rM203aHJWd0ZvNnhpbFpVRVlPak9sNXJzcGM5cjZZZExVSW9aN2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODM2NjAzCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIzLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKZ0hNK0dWcDNKM2xiRENYMlNqMXA1TGVqcWNEbm1rMU9ERUIwUmY0RnhHbThGUS93VStrdG4wbkU2U04xdXZ6cHdwMFl2c0VCaEdRYXJXdlE5emJkQVE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/516194212"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWNLVUpKa2c4eE5jZTVwcU84UVdJYmIzTGVRdCs4eEZ6WTFrdTVJUllPcGJsaG1OaWVxb25TYkJDVElLdFFHYUMvM0V4b1VkSStlOEJ5ZnpFWGJEaHdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODkzNzU0CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI0LjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKazB6SElwSUF0akhOZ1VUWFN2N0kvVUpxWG5xdFpCQU8wRTlaOFZTajNhWGNmcHBqMmtsUUhqODNoUGduSEV2aWZBcUFBV3NZMERQdmRoVG9BT096Qmc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/516941284"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWVUMGFEOGdKNUE1TG5EZURPK1RCVDg2WTZyclFsNGkrVWhxcUxVZ3orMjJyTk5rM203aHJWd0ZvNnhpbFpVRVlPak9sNXJzcGM5cjZZZExVSW9aN2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODM2NjAzCWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjIzLjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKZ0hNK0dWcDNKM2xiRENYMlNqMXA1TGVqcWNEbm1rMU9ERUIwUmY0RnhHbThGUS93VStrdG4wbkU2U04xdXZ6cHdwMFl2c0VCaEdRYXJXdlE5emJkQVE9PQo=",
-      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/516194212"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTaHZwUmlOSEZXSWNLVUpKa2c4eE5jZTVwcU84UVdJYmIzTGVRdCs4eEZ6WTFrdTVJUllPcGJsaG1OaWVxb25TYkJDVElLdFFHYUMvM0V4b1VkSStlOEJ5ZnpFWGJEaHdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2ODkzNzU0CWZpbGU6Q2VsbFhwbG9yZXIgQmV0YV8wLjI0LjAtYmV0YS4xX3g2NC1zZXR1cC5leGUKazB6SElwSUF0akhOZ1VUWFN2N0kvVUpxWG5xdFpCQU8wRTlaOFZTajNhWGNmcHBqMmtsUUhqODNoUGduSEV2aWZBcUFBV3NZMERQdmRoVG9BT096Qmc9PQo=",
+      "url": "https://api.github.com/repos/mattiafelice-palermo/cellxplorer/releases/assets/516941284"
     }
   }
 }
