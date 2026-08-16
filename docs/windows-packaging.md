@@ -246,6 +246,16 @@ The independent main workflow owns the shared production Rust dependency cache. 
 the same stable workspace/environment key in restore-only mode, so a cache miss still performs the
 normal Cargo/Tauri build and a tag cannot create an unusable tag-scoped cache for a future release.
 
+The main cache-warm compile runs from a clean checkout, where the ignored `frontend/dist` bundle and
+`src-tauri/binaries/backend` sidecar do not exist. It supplies an ephemeral Tauri `TAURI_CONFIG`
+merge patch that removes only those build-time inputs for the cache-only compile. The release job
+continues to use the repository Tauri config, builds or restores the real frontend and sidecar, and
+verifies both before packaging; the cache patch never changes shipped application configuration.
+
+When `scripts/build-app.ps1` is invoked with `-SkipFrontend -SkipInstaller` for the exact-reuse
+backend-only preparation, it does not require a frontend channel stamp. Installer-producing paths
+still perform the normal channel verification.
+
 ## Production GitHub release
 
 Stable and Beta releases are published by pushing exact SemVer tags:
