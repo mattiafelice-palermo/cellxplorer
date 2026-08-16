@@ -9,11 +9,8 @@
     "046.3"
   ],
   "turn": "REVIEWER",
-  "action": "FINAL_REVIEW",
-  "findings": [
-    "R3",
-    "R8"
-  ],
-  "resume_review": "FINAL_REVIEW",
-  "updated_at": "2026-08-16T10:57:47+02:00"
+  "action": "BLOCKED",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-16T11:05:00+02:00"
 }

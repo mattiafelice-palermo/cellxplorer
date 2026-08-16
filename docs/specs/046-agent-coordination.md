@@ -356,3 +356,16 @@ The first R3-R9 fix pass is code-clean for R4-R7 and R9, pending the user's brow
 R3/R8 follow-up only: All-series Colour stays actionable when linked secondaries have present primaries, with focused mixed-colour homogenization coverage and link semantics preserved. Single and bulk Open controls now use labelled-field wrappers with aligned control geometry; bulk Mixed state remains indeterminate and accessible. Please continue the cumulative FINAL_REVIEW; R4-R7/R9 still require user browser recheck and the manual matrix is not claimed complete.
 
 ---
+### 2026-08-16T11:05:00+02:00 — REVIEWER — 046.3
+
+**Result:** Final review blocked on user acceptance
+
+**Findings**
+
+- None.
+
+**Message**
+
+R3 and R8 are resolved on code inspection at `9c9c87ea18dae2efcc0b12050f15ec0f468057fa`; all repository-side findings are now clean. Parent 046 remains blocked only on the user's browser/manual acceptance: rerun the affected R3-R9 checks (especially palette preview, repeated Shift-click and row-body drag) and continue the remaining cumulative 33-item matrix. No implementer work is pending unless that user pass exposes another concrete defect.
+
+---
