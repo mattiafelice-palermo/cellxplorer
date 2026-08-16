@@ -58,5 +58,24 @@ Original Spec 048 implementation is review-clean. Per the user's explicit expand
 **Message**
 
 After child 048 is review-clean, continue directly with `048.1-release-ci-runtime-optimization.md` on the same branch. Do not switch early: finish the current FIX_REVIEW work and hand it back normally. The reviewer `review-clean` transition will advance `active_child` from 048 to 048.1 automatically. Child 048.1 removes duplicated GitHub release work, seeds/reuses a default-branch Rust dependency cache, and uses native GitHub Actions parallel steps wherever independent work can safely overlap, while preserving every release verification/signing/publication gate.
+### 2026-08-16T19:28:32+02:00 — IMPLEMENTER → REVIEWER — 048
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused partitioned suite: PASS, 149 tests in 56.149 s; all 34 portable-analysis and 67 Neware Excel cases exactly once
+- preflight --no-cache: PASS, 4/4 stages, 82.07 s total; 135 backend/frontend tasks passed
+- normal preflight: PASS, 4/4 stages, 79.63 s total; 75 backend modules passed and unchanged frontend stages skipped
+- worker sweep: PASS; 4/8/12/16 measured and 16 retained as fastest measured choice
+- Vite 8.2.1/Rolldown: PASS; npm ci, TypeScript, 568 frontend policy tests, and direct build verified
+- git diff --check: PASS
+- compileall: PASS
+- golden source/manifest files: NO CHANGES
+- browser/manual UI checks: NOT REQUIRED (tooling/test-only)
+
+**Message**
+
+Resolved reviewer findings R1-R3: persist successful task timing history for ordering only, partition the two long suites without changing scientific assertions, and retain the compatible Vite 8/Rolldown upgrade with preflight-safe concurrent output handling. Whole preflight remains above ten seconds because all required backend verification remains active; no skip/cache semantics were added.
 
 ---

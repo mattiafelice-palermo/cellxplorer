@@ -417,7 +417,7 @@ represented.
 At minimum, run the modified target modules directly after each change. The final verification is:
 
 ```powershell
-python -m unittest tests.test_fast_neware tests.test_beta_bootstrap tests.test_neware_excel tests.test_portable_analysis -v
+python -m unittest --quiet tests.test_fast_neware tests.test_beta_bootstrap tests.test_portable_analysis_sources tests.test_portable_analysis_imports tests.test_portable_analysis_integrity tests.test_portable_analysis_mutations tests.test_portable_analysis_presentation tests.test_neware_excel_records tests.test_neware_excel_metadata tests.test_neware_excel_protocol tests.test_neware_excel_analysis
 python scripts\preflight.py --no-cache
 python scripts\preflight.py
 ```
@@ -515,7 +515,42 @@ portable analysis is changed only at the measured repeated-export setup hotspot.
 | Malformed portable-chain subcases exported the same valid report repeatedly | One immutable valid export/report is deep-copied into each independently rewritten malformed HTML package | Every mutation still runs both inspection and import and asserts identical failure details plus zero imported rows |
 | Neware Excel synthetic workbook setup | Unchanged | Baseline profiling found no broad redundant serialization hotspot; all existing protocol/dialect/summary assertions remain untouched |
 
-### Final required verification
+### Reviewer-authorized performance extension (R1-R3)
+
+The reviewer returned the original implementation clean and, following the user's expanded
+whole-preflight goal, authorized three performance follow-ups without adding backend test
+skipping/caching:
+
+- **R1:** `scripts/run_backend_tests.py` now persists successful backend/frontend task durations in
+  the existing ignored `.preflight-cache.json`, queues unknown tasks first, then known tasks
+  longest-first, and preserves one subprocess/private backend data root per task. Timing history
+  affects ordering only; `--no-cache` still executes every task. Malformed/missing histories fail
+  closed and successful task failure attribution is unchanged.
+- **R2:** the original portable-analysis and Neware Excel test bodies remain the source of truth,
+  while disjoint `load_tests` partition modules run them in separate runner processes. The two
+  source modules are excluded from runner discovery so no zero-test support process is counted;
+  the final partition set contains all 34 portable and 67 Excel tests exactly once. Final
+  standalone partition measurements were portable sources/imports 8.32/8.06 s,
+  integrity/mutations 9.24/5.72 s, presentation 5.25 s, and Excel
+  records/metadata/protocol/analysis 6.44/3.77/7.28/3.85 s.
+- **R3:** the reversible build experiment upgraded Vite 5.4.21 plus React plugin 4.3.4 to
+  Vite 8.2.1/Rolldown plus React plugin 6.0.5. The clean direct build baseline was 42.79 s;
+  the retained clean `npm ci` installation and direct Rolldown build were compatible, with the
+  latter measured at 20.10 s (a warm run measured 9.67 s). TypeScript, all 568 frontend policy
+  tests, and the Plotly runtime consistency check passed. The preflight-only build environment
+  keeps the ignored assets mount available during the existing parallel backend/build wave;
+  direct/package builds retain normal clean-output behavior.
+
+The same-machine worker sweep before the split passed at approximately 61/90/54/52 s for
+4/8/12/16 workers; 16 remained the fastest measured choice. Post-split validation measured
+approximately 131.90 s at 4 workers and 72.18 s at 16 workers, so the default remains 16. The
+large variation is attributable to the existing local `run.py` app process and concurrent
+verification resource contention, not a change to scientific assertions.
+
+### Original-scope checkpoint verification
+
+The following values are retained as the original implementation checkpoint, before the
+reviewer-authorized R1-R3 performance extension below.
 
 - Focused command `python -m unittest tests.test_fast_neware tests.test_beta_bootstrap tests.test_neware_excel tests.test_portable_analysis -v`: **PASS**, 149 tests, 35.573 s.
 - `python scripts\\preflight.py --no-cache`: **PASS**, 4/4 stages, 45.42 s total. The required production bundle stage was 45.16 s; the complete backend/frontend test pool was 42.42 s and all 128 tasks passed.
@@ -530,3 +565,28 @@ backend/frontend verification stage, or changing the global preflight scheduler/
 Those actions would violate the locked decisions and the explicit out-of-scope boundary. The
 scientific and parser correctness gates therefore remain intact; the optimized target modules
 remove only measured redundant fixture/setup work.
+
+### Final R1-R3 verification
+
+- The corrected partitioned focused command above: **PASS**, 149 tests, 56.149 s. All 34
+  portable-analysis and 67 Neware Excel cases ran exactly once; the source modules remain the
+  single test-body source of truth and their partition wrappers are the discovery entry points.
+- `python scripts\preflight.py --no-cache`: **PASS**, 4/4 stages, 82.07 s total. The complete
+  135-task backend/frontend pool passed in 81.29 s; the frontend type check took 11.48 s and the
+  Vite 8/Rolldown production bundle took 24.56 s. A prior concurrent run had one existing
+  scientific-preparation worker timeout under resource contention; the standalone module passed
+  in 5.660 s and the immediate clean no-cache rerun passed all tasks.
+- `python scripts\preflight.py`: **PASS**, 4/4 stages, 79.63 s total. All 75 backend modules
+  passed in 78.62 s; the unchanged frontend policy, type-check, and bundle stages were correctly
+  skipped by the cache.
+- `npm ci`: **PASS** with the committed Vite/Rolldown lockfile; direct Vite 8 build: **PASS** at
+  20.10 s in a clean-output run.
+- `python -m compileall -q backend tests scripts`: **PASS**.
+- `git diff --check`: **PASS**.
+- Golden analysis source and manifest files: **NO CHANGES**.
+- Browser/manual UI checks: **NOT REQUIRED** (test/tooling-only change).
+
+The full-preflight sub-ten-second target remains unattainable without skipping/caching required
+backend/frontend verification or changing the global scheduler. R1 improves repeat ordering and
+R2 keeps long target suites independently runnable; R3 materially reduces the direct frontend
+bundle, while all scientific assertions and full verification gates remain active.

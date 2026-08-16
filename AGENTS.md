@@ -264,6 +264,10 @@ Cellxplorer/
 │   ├── test_parser_identity.py     Per-source parser identity grammar and cache-invalidation tests (Spec 040.3)
 │   ├── test_mixed_parser_integration.py  Real mixed binary/Excel Cell chain through cache/stitch/
 │   │                                analysis_engine/Parent-034-guard/cache-key resolution (Spec 040.5)
+│   ├── test_neware_excel_{records,metadata,protocol,analysis}.py  Coherent process partitions
+│   │                                for the Neware Excel parser and analysis integration suite (Spec 048)
+│   ├── test_portable_analysis_{sources,imports,integrity,mutations,presentation}.py
+│   │                                Coherent process partitions for portable export/import coverage (Spec 048)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)

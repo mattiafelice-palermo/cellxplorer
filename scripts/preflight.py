@@ -208,12 +208,15 @@ def write_preflight_cache(
     frontend_policy_hash: str | None = None,
 ) -> None:
     path = root / PREFLIGHT_CACHE_FILE
-    payload = {
-        "frontend_build_hash": frontend_hash,
-        "frontend_policy_test_hash": frontend_policy_hash
-        or frontend_policy_input_hash(root),
-        "last_run_passed": passed,
-    }
+    payload = read_preflight_cache(root) or {}
+    payload.update(
+        {
+            "frontend_build_hash": frontend_hash,
+            "frontend_policy_test_hash": frontend_policy_hash
+            or frontend_policy_input_hash(root),
+            "last_run_passed": passed,
+        }
+    )
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
@@ -442,6 +445,12 @@ def run_preflight(
     with tempfile.TemporaryDirectory(prefix="cellxplorer-preflight-") as temp_data_dir:
         env = os.environ.copy()
         env["CELLXPLORER_DATA"] = temp_data_dir
+        # Vite and the backend test pool run concurrently. Keep an assets mount
+        # available while Rolldown replaces the ignored build output, and let
+        # the Vite config retain the existing output during this verification
+        # wave. Direct/package builds still use Vite's normal clean output.
+        (root / "frontend" / "dist" / "assets").mkdir(parents=True, exist_ok=True)
+        env["CELLXPLORER_PREFLIGHT_BUILD"] = "1"
         if "CELLXPLORER_PREFLIGHT_CPU_BUDGET" not in env:
             env["CELLXPLORER_PREFLIGHT_CPU_BUDGET"] = str(preflight_cpu_budget())
 

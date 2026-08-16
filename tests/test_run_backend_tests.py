@@ -1,5 +1,6 @@
 import io
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -75,9 +76,119 @@ class RunBackendTestsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "8"}, clear=False):
             self.assertLess(runner.ndax_worker_budget(8), runner.ndax_worker_budget(1))
 
+    def test_timing_history_ignores_missing_malformed_and_invalid_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cache_path = root / runner.PREFLIGHT_CACHE_FILE
+            self.assertEqual(runner.read_timing_history(root), {})
+
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        runner.TEST_TIMINGS_KEY: {
+                            "known": 3.5,
+                            "negative": -1,
+                            "text": "2.0",
+                            "boolean": True,
+                            "nan": float("nan"),
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(runner.read_timing_history(root), {"known": 3.5})
+
+            cache_path.write_text("{malformed", encoding="utf-8")
+            self.assertEqual(runner.read_timing_history(root), {})
+
+    def test_cost_aware_ordering_puts_unknown_tasks_first_then_known_longest_first(self):
+        history = {"tests.test_short": 1.0, "tests.test_long": 8.0}
+        self.assertEqual(
+            runner.order_task_names(
+                ["tests.test_short", "tests.test_new", "tests.test_long"],
+                history,
+            ),
+            ["tests.test_new", "tests.test_long", "tests.test_short"],
+        )
+
+    def test_cost_aware_runner_submits_longest_known_tasks_first_and_persists_successes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.make_runner_repo(root)
+            (root / runner.PREFLIGHT_CACHE_FILE).write_text(
+                json.dumps(
+                    {
+                        runner.TEST_TIMINGS_KEY: {
+                            "tests.test_alpha": 1.0,
+                            "tests.test_beta": 10.0,
+                            "frontend/tests/a.test.ts": 5.0,
+                            "frontend/tests/b.test.ts": 2.0,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            observed: list[str] = []
+
+            def fake_run(command, cwd, env, capture_output, text, shell):
+                if "--test" in command:
+                    observed.append(Path(command[-1]).relative_to(root).as_posix())
+                else:
+                    observed.append(command[-1])
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with (
+                mock.patch.object(runner, "repo_root", return_value=root),
+                mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
+                redirect_stdout(io.StringIO()),
+            ):
+                code = runner.main(
+                    ["--jobs", "1", "--node", "node.exe", "--data-root", str(root / "data")]
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                observed,
+                [
+                    "tests.test_beta",
+                    "frontend/tests/a.test.ts",
+                    "frontend/tests/b.test.ts",
+                    "tests.test_alpha",
+                ],
+            )
+            cache = json.loads((root / runner.PREFLIGHT_CACHE_FILE).read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(cache[runner.TEST_TIMINGS_KEY]),
+                {
+                    "tests.test_alpha",
+                    "tests.test_beta",
+                    "frontend/tests/a.test.ts",
+                    "frontend/tests/b.test.ts",
+                },
+            )
+
     def test_effective_backend_jobs_respects_cpu_budget(self):
         with mock.patch.dict(os.environ, {"CELLXPLORER_PREFLIGHT_CPU_BUDGET": "4"}, clear=False):
             self.assertEqual(runner.effective_backend_jobs(16, 20), 4)
+
+    def test_discovery_excludes_partition_source_modules(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tests_dir = Path(temp_dir)
+            for name in (
+                "test_neware_excel.py",
+                "test_neware_excel_records.py",
+                "test_portable_analysis.py",
+                "test_portable_analysis_sources.py",
+            ):
+                (tests_dir / name).write_text("", encoding="utf-8")
+
+            self.assertEqual(
+                runner.discover_test_modules(tests_dir),
+                [
+                    "tests.test_neware_excel_records",
+                    "tests.test_portable_analysis_sources",
+                ],
+            )
 
     def test_backend_and_frontend_files_share_one_bounded_pool(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -158,6 +269,10 @@ class RunBackendTestsTests(unittest.TestCase):
             self.assertIn("=== frontend/tests/b.test.ts ===", stderr.getvalue())
             self.assertIn("frontend failure detail", stderr.getvalue())
             self.assertIn("frontend/tests/b.test.ts", stdout.getvalue())
+
+            cache = json.loads((root / runner.PREFLIGHT_CACHE_FILE).read_text(encoding="utf-8"))
+            self.assertNotIn("frontend/tests/b.test.ts", cache[runner.TEST_TIMINGS_KEY])
+            self.assertIn("frontend/tests/a.test.ts", cache[runner.TEST_TIMINGS_KEY])
 
     def test_skip_frontend_tests_keeps_backend_tasks_in_pool(self):
         with tempfile.TemporaryDirectory() as temp_dir:

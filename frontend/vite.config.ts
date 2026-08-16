@@ -12,5 +12,6 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 5000,
+    emptyOutDir: process.env.CELLXPLORER_PREFLIGHT_BUILD !== "1",
   },
 });

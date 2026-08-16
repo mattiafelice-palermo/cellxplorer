@@ -7,13 +7,13 @@
     "048",
     "048.1"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "FIX_REVIEW",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [
     "R1",
     "R2",
     "R3"
   ],
   "resume_review": "REVIEW",
-  "updated_at": "2026-08-16T19:16:20+02:00"
+  "updated_at": "2026-08-16T19:28:32+02:00"
 }
