@@ -457,6 +457,12 @@ test("bulk colour policy identifies only selected linked secondary series", () =
     axis: "y2",
     measure: "ce",
   });
+  const orphan = cell({
+    key: "y2:ce:c9",
+    sourceKey: "c9",
+    axis: "y2",
+    measure: "ce",
+  });
 
   assert.deepEqual(
     linkedSecondarySeriesKeys(
@@ -476,6 +482,11 @@ test("bulk colour policy identifies only selected linked secondary series", () =
     linkedSecondarySeriesKeys([primary, linked], ["y2:ce:c1"], {}, false),
     [],
     "the plot-wide link default is the same default used by the editor",
+  );
+  assert.deepEqual(
+    linkedSecondarySeriesKeys([orphan], ["y2:ce:c9"], {}, true),
+    [],
+    "an orphan secondary keeps its independent colour even when linking is enabled",
   );
 });
 

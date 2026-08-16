@@ -80,3 +80,20 @@ R1-R4 fixed: descendant keyboard isolation, linked-secondary bulk colour gating,
 R1-R4 are resolved. Fix only R5: make bulk-colour gating match the existing orphan-secondary resolver semantics, add the focused regression test, verify, and hand back to REVIEWER. Do not begin 046.2.
 
 ---
+### 2026-08-16T04:38:25+02:00 — IMPLEMENTER → REVIEWER — 046.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: PASS - node --test frontend\tests\seriesStyling.test.ts (47 tests)
+- TypeScript: PASS - npx.cmd tsc --noEmit
+- Vite build: PASS - npx.cmd vite build
+- preflight: PASS - python scripts\preflight.py
+- manual/browser checks: NOT RUN - user deferred manual checks until final Spec 046 implementation
+
+**Message**
+
+R5 fixed: bulk-colour gating now requires a present primary descriptor, with orphan-secondary regression coverage. R1-R4 remain resolved; do not begin 046.2 until review approves.
+
+---

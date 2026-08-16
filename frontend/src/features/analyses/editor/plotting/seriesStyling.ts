@@ -267,11 +267,18 @@ export function linkedSecondarySeriesKeys(
   linkSecondaryColors = false,
 ): string[] {
   const selected = new Set(selectedKeys);
+  const descriptorKeys = new Set(descriptors.map((descriptor) => descriptor.key));
   return descriptors
     .filter((descriptor) => selected.has(descriptor.key) && isSecondarySeries(descriptor))
     .filter(
-      (descriptor) =>
-        (overrides?.[descriptor.key]?.link_color ?? linkSecondaryColors) === true,
+      (descriptor) => {
+        const primaryKey = primarySeriesKeyFor(descriptor);
+        return (
+          primaryKey !== null &&
+          descriptorKeys.has(primaryKey) &&
+          (overrides?.[descriptor.key]?.link_color ?? linkSecondaryColors) === true
+        );
+      },
     )
     .map((descriptor) => descriptor.key);
 }
