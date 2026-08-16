@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "spec": "046",
+  "branch": "feature/series-appearance-manager",
+  "active_child": "046.1",
+  "children": [
+    "046.1",
+    "046.2",
+    "046.3"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-16T03:56:53+02:00"
+}
