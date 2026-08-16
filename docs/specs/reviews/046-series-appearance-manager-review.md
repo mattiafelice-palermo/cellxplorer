@@ -13,12 +13,22 @@ Status: **CHANGES REQUIRED — R5**
 - R1/R2 repository closure remains resolved.
 - R3 All-series aggregate/homogenization remains resolved.
 - R4 palette preview is user-accepted.
-- R5 modifier/range selection is **REOPENED from user browser evidence**. The latest implementation is still not behaviorally correct: Shift-click consistently omits the second/clicked endpoint in the user's real browser.
+- R5 modifier/range selection is **REOPENED from user browser evidence**. Shift-click still omits the second/clicked endpoint in the user's real browser.
 - R6/R7/R8/R9 remain accepted/resolved.
 - R10 detached legend rendering is user-accepted.
 - R11 embedded legend presentation is **USER-ACCEPTED**.
 - R12 local scientific-preview latency is **USER-ACCEPTED**.
 - The broader cumulative manual/browser matrix remains incomplete.
+
+## Browser-authorization authority note
+
+There is no remaining ambiguity about browser permission for R5.
+
+An older user instruction said not to use the browser and that the user would perform manual checks later. The **newer direct user instruction on 2026-08-16 at approximately 15:49 +02:00** explicitly asks:
+
+> "Can we tell the implementer to use the browser to try fix this?"
+
+That is a direct, later user instruction and therefore supersedes the older no-browser restriction **for R5 debugging and verification**. This is not a reviewer interpretation or override; it is the current user instruction. The implementer is authorized to use browser tooling for this finding.
 
 ## Verification record
 
@@ -78,21 +88,17 @@ This means the remaining defect is in the live interaction/state/event path, not
 
 Make one browser gesture produce exactly one deterministic selection-state transition. Click A, then Shift-click D must leave A/B/C/D selected after all pointer/click/change/focus/sortable handlers have finished. The same must hold for reverse ranges and for both row-body and checkbox interaction paths.
 
-**Explicit browser authorization for this pass**
-
-The user's current instruction explicitly authorizes the implementer to use browser tooling for R5 and supersedes the older project-session instruction that browser use was prohibited. For this finding, browser reproduction/debugging is not only permitted but required if the implementer environment provides it.
-
 **Mandatory browser-debug requirement**
 
-This finding has already survived multiple code-only fixes. Before changing more code:
+Browser use is explicitly authorized by the current user instruction quoted above. Before changing more code:
 
-1. reproduce the failure in the running frontend/application using an actual browser/runtime;
+1. reproduce the failure in the running frontend/application using the implementer's actual browser/runtime tooling;
 2. instrument or otherwise inspect the row/checkbox pointer-down → click → change/state-update sequence as needed;
 3. identify which handler/update removes or fails to add the endpoint;
 4. apply the smallest fix;
 5. rerun the browser scenario repeatedly after the fix.
 
-Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code inspection. If browser tooling is genuinely unavailable in the implementer environment, report that environment limitation explicitly and leave R5 unresolved rather than claiming success.
+Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code inspection. If the implementer environment genuinely has no browser capability, state that specific tool/environment limitation; do not cite the superseded user prohibition.
 
 **Acceptance criteria**
 
@@ -137,4 +143,4 @@ Do **not** hand R5 back as fixed based only on unit tests, TypeScript, or code i
 
 ## Decision
 
-**CHANGES REQUIRED — fix only R5. Browser use is explicitly authorized by the user for this pass. This pass requires real-browser reproduction and post-fix verification; do not return a code-only claim of success. After the browser-verified fix, run the normal focused verification and hand back to REVIEWER for the same cumulative FINAL_REVIEW.**
+**CHANGES REQUIRED — fix only R5. The current user explicitly authorizes browser use for this pass and that later instruction supersedes the old no-browser rule. Real-browser reproduction and post-fix verification are required before handing R5 back.**
