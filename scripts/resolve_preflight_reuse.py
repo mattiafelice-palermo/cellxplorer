@@ -100,15 +100,18 @@ def classify_completed_run(
     *,
     job_name: str = DEFAULT_JOB_NAME,
 ) -> tuple[str, str]:
-    """Classify a completed run as reusable, fallback, or release-blocking."""
+    """Classify the canonical job independently of unrelated workflow jobs."""
 
     matching_jobs = [job for job in _jobs(jobs_payload) if job.get("name") == job_name]
     if len(matching_jobs) != 1:
         return "fallback", f"canonical job {job_name!r} is missing or ambiguous"
 
     job = matching_jobs[0]
-    if job.get("status") != "completed":
-        return "fallback", f"canonical job status is {job.get('status')!r}"
+    job_status = job.get("status")
+    if job_status in ACTIVE_RUN_STATUSES:
+        return "active", f"canonical job is {job_status!r}"
+    if job_status != "completed":
+        return "fallback", f"canonical job status is {job_status!r}"
 
     conclusion = job.get("conclusion")
     if conclusion == "success":
@@ -146,14 +149,6 @@ def _inspect_latest(
 
     run = runs[0]
     run_id = _run_id(run)
-    status = run.get("status")
-    if status in ACTIVE_RUN_STATUSES:
-        return "active", f"trusted run {run_id} is {status}", run_id
-    if status != "completed":
-        raise PreflightResolutionError(
-            f"Trusted preflight run {run_id} has unexpected status {status!r}."
-        )
-
     jobs_payload = api_call(f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100")
     outcome, reason = classify_completed_run(run, jobs_payload, job_name=job_name)
     return outcome, f"run {run_id}: {reason}", run_id

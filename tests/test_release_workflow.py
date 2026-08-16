@@ -310,6 +310,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('add-job-id-key: "false"', self.release)
         self.assertIn('save-if: "false"', self.release)
 
+    def test_main_preflight_dependency_installation_uses_native_parallel_group(self):
+        self.assertIn("      - parallel:\n", self.preflight)
+        parallel = self.preflight.split("      - parallel:\n", 1)[1]
+        parallel = parallel.split("      - name: Run CellXplorer preflight", 1)[0]
+        self.assertIn("Install backend dependencies", parallel)
+        self.assertIn("python -m pip install -r backend/requirements.txt", parallel)
+        self.assertIn("python -m pip check", parallel)
+        self.assertIn("Install frontend dependencies", parallel)
+        self.assertIn("npm --prefix frontend ci", parallel)
+
     def test_dependency_installation_uses_native_parallel_group(self):
         self.assertIn("      - parallel:\n", self.release)
         parallel = self.release.split("      - parallel:\n", 1)[1]
@@ -622,10 +632,14 @@ class PreflightReuseResolutionTests(unittest.TestCase):
         active = self.run_row(1, status="in_progress", conclusion=None)
         completed = self.run_row(1, status="completed", conclusion="success")
         run_payloads = [{"workflow_runs": [active]}, {"workflow_runs": [completed]}]
+        job_payloads = [
+            self.jobs(status="in_progress", conclusion=None),
+            self.jobs(),
+        ]
 
         def api(endpoint: str):
             if "/jobs?" in endpoint:
-                return self.jobs()
+                return job_payloads.pop(0)
             return run_payloads.pop(0)
 
         result = resolve_preflight_reuse.resolve_preflight(
@@ -643,12 +657,17 @@ class PreflightReuseResolutionTests(unittest.TestCase):
     def test_active_run_timeout_is_fail_closed(self):
         active = self.run_row(1, status="in_progress", conclusion=None)
 
+        def api(endpoint: str):
+            if "/jobs?" in endpoint:
+                return self.jobs(status="in_progress", conclusion=None)
+            return {"workflow_runs": [active]}
+
         with self.assertRaises(resolve_preflight_reuse.PreflightResolutionError):
             resolve_preflight_reuse.resolve_preflight(
                 repository="owner/repo",
                 sha=self.SHA,
                 wait_seconds=0,
-                api_call=lambda _endpoint: {"workflow_runs": [active]},
+                api_call=api,
                 sleep=lambda _seconds: None,
                 clock=lambda: 0.0,
             )
@@ -661,6 +680,56 @@ class PreflightReuseResolutionTests(unittest.TestCase):
         )
         self.assertEqual(result["reuse_preflight"], "false")
         self.assertIn("no trusted main-push preflight run", result["preflight_reason"])
+
+    def test_active_workflow_reuses_completed_canonical_job_without_waiting_for_cache_helper(self):
+        active = self.run_row(1, status="in_progress", conclusion=None)
+        jobs = {
+            "jobs": [
+                {
+                    "name": "Clean Windows preflight",
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "name": "Warm Windows release Rust cache",
+                    "status": "in_progress",
+                    "conclusion": None,
+                },
+            ]
+        }
+        sleeps: list[float] = []
+        result = resolve_preflight_reuse.resolve_preflight(
+            repository="owner/repo",
+            sha=self.SHA,
+            api_call=lambda endpoint: jobs if "/jobs?" in endpoint else {"workflow_runs": [active]},
+            sleep=sleeps.append,
+        )
+        self.assertEqual(result["reuse_preflight"], "true")
+        self.assertEqual(sleeps, [])
+
+    def test_active_workflow_canonical_failure_blocks_without_waiting_for_cache_helper(self):
+        active = self.run_row(1, status="in_progress", conclusion=None)
+        jobs = {
+            "jobs": [
+                {
+                    "name": "Clean Windows preflight",
+                    "status": "completed",
+                    "conclusion": "failure",
+                },
+                {
+                    "name": "Warm Windows release Rust cache",
+                    "status": "in_progress",
+                    "conclusion": None,
+                },
+            ]
+        }
+        with self.assertRaises(resolve_preflight_reuse.PreflightResolutionError):
+            resolve_preflight_reuse.resolve_preflight(
+                repository="owner/repo",
+                sha=self.SHA,
+                api_call=lambda endpoint: jobs if "/jobs?" in endpoint else {"workflow_runs": [active]},
+                sleep=lambda _seconds: self.fail("cache helper must not delay canonical failure"),
+            )
 
     def test_missing_github_cli_fails_closed(self):
         with mock.patch.object(

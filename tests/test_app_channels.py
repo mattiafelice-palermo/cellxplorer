@@ -87,6 +87,23 @@ class AppChannelConfigurationTests(unittest.TestCase):
         self.assertIn("--no-sign", script)
         self.assertIn("$expectedInstallerName", script)
 
+    def test_backend_only_build_does_not_require_frontend_stamp(self):
+        script = BUILD_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            """else {
+    if (-not $SkipInstaller) {
+        Write-Host "Verifying frontend channel stamp..." -ForegroundColor Yellow""",
+            script,
+        )
+        self.assertIn(
+            "Skipping frontend channel verification for backend-only build.",
+            script,
+        )
+        self.assertIn(
+            'Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot',
+            script,
+        )
+
     def test_package_json_exposes_channel_build_scripts(self):
         scripts = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))["scripts"]
         self.assertEqual(scripts["tauri:build:stable"], "python scripts/frontend_channel.py verify --channel stable && tauri build")

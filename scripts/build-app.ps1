@@ -118,8 +118,13 @@ if (-not $SkipFrontend) {
     }
 }
 else {
-    Write-Host "Verifying frontend channel stamp..." -ForegroundColor Yellow
-    Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot
+    if (-not $SkipInstaller) {
+        Write-Host "Verifying frontend channel stamp..." -ForegroundColor Yellow
+        Invoke-Checked "python" @("scripts/frontend_channel.py", "verify", "--channel", $Channel) $repoRoot
+    }
+    else {
+        Write-Host "Skipping frontend channel verification for backend-only build." -ForegroundColor DarkGray
+    }
 }
 
 if (-not $SkipBackend) {
