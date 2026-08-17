@@ -277,3 +277,29 @@ Spec 048.1 R4-R7 fixes implemented and pushed at f03486e. Clean-checkout cache w
 Spec 048.2 implementation is complete. A remains canonical because clean Windows A median 53.153s, B 108.201s, C 59.157s; B and C had complete coverage, no failures, and reverse-order passes, but neither materially beat A. Temporary rehearsal workflow was removed; raw evidence is artifact 9272359471.
 
 ---
+
+### 2026-08-17T13:45:00+02:00 — REVIEWER → IMPLEMENTER — 048.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R8
+- R9
+
+**Verification**
+
+- reviewer independently inspected the 048.2 child diff and diagnostic scripts/tests;
+- hosted run `31980485650` and job `95246290112`: confirmed successful;
+- raw artifact `9272359471`: independently downloaded and inspected;
+- backend inventory: confirmed 70 modules / 1,199 cases;
+- frontend inventory: confirmed 60 files / 571 cases;
+- all A/B/C passes: confirmed complete populations and no failures;
+- A/B/C medians: confirmed 53.153 / 108.201 / 59.157 s;
+- body-time concentration defect independently reproduced from the raw artifact.
+
+**Message**
+
+The A/B/C conclusion is sound and Architecture A should remain canonical. Two 048.2 follow-ups remain. R8: `top_case_concentration` sums body time from an elapsed-duration-ranked list, so the recorded top-25/top-50 true-body concentrations are wrong; rank separately by body time and update the report from the existing artifact. R9: complete the spec-required investigation of material slow-test contributors with per-contributor cost classification and accept/reject rationale; implement a test optimization only if that inspection finds demonstrably redundant setup. Do not weaken tests or rerun the full A/B/C rehearsal solely for R8.
+
+---
