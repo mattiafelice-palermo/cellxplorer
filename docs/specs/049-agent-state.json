@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "spec": "049",
+  "branch": "feature/semantic-protocol-signature",
+  "active_child": "049",
+  "children": [
+    "049"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-17T18:39:56+02:00"
+}
