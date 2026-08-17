@@ -59,14 +59,20 @@ capacity-scaled currents remain excluded. The shared analysis-result cache gener
 bumped when target-resolution semantics change; this deliberately invalidates old warm results so
 they cannot disagree with a cold recompute.
 
-The shared protocol editor's `Compare protocol families` modal is diagnostic only. Strict mode
-uses the normalized semantic identity; Workflow mode compares ordered building blocks, loop
-structure, rates, and timing while showing termination/control conditions, voltage/protection, and
-recording settings as ignored evidence by default; Custom mode lets the scientist opt those
-dimensions into the comparison. Termination evidence is not part of workflow-structure equality,
-so a threshold-only change is reported in its own dimension rather than as a changed loop.
-Even when families are workflow-comparable, DCIR targets remain scoped to the original protocol
-signature and source-local step indices: the modal never merges families or creates a step mapping.
+The pairwise `Compare protocol families` view is diagnostic by default. Strict mode uses the
+normalized semantic identity; Workflow mode compares ordered building blocks, loop structure,
+rates, and timing while showing termination/control conditions, voltage/protection, and recording
+settings as ignored evidence by default; Custom mode lets the scientist opt those dimensions into
+the comparison. Termination evidence is not part of workflow-structure equality, so a
+threshold-only change is reported in its own dimension rather than as a changed loop.
+
+The user-authorized 049.1 extension adds an explicit all-family grouping workflow to this same
+surface. A named group stores analysis-local metadata only, and applying it expands the selected
+reference steps into exact source-local targets for each member family; it does not merge families,
+rewrite source signatures, or infer a mapping from a workflow match alone. Optional
+`protocol_group_id` values on protocol/DCIR segments are editor provenance, not scientific inputs,
+and are excluded from the scientific analysis-cache identity. Removing a group removes only that
+analysis-local metadata; existing explicit targets and source data remain unchanged.
 
 Candidate recognition is only an editing aid. It suggests adjacent rest/pulse pairs using editable
 minimum-rest, maximum-pulse, and rest-to-pulse ratio thresholds. Detection reads the reconstructed

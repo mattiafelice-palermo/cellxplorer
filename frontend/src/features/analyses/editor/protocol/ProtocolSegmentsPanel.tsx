@@ -1361,7 +1361,7 @@ function GroupedProtocolComparisonModal({
                   <Box>
                     <Group justify="space-between" align="baseline" gap="xs" mb={6} wrap="nowrap">
                       <Text size="xs" fw={700}>Applied protocol groups</Text>
-                      <Text size="10px" c="dimmed" ta="right">Rename or remove groups without changing source data.</Text>
+                      <Text size="xs" c="dimmed" ta="right">Rename or remove groups without changing source data.</Text>
                     </Group>
                     <Stack gap={4}>
                       {existingGroups.map((group) => (
@@ -1480,7 +1480,7 @@ function GroupedProtocolComparisonModal({
             <Stack gap="xs" h="100%">
               <Group justify="space-between" align="baseline" gap="xs" wrap="nowrap">
                 <Text size="sm" fw={700}>Reference versus all existing protocols</Text>
-                <Text size="10px" c="dimmed" ta="right">Scroll horizontally to inspect all families</Text>
+                <Text size="xs" c="dimmed" ta="right">Scroll horizontally to inspect all families</Text>
               </Group>
               {families.length < 2 ? (
                 <Paper withBorder p="md" radius="md" style={{ flex: 1 }}>
@@ -1590,7 +1590,7 @@ function GroupedProtocolComparisonModal({
                           {existing && <Badge size="xs" variant="light" color="gray">Already applied</Badge>}
                         </Group>
                         {existing && (
-                          <Text size="10px" c="orange">
+                          <Text size="xs" c="orange">
                             This grouping already exists as “{existing.name}”. Rename it in Applied protocol groups.
                           </Text>
                         )}
@@ -1624,7 +1624,7 @@ function GroupedProtocolComparisonModal({
 
         <Divider />
         <Group justify="space-between" align="center" gap="sm" wrap="wrap-reverse">
-          <Text size="10px" c="dimmed">No source data changes until you create named groups.</Text>
+          <Text size="xs" c="dimmed">No source data changes until you create named groups.</Text>
           <Group gap="xs">
             <Button variant="default" size="sm" onClick={onClose}>Cancel</Button>
             <Button size="sm" onClick={applyGroups} disabled={!canApply}>

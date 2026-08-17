@@ -1,14 +1,15 @@
 # Feature specs
 
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
-  adds a read-only protocol-family comparison modal beside the protocol selector, distinguishing
-  strict semantic identity from workflow and custom comparability without silently merging
-  source-local targets. **Implementation ready for remote review** on
+  adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
+  semantic identity from workflow and custom comparability without silently merging source-local
+  targets. The user-authorized 049.1 extension adds explicit named analysis-local grouping and
+  exact source-local target expansion. **Final review in progress** on
   `feature/semantic-protocol-signature`; the generated HTML mockup is included as the spec asset.
   - [`049.1-protocol-family-grouping.md`](049.1-protocol-family-grouping.md)
     extends the comparison surface into an all-family, split-pane grouping workflow with editable
-    names, persisted analysis-local group metadata, and source-local step mapping. **Implementation
-    complete - review pending.**
+    names, persisted analysis-local group metadata, and source-local step mapping. **Final review
+    in progress.**
 - [`048-test-fixture-runtime-optimization.md`](048-test-fixture-runtime-optimization.md)
   reduces redundant backend fixture/setup work and release/CI orchestration cost without changing
   application or scientific behavior. Parent 048 and children 048.1/048.2 are implemented and

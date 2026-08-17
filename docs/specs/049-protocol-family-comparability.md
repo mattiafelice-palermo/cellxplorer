@@ -1,8 +1,14 @@
 # 049 — Protocol-family comparability review
 
-**Status:** Implementation ready for remote review
+**Status:** Final review in progress
 **Branch:** `feature/semantic-protocol-signature`
 **Depends on:** the semantic protocol signature contract already present on this branch
+**Review document:** [`reviews/049-protocol-family-comparability-review.md`](reviews/049-protocol-family-comparability-review.md)
+
+This parent records the original pairwise comparison surface. The user-authorized
+[`049.1-protocol-family-grouping.md`](049.1-protocol-family-grouping.md) extension adds explicit,
+named analysis-local grouping and source-local target expansion; that extension is part of the
+current implementation and final review.
 
 ## Goal
 
@@ -49,12 +55,13 @@ The modal offers a short mutually exclusive `SegmentedControl`:
 Every evidence row reports `Same`, `Different`, or `Ignored`. `Ignored` means only that the row is
 outside the selected comparison basis; it is never hidden.
 
-### 3. No silent grouping
+### 3. No silent grouping; explicit grouping is opt-in
 
-This feature is a review surface. It does not change the analysis draft, saved plot, protocol
-signature, database, source files, or scientific cache. The existing segment editor continues to
-store exact `(protocol_signature, step_indices)` targets. A future feature may add reviewed,
-source-local semantic mappings, but this spec must not infer those mappings from a workflow match.
+The core comparison view does not silently change the analysis draft, saved plot, protocol
+signature, database, source files, or scientific cache. The user-authorized 049.1 extension adds an
+explicit create/apply action for named analysis-local groups. It stores no synthetic protocol
+signature: applying a group expands the selection to exact `(protocol_signature, step_indices)`
+targets for each member family, and the explicit targets remain authoritative.
 
 ## User experience
 
@@ -86,9 +93,10 @@ The modal title is `Compare protocol families`. It contains, in this order:
 When fewer than two families are available, the modal explains that a second family is required
 and does not fabricate a comparison.
 
-The modal is intentionally read-only. There is no `Merge`, `Apply`, or `Use workflow grouping`
-action in this feature because those labels would imply a persisted mapping that the current
-source-local target model cannot safely provide.
+The pairwise comparison view is intentionally diagnostic until the user enters the explicit
+049.1 grouping workflow. The grouping extension provides a named create/apply action only after
+the selected workflow dimensions support source-local mapping; it never silently merges source
+families or rewrites their signatures.
 
 ## Comparison evidence contract
 
@@ -123,11 +131,13 @@ values must be displayed as unavailable, not as zero.
 
 ### Not required
 
-- no API route, SQLAlchemy migration, analysis-spec field, or source-file mutation; the review
-  compatibility fix may bump the disposable analysis-result cache generation when target
-  resolution semantics change;
-- no workflow-based family regrouping or target-index translation; strict protocol identity may
-  create a new family when source-declared termination conditions differ;
+- no backend API route, SQLAlchemy migration, or source-file mutation; the 049.1 extension adds
+  only analysis-local frontend group metadata and exact target expansion. The review compatibility
+  fix may bump the disposable analysis-result cache generation when target-resolution semantics
+  change;
+- no silent workflow-based family regrouping or target-index translation in the core comparator;
+  explicit reviewed grouping and target expansion are defined by 049.1, while strict protocol
+  identity may still create a new family when source-declared termination conditions differ;
 - no new global CSS or one-off color system;
 - no change to DCIR's use of the reconstructed per-step current;
 - no broad refactor of `AnalysisEditor.tsx`.
@@ -162,7 +172,9 @@ implementation details disagree.
    the structure, rates, timing, and termination conditions are not selected as discriminators.
 6. Custom mode exposes the relevant dimension controls and updates the evidence/result state
    without mutating the segment draft.
-7. The modal never creates, removes, rewrites, or merges protocol targets.
+7. The core pairwise modal never creates, removes, rewrites, or merges protocol targets. The
+   explicit 049.1 grouping workflow may create analysis-local group metadata and expand exact
+   source-local targets without changing protocol signatures or source data.
 8. One-family and missing-value states are explicit and fail closed.
 9. The helper tests cover matching families, voltage-only differences, capacity-scaled rate
    current differences, termination-only differences, strict/workflow/custom selection, and
@@ -188,19 +200,22 @@ implementation details disagree.
   generation to invalidate old warm results deterministically.
 - Fixed the Vite 8 CommonJS/ESM interop at the Plotly factory boundary, preventing the local
   frontend from stopping at a blank page during startup.
-- The modal remains read-only: it does not create, remove, rewrite, or merge analysis targets.
+- Implemented the user-authorized 049.1 grouping extension in the current beta6 behavior: named
+  analysis-local groups expand reference selections into exact source-local protocol/DCIR targets;
+  group provenance is editor-only and excluded from the scientific cache identity. Removing or
+  renaming a group does not rewrite source data or existing explicit targets.
 
 ## Verification record
 
-- `node --test frontend\\tests\\protocolComparability.test.ts frontend\\tests\\plotFactory.test.ts` — PASS (11 tests).
-- `python -m unittest tests.test_protocol tests.test_analysis_engine tests.test_analysis_cache` — PASS (132 tests).
-- `python -m unittest tests.test_golden_analysis` — PASS (30 tests; all refreshed golden diffs are zero).
-- `python -m unittest tests.test_neware_excel` — PASS (67 tests).
+- `node --test frontend\\tests\\protocolComparability.test.ts frontend\\tests\\protocolGroupPolicy.test.ts frontend\\tests\\dcirProtocolPolicy.test.ts` — PASS (21 tests).
+- `python -m unittest tests.test_analysis_cache` — PASS (33 tests, including editor-only group
+  provenance exclusion from the scientific cache identity).
 - `npm.cmd run build` — PASS (TypeScript build and Vite production bundle).
-- `python scripts\\check_versions.py --expected-version 0.25.0-beta.3` — PASS.
-- `python scripts\\preflight.py --no-cache` — PASS (4/4 stages; all 132 backend/frontend test files/modules).
+- `python scripts\\check_versions.py --expected-version 0.26.0-beta.6` — PASS.
+- `python scripts\\preflight.py` — PASS (4/4 stages; complete backend/frontend preflight).
 - Read-only inspection of analysis 34 (`Bump study cells`) — PASS: the 11 selected sources resolve to
-  four semantic signatures with the four 97% termination sources separated from the seven 80% sources.
+  four semantic signatures with the four 97% termination sources separated from the seven 80% sources;
+  explicit grouping then expands selections to exact source-local targets.
 - In-app browser check — NOT RUN, per the explicit request that the user test the app manually.
 
 ## Reference asset
