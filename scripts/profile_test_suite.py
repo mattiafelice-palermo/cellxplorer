@@ -297,9 +297,25 @@ def _summarize_backend(
                 "skips": payload["skips"],
             }
         )
-    top = sorted(cases, key=lambda item: float(item["duration_seconds"]), reverse=True)
+    # Keep elapsed-duration ranking for the slow-case inventory.  Body-time
+    # concentration is a separate question and must use its own ranking;
+    # setup/import-heavy cases can otherwise displace genuinely expensive
+    # test bodies from the concentration numerator.
+    top = sorted(
+        cases,
+        key=lambda item: (-float(item["duration_seconds"]), str(item["id"])),
+    )
+    body_top = sorted(
+        cases,
+        key=lambda item: (-float(item["body_seconds"]), str(item["id"])),
+    )
     concentrations = {
-        str(limit): (sum(float(case["body_seconds"]) for case in top[:limit]) / total_body_seconds if total_body_seconds else 0.0)
+        str(limit): (
+            sum(float(case["body_seconds"]) for case in body_top[:limit])
+            / total_body_seconds
+            if total_body_seconds
+            else 0.0
+        )
         for limit in (10, 25, 50)
     }
     return {
