@@ -51,6 +51,12 @@ the reconstructed step and are used by the DCIR calculation. Exported and inferr
 normalized to the same semantic value. If neither a rate nor a nominal-capacity basis is available,
 the step remains absolute-current-controlled and retains its mA values.
 
+Protocol signatures are versioned identities, not durable target IDs. Reconstructed protocols expose
+the current signature plus `legacy_signatures`, and Cycles, Steps, and DCIR resolve saved targets
+against either list so a signature-algorithm upgrade cannot make source-local selections disappear.
+The shared analysis-result cache generation must be bumped when target-resolution semantics change;
+this deliberately invalidates old warm results so they cannot disagree with a cold recompute.
+
 The shared protocol editor's `Compare protocol families` modal is diagnostic only. Strict mode
 uses the normalized semantic identity; Workflow mode compares ordered building blocks, loop
 structure, rates, and timing while showing voltage/protection and recording settings as ignored

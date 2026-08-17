@@ -64,6 +64,35 @@ SIGNATURE_FIELDS = (
 )
 
 PROTOCOL_SIGNATURE_VERSION = 3
+LEGACY_PROTOCOL_SIGNATURE_VERSION = 1
+LEGACY_SIGNATURE_FIELDS = (
+    "number",
+    "type_id",
+    "current_ma",
+    "target_voltage_v",
+    "stop_voltage_v",
+    "stop_current_ma",
+    "time_limit_s",
+    "record_interval_s",
+    "record_voltage_delta_v",
+    "protection_upper_v",
+    "protection_lower_v",
+    "loop_start_step",
+    "loop_count",
+)
+
+# BioLogic's declared protocol carries these source-declared controls on each
+# step. They were part of the former version-1 signature even though the
+# stored protocol payload did not record the extra-field list separately.
+# Keeping the list here lets old persisted MPR targets resolve after an
+# upgrade, while a future adapter can still pass its own fields explicitly.
+DECLARED_PROTOCOL_SIGNATURE_EXTRA_FIELDS = (
+    "capacity_limit_mah",
+    "hold_duration_s",
+    "rest_duration_s",
+    "final_voltage_test_v",
+    "loop_body_inclusive",
+)
 
 
 def _canonical_protocol_rate(value: object) -> float | None:
@@ -391,6 +420,137 @@ def _protocol_signature(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _legacy_protocol_signature(
+    steps: list[dict],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> str:
+    """Reproduce the version-1 signature used by persisted analysis targets.
+
+    This is intentionally kept as a compatibility helper rather than reused
+    for new identity. The old algorithm included capacity-scaled currents and
+    only retained explicit C-rates, which is exactly why its hashes changed
+    between otherwise equivalent cells.
+    """
+    fields = LEGACY_SIGNATURE_FIELDS + tuple(
+        field for field in extra_fields if field not in LEGACY_SIGNATURE_FIELDS
+    )
+    canonical_steps = []
+    for step in steps:
+        item = {field: step.get(field) for field in fields}
+        item["explicit_c_rate"] = (
+            step.get("c_rate") if step.get("c_rate_source") == "explicit" else None
+        )
+        canonical_steps.append(item)
+    payload = json.dumps(
+        {
+            "signature_version": LEGACY_PROTOCOL_SIGNATURE_VERSION,
+            "steps": canonical_steps,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _signature_extra_fields(
+    steps: list[dict], explicit: tuple[str, ...] = ()
+) -> tuple[str, ...]:
+    """Resolve signature extension fields for stored declared protocols."""
+    if explicit:
+        return tuple(dict.fromkeys(explicit))
+    return tuple(
+        field
+        for field in DECLARED_PROTOCOL_SIGNATURE_EXTRA_FIELDS
+        if any(field in step for step in steps)
+    )
+
+
+def _with_protocol_signature_aliases(
+    protocol: dict,
+    *,
+    signature_extra_fields: tuple[str, ...] = (),
+) -> dict:
+    """Return a protocol with its current identity and legacy target aliases.
+
+    Protocol payloads are persisted in source metadata, so this function does
+    not mutate the stored object. It recomputes the current signature from the
+    step settings and retains both the previously stored signature and the
+    deterministic version-1 hash as aliases when they differ.
+    """
+    steps = [dict(step) for step in protocol.get("steps", []) if isinstance(step, dict)]
+    extra_fields = _signature_extra_fields(steps, signature_extra_fields)
+    current_signature = _protocol_signature(steps, extra_fields=extra_fields)
+    aliases: list[str] = []
+
+    def add_alias(value: object) -> None:
+        if isinstance(value, str) and value and value != current_signature and value not in aliases:
+            aliases.append(value)
+
+    add_alias(protocol.get("signature"))
+    stored_aliases = protocol.get("legacy_signatures")
+    if isinstance(stored_aliases, list):
+        for value in stored_aliases:
+            add_alias(value)
+    add_alias(_legacy_protocol_signature(steps, extra_fields=extra_fields))
+
+    result = dict(protocol)
+    result["steps"] = steps
+    result["signature"] = current_signature
+    result["legacy_signatures"] = aliases
+    return result
+
+
+def protocol_signature_candidates(protocol: Mapping[str, Any] | None) -> list[str]:
+    """Return the current signature followed by compatible legacy aliases."""
+    if not isinstance(protocol, Mapping):
+        return []
+    values: list[str] = []
+    signature = protocol.get("signature")
+    if isinstance(signature, str) and signature:
+        values.append(signature)
+    aliases = protocol.get("legacy_signatures")
+    if isinstance(aliases, list):
+        values.extend(value for value in aliases if isinstance(value, str) and value)
+    return list(dict.fromkeys(values))
+
+
+def protocol_signature_matches(
+    protocol: Mapping[str, Any] | None,
+    target_signature: object,
+) -> bool:
+    """Match a persisted target against current or known legacy identity."""
+    return isinstance(target_signature, str) and target_signature in protocol_signature_candidates(protocol)
+
+
+def protocol_target_for_protocol(
+    targets: Mapping[str, Any], protocol: Mapping[str, Any] | None
+) -> Any | None:
+    """Return the first target keyed by the current signature or its aliases."""
+    for signature in protocol_signature_candidates(protocol):
+        if signature in targets:
+            return targets[signature]
+    return None
+
+
+def protocol_steps_for_protocol(
+    targets: Mapping[str, Any], protocol: Mapping[str, Any] | None
+) -> set[int]:
+    """Collect source-local steps from all matching target aliases."""
+    selected: set[int] = set()
+    for signature in protocol_signature_candidates(protocol):
+        values = targets.get(signature)
+        if not isinstance(values, (list, tuple, set)):
+            continue
+        for value in values:
+            try:
+                selected.add(int(value))
+            except (TypeError, ValueError):
+                continue
+    return selected
+
+
 def observed_step_coverage(frame: pd.DataFrame | None) -> list[dict]:
     """Summarize executed protocol-step occurrences from a raw cache slice."""
     if frame is None or frame.empty or "step_index" not in frame.columns:
@@ -674,21 +834,24 @@ def build_declared_protocol(
     }
     if summary_extra:
         summary.update(summary_extra)
-    return {
-        "signature": _protocol_signature(
-            normalized_steps,
-            extra_fields=signature_extra_fields,
-        ),
-        "n_steps": len(normalized_steps),
-        "n_executable_steps": len(executable),
-        "nominal_capacity_mah": nominal_capacity_mah,
-        "nominal_capacity_inferred": False,
-        "steps": normalized_steps,
-        "groups": _structural_groups(normalized_steps),
-        "summary": summary,
-        "warnings": result_warnings,
-        "capabilities": result_capabilities,
-    }
+    return _with_protocol_signature_aliases(
+        {
+            "signature": _protocol_signature(
+                normalized_steps,
+                extra_fields=signature_extra_fields,
+            ),
+            "n_steps": len(normalized_steps),
+            "n_executable_steps": len(executable),
+            "nominal_capacity_mah": nominal_capacity_mah,
+            "nominal_capacity_inferred": False,
+            "steps": normalized_steps,
+            "groups": _structural_groups(normalized_steps),
+            "summary": summary,
+            "warnings": result_warnings,
+            "capabilities": result_capabilities,
+        },
+        signature_extra_fields=signature_extra_fields,
+    )
 
 
 DECLARED_PROTOCOL_METADATA_KEY = "_cellxplorer_declared_protocol"
@@ -725,7 +888,7 @@ def reconstruct_declared_protocol(
 
     stored = _stored_declared_protocol(header_meta)
     if stored is not None:
-        return stored
+        return _with_protocol_signature_aliases(stored)
     return reconstruct_protocol(header_meta, nominal_capacity_mah)
 
 
@@ -735,7 +898,7 @@ def reconstruct_protocol(
 ) -> dict:
     stored = _stored_declared_protocol(flat)
     if stored is not None:
-        return stored
+        return _with_protocol_signature_aliases(stored)
     flat = flat or {}
     mapped_steps = _step_maps(flat)
     inferred_nominal = nominal_capacity_mah is None
@@ -769,25 +932,27 @@ def reconstruct_protocol(
     discharge_cutoffs = _window_counts(executable, "discharge")
     if len(charge_cutoffs) > 1 or len(discharge_cutoffs) > 1:
         warnings.append("The protocol contains multiple operational voltage windows; all are shown rather than forcing one cutoff pair.")
-    return {
-        "signature": _protocol_signature(steps),
-        "n_steps": len(steps),
-        "n_executable_steps": len(executable),
-        # The basis for every C-rate shown, so a reader can convert back to mA.
-        "nominal_capacity_mah": effective_nominal,
-        "nominal_capacity_inferred": inferred_nominal and effective_nominal is not None,
-        "steps": steps,
-        "groups": _structural_groups(steps),
-        "summary": {
-            "charge_cutoffs": charge_cutoffs,
-            "discharge_cutoffs": discharge_cutoffs,
-            "protection_windows": [
-                {"lower_v": lower, "upper_v": upper} for lower, upper in protection_windows
-            ],
-            "record_intervals_s": record_intervals,
-        },
-        "warnings": warnings,
-    }
+    return _with_protocol_signature_aliases(
+        {
+            "signature": _protocol_signature(steps),
+            "n_steps": len(steps),
+            "n_executable_steps": len(executable),
+            # The basis for every C-rate shown, so a reader can convert back to mA.
+            "nominal_capacity_mah": effective_nominal,
+            "nominal_capacity_inferred": inferred_nominal and effective_nominal is not None,
+            "steps": steps,
+            "groups": _structural_groups(steps),
+            "summary": {
+                "charge_cutoffs": charge_cutoffs,
+                "discharge_cutoffs": discharge_cutoffs,
+                "protection_windows": [
+                    {"lower_v": lower, "upper_v": upper} for lower, upper in protection_windows
+                ],
+                "record_intervals_s": record_intervals,
+            },
+            "warnings": warnings,
+        }
+    )
 
 
 def predominant_cutoff(flat: dict[str, str] | None, direction: str) -> float | None:

@@ -118,8 +118,9 @@ values must be displayed as unavailable, not as zero.
 
 ### Not required
 
-- no API route, SQLAlchemy migration, analysis-spec field, cache-version bump, or source-file
-  mutation;
+- no API route, SQLAlchemy migration, analysis-spec field, or source-file mutation; the review
+  compatibility fix may bump the disposable analysis-result cache generation when target
+  resolution semantics change;
 - no automatic family regrouping or target-index translation;
 - no new global CSS or one-off color system;
 - no change to DCIR's use of the reconstructed per-step current;
@@ -170,16 +171,24 @@ implementation details disagree.
 - Added the read-only Mantine comparison modal with Strict, Workflow, and Custom modes, explicit
   Same/Different/Ignored evidence, and fail-closed unavailable-family states.
 - Added the pure comparison policy and focused frontend tests for voltage-only differences,
-  capacity-scaled currents, loop changes, custom dimensions, and missing values.
-- Kept analysis targets, protocol signatures, source data, and caches unchanged while comparing.
+  backend-aligned C-rate boundaries, condition values/jumps, ordered evidence, custom dimensions,
+  and missing values.
+- Added version-aware protocol signature aliases so persisted Cycles, Steps, and DCIR targets
+  continue to resolve source-local steps after the semantic signature upgrade. Bumped the
+  disposable analysis-result cache generation to invalidate old warm results deterministically.
+- Fixed the Vite 8 CommonJS/ESM interop at the Plotly factory boundary, preventing the local
+  frontend from stopping at a blank page during startup.
+- The modal remains read-only: it does not create, remove, rewrite, or merge analysis targets.
 
 ## Verification record
 
-- `node --test frontend\\tests\\protocolComparability.test.ts` — PASS (5 tests).
-- `python -m unittest tests.test_protocol tests.test_dcir` — PASS (31 tests).
+- `node --test frontend\\tests\\protocolComparability.test.ts frontend\\tests\\plotFactory.test.ts` — PASS (11 tests).
+- `python -m unittest tests.test_protocol tests.test_analysis_engine tests.test_analysis_cache` — PASS (130 tests).
 - `npm.cmd run build` — PASS (TypeScript build and Vite production bundle).
-- `python scripts\\check_versions.py --expected-version 0.25.0-beta.1` — PASS.
-- `python scripts\\preflight.py` — PASS (4/4 stages; 131 backend/frontend test files/modules).
+- `npx.cmd vite --host 127.0.0.1 --port 5173` — PASS (Vite 8 dev server reached ready state on
+  the next available port; terminal-only, no browser).
+- `python scripts\\check_versions.py --expected-version 0.25.0-beta.2` — PASS.
+- `python scripts\\preflight.py --no-cache` — PASS (4/4 stages; 132 backend/frontend test files/modules).
 - In-app browser check — NOT RUN, per the explicit request that the user test the app manually.
 
 ## Reference asset

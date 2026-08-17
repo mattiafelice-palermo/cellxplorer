@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.25.0-beta.2 - 2026-08-17
+
+### Bug fixes
+
+- Preserve saved protocol targets across semantic signature upgrades and fix the Vite 8 Plotly startup interop.
+
 ## 0.25.0-beta.1 - 2026-08-17
 
 ### New features

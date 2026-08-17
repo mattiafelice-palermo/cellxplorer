@@ -117,6 +117,10 @@ interface DcirProtocolResult {
   candidates: DcirCandidate[];
 }
 
+function familyMatchesSignature(family: DcirProtocolFamily, signature: string): boolean {
+  return family.signature === signature || (family.protocol.legacy_signatures ?? []).includes(signature);
+}
+
 export interface DcirResultSeries {
   series_id: string;
   cell_id: number;
@@ -427,9 +431,7 @@ function validateDcirSegment(
     return "Select one rest step and the pulse that follows it.";
   }
   for (const target of segment.targets) {
-    const family = families.find(
-      (item) => item.signature === target.protocol_signature
-    );
+    const family = families.find((item) => familyMatchesSignature(item, target.protocol_signature));
     if (!family) {
       return "One selected protocol is no longer available.";
     }
@@ -455,9 +457,7 @@ function toDcirSegment(
   families: DcirProtocolFamily[],
 ): DcirSegment | null {
   const targets = segment.targets.flatMap((target) => {
-    const family = families.find(
-      (item) => item.signature === target.protocol_signature
-    );
+    const family = families.find((item) => familyMatchesSignature(item, target.protocol_signature));
     const converted = family
       ? targetFromSteps(family, target.step_indices)
       : null;
@@ -495,6 +495,9 @@ export function DcirSettings({
       for (const cellId of family.cell_ids) {
         const cellSignatures = signatures.get(cellId) ?? new Set<string>();
         cellSignatures.add(family.signature);
+        for (const legacySignature of family.protocol.legacy_signatures ?? []) {
+          cellSignatures.add(legacySignature);
+        }
         signatures.set(cellId, cellSignatures);
       }
     }
@@ -532,7 +535,7 @@ export function DcirSettings({
       (protocols.data?.candidates ?? []).map((candidate) => {
         // Find the protocol family to get cell names
         const family = protocolFamilies.find(
-          (f) => f.signature === candidate.protocol_signature
+      (f) => familyMatchesSignature(f, candidate.protocol_signature)
         );
         const cellNames = family?.cell_names ?? candidate.compatible_cell_names ?? [];
         return {
@@ -712,9 +715,7 @@ export function DcirSettings({
       ...new Set(
         converted.targets.flatMap(
           (target) =>
-            protocolFamilies.find(
-              (family) => family.signature === target.protocol_signature
-            )?.cell_ids ?? []
+            protocolFamilies.find((family) => familyMatchesSignature(family, target.protocol_signature))?.cell_ids ?? []
         )
       ),
     ];

@@ -20,8 +20,11 @@ from sqlalchemy.orm import Session
 
 from ..config import CACHE_DIR, CALC_VERSION
 
-ANALYSIS_CACHE_VERSION = 5
-# ^ Spec 040.3: result_key() now fingerprints each contributing source's OWN
+ANALYSIS_CACHE_VERSION = 6
+# ^ Spec 049: protocol targets now resolve current and version-1 protocol
+# signature aliases. Existing result files are therefore deterministically
+# invalidated so a warm cache cannot disagree with a cache-cleared recompute.
+# Spec 040.3: result_key() now fingerprints each contributing source's OWN
 # resolved parser identity per cell (`source_parser_versions`) instead of one
 # process-global `parser_version` scalar shared by the whole key. This is a
 # key-COMPUTATION change that applies uniformly to every analysis kind, so it

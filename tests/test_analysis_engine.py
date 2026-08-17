@@ -304,6 +304,23 @@ class AnalysisEngineTests(unittest.TestCase):
             {badge["kind"] for badge in result["badges"]},
         )
 
+    def test_legacy_protocol_signature_still_filters_cycles(self):
+        spec = self.spec_with_protocol_mode("excluded")
+        current = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )
+        spec["protocol_segments"][0]["targets"][0]["protocol_signature"] = (
+            current["legacy_signatures"][0]
+        )
+
+        result = engine.compute(self.db, spec, None)
+
+        self.assertEqual(result["cell_series"][0]["x"], list(range(2, 51, 2)))
+        self.assertNotIn(
+            "protocol_segment_unmatched",
+            {badge["kind"] for badge in result["badges"]},
+        )
+
     def test_steps_compute_emits_one_series_per_cell_segment_pair(self):
         cell = self.cells["c1"]
         signature = protocol.reconstruct_protocol(
@@ -398,6 +415,39 @@ class AnalysisEngineTests(unittest.TestCase):
             )
         )
 
+    def test_steps_compute_resolves_a_pre_upgrade_protocol_target(self):
+        cell = self.cells["c1"]
+        current = protocol.reconstruct_protocol(
+            analysis_protocol_header(), nominal_capacity_mah=2.0
+        )
+        spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        spec["protocol_segments"] = [
+            {
+                "id": "legacy-discharge",
+                "name": "Legacy discharge",
+                "targets": [
+                    {
+                        "protocol_signature": current["legacy_signatures"][0],
+                        "step_indices": [2],
+                    }
+                ],
+            }
+        ]
+        spec["computation"]["steps"] = {
+            "series": [
+                {
+                    "id": "legacy-discharge-series",
+                    "cell_id": cell.id,
+                    "segment_id": "legacy-discharge",
+                }
+            ],
+            "mode": "union",
+        }
+
+        result = engine.compute_steps(self.db, spec, None)
+
+        self.assertEqual(result["cell_series"][0]["n_blocks"], 50)
+
     def test_dcir_compute_emits_explicit_cell_segment_series(self):
         cell = self.cells["c1"]
         source = cell.tests[0].file_links[0].file
@@ -412,7 +462,7 @@ class AnalysisEngineTests(unittest.TestCase):
             cache.build(self.HASHES["c1"], f"{self.HASHES['c1']}.ndax")
             signature = protocol.reconstruct_protocol(
                 dcir_protocol_header(), nominal_capacity_mah=2.0
-            )["signature"]
+            )["legacy_signatures"][0]
             spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
             spec["dcir_segments"] = [
                 {

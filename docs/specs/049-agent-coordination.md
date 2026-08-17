@@ -51,3 +51,22 @@ Spec 049 implementation is complete on the feature branch. The modal is read-onl
 R1 is the cumulative scientific-identity blocker. R2/R3 can produce false workflow matches; R4/R5 are localized comparator fixes.
 
 ---
+### 2026-08-17T19:46:16+02:00 — IMPLEMENTER → REVIEWER — 049
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (11 tests)
+- focused backend tests: PASS (130 tests)
+- frontend type-check/build: PASS
+- Vite 8 terminal startup: PASS; no browser
+- version check: PASS (0.25.0-beta.2)
+- canonical preflight: PASS (4/4 stages; 132 backend/frontend test files/modules)
+- browser checks: NOT RUN (user will test manually)
+
+**Message**
+
+Review fixes R1-R5 are implemented. Legacy protocol aliases preserve Cycles/Steps/DCIR target meaning, analysis results invalidate deterministically across target-resolution generations, comparator semantics match backend normalization, evidence is ordered and explanatory, Custom mode fails closed, and the Vite 8 Plotly factory interop prevents the blank local page.
+
+---

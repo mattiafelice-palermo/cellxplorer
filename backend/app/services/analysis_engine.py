@@ -818,14 +818,15 @@ def _protocol_step_targets(
                 source_file=source_file,
             )
             continue
-        signature = reconstructed["signature"]
         modes = {mode: set() for mode in PROTOCOL_SEGMENT_MODES}
         for mode, selected_segments in context["selected"].items():
             for segment in selected_segments:
                 segment_matches = False
                 targets = segment.get("targets") or []
                 for target in targets if isinstance(targets, list) else []:
-                    if not isinstance(target, dict) or target.get("protocol_signature") != signature:
+                    if not isinstance(target, dict) or not protocol.protocol_signature_matches(
+                        reconstructed, target.get("protocol_signature")
+                    ):
                         continue
                     segment_matches = True
                     modes[mode].update(_target_step_indices(target))
@@ -2195,10 +2196,12 @@ def compute_steps(
             )
             raw_start = raw_timestamps.min() if len(raw_timestamps) else None
             for source_index, source_file in enumerate(files):
-                signature = protocol_service.reconstruct_protocol(
+                reconstructed = protocol_service.reconstruct_protocol(
                     source_file.header_meta, nominal
-                ).get("signature")
-                selected = targets.get(str(signature), set()) if signature else set()
+                )
+                selected = protocol_service.protocol_steps_for_protocol(
+                    targets, reconstructed
+                )
                 if not selected:
                     continue
                 source_raw = raw.loc[raw["segment"] == source_index].copy()
@@ -2406,10 +2409,10 @@ def compute_dcir(
         occurrence_frames: list[pd.DataFrame] = []
         matched_target: dict | None = None
         for source_index, source_file in enumerate(files):
-            signature = protocol_service.reconstruct_protocol(
+            reconstructed = protocol_service.reconstruct_protocol(
                 source_file.header_meta, nominal
-            ).get("signature")
-            target = targets.get(str(signature)) if signature else None
+            )
+            target = protocol_service.protocol_target_for_protocol(targets, reconstructed)
             if not target or raw.empty:
                 continue
             try:

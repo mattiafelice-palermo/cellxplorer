@@ -4,6 +4,7 @@ import test from "node:test";
 import type { FileProtocol, ProtocolGroup, ProtocolStep } from "../src/api.ts";
 import {
   compareProtocolFamilies,
+  normalizeProtocolRate,
   WORKFLOW_COMPARISON_DIMENSIONS,
   type ProtocolComparisonDimensions,
 } from "../src/features/analyses/editor/protocol/protocolComparability.ts";
@@ -107,6 +108,26 @@ test("capacity-scaled currents do not make rate-controlled families different", 
   assert.equal(row(result, "rates").status, "same");
 });
 
+test("C-rate comparison uses the backend semantic normalization boundary", () => {
+  assert.equal(normalizeProtocolRate(1 / 3), normalizeProtocolRate(0.333), "C/3 precision is equivalent");
+  assert.notEqual(normalizeProtocolRate(1 / 3), normalizeProtocolRate(0.35), "C/3 and 0.35C stay distinct");
+  assert.notEqual(normalizeProtocolRate(0.10), normalizeProtocolRate(0.119), "small rates do not use an absolute 0.02 window");
+
+  const equivalent = compareProtocolFamilies(
+    protocol({ steps: [step({ c_rate: 1 / 3 }), protocol().steps[1]] }),
+    protocol({ steps: [step({ c_rate: 0.333 }), protocol().steps[1]] }),
+    "workflow",
+  );
+  assert.equal(row(equivalent, "rates").status, "same");
+
+  const distinct = compareProtocolFamilies(
+    protocol({ steps: [step({ c_rate: 1 / 3 }), protocol().steps[1]] }),
+    protocol({ steps: [step({ c_rate: 0.35 }), protocol().steps[1]] }),
+    "workflow",
+  );
+  assert.equal(row(distinct, "rates").status, "different");
+});
+
 test("custom mode can opt voltage back into the comparison", () => {
   const reference = protocol();
   const candidate = protocol({
@@ -136,6 +157,49 @@ test("workflow mode detects a changed loop structure", () => {
 
   assert.equal(result.comparable, false);
   assert.equal(row(result, "structure").status, "different");
+  assert.notEqual(row(result, "structure").reference, row(result, "structure").candidate);
+});
+
+test("workflow structure includes condition values and structurally normalized jumps", () => {
+  const condition = {
+    expression: "DischargeAh",
+    name: "capacity",
+    value: 1,
+    comparator_id: 2,
+    jump_step: 2,
+  };
+  const reference = protocol({
+    steps: [step({ conditions: [condition] }), protocol().steps[1]],
+  });
+  const changedValue = protocol({
+    steps: [step({ conditions: [{ ...condition, value: 2 }] }), protocol().steps[1]],
+  });
+  const changedJump = protocol({
+    steps: [step({ conditions: [{ ...condition, jump_step: 1 }] }), protocol().steps[1]],
+  });
+
+  assert.equal(compareProtocolFamilies(reference, changedValue, "workflow").comparable, false);
+  assert.equal(row(compareProtocolFamilies(reference, changedValue, "workflow"), "structure").status, "different");
+  assert.equal(row(compareProtocolFamilies(reference, changedJump, "workflow"), "structure").status, "different");
+
+  const renumbered = protocol({
+    steps: [
+      step({ number: 10, conditions: [{ ...condition, jump_step: 20 }] }),
+      { ...protocol().steps[1], number: 20 },
+    ],
+  });
+  assert.equal(compareProtocolFamilies(reference, renumbered, "workflow").rows.find((item) => item.key === "structure")?.status, "same");
+});
+
+test("rate schedule evidence preserves step order", () => {
+  const second = step({ number: 2, c_rate: 0.25, stop_c_rate: 0.05 });
+  const reference = protocol({ steps: [step({ c_rate: 0.5 }), second] });
+  const candidate = protocol({ steps: [step({ c_rate: 0.25 }), { ...second, c_rate: 0.5 }] });
+  const result = compareProtocolFamilies(reference, candidate, "workflow");
+
+  assert.equal(row(result, "rates").status, "different");
+  assert.match(row(result, "rates").reference, /S1 C\/2/);
+  assert.match(row(result, "rates").candidate, /S1 C\/4/);
 });
 
 test("missing timing values are compared as missing, not as zero", () => {
@@ -154,4 +218,23 @@ test("missing timing values are compared as missing, not as zero", () => {
   assert.equal(result.comparable, false);
   assert.equal(row(result, "timing").status, "different");
   assert.match(row(result, "timing").candidate, /Unavailable/);
+});
+
+test("custom mode with no selected dimensions fails closed", () => {
+  const result = compareProtocolFamilies(
+    protocol(),
+    protocol({ signature: "different-but-unchecked" }),
+    "custom",
+    {
+      structure: false,
+      rates: false,
+      timing: false,
+      voltage: false,
+      recording: false,
+    },
+  );
+
+  assert.equal(result.comparable, false);
+  assert.deepEqual(result.differingDimensions, []);
+  assert.ok(result.rows.every((item) => item.status === "ignored"));
 });

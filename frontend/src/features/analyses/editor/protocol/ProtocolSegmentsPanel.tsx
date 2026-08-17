@@ -100,6 +100,7 @@ interface ProtocolFileRef {
 
 interface ProtocolFamily {
   signature: string;
+  legacySignatures: string[];
   protocol: FileProtocol | null;
   files: ProtocolFileRef[];
   unavailableSteps?: number[];
@@ -164,19 +165,34 @@ function uniqueSorted(values: number[]): number[] {
   return [...new Set(values)].sort((a, b) => a - b);
 }
 
-function selectedSteps(targets: ProtocolSegmentTarget[], signature: string): number[] {
-  return targets.find((target) => target.protocol_signature === signature)?.step_indices ?? [];
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function familyMatchesSignature(family: ProtocolFamily, signature: string): boolean {
+  return family.signature === signature || family.legacySignatures.includes(signature);
+}
+
+function selectedSteps(
+  targets: ProtocolSegmentTarget[],
+  signature: string,
+  family?: ProtocolFamily,
+): number[] {
+  const matches = targets.filter((target) =>
+    family ? familyMatchesSignature(family, target.protocol_signature) : target.protocol_signature === signature
+  );
+  return uniqueSorted(matches.flatMap((target) => target.step_indices));
 }
 
 function replaceTarget(
   targets: ProtocolSegmentTarget[],
-  signature: string,
+  family: ProtocolFamily,
   steps: number[]
 ): ProtocolSegmentTarget[] {
-  const next = targets.filter((target) => target.protocol_signature !== signature);
+  const next = targets.filter((target) => !familyMatchesSignature(family, target.protocol_signature));
   const normalized = uniqueSorted(steps);
   if (normalized.length > 0) {
-    next.push({ protocol_signature: signature, step_indices: normalized });
+    next.push({ protocol_signature: family.signature, step_indices: normalized });
   }
   return next.sort((a, b) => a.protocol_signature.localeCompare(b.protocol_signature));
 }
@@ -194,7 +210,7 @@ function targetCount(targets: ProtocolSegmentTarget[]): number {
  * lookup, used by both, removes the possibility.
  */
 function protocolNumber(families: ProtocolFamily[], signature: string): number | null {
-  const index = families.findIndex((family) => family.signature === signature);
+  const index = families.findIndex((family) => familyMatchesSignature(family, signature));
   return index >= 0 ? index + 1 : null;
 }
 
@@ -652,9 +668,11 @@ function SegmentSidePanel({
   for (const segment of segments) {
     // A segment can span protocols; list it under each one it touches.
     for (const target of segment.targets) {
-      const list = byProtocol.get(target.protocol_signature) ?? [];
+      const family = families.find((item) => familyMatchesSignature(item, target.protocol_signature));
+      const signature = family?.signature ?? target.protocol_signature;
+      const list = byProtocol.get(signature) ?? [];
       list.push(segment);
-      byProtocol.set(target.protocol_signature, list);
+      byProtocol.set(signature, list);
     }
   }
 
@@ -864,6 +882,7 @@ function ProtocolComparisonModal({
     ? compareProtocolFamilies(reference.protocol, candidate.protocol, mode, customDimensions)
     : null;
   const comparedDimensions = comparisonDimensionsFor(mode, customDimensions);
+  const hasSelectedDimension = Object.values(comparedDimensions).some(Boolean);
 
   const chooseReference = (value: string | null) => {
     if (!value) return;
@@ -874,7 +893,9 @@ function ProtocolComparisonModal({
   };
 
   const resultTitle = result
-    ? result.comparable
+    ? mode === "custom" && !hasSelectedDimension
+      ? "Select at least one dimension"
+      : result.comparable
       ? mode === "strict"
         ? "Strictly comparable"
         : mode === "workflow"
@@ -885,7 +906,9 @@ function ProtocolComparisonModal({
         : "Selected dimensions differ"
     : null;
   const resultDetail = result
-    ? result.comparable
+    ? mode === "custom" && !hasSelectedDimension
+      ? "No protocol dimensions are selected, so this comparison is indeterminate. Select at least one dimension to get a meaningful result."
+      : result.comparable
       ? mode === "strict"
         ? "The selected protocol identity fields match."
         : "The families can be reviewed together for this basis; ignored limits remain attached to each source."
@@ -1020,7 +1043,11 @@ function ProtocolComparisonModal({
                 </Table.Tbody>
               </Table>
             </ScrollArea>
-            <Alert color={result.comparable ? "teal" : "orange"} variant="light" title={resultTitle ?? "Comparison result"}>
+            <Alert
+              color={result.comparable ? "teal" : mode === "custom" && !hasSelectedDimension ? "gray" : "orange"}
+              variant="light"
+              title={resultTitle ?? "Comparison result"}
+            >
               {resultDetail}
               {mode !== "strict" && (
                 <Text size="xs" c="dimmed" mt={4}>
@@ -1069,7 +1096,7 @@ function ProtocolPicker({
   const label = (family: ProtocolFamily) => {
     const cells = [...new Set(family.files.map((file) => file.cellName))];
     const steps = family.protocol?.n_executable_steps ?? 0;
-    const chosen = selectedSteps(targets, family.signature).length;
+    const chosen = selectedSteps(targets, family.signature, family).length;
     const where = cells.length === 0 ? "not in samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`;
     const number = protocolNumber(families, family.signature) ?? "—";
     return `Protocol ${number} — ${steps} steps, ${where}${chosen ? ` · ${chosen} selected` : ""}`;
@@ -1518,17 +1545,17 @@ function SegmentEditor({
   const activeFamily = families.find((f) => f.signature === activeSignature) ?? null;
   const count = targetCount(targets);
 
-  const setFamilySteps = (signature: string, steps: number[]) => {
-    setTargets((current) => replaceTarget(current, signature, steps));
+  const setFamilySteps = (family: ProtocolFamily, steps: number[]) => {
+    setTargets((current) => replaceTarget(current, family, steps));
   };
 
-  const toggleSteps = (signature: string, steps: number[], checked: boolean) => {
-    const current = new Set(selectedSteps(targets, signature));
+  const toggleSteps = (family: ProtocolFamily, steps: number[], checked: boolean) => {
+    const current = new Set(selectedSteps(targets, family.signature, family));
     for (const step of steps) {
       if (checked) current.add(step);
       else current.delete(step);
     }
-    setFamilySteps(signature, [...current]);
+    setFamilySteps(family, [...current]);
   };
 
   const [editingId, setEditingId] = useState<string | null>(draft.id);
@@ -1575,7 +1602,7 @@ function SegmentEditor({
   const treeContent = useMemo(() => {
     if (loading || !activeFamily) return null;
     const family = activeFamily;
-    const selected = selectedSteps(targets, family.signature);
+    const selected = selectedSteps(targets, family.signature, family);
     const selectedSet = new Set(selected);
     const groups = familyGroups(family);
     const allSteps = uniqueSorted(groupSteps(groups));
@@ -1619,7 +1646,7 @@ function SegmentEditor({
                   variant="light"
                   color="var(--mantine-primary-color-6)"
                   disabled={visibleSteps.size === 0}
-                  onClick={() => toggleSteps(family.signature, [...visibleSteps], true)}
+                  onClick={() => toggleSteps(family, [...visibleSteps], true)}
                 >
                   Select {visibleSteps.size} matching
                 </Button>
@@ -1637,7 +1664,7 @@ function SegmentEditor({
               variant="subtle"
               color="gray"
               disabled={selected.length === 0}
-              onClick={() => setFamilySteps(family.signature, [])}
+              onClick={() => setFamilySteps(family, [])}
             >
               Clear
             </Button>
@@ -1654,7 +1681,7 @@ function SegmentEditor({
               family={family}
               visibleSteps={displaySteps}
               defaultOpen={expandAll ?? group.depth === 0}
-              onToggleSteps={(steps, checked) => toggleSteps(family.signature, steps, checked)}
+                onToggleSteps={(steps, checked) => toggleSteps(family, steps, checked)}
             />
           ))}
         </Stack>
@@ -2049,9 +2076,14 @@ export function ProtocolSegmentsPanel({
           if (!signature) continue;
           const family = bySignature.get(signature) ?? {
             signature,
+            legacySignatures: file.protocol.legacy_signatures ?? [],
             protocol: file.protocol,
             files: [],
           };
+          family.legacySignatures = uniqueStrings([
+            ...family.legacySignatures,
+            ...(file.protocol.legacy_signatures ?? []),
+          ]);
           family.files.push({
             cellId: cell.cell_id,
             cellName: cell.cell_name,
@@ -2071,11 +2103,13 @@ export function ProtocolSegmentsPanel({
 
   const editorFamilies = useMemo(() => {
     if (!draft) return loadedFamilies;
-    const known = new Set(loadedFamilies.map((family) => family.signature));
+    const known = (signature: string) =>
+      loadedFamilies.some((family) => familyMatchesSignature(family, signature));
     const unavailable = draft.targets
-      .filter((target) => !known.has(target.protocol_signature))
+      .filter((target) => !known(target.protocol_signature))
       .map((target): ProtocolFamily => ({
         signature: target.protocol_signature,
+        legacySignatures: [],
         protocol: null,
         files: [],
         unavailableSteps: uniqueSorted(target.step_indices),
@@ -2156,7 +2190,7 @@ export function ProtocolSegmentsPanel({
                         <Text size="10px" c="dimmed">
                           {segment.targets.map((target, idx) => {
                             const num = protocolNumber(loadedFamilies, target.protocol_signature);
-                            const family = loadedFamilies.find((f) => f.signature === target.protocol_signature);
+                            const family = loadedFamilies.find((f) => familyMatchesSignature(f, target.protocol_signature));
                             const cellNames = [...new Set(family?.files.map((f) => f.cellName) ?? [])];
                             const cellLabel = cellNames.length === 0 ? "no cells" : cellNames.length === 1 ? cellNames[0] : `${cellNames[0]} +${cellNames.length - 1} more`;
                             return (

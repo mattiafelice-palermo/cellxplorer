@@ -346,6 +346,33 @@ class AnalysisCacheTests(unittest.TestCase):
         self.assertEqual(cycles_before, cycles_after)
         self.assertNotEqual(time_capacity_before, time_capacity_after)
 
+    def test_protocol_target_resolution_generation_invalidates_old_results(self):
+        spec = {
+            "selection": {"units": []},
+            "computation": {},
+            "aggregation": {},
+            "presentation": {},
+        }
+        db = object()
+        with (
+            patch.object(analysis_engine, "resolve_selection", return_value=([], [])),
+            patch.object(analysis_engine, "preload_cell_sources"),
+            patch.object(analysis_engine, "load_scalar_metadata", return_value={}),
+        ):
+            current_key = analysis_cache.result_key(
+                db, "dcir", spec, None, use_current_versions=True
+            )
+            with patch.object(
+                analysis_cache,
+                "ANALYSIS_CACHE_VERSION",
+                analysis_cache.ANALYSIS_CACHE_VERSION - 1,
+            ):
+                legacy_key = analysis_cache.result_key(
+                    db, "dcir", spec, None, use_current_versions=True
+                )
+
+        self.assertNotEqual(current_key, legacy_key)
+
     def test_dcir_view_does_not_change_scientific_cache_spec(self):
         base = {
             "selection": {"units": [{"kind": "cell", "ref_id": 7}]},

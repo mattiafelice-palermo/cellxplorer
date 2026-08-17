@@ -69,6 +69,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(first["signature"], second["signature"])
         self.assertEqual(len(first["signature"]), 64)
 
+    def test_signature_keeps_version_one_alias_for_persisted_targets(self):
+        result = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        legacy = protocol._legacy_protocol_signature(result["steps"])
+
+        self.assertIn(legacy, result["legacy_signatures"])
+        self.assertTrue(protocol.protocol_signature_matches(result, legacy))
+
+    def test_pre_upgrade_stored_protocol_is_rekeyed_without_losing_its_alias(self):
+        current = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        legacy = protocol._legacy_protocol_signature(current["steps"])
+        stored = dict(current)
+        stored["signature"] = legacy
+
+        restored = protocol.reconstruct_protocol(
+            {protocol.DECLARED_PROTOCOL_METADATA_KEY: stored},
+            nominal_capacity_mah=10,
+        )
+
+        self.assertEqual(restored["signature"], current["signature"])
+        self.assertIn(legacy, restored["legacy_signatures"])
+        self.assertEqual(restored["steps"], current["steps"])
+
     def test_signature_changes_when_executable_settings_change(self):
         changed = synthetic_header()
         changed["Step.Step_Info.Step3.Limit.Main.Stop_Volt.Value"] = "29000"

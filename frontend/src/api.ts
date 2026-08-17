@@ -579,6 +579,8 @@ export interface ProtocolStep {
     value: number | null;
     comparator_id: number | null;
     jump_step: number | null;
+    global_user_id?: number | null;
+    stores_as?: string | null;
   }[];
 }
 
@@ -602,6 +604,8 @@ export interface ProtocolGroup {
 
 export interface FileProtocol {
   signature: string;
+  /** Signatures from earlier protocol identity generations retained for saved targets. */
+  legacy_signatures?: string[];
   n_steps: number;
   n_executable_steps: number;
   steps: ProtocolStep[];
