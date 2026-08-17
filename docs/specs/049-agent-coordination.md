@@ -145,3 +145,17 @@ R1/R2/R5/R6 are resolved; R3 is superseded by the user-approved termination-dime
 Review fixes R4, R7, R8, R9, and R10 are implemented. Declared BioLogic controls are visible in their comparison dimensions; group creation preserves existing definitions; ambiguous group provenance is neutral; and grouped DCIR validation follows the authorized empty-step policy. Current checkpoint is beta.5.
 
 ---
+### 2026-08-17T23:55:15+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R8
+- R10
+
+**Message**
+
+R4/R7/R9/R11 are resolved at beta.5. R8 still needs semantic normalization of BioLogic-only storage extras (redundant rest duration and non-loop loop-body flags), and R10 still infers group ownership from membership when the saved segment carries no provenance.
+
+---
