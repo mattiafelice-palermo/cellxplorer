@@ -286,6 +286,23 @@ test("workflow can ignore empty rest or pause rows without treating them as exec
 
   const strictWorkflow = compareProtocolFamilies(reference, candidate, "workflow");
   assert.equal(strictWorkflow.comparable, false);
+  assert.equal(row(strictWorkflow, "structure").status, "different");
+  assert.equal(row(strictWorkflow, "rates").status, "same");
+  assert.equal(row(strictWorkflow, "timing").status, "same");
+
+  const customWithTermination: ProtocolComparisonDimensions = {
+    ...WORKFLOW_COMPARISON_DIMENSIONS,
+    termination: true,
+  };
+  const customWithoutIgnoring = compareProtocolFamilies(
+    reference,
+    candidate,
+    "custom",
+    customWithTermination,
+  );
+  assert.equal(row(customWithoutIgnoring, "structure").status, "different");
+  assert.equal(row(customWithoutIgnoring, "termination").status, "same");
+
   const ignoredWorkflow = compareProtocolFamilies(reference, candidate, "workflow", undefined, {
     ignoreEmptyRestPause: true,
   });

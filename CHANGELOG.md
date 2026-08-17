@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.26.0-beta.2 - 2026-08-17
+
+- Fix empty-step comparison alignment and grouped DCIR segment display.
+
 ## 0.26.0-beta.1 - 2026-08-17
 
 - Add reviewable protocol-family grouping with named source-local protocol options.

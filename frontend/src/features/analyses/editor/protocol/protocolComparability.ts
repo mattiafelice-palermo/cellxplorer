@@ -399,8 +399,17 @@ function dimensionEqual(
   mode: ProtocolComparisonMode,
   options: ProtocolComparisonOptions,
 ): boolean {
-  const comparableReference = protocolForComparison(reference, options);
-  const comparableCandidate = protocolForComparison(candidate, options);
+  // An empty Rest/Pause row is a real workflow difference when the user keeps
+  // it enabled for the structure dimension, but it carries no value for the
+  // other dimensions. Remove it from value comparisons as well, otherwise one
+  // inserted empty row shifts every later value by one index and creates a
+  // cascade of false rate/timing/termination differences.
+  const valueComparisonOptions: ProtocolComparisonOptions = {
+    ...options,
+    ignoreEmptyRestPause: key === "structure" ? options.ignoreEmptyRestPause : true,
+  };
+  const comparableReference = protocolForComparison(reference, valueComparisonOptions);
+  const comparableCandidate = protocolForComparison(candidate, valueComparisonOptions);
   switch (key) {
     case "structure":
       return structureToken(comparableReference, mode === "strict") === structureToken(comparableCandidate, mode === "strict");
