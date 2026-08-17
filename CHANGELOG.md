@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.26.0-beta.6 - 2026-08-18
+
+- Normalize cross-source protocol comparisons and preserve grouped segment provenance.
+
 ## 0.26.0-beta.5 - 2026-08-17
 
 - Fix reviewed protocol grouping and comparability edge cases.

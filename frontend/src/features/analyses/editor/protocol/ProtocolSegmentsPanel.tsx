@@ -91,7 +91,7 @@ import {
   mergeProtocolGroups,
   normalizeProtocolGroups,
   protocolGroupForDefinition,
-  protocolGroupsForMembership,
+  protocolGroupForProvenance,
   type ProtocolGroupDefinition,
 } from "./protocolGroupPolicy";
 
@@ -123,6 +123,7 @@ interface SegmentDraft {
   id: string | null;
   name: string;
   targets: ProtocolSegmentTarget[];
+  protocolGroupId: string | null;
 }
 
 interface RangeDraft {
@@ -754,12 +755,16 @@ function segmentTargetGroup(
 ): ProtocolFamilyGroup | null {
   const targetSignatures = new Set(segmentTargetFamilies(segment, families).map((family) => family.signature));
   if (targetSignatures.size === 0) return null;
-  const matches = protocolGroupsForMembership(protocolGroups, [...targetSignatures])
-    .filter((group) => isSelectableProtocolGroup(group));
-  // A segment only stores exact source targets, not the modal definition that
-  // created them. If two saved definitions intentionally share membership,
-  // avoid pretending that the first one owns the segment.
-  return matches.length === 1 ? matches[0] : null;
+  const group = protocolGroupForProvenance(
+    protocolGroups,
+    segment.protocol_group_id,
+    [...targetSignatures],
+  );
+  if (!group || !isSelectableProtocolGroup(group)) return null;
+  const members = protocolGroupMembers(group, families);
+  return members.length === targetSignatures.size && members.every((family) => targetSignatures.has(family.signature))
+    ? group
+    : null;
 }
 
 function segmentTargetLabel(
@@ -768,13 +773,9 @@ function segmentTargetLabel(
   protocolGroups: ProtocolFamilyGroup[],
 ): string {
   const targetFamilies = segmentTargetFamilies(segment, families);
-  const matchingGroups = protocolGroupsForMembership(
-    protocolGroups,
-    targetFamilies.map((family) => family.signature),
-  ).filter((group) => isSelectableProtocolGroup(group));
   const group = segmentTargetGroup(segment, families, protocolGroups);
   if (group) return `${group.name} - ${targetFamilies.length} families`;
-  if (matchingGroups.length > 1 && targetFamilies.length > 1) {
+  if (targetFamilies.length > 1) {
     return `Grouped selection - ${targetFamilies.length} families`;
   }
   const labels = segment.targets.map((target) => {
@@ -2109,6 +2110,7 @@ function SegmentEditor({
 }) {
   const [name, setName] = useState(draft.name);
   const [targets, setTargets] = useState<ProtocolSegmentTarget[]>(draft.targets);
+  const [protocolGroupId, setProtocolGroupId] = useState<string | null>(draft.protocolGroupId);
   const [ranges, setRanges] = useState<Record<string, RangeDraft>>({});
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<StepFilter[]>([]);
@@ -2155,6 +2157,7 @@ function SegmentEditor({
   const count = targetCount(targets);
 
   const setFamilySteps = (family: ProtocolFamily, steps: number[]) => {
+    setProtocolGroupId(null);
     setTargets((current) => replaceTarget(current, family, steps));
   };
 
@@ -2169,6 +2172,7 @@ function SegmentEditor({
 
   const setActiveSelection = (steps: number[]) => {
     if (activeGroup) {
+      setProtocolGroupId(activeGroup.id);
       setTargets((current) => replaceGroupTargets(current, activeGroup, families, steps));
     } else if (activeFamily) {
       setFamilySteps(activeFamily, steps);
@@ -2202,6 +2206,7 @@ function SegmentEditor({
         ...target,
         step_indices: uniqueSorted(target.step_indices),
       })),
+      protocol_group_id: protocolGroupId,
     };
     const error = validateSegment?.(segment) ?? null;
     if (error) {
@@ -2212,6 +2217,7 @@ function SegmentEditor({
     setEditingId(null);
     setName("");
     setTargets([]);
+    setProtocolGroupId(null);
     setValidationError(null);
   };
 
@@ -2219,6 +2225,7 @@ function SegmentEditor({
     setEditingId(segment.id);
     setName(segment.name);
     setTargets(segment.targets.map((target) => ({ ...target })));
+    setProtocolGroupId(segment.protocol_group_id ?? null);
     setValidationError(null);
   };
 
@@ -2233,6 +2240,7 @@ function SegmentEditor({
   );
   const applySuggestionTargets = (suggestion: ProtocolSegmentSuggestion) => {
     if (!activeGroup) {
+      setProtocolGroupId(null);
       setTargets(
         suggestion.segment.targets.map((target) => ({
           ...target,
@@ -2249,6 +2257,7 @@ function SegmentEditor({
       ? suggestion.segment.targets.find((target) => familyMatchesSignature(source, target.protocol_signature))
       : suggestion.segment.targets[0];
     if (!reference?.protocol || !source?.protocol || !sourceTarget) {
+      setProtocolGroupId(null);
       setTargets(suggestion.segment.targets.map((target) => ({ ...target, step_indices: [...target.step_indices] })));
       return;
     }
@@ -2256,6 +2265,7 @@ function SegmentEditor({
     const referenceSteps = source.signature === reference.signature
       ? sourceTarget.step_indices
       : mapComparableProtocolStepNumbers(source.protocol, reference.protocol, sourceTarget.step_indices, options);
+    setProtocolGroupId(activeGroup.id);
     setTargets(replaceGroupTargets([], activeGroup, families, referenceSteps));
   };
 
@@ -2793,6 +2803,7 @@ export function ProtocolSegmentsPanel({
     setDraft({
       id: segment?.id ?? null,
       name: segment?.name ?? "",
+      protocolGroupId: segment?.protocol_group_id ?? null,
       targets: segment?.targets.map((target) => ({
         ...target,
         step_indices: [...target.step_indices],
@@ -2951,7 +2962,7 @@ export function ProtocolSegmentsPanel({
 
       {draft && (
         <SegmentEditor
-          key={`${draft.id ?? "new"}-${draft.targets.map((target) => target.protocol_signature).join("|")}`}
+          key={`${draft.id ?? "new"}-${draft.protocolGroupId ?? "none"}-${draft.targets.map((target) => target.protocol_signature).join("|")}`}
           draft={draft}
           families={editorFamilies}
           protocolGroups={protocolGroups}

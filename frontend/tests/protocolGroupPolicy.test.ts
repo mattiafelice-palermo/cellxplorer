@@ -7,6 +7,7 @@ import {
   normalizeProtocolGroups,
   protocolGroupDefinitionKey,
   protocolGroupForDefinition,
+  protocolGroupForProvenance,
   protocolGroupMembershipKey,
   protocolGroupsForMembership,
 } from "../src/features/analyses/editor/protocol/protocolGroupPolicy.ts";
@@ -99,5 +100,22 @@ test("membership lookup exposes ambiguity instead of selecting the first definit
   assert.deepEqual(
     protocolGroupsForMembership([first, second], ["protocol-b", "protocol-a"]).map((item) => item.id),
     ["group-a", "group-b"],
+  );
+});
+
+test("segment provenance does not transfer ownership after the recorded group is removed", () => {
+  const first = group("group-a", ["protocol-a", "protocol-b"]);
+  const second = { ...group("group-b", ["protocol-b", "protocol-a"]), ignore_empty_rest_pause: false };
+  assert.equal(
+    protocolGroupForProvenance([first, second], "group-a", ["protocol-a", "protocol-b"])?.id,
+    "group-a",
+  );
+  assert.equal(
+    protocolGroupForProvenance([second], "group-a", ["protocol-a", "protocol-b"]),
+    undefined,
+  );
+  assert.equal(
+    protocolGroupForProvenance([first, second], undefined, ["protocol-a", "protocol-b"]),
+    undefined,
   );
 });

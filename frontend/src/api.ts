@@ -662,6 +662,8 @@ export interface ProtocolSegment {
   id: string;
   name: string;
   targets: ProtocolSegmentTarget[];
+  /** Analysis-local provenance; scientific targets remain authoritative. */
+  protocol_group_id?: string | null;
 }
 
 /**
@@ -851,6 +853,8 @@ export interface DcirSegment {
   id: string;
   name: string;
   targets: DcirSegmentTarget[];
+  /** Analysis-local provenance; scientific targets remain authoritative. */
+  protocol_group_id?: string | null;
 }
 
 export interface DcirSeriesSpec {

@@ -1,7 +1,7 @@
 {
   "name": "cellxplorer-desktop",
   "private": true,
-  "version": "0.26.0-beta.5",
+  "version": "0.26.0-beta.6",
   "type": "module",
   "scripts": {
     "check:packaging-tools": "rustc --version && cargo --version && python -m PyInstaller --version && npx.cmd tauri --version",

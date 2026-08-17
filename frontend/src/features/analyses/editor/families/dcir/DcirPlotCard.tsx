@@ -452,7 +452,12 @@ function toDcirSegment(
     return converted ? [converted] : [];
   });
   if (targets.length !== segment.targets.length) return null;
-  return { id: segment.id, name: segment.name, targets };
+  return {
+    id: segment.id,
+    name: segment.name,
+    protocol_group_id: segment.protocol_group_id ?? null,
+    targets,
+  };
 }
 
 export function DcirSettings({
@@ -511,6 +516,7 @@ export function DcirSettings({
       segments.map((segment) => ({
         id: segment.id,
         name: segment.name,
+        protocol_group_id: segment.protocol_group_id ?? null,
         targets: segment.targets.map((target) => ({
           protocol_signature: target.protocol_signature,
           step_indices: [target.rest_step_index, target.pulse_step_index],

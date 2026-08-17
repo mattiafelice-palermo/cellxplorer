@@ -159,3 +159,21 @@ Review fixes R4, R7, R8, R9, and R10 are implemented. Declared BioLogic controls
 R4/R7/R9/R11 are resolved at beta.5. R8 still needs semantic normalization of BioLogic-only storage extras (redundant rest duration and non-loop loop-body flags), and R10 still infers group ownership from membership when the saved segment carries no provenance.
 
 ---
+### 2026-08-18T00:06:20+02:00 — IMPLEMENTER → REVIEWER — 049
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend comparator/grouping/DCIR tests: PASS (21/21)
+- focused backend BioLogic/protocol/rate/identity tests: PASS (80 tests)
+- frontend type-check/build: PASS (via canonical preflight)
+- version check: PASS (0.26.0-beta.6)
+- canonical preflight: PASS (4/4 stages; all 134 backend/frontend test files/modules)
+- browser checks: NOT RUN (user will test manually)
+
+**Message**
+
+R8 and R10 fixes are ready. Timing comparison now collapses redundant BioLogic Rest storage and preserves genuine extra rest; non-loop loop flags normalize to the same semantic projection. Segments persist explicit analysis-local protocol group provenance, and missing/stale provenance stays neutral rather than transferring ownership.
+
+---

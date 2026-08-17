@@ -781,6 +781,7 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
   spec.protocol_segments = (spec.protocol_segments ?? []).map((segment) => ({
     id: segment.id,
     name: segment.name,
+    protocol_group_id: segment.protocol_group_id ?? null,
     targets: (segment.targets ?? [])
       .map((target) => ({
         protocol_signature: target.protocol_signature,
@@ -812,6 +813,7 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
   spec.dcir_segments = (spec.dcir_segments ?? []).map((segment) => ({
     id: segment.id,
     name: segment.name,
+    protocol_group_id: segment.protocol_group_id ?? null,
     targets: (segment.targets ?? [])
       .filter(
         (target) =>

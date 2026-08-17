@@ -63,6 +63,24 @@ export function protocolGroupsForMembership(
 }
 
 /**
+ * Resolve a saved segment's group only from explicit provenance. Membership
+ * is checked as a guard against stale metadata, but is never used to choose a
+ * different group after the recorded group has been removed.
+ */
+export function protocolGroupForProvenance(
+  groups: ProtocolFamilyGroup[],
+  groupId: string | null | undefined,
+  familySignatures: string[],
+): ProtocolFamilyGroup | undefined {
+  if (!groupId) return undefined;
+  const group = groups.find((candidate) => candidate.id === groupId);
+  if (!group) return undefined;
+  return protocolGroupMembershipKey(group.family_signatures) === protocolGroupMembershipKey(familySignatures)
+    ? group
+    : undefined;
+}
+
+/**
  * Keep only selectable, unique named groupings. A single family already has a
  * raw protocol-family option and must not gain a duplicate named option. Two
  * definitions with the same family membership but different comparison

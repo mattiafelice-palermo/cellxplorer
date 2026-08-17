@@ -273,6 +273,27 @@ test("declared protocol controls participate in their scientific comparison dime
   assert.equal(row(timingChanged, "timing").status, "different");
   assert.match(row(timingChanged, "timing").candidate, /hold 4 s; rest 8 s/);
 
+  const redundantRestStorage = compareProtocolFamilies(
+    protocol(),
+    protocol({ steps: [step(), { ...protocol().steps[1], rest_duration_s: 40 }] }),
+    "workflow",
+  );
+  assert.equal(row(redundantRestStorage, "timing").status, "same");
+  const additionalRest = compareProtocolFamilies(
+    protocol(),
+    protocol({ steps: [step(), { ...protocol().steps[1], rest_duration_s: 80 }] }),
+    "workflow",
+  );
+  assert.equal(row(additionalRest, "timing").status, "different");
+  assert.match(row(additionalRest, "timing").candidate, /rest 80 s/);
+
+  const nonLoopStorage = compareProtocolFamilies(
+    protocol(),
+    protocol({ steps: [step({ loop_body_inclusive: false }), protocol().steps[1]] }),
+    "workflow",
+  );
+  assert.equal(row(nonLoopStorage, "structure").status, "same");
+
   const voltageChanged = compareProtocolFamilies(
     protocol({ signature: "gcpl-reference" }),
     protocol({ signature: "gcpl-candidate", steps: [step({ final_voltage_test_v: 3.1 }), protocol().steps[1]] }),

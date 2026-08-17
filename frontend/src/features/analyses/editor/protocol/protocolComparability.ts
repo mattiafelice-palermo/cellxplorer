@@ -93,6 +93,8 @@ export function isEmptyRestPauseStep(step: ProtocolStep): boolean {
     step.record_voltage_delta_v,
     step.protection_upper_v,
     step.protection_lower_v,
+    step.loop_start_step,
+    step.loop_count,
     step.capacity_limit_mah,
     step.hold_duration_s,
     step.rest_duration_s,
@@ -262,6 +264,30 @@ function conditionToken(
   ]);
 }
 
+/**
+ * BioLogic Rest rows preserve the same effective duration twice: once as the
+ * ordinary step time and once as a source-declared rest field. Treat that
+ * duplicate storage as one semantic timing value while retaining genuinely
+ * additional post-step rest information on non-Rest rows.
+ */
+function normalizedRestDuration(step: ProtocolStep): number | null {
+  if (step.rest_duration_s == null) return null;
+  if (step.direction === "rest" && exactNumberEqual(step.rest_duration_s, step.time_limit_s)) {
+    return null;
+  }
+  return step.rest_duration_s;
+}
+
+/**
+ * Loop-body inclusivity is meaningful only on a row that actually declares a
+ * loop. BioLogic emits `false` on every ordinary row, whereas Neware omits the
+ * optional field; both are the same non-loop semantics.
+ */
+function normalizedLoopBodyInclusive(step: ProtocolStep): boolean | null {
+  const hasLoopStructure = step.loop_start_step != null || step.loop_count != null;
+  return hasLoopStructure ? step.loop_body_inclusive === true : null;
+}
+
 function structureToken(protocol: FileProtocol, strict: boolean): string {
   const steps = protocol.steps.map((step) => ({
     number: strict ? step.number : null,
@@ -269,7 +295,7 @@ function structureToken(protocol: FileProtocol, strict: boolean): string {
     direction: step.direction,
     loop_start_step: strict ? step.loop_start_step : null,
     loop_count: step.loop_count,
-    loop_body_inclusive: step.loop_body_inclusive ?? null,
+    loop_body_inclusive: normalizedLoopBodyInclusive(step),
   }));
   const groups = protocol.groups.map(groupWorkflowToken);
   return JSON.stringify({ steps, groups });
@@ -355,7 +381,7 @@ function structureSummary(protocol: FileProtocol): string {
   const steps = protocol.steps.map((step, index) => {
     const loop = step.loop_count == null
       ? ""
-      : ` x${step.loop_count}${step.loop_body_inclusive == null ? "" : step.loop_body_inclusive ? " inclusive" : " exclusive"}`;
+      : ` x${step.loop_count}${normalizedLoopBodyInclusive(step) == null ? "" : normalizedLoopBodyInclusive(step) ? " inclusive" : " exclusive"}`;
     return `${stepLabel(index)} ${step.type}${loop}`;
   });
   const blocks = protocol.groups.map((group) => groupEvidence(group, stepOrder(protocol)));
@@ -401,7 +427,8 @@ function timingSummary(protocol: FileProtocol): string {
       const values: string[] = [];
       if (step.time_limit_s != null) values.push(`limit ${formatDuration(step.time_limit_s)}`);
       if (step.hold_duration_s != null) values.push(`hold ${formatDuration(step.hold_duration_s)}`);
-      if (step.rest_duration_s != null) values.push(`rest ${formatDuration(step.rest_duration_s)}`);
+      const restDuration = normalizedRestDuration(step);
+      if (restDuration != null) values.push(`rest ${formatDuration(restDuration)}`);
       return `${stepLabel(index)} ${values.join("; ") || "Unavailable"}`;
     })
     .join(" | ") || "Unavailable";
@@ -458,7 +485,7 @@ function dimensionEqual(
       return valuesEqual(comparableReference, comparableCandidate, (step) => [
         step.time_limit_s,
         step.hold_duration_s ?? null,
-        step.rest_duration_s ?? null,
+        normalizedRestDuration(step),
       ]);
     case "voltage":
       return valuesEqual(comparableReference, comparableCandidate, (step) => [
