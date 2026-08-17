@@ -31,6 +31,7 @@ import { useQueries } from "@tanstack/react-query";
 import {
   IconCalculator,
   IconCalculatorOff,
+  IconCheck,
   IconEdit,
   IconEye,
   IconEyeOff,
@@ -88,7 +89,8 @@ import {
 } from "./protocolStepNeighbours";
 import {
   normalizeProtocolGroups,
-  protocolGroupForMembership,
+  protocolGroupForDefinition,
+  type ProtocolGroupDefinition,
 } from "./protocolGroupPolicy";
 
 interface ProtocolFileRef {
@@ -1032,10 +1034,20 @@ function groupedProtocolProposals(
 function persistedGroupingForProposal(
   proposal: GroupedProtocolProposal,
   groups: ProtocolFamilyGroup[],
+  mode: ProtocolComparisonMode,
+  dimensions: ProtocolComparisonDimensions,
+  options: ProtocolComparisonOptions,
 ): ProtocolFamilyGroup | undefined {
-  return protocolGroupForMembership(
+  const definition: ProtocolGroupDefinition = {
+    family_signatures: proposal.members.map((family) => family.signature),
+    reference_signature: proposal.reference.signature,
+    comparison_mode: mode,
+    comparison_dimensions: dimensions,
+    ignore_empty_rest_pause: options.ignoreEmptyRestPause ?? false,
+  };
+  return protocolGroupForDefinition(
     groups,
-    proposal.members.map((family) => family.signature),
+    definition,
   );
 }
 
@@ -1120,6 +1132,8 @@ function GroupedProtocolComparisonModal({
   });
   const [ignoreEmptyRestPause, setIgnoreEmptyRestPause] = useState(true);
   const [groupNames, setGroupNames] = useState<Record<string, string>>({});
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState("");
 
   useEffect(() => {
     if (!opened) return;
@@ -1128,6 +1142,8 @@ function GroupedProtocolComparisonModal({
     setCustomDimensions({ ...WORKFLOW_COMPARISON_DIMENSIONS, termination: true });
     setIgnoreEmptyRestPause(true);
     setGroupNames({});
+    setEditingGroupId(null);
+    setEditingGroupName("");
   }, [opened, activeSignature, families]);
 
   const reference = families.find((family) => family.signature === referenceSignature) ?? families[0] ?? null;
@@ -1149,6 +1165,20 @@ function GroupedProtocolComparisonModal({
   // A one-family proposal is the existing raw protocol, not a new grouping.
   // Do not create a second selectable object for it.
   const groupProposals = proposals.filter((proposal) => proposal.members.length > 1);
+  const existingGroupingForProposal = (proposal: GroupedProtocolProposal) =>
+    persistedGroupingForProposal(
+      proposal,
+      existingGroups,
+      mode,
+      comparedDimensions,
+      comparisonOptions,
+    );
+  const duplicateGroupProposals = groupProposals.filter((proposal) =>
+    existingGroupingForProposal(proposal),
+  );
+  const newGroupProposals = groupProposals.filter(
+    (proposal) => !existingGroupingForProposal(proposal),
+  );
   const candidates = families.filter((family) => family.signature !== reference?.signature);
   const candidateResults = candidates.map((family) => ({
     family,
@@ -1170,20 +1200,34 @@ function GroupedProtocolComparisonModal({
       families.every((family) => family.protocol) &&
       hasSelectedDimension &&
       comparedDimensions.structure &&
-      groupProposals.length > 0,
+      newGroupProposals.length > 0,
   );
 
   const nameFor = (proposal: GroupedProtocolProposal, index: number): string =>
+    existingGroupingForProposal(proposal)?.name ??
     groupNames[proposal.key] ??
-    persistedGroupingForProposal(proposal, existingGroups)?.name ??
     `New protocol ${index + 1}`;
+
+  const saveGroupRename = () => {
+    const nextName = editingGroupName.trim();
+    if (!editingGroupId || !nextName || !onApplyGroups) return;
+    onApplyGroups(
+      normalizeProtocolGroups(
+        existingGroups.map((group) =>
+          group.id === editingGroupId ? { ...group, name: nextName } : group,
+        ),
+      ),
+    );
+    setEditingGroupId(null);
+    setEditingGroupName("");
+  };
 
   const applyGroups = () => {
     if (!canApply || !onApplyGroups) return;
     onApplyGroups(
       normalizeProtocolGroups(
-        groupProposals.map((proposal, index) => ({
-          id: persistedGroupingForProposal(proposal, existingGroups)?.id ?? segmentId(),
+        newGroupProposals.map((proposal, index) => ({
+          id: segmentId(),
           name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
           family_signatures: proposal.members.map((family) => family.signature),
           reference_signature: proposal.reference.signature,
@@ -1257,7 +1301,11 @@ function GroupedProtocolComparisonModal({
                 />
                 <Group justify="space-between" gap="xs" wrap="nowrap">
                   <Text size="xs" c="dimmed">
-                    {groupProposals.length} proposed group{groupProposals.length === 1 ? "" : "s"} - {allCells.length} cells
+                    {newGroupProposals.length} new group{newGroupProposals.length === 1 ? "" : "s"}
+                    {duplicateGroupProposals.length > 0
+                      ? ` - ${duplicateGroupProposals.length} already applied`
+                      : ""}
+                    {` - ${allCells.length} cells`}
                   </Text>
                   <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)">Preview</Badge>
                 </Group>
@@ -1305,50 +1353,112 @@ function GroupedProtocolComparisonModal({
                   <Box>
                     <Group justify="space-between" align="baseline" gap="xs" mb={6} wrap="nowrap">
                       <Text size="xs" fw={700}>Applied protocol groups</Text>
-                      <Text size="10px" c="dimmed" ta="right">Remove a group without changing source data.</Text>
+                      <Text size="10px" c="dimmed" ta="right">Rename or remove groups without changing source data.</Text>
                     </Group>
                     <Stack gap={4}>
                       {existingGroups.map((group) => (
                         <Paper key={group.id} withBorder radius="sm" p="xs">
-                          <Group justify="space-between" gap="xs" wrap="nowrap">
-                            <Box style={{ minWidth: 0, flex: 1 }}>
-                              <Text size="xs" fw={600} truncate title={group.name}>{group.name}</Text>
-                              <Text size="10px" c="dimmed">
-                                {group.family_signatures.length} source families
-                              </Text>
-                            </Box>
-                            <Tooltip label={`Remove ${group.name}`} withArrow>
-                              <ActionIcon
-                                size="sm"
-                                variant="subtle"
-                                color="red"
-                                aria-label={`Remove protocol group ${group.name}`}
-                                onClick={() =>
-                                  modals.openConfirmModal({
-                                    title: `Remove ${group.name}?`,
-                                    children: (
-                                      <Text size="sm">
-                                        This removes the named grouping from the protocol selector.
-                                        Raw protocol families and existing segment definitions remain unchanged.
-                                      </Text>
-                                    ),
-                                    labels: { confirm: "Remove group", cancel: "Cancel" },
-                                    confirmProps: { color: "red" },
-                                    onConfirm: () => {
-                                      onApplyGroups(
-                                        normalizeProtocolGroups(
-                                          existingGroups.filter((item) => item.id !== group.id),
+                          {editingGroupId === group.id ? (
+                            <Group gap={4} wrap="nowrap">
+                              <TextInput
+                                size="xs"
+                                value={editingGroupName}
+                                onChange={(event) => setEditingGroupName(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") saveGroupRename();
+                                  if (event.key === "Escape") {
+                                    setEditingGroupId(null);
+                                    setEditingGroupName("");
+                                  }
+                                }}
+                                aria-label={`Rename protocol group ${group.name}`}
+                                autoFocus
+                                style={{ flex: 1, minWidth: 0 }}
+                              />
+                              <Tooltip label="Save name" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  color="teal"
+                                  aria-label={`Save name for ${group.name}`}
+                                  disabled={!editingGroupName.trim()}
+                                  onClick={saveGroupRename}
+                                >
+                                  <IconCheck size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Cancel rename" withArrow>
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  color="gray"
+                                  aria-label="Cancel rename"
+                                  onClick={() => {
+                                    setEditingGroupId(null);
+                                    setEditingGroupName("");
+                                  }}
+                                >
+                                  <IconX size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          ) : (
+                            <Group justify="space-between" gap="xs" wrap="nowrap">
+                              <Box style={{ minWidth: 0, flex: 1 }}>
+                                <Text size="xs" fw={600} truncate title={group.name}>{group.name}</Text>
+                                <Text size="10px" c="dimmed">
+                                  {group.family_signatures.length} source families
+                                </Text>
+                              </Box>
+                              <Group gap={2} wrap="nowrap">
+                                <Tooltip label={`Rename ${group.name}`} withArrow>
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    color="gray"
+                                    aria-label={`Rename protocol group ${group.name}`}
+                                    onClick={() => {
+                                      setEditingGroupId(group.id);
+                                      setEditingGroupName(group.name);
+                                    }}
+                                  >
+                                    <IconPencil size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                                <Tooltip label={`Remove ${group.name}`} withArrow>
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="subtle"
+                                    color="red"
+                                    aria-label={`Remove protocol group ${group.name}`}
+                                    onClick={() =>
+                                      modals.openConfirmModal({
+                                        title: `Remove ${group.name}?`,
+                                        children: (
+                                          <Text size="sm">
+                                            This removes the named grouping from the protocol selector.
+                                            Raw protocol families and existing segment definitions remain unchanged.
+                                          </Text>
                                         ),
-                                      );
-                                      onClose();
-                                    },
-                                  })
-                                }
-                              >
-                                <IconTrash size={14} />
-                              </ActionIcon>
-                            </Tooltip>
-                          </Group>
+                                        labels: { confirm: "Remove group", cancel: "Cancel" },
+                                        confirmProps: { color: "red" },
+                                        onConfirm: () => {
+                                          onApplyGroups(
+                                            normalizeProtocolGroups(
+                                              existingGroups.filter((item) => item.id !== group.id),
+                                            ),
+                                          );
+                                          onClose();
+                                        },
+                                      })
+                                    }
+                                  >
+                                    <IconTrash size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              </Group>
+                            </Group>
+                          )}
                         </Paper>
                       ))}
                     </Stack>
@@ -1429,12 +1539,12 @@ function GroupedProtocolComparisonModal({
         <Box>
           <Group justify="space-between" align="baseline" gap="xs" mb={6} wrap="nowrap">
             <Text size="sm" fw={700}>Proposed protocol groups</Text>
-            <Text size="xs" c="dimmed" ta="right">Name groups and review included protocols and cells. These become selectable after applying.</Text>
+            <Text size="xs" c="dimmed" ta="right">Name groups and review included protocols and cells. These become selectable after creation.</Text>
           </Group>
           {!hasSelectedDimension ? (
             <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select at least one comparison dimension to propose meaningful protocol groups.</Text></Paper>
           ) : !comparedDimensions.structure ? (
-            <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select Step flow and loops before applying groups. Grouped step selections are mapped by workflow order, so a structural match is required.</Text></Paper>
+            <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select Step flow and loops before creating groups. Grouped step selections are mapped by workflow order, so a structural match is required.</Text></Paper>
           ) : groupProposals.length === 0 ? (
             <Paper withBorder p="sm" radius="md">
               <Text size="xs" c="dimmed">
@@ -1446,7 +1556,7 @@ function GroupedProtocolComparisonModal({
             <Grid gutter="sm">
               {groupProposals.map((proposal, index) => {
                 const cells = groupedCellNames(proposal);
-                const existing = persistedGroupingForProposal(proposal, existingGroups);
+                const existing = existingGroupingForProposal(proposal);
                 return (
                   <Grid.Col key={proposal.key} span={{ base: 12, sm: 6 }}>
                     <Paper
@@ -1461,6 +1571,7 @@ function GroupedProtocolComparisonModal({
                           <TextInput
                             size="xs"
                             value={nameFor(proposal, index)}
+                            readOnly={Boolean(existing)}
                             onChange={(event) => setGroupNames((current) => ({ ...current, [proposal.key]: event.currentTarget.value }))}
                             aria-label={`Name protocol group ${index + 1}`}
                             style={{ flex: 1, minWidth: 0 }}
@@ -1470,6 +1581,11 @@ function GroupedProtocolComparisonModal({
                           <Text size="10px" c="dimmed">{proposal.members.length} source families - {cells.length} cell{cells.length === 1 ? "" : "s"}</Text>
                           {existing && <Badge size="xs" variant="light" color="gray">Already applied</Badge>}
                         </Group>
+                        {existing && (
+                          <Text size="10px" c="orange">
+                            This grouping already exists as “{existing.name}”. Rename it in Applied protocol groups.
+                          </Text>
+                        )}
                         <Box>
                           <Text size="10px" c="dimmed" mb={4}>Includes protocols</Text>
                           <Group gap={4} wrap="wrap">
@@ -1500,11 +1616,13 @@ function GroupedProtocolComparisonModal({
 
         <Divider />
         <Group justify="space-between" align="center" gap="sm" wrap="wrap-reverse">
-          <Text size="10px" c="dimmed">No source data changes until you apply named groups.</Text>
+          <Text size="10px" c="dimmed">No source data changes until you create named groups.</Text>
           <Group gap="xs">
             <Button variant="default" size="sm" onClick={onClose}>Cancel</Button>
             <Button size="sm" onClick={applyGroups} disabled={!canApply}>
-              Apply {groupProposals.length} grouped protocol{groupProposals.length === 1 ? "" : "s"}
+              {newGroupProposals.length > 0
+                ? `Create ${newGroupProposals.length} protocol group${newGroupProposals.length === 1 ? "" : "s"}`
+                : "No new groups to create"}
             </Button>
           </Group>
         </Group>

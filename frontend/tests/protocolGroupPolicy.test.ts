@@ -4,7 +4,8 @@ import test from "node:test";
 import type { ProtocolFamilyGroup } from "../src/api.ts";
 import {
   normalizeProtocolGroups,
-  protocolGroupForMembership,
+  protocolGroupDefinitionKey,
+  protocolGroupForDefinition,
   protocolGroupMembershipKey,
 } from "../src/features/analyses/editor/protocol/protocolGroupPolicy.ts";
 
@@ -38,21 +39,39 @@ test("group membership keys are order-independent and deduplicate signatures", (
   );
 });
 
-test("normalization removes singleton groups and keeps the first duplicate membership", () => {
+test("normalization removes singleton groups and keeps the first duplicate definition", () => {
   const normalized = normalizeProtocolGroups([
     group("singleton", ["protocol-a"]),
     group("first", ["protocol-b", "protocol-a"]),
-    group("duplicate", ["protocol-a", "protocol-b"]),
+    group("duplicate", ["protocol-a", "protocol-b"], "protocol-b"),
   ]);
 
   assert.deepEqual(normalized.map((item) => item.id), ["first"]);
   assert.deepEqual(normalized[0].family_signatures, ["protocol-b", "protocol-a"]);
 });
 
-test("an existing membership is reused regardless of proposal order", () => {
+test("different comparison settings are distinct group definitions", () => {
+  const first = group("first", ["protocol-a", "protocol-b"]);
+  const second = group("second", ["protocol-b", "protocol-a"]);
+  second.comparison_dimensions.voltage = true;
+
+  assert.notEqual(protocolGroupDefinitionKey(first), protocolGroupDefinitionKey(second));
+  assert.deepEqual(normalizeProtocolGroups([first, second]).map((item) => item.id), [
+    "first",
+    "second",
+  ]);
+});
+
+test("an existing definition is reused regardless of proposal order", () => {
   const existing = group("group-1", ["protocol-a", "protocol-b"]);
   assert.equal(
-    protocolGroupForMembership([existing], ["protocol-b", "protocol-a"])?.id,
+    protocolGroupForDefinition([existing], {
+      family_signatures: ["protocol-b", "protocol-a"],
+      reference_signature: "protocol-a",
+      comparison_mode: "workflow",
+      comparison_dimensions: existing.comparison_dimensions,
+      ignore_empty_rest_pause: true,
+    })?.id,
     "group-1",
   );
 });
