@@ -160,7 +160,7 @@ test("workflow mode detects a changed loop structure", () => {
   assert.notEqual(row(result, "structure").reference, row(result, "structure").candidate);
 });
 
-test("workflow structure includes condition values and structurally normalized jumps", () => {
+test("termination conditions are separate from workflow structure", () => {
   const condition = {
     expression: "DischargeAh",
     name: "capacity",
@@ -178,9 +178,23 @@ test("workflow structure includes condition values and structurally normalized j
     steps: [step({ conditions: [{ ...condition, jump_step: 1 }] }), protocol().steps[1]],
   });
 
-  assert.equal(compareProtocolFamilies(reference, changedValue, "workflow").comparable, false);
-  assert.equal(row(compareProtocolFamilies(reference, changedValue, "workflow"), "structure").status, "different");
-  assert.equal(row(compareProtocolFamilies(reference, changedJump, "workflow"), "structure").status, "different");
+  const workflow = compareProtocolFamilies(reference, changedValue, "workflow");
+  assert.equal(workflow.comparable, true);
+  assert.equal(row(workflow, "structure").status, "same");
+  assert.equal(row(workflow, "termination").status, "ignored");
+
+  const custom: ProtocolComparisonDimensions = {
+    ...WORKFLOW_COMPARISON_DIMENSIONS,
+    termination: true,
+  };
+  const changedValueResult = compareProtocolFamilies(reference, changedValue, "custom", custom);
+  const changedJumpResult = compareProtocolFamilies(reference, changedJump, "custom", custom);
+  assert.equal(changedValueResult.comparable, false);
+  assert.equal(row(changedValueResult, "structure").status, "same");
+  assert.equal(row(changedValueResult, "termination").status, "different");
+  assert.match(row(changedValueResult, "termination").reference, /S1 if DischargeAh=1, jump S2/);
+  assert.match(row(changedValueResult, "termination").candidate, /S1 if DischargeAh=2, jump S2/);
+  assert.equal(row(changedJumpResult, "termination").status, "different");
 
   const renumbered = protocol({
     steps: [
@@ -188,7 +202,9 @@ test("workflow structure includes condition values and structurally normalized j
       { ...protocol().steps[1], number: 20 },
     ],
   });
-  assert.equal(compareProtocolFamilies(reference, renumbered, "workflow").rows.find((item) => item.key === "structure")?.status, "same");
+  const renumberedResult = compareProtocolFamilies(reference, renumbered, "custom", custom);
+  assert.equal(row(renumberedResult, "structure").status, "same");
+  assert.equal(row(renumberedResult, "termination").status, "same");
 });
 
 test("rate schedule evidence preserves step order", () => {
@@ -227,6 +243,7 @@ test("custom mode with no selected dimensions fails closed", () => {
     "custom",
     {
       structure: false,
+      termination: false,
       rates: false,
       timing: false,
       voltage: false,

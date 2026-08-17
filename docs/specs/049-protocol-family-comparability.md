@@ -22,8 +22,10 @@ differences without CellXplorer silently treating unlike source-local step mappi
 The existing `FileProtocol.signature` remains the identity used by protocol-derived analysis
 targets. It is a normalized semantic identity: when a step has an explicit or capacity-derived
 C-rate, its capacity-scaled `current_ma` (and a capacity-scaled stop-current threshold) is not a
-protocol-family discriminator. The actual current remains available to DCIR calculations. An
-absolute-current step without a rate basis remains current-controlled and is identity-relevant.
+protocol-family discriminator. Source-declared control and termination conditions are part of the
+strict identity, including their thresholds and jump destinations. The actual current remains
+available to DCIR calculations. An absolute-current step without a rate basis remains
+current-controlled and is identity-relevant.
 
 Comparability is an analysis-facing diagnostic, not a replacement signature. A workflow match
 does not merge families, rewrite a `protocol_signature`, or copy step indices between files.
@@ -33,14 +35,16 @@ does not merge families, rewrite a `protocol_signature`, or copy step indices be
 The modal offers a short mutually exclusive `SegmentedControl`:
 
 - **Strict** — compare all supported protocol dimensions, including voltage cutoffs, protection
-  limits, timing, recording settings, ordered step identity, and loop/control structure. The
+  limits, timing, recording settings, ordered step identity, loop structure, and termination /
+  control conditions. The
   semantic signature is authoritative for the overall strict result.
 - **Workflow** — compare the ordered building blocks and their flow: step type/direction order,
   loop nesting and repeat counts, the C-rate/stop-rate schedule, and rest/hold/pulse timing.
-  Voltage cutoffs and protection limits are shown as evidence but are ignored for the workflow
-  result by default. Recording settings are also shown but are not a workflow discriminator.
+  Termination/control conditions, voltage cutoffs, and protection limits are shown as evidence but
+  are ignored for the workflow result by default. Recording settings are also shown but are not a
+  workflow discriminator.
 - **Custom** — start with the workflow dimensions selected and let the user include or exclude
-  voltage/protection, timing/rate, and recording dimensions explicitly.
+  termination conditions, voltage/protection, timing/rate, and recording dimensions explicitly.
 
 Every evidence row reports `Same`, `Different`, or `Ignored`. `Ignored` means only that the row is
 outside the selected comparison basis; it is never hidden.
@@ -93,7 +97,8 @@ database field is required.
 
 | Dimension | Compared content | Workflow default |
 | --- | --- | --- |
-| Step flow and loops | Ordered step types/directions, control conditions, loop nesting and repeat counts; strict mode also respects the identity-level step arrangement | Included |
+| Step flow and loops | Ordered step types/directions, loop nesting and repeat counts; strict mode also respects the identity-level step arrangement | Included |
+| Termination and control conditions | Ordered source-declared condition expressions, thresholds, comparator identifiers, variable bindings, and jump destinations | Ignored |
 | C-rate / pulse schedule | Per-step C-rate and stop C-rate, using the backend's normalized rate representation; absolute-current steps remain current-controlled | Included |
 | Rest and hold timing | Time limits and rest/hold/pulse durations in protocol order | Included |
 | Voltage cutoffs | Target/stop voltage and protection lower/upper limits | Ignored |
@@ -121,7 +126,8 @@ values must be displayed as unavailable, not as zero.
 - no API route, SQLAlchemy migration, analysis-spec field, or source-file mutation; the review
   compatibility fix may bump the disposable analysis-result cache generation when target
   resolution semantics change;
-- no automatic family regrouping or target-index translation;
+- no workflow-based family regrouping or target-index translation; strict protocol identity may
+  create a new family when source-declared termination conditions differ;
 - no new global CSS or one-off color system;
 - no change to DCIR's use of the reconstructed per-step current;
 - no broad refactor of `AnalysisEditor.tsx`.
@@ -153,13 +159,14 @@ implementation details disagree.
 4. Strict mode marks a voltage-cutoff difference as `Different` and reports the families as not
    strictly comparable.
 5. Workflow mode leaves that voltage row visible as `Ignored` and can report a workflow match when
-   the structure, rates, and timing match.
+   the structure, rates, timing, and termination conditions are not selected as discriminators.
 6. Custom mode exposes the relevant dimension controls and updates the evidence/result state
    without mutating the segment draft.
 7. The modal never creates, removes, rewrites, or merges protocol targets.
 8. One-family and missing-value states are explicit and fail closed.
 9. The helper tests cover matching families, voltage-only differences, capacity-scaled rate
-   current differences, strict/workflow/custom selection, and missing values.
+   current differences, termination-only differences, strict/workflow/custom selection, and
+   missing values.
 10. Frontend type-check/build and the repository preflight pass. In-app browser verification is
     intentionally deferred to the user for this handoff, per the explicit request to test the app
     manually.
@@ -171,11 +178,14 @@ implementation details disagree.
 - Added the read-only Mantine comparison modal with Strict, Workflow, and Custom modes, explicit
   Same/Different/Ignored evidence, and fail-closed unavailable-family states.
 - Added the pure comparison policy and focused frontend tests for voltage-only differences,
-  backend-aligned C-rate boundaries, condition values/jumps, ordered evidence, custom dimensions,
-  and missing values.
-- Added version-aware protocol signature aliases so persisted Cycles, Steps, and DCIR targets
-  continue to resolve source-local steps after the semantic signature upgrade. Bumped the
-  disposable analysis-result cache generation to invalidate old warm results deterministically.
+  backend-aligned C-rate boundaries, termination-only differences, ordered evidence, custom
+  dimensions, and missing values. Workflow structure now compares step/loop shape separately from
+  source-declared termination/control conditions; Strict and Custom can compare the new
+  termination dimension explicitly.
+- Added termination conditions to the version-4 semantic protocol identity so family recognition
+  separates source-declared thresholds while preserving version-3 and version-1 signature aliases
+  for persisted Cycles, Steps, and DCIR targets. Bumped the disposable analysis-result cache
+  generation to invalidate old warm results deterministically.
 - Fixed the Vite 8 CommonJS/ESM interop at the Plotly factory boundary, preventing the local
   frontend from stopping at a blank page during startup.
 - The modal remains read-only: it does not create, remove, rewrite, or merge analysis targets.
@@ -183,12 +193,14 @@ implementation details disagree.
 ## Verification record
 
 - `node --test frontend\\tests\\protocolComparability.test.ts frontend\\tests\\plotFactory.test.ts` — PASS (11 tests).
-- `python -m unittest tests.test_protocol tests.test_analysis_engine tests.test_analysis_cache` — PASS (130 tests).
+- `python -m unittest tests.test_protocol tests.test_analysis_engine tests.test_analysis_cache` — PASS (132 tests).
+- `python -m unittest tests.test_golden_analysis` — PASS (30 tests; all refreshed golden diffs are zero).
+- `python -m unittest tests.test_neware_excel` — PASS (67 tests).
 - `npm.cmd run build` — PASS (TypeScript build and Vite production bundle).
-- `npx.cmd vite --host 127.0.0.1 --port 5173` — PASS (Vite 8 dev server reached ready state on
-  the next available port; terminal-only, no browser).
-- `python scripts\\check_versions.py --expected-version 0.25.0-beta.2` — PASS.
-- `python scripts\\preflight.py --no-cache` — PASS (4/4 stages; 132 backend/frontend test files/modules).
+- `python scripts\\check_versions.py --expected-version 0.25.0-beta.3` — PASS.
+- `python scripts\\preflight.py --no-cache` — PASS (4/4 stages; all 132 backend/frontend test files/modules).
+- Read-only inspection of analysis 34 (`Bump study cells`) — PASS: the 11 selected sources resolve to
+  four semantic signatures with the four 97% termination sources separated from the seven 80% sources.
 - In-app browser check — NOT RUN, per the explicit request that the user test the app manually.
 
 ## Reference asset
@@ -196,4 +208,4 @@ implementation details disagree.
 [Open the protocol comparability modal mockup](assets/049-protocol-family-comparability.html)
 
 The mockup opens in workflow mode and demonstrates the selector-adjacent settings action,
-evidence table, ignored voltage cutoff, and strict/workflow/custom controls.
+evidence table, ignored termination/voltage rows, and strict/workflow/custom controls.

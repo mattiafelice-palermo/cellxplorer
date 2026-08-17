@@ -4,6 +4,7 @@ export type ProtocolComparisonMode = "strict" | "workflow" | "custom";
 
 export type ProtocolComparisonDimension =
   | "structure"
+  | "termination"
   | "rates"
   | "timing"
   | "voltage"
@@ -13,6 +14,7 @@ export type ProtocolComparisonStatus = "same" | "different" | "ignored";
 
 export interface ProtocolComparisonDimensions {
   structure: boolean;
+  termination: boolean;
   rates: boolean;
   timing: boolean;
   voltage: boolean;
@@ -38,6 +40,7 @@ export interface ProtocolComparisonResult {
 
 export const WORKFLOW_COMPARISON_DIMENSIONS: ProtocolComparisonDimensions = {
   structure: true,
+  termination: false,
   rates: true,
   timing: true,
   voltage: false,
@@ -46,6 +49,7 @@ export const WORKFLOW_COMPARISON_DIMENSIONS: ProtocolComparisonDimensions = {
 
 const STRICT_COMPARISON_DIMENSIONS: ProtocolComparisonDimensions = {
   structure: true,
+  termination: true,
   rates: true,
   timing: true,
   voltage: true,
@@ -54,6 +58,7 @@ const STRICT_COMPARISON_DIMENSIONS: ProtocolComparisonDimensions = {
 
 const DIMENSION_ORDER: ProtocolComparisonDimension[] = [
   "structure",
+  "termination",
   "rates",
   "timing",
   "voltage",
@@ -157,17 +162,21 @@ function conditionToken(
 }
 
 function structureToken(protocol: FileProtocol, strict: boolean): string {
-  const order = stepOrder(protocol);
   const steps = protocol.steps.map((step) => ({
     number: strict ? step.number : null,
     type_id: step.type_id,
     direction: step.direction,
     loop_start_step: strict ? step.loop_start_step : null,
     loop_count: step.loop_count,
-    conditions: conditionToken(step, strict, order),
   }));
   const groups = protocol.groups.map(groupWorkflowToken);
   return JSON.stringify({ steps, groups });
+}
+
+function terminationToken(protocol: FileProtocol, strict: boolean): string {
+  const order = stepOrder(protocol);
+  const steps = protocol.steps.map((step) => conditionToken(step, strict, order));
+  return JSON.stringify(steps);
 }
 
 function rateToken(step: ProtocolStep): unknown[] {
@@ -227,12 +236,21 @@ function groupEvidence(group: ProtocolGroup, order: Map<number, number>): string
 
 function structureSummary(protocol: FileProtocol): string {
   const steps = protocol.steps.map((step, index) => {
-    const condition = conditionEvidence(step);
     const loop = step.loop_count == null ? "" : ` x${step.loop_count}`;
-    return `${stepLabel(index)} ${step.type}${loop}${condition ? ` (${condition})` : ""}`;
+    return `${stepLabel(index)} ${step.type}${loop}`;
   });
   const blocks = protocol.groups.map((group) => groupEvidence(group, stepOrder(protocol)));
   return `flow ${steps.join(" -> ") || "Unavailable"} | ${blocks.join("; ") || "no blocks"}`;
+}
+
+function terminationSummary(protocol: FileProtocol): string {
+  const conditions = protocol.steps
+    .map((step, index) => {
+      const evidence = conditionEvidence(step);
+      return evidence ? `${stepLabel(index)} ${evidence}` : null;
+    })
+    .filter((value): value is string => value !== null);
+  return conditions.join(" | ") || "No conditional termination or branch rules";
 }
 
 function rateEvidence(step: ProtocolStep): string {
@@ -289,6 +307,8 @@ function dimensionEqual(
   switch (key) {
     case "structure":
       return structureToken(reference, mode === "strict") === structureToken(candidate, mode === "strict");
+    case "termination":
+      return terminationToken(reference, mode === "strict") === terminationToken(candidate, mode === "strict");
     case "rates":
       return ratesEqual(reference, candidate);
     case "timing":
@@ -314,6 +334,7 @@ const ROW_DEFINITIONS: {
   summary: (protocol: FileProtocol) => string;
 }[] = [
   { key: "structure", label: "Step flow and loops", summary: structureSummary },
+  { key: "termination", label: "Termination and control conditions", summary: terminationSummary },
   { key: "rates", label: "C-rate / pulse schedule", summary: ratesSummary },
   { key: "timing", label: "Rest and hold timing", summary: timingSummary },
   { key: "voltage", label: "Voltage cutoffs and protection", summary: voltageSummary },

@@ -891,6 +891,7 @@
 
               <div class="cx-custom-options" id="cx-custom-options">
                 <label class="cx-check-row"><input type="checkbox" checked data-dimension="flow"> Step flow, loops and block order</label>
+                <label class="cx-check-row"><input type="checkbox" data-dimension="termination"> Termination and control conditions</label>
                 <label class="cx-check-row"><input type="checkbox" checked data-dimension="rates"> Explicit C-rates and pulse timing</label>
                 <label class="cx-check-row"><input type="checkbox" data-dimension="voltage"> Voltage cutoffs and protection limits</label>
                 <label class="cx-check-row"><input type="checkbox" data-dimension="recording"> Recording and sampling settings</label>
@@ -919,11 +920,12 @@
       if (!root) return;
       const descriptions = {
         strict: 'All scientific identity fields must match, including voltage cutoffs, protections and timing.',
-        workflow: 'Same ordered building blocks, loops and explicit rates. Numeric limits may differ.',
+        workflow: 'Same ordered building blocks, loops and explicit rates. Termination rules and numeric limits may differ.',
         custom: 'Choose the dimensions that matter for the intended analysis; excluded fields stay visible as differences.'
       };
       const rows = [
         { key: 'flow', label: 'Step flow and loops', left: '111 steps · 3 loops', right: '111 steps · 3 loops', same: true },
+        { key: 'termination', label: 'Termination and control conditions', left: 'SOH_E = 0.97 / jump S4', right: 'SOH_E = 0.80 / jump S4', same: false },
         { key: 'rates', label: 'C-rate / pulse schedule', left: '0.3 C → 1.5 C · 8 pulses', right: '0.3 C → 1.5 C · 8 pulses', same: true },
         { key: 'timing', label: 'Rest and hold timing', left: '10 s / 40 s rests', right: '10 s / 40 s rests', same: true },
         { key: 'voltage', label: 'Voltage cutoffs', left: '2.0 V final discharge', right: '2.8 V final discharge', same: false },

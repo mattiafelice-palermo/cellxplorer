@@ -814,7 +814,7 @@ const COMPARISON_MODE_OPTIONS = [
 
 const COMPARISON_MODE_HELP: Record<ProtocolComparisonMode, string> = {
   strict: "All supported protocol identity fields must match, including voltage cutoffs and protection limits.",
-  workflow: "Compare the ordered building blocks, loops, rates, and timing. Voltage and recording settings remain visible but are ignored.",
+  workflow: "Compare the ordered building blocks, loops, rates, and timing. Termination conditions, voltage, and recording settings remain visible but are ignored.",
   custom: "Choose which dimensions matter for this review. Excluded rows remain visible as ignored evidence.",
 };
 
@@ -823,6 +823,7 @@ const CUSTOM_DIMENSION_OPTIONS: {
   label: string;
 }[] = [
   { key: "structure", label: "Step flow and loops" },
+  { key: "termination", label: "Termination and control conditions" },
   { key: "rates", label: "C-rates and pulse schedule" },
   { key: "timing", label: "Rest and hold timing" },
   { key: "voltage", label: "Voltage cutoffs and protection" },

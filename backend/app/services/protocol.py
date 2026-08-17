@@ -63,7 +63,11 @@ SIGNATURE_FIELDS = (
     "loop_count",
 )
 
-PROTOCOL_SIGNATURE_VERSION = 3
+# Version 4 makes source-declared control/termination conditions part of the
+# strict protocol identity. Version 3 remains an alias so persisted targets
+# created before this dimension existed continue to resolve.
+PROTOCOL_SIGNATURE_VERSION = 4
+PREVIOUS_SEMANTIC_SIGNATURE_VERSION = 3
 LEGACY_PROTOCOL_SIGNATURE_VERSION = 1
 LEGACY_SIGNATURE_FIELDS = (
     "number",
@@ -383,9 +387,28 @@ def _step_summary(step: dict) -> str:
     return " | ".join(parts)
 
 
-def _protocol_signature(
+def _condition_signature_token(condition: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the behavior-relevant, source-normalized condition fields."""
+
+    return {
+        key: condition.get(key)
+        for key in (
+            "expression",
+            "name",
+            "value",
+            "comparator_id",
+            "jump_step",
+            "global_user_id",
+            "stores_as",
+        )
+    }
+
+
+def _semantic_protocol_signature(
     steps: list[dict],
     *,
+    signature_version: int,
+    include_termination: bool,
     extra_fields: tuple[str, ...] = (),
 ) -> str:
     """Hash semantic programmed settings, not cell-specific C-rate currents.
@@ -394,7 +417,10 @@ def _protocol_signature(
     value belongs to execution data rather than protocol identity. Steps with
     no rate basis remain absolute-current-controlled and retain their mA value
     in the signature. The actual current is still preserved on each step for
-    DCIR calculations.
+    DCIR calculations. Current protocol identity also includes normalized
+    source-declared control/termination conditions; the version-3 alias can be
+    generated without those conditions for persisted targets from the previous
+    identity contract.
     """
     canonical_steps = []
     fields = SIGNATURE_FIELDS + tuple(
@@ -410,14 +436,48 @@ def _protocol_signature(
         )
         item["semantic_c_rate"] = semantic_rate
         item["semantic_stop_c_rate"] = semantic_stop_rate
+        if include_termination:
+            item["termination_conditions"] = [
+                _condition_signature_token(condition)
+                for condition in step.get("conditions", [])
+                if isinstance(condition, Mapping)
+            ]
         canonical_steps.append(item)
     payload = json.dumps(
-        {"signature_version": PROTOCOL_SIGNATURE_VERSION, "steps": canonical_steps},
+        {"signature_version": signature_version, "steps": canonical_steps},
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _protocol_signature(
+    steps: list[dict],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> str:
+    return _semantic_protocol_signature(
+        steps,
+        signature_version=PROTOCOL_SIGNATURE_VERSION,
+        include_termination=True,
+        extra_fields=extra_fields,
+    )
+
+
+def _previous_semantic_protocol_signature(
+    steps: list[dict],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> str:
+    """Reproduce the version-3 identity, which excluded termination rules."""
+
+    return _semantic_protocol_signature(
+        steps,
+        signature_version=PREVIOUS_SEMANTIC_SIGNATURE_VERSION,
+        include_termination=False,
+        extra_fields=extra_fields,
+    )
 
 
 def _legacy_protocol_signature(
@@ -477,7 +537,7 @@ def _with_protocol_signature_aliases(
     Protocol payloads are persisted in source metadata, so this function does
     not mutate the stored object. It recomputes the current signature from the
     step settings and retains both the previously stored signature and the
-    deterministic version-1 hash as aliases when they differ.
+    deterministic version-3 and version-1 hashes as aliases when they differ.
     """
     steps = [dict(step) for step in protocol.get("steps", []) if isinstance(step, dict)]
     extra_fields = _signature_extra_fields(steps, signature_extra_fields)
@@ -493,6 +553,12 @@ def _with_protocol_signature_aliases(
     if isinstance(stored_aliases, list):
         for value in stored_aliases:
             add_alias(value)
+    add_alias(
+        _previous_semantic_protocol_signature(
+            steps,
+            extra_fields=extra_fields,
+        )
+    )
     add_alias(_legacy_protocol_signature(steps, extra_fields=extra_fields))
 
     result = dict(protocol)

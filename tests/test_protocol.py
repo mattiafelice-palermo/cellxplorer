@@ -76,6 +76,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn(legacy, result["legacy_signatures"])
         self.assertTrue(protocol.protocol_signature_matches(result, legacy))
 
+    def test_signature_keeps_condition_free_version_three_alias(self):
+        result = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
+        previous = protocol._previous_semantic_protocol_signature(result["steps"])
+
+        self.assertIn(previous, result["legacy_signatures"])
+        self.assertTrue(protocol.protocol_signature_matches(result, previous))
+
     def test_pre_upgrade_stored_protocol_is_rekeyed_without_losing_its_alias(self):
         current = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
         legacy = protocol._legacy_protocol_signature(current["steps"])
@@ -97,6 +104,23 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertNotEqual(
             protocol.reconstruct_protocol(synthetic_header())["signature"],
+            protocol.reconstruct_protocol(changed)["signature"],
+        )
+
+    def test_signature_changes_when_termination_condition_changes(self):
+        first = synthetic_header()
+        prefix = "Step.Step_Info.Step3.Limit.Other.Cnd1."
+        first[prefix + "Expression"] = "DischargeAh"
+        first[prefix + "ExpressionName"] = "AhCount"
+        first[prefix + "CmpType"] = "4"
+        first[prefix + "Value"] = "1"
+        first[prefix + "Jump_Line"] = "6"
+
+        changed = dict(first)
+        changed[prefix + "Value"] = "2"
+
+        self.assertNotEqual(
+            protocol.reconstruct_protocol(first)["signature"],
             protocol.reconstruct_protocol(changed)["signature"],
         )
 

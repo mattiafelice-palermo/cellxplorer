@@ -54,13 +54,17 @@ the step remains absolute-current-controlled and retains its mA values.
 Protocol signatures are versioned identities, not durable target IDs. Reconstructed protocols expose
 the current signature plus `legacy_signatures`, and Cycles, Steps, and DCIR resolve saved targets
 against either list so a signature-algorithm upgrade cannot make source-local selections disappear.
-The shared analysis-result cache generation must be bumped when target-resolution semantics change;
-this deliberately invalidates old warm results so they cannot disagree with a cold recompute.
+The current semantic identity includes normalized source-declared termination/control conditions;
+capacity-scaled currents remain excluded. The shared analysis-result cache generation must be
+bumped when target-resolution semantics change; this deliberately invalidates old warm results so
+they cannot disagree with a cold recompute.
 
 The shared protocol editor's `Compare protocol families` modal is diagnostic only. Strict mode
 uses the normalized semantic identity; Workflow mode compares ordered building blocks, loop
-structure, rates, and timing while showing voltage/protection and recording settings as ignored
-evidence by default; Custom mode lets the scientist opt those dimensions into the comparison.
+structure, rates, and timing while showing termination/control conditions, voltage/protection, and
+recording settings as ignored evidence by default; Custom mode lets the scientist opt those
+dimensions into the comparison. Termination evidence is not part of workflow-structure equality,
+so a threshold-only change is reported in its own dimension rather than as a changed loop.
 Even when families are workflow-comparable, DCIR targets remain scoped to the original protocol
 signature and source-local step indices: the modal never merges families or creates a step mapping.
 

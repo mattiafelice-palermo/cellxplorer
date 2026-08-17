@@ -1447,7 +1447,7 @@ class NewareExcelParserTests(unittest.TestCase):
             parsing.PARSER_VERSION,
             f"{parsing.NEWARE_NDA_VERSION}-cxp{neware_excel.EXCEL_PARSER_REVISION + 1}",
         )
-        self.assertEqual(CALC_VERSION, "1.6.1")
+        self.assertEqual(CALC_VERSION, "1.6.2")
 
     def test_cycle_summary_validation_accepts_rounded_values(self):
         with TemporaryDirectory() as temporary:

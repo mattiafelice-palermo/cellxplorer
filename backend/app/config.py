@@ -27,7 +27,7 @@ IMPORT_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = f"sqlite:///{DB_PATH.as_posix()}"
-APP_VERSION = "0.25.0-beta.2"
+APP_VERSION = "0.25.0-beta.3"
 INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").strip() or None
 
 # Version of our derived per-cycle calculation code. Bump when the
@@ -54,6 +54,8 @@ INSTALL_INSTANCE_ID = os.environ.get("CELLXPLORER_INSTALL_INSTANCE_ID", "").stri
 #        observed local labels only; stitched frames add provenance columns. Per-file
 #        per-cycle parquet outputs are unchanged, but analysis provenance must not reuse
 #        pre-034.1 global cycle numbers for gapped or multi-source selections.
-CALC_VERSION = "1.6.1"
+# 1.6.2: protocol identity includes source-declared termination/control conditions
+#        and resolves the prior condition-free signature as a compatibility alias.
+CALC_VERSION = "1.6.2"
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

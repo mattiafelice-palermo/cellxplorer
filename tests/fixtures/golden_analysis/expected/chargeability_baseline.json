@@ -14,7 +14,7 @@
     ]
   },
   "badges": [],
-  "calc_version": "1.6.1",
+  "calc_version": "1.6.2",
   "candidates": [
     {
       "added_soc_pct": 60.0,
@@ -30,7 +30,7 @@
       "matches_filters": true,
       "mode": "CV charge",
       "preparation_step_index": 25,
-      "protocol_signature": "22158a5ae29320959ff0e71dba005886977e2d71200f6cab580de58e35479eb1",
+      "protocol_signature": "b522e2adf5806d499705e5b751c5e76d283744007630c0375d54a3da9f7bb68c",
       "reference_step_index": 19,
       "reference_variable": "User1",
       "removed_soc_pct": 80.0,
@@ -86,7 +86,7 @@
       "mode": "CV charge",
       "observed_final_soc_pct": 80.00055521145487,
       "occurrence": 1,
-      "protocol_signature": "22158a5ae29320959ff0e71dba005886977e2d71200f6cab580de58e35479eb1",
+      "protocol_signature": "b522e2adf5806d499705e5b751c5e76d283744007630c0375d54a3da9f7bb68c",
       "reference": {
         "cycle": 7,
         "kind": "protocol_recorded",

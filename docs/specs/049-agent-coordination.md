@@ -70,3 +70,21 @@ R1 is the cumulative scientific-identity blocker. R2/R3 can produce false workfl
 Review fixes R1-R5 are implemented. Legacy protocol aliases preserve Cycles/Steps/DCIR target meaning, analysis results invalidate deterministically across target-resolution generations, comparator semantics match backend normalization, evidence is ordered and explanatory, Custom mode fails closed, and the Vite 8 Plotly factory interop prevents the blank local page.
 
 ---
+### 2026-08-17T20:16:32+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+- R5
+- R6
+
+**Message**
+
+User-authorized follow-up: make termination/control conditions a first-class protocol-comparability dimension and align strict family recognition with the source-declared termination conditions. Re-review the cumulative R1-R5 fixes together with R6.
+
+---
