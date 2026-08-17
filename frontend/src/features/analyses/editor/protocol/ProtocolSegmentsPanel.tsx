@@ -86,6 +86,10 @@ import {
   type NeighbourDirection,
   type NeighbourScope,
 } from "./protocolStepNeighbours";
+import {
+  normalizeProtocolGroups,
+  protocolGroupForMembership,
+} from "./protocolGroupPolicy";
 
 interface ProtocolFileRef {
   cellId: number;
@@ -1029,11 +1033,10 @@ function persistedGroupingForProposal(
   proposal: GroupedProtocolProposal,
   groups: ProtocolFamilyGroup[],
 ): ProtocolFamilyGroup | undefined {
-  const members = new Set(proposal.members.map((family) => family.signature));
-  return groups.find((group) => {
-    const saved = new Set(group.family_signatures);
-    return saved.size === members.size && [...members].every((signature) => saved.has(signature));
-  });
+  return protocolGroupForMembership(
+    groups,
+    proposal.members.map((family) => family.signature),
+  );
 }
 
 function compactGroupingEvidence(value: string): string {
@@ -1143,6 +1146,9 @@ function GroupedProtocolComparisonModal({
     ),
     [families, mode, customDimensions, comparisonOptions.ignoreEmptyRestPause, reference?.signature],
   );
+  // A one-family proposal is the existing raw protocol, not a new grouping.
+  // Do not create a second selectable object for it.
+  const groupProposals = proposals.filter((proposal) => proposal.members.length > 1);
   const candidates = families.filter((family) => family.signature !== reference?.signature);
   const candidateResults = candidates.map((family) => ({
     family,
@@ -1164,7 +1170,7 @@ function GroupedProtocolComparisonModal({
       families.every((family) => family.protocol) &&
       hasSelectedDimension &&
       comparedDimensions.structure &&
-      proposals.length > 0,
+      groupProposals.length > 0,
   );
 
   const nameFor = (proposal: GroupedProtocolProposal, index: number): string =>
@@ -1175,15 +1181,17 @@ function GroupedProtocolComparisonModal({
   const applyGroups = () => {
     if (!canApply || !onApplyGroups) return;
     onApplyGroups(
-      proposals.map((proposal, index) => ({
-        id: persistedGroupingForProposal(proposal, existingGroups)?.id ?? segmentId(),
-        name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
-        family_signatures: proposal.members.map((family) => family.signature),
-        reference_signature: proposal.reference.signature,
-        comparison_mode: mode,
-        comparison_dimensions: { ...comparedDimensions },
-        ignore_empty_rest_pause: comparisonOptions.ignoreEmptyRestPause ?? false,
-      })),
+      normalizeProtocolGroups(
+        groupProposals.map((proposal, index) => ({
+          id: persistedGroupingForProposal(proposal, existingGroups)?.id ?? segmentId(),
+          name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
+          family_signatures: proposal.members.map((family) => family.signature),
+          reference_signature: proposal.reference.signature,
+          comparison_mode: mode,
+          comparison_dimensions: { ...comparedDimensions },
+          ignore_empty_rest_pause: comparisonOptions.ignoreEmptyRestPause ?? false,
+        })),
+      ),
     );
     onClose();
   };
@@ -1249,7 +1257,7 @@ function GroupedProtocolComparisonModal({
                 />
                 <Group justify="space-between" gap="xs" wrap="nowrap">
                   <Text size="xs" c="dimmed">
-                    {proposals.length} proposed group{proposals.length === 1 ? "" : "s"} - {allCells.length} cells
+                    {groupProposals.length} proposed group{groupProposals.length === 1 ? "" : "s"} - {allCells.length} cells
                   </Text>
                   <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)">Preview</Badge>
                 </Group>
@@ -1293,6 +1301,59 @@ function GroupedProtocolComparisonModal({
                   <Group gap={4} wrap="nowrap"><Badge size="xs" variant="light" color="orange">Different</Badge><Text size="10px" c="dimmed">splits</Text></Group>
                   <Group gap={4} wrap="nowrap"><Badge size="xs" variant="light" color="gray">Ignored</Badge><Text size="10px" c="dimmed">evidence only</Text></Group>
                 </Group>
+                {existingGroups.length > 0 && onApplyGroups && (
+                  <Box>
+                    <Group justify="space-between" align="baseline" gap="xs" mb={6} wrap="nowrap">
+                      <Text size="xs" fw={700}>Applied protocol groups</Text>
+                      <Text size="10px" c="dimmed" ta="right">Remove a group without changing source data.</Text>
+                    </Group>
+                    <Stack gap={4}>
+                      {existingGroups.map((group) => (
+                        <Paper key={group.id} withBorder radius="sm" p="xs">
+                          <Group justify="space-between" gap="xs" wrap="nowrap">
+                            <Box style={{ minWidth: 0, flex: 1 }}>
+                              <Text size="xs" fw={600} truncate title={group.name}>{group.name}</Text>
+                              <Text size="10px" c="dimmed">
+                                {group.family_signatures.length} source families
+                              </Text>
+                            </Box>
+                            <Tooltip label={`Remove ${group.name}`} withArrow>
+                              <ActionIcon
+                                size="sm"
+                                variant="subtle"
+                                color="red"
+                                aria-label={`Remove protocol group ${group.name}`}
+                                onClick={() =>
+                                  modals.openConfirmModal({
+                                    title: `Remove ${group.name}?`,
+                                    children: (
+                                      <Text size="sm">
+                                        This removes the named grouping from the protocol selector.
+                                        Raw protocol families and existing segment definitions remain unchanged.
+                                      </Text>
+                                    ),
+                                    labels: { confirm: "Remove group", cancel: "Cancel" },
+                                    confirmProps: { color: "red" },
+                                    onConfirm: () => {
+                                      onApplyGroups(
+                                        normalizeProtocolGroups(
+                                          existingGroups.filter((item) => item.id !== group.id),
+                                        ),
+                                      );
+                                      onClose();
+                                    },
+                                  })
+                                }
+                              >
+                                <IconTrash size={14} />
+                              </ActionIcon>
+                            </Tooltip>
+                          </Group>
+                        </Paper>
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
               </Stack>
             </Paper>
           </Grid.Col>
@@ -1374,10 +1435,18 @@ function GroupedProtocolComparisonModal({
             <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select at least one comparison dimension to propose meaningful protocol groups.</Text></Paper>
           ) : !comparedDimensions.structure ? (
             <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select Step flow and loops before applying groups. Grouped step selections are mapped by workflow order, so a structural match is required.</Text></Paper>
+          ) : groupProposals.length === 0 ? (
+            <Paper withBorder p="sm" radius="md">
+              <Text size="xs" c="dimmed">
+                No new grouping is available under these settings. Each family would remain a
+                separate existing protocol, so nothing will be created.
+              </Text>
+            </Paper>
           ) : (
             <Grid gutter="sm">
-              {proposals.map((proposal, index) => {
+              {groupProposals.map((proposal, index) => {
                 const cells = groupedCellNames(proposal);
+                const existing = persistedGroupingForProposal(proposal, existingGroups);
                 return (
                   <Grid.Col key={proposal.key} span={{ base: 12, sm: 6 }}>
                     <Paper
@@ -1397,7 +1466,10 @@ function GroupedProtocolComparisonModal({
                             style={{ flex: 1, minWidth: 0 }}
                           />
                         </Group>
-                        <Text size="10px" c="dimmed">{proposal.members.length} source famil{proposal.members.length === 1 ? "y" : "ies"} - {cells.length} cell{cells.length === 1 ? "" : "s"}</Text>
+                        <Group justify="space-between" gap="xs" wrap="nowrap">
+                          <Text size="10px" c="dimmed">{proposal.members.length} source families - {cells.length} cell{cells.length === 1 ? "" : "s"}</Text>
+                          {existing && <Badge size="xs" variant="light" color="gray">Already applied</Badge>}
+                        </Group>
                         <Box>
                           <Text size="10px" c="dimmed" mb={4}>Includes protocols</Text>
                           <Group gap={4} wrap="wrap">
@@ -1432,7 +1504,7 @@ function GroupedProtocolComparisonModal({
           <Group gap="xs">
             <Button variant="default" size="sm" onClick={onClose}>Cancel</Button>
             <Button size="sm" onClick={applyGroups} disabled={!canApply}>
-              Apply {proposals.length} grouped protocol{proposals.length === 1 ? "" : "s"}
+              Apply {groupProposals.length} grouped protocol{groupProposals.length === 1 ? "" : "s"}
             </Button>
           </Group>
         </Group>
@@ -1930,11 +2002,22 @@ function SegmentEditor({
   // sorted by signature, so "the first family" is a different protocol at
   // 0.5s than at 2s. Steps selected before the list settled were being filed
   // against whichever protocol happened to sort first at that instant, which
-  // then appeared under a different number once the rest arrived.
+  // then appeared under a different number once the rest arrived. If a named
+  // group is removed, however, its selection is no longer valid and must fall
+  // back to a raw family.
   useEffect(() => {
-    if (loading || activeSignature !== null || families.length === 0) return;
+    const activeRawFamily = activeSignature !== null && families.some((family) =>
+      familyMatchesSignature(family, activeSignature),
+    );
+    const activeGroup = activeSignature !== null && protocolGroups.some(
+      (group) =>
+        group.id === activeSignature &&
+        isSelectableProtocolGroup(group) &&
+        protocolGroupMembers(group, families).length > 0,
+    );
+    if (loading || families.length === 0 || activeRawFamily || activeGroup) return;
     setActiveSignature(families[0].signature);
-  }, [loading, activeSignature, families]);
+  }, [loading, activeSignature, families, protocolGroups]);
   useEffect(() => {
     setShownNeighbours(null);
   }, [query, filters, activeSignature]);

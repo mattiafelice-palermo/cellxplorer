@@ -178,6 +178,7 @@ import {
   dcirTracesForResult,
   type DcirResult,
 } from "./families/dcir/DcirPlotCard";
+import { normalizeProtocolGroups } from "./protocol/protocolGroupPolicy";
 import {
   ChargeabilityPlotCard,
   ChargeabilitySettings,
@@ -787,8 +788,8 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       }))
       .filter((target) => target.protocol_signature && target.step_indices.length > 0),
   }));
-  spec.protocol_groups = (spec.protocol_groups ?? [])
-    .map((group): ProtocolFamilyGroup => ({
+  spec.protocol_groups = normalizeProtocolGroups(
+    (spec.protocol_groups ?? []).map((group): ProtocolFamilyGroup => ({
       id: group.id,
       name: group.name?.trim() || "Protocol group",
       family_signatures: [...new Set(group.family_signatures ?? [])].filter(Boolean),
@@ -806,12 +807,8 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
         recording: Boolean(group.comparison_dimensions?.recording),
       },
       ignore_empty_rest_pause: Boolean(group.ignore_empty_rest_pause),
-    }))
-    .filter(
-      (group) =>
-        group.family_signatures.length > 0 &&
-        group.family_signatures.includes(group.reference_signature),
-    );
+    })),
+  );
   spec.dcir_segments = (spec.dcir_segments ?? []).map((segment) => ({
     id: segment.id,
     name: segment.name,
@@ -2762,7 +2759,7 @@ function AnalysisEditorView({
 
   const saveProtocolGroups = (groups: ProtocolFamilyGroup[]) => {
     update((s) => {
-      s.protocol_groups = groups;
+      s.protocol_groups = normalizeProtocolGroups(groups);
     });
   };
 
