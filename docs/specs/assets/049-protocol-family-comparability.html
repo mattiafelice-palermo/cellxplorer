@@ -1,0 +1,988 @@
+<div id="cx-protocol-comparability-mockup">
+  <style>
+    #cx-protocol-comparability-mockup {
+      --cx-ink: light-dark(#25262b, #f1f3f5);
+      --cx-muted: light-dark(#6b7280, #a6a7ab);
+      --cx-subtle: light-dark(#8b929d, #8f9096);
+      --cx-page: light-dark(#f5f6f8, #1a1b1e);
+      --cx-surface: light-dark(#ffffff, #25262b);
+      --cx-surface-soft: light-dark(#f8f9fa, #2c2e33);
+      --cx-line: light-dark(#e4e7ec, #3b3d43);
+      --cx-line-strong: light-dark(#d0d5dd, #55585f);
+      --cx-blue: light-dark(#2774d9, #69a5ff);
+      --cx-blue-soft: light-dark(#eaf2ff, #263a57);
+      --cx-green: light-dark(#2f9e44, #69db7c);
+      --cx-green-soft: light-dark(#ebfbee, #24412b);
+      --cx-amber: light-dark(#c77700, #ffc078);
+      --cx-amber-soft: light-dark(#fff4dc, #4a3518);
+      --cx-red: light-dark(#c92a2a, #ff8787);
+      --cx-red-soft: light-dark(#fff0f0, #4a2527);
+      color-scheme: light dark;
+      color: var(--cx-ink);
+      font-family: "Segoe UI", Inter, system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.35;
+      width: 100%;
+      max-width: 1220px;
+      margin: 0 auto;
+    }
+
+    #cx-protocol-comparability-mockup * { box-sizing: border-box; }
+    #cx-protocol-comparability-mockup button,
+    #cx-protocol-comparability-mockup input { font: inherit; }
+
+    #cx-protocol-comparability-mockup .cx-window {
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid var(--cx-line);
+      border-radius: 10px;
+      background: var(--cx-page);
+      box-shadow: 0 16px 42px light-dark(rgba(27, 39, 61, .12), rgba(0, 0, 0, .35));
+      display: flex;
+    }
+
+    #cx-protocol-comparability-mockup .cx-sidebar {
+      width: 190px;
+      flex: 0 0 190px;
+      padding: 18px 12px;
+      border-right: 1px solid var(--cx-line);
+      background: var(--cx-surface);
+      display: flex;
+      flex-direction: column;
+    }
+
+    #cx-protocol-comparability-mockup .cx-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 1px 8px 28px;
+      color: var(--cx-ink);
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+
+    #cx-protocol-comparability-mockup .cx-brand-mark {
+      width: 25px;
+      height: 25px;
+      border-radius: 7px;
+      background: var(--cx-blue);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    #cx-protocol-comparability-mockup .cx-nav-label {
+      margin: 0 10px 7px;
+      color: var(--cx-subtle);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    #cx-protocol-comparability-mockup .cx-nav-item {
+      min-height: 33px;
+      padding: 7px 10px;
+      border-radius: 5px;
+      color: var(--cx-muted);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 3px;
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-nav-item.active {
+      color: var(--cx-blue);
+      background: var(--cx-blue-soft);
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-nav-glyph {
+      width: 15px;
+      color: currentColor;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-sidebar-footer {
+      margin-top: auto;
+      padding: 12px 10px 2px;
+      border-top: 1px solid var(--cx-line);
+      color: var(--cx-subtle);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-workspace {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #cx-protocol-comparability-mockup .cx-topbar {
+      min-height: 58px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--cx-line);
+      background: var(--cx-surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--cx-muted);
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-breadcrumbs strong {
+      color: var(--cx-ink);
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-quiet-button,
+    #cx-protocol-comparability-mockup .cx-primary-button,
+    #cx-protocol-comparability-mockup .cx-mode-button,
+    #cx-protocol-comparability-mockup .cx-icon-button {
+      border: 1px solid var(--cx-line-strong);
+      border-radius: 5px;
+      background: var(--cx-surface);
+      color: var(--cx-ink);
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+
+    #cx-protocol-comparability-mockup .cx-quiet-button:hover,
+    #cx-protocol-comparability-mockup .cx-mode-button:hover,
+    #cx-protocol-comparability-mockup .cx-icon-button:hover {
+      border-color: var(--cx-blue);
+      color: var(--cx-blue);
+    }
+
+    #cx-protocol-comparability-mockup .cx-quiet-button {
+      padding: 6px 10px;
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-primary-button {
+      padding: 7px 12px;
+      border-color: var(--cx-blue);
+      background: var(--cx-blue);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-primary-button:hover { filter: brightness(1.05); }
+
+    #cx-protocol-comparability-mockup .cx-page-body {
+      min-width: 0;
+      flex: 1;
+      padding: 19px 20px 22px;
+      position: relative;
+    }
+
+    #cx-protocol-comparability-mockup .cx-page-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    #cx-protocol-comparability-mockup h1,
+    #cx-protocol-comparability-mockup h2,
+    #cx-protocol-comparability-mockup h3,
+    #cx-protocol-comparability-mockup p { margin: 0; }
+
+    #cx-protocol-comparability-mockup h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -.015em;
+    }
+
+    #cx-protocol-comparability-mockup .cx-page-heading p {
+      margin-top: 4px;
+      color: var(--cx-muted);
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-heading-tabs {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: var(--cx-muted);
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-heading-tab {
+      padding-bottom: 7px;
+      border-bottom: 2px solid transparent;
+    }
+
+    #cx-protocol-comparability-mockup .cx-heading-tab.active {
+      border-color: var(--cx-blue);
+      color: var(--cx-blue);
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+    }
+
+    #cx-protocol-comparability-mockup .cx-panel,
+    #cx-protocol-comparability-mockup .cx-paper {
+      border: 1px solid var(--cx-line);
+      border-radius: 6px;
+      background: var(--cx-surface);
+    }
+
+    #cx-protocol-comparability-mockup .cx-panel-header {
+      min-height: 48px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--cx-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-panel-subtitle {
+      margin-top: 2px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-count {
+      min-width: 21px;
+      height: 20px;
+      padding: 2px 6px;
+      border: 1px solid var(--cx-line);
+      border-radius: 10px;
+      color: var(--cx-muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    #cx-protocol-comparability-mockup .cx-icon-button {
+      width: 27px;
+      height: 27px;
+      padding: 0;
+      color: var(--cx-muted);
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    #cx-protocol-comparability-mockup .cx-protocol-body { padding: 12px; }
+
+    #cx-protocol-comparability-mockup .cx-protocol-selector-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 32px;
+      align-items: end;
+      gap: 8px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-settings-button {
+      color: var(--cx-blue);
+      border-color: light-dark(#b8d2fb, #466996);
+      background: var(--cx-blue-soft);
+      font-size: 15px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-settings-button:hover {
+      border-color: var(--cx-blue);
+      background: var(--cx-blue-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--cx-muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-select-like {
+      min-height: 34px;
+      padding: 7px 9px;
+      border: 1px solid var(--cx-line-strong);
+      border-radius: 5px;
+      background: var(--cx-surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--cx-ink);
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-select-like span:last-child {
+      color: var(--cx-subtle);
+      font-size: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-protocol-toolbar {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-small-link {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--cx-blue);
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-capacity-card {
+      margin-top: 11px;
+      padding: 10px;
+      background: var(--cx-surface-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-capacity-head,
+    #cx-protocol-comparability-mockup .cx-capacity-values {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-capacity-head {
+      margin-bottom: 7px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-capacity-values strong {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #cx-protocol-comparability-mockup .cx-capacity-values span {
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-rule {
+      height: 1px;
+      margin: 10px 0;
+      background: var(--cx-line);
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-filter {
+      min-height: 31px;
+      padding: 6px 8px;
+      border: 1px solid var(--cx-line);
+      border-radius: 4px;
+      color: var(--cx-subtle);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-card {
+      margin-top: 12px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-card-head {
+      padding: 8px 10px;
+      background: var(--cx-surface-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-table,
+    #cx-protocol-comparability-mockup .cx-evidence-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-table th,
+    #cx-protocol-comparability-mockup .cx-step-table td {
+      padding: 7px 9px;
+      border-top: 1px solid var(--cx-line);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-table th {
+      color: var(--cx-subtle);
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-step-table th:first-child,
+    #cx-protocol-comparability-mockup .cx-step-table td:first-child { width: 42px; color: var(--cx-subtle); }
+    #cx-protocol-comparability-mockup .cx-step-table th:nth-child(2),
+    #cx-protocol-comparability-mockup .cx-step-table td:nth-child(2) { width: 99px; }
+
+    #cx-protocol-comparability-mockup .cx-step-name { font-weight: 500; }
+    #cx-protocol-comparability-mockup .cx-step-detail { color: var(--cx-muted); }
+
+    #cx-protocol-comparability-mockup .cx-segment-list {
+      margin-top: 12px;
+      display: grid;
+      gap: 7px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-segment-row {
+      padding: 9px 10px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      background: var(--cx-surface);
+    }
+
+    #cx-protocol-comparability-mockup .cx-segment-row-top,
+    #cx-protocol-comparability-mockup .cx-segment-row-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-segment-row-bottom {
+      margin-top: 5px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-segment-actions {
+      display: flex;
+      gap: 7px;
+      color: var(--cx-subtle);
+      font-size: 13px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-mini-badge,
+    #cx-protocol-comparability-mockup .cx-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 4px;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    #cx-protocol-comparability-mockup .cx-mini-badge {
+      padding: 3px 6px;
+      border: 1px solid var(--cx-line);
+      color: var(--cx-muted);
+      background: var(--cx-surface-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-mini-badge.blue {
+      border-color: light-dark(#b8d2fb, #466996);
+      color: var(--cx-blue);
+      background: var(--cx-blue-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-drawer {
+      width: min(476px, 100%);
+      max-height: 680px;
+      border: 1px solid var(--cx-line-strong);
+      border-radius: 7px;
+      background: var(--cx-surface);
+      box-shadow: 0 10px 26px light-dark(rgba(31, 45, 61, .10), rgba(0, 0, 0, .25));
+      overflow: auto;
+    }
+
+    #cx-protocol-comparability-mockup .cx-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      padding: 54px 20px 18px;
+      background: light-dark(rgba(43, 49, 61, .25), rgba(0, 0, 0, .58));
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+    }
+
+    #cx-protocol-comparability-mockup .cx-modal-backdrop.hidden { display: none; }
+
+    #cx-protocol-comparability-mockup .cx-drawer-head {
+      padding: 13px 14px 12px;
+      border-bottom: 1px solid var(--cx-line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-drawer-head h2 {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    #cx-protocol-comparability-mockup .cx-drawer-head p {
+      margin-top: 4px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-drawer-body { padding: 13px 14px 14px; }
+
+    #cx-protocol-comparability-mockup .cx-mode-label {
+      margin-bottom: 6px;
+      color: var(--cx-muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-mode-switch {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      padding: 2px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      background: var(--cx-surface-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-mode-button {
+      padding: 6px 4px;
+      border-color: transparent;
+      background: transparent;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-mode-button.active {
+      border-color: var(--cx-line-strong);
+      background: var(--cx-surface);
+      color: var(--cx-blue);
+      font-weight: 500;
+      box-shadow: 0 1px 2px light-dark(rgba(0,0,0,.06), rgba(0,0,0,.2));
+    }
+
+    #cx-protocol-comparability-mockup .cx-mode-description {
+      min-height: 35px;
+      margin-top: 8px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-reference-row {
+      margin-top: 11px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-reference-box {
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      background: var(--cx-surface-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-reference-box.reference { border-left: 3px solid var(--cx-blue); }
+    #cx-protocol-comparability-mockup .cx-reference-box.candidate { border-left: 3px solid var(--cx-amber); }
+
+    #cx-protocol-comparability-mockup .cx-reference-box small {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--cx-muted);
+      font-size: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-reference-box strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-reference-box span {
+      display: block;
+      margin-top: 2px;
+      color: var(--cx-muted);
+      font-size: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-evidence-wrap {
+      margin-top: 12px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    #cx-protocol-comparability-mockup .cx-evidence-title {
+      padding: 8px 9px;
+      border-bottom: 1px solid var(--cx-line);
+      background: var(--cx-surface-soft);
+      color: var(--cx-ink);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    #cx-protocol-comparability-mockup .cx-evidence-table th,
+    #cx-protocol-comparability-mockup .cx-evidence-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid var(--cx-line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-evidence-table tr:last-child td { border-bottom: 0; }
+
+    #cx-protocol-comparability-mockup .cx-evidence-table th {
+      color: var(--cx-subtle);
+      font-size: 9px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    #cx-protocol-comparability-mockup .cx-evidence-table th:first-child,
+    #cx-protocol-comparability-mockup .cx-evidence-table td:first-child { width: 29%; }
+    #cx-protocol-comparability-mockup .cx-evidence-table th:last-child,
+    #cx-protocol-comparability-mockup .cx-evidence-table td:last-child { width: 23%; }
+
+    #cx-protocol-comparability-mockup .cx-evidence-table td:first-child { color: var(--cx-ink); font-weight: 500; }
+    #cx-protocol-comparability-mockup .cx-evidence-table td:not(:first-child) { color: var(--cx-muted); }
+
+    #cx-protocol-comparability-mockup .cx-status { padding: 3px 5px; font-weight: 500; }
+    #cx-protocol-comparability-mockup .cx-status.same { color: var(--cx-green); background: var(--cx-green-soft); }
+    #cx-protocol-comparability-mockup .cx-status.ignored { color: var(--cx-blue); background: var(--cx-blue-soft); }
+    #cx-protocol-comparability-mockup .cx-status.diff { color: var(--cx-red); background: var(--cx-red-soft); }
+    #cx-protocol-comparability-mockup .cx-status.review { color: var(--cx-amber); background: var(--cx-amber-soft); }
+
+    #cx-protocol-comparability-mockup .cx-status-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    #cx-protocol-comparability-mockup .cx-custom-options {
+      display: none;
+      margin-top: 9px;
+      padding: 8px 9px;
+      border: 1px solid var(--cx-line);
+      border-radius: 5px;
+      background: var(--cx-surface-soft);
+    }
+
+    #cx-protocol-comparability-mockup .cx-custom-options.visible { display: grid; gap: 7px; }
+
+    #cx-protocol-comparability-mockup .cx-check-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-check-row input {
+      width: 13px;
+      height: 13px;
+      margin: 0;
+      accent-color: var(--cx-blue);
+    }
+
+    #cx-protocol-comparability-mockup .cx-result-alert {
+      margin-top: 12px;
+      padding: 9px 10px;
+      border: 1px solid light-dark(#b8d2fb, #466996);
+      border-radius: 5px;
+      background: var(--cx-blue-soft);
+      color: var(--cx-ink);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-result-alert strong { color: var(--cx-blue); font-weight: 600; }
+    #cx-protocol-comparability-mockup .cx-result-alert span { display: block; margin-top: 3px; color: var(--cx-muted); }
+
+    #cx-protocol-comparability-mockup .cx-drawer-foot {
+      padding: 11px 14px;
+      border-top: 1px solid var(--cx-line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-foot-note {
+      color: var(--cx-subtle);
+      font-size: 10px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-comparison-strip {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--cx-line);
+      border-radius: 6px;
+      background: var(--cx-surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-comparison-strip p {
+      margin-top: 3px;
+      color: var(--cx-muted);
+      font-size: 11px;
+    }
+
+    #cx-protocol-comparability-mockup .cx-strip-title { font-weight: 500; }
+
+    @media (max-width: 920px) {
+      #cx-protocol-comparability-mockup .cx-sidebar { width: 160px; flex-basis: 160px; }
+      #cx-protocol-comparability-mockup .cx-main-grid { grid-template-columns: 1fr; }
+      #cx-protocol-comparability-mockup .cx-modal-backdrop { padding-right: 14px; padding-left: 14px; }
+    }
+
+    @media (max-width: 650px) {
+      #cx-protocol-comparability-mockup .cx-window { display: block; }
+      #cx-protocol-comparability-mockup .cx-sidebar { width: 100%; min-height: 0; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--cx-line); }
+      #cx-protocol-comparability-mockup .cx-brand { margin-bottom: 10px; }
+      #cx-protocol-comparability-mockup .cx-nav-label,
+      #cx-protocol-comparability-mockup .cx-sidebar-footer { display: none; }
+      #cx-protocol-comparability-mockup .cx-nav-item { display: inline-flex; margin: 0 3px 0 0; }
+      #cx-protocol-comparability-mockup .cx-topbar { padding: 0 12px; }
+      #cx-protocol-comparability-mockup .cx-page-body { padding: 14px 12px 18px; }
+      #cx-protocol-comparability-mockup .cx-page-heading { display: block; }
+      #cx-protocol-comparability-mockup .cx-heading-tabs { margin-top: 12px; }
+      #cx-protocol-comparability-mockup .cx-reference-row { grid-template-columns: 1fr; }
+      #cx-protocol-comparability-mockup .cx-comparison-strip { align-items: flex-start; flex-direction: column; }
+      #cx-protocol-comparability-mockup .cx-modal-backdrop { padding: 34px 10px 12px; }
+    }
+  </style>
+
+  <div class="cx-window">
+    <aside class="cx-sidebar">
+      <div class="cx-brand"><span class="cx-brand-mark">C</span><span>CellXplorer</span></div>
+      <div class="cx-nav-label">Workspace</div>
+      <div class="cx-nav-item"><span class="cx-nav-glyph">⌂</span><span>Library</span></div>
+      <div class="cx-nav-item"><span class="cx-nav-glyph">▱</span><span>Projects</span></div>
+      <div class="cx-nav-item active"><span class="cx-nav-glyph">◒</span><span>Analyses</span></div>
+      <div class="cx-nav-item"><span class="cx-nav-glyph">⚙</span><span>Settings</span></div>
+      <div class="cx-sidebar-footer">Local workspace<br><span>12 cells · 4 sources</span></div>
+    </aside>
+
+    <main class="cx-workspace">
+      <header class="cx-topbar">
+        <div class="cx-breadcrumbs"><span>Analyses</span><span>›</span><strong>DCIR comparison</strong></div>
+        <div class="cx-top-actions"><button class="cx-quiet-button">Save view</button><span style="color:var(--cx-subtle);font-size:12px">⋮</span></div>
+      </header>
+
+      <div class="cx-page-body">
+        <div class="cx-page-heading">
+          <div>
+            <h1>Protocol segments</h1>
+            <p>Define the protocol portions used by this analysis.</p>
+          </div>
+          <div class="cx-heading-tabs"><span class="cx-heading-tab active">Configure</span><span class="cx-heading-tab">Results</span></div>
+        </div>
+
+        <div class="cx-main-grid">
+          <section>
+            <div class="cx-panel">
+              <div class="cx-panel-header">
+                <div>
+                  <div class="cx-panel-title"><span>Protocol segments</span><span class="cx-count">2</span></div>
+                  <div class="cx-panel-subtitle">Each segment maps steps from one or more comparable protocol families.</div>
+                </div>
+                <button class="cx-icon-button" aria-label="Add segment">＋</button>
+              </div>
+
+              <div class="cx-protocol-body">
+                <div class="cx-segment-row">
+                  <div class="cx-segment-row-top"><strong>Discharge pulse</strong><div class="cx-segment-actions"><span>◉</span><span>✎</span><span>⋮</span></div></div>
+                  <div class="cx-segment-row-bottom"><span>8 steps · 2 protocol families · 9 cells</span><span class="cx-mini-badge blue">Workflow comparable</span></div>
+                </div>
+                <div class="cx-segment-row">
+                  <div class="cx-segment-row-top"><strong>Charge pulse</strong><div class="cx-segment-actions"><span>◉</span><span>✎</span><span>⋮</span></div></div>
+                  <div class="cx-segment-row-bottom"><span>8 steps · 1 protocol family · 9 cells</span><span class="cx-mini-badge">Strict match</span></div>
+                </div>
+
+                <div class="cx-rule"></div>
+                <div class="cx-protocol-selector-row">
+                  <div><label class="cx-label">Protocol family</label><div class="cx-select-like"><span>Protocol 1 — 111 steps, 9 cells</span><span>⌄</span></div></div>
+                  <button class="cx-icon-button cx-settings-button" id="cx-compare-trigger" title="Compare protocol families" aria-label="Compare protocol families" aria-expanded="true">⚙</button>
+                </div>
+                <div class="cx-protocol-toolbar"><span class="cx-muted" style="color:var(--cx-muted);font-size:11px">Reference: BQV_2374…</span><span style="color:var(--cx-subtle);font-size:10px">Settings controls comparability</span></div>
+
+                <div class="cx-paper cx-capacity-card">
+                  <div class="cx-capacity-head"><span>Capacity reference</span><span style="color:var(--cx-green)">✓ inferred</span></div>
+                  <div class="cx-capacity-values"><strong>50.4 mAh</strong><span>2.0–4.5 V protection window</span></div>
+                  <div class="cx-capacity-values" style="margin-top:6px"><span>0.3 C · 15.1 mA</span><span>0.7 C · 35.3 mA · 1.5 C · 75.6 mA</span></div>
+                </div>
+
+                <div class="cx-step-card">
+                  <div class="cx-step-card-head"><span>Steps in selected family</span><span>111 total · 3 loops</span></div>
+                  <table class="cx-step-table">
+                    <thead><tr><th>#</th><th>Type</th><th>Conditions</th><th>Flow</th></tr></thead>
+                    <tbody>
+                      <tr><td>1</td><td class="cx-step-name">Rest</td><td class="cx-step-detail">10 s</td><td class="cx-step-detail">Initial</td></tr>
+                      <tr><td>2</td><td class="cx-step-name">CC charge</td><td class="cx-step-detail">0.3 C → 4.5 V</td><td class="cx-step-detail">Block A</td></tr>
+                      <tr><td>3</td><td class="cx-step-name">CV hold</td><td class="cx-step-detail">4.5 V · 10 min</td><td class="cx-step-detail">Block A</td></tr>
+                      <tr><td>4</td><td class="cx-step-name">DCIR pulse</td><td class="cx-step-detail">1.5 C · 10 s</td><td class="cx-step-detail">Loop × 8</td></tr>
+                      <tr><td>5</td><td class="cx-step-name">Rest</td><td class="cx-step-detail">40 s</td><td class="cx-step-detail">Loop × 8</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="cx-step-filter" style="margin-top:10px">⌕&nbsp; Search steps, rates, limits or conditions</div>
+              </div>
+            </div>
+
+            <div class="cx-comparison-strip">
+              <div><div class="cx-strip-title">Analysis comparison scope</div><p>DCIR resistance uses pulse current and local voltage response; capacity cutoffs remain visible as evidence.</p></div>
+              <span class="cx-mini-badge blue">Per-family limits retained</span>
+            </div>
+          </section>
+
+        </div>
+
+        <div class="cx-modal-backdrop" id="cx-comparison-modal">
+          <aside class="cx-drawer" role="dialog" aria-modal="true" aria-label="Compare protocol families">
+            <div class="cx-drawer-head">
+              <div><h2>Compare protocol families</h2><p>Check whether two protocols are comparable for this analysis.</p></div>
+              <button class="cx-icon-button" aria-label="Close comparison">×</button>
+            </div>
+            <div class="cx-drawer-body">
+              <div class="cx-mode-label">Comparison basis</div>
+              <div class="cx-mode-switch" role="tablist" aria-label="Comparison basis">
+                <button class="cx-mode-button" data-mode="strict" role="tab">Strict</button>
+                <button class="cx-mode-button active" data-mode="workflow" role="tab" aria-selected="true">Workflow</button>
+                <button class="cx-mode-button" data-mode="custom" role="tab">Custom</button>
+              </div>
+              <div class="cx-mode-description" id="cx-mode-description">Same ordered building blocks, loops and explicit rates. Numeric limits may differ.</div>
+
+              <div class="cx-reference-row">
+                <div class="cx-reference-box reference"><small>Reference family</small><strong>Protocol 1 · 9 cells</strong><span>111 steps · BQV_2374…</span></div>
+                <div class="cx-reference-box candidate"><small>Candidate family</small><strong>Protocol 2 · 1 cell</strong><span>111 steps · BQV_2371…</span></div>
+              </div>
+
+              <div class="cx-custom-options" id="cx-custom-options">
+                <label class="cx-check-row"><input type="checkbox" checked data-dimension="flow"> Step flow, loops and block order</label>
+                <label class="cx-check-row"><input type="checkbox" checked data-dimension="rates"> Explicit C-rates and pulse timing</label>
+                <label class="cx-check-row"><input type="checkbox" data-dimension="voltage"> Voltage cutoffs and protection limits</label>
+                <label class="cx-check-row"><input type="checkbox" data-dimension="recording"> Recording and sampling settings</label>
+              </div>
+
+              <div class="cx-evidence-wrap">
+                <div class="cx-evidence-title">Comparison evidence</div>
+                <table class="cx-evidence-table">
+                  <thead><tr><th>Dimension</th><th>Reference</th><th>Candidate</th><th>Result</th></tr></thead>
+                  <tbody id="cx-evidence-body"></tbody>
+                </table>
+              </div>
+
+              <div class="cx-result-alert" id="cx-result-alert"><strong id="cx-result-title">Comparable workflow</strong><span id="cx-result-detail">Protocol 2 can join the DCIR workflow group. Its own voltage limits remain attached to the source and are not silently replaced.</span></div>
+            </div>
+            <div class="cx-drawer-foot"><span class="cx-foot-note">Diagnostic grouping · no source data changed</span><button class="cx-primary-button" id="cx-apply-button">Use workflow grouping</button></div>
+          </aside>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('cx-protocol-comparability-mockup');
+      if (!root) return;
+      const descriptions = {
+        strict: 'All scientific identity fields must match, including voltage cutoffs, protections and timing.',
+        workflow: 'Same ordered building blocks, loops and explicit rates. Numeric limits may differ.',
+        custom: 'Choose the dimensions that matter for the intended analysis; excluded fields stay visible as differences.'
+      };
+      const rows = [
+        { key: 'flow', label: 'Step flow and loops', left: '111 steps · 3 loops', right: '111 steps · 3 loops', same: true },
+        { key: 'rates', label: 'C-rate / pulse schedule', left: '0.3 C → 1.5 C · 8 pulses', right: '0.3 C → 1.5 C · 8 pulses', same: true },
+        { key: 'timing', label: 'Rest and hold timing', left: '10 s / 40 s rests', right: '10 s / 40 s rests', same: true },
+        { key: 'voltage', label: 'Voltage cutoffs', left: '2.0 V final discharge', right: '2.8 V final discharge', same: false },
+        { key: 'recording', label: 'Recording settings', left: '10 Hz pulse sampling', right: '10 Hz pulse sampling', same: true }
+      ];
+      const modeButtons = [...root.querySelectorAll('[data-mode]')];
+      const body = root.querySelector('#cx-evidence-body');
+      const description = root.querySelector('#cx-mode-description');
+      const resultTitle = root.querySelector('#cx-result-title');
+      const resultDetail = root.querySelector('#cx-result-detail');
+      const customOptions = root.querySelector('#cx-custom-options');
+      const applyButton = root.querySelector('#cx-apply-button');
+      let mode = 'workflow';
+
+      function checkedDimensions() {
+        return new Set([...root.querySelectorAll('[data-dimension]')].filter(input => input.checked).map(input => input.dataset.dimension));
+      }
+
+      function render() {
+        modeButtons.forEach(button => {
+          const active = button.dataset.mode === mode;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        description.textContent = descriptions[mode];
+        customOptions.classList.toggle('visible', mode === 'custom');
+        const selected = mode === 'strict' ? new Set(rows.map(row => row.key)) : mode === 'workflow' ? new Set(['flow', 'rates', 'timing', 'recording']) : checkedDimensions();
+        body.innerHTML = rows.map(row => {
+          const isSelected = selected.has(row.key);
+          const statusClass = isSelected ? (row.same ? 'same' : 'diff') : 'ignored';
+          const statusText = isSelected ? (row.same ? 'Same' : 'Different') : 'Ignored';
+          return '<tr><td>' + row.label + '</td><td>' + row.left + '</td><td>' + row.right + '</td><td><span class="cx-status ' + statusClass + '"><span class="cx-status-dot"></span>' + statusText + '</span></td></tr>';
+        }).join('');
+        const differences = rows.filter(row => selected.has(row.key) && !row.same).length;
+        if (differences === 0) {
+          resultTitle.textContent = mode === 'strict' ? 'Strictly comparable' : 'Comparable workflow';
+          resultDetail.textContent = mode === 'strict' ? 'Every selected protocol field matches.' : 'Protocol 2 can join the DCIR workflow group. Excluded numeric limits remain attached to the source.';
+          applyButton.textContent = mode === 'strict' ? 'Use strict grouping' : mode === 'custom' ? 'Use custom grouping' : 'Use workflow grouping';
+        } else {
+          resultTitle.textContent = 'Keep families separate';
+          resultDetail.textContent = differences + ' selected dimension' + (differences === 1 ? '' : 's') + ' differ. You can still inspect the protocols side by side without grouping them.';
+          applyButton.textContent = 'Keep separate';
+        }
+      }
+
+      modeButtons.forEach(button => button.addEventListener('click', () => { mode = button.dataset.mode; render(); }));
+      root.querySelectorAll('[data-dimension]').forEach(input => input.addEventListener('change', render));
+      const modal = root.querySelector('#cx-comparison-modal');
+      const trigger = root.querySelector('#cx-compare-trigger');
+      const closeButton = root.querySelector('[aria-label="Close comparison"]');
+      const setModalOpen = (open) => {
+        modal.classList.toggle('hidden', !open);
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      trigger.addEventListener('click', () => setModalOpen(true));
+      closeButton.addEventListener('click', () => setModalOpen(false));
+      modal.addEventListener('click', (event) => { if (event.target === modal) setModalOpen(false); });
+      setModalOpen(true);
+      render();
+    })();
+  </script>
+</div>
