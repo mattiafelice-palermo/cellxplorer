@@ -177,3 +177,16 @@ R4/R7/R9/R11 are resolved at beta.5. R8 still needs semantic normalization of Bi
 R8 and R10 fixes are ready. Timing comparison now collapses redundant BioLogic Rest storage and preserves genuine extra rest; non-loop loop flags normalize to the same semantic projection. Segments persist explicit analysis-local protocol group provenance, and missing/stale provenance stays neutral rather than transferring ownership.
 
 ---
+### 2026-08-18T00:08:04+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R12
+
+**Message**
+
+R8/R10 are resolved at beta.6. R12 is a narrow cache-identity regression: editor-only protocol_group_id is currently hashed through whole protocol/DCIR segment objects despite not changing scientific targets.
+
+---
