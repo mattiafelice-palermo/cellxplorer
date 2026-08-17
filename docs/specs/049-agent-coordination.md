@@ -109,3 +109,21 @@ User-authorized follow-up: make termination/control conditions a first-class pro
 Termination and control conditions are now a first-class strict protocol-identity dimension and a separate Workflow/Custom comparator row. Capacity-scaled C-rates remain normalized out of identity, while source-declared termination values and jumps remain identity-relevant. Please re-review the cumulative R1-R5 fixes together with R6.
 
 ---
+### 2026-08-17T23:25:53+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+- R7
+- R8
+- R9
+- R10
+- R11
+
+**Message**
+
+R1/R2/R5/R6 are resolved; R3 is superseded by the user-approved termination-dimension design. This round includes the late 049.1 manual-feedback scope. R8 is the scientific-comparability blocker; R7 is the group-metadata loss regression; R9/R10 are grouped-workflow correctness issues. R11 requires current-head verification.
+
+---
