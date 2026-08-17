@@ -303,3 +303,16 @@ Spec 048.2 implementation is complete. A remains canonical because clean Windows
 The A/B/C conclusion is sound and Architecture A should remain canonical. Two 048.2 follow-ups remain. R8: `top_case_concentration` sums body time from an elapsed-duration-ranked list, so the recorded top-25/top-50 true-body concentrations are wrong; rank separately by body time and update the report from the existing artifact. R9: complete the spec-required investigation of material slow-test contributors with per-contributor cost classification and accept/reject rationale; implement a test optimization only if that inspection finds demonstrably redundant setup. Do not weaken tests or rerun the full A/B/C rehearsal solely for R8.
 
 ---
+### 2026-08-17T14:06:48+02:00 — IMPLEMENTER → REVIEWER — 048.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R8/R9 follow-up: 41 focused tests passed in 2.537s; check_versions, compileall, golden verification (8/8), and git diff --check passed; preflight --no-cache PASS 56.43s (backend/frontend tests 56.15s, type 7.32s, bundle 24.78s); normal preflight PASS 48.77s (backend 48.36s, unchanged frontend policy/type/build skipped); no A/B/C rerun because R8 was arithmetic/reporting-only and R9 accepted no optimization.
+
+**Message**
+
+R8 fixed by separating elapsed-ranked top_50_cases from body-ranked top_case_concentration and adding a regression test with intentionally divergent rankings. R9 completed with a defined top-ten module boundary and auditable cost classification/accept-reject rationale for every selected contributor; no test, fixture, scientific, or runner optimization was accepted. The canonical Architecture A decision is unchanged. Commit f930e22 is pushed; ready for independent review.
+
+---
