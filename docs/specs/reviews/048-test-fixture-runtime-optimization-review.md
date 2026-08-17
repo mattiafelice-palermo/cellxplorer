@@ -1,156 +1,115 @@
 # Spec 048 implementation review — Test and release runtime optimization
 
-Status: **Changes required — documentation closure only (R10)**  
+Status: **FEATURE COMPLETE — cumulative review clean; ready for user merge decision**  
 Branch: `feature/test-fixture-runtime-optimization`  
 Merge base: `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6`  
-Reviewed branch head: `b6c6770489efedcebda83fb1d079bb1ff5419ede`  
+Final reviewed branch head: `59a50271c03d5257a79165f5b9e48f0bf5a9dea6`  
 Hosted 048.2 evidence commit: `7a048b2db67a127c59410c9ebd47efba43666ad1`
 
-## Review scope and result
+## Final decision
 
-Children 048, 048.1, and 048.2 are now **code/review clean**. R8 and R9 are resolved. I then performed the required fresh cumulative Parent 048 review against the original merge base rather than relying only on the child reviews.
+**REVIEW CLEAN — Parent Spec 048 and children 048.1/048.2 are complete.**
 
-The cumulative implementation is technically clean and the branch scope is coherent. The only remaining item is durable documentation closure: the parent/child status headers and `docs/specs/README.md` still describe 048 as planned/in progress and do not reflect the completed 048.2 child.
+A fresh cumulative review was performed against the original merge base after all child reviews. R1-R10 are resolved. The final R10 patch is documentation/status-only and accurately closes the parent/child/index records without rewriting historical evidence.
+
+The branch is ready to merge from the reviewer perspective. The merge decision remains with the user; this review does not merge, tag, or release the branch.
 
 ## Confirmed cumulative implementation
 
 - Exact repository: `mattiafelice-palermo/cellxplorer`.
 - Exact branch: `feature/test-fixture-runtime-optimization`.
 - Correct merge base/current `main`: `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6`.
-- Branch head reviewed: `b6c6770489efedcebda83fb1d079bb1ff5419ede`.
-- Branch is 44 commits ahead and 0 behind the merge base.
-- Branch scope is limited to the intended Parent 048 work: measured fixture reductions, the accepted Vite/Rolldown migration, preflight/test-runner tooling, release/CI orchestration and Rust-cache work, exhaustive profiling/runner diagnostics, focused tests, and documentation/workflow records.
-- No unrelated UI/scientific feature implementation is mixed into the branch.
+- Cumulative branch scope is coherent and contains no unrelated feature implementation.
 - Golden scientific source/manifest semantics remain unchanged.
-- No backend test-result caching, changed-test selection, test sampling, weakened tolerances, or reduced scientific assertions were introduced.
-- The temporary benchmark/rehearsal workflows used for evidence were removed before handoff.
+- No backend test-result caching, changed-test selection, sampling, loosened scientific tolerances, or removed assertions were introduced.
+- Temporary benchmark/rehearsal workflows used to collect hosted evidence were removed before final handoff.
 
-## Child 048 summary
+## Child 048 — fixture/test-runtime work
 
-The original fixture/runtime work remains accepted:
+Accepted retained changes:
 
-- Fast Neware moved repeated parameter coverage to compact deterministic parity while retaining a committed real-source smoke;
-- Beta bootstrap reuses an immutable current-schema construction input while each test still receives private writable state;
-- Neware Excel was profiled and deliberately left unchanged because serialization/parsing was not the dominant removable cost;
-- portable-analysis removed repeated equivalent valid-report construction while preserving malformed-container failure coverage;
-- the attempted timing-history scheduler and partition topology were rejected by controlled evidence and fully reverted;
-- Vite 8/Rolldown was retained after compatible build/test verification and material direct-build improvement.
+- Fast Neware replaces repeated long-file parameter work with compact deterministic parity while retaining a committed real-source smoke and direct cycle/decoder semantics.
+- Beta bootstrap reuses immutable schema construction input while every test keeps private writable state.
+- Neware Excel remains unchanged after profiling showed no justified broad fixture shortcut.
+- Portable-analysis removes repeated equivalent valid-report construction while retaining malformed-container failure semantics.
+- The timing-history scheduler was rejected by clean hosted evidence and fully removed.
+- The attempted suite partition topology was rejected after aggregate regression and fully reverted.
+- Vite 8/Rolldown remains retained after compatibility checks and material direct-build improvement.
 
-## Child 048.1 summary
+## Child 048.1 — release/CI runtime
 
-The release/CI work remains accepted:
+Accepted retained changes:
 
-- trusted exact-SHA canonical Windows preflight results may be reused under fail-closed trust rules;
-- failure blocks release while missing/cancelled/skipped evidence falls back to the complete release-local no-cache preflight;
-- the main-owned release-profile Rust cache is restored by release without relying on tag-scoped saves;
-- independent pip/npm and release-input work is parallelized with native GitHub Actions semantics;
+- release may reuse a trusted exact-SHA canonical Windows preflight under fail-closed workflow/job/SHA/origin rules;
+- failed canonical evidence blocks release, while missing/cancelled/skipped evidence falls back to the complete release-local no-cache preflight;
+- release restores a main-owned production-profile Rust cache without relying on tag-scoped cache saves;
+- independent dependency installs and exact-reuse release inputs use native GitHub Actions parallelism;
 - fallback preflight does not build the selected-channel frontend twice;
-- sidecar/frontend verification, packaged-backend smoke, Tauri packaging, signing/updater verification, draft publication, and channel-pointer mutation remain ordered and fail-closed;
-- hosted rehearsal `31975338254` demonstrated a cold 427.81 s release-profile compile followed by a warm exact cache hit at 138.97 s and passed the corrected release-input verification path.
+- frontend stamp verification, packaged-backend smoke, Tauri packaging, signing/updater validation, draft publication, and channel-pointer mutation remain ordered and fail-closed;
+- hosted rehearsal `31975338254` showed a cold release-profile Cargo build at 427.81 s and a warm exact-cache-hit build at 138.97 s, with the corrected release-input path passing.
 
-## Child 048.2 summary
+## Child 048.2 — exhaustive test profiling / runner architecture
 
-The exhaustive profiling/runner investigation is now accepted:
+Hosted run `31980485650`, job `95246290112`, supplied the authoritative clean Windows evidence:
 
-- hosted run `31980485650`, job `95246290112`, covered 70 backend modules / 1,199 backend cases and 60 frontend files / 571 frontend cases;
-- all six counterbalanced A/B/C passes completed the same complete backend population;
+- backend profile: 70 modules / 1,199 cases;
+- frontend profile: 60 files / 571 cases;
+- six counterbalanced backend runs: `A,B,C,C,B,A`;
 - Architecture A median: **53.153 s**;
 - Architecture B median: **108.201 s**;
 - Architecture C median: **59.157 s**;
-- B and C both passed reverse-module-order runs but neither materially beat A, so the existing fresh-process-per-module runner correctly remains canonical;
-- startup/import probes show meaningful repeated import cost, but the persistent alternatives did not reduce end-to-end wall time on the four-CPU hosted Windows runner;
-- the material-contributor audit now covers the top ten backend modules (72.950 s summed module wall, 52.546 s body time / 72.00% of backend body time) and records the dominant operation, behavior-vs-setup classification, concrete optimization considered, and accept/reject rationale for each;
-- no further individual optimization was accepted because the inspected cost was required integration/migration/parser/cache/report/lifecycle/isolation behavior rather than demonstrated redundant setup.
+- B and C both completed reverse-module-order runs with the full population and no failures.
+
+The evidence therefore supports retaining Architecture A, the existing fresh-process-per-module runner. Reducing repeated interpreter/import work did not improve complete-suite wall time on the four-logical-CPU hosted Windows runner.
+
+The profiler's corrected true-body concentration is approximately **31.60% / 52.34% / 65.03%** for the top 10/25/50 cases by body time. The material-contributor audit covers the hosted top-ten backend modules (72.950 s summed module wall; 52.546 s body, about 72% of total backend body time) and records the expensive operation, behavior-vs-setup classification, optimization considered, and accept/reject rationale for each.
+
+Representative reviewer spot checks support those decisions: migration tests intentionally construct distinct schema/database states; golden checkpoint tests already share immutable expensive setup at class scope; mixed-parser integration deliberately performs real binary+Excel ingest/cache construction with private mutable state. No concrete correctness-preserving redundant setup remained that justified another test rewrite.
 
 ## Verification record
 
-### Implementer-reported latest 048.2 follow-up
+### Implementer-reported final 048.2 follow-up
 
 - focused R8/R9 suite: **PASS**, 41 tests in 2.537 s;
 - `python scripts/check_versions.py`: **PASS**;
 - `python -m compileall -q backend tests scripts`: **PASS**;
 - golden verification: **PASS**, 8/8;
 - `git diff --check`: **PASS**;
-- `python scripts/preflight.py --no-cache`: **PASS**, 56.43 s; backend/frontend stage 56.15 s, type check 7.32 s, bundle 24.78 s;
-- `python scripts/preflight.py`: **PASS**, 48.77 s; backend stage 48.36 s, unchanged frontend policy/type/build stages skipped by the existing conservative cache;
-- no A/B/C rerun, appropriately, because R8 was reporting arithmetic only and R9 retained no runner/test optimization.
+- `python scripts/preflight.py --no-cache`: **PASS**, 56.43 s;
+- `python scripts/preflight.py`: **PASS**, 48.77 s;
+- R10 documentation closure: `git diff --check` **PASS**; only the requested four status/index documents changed.
+
+Earlier child-specific verification and hosted evidence remain recorded in the specifications/coordination history.
 
 ### Reviewer-independent
 
 I independently inspected through the GitHub connector:
 
-- the full branch comparison against `02dfcb868bd4d9fe3e1e271f28343b73dbc476c6`;
-- the original Parent 048 goals/locked decisions and implementation record;
-- final 048.1 release/CI implementation and previously accepted hosted evidence;
-- 048.2 profiler/benchmark implementation and focused tests;
-- raw 048.2 hosted artifact `9272359471` and its complete backend/frontend/A/B/C populations;
-- R8 fix commit `f930e226c2e90513fabfa218e076146c07858955`;
-- the new body-ranked concentration regression test;
-- corrected body-time concentration values from the existing raw artifact: about 31.60% / 52.34% / 65.03%;
-- R9's top-ten material-contributor audit;
-- representative contributor modules including import flow, database migrations, golden approval checkpoints, and mixed-parser integration.
+- the full feature branch against the verified merge base;
+- child 048 implementation and retained/reverted experiments;
+- final 048.1 release/preflight workflows, helper behavior, tests, and accepted hosted rehearsal evidence;
+- 048.2 profiler, A/B/C benchmark harness, isolation tests, raw hosted artifact `9272359471`, and complete test populations;
+- R8 arithmetic/ranking correction and divergent-ranking regression test;
+- R9 material-contributor audit plus representative actual slow-test modules;
+- R10 commit `c689103930dc529fe8f85266045cc3dc2a53d649`, confirming it changes only Parent 048, 048.1, 048.2, and `docs/specs/README.md` status/index text.
 
-The R9 spot checks support the recorded decisions: migration tests intentionally construct distinct fresh/historical/future/corrupt states; golden checkpoint tests already share their immutable expensive environment at class scope; mixed-parser integration intentionally performs real binary+Excel ingestion/cache construction against private mutable DB/cache state. I did not find a concrete correctness-preserving setup shortcut that the implementer improperly rejected.
-
-I did **not** independently execute repository test commands in this Chat + GitHub reviewer session.
+I did **not** independently execute local repository commands in this Chat + GitHub reviewer session. Hosted Actions/raw-artifact evidence was independently inspected where stated.
 
 ## Findings
 
-### R1 — RESOLVED: timing-history scheduler reverted
-
-### R2 — RESOLVED: partition experiment reverted
-
-### R3 — RESOLVED: Vite 8 / Rolldown migration accepted
-
-### R4 — RESOLVED: backend-only sidecar no longer races frontend stamp
-
-### R5 — RESOLVED: exact-SHA release decision uses the canonical job
-
-### R6 — RESOLVED: main dependency installs use native parallel steps
-
-### R7 — RESOLVED: hosted release/cache runtime evidence obtained
-
-### R8 — RESOLVED: body-time concentration uses a body-ranked population
-
-`profile_test_suite.py` now maintains separate elapsed and body rankings, preserves elapsed ordering for `top_50_cases`, calculates `top_case_concentration` from `body_seconds`, and has a regression test where the rankings deliberately diverge. The implementation record now contains the corrected 31.60% / 52.34% / 65.03% values.
-
-### R9 — RESOLVED: material slow-test contributors are explicitly audited
-
-The implementation record defines a top-ten / >=3.9 s hosted-module-wall selection boundary and documents the required cost classification, concrete optimization considered, and accept/reject rationale for every selected contributor. No speculative test weakening was introduced.
-
-### R10 — Low: close stale Parent 048 status documentation
-
-Affected files:
-- `docs/specs/048-test-fixture-runtime-optimization.md`
-- `docs/specs/048.1-release-ci-runtime-optimization.md`
-- `docs/specs/048.2-full-test-suite-profiling-and-runner-architecture.md`
-- `docs/specs/README.md`
-
-**Current**
-
-The cumulative implementation is review-clean, but durable status text is stale:
-
-- Parent 048 still says `Status: Plan`;
-- 048.1 still says `Implementation in progress — child 048 review-clean`;
-- 048.2 still says `Implemented - awaiting independent review`;
-- the spec index says child 048.1 is in progress and does not list child 048.2.
-
-**Target**
-
-Perform the final documentation closure authorized by this cumulative review. Mark Parent 048 and both children as implemented/review-clean, list 048.2 in the index, and make the index summary accurately state that 048/048.1/048.2 and the cumulative Parent 048 review are complete. Do not rewrite historical measurement text or implementation chronology.
-
-**Acceptance criteria**
-
-- Parent 048 header clearly says complete/review-clean;
-- 048.1 header clearly says implemented/review-clean;
-- 048.2 header clearly says implemented/review-clean;
-- `docs/specs/README.md` lists both 048.1 and 048.2 and states the parent/final cumulative review is complete;
-- no historical implementation/evidence records are rewritten merely to make them look current;
-- patch is documentation/status only;
-- `git diff --check` passes.
+- **R1 — RESOLVED:** timing-history scheduler reverted after clean CI rejection.
+- **R2 — RESOLVED:** regressing partition topology reverted.
+- **R3 — RESOLVED:** compatible Vite 8/Rolldown migration retained.
+- **R4 — RESOLVED:** backend-only sidecar path no longer races frontend stamp.
+- **R5 — RESOLVED:** exact-SHA release decision uses the named canonical job.
+- **R6 — RESOLVED:** main dependency installs use native parallel steps.
+- **R7 — RESOLVED:** hosted Rust-cache/release-input evidence obtained.
+- **R8 — RESOLVED:** body-time concentration now uses a body-ranked population with regression coverage.
+- **R9 — RESOLVED:** material slow-test contributors have an auditable per-contributor investigation.
+- **R10 — RESOLVED:** parent/child/index closure documentation now accurately says implemented/review-clean and lists 048.2.
 
 ## Merge readiness
 
-**TECHNICAL/CUMULATIVE REVIEW CLEAN; NOT YET FEATURE_COMPLETE ONLY BECAUSE R10 DOCUMENTATION CLOSURE IS UNCOMMITTED.**
+**READY TO MERGE.**
 
-Return the documentation-only R10 patch for a final reviewer verification. If it is limited to the requested closure and accurate, the reviewer can set the workflow to `FEATURE_COMPLETE` and leave the merge decision to the user.
+All Parent 048 repository-side findings are resolved, all children are review-clean, the cumulative review is clean, and durable status documentation is closed. No manual/browser validation is required for this tooling/CI-only parent. The user retains the final merge/release decision.
