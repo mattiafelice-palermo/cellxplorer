@@ -473,6 +473,86 @@ class AnalysisCacheTests(unittest.TestCase):
             analysis_cache._scientific_spec(changed_target),
         )
 
+    def test_editor_only_protocol_group_provenance_does_not_change_cache_identity(self):
+        base = {
+            "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
+            "computation": {
+                "steps": {
+                    "series": [{"id": "s1", "cell_id": 7, "segment_id": "shared-rpt"}],
+                    "mode": "union",
+                },
+                "dcir": {
+                    "series": [{"id": "d1", "cell_id": 7, "segment_id": "dcir-discharge"}]
+                },
+            },
+            "aggregation": {},
+            "protocol_segments": [
+                {
+                    "id": "shared-rpt",
+                    "name": "Shared RPT",
+                    "protocol_group_id": "group-a",
+                    "targets": [
+                        {"protocol_signature": "protocol-a", "step_indices": [12, 13]}
+                    ],
+                }
+            ],
+            "dcir_segments": [
+                {
+                    "id": "dcir-discharge",
+                    "name": "Discharge pulse",
+                    "protocol_group_id": "group-a",
+                    "targets": [
+                        {
+                            "protocol_signature": "protocol-a",
+                            "rest_step_index": 12,
+                            "pulse_step_index": 13,
+                        }
+                    ],
+                }
+            ],
+            "presentation": {},
+        }
+        changed_provenance = deepcopy(base)
+        changed_provenance["protocol_segments"][0]["protocol_group_id"] = "group-b"
+        changed_provenance["dcir_segments"][0]["protocol_group_id"] = "group-b"
+
+        self.assertEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_provenance),
+        )
+
+        changed_target = deepcopy(base)
+        changed_target["protocol_segments"][0]["targets"][0]["step_indices"] = [12, 14]
+        changed_target["dcir_segments"][0]["targets"][0]["pulse_step_index"] = 15
+        self.assertNotEqual(
+            analysis_cache._scientific_spec(base),
+            analysis_cache._scientific_spec(changed_target),
+        )
+
+        db = object()
+        with (
+            patch.object(analysis_engine, "resolve_selection", return_value=([], [])),
+            patch.object(analysis_engine, "preload_cell_sources"),
+            patch.object(analysis_engine, "load_scalar_metadata", return_value={}),
+        ):
+            for kind in ("steps", "dcir"):
+                self.assertEqual(
+                    analysis_cache.result_key(
+                        db, kind, base, None, use_current_versions=True
+                    ),
+                    analysis_cache.result_key(
+                        db, kind, changed_provenance, None, use_current_versions=True
+                    ),
+                )
+                self.assertNotEqual(
+                    analysis_cache.result_key(
+                        db, kind, base, None, use_current_versions=True
+                    ),
+                    analysis_cache.result_key(
+                        db, kind, changed_target, None, use_current_versions=True
+                    ),
+                )
+
     def test_steps_result_schema_version_only_invalidates_steps_results(self):
         spec = {
             "selection": {"units": []},

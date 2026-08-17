@@ -146,12 +146,29 @@ def _forget_budgeted(path: Path) -> None:
 
 def _scientific_spec(spec: dict) -> dict:
     presentation = spec.get("presentation") or {}
+
+    def scientific_segments(value: object) -> list[object]:
+        """Exclude editor-only provenance while retaining scientific fields."""
+        if not isinstance(value, list):
+            return []
+        result: list[object] = []
+        for segment in value:
+            if not isinstance(segment, dict):
+                result.append(segment)
+                continue
+            normalized = dict(segment)
+            # Protocol-group attribution is analysis-editor metadata. The
+            # engine consumes exact targets, not the group that produced them.
+            normalized.pop("protocol_group_id", None)
+            result.append(normalized)
+        return result
+
     return {
         "selection": spec.get("selection") or {},
         "computation": spec.get("computation") or {},
         "aggregation": spec.get("aggregation") or {},
-        "protocol_segments": spec.get("protocol_segments") or [],
-        "dcir_segments": spec.get("dcir_segments") or [],
+        "protocol_segments": scientific_segments(spec.get("protocol_segments")),
+        "dcir_segments": scientific_segments(spec.get("dcir_segments")),
         "hidden_protocol_segment_ids": presentation.get("hidden_protocol_segment_ids") or [],
     }
 

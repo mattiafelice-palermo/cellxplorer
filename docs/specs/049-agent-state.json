@@ -6,11 +6,11 @@
   "children": [
     "049"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "FIX_REVIEW",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [
     "R12"
   ],
   "resume_review": "REVIEW",
-  "updated_at": "2026-08-18T00:08:04+02:00"
+  "updated_at": "2026-08-18T00:14:24+02:00"
 }

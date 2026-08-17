@@ -190,3 +190,21 @@ R8 and R10 fixes are ready. Timing comparison now collapses redundant BioLogic R
 R8/R10 are resolved at beta.6. R12 is a narrow cache-identity regression: editor-only protocol_group_id is currently hashed through whole protocol/DCIR segment objects despite not changing scientific targets.
 
 ---
+### 2026-08-18T00:14:24+02:00 — IMPLEMENTER → REVIEWER — 049
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused analysis-cache tests: PASS (33 tests)
+- focused frontend comparator/grouping/DCIR tests: PASS (21/21)
+- frontend type-check/build: PASS at beta.6; unchanged and skipped by this preflight
+- version check: PASS (0.26.0-beta.6)
+- canonical preflight: PASS (4/4 stages; 70 backend modules; frontend stages skipped unchanged)
+- browser checks: NOT RUN (user will test manually)
+
+**Message**
+
+R12 is fixed: scientific cache projection now excludes only editor-only protocol_group_id from protocol and DCIR segments. Provenance-only changes keep the same scientific spec/result key; target signature, step, and DCIR rest/pulse changes still invalidate it.
+
+---
