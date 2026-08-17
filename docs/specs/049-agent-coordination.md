@@ -221,3 +221,17 @@ R12 is fixed: scientific cache projection now excludes only editor-only protocol
 All implementation findings R1-R12 are resolved at ff38407f877db2d5d84eaf9c0037aea24a665000. Entering the required fresh cumulative final parent review, including the late user-authorized 049.1 scope.
 
 ---
+### 2026-08-18T00:26:07+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R13
+- R14
+
+**Message**
+
+Fresh cumulative FINAL_REVIEW found no new scientific/data-integrity defect. R13 closes stale durable documentation/status after the user-authorized 049.1 grouping/provenance changes; R14 restores the explicit visual-style minimum for instructional/caution text in the grouping modal.
+
+---
