@@ -93,6 +93,13 @@ export function isEmptyRestPauseStep(step: ProtocolStep): boolean {
     step.record_voltage_delta_v,
     step.protection_upper_v,
     step.protection_lower_v,
+    step.capacity_limit_mah,
+    step.hold_duration_s,
+    step.rest_duration_s,
+    step.final_voltage_test_v,
+    // BioLogic currently emits false for non-loop steps. Only an explicit
+    // inclusive loop marker changes the meaning of an otherwise empty rest.
+    step.loop_body_inclusive === true ? true : null,
   ].every((value) => value == null) && (step.conditions?.length ?? 0) === 0;
 }
 
@@ -262,6 +269,7 @@ function structureToken(protocol: FileProtocol, strict: boolean): string {
     direction: step.direction,
     loop_start_step: strict ? step.loop_start_step : null,
     loop_count: step.loop_count,
+    loop_body_inclusive: step.loop_body_inclusive ?? null,
   }));
   const groups = protocol.groups.map(groupWorkflowToken);
   return JSON.stringify({ steps, groups });
@@ -269,7 +277,10 @@ function structureToken(protocol: FileProtocol, strict: boolean): string {
 
 function terminationToken(protocol: FileProtocol, strict: boolean): string {
   const order = stepOrder(protocol);
-  const steps = protocol.steps.map((step) => conditionToken(step, strict, order));
+  const steps = protocol.steps.map((step) => ({
+    conditions: conditionToken(step, strict, order),
+    capacity_limit_mah: step.capacity_limit_mah ?? null,
+  }));
   return JSON.stringify(steps);
 }
 
@@ -312,7 +323,19 @@ function conditionEvidence(step: ProtocolStep): string {
     .map((condition) => {
       const value = condition.value == null ? "?" : formatNumber(condition.value);
       const jump = condition.jump_step == null ? "no jump" : `jump S${condition.jump_step}`;
-      return `if ${condition.expression}=${value}, ${jump}`;
+      const expression = condition.name
+        ? `${condition.expression} [${condition.name}]`
+        : condition.expression;
+      // CmpType is source data whose numeric meaning is not verified across
+      // cycler formats. Render the normalized id instead of guessing a symbol.
+      const comparator = condition.comparator_id == null
+        ? "="
+        : `cmp#${condition.comparator_id}`;
+      const bindings = [
+        condition.global_user_id == null ? null : `global#${condition.global_user_id}`,
+        condition.stores_as ? `stores as ${condition.stores_as}` : null,
+      ].filter((value): value is string => value !== null);
+      return `if ${expression} ${comparator} ${value}${bindings.length ? ` (${bindings.join(", ")})` : ""}, ${jump}`;
     })
     .join("; ");
 }
@@ -330,7 +353,9 @@ function groupEvidence(group: ProtocolGroup, order: Map<number, number>): string
 
 function structureSummary(protocol: FileProtocol): string {
   const steps = protocol.steps.map((step, index) => {
-    const loop = step.loop_count == null ? "" : ` x${step.loop_count}`;
+    const loop = step.loop_count == null
+      ? ""
+      : ` x${step.loop_count}${step.loop_body_inclusive == null ? "" : step.loop_body_inclusive ? " inclusive" : " exclusive"}`;
     return `${stepLabel(index)} ${step.type}${loop}`;
   });
   const blocks = protocol.groups.map((group) => groupEvidence(group, stepOrder(protocol)));
@@ -341,7 +366,12 @@ function terminationSummary(protocol: FileProtocol): string {
   const conditions = protocol.steps
     .map((step, index) => {
       const evidence = conditionEvidence(step);
-      return evidence ? `${stepLabel(index)} ${evidence}` : null;
+      const values = [] as string[];
+      if (step.capacity_limit_mah != null) {
+        values.push(`capacity cutoff ${formatNumber(step.capacity_limit_mah)} mAh`);
+      }
+      if (evidence) values.push(evidence);
+      return values.length > 0 ? `${stepLabel(index)} ${values.join("; ")}` : null;
     })
     .filter((value): value is string => value !== null);
   return conditions.join(" | ") || "No conditional termination or branch rules";
@@ -367,7 +397,13 @@ function ratesSummary(protocol: FileProtocol): string {
 
 function timingSummary(protocol: FileProtocol): string {
   return protocol.steps
-    .map((step, index) => `${stepLabel(index)} ${step.time_limit_s == null ? "Unavailable" : formatDuration(step.time_limit_s)}`)
+    .map((step, index) => {
+      const values: string[] = [];
+      if (step.time_limit_s != null) values.push(`limit ${formatDuration(step.time_limit_s)}`);
+      if (step.hold_duration_s != null) values.push(`hold ${formatDuration(step.hold_duration_s)}`);
+      if (step.rest_duration_s != null) values.push(`rest ${formatDuration(step.rest_duration_s)}`);
+      return `${stepLabel(index)} ${values.join("; ") || "Unavailable"}`;
+    })
     .join(" | ") || "Unavailable";
 }
 
@@ -379,6 +415,7 @@ function voltageSummary(protocol: FileProtocol): string {
     if (step.protection_lower_v != null || step.protection_upper_v != null) {
       values.push(`protect ${step.protection_lower_v == null ? "?" : formatNumber(step.protection_lower_v)}-${step.protection_upper_v == null ? "?" : formatNumber(step.protection_upper_v)} V`);
     }
+    if (step.final_voltage_test_v != null) values.push(`final test ${formatNumber(step.final_voltage_test_v)} V`);
     return `${stepLabel(index)} ${values.join("; ") || "Unavailable"}`;
   }).join(" | ") || "Unavailable";
 }
@@ -418,13 +455,18 @@ function dimensionEqual(
     case "rates":
       return ratesEqual(comparableReference, comparableCandidate);
     case "timing":
-      return valuesEqual(comparableReference, comparableCandidate, (step) => [step.time_limit_s]);
+      return valuesEqual(comparableReference, comparableCandidate, (step) => [
+        step.time_limit_s,
+        step.hold_duration_s ?? null,
+        step.rest_duration_s ?? null,
+      ]);
     case "voltage":
       return valuesEqual(comparableReference, comparableCandidate, (step) => [
         step.target_voltage_v,
         step.stop_voltage_v,
         step.protection_lower_v,
         step.protection_upper_v,
+        step.final_voltage_test_v ?? null,
       ]);
     case "recording":
       return valuesEqual(comparableReference, comparableCandidate, (step) => [

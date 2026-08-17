@@ -88,8 +88,10 @@ import {
   type NeighbourScope,
 } from "./protocolStepNeighbours";
 import {
+  mergeProtocolGroups,
   normalizeProtocolGroups,
   protocolGroupForDefinition,
+  protocolGroupsForMembership,
   type ProtocolGroupDefinition,
 } from "./protocolGroupPolicy";
 
@@ -752,11 +754,12 @@ function segmentTargetGroup(
 ): ProtocolFamilyGroup | null {
   const targetSignatures = new Set(segmentTargetFamilies(segment, families).map((family) => family.signature));
   if (targetSignatures.size === 0) return null;
-  return protocolGroups.find((group) => {
-    if (!isSelectableProtocolGroup(group)) return false;
-    const members = protocolGroupMembers(group, families);
-    return members.length === targetSignatures.size && members.every((family) => targetSignatures.has(family.signature));
-  }) ?? null;
+  const matches = protocolGroupsForMembership(protocolGroups, [...targetSignatures])
+    .filter((group) => isSelectableProtocolGroup(group));
+  // A segment only stores exact source targets, not the modal definition that
+  // created them. If two saved definitions intentionally share membership,
+  // avoid pretending that the first one owns the segment.
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function segmentTargetLabel(
@@ -765,8 +768,15 @@ function segmentTargetLabel(
   protocolGroups: ProtocolFamilyGroup[],
 ): string {
   const targetFamilies = segmentTargetFamilies(segment, families);
+  const matchingGroups = protocolGroupsForMembership(
+    protocolGroups,
+    targetFamilies.map((family) => family.signature),
+  ).filter((group) => isSelectableProtocolGroup(group));
   const group = segmentTargetGroup(segment, families, protocolGroups);
   if (group) return `${group.name} - ${targetFamilies.length} families`;
+  if (matchingGroups.length > 1 && targetFamilies.length > 1) {
+    return `Grouped selection - ${targetFamilies.length} families`;
+  }
   const labels = segment.targets.map((target) => {
     const family = families.find((item) => familyMatchesSignature(item, target.protocol_signature));
     return family
@@ -1224,19 +1234,16 @@ function GroupedProtocolComparisonModal({
 
   const applyGroups = () => {
     if (!canApply || !onApplyGroups) return;
-    onApplyGroups(
-      normalizeProtocolGroups(
-        newGroupProposals.map((proposal, index) => ({
-          id: segmentId(),
-          name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
-          family_signatures: proposal.members.map((family) => family.signature),
-          reference_signature: proposal.reference.signature,
-          comparison_mode: mode,
-          comparison_dimensions: { ...comparedDimensions },
-          ignore_empty_rest_pause: comparisonOptions.ignoreEmptyRestPause ?? false,
-        })),
-      ),
-    );
+    const additions = newGroupProposals.map((proposal, index) => ({
+      id: segmentId(),
+      name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
+      family_signatures: proposal.members.map((family) => family.signature),
+      reference_signature: proposal.reference.signature,
+      comparison_mode: mode,
+      comparison_dimensions: { ...comparedDimensions },
+      ignore_empty_rest_pause: comparisonOptions.ignoreEmptyRestPause ?? false,
+    }));
+    onApplyGroups(mergeProtocolGroups(existingGroups, additions));
     onClose();
   };
 

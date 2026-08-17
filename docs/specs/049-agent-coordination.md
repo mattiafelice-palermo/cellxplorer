@@ -127,3 +127,21 @@ Termination and control conditions are now a first-class strict protocol-identit
 R1/R2/R5/R6 are resolved; R3 is superseded by the user-approved termination-dimension design. This round includes the late 049.1 manual-feedback scope. R8 is the scientific-comparability blocker; R7 is the group-metadata loss regression; R9/R10 are grouped-workflow correctness issues. R11 requires current-head verification.
 
 ---
+### 2026-08-17T23:49:16+02:00 — IMPLEMENTER → REVIEWER — 049
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend comparator/grouping/DCIR tests: PASS (20/20)
+- focused backend BioLogic/protocol/rate/identity tests: PASS (80 tests)
+- frontend type-check/build: PASS (npm.cmd run build)
+- version check: PASS (0.26.0-beta.5)
+- canonical preflight: PASS (4/4 stages; all 134 backend/frontend test files/modules)
+- browser checks: NOT RUN (user will test manually)
+
+**Message**
+
+Review fixes R4, R7, R8, R9, and R10 are implemented. Declared BioLogic controls are visible in their comparison dimensions; group creation preserves existing definitions; ambiguous group provenance is neutral; and grouped DCIR validation follows the authorized empty-step policy. Current checkpoint is beta.5.
+
+---

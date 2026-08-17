@@ -4,6 +4,7 @@ import test from "node:test";
 import type { FileProtocol, ProtocolGroup, ProtocolStep } from "../src/api.ts";
 import {
   compareProtocolFamilies,
+  isEmptyRestPauseStep,
   mapComparableProtocolStepNumbers,
   normalizeProtocolRate,
   WORKFLOW_COMPARISON_DIMENSIONS,
@@ -193,9 +194,22 @@ test("termination conditions are separate from workflow structure", () => {
   assert.equal(changedValueResult.comparable, false);
   assert.equal(row(changedValueResult, "structure").status, "same");
   assert.equal(row(changedValueResult, "termination").status, "different");
-  assert.match(row(changedValueResult, "termination").reference, /S1 if DischargeAh=1, jump S2/);
-  assert.match(row(changedValueResult, "termination").candidate, /S1 if DischargeAh=2, jump S2/);
+  assert.match(row(changedValueResult, "termination").reference, /S1 if DischargeAh \[capacity\] cmp#2 1, jump S2/);
+  assert.match(row(changedValueResult, "termination").candidate, /S1 if DischargeAh \[capacity\] cmp#2 2, jump S2/);
   assert.equal(row(changedJumpResult, "termination").status, "different");
+
+  const changedComparator = protocol({
+    steps: [step({ conditions: [{ ...condition, comparator_id: 3 }] }), protocol().steps[1]],
+  });
+  const changedBinding = protocol({
+    steps: [step({ conditions: [{ ...condition, global_user_id: 72, stores_as: "User2" }] }), protocol().steps[1]],
+  });
+  const changedComparatorResult = compareProtocolFamilies(reference, changedComparator, "custom", custom);
+  const changedBindingResult = compareProtocolFamilies(reference, changedBinding, "custom", custom);
+  assert.equal(row(changedComparatorResult, "termination").status, "different");
+  assert.equal(row(changedBindingResult, "termination").status, "different");
+  assert.match(row(changedComparatorResult, "termination").candidate, /cmp#3/);
+  assert.match(row(changedBindingResult, "termination").candidate, /global#72, stores as User2/);
 
   const renumbered = protocol({
     steps: [
@@ -235,6 +249,70 @@ test("missing timing values are compared as missing, not as zero", () => {
   assert.equal(result.comparable, false);
   assert.equal(row(result, "timing").status, "different");
   assert.match(row(result, "timing").candidate, /Unavailable/);
+});
+
+test("declared protocol controls participate in their scientific comparison dimensions", () => {
+  const terminationCustom: ProtocolComparisonDimensions = {
+    ...WORKFLOW_COMPARISON_DIMENSIONS,
+    termination: true,
+  };
+  const capacityChanged = compareProtocolFamilies(
+    protocol(),
+    protocol({ steps: [step({ capacity_limit_mah: 12 }), protocol().steps[1]] }),
+    "custom",
+    terminationCustom,
+  );
+  assert.equal(row(capacityChanged, "termination").status, "different");
+  assert.match(row(capacityChanged, "termination").candidate, /capacity cutoff 12 mAh/);
+
+  const timingChanged = compareProtocolFamilies(
+    protocol(),
+    protocol({ steps: [step({ hold_duration_s: 4, rest_duration_s: 8 }), protocol().steps[1]] }),
+    "workflow",
+  );
+  assert.equal(row(timingChanged, "timing").status, "different");
+  assert.match(row(timingChanged, "timing").candidate, /hold 4 s; rest 8 s/);
+
+  const voltageChanged = compareProtocolFamilies(
+    protocol({ signature: "gcpl-reference" }),
+    protocol({ signature: "gcpl-candidate", steps: [step({ final_voltage_test_v: 3.1 }), protocol().steps[1]] }),
+    "strict",
+  );
+  assert.equal(row(voltageChanged, "voltage").status, "different");
+  assert.match(row(voltageChanged, "voltage").candidate, /final test 3.1 V/);
+  assert.ok(voltageChanged.rows.some((item) => item.status === "different"));
+
+  const loopChanged = compareProtocolFamilies(
+    protocol({ steps: [step({ loop_count: 2, loop_body_inclusive: false }), protocol().steps[1]] }),
+    protocol({ steps: [step({ loop_count: 2, loop_body_inclusive: true }), protocol().steps[1]] }),
+    "workflow",
+  );
+  assert.equal(row(loopChanged, "structure").status, "different");
+  assert.match(row(loopChanged, "structure").candidate, /inclusive/);
+});
+
+test("empty rest or pause detection fails closed for declared controls", () => {
+  const empty = step({
+    type: "Pause",
+    direction: "rest",
+    current_ma: null,
+    c_rate: null,
+    target_voltage_v: null,
+    stop_voltage_v: null,
+    stop_current_ma: null,
+    stop_c_rate: null,
+    time_limit_s: null,
+    record_interval_s: null,
+    record_voltage_delta_v: null,
+    protection_upper_v: null,
+    protection_lower_v: null,
+  });
+  assert.equal(isEmptyRestPauseStep(empty), true);
+  assert.equal(isEmptyRestPauseStep({ ...empty, capacity_limit_mah: 1 }), false);
+  assert.equal(isEmptyRestPauseStep({ ...empty, hold_duration_s: 2 }), false);
+  assert.equal(isEmptyRestPauseStep({ ...empty, rest_duration_s: 2 }), false);
+  assert.equal(isEmptyRestPauseStep({ ...empty, final_voltage_test_v: 3.2 }), false);
+  assert.equal(isEmptyRestPauseStep({ ...empty, loop_body_inclusive: true }), false);
 });
 
 test("custom mode with no selected dimensions fails closed", () => {

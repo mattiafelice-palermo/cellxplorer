@@ -3,10 +3,12 @@ import test from "node:test";
 
 import type { ProtocolFamilyGroup } from "../src/api.ts";
 import {
+  mergeProtocolGroups,
   normalizeProtocolGroups,
   protocolGroupDefinitionKey,
   protocolGroupForDefinition,
   protocolGroupMembershipKey,
+  protocolGroupsForMembership,
 } from "../src/features/analyses/editor/protocol/protocolGroupPolicy.ts";
 
 function group(
@@ -73,5 +75,29 @@ test("an existing definition is reused regardless of proposal order", () => {
       ignore_empty_rest_pause: true,
     })?.id,
     "group-1",
+  );
+});
+
+test("merging new definitions preserves existing groups and excludes exact duplicates", () => {
+  const existing = group("group-a", ["protocol-a", "protocol-b"]);
+  const addition = group("group-b", ["protocol-b", "protocol-c"]);
+  const duplicateWithNewId = group("duplicate", ["protocol-b", "protocol-a"], "protocol-a");
+
+  assert.deepEqual(
+    mergeProtocolGroups([existing], [addition, duplicateWithNewId]).map((item) => item.id),
+    ["group-a", "group-b"],
+  );
+  assert.equal(
+    mergeProtocolGroups([{ ...existing, name: "Renamed A" }], [addition])[0].name,
+    "Renamed A",
+  );
+});
+
+test("membership lookup exposes ambiguity instead of selecting the first definition", () => {
+  const first = group("group-a", ["protocol-a", "protocol-b"]);
+  const second = { ...group("group-b", ["protocol-b", "protocol-a"]), ignore_empty_rest_pause: false };
+  assert.deepEqual(
+    protocolGroupsForMembership([first, second], ["protocol-b", "protocol-a"]).map((item) => item.id),
+    ["group-a", "group-b"],
   );
 });

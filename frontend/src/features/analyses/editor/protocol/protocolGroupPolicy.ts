@@ -48,6 +48,21 @@ export function protocolGroupForDefinition(
 }
 
 /**
+ * Return every saved definition for one exact family membership. Membership
+ * alone is deliberately not a complete group identity: two definitions may
+ * use different comparison dimensions or empty-step policies.
+ */
+export function protocolGroupsForMembership(
+  groups: ProtocolFamilyGroup[],
+  familySignatures: string[],
+): ProtocolFamilyGroup[] {
+  const membershipKey = protocolGroupMembershipKey(familySignatures);
+  return groups.filter(
+    (group) => protocolGroupMembershipKey(group.family_signatures) === membershipKey,
+  );
+}
+
+/**
  * Keep only selectable, unique named groupings. A single family already has a
  * raw protocol-family option and must not gain a duplicate named option. Two
  * definitions with the same family membership but different comparison
@@ -73,4 +88,25 @@ export function normalizeProtocolGroups(
       seenDefinitions.add(key);
       return true;
     });
+}
+
+/**
+ * Merge newly proposed definitions into the complete saved list. Callers of
+ * the grouping modal persist the callback result as the analysis-local group
+ * collection, so replacing the list with only the current proposals would
+ * silently remove earlier groups.
+ */
+export function mergeProtocolGroups(
+  existing: ProtocolFamilyGroup[],
+  additions: ProtocolFamilyGroup[],
+): ProtocolFamilyGroup[] {
+  const merged = normalizeProtocolGroups(existing);
+  const seenDefinitions = new Set(merged.map(protocolGroupDefinitionKey));
+  for (const group of normalizeProtocolGroups(additions)) {
+    const key = protocolGroupDefinitionKey(group);
+    if (seenDefinitions.has(key)) continue;
+    seenDefinitions.add(key);
+    merged.push(group);
+  }
+  return merged;
 }

@@ -96,6 +96,10 @@ import {
 import { RecognitionProgress } from "../../recognition/RecognitionProgress.tsx";
 import { groupSuggestionsByFamily } from "../../protocol/suggestionGrouping";
 import { groupCellsByApplicability } from "./suggestionGrouping";
+import {
+  dcirIgnoreEmptyRestPauseForSegment,
+  dcirTargetFromSteps,
+} from "./dcirProtocolPolicy";
 
 interface DcirCandidate extends DcirSegmentTarget {
   id: string;
@@ -365,35 +369,6 @@ function useDcirProtocols(analysisId: number, spec: AnalysisSpec) {
   });
 }
 
-function targetFromSteps(
-  family: DcirProtocolFamily,
-  stepIndices: number[],
-): DcirSegmentTarget | null {
-  if (stepIndices.length !== 2) return null;
-  const [restStep, pulseStep] = [...stepIndices].sort((a, b) => a - b);
-  const rest = family.protocol.steps.find((step) => step.number === restStep);
-  const pulse = family.protocol.steps.find((step) => step.number === pulseStep);
-  if (!rest || !pulse || rest.direction !== "rest") return null;
-  if (pulse.direction !== "charge" && pulse.direction !== "discharge") return null;
-  const executable = family.protocol.steps.filter(
-    (step) => step.direction !== "control"
-  );
-  const restPosition = executable.findIndex((step) => step.number === rest.number);
-  if (restPosition < 0 || executable[restPosition + 1]?.number !== pulse.number) {
-    return null;
-  }
-  return {
-    protocol_signature: family.signature,
-    rest_step_index: rest.number,
-    pulse_step_index: pulse.number,
-    direction: pulse.direction,
-    current_ma: pulse.current_ma,
-    c_rate: pulse.c_rate,
-    rest_duration_s: rest.time_limit_s,
-    pulse_duration_s: pulse.time_limit_s,
-  };
-}
-
 /**
  * A protocol-independent identity for a rest/pulse pairing, so the same DCIR
  * pair cannot be filed twice under different segment ids (e.g. picked once from
@@ -427,6 +402,7 @@ function validateDcirSegment(
   segment: ProtocolSegment,
   families: DcirProtocolFamily[],
   existing: DcirSegment[],
+  protocolGroups: ProtocolFamilyGroup[],
 ): string | null {
   if (segment.targets.length === 0) {
     return "Select one rest step and the pulse that follows it.";
@@ -436,7 +412,12 @@ function validateDcirSegment(
     if (!family) {
       return "One selected protocol is no longer available.";
     }
-    if (!targetFromSteps(family, target.step_indices)) {
+    const ignoreEmptyRestPause = dcirIgnoreEmptyRestPauseForSegment(
+      segment,
+      families,
+      protocolGroups,
+    );
+    if (!dcirTargetFromSteps(family, target.step_indices, { ignoreEmptyRestPause })) {
       return (
         "Each DCIR target must contain exactly one rest step and the immediately " +
         "following charge or discharge pulse."
@@ -456,11 +437,17 @@ function validateDcirSegment(
 function toDcirSegment(
   segment: ProtocolSegment,
   families: DcirProtocolFamily[],
+  protocolGroups: ProtocolFamilyGroup[],
 ): DcirSegment | null {
+  const ignoreEmptyRestPause = dcirIgnoreEmptyRestPauseForSegment(
+    segment,
+    families,
+    protocolGroups,
+  );
   const targets = segment.targets.flatMap((target) => {
     const family = families.find((item) => familyMatchesSignature(item, target.protocol_signature));
     const converted = family
-      ? targetFromSteps(family, target.step_indices)
+      ? dcirTargetFromSteps(family, target.step_indices, { ignoreEmptyRestPause })
       : null;
     return converted ? [converted] : [];
   });
@@ -709,7 +696,7 @@ export function DcirSettings({
   };
 
   const saveProtocolSegment = (segment: ProtocolSegment) => {
-    const converted = toDcirSegment(segment, protocolFamilies);
+    const converted = toDcirSegment(segment, protocolFamilies, spec.protocol_groups ?? []);
     if (!converted) return;
     const isNew = !segments.some((item) => item.id === segment.id);
     const compatibleCellIds = [
@@ -785,7 +772,7 @@ export function DcirSettings({
         suggestionsLoading={protocols.isLoading}
         suggestionsError={protocols.isError}
         validateSegment={(segment) =>
-          validateDcirSegment(segment, protocolFamilies, segments)
+          validateDcirSegment(segment, protocolFamilies, segments, spec.protocol_groups ?? [])
         }
       />
 

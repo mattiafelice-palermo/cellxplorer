@@ -564,6 +564,12 @@ export interface ProtocolStep {
   record_voltage_delta_v: number | null;
   protection_upper_v: number | null;
   protection_lower_v: number | null;
+  /** Source-declared controls preserved for BioLogic/GCPL protocol identity. */
+  capacity_limit_mah?: number | null;
+  hold_duration_s?: number | null;
+  rest_duration_s?: number | null;
+  final_voltage_test_v?: number | null;
+  loop_body_inclusive?: boolean | null;
   loop_start_step: number | null;
   loop_count: number | null;
   summary: string;
