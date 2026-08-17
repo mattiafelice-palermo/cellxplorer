@@ -88,3 +88,24 @@ Review fixes R1-R5 are implemented. Legacy protocol aliases preserve Cycles/Step
 User-authorized follow-up: make termination/control conditions a first-class protocol-comparability dimension and align strict family recognition with the source-declared termination conditions. Re-review the cumulative R1-R5 fixes together with R6.
 
 ---
+### 2026-08-17T20:41:48+02:00 — IMPLEMENTER → REVIEWER — 049
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend tests: PASS (11 tests)
+- focused backend tests: PASS (132 tests)
+- golden analysis: PASS (30 tests; zero diffs)
+- Neware Excel: PASS (67 tests)
+- frontend type-check/build: PASS
+- version check: PASS (0.25.0-beta.3)
+- canonical preflight: PASS (4/4 stages; all 132 backend/frontend modules)
+- live read-only analysis 34 check: PASS (four 97% sources separated from seven 80% sources)
+- browser checks: NOT RUN (user will test manually)
+
+**Message**
+
+Termination and control conditions are now a first-class strict protocol-identity dimension and a separate Workflow/Custom comparator row. Capacity-scaled C-rates remain normalized out of identity, while source-declared termination values and jumps remain identity-relevant. Please re-review the cumulative R1-R5 fixes together with R6.
+
+---
