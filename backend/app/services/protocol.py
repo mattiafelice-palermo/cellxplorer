@@ -10,6 +10,7 @@ from collections import Counter
 from collections.abc import Mapping
 import hashlib
 import json
+from math import isfinite
 import re
 from statistics import median
 from typing import Any
@@ -40,11 +41,16 @@ STEP_TYPES = {
 }
 
 COMMON_C_RATE_DENOMINATORS = (2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100)
+PROTOCOL_RATE_RELATIVE_TOLERANCE = 0.02
 
+# These fields describe the programmed protocol structure and executable limits.
+# ``current_ma`` is handled separately below because an explicit or
+# capacity-derived C-rate makes the current (including a derived CV stop-current
+# threshold) a cell-capacity-scaled execution value rather than protocol
+# identity. Absolute-current steps still include their mA setpoint.
 SIGNATURE_FIELDS = (
     "number",
     "type_id",
-    "current_ma",
     "target_voltage_v",
     "stop_voltage_v",
     "stop_current_ma",
@@ -56,6 +62,33 @@ SIGNATURE_FIELDS = (
     "loop_start_step",
     "loop_count",
 )
+
+PROTOCOL_SIGNATURE_VERSION = 3
+
+
+def _canonical_protocol_rate(value: object) -> float | None:
+    """Return a stable semantic C-rate value for protocol identity.
+
+    Neware exports the same programmed rate with different precision, and some
+    files omit the rate while retaining a current that can be converted using
+    nominal capacity. Snap values close to common rate fractions/decimal rates
+    within the same 2% tolerance used by the rate-oriented UI; preserve an
+    uncommon rate at six decimal places rather than silently broadening it.
+    """
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(rate) or rate <= 0:
+        return None
+
+    references = [1.0 / denominator for denominator in COMMON_C_RATE_DENOMINATORS]
+    references.extend(round(index / 10.0, 1) for index in range(1, 101))
+    references.extend(float(index) for index in range(1, 101))
+    nearest = min(references, key=lambda reference: abs(rate - reference))
+    if abs(rate - nearest) / nearest <= PROTOCOL_RATE_RELATIVE_TOLERANCE:
+        return round(nearest, 6)
+    return round(rate, 6)
 
 
 def _number(value: object) -> float | None:
@@ -326,19 +359,31 @@ def _protocol_signature(
     *,
     extra_fields: tuple[str, ...] = (),
 ) -> str:
-    """Hash executable settings without source or inferred display values."""
+    """Hash semantic programmed settings, not cell-specific C-rate currents.
+
+    When an explicit or capacity-derived C-rate is available, the exported mA
+    value belongs to execution data rather than protocol identity. Steps with
+    no rate basis remain absolute-current-controlled and retain their mA value
+    in the signature. The actual current is still preserved on each step for
+    DCIR calculations.
+    """
     canonical_steps = []
     fields = SIGNATURE_FIELDS + tuple(
         field for field in extra_fields if field not in SIGNATURE_FIELDS
     )
     for step in steps:
         item = {field: step.get(field) for field in fields}
-        item["explicit_c_rate"] = (
-            step.get("c_rate") if step.get("c_rate_source") == "explicit" else None
+        semantic_rate = _canonical_protocol_rate(step.get("c_rate"))
+        semantic_stop_rate = _canonical_protocol_rate(step.get("stop_c_rate"))
+        item["current_ma"] = step.get("current_ma") if semantic_rate is None else None
+        item["stop_current_ma"] = (
+            step.get("stop_current_ma") if semantic_stop_rate is None else None
         )
+        item["semantic_c_rate"] = semantic_rate
+        item["semantic_stop_c_rate"] = semantic_stop_rate
         canonical_steps.append(item)
     payload = json.dumps(
-        {"signature_version": 1, "steps": canonical_steps},
+        {"signature_version": PROTOCOL_SIGNATURE_VERSION, "steps": canonical_steps},
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,

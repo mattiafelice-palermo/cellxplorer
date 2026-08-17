@@ -61,7 +61,10 @@ class ProtocolTests(unittest.TestCase):
 
     def test_signature_matches_equivalent_protocols_across_sources(self):
         first = protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=10)
-        second = protocol.reconstruct_protocol(dict(synthetic_header()), nominal_capacity_mah=20)
+        changed = dict(synthetic_header())
+        changed["Step.Step_Info.Step5.Limit.Main.Curr.Value"] = "20"
+        changed["Step.Step_Info.Step5.Limit.Main.Stop_Curr.Value"] = "1.0"
+        second = protocol.reconstruct_protocol(changed, nominal_capacity_mah=20)
 
         self.assertEqual(first["signature"], second["signature"])
         self.assertEqual(len(first["signature"]), 64)
@@ -72,6 +75,41 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertNotEqual(
             protocol.reconstruct_protocol(synthetic_header())["signature"],
+            protocol.reconstruct_protocol(changed)["signature"],
+        )
+
+    def test_signature_ignores_capacity_scaled_current_for_explicit_rate_steps(self):
+        changed = synthetic_header()
+        changed["Step.Step_Info.Step1.Limit.Main.Curr.Value"] = "7.5"
+        changed["Step.Step_Info.Step3.Limit.Main.Curr.Value"] = "7.5"
+
+        self.assertEqual(
+            protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=20)["signature"],
+            protocol.reconstruct_protocol(changed, nominal_capacity_mah=20)["signature"],
+        )
+
+    def test_signature_matches_explicit_and_inferred_rate_steps(self):
+        inferred = synthetic_header()
+        inferred.pop("Step.Step_Info.Step1.Limit.Main.Rate.Value")
+        inferred.pop("Step.Step_Info.Step3.Limit.Main.Rate.Value")
+        inferred["Step.Step_Info.Step1.Limit.Main.Curr.Value"] = "10"
+        inferred["Step.Step_Info.Step3.Limit.Main.Curr.Value"] = "10"
+
+        self.assertEqual(
+            protocol.reconstruct_protocol(synthetic_header(), nominal_capacity_mah=20)["signature"],
+            protocol.reconstruct_protocol(inferred, nominal_capacity_mah=20)["signature"],
+        )
+
+    def test_signature_retains_current_for_steps_without_rate_basis(self):
+        header = synthetic_header()
+        header.pop("Step.Step_Info.Step1.Limit.Main.Rate.Value")
+        header.pop("Step.Step_Info.Step3.Limit.Main.Rate.Value")
+        header["Step.Step_Info.Step5.Limit.Main.Curr.Value"] = "10.0"
+        changed = dict(header)
+        changed["Step.Step_Info.Step5.Limit.Main.Curr.Value"] = "12.0"
+
+        self.assertNotEqual(
+            protocol.reconstruct_protocol(header)["signature"],
             protocol.reconstruct_protocol(changed)["signature"],
         )
 

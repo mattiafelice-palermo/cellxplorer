@@ -30,7 +30,7 @@
       "matches_filters": true,
       "mode": "CV charge",
       "preparation_step_index": 25,
-      "protocol_signature": "be1374acf912d64b42060b2dae784c9694702453b71cace65e2a5ad9e682a9f4",
+      "protocol_signature": "22158a5ae29320959ff0e71dba005886977e2d71200f6cab580de58e35479eb1",
       "reference_step_index": 19,
       "reference_variable": "User1",
       "removed_soc_pct": 80.0,
@@ -86,7 +86,7 @@
       "mode": "CV charge",
       "observed_final_soc_pct": 80.00055521145487,
       "occurrence": 1,
-      "protocol_signature": "be1374acf912d64b42060b2dae784c9694702453b71cace65e2a5ad9e682a9f4",
+      "protocol_signature": "22158a5ae29320959ff0e71dba005886977e2d71200f6cab580de58e35479eb1",
       "reference": {
         "cycle": 7,
         "kind": "protocol_recorded",

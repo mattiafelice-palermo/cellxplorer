@@ -412,7 +412,7 @@
       "name": "test",
       "targets": [
         {
-          "protocol_signature": "be1374acf912d64b42060b2dae784c9694702453b71cace65e2a5ad9e682a9f4",
+          "protocol_signature": "22158a5ae29320959ff0e71dba005886977e2d71200f6cab580de58e35479eb1",
           "step_indices": [
             2,
             3,

@@ -44,6 +44,13 @@ exact `rest_step_index` plus `pulse_step_index`. This separation lets the DCIR e
 specialized rest/pulse recognition without changing protocol filtering in Cycles or block
 definitions in Steps.
 
+Protocol identity is semantic: when an explicit or capacity-derived C-rate is available, the
+source-exported mA setpoints, including derived CV stop-current thresholds, are omitted from the
+signature because they are cell-capacity-scaled execution values; the actual mA values remain on
+the reconstructed step and are used by the DCIR calculation. Exported and inferred rates are
+normalized to the same semantic value. If neither a rate nor a nominal-capacity basis is available,
+the step remains absolute-current-controlled and retains its mA values.
+
 Candidate recognition is only an editing aid. It suggests adjacent rest/pulse pairs using editable
 minimum-rest, maximum-pulse, and rest-to-pulse ratio thresholds. Detection reads the reconstructed
 protocol's `time_limit_s`, so Neware millisecond duration fields must be normalized by

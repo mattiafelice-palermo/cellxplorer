@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.24.0-beta.2 - 2026-08-17
+
+- Treat capacity-scaled current setpoints as semantic C-rate protocol identity while preserving measured DCIR current.
+
 ## 0.24.0-beta.1 - 2026-08-16
 
 ### New features

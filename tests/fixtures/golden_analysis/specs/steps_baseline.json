@@ -414,7 +414,7 @@
       "name": "Initial CC charge block",
       "targets": [
         {
-          "protocol_signature": "01f4668b624ca93c50878291c0e231de263d17aa5c9ebf41228af5b80c977b25",
+          "protocol_signature": "a5a57928bad36bf3229fe13f40488cd189761ae7a5360414ef476bc9f9745ee1",
           "step_indices": [
             2,
             3,
