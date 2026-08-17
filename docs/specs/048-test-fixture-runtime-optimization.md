@@ -1,6 +1,6 @@
 # Spec 048: reduce backend test fixture/runtime cost
 
-Status: **Plan**  
+Status: **Implemented — review-clean; cumulative Parent 048 review complete**
 Type: **development tooling / test performance**  
 Branch: `feature/test-fixture-runtime-optimization`  
 Review document: [`reviews/048-test-fixture-runtime-optimization-review.md`](reviews/048-test-fixture-runtime-optimization-review.md)
