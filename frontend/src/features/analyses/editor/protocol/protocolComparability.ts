@@ -21,6 +21,14 @@ export interface ProtocolComparisonDimensions {
   recording: boolean;
 }
 
+export interface ProtocolComparisonOptions {
+  /**
+   * Empty Rest/Pause rows carry no executable setting and may be ignored when
+   * comparing workflow shape. They remain visible in evidence summaries.
+   */
+  ignoreEmptyRestPause?: boolean;
+}
+
 export interface ProtocolComparisonRow {
   key: ProtocolComparisonDimension;
   label: string;
@@ -68,6 +76,53 @@ const DIMENSION_ORDER: ProtocolComparisonDimension[] = [
 const RATE_RELATIVE_TOLERANCE = 0.02;
 const VALUE_ABSOLUTE_TOLERANCE = 1e-9;
 const COMMON_C_RATE_DENOMINATORS = [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100];
+
+export function isEmptyRestPauseStep(step: ProtocolStep): boolean {
+  const type = step.type.trim().toLowerCase();
+  const isRestPause = type === "rest" || type === "pause" || type.includes("rest") || type.includes("pause");
+  if (!isRestPause) return false;
+  return [
+    step.current_ma,
+    step.c_rate,
+    step.target_voltage_v,
+    step.stop_voltage_v,
+    step.stop_current_ma,
+    step.stop_c_rate,
+    step.time_limit_s,
+    step.record_interval_s,
+    step.record_voltage_delta_v,
+    step.protection_upper_v,
+    step.protection_lower_v,
+  ].every((value) => value == null) && (step.conditions?.length ?? 0) === 0;
+}
+
+export function comparableProtocolStepNumbers(
+  protocol: FileProtocol,
+  options: ProtocolComparisonOptions = {},
+): number[] {
+  return protocol.steps
+    .filter((step) => !(options.ignoreEmptyRestPause && isEmptyRestPauseStep(step)))
+    .map((step) => step.number);
+}
+
+/** Map selected reference step numbers by executable order to a comparable family. */
+export function mapComparableProtocolStepNumbers(
+  reference: FileProtocol,
+  candidate: FileProtocol,
+  selectedReferenceSteps: number[],
+  options: ProtocolComparisonOptions = {},
+): number[] {
+  const referenceSteps = comparableProtocolStepNumbers(reference, options);
+  const candidateSteps = comparableProtocolStepNumbers(candidate, options);
+  const candidateByReferenceOrdinal = new Map(
+    referenceSteps.map((number, index) => [number, candidateSteps[index]]),
+  );
+  return [...new Set(
+    selectedReferenceSteps
+      .map((number) => candidateByReferenceOrdinal.get(number))
+      .filter((number): number is number => number != null),
+  )].sort((a, b) => a - b);
+}
 
 export function comparisonDimensionsFor(
   mode: ProtocolComparisonMode,
@@ -135,6 +190,45 @@ function groupWorkflowToken(group: ProtocolGroup): unknown {
     group.step_numbers.length,
     group.children.map(groupWorkflowToken),
   ];
+}
+
+function protocolForComparison(
+  protocol: FileProtocol,
+  options: ProtocolComparisonOptions,
+): FileProtocol {
+  if (!options.ignoreEmptyRestPause) return protocol;
+  const ignored = new Set(
+    protocol.steps.filter(isEmptyRestPauseStep).map((step) => step.number),
+  );
+  if (ignored.size === 0) return protocol;
+
+  const normalizeGroup = (group: ProtocolGroup): ProtocolGroup | null => {
+    const children = group.children
+      .map(normalizeGroup)
+      .filter((child): child is ProtocolGroup => child !== null);
+    const stepNumbers = group.step_numbers.filter((number) => !ignored.has(number));
+    const allStepNumbers = group.all_step_numbers.filter((number) => !ignored.has(number));
+    if (allStepNumbers.length === 0) return null;
+    return {
+      ...group,
+      step_numbers: stepNumbers,
+      all_step_numbers: allStepNumbers,
+      children,
+      start_step: allStepNumbers[0] ?? group.start_step,
+      end_step: allStepNumbers[allStepNumbers.length - 1] ?? group.end_step,
+      control_step: group.control_step != null && !ignored.has(group.control_step)
+        ? group.control_step
+        : null,
+    };
+  };
+
+  return {
+    ...protocol,
+    steps: protocol.steps.filter((step) => !ignored.has(step.number)),
+    groups: protocol.groups
+      .map(normalizeGroup)
+      .filter((group): group is ProtocolGroup => group !== null),
+  };
 }
 
 function stepOrder(protocol: FileProtocol): Map<number, number> {
@@ -303,25 +397,28 @@ function dimensionEqual(
   reference: FileProtocol,
   candidate: FileProtocol,
   mode: ProtocolComparisonMode,
+  options: ProtocolComparisonOptions,
 ): boolean {
+  const comparableReference = protocolForComparison(reference, options);
+  const comparableCandidate = protocolForComparison(candidate, options);
   switch (key) {
     case "structure":
-      return structureToken(reference, mode === "strict") === structureToken(candidate, mode === "strict");
+      return structureToken(comparableReference, mode === "strict") === structureToken(comparableCandidate, mode === "strict");
     case "termination":
-      return terminationToken(reference, mode === "strict") === terminationToken(candidate, mode === "strict");
+      return terminationToken(comparableReference, mode === "strict") === terminationToken(comparableCandidate, mode === "strict");
     case "rates":
-      return ratesEqual(reference, candidate);
+      return ratesEqual(comparableReference, comparableCandidate);
     case "timing":
-      return valuesEqual(reference, candidate, (step) => [step.time_limit_s]);
+      return valuesEqual(comparableReference, comparableCandidate, (step) => [step.time_limit_s]);
     case "voltage":
-      return valuesEqual(reference, candidate, (step) => [
+      return valuesEqual(comparableReference, comparableCandidate, (step) => [
         step.target_voltage_v,
         step.stop_voltage_v,
         step.protection_lower_v,
         step.protection_upper_v,
       ]);
     case "recording":
-      return valuesEqual(reference, candidate, (step) => [
+      return valuesEqual(comparableReference, comparableCandidate, (step) => [
         step.record_interval_s,
         step.record_voltage_delta_v,
       ]);
@@ -346,6 +443,7 @@ export function compareProtocolFamilies(
   candidate: FileProtocol,
   mode: ProtocolComparisonMode,
   custom: ProtocolComparisonDimensions = WORKFLOW_COMPARISON_DIMENSIONS,
+  options: ProtocolComparisonOptions = {},
 ): ProtocolComparisonResult {
   const dimensions = comparisonDimensionsFor(mode, custom);
   const rows = ROW_DEFINITIONS.map(({ key, label, summary }) => ({
@@ -354,7 +452,7 @@ export function compareProtocolFamilies(
     reference: summary(reference),
     candidate: summary(candidate),
     status: dimensions[key]
-      ? dimensionEqual(key, reference, candidate, mode) ? "same" : "different"
+      ? dimensionEqual(key, reference, candidate, mode, options) ? "same" : "different"
       : "ignored",
   } satisfies ProtocolComparisonRow));
   const strictIdentityMatch = mode !== "strict" || reference.signature === candidate.signature;

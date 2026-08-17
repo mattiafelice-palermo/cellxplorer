@@ -43,6 +43,7 @@ import {
   type FileProtocol,
   type PlotExportFormat,
   type PlotStyle,
+  type ProtocolFamilyGroup,
   type ProtocolSegment,
   type SeriesStyleOverride,
   type SeriesStyleRule,
@@ -742,6 +743,12 @@ export function DcirSettings({
       <ProtocolSegmentsPanel
         cellIds={cells.map((cell) => cell.id)}
         segments={protocolSegments}
+        protocolGroups={spec.protocol_groups ?? []}
+        onSaveProtocolGroups={(groups: ProtocolFamilyGroup[]) =>
+          update((draft) => {
+            draft.protocol_groups = groups;
+          })
+        }
         hiddenSegmentIds={spec.presentation.hidden_analysis_segment_ids ?? []}
         excludedSegmentIds={[]}
         onlySegmentIds={[]}

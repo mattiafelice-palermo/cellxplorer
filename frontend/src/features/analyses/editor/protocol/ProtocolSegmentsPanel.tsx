@@ -9,6 +9,7 @@ import {
   Checkbox,
   Collapse,
   Divider,
+  Grid,
   Group,
   Loader,
   Modal,
@@ -50,6 +51,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CellProtocol,
   FileProtocol,
+  ProtocolFamilyGroup,
   get,
   ProtocolSegment,
   ProtocolGroup,
@@ -69,10 +71,13 @@ import {
 import { normalizeGroup } from "./protocolGroupNormalization";
 import {
   compareProtocolFamilies,
+  comparableProtocolStepNumbers,
   comparisonDimensionsFor,
+  mapComparableProtocolStepNumbers,
   WORKFLOW_COMPARISON_DIMENSIONS,
   type ProtocolComparisonDimensions,
   type ProtocolComparisonMode,
+  type ProtocolComparisonOptions,
   type ProtocolComparisonStatus,
 } from "./protocolComparability";
 import {
@@ -120,6 +125,8 @@ interface RangeDraft {
 export interface ProtocolSegmentsPanelProps {
   cellIds: number[];
   segments: ProtocolSegment[];
+  protocolGroups?: ProtocolFamilyGroup[];
+  onSaveProtocolGroups?: (groups: ProtocolFamilyGroup[]) => void;
   hiddenSegmentIds: string[];
   excludedSegmentIds: string[];
   onlySegmentIds: string[];
@@ -195,6 +202,77 @@ function replaceTarget(
     next.push({ protocol_signature: family.signature, step_indices: normalized });
   }
   return next.sort((a, b) => a.protocol_signature.localeCompare(b.protocol_signature));
+}
+
+function protocolGroupMembers(
+  group: ProtocolFamilyGroup,
+  families: ProtocolFamily[],
+): ProtocolFamily[] {
+  const signatures = new Set(group.family_signatures);
+  return families.filter(
+    (family) =>
+      signatures.has(family.signature) ||
+      family.legacySignatures.some((signature) => signatures.has(signature)),
+  );
+}
+
+function isSelectableProtocolGroup(group: ProtocolFamilyGroup): boolean {
+  // Grouped selections are mapped by executable workflow order. A comparison
+  // that ignored structure may be useful as evidence, but it is not safe to
+  // expose as a selectable target because its source step indices are not
+  // interchangeable.
+  return group.comparison_dimensions.structure;
+}
+
+function protocolGroupReference(
+  group: ProtocolFamilyGroup,
+  families: ProtocolFamily[],
+): ProtocolFamily | null {
+  return (
+    families.find((family) => familyMatchesSignature(family, group.reference_signature)) ??
+    protocolGroupMembers(group, families)[0] ??
+    null
+  );
+}
+
+function selectedStepsForGroup(
+  targets: ProtocolSegmentTarget[],
+  group: ProtocolFamilyGroup,
+  families: ProtocolFamily[],
+): number[] {
+  const reference = protocolGroupReference(group, families);
+  return reference ? selectedSteps(targets, reference.signature, reference) : [];
+}
+
+function replaceGroupTargets(
+  targets: ProtocolSegmentTarget[],
+  group: ProtocolFamilyGroup,
+  families: ProtocolFamily[],
+  referenceSteps: number[],
+): ProtocolSegmentTarget[] {
+  if (!isSelectableProtocolGroup(group)) return targets;
+  const reference = protocolGroupReference(group, families);
+  if (!reference?.protocol) return targets;
+  let next = targets;
+  const options: ProtocolComparisonOptions = {
+    ignoreEmptyRestPause: group.ignore_empty_rest_pause,
+  };
+  const comparableReferenceSteps = new Set(comparableProtocolStepNumbers(reference.protocol, options));
+  const normalizedReferenceSteps = referenceSteps.filter((step) => comparableReferenceSteps.has(step));
+  for (const family of protocolGroupMembers(group, families)) {
+    if (!family.protocol) continue;
+    const mapped =
+      family.signature === reference.signature
+        ? normalizedReferenceSteps
+        : mapComparableProtocolStepNumbers(
+            reference.protocol,
+            family.protocol,
+            normalizedReferenceSteps,
+            options,
+          );
+    next = replaceTarget(next, family, mapped);
+  }
+  return next;
 }
 
 function targetCount(targets: ProtocolSegmentTarget[]): number {
@@ -838,234 +916,474 @@ function protocolFamilyLabel(families: ProtocolFamily[], family: ProtocolFamily)
   return `Protocol ${number} — ${steps} steps, ${where}`;
 }
 
-function ProtocolComparisonModal({
+interface GroupedProtocolProposal {
+  key: string;
+  members: ProtocolFamily[];
+  reference: ProtocolFamily;
+}
+
+function groupedFamilyCellNames(family: ProtocolFamily): string[] {
+  return uniqueStrings(family.files.map((file) => file.cellName));
+}
+
+function groupedCellNames(group: GroupedProtocolProposal): string[] {
+  return uniqueStrings(group.members.flatMap(groupedFamilyCellNames));
+}
+
+function shortCellName(name: string): string {
+  return name.length > 11 ? `${name.slice(0, 7)}...${name.slice(-2)}` : name;
+}
+
+function groupedProposalKey(families: ProtocolFamily[]): string {
+  return families.map((family) => family.signature).sort().join("|");
+}
+
+function groupedProtocolProposals(
+  families: ProtocolFamily[],
+  mode: ProtocolComparisonMode,
+  dimensions: ProtocolComparisonDimensions,
+  options: ProtocolComparisonOptions,
+  referenceSignature: string | null,
+): GroupedProtocolProposal[] {
+  const groups: GroupedProtocolProposal[] = [];
+  for (const family of families) {
+    const match = family.protocol
+      ? groups.find(
+          (group) =>
+            Boolean(group.reference.protocol) &&
+            compareProtocolFamilies(
+              group.reference.protocol!,
+              family.protocol!,
+              mode,
+              dimensions,
+              options,
+            ).comparable,
+        )
+      : undefined;
+    if (match) {
+      match.members.push(family);
+      match.key = groupedProposalKey(match.members);
+    } else {
+      groups.push({ key: groupedProposalKey([family]), members: [family], reference: family });
+    }
+  }
+  return groups.map((group) => ({
+    ...group,
+    reference:
+      group.members.find((family) => family.signature === referenceSignature) ?? group.reference,
+  }));
+}
+
+function persistedGroupingForProposal(
+  proposal: GroupedProtocolProposal,
+  groups: ProtocolFamilyGroup[],
+): ProtocolFamilyGroup | undefined {
+  const members = new Set(proposal.members.map((family) => family.signature));
+  return groups.find((group) => {
+    const saved = new Set(group.family_signatures);
+    return saved.size === members.size && [...members].every((signature) => saved.has(signature));
+  });
+}
+
+function compactGroupingEvidence(value: string): string {
+  const normalized = value.trim();
+  return normalized.length > 76 ? `${normalized.slice(0, 73)}...` : normalized;
+}
+
+function groupingDifferenceText(row: {
+  status: ProtocolComparisonStatus;
+  reference: string;
+  candidate: string;
+}): string {
+  if (row.status === "same") return "Same as reference";
+  if (row.status === "ignored") return `Ignored - ${compactGroupingEvidence(row.candidate)}`;
+  const referenceParts = row.reference.split(" | ");
+  const candidateParts = row.candidate.split(" | ");
+  const index = candidateParts.findIndex((part, partIndex) => part !== referenceParts[partIndex]);
+  const selectedIndex = index < 0 ? 0 : index;
+  const reference = referenceParts[selectedIndex] ?? row.reference;
+  const candidate = candidateParts[selectedIndex] ?? row.candidate;
+  return `${compactGroupingEvidence(reference)} -> ${compactGroupingEvidence(candidate)}`;
+}
+
+function groupedProtocolSummary(
+  proposal: GroupedProtocolProposal,
+  mode: ProtocolComparisonMode,
+  customDimensions: ProtocolComparisonDimensions,
+  options: ProtocolComparisonOptions,
+): string {
+  const dimensions = comparisonDimensionsFor(mode, customDimensions);
+  const selectedLabels = CUSTOM_DIMENSION_OPTIONS
+    .filter((option) => dimensions[option.key])
+    .map((option) => option.label.toLowerCase());
+  const ignoredLabels = new Set<string>();
+  if (proposal.reference.protocol) {
+    for (const member of proposal.members.slice(1)) {
+      if (!member.protocol) continue;
+      const result = compareProtocolFamilies(
+        proposal.reference.protocol,
+        member.protocol,
+        mode,
+        customDimensions,
+        options,
+      );
+      for (const option of CUSTOM_DIMENSION_OPTIONS) {
+        const row = result.rows.find((item) => item.key === option.key);
+        if (!dimensions[option.key] && row && row.reference !== row.candidate) {
+          ignoredLabels.add(option.label.toLowerCase());
+        }
+      }
+    }
+  }
+  const selected = selectedLabels.length
+    ? `Matches on ${selectedLabels.slice(0, 2).join(" and ")}${selectedLabels.length > 2 ? " ..." : ""}`
+    : "No comparison dimensions selected";
+  const ignored = [...ignoredLabels][0];
+  const emptyNote = options.ignoreEmptyRestPause ? " - empty rest/pause steps ignored" : "";
+  return `${selected}${emptyNote}${ignored ? ` - ${ignored} remain source-local` : ""}`;
+}
+
+function GroupedProtocolComparisonModal({
   opened,
   onClose,
   families,
   activeSignature,
+  existingGroups,
+  onApplyGroups,
 }: {
   opened: boolean;
   onClose: () => void;
   families: ProtocolFamily[];
   activeSignature: string | null;
+  existingGroups: ProtocolFamilyGroup[];
+  onApplyGroups?: (groups: ProtocolFamilyGroup[]) => void;
 }) {
-  const [mode, setMode] = useState<ProtocolComparisonMode>("workflow");
+  const [mode, setMode] = useState<ProtocolComparisonMode>("custom");
   const [referenceSignature, setReferenceSignature] = useState<string | null>(activeSignature);
-  const [candidateSignature, setCandidateSignature] = useState<string | null>(null);
   const [customDimensions, setCustomDimensions] = useState<ProtocolComparisonDimensions>({
     ...WORKFLOW_COMPARISON_DIMENSIONS,
+    termination: true,
   });
-
-  const familyOptions = families.map((family) => ({
-    value: family.signature,
-    label: protocolFamilyLabel(families, family),
-  }));
-
-  const openComparison = () => {
-    const reference = activeSignature ?? families[0]?.signature ?? null;
-    const candidate = families.find((family) => family.signature !== reference)?.signature ?? null;
-    setReferenceSignature(reference);
-    setCandidateSignature(candidate);
-    setMode("workflow");
-    setCustomDimensions({ ...WORKFLOW_COMPARISON_DIMENSIONS });
-  };
+  const [ignoreEmptyRestPause, setIgnoreEmptyRestPause] = useState(true);
+  const [groupNames, setGroupNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (opened) openComparison();
-    // Opening is the only time the active picker selection should reset the
-    // comparison pair. Selectors inside the modal remain user-controlled.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened]);
+    if (!opened) return;
+    setReferenceSignature(activeSignature ?? families[0]?.signature ?? null);
+    setMode("custom");
+    setCustomDimensions({ ...WORKFLOW_COMPARISON_DIMENSIONS, termination: true });
+    setIgnoreEmptyRestPause(true);
+    setGroupNames({});
+  }, [opened, activeSignature, families]);
 
-  const reference = families.find((family) => family.signature === referenceSignature) ?? null;
-  const candidate = families.find((family) => family.signature === candidateSignature) ?? null;
-  const result = reference?.protocol && candidate?.protocol
-    ? compareProtocolFamilies(reference.protocol, candidate.protocol, mode, customDimensions)
-    : null;
+  const reference = families.find((family) => family.signature === referenceSignature) ?? families[0] ?? null;
   const comparedDimensions = comparisonDimensionsFor(mode, customDimensions);
   const hasSelectedDimension = Object.values(comparedDimensions).some(Boolean);
-
-  const chooseReference = (value: string | null) => {
-    if (!value) return;
-    setReferenceSignature(value);
-    if (value === candidateSignature) {
-      setCandidateSignature(families.find((family) => family.signature !== value)?.signature ?? null);
-    }
+  const comparisonOptions: ProtocolComparisonOptions = {
+    ignoreEmptyRestPause: mode !== "strict" && ignoreEmptyRestPause,
   };
+  const proposals = useMemo(
+    () => groupedProtocolProposals(
+      families,
+      mode,
+      customDimensions,
+      comparisonOptions,
+      reference?.signature ?? null,
+    ),
+    [families, mode, customDimensions, comparisonOptions.ignoreEmptyRestPause, reference?.signature],
+  );
+  const candidates = families.filter((family) => family.signature !== reference?.signature);
+  const candidateResults = candidates.map((family) => ({
+    family,
+    result:
+      reference?.protocol && family.protocol
+        ? compareProtocolFamilies(
+            reference.protocol,
+            family.protocol,
+            mode,
+            customDimensions,
+            comparisonOptions,
+          )
+        : null,
+  }));
+  const allCells = uniqueStrings(families.flatMap(groupedFamilyCellNames));
+  const canApply = Boolean(
+    onApplyGroups &&
+      families.length > 0 &&
+      families.every((family) => family.protocol) &&
+      hasSelectedDimension &&
+      comparedDimensions.structure &&
+      proposals.length > 0,
+  );
 
-  const resultTitle = result
-    ? mode === "custom" && !hasSelectedDimension
-      ? "Select at least one dimension"
-      : result.comparable
-      ? mode === "strict"
-        ? "Strictly comparable"
-        : mode === "workflow"
-          ? "Comparable workflow"
-          : "Comparable for selected dimensions"
-      : mode === "strict"
-        ? "Not strictly comparable"
-        : "Selected dimensions differ"
-    : null;
-  const resultDetail = result
-    ? mode === "custom" && !hasSelectedDimension
-      ? "No protocol dimensions are selected, so this comparison is indeterminate. Select at least one dimension to get a meaningful result."
-      : result.comparable
-      ? mode === "strict"
-        ? "The selected protocol identity fields match."
-        : "The families can be reviewed together for this basis; ignored limits remain attached to each source."
-      : mode === "strict" && !result.strictIdentityMatch
-        ? "The normalized semantic protocol signatures differ. Review the evidence rows before treating these families as the same protocol."
-        : `Different: ${result.rows.filter((row) => row.status === "different").map((row) => row.label.toLowerCase()).join(", ")}.`
-    : null;
+  const nameFor = (proposal: GroupedProtocolProposal, index: number): string =>
+    groupNames[proposal.key] ??
+    persistedGroupingForProposal(proposal, existingGroups)?.name ??
+    `New protocol ${index + 1}`;
+
+  const applyGroups = () => {
+    if (!canApply || !onApplyGroups) return;
+    onApplyGroups(
+      proposals.map((proposal, index) => ({
+        id: persistedGroupingForProposal(proposal, existingGroups)?.id ?? segmentId(),
+        name: nameFor(proposal, index).trim() || `New protocol ${index + 1}`,
+        family_signatures: proposal.members.map((family) => family.signature),
+        reference_signature: proposal.reference.signature,
+        comparison_mode: mode,
+        comparison_dimensions: { ...comparedDimensions },
+        ignore_empty_rest_pause: comparisonOptions.ignoreEmptyRestPause ?? false,
+      })),
+    );
+    onClose();
+  };
 
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Compare protocol families"
-      size="xl"
+      title={
+        <Box>
+          <Text fw={700} size="md">Compare and group protocol families</Text>
+          <Text size="xs" c="dimmed" mt={2} fw={400}>
+            Review the groups, name them, then make them available as protocol options.
+          </Text>
+        </Box>
+      }
+      size="min(1400px, calc(100vw - 2rem))"
       centered
       styles={{
-        content: { maxHeight: "calc(100dvh - 2rem)" },
-        body: { overflowY: "auto" },
+        content: {
+          maxHeight: "calc(100dvh - 2rem)",
+          display: "flex",
+          flexDirection: "column",
+        },
+        header: { alignItems: "flex-start" },
+        title: { minWidth: 0, flex: 1 },
+        body: { overflowY: "auto", minHeight: 0 },
       }}
     >
       <Stack gap="sm">
-        <Alert color="teal" variant="light" title="Diagnostic comparison">
-          This review does not change source data, protocol signatures, or segment targets. A
-          workflow match is not an automatic step mapping between files.
-        </Alert>
+        <Grid gutter="md" align="stretch">
+          <Grid.Col span={{ base: 12, md: 4 }}>
+            <Paper
+              withBorder
+              radius="md"
+              p="sm"
+              h="100%"
+              bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+            >
+              <Stack gap="sm">
+                <Box>
+                  <Text size="xs" fw={700} mb={5}>Comparison basis</Text>
+                  <SegmentedControl
+                    fullWidth
+                    size="xs"
+                    data={COMPARISON_MODE_OPTIONS}
+                    value={mode}
+                    onChange={(value) => setMode(value as ProtocolComparisonMode)}
+                  />
+                  <Text size="xs" c="dimmed" mt={6}>{COMPARISON_MODE_HELP[mode]}</Text>
+                </Box>
+                <Select
+                  size="xs"
+                  label="Reference protocol"
+                  data={families.map((family) => ({
+                    value: family.signature,
+                    label: protocolFamilyLabel(families, family),
+                  }))}
+                  value={reference?.signature ?? null}
+                  onChange={(value) => value && setReferenceSignature(value)}
+                  allowDeselect={false}
+                  comboboxProps={{ withinPortal: true }}
+                />
+                <Group justify="space-between" gap="xs" wrap="nowrap">
+                  <Text size="xs" c="dimmed">
+                    {proposals.length} proposed group{proposals.length === 1 ? "" : "s"} - {allCells.length} cells
+                  </Text>
+                  <Badge size="xs" variant="light" color="var(--mantine-primary-color-6)">Preview</Badge>
+                </Group>
+                {mode === "custom" ? (
+                  <Paper withBorder radius="md" p="xs" bg="var(--mantine-color-body)">
+                    <Text size="xs" fw={700} mb={6}>Compare on these dimensions</Text>
+                    <Stack gap={5}>
+                      {CUSTOM_DIMENSION_OPTIONS.map((option) => (
+                        <Checkbox
+                          key={option.key}
+                          size="xs"
+                          label={option.label}
+                          checked={customDimensions[option.key]}
+                          onChange={(event) =>
+                            setCustomDimensions((current) => ({
+                              ...current,
+                              [option.key]: event.currentTarget.checked,
+                            }))
+                          }
+                        />
+                      ))}
+                      <Checkbox
+                        size="xs"
+                        label="Ignore empty rest/pause steps"
+                        checked={ignoreEmptyRestPause}
+                        onChange={(event) => setIgnoreEmptyRestPause(event.currentTarget.checked)}
+                      />
+                    </Stack>
+                  </Paper>
+                ) : (
+                  <Checkbox
+                    size="xs"
+                    label="Ignore empty rest/pause steps"
+                    checked={ignoreEmptyRestPause}
+                    disabled={mode === "strict"}
+                    onChange={(event) => setIgnoreEmptyRestPause(event.currentTarget.checked)}
+                  />
+                )}
+                <Group gap="sm" wrap="wrap">
+                  <Group gap={4} wrap="nowrap"><Badge size="xs" variant="light" color="teal">Same</Badge><Text size="10px" c="dimmed">matches</Text></Group>
+                  <Group gap={4} wrap="nowrap"><Badge size="xs" variant="light" color="orange">Different</Badge><Text size="10px" c="dimmed">splits</Text></Group>
+                  <Group gap={4} wrap="nowrap"><Badge size="xs" variant="light" color="gray">Ignored</Badge><Text size="10px" c="dimmed">evidence only</Text></Group>
+                </Group>
+              </Stack>
+            </Paper>
+          </Grid.Col>
+
+          <Grid.Col span={{ base: 12, md: 8 }}>
+            <Stack gap="xs" h="100%">
+              <Group justify="space-between" align="baseline" gap="xs" wrap="nowrap">
+                <Text size="sm" fw={700}>Reference versus all existing protocols</Text>
+                <Text size="10px" c="dimmed" ta="right">Scroll horizontally to inspect all families</Text>
+              </Group>
+              {families.length < 2 ? (
+                <Paper withBorder p="md" radius="md" style={{ flex: 1 }}>
+                  <Text size="sm" fw={600}>One protocol family available</Text>
+                  <Text size="xs" c="dimmed" mt={4}>Select at least two protocol families in the analysis samples to compare and group them.</Text>
+                </Paper>
+              ) : !reference?.protocol ? (
+                <Paper withBorder p="md" radius="md" style={{ flex: 1 }}>
+                  <Text size="sm" fw={600}>Protocol details unavailable</Text>
+                  <Text size="xs" c="dimmed" mt={4}>The selected reference family has no readable protocol details in the current sample set.</Text>
+                </Paper>
+              ) : (
+                <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
+                  <Table withTableBorder highlightOnHover={false} miw={Math.max(780, 330 + candidates.length * 190)}>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th w={150} style={{ position: "sticky", left: 0, zIndex: 4, background: "var(--mantine-color-body)" }}>Dimension</Table.Th>
+                        <Table.Th w={205} style={{ background: "var(--mantine-primary-color-light)" }}>
+                          <Text size="xs" fw={700}>Reference</Text>
+                          <Text size="10px" c="dimmed" fw={400} lineClamp={2}>{protocolFamilyLabel(families, reference)}</Text>
+                        </Table.Th>
+                        {candidates.map((family) => (
+                          <Table.Th key={family.signature} w={190}>
+                            <Text size="xs" fw={700} lineClamp={1}>Protocol {protocolNumber(families, family.signature) ?? "-"}</Text>
+                            <Text size="10px" c="dimmed" fw={400} lineClamp={2}>{protocolFamilyLabel(families, family)}</Text>
+                          </Table.Th>
+                        ))}
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {CUSTOM_DIMENSION_OPTIONS.map((option) => (
+                        <Table.Tr key={option.key}>
+                          <Table.Td style={{ position: "sticky", left: 0, zIndex: 2, background: "var(--mantine-color-body)" }}>
+                            <Text size="xs" fw={600}>{option.label}</Text>
+                          </Table.Td>
+                          <Table.Td style={{ background: "var(--mantine-primary-color-light)" }}>
+                            <Text size="10px" c="dimmed">Baseline</Text>
+                          </Table.Td>
+                          {candidateResults.map(({ family, result }) => {
+                            const row = result?.rows.find((item) => item.key === option.key);
+                            return (
+                              <Table.Td key={family.signature}>
+                                {row ? (
+                                  <Stack gap={3}>
+                                    <ComparisonStatusBadge status={row.status} />
+                                    <Text size="10px" c="dimmed" lineClamp={2} title={`${row.reference} -> ${row.candidate}`}>
+                                      {groupingDifferenceText(row)}
+                                    </Text>
+                                  </Stack>
+                                ) : <Text size="10px" c="dimmed">Unavailable</Text>}
+                              </Table.Td>
+                            );
+                          })}
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              )}
+            </Stack>
+          </Grid.Col>
+        </Grid>
 
         <Box>
-          <Text size="xs" fw={700} mb={5}>Comparison basis</Text>
-          <SegmentedControl
-            fullWidth
-            size="xs"
-            data={COMPARISON_MODE_OPTIONS}
-            value={mode}
-            onChange={(value) => setMode(value as ProtocolComparisonMode)}
-          />
-          <Text size="xs" c="dimmed" mt={6}>
-            {COMPARISON_MODE_HELP[mode]}
-          </Text>
+          <Group justify="space-between" align="baseline" gap="xs" mb={6} wrap="nowrap">
+            <Text size="sm" fw={700}>Proposed protocol groups</Text>
+            <Text size="xs" c="dimmed" ta="right">Name groups and review included protocols and cells. These become selectable after applying.</Text>
+          </Group>
+          {!hasSelectedDimension ? (
+            <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select at least one comparison dimension to propose meaningful protocol groups.</Text></Paper>
+          ) : !comparedDimensions.structure ? (
+            <Paper withBorder p="sm" radius="md"><Text size="xs" c="dimmed">Select Step flow and loops before applying groups. Grouped step selections are mapped by workflow order, so a structural match is required.</Text></Paper>
+          ) : (
+            <Grid gutter="sm">
+              {proposals.map((proposal, index) => {
+                const cells = groupedCellNames(proposal);
+                return (
+                  <Grid.Col key={proposal.key} span={{ base: 12, sm: 6 }}>
+                    <Paper
+                      withBorder
+                      radius="md"
+                      p="sm"
+                      style={{ borderTop: `3px solid var(--mantine-primary-color-${index % 2 === 0 ? "6" : "7"})` }}
+                    >
+                      <Stack gap={7}>
+                        <Group gap="xs" wrap="nowrap">
+                          <Text size="10px" c="dimmed" tt="uppercase" fw={700} style={{ flexShrink: 0 }}>Group {index + 1}</Text>
+                          <TextInput
+                            size="xs"
+                            value={nameFor(proposal, index)}
+                            onChange={(event) => setGroupNames((current) => ({ ...current, [proposal.key]: event.currentTarget.value }))}
+                            aria-label={`Name protocol group ${index + 1}`}
+                            style={{ flex: 1, minWidth: 0 }}
+                          />
+                        </Group>
+                        <Text size="10px" c="dimmed">{proposal.members.length} source famil{proposal.members.length === 1 ? "y" : "ies"} - {cells.length} cell{cells.length === 1 ? "" : "s"}</Text>
+                        <Box>
+                          <Text size="10px" c="dimmed" mb={4}>Includes protocols</Text>
+                          <Group gap={4} wrap="wrap">
+                            {proposal.members.map((family) => <Badge key={family.signature} size="xs" variant="light" color="var(--mantine-primary-color-6)">Protocol {protocolNumber(families, family.signature) ?? "-"}</Badge>)}
+                          </Group>
+                        </Box>
+                        <Box>
+                          <Text size="10px" c="dimmed" mb={4}>Cells in this group</Text>
+                          <Group gap={4} wrap="wrap">
+                            {cells.map((cell) => (
+                              <Tooltip key={cell} label={cell} withArrow>
+                                <Badge size="xs" variant="default" style={{ maxWidth: 92 }}><Text size="10px" truncate>{shortCellName(cell)}</Text></Badge>
+                              </Tooltip>
+                            ))}
+                          </Group>
+                        </Box>
+                        <Text size="10px" c="dimmed" lineClamp={2} title={groupedProtocolSummary(proposal, mode, customDimensions, comparisonOptions)}>
+                          {groupedProtocolSummary(proposal, mode, customDimensions, comparisonOptions)}
+                        </Text>
+                      </Stack>
+                    </Paper>
+                  </Grid.Col>
+                );
+              })}
+            </Grid>
+          )}
         </Box>
 
-        <Group align="end" grow wrap="nowrap">
-          <Select
-            size="xs"
-            label="Reference family"
-            data={familyOptions}
-            value={referenceSignature}
-            onChange={chooseReference}
-            allowDeselect={false}
-            comboboxProps={{ withinPortal: true }}
-          />
-          <Select
-            size="xs"
-            label="Candidate family"
-            data={familyOptions.filter((option) => option.value !== referenceSignature)}
-            value={candidateSignature}
-            onChange={setCandidateSignature}
-            placeholder={families.length < 2 ? "No second family" : "Choose a family"}
-            allowDeselect={false}
-            disabled={families.length < 2}
-            comboboxProps={{ withinPortal: true }}
-          />
-        </Group>
-
-        {mode === "custom" && (
-          <Paper
-            withBorder
-            radius="md"
-            p="xs"
-            bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
-          >
-            <Text size="xs" fw={700} mb={6}>Compare these dimensions</Text>
-            <Group gap="sm" wrap="wrap">
-              {CUSTOM_DIMENSION_OPTIONS.map((option) => (
-                <Checkbox
-                  key={option.key}
-                  size="xs"
-                  label={option.label}
-                  checked={customDimensions[option.key]}
-                  onChange={(event) =>
-                    setCustomDimensions((current) => ({
-                      ...current,
-                      [option.key]: event.currentTarget.checked,
-                    }))
-                  }
-                />
-              ))}
-            </Group>
-          </Paper>
-        )}
-
-        {families.length < 2 ? (
-          <Alert color="gray" title="One protocol family available">
-            Select at least two protocol families in the analysis samples to compare their evidence.
-          </Alert>
-        ) : !reference?.protocol || !candidate?.protocol ? (
-          <Alert color="gray" title="Protocol details unavailable">
-            The selected family does not have readable protocol details in the current sample set.
-          </Alert>
-        ) : result ? (
-          <>
-            <ScrollArea type="auto" offsetScrollbars>
-              <Table withTableBorder highlightOnHover={false} style={{ tableLayout: "fixed" }}>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th w="25%">Dimension</Table.Th>
-                    <Table.Th w="26%">Reference</Table.Th>
-                    <Table.Th w="26%">Candidate</Table.Th>
-                    <Table.Th w="23%">Result</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {result.rows.map((row) => (
-                    <Table.Tr key={row.key}>
-                      <Table.Td>
-                        <Text size="xs" fw={600}>{row.label}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" ff="monospace" lineClamp={2} title={row.reference}>
-                          {row.reference}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" ff="monospace" lineClamp={2} title={row.candidate}>
-                          {row.candidate}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <ComparisonStatusBadge status={row.status} />
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-            <Alert
-              color={result.comparable ? "teal" : mode === "custom" && !hasSelectedDimension ? "gray" : "orange"}
-              variant="light"
-              title={resultTitle ?? "Comparison result"}
-            >
-              {resultDetail}
-              {mode !== "strict" && (
-                <Text size="xs" c="dimmed" mt={4}>
-                  {Object.entries(comparedDimensions)
-                    .filter(([, selected]) => !selected)
-                    .map(([key]) => CUSTOM_DIMENSION_OPTIONS.find((option) => option.key === key)?.label.toLowerCase())
-                    .filter(Boolean)
-                    .join(", ") || "No dimensions"}{" "}
-                  remain visible as ignored evidence.
-                </Text>
-              )}
-            </Alert>
-          </>
-        ) : null}
-
-        <Group justify="flex-end">
-          <Button variant="default" size="sm" onClick={onClose}>Close</Button>
+        <Divider />
+        <Group justify="space-between" align="center" gap="sm" wrap="wrap-reverse">
+          <Text size="10px" c="dimmed">No source data changes until you apply named groups.</Text>
+          <Group gap="xs">
+            <Button variant="default" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={applyGroups} disabled={!canApply}>
+              Apply {proposals.length} grouped protocol{proposals.length === 1 ? "" : "s"}
+            </Button>
+          </Group>
         </Group>
       </Stack>
     </Modal>
@@ -1082,18 +1400,28 @@ function ProtocolComparisonModal({
  */
 function ProtocolPicker({
   families,
+  protocolGroups,
+  onApplyGroups,
   activeSignature,
   onSelect,
   targets,
 }: {
   families: ProtocolFamily[];
+  protocolGroups: ProtocolFamilyGroup[];
+  onApplyGroups?: (groups: ProtocolFamilyGroup[]) => void;
   activeSignature: string | null;
   onSelect: (signature: string) => void;
   targets: ProtocolSegmentTarget[];
 }) {
   const [showCells, setShowCells] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const active = families.find((f) => f.signature === activeSignature) ?? families[0];
+  const activeGroup = protocolGroups.find(
+    (group) => group.id === activeSignature && isSelectableProtocolGroup(group),
+  ) ?? null;
+  const active = families.find((f) => f.signature === activeSignature) ??
+    (activeGroup ? protocolGroupReference(activeGroup, families) : null) ??
+    families[0];
+  const activeMembers = activeGroup ? protocolGroupMembers(activeGroup, families) : active ? [active] : [];
   const label = (family: ProtocolFamily) => {
     const cells = [...new Set(family.files.map((file) => file.cellName))];
     const steps = family.protocol?.n_executable_steps ?? 0;
@@ -1103,6 +1431,19 @@ function ProtocolPicker({
     return `Protocol ${number} — ${steps} steps, ${where}${chosen ? ` · ${chosen} selected` : ""}`;
   };
 
+  const groupLabel = (group: ProtocolFamilyGroup) => {
+    const members = protocolGroupMembers(group, families);
+    const cells = uniqueStrings(members.flatMap(groupedFamilyCellNames));
+    const chosen = selectedStepsForGroup(targets, group, families).length;
+    return `${group.name} - ${members.length} families, ${cells.length} cells${chosen ? ` - ${chosen} selected` : ""}`;
+  };
+  const selectorData = [
+    ...protocolGroups
+      .filter((group) => isSelectableProtocolGroup(group) && protocolGroupMembers(group, families).length > 0)
+      .map((group) => ({ value: group.id, label: `Grouped - ${groupLabel(group)}` })),
+    ...families.map((family) => ({ value: family.signature, label: label(family) })),
+  ];
+
   return (
     <>
       <Stack gap={4}>
@@ -1111,11 +1452,8 @@ function ProtocolPicker({
             size="xs"
             label="Protocol"
             style={{ flex: 1 }}
-            data={families.map((family) => ({
-              value: family.signature,
-              label: label(family),
-            }))}
-            value={active?.signature ?? null}
+            data={selectorData}
+            value={activeGroup?.id ?? active?.signature ?? null}
             onChange={(value) => value && onSelect(value)}
             allowDeselect={false}
             comboboxProps={{ withinPortal: true }}
@@ -1135,16 +1473,16 @@ function ProtocolPicker({
             size="compact-xs"
             variant="default"
             onClick={() => setShowCells((value) => !value)}
-            disabled={!active || active.files.length === 0}
+            disabled={activeMembers.length === 0}
           >
-            {showCells ? "Hide cells" : `Cells (${new Set(active?.files.map((f) => f.cellName)).size ?? 0})`}
+            {showCells ? "Hide cells" : `Cells (${uniqueStrings(activeMembers.flatMap(groupedFamilyCellNames)).length})`}
           </Button>
         </Group>
-        {showCells && active && (
+        {showCells && activeMembers.length > 0 && (
           <Paper withBorder radius="md" p={6} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
             <Box className="cx-vertical-scroll" style={{ maxHeight: 96 }}>
               <Stack gap={2}>
-                {active.files.map((file) => (
+                {activeMembers.flatMap((family) => family.files).map((file) => (
                   <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
                     <Text size="10px" c="dimmed" truncate>
                       {file.cellName} · {file.testName} / {file.filename}
@@ -1156,11 +1494,13 @@ function ProtocolPicker({
           </Paper>
         )}
       </Stack>
-      <ProtocolComparisonModal
+      <GroupedProtocolComparisonModal
         opened={comparisonOpen}
         onClose={() => setComparisonOpen(false)}
         families={families}
         activeSignature={active?.signature ?? activeSignature}
+        existingGroups={protocolGroups}
+        onApplyGroups={onApplyGroups}
       />
     </>
   );
@@ -1489,6 +1829,8 @@ function ShowNeighboursButton({
 function SegmentEditor({
   draft,
   families,
+  protocolGroups,
+  onSaveProtocolGroups,
   segments,
   loading,
   hasErrors,
@@ -1503,6 +1845,8 @@ function SegmentEditor({
 }: {
   draft: SegmentDraft;
   families: ProtocolFamily[];
+  protocolGroups: ProtocolFamilyGroup[];
+  onSaveProtocolGroups?: (groups: ProtocolFamilyGroup[]) => void;
   segments: ProtocolSegment[];
   loading: boolean;
   hasErrors: boolean;
@@ -1543,7 +1887,12 @@ function SegmentEditor({
   useEffect(() => {
     setShownNeighbours(null);
   }, [query, filters, activeSignature]);
-  const activeFamily = families.find((f) => f.signature === activeSignature) ?? null;
+  const activeGroup = protocolGroups.find(
+    (group) => group.id === activeSignature && isSelectableProtocolGroup(group),
+  ) ?? null;
+  const activeFamily = families.find((f) => f.signature === activeSignature) ??
+    (activeGroup ? protocolGroupReference(activeGroup, families) : null);
+  const activeMembers = activeGroup ? protocolGroupMembers(activeGroup, families) : activeFamily ? [activeFamily] : [];
   const count = targetCount(targets);
 
   const setFamilySteps = (family: ProtocolFamily, steps: number[]) => {
@@ -1557,6 +1906,29 @@ function SegmentEditor({
       else current.delete(step);
     }
     setFamilySteps(family, [...current]);
+  };
+
+  const setActiveSelection = (steps: number[]) => {
+    if (activeGroup) {
+      setTargets((current) => replaceGroupTargets(current, activeGroup, families, steps));
+    } else if (activeFamily) {
+      setFamilySteps(activeFamily, steps);
+    }
+  };
+
+  const toggleActiveSelection = (steps: number[], checked: boolean) => {
+    const current = new Set(
+      activeGroup
+        ? selectedStepsForGroup(targets, activeGroup, families)
+        : activeFamily
+          ? selectedSteps(targets, activeFamily.signature, activeFamily)
+          : [],
+    );
+    for (const step of steps) {
+      if (checked) current.add(step);
+      else current.delete(step);
+    }
+    setActiveSelection([...current]);
   };
 
   const [editingId, setEditingId] = useState<string | null>(draft.id);
@@ -1594,6 +1966,39 @@ function SegmentEditor({
   const selectedSuggestion = suggestions.find(
     (suggestion) => suggestion.id === suggestionId
   );
+  const activeSuggestionSignatures = activeGroup
+    ? new Set(protocolGroupMembers(activeGroup, families).map((family) => family.signature))
+    : new Set(activeSignature ? [activeSignature] : []);
+  const activeSuggestions = suggestions.filter(
+    (suggestion) => Boolean(suggestion.protocolSignature && activeSuggestionSignatures.has(suggestion.protocolSignature)),
+  );
+  const applySuggestionTargets = (suggestion: ProtocolSegmentSuggestion) => {
+    if (!activeGroup) {
+      setTargets(
+        suggestion.segment.targets.map((target) => ({
+          ...target,
+          step_indices: [...target.step_indices],
+        })),
+      );
+      return;
+    }
+    const reference = protocolGroupReference(activeGroup, families);
+    const source = suggestion.protocolSignature
+      ? families.find((family) => familyMatchesSignature(family, suggestion.protocolSignature!))
+      : null;
+    const sourceTarget = source
+      ? suggestion.segment.targets.find((target) => familyMatchesSignature(source, target.protocol_signature))
+      : suggestion.segment.targets[0];
+    if (!reference?.protocol || !source?.protocol || !sourceTarget) {
+      setTargets(suggestion.segment.targets.map((target) => ({ ...target, step_indices: [...target.step_indices] })));
+      return;
+    }
+    const options: ProtocolComparisonOptions = { ignoreEmptyRestPause: activeGroup.ignore_empty_rest_pause };
+    const referenceSteps = source.signature === reference.signature
+      ? sourceTarget.step_indices
+      : mapComparableProtocolStepNumbers(source.protocol, reference.protocol, sourceTarget.step_indices, options);
+    setTargets(replaceGroupTargets([], activeGroup, families, referenceSteps));
+  };
 
   // Rendering the nested step tree is the expensive part of this modal. Keeping
   // it out of the name field's render path is what makes typing the segment
@@ -1603,7 +2008,9 @@ function SegmentEditor({
   const treeContent = useMemo(() => {
     if (loading || !activeFamily) return null;
     const family = activeFamily;
-    const selected = selectedSteps(targets, family.signature, family);
+    const selected = activeGroup
+      ? selectedStepsForGroup(targets, activeGroup, families)
+      : selectedSteps(targets, family.signature, family);
     const selectedSet = new Set(selected);
     const groups = familyGroups(family);
     const allSteps = uniqueSorted(groupSteps(groups));
@@ -1647,7 +2054,7 @@ function SegmentEditor({
                   variant="light"
                   color="var(--mantine-primary-color-6)"
                   disabled={visibleSteps.size === 0}
-                  onClick={() => toggleSteps(family, [...visibleSteps], true)}
+                  onClick={() => toggleActiveSelection([...visibleSteps], true)}
                 >
                   Select {visibleSteps.size} matching
                 </Button>
@@ -1665,7 +2072,7 @@ function SegmentEditor({
               variant="subtle"
               color="gray"
               disabled={selected.length === 0}
-              onClick={() => setFamilySteps(family, [])}
+              onClick={() => setActiveSelection([])}
             >
               Clear
             </Button>
@@ -1682,14 +2089,14 @@ function SegmentEditor({
               family={family}
               visibleSteps={displaySteps}
               defaultOpen={expandAll ?? group.depth === 0}
-                onToggleSteps={(steps, checked) => toggleSteps(family, steps, checked)}
+                onToggleSteps={(steps, checked) => toggleActiveSelection(steps, checked)}
             />
           ))}
         </Stack>
       </Box>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, activeFamily, targets, filters, query, expandEpoch, expandAll, shownNeighbours]);
+  }, [loading, activeFamily, activeGroup, families, targets, filters, query, expandEpoch, expandAll, shownNeighbours]);
 
   return (
     <Modal
@@ -1792,19 +2199,21 @@ function SegmentEditor({
                   size="xs"
                   label="Protocol"
                   style={{ width: 220, flexShrink: 0 }}
-                  data={families.map((family) => {
-                    const cells = [...new Set(family.files.map((file) => file.cellName))];
-                    const steps = family.protocol?.n_executable_steps ?? 0;
-                    const where = cells.length === 0 ? "not in samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`;
-                    const number = protocolNumber(families, family.signature) ?? "—";
-                    return {
+                  data={[
+                    ...protocolGroups
+                      .filter((group) => isSelectableProtocolGroup(group) && protocolGroupMembers(group, families).length > 0)
+                      .map((group) => ({
+                        value: group.id,
+                        label: `Grouped - ${group.name} (${protocolGroupMembers(group, families).length} families)`,
+                      })),
+                    ...families.map((family) => ({
                       value: family.signature,
-                      label: `Protocol ${number} — ${steps} steps, ${where}`,
-                    };
-                  })}
-                  value={activeSignature}
+                      label: protocolFamilyLabel(families, family),
+                    })),
+                  ]}
+                  value={activeGroup?.id ?? activeSignature}
                   onChange={(value) => {
-                    if (value && value !== activeSignature) {
+                    if (value) {
                       setActiveSignature(value);
                       setSuggestionId(null);
                     }
@@ -1827,13 +2236,12 @@ function SegmentEditor({
                   size="compact-xs"
                   variant="default"
                   onClick={() => {
-                    const active = families.find((f) => f.signature === activeSignature);
                     // Toggle cell display logic would go here if needed
                   }}
-                  disabled={!activeSignature}
+                  disabled={activeMembers.length === 0}
                   style={{ flexShrink: 0 }}
                 >
-                  {activeSignature ? `Cells (${new Set(families.find((f) => f.signature === activeSignature)?.files.map((f) => f.cellName)).size ?? 0})` : "Cells"}
+                  {activeMembers.length > 0 ? `Cells (${uniqueStrings(activeMembers.flatMap(groupedFamilyCellNames)).length})` : "Cells"}
                 </Button>
                 {/* Suggestions selector for active protocol only */}
                 <Box style={{ flex: 1, minWidth: 0 }}>
@@ -1849,8 +2257,7 @@ function SegmentEditor({
                     data={
                       // Filter suggestions to active protocol and render flat (no grouping)
                       // since they're now single-protocol
-                      suggestions
-                        .filter((s) => s.protocolSignature === activeSignature)
+                      activeSuggestions
                         .map((suggestion) => ({
                           value: suggestion.id,
                           label: suggestion.label,
@@ -1866,13 +2273,9 @@ function SegmentEditor({
                       const selected = suggestions.find((s) => s.id === value);
                       if (!selected) return;
 
-                      // Auto-apply the suggestion: set targets and active signature
-                      setTargets(
-                        selected.segment.targets.map((target) => ({
-                          ...target,
-                          step_indices: [...target.step_indices],
-                        }))
-                      );
+                      // Auto-apply the suggestion, expanding it across an
+                      // applied workflow group when one is active.
+                      applySuggestionTargets(selected);
 
                       // Auto-populate name only if it's empty or matches a previous auto-generated name
                       if (
@@ -1903,7 +2306,7 @@ function SegmentEditor({
               {!suggestionsLoading &&
                 !suggestionsError &&
                 activeSignature &&
-                suggestions.filter((s) => s.protocolSignature === activeSignature).length === 0 && (
+                activeSuggestions.length === 0 && (
                   <Text size="xs" c="dimmed">
                     No detected pairs for this protocol.
                   </Text>
@@ -1918,11 +2321,13 @@ function SegmentEditor({
         )}
 
         {showSuggestions && (
-          <ProtocolComparisonModal
+          <GroupedProtocolComparisonModal
             opened={suggestionComparisonOpen}
             onClose={() => setSuggestionComparisonOpen(false)}
             families={families}
             activeSignature={activeSignature}
+            existingGroups={protocolGroups}
+            onApplyGroups={onSaveProtocolGroups}
           />
         )}
 
@@ -1944,7 +2349,9 @@ function SegmentEditor({
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <ProtocolPicker
                   families={families}
-                  activeSignature={activeFamily?.signature ?? null}
+                  protocolGroups={protocolGroups}
+                  onApplyGroups={onSaveProtocolGroups}
+                  activeSignature={activeSignature}
                   onSelect={setActiveSignature}
                   targets={targets}
                 />
@@ -2035,6 +2442,8 @@ function SegmentEditor({
 export function ProtocolSegmentsPanel({
   cellIds,
   segments,
+  protocolGroups = [],
+  onSaveProtocolGroups,
   hiddenSegmentIds,
   excludedSegmentIds,
   onlySegmentIds,
@@ -2283,6 +2692,8 @@ export function ProtocolSegmentsPanel({
           key={`${draft.id ?? "new"}-${draft.targets.map((target) => target.protocol_signature).join("|")}`}
           draft={draft}
           families={editorFamilies}
+          protocolGroups={protocolGroups}
+          onSaveProtocolGroups={onSaveProtocolGroups}
           segments={segments}
           loading={loading}
           hasErrors={hasErrors}

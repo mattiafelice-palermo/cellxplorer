@@ -91,6 +91,7 @@ import {
   put,
   PlotAspectRatioKey,
   PlotExportFormat,
+  ProtocolFamilyGroup,
   ProtocolSegment,
   ReplicateGroupSummary,
   SavedAnalysisPlot,
@@ -786,6 +787,31 @@ function normalizeSpec(input: AnalysisSpec): AnalysisSpec {
       }))
       .filter((target) => target.protocol_signature && target.step_indices.length > 0),
   }));
+  spec.protocol_groups = (spec.protocol_groups ?? [])
+    .map((group): ProtocolFamilyGroup => ({
+      id: group.id,
+      name: group.name?.trim() || "Protocol group",
+      family_signatures: [...new Set(group.family_signatures ?? [])].filter(Boolean),
+      reference_signature: group.reference_signature,
+      comparison_mode:
+        group.comparison_mode === "strict" || group.comparison_mode === "custom"
+          ? group.comparison_mode
+          : "workflow",
+      comparison_dimensions: {
+        structure: Boolean(group.comparison_dimensions?.structure),
+        termination: Boolean(group.comparison_dimensions?.termination),
+        rates: Boolean(group.comparison_dimensions?.rates),
+        timing: Boolean(group.comparison_dimensions?.timing),
+        voltage: Boolean(group.comparison_dimensions?.voltage),
+        recording: Boolean(group.comparison_dimensions?.recording),
+      },
+      ignore_empty_rest_pause: Boolean(group.ignore_empty_rest_pause),
+    }))
+    .filter(
+      (group) =>
+        group.family_signatures.length > 0 &&
+        group.family_signatures.includes(group.reference_signature),
+    );
   spec.dcir_segments = (spec.dcir_segments ?? []).map((segment) => ({
     id: segment.id,
     name: segment.name,
@@ -2734,6 +2760,12 @@ function AnalysisEditorView({
     });
   };
 
+  const saveProtocolGroups = (groups: ProtocolFamilyGroup[]) => {
+    update((s) => {
+      s.protocol_groups = groups;
+    });
+  };
+
   const toggleProtocolSegmentHidden = (segmentId: string) => {
     update((s) => {
       const hidden = s.presentation.hidden_protocol_segment_ids ?? [];
@@ -3309,6 +3341,8 @@ function AnalysisEditorView({
         <ProtocolSegmentsPanel
           cellIds={protocolCellIds}
           segments={spec.protocol_segments ?? []}
+          protocolGroups={spec.protocol_groups ?? []}
+          onSaveProtocolGroups={saveProtocolGroups}
           // On the steps tab, hiding a segment hides the series that plot it —
           // a display-only filter (hidden_analysis_segment_ids). On the cycle /
           // time-capacity tabs it masks those steps in the computed data

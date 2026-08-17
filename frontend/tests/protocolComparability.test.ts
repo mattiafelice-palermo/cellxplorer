@@ -4,6 +4,7 @@ import test from "node:test";
 import type { FileProtocol, ProtocolGroup, ProtocolStep } from "../src/api.ts";
 import {
   compareProtocolFamilies,
+  mapComparableProtocolStepNumbers,
   normalizeProtocolRate,
   WORKFLOW_COMPARISON_DIMENSIONS,
   type ProtocolComparisonDimensions,
@@ -254,4 +255,46 @@ test("custom mode with no selected dimensions fails closed", () => {
   assert.equal(result.comparable, false);
   assert.deepEqual(result.differingDimensions, []);
   assert.ok(result.rows.every((item) => item.status === "ignored"));
+});
+
+test("workflow can ignore empty rest or pause rows without treating them as executable steps", () => {
+  const emptyPause = step({
+    number: 2,
+    type: "Pause",
+    direction: "rest",
+    current_ma: null,
+    c_rate: null,
+    target_voltage_v: null,
+    stop_voltage_v: null,
+    stop_current_ma: null,
+    stop_c_rate: null,
+    time_limit_s: null,
+    record_interval_s: null,
+    record_voltage_delta_v: null,
+    protection_upper_v: null,
+    protection_lower_v: null,
+  });
+  const reference = protocol({
+    steps: [step({ number: 1 }), step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: 40 })],
+    groups: [],
+  });
+  const candidate = protocol({
+    steps: [reference.steps[0], emptyPause, { ...reference.steps[1], number: 3 }],
+    groups: [],
+    signature: "empty-pause",
+  });
+
+  const strictWorkflow = compareProtocolFamilies(reference, candidate, "workflow");
+  assert.equal(strictWorkflow.comparable, false);
+  const ignoredWorkflow = compareProtocolFamilies(reference, candidate, "workflow", undefined, {
+    ignoreEmptyRestPause: true,
+  });
+  assert.equal(ignoredWorkflow.comparable, true);
+  assert.equal(ignoredWorkflow.rows.find((row) => row.key === "structure")?.status, "same");
+  assert.equal(ignoredWorkflow.rows.find((row) => row.key === "timing")?.status, "same");
+
+  assert.deepEqual(
+    mapComparableProtocolStepNumbers(reference, candidate, [1, 2], { ignoreEmptyRestPause: true }),
+    [1, 3],
+  );
 });

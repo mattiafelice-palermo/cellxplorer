@@ -658,6 +658,29 @@ export interface ProtocolSegment {
   targets: ProtocolSegmentTarget[];
 }
 
+/**
+ * A user-reviewed, analysis-local view over one or more source protocol
+ * families. The analysis engine still receives the exact source signatures in
+ * ProtocolSegmentTarget; this metadata only lets the editor expose a named
+ * workflow grouping and map selections back to those source-local targets.
+ */
+export interface ProtocolFamilyGroup {
+  id: string;
+  name: string;
+  family_signatures: string[];
+  reference_signature: string;
+  comparison_mode: "strict" | "workflow" | "custom";
+  comparison_dimensions: {
+    structure: boolean;
+    termination: boolean;
+    rates: boolean;
+    timing: boolean;
+    voltage: boolean;
+    recording: boolean;
+  };
+  ignore_empty_rest_pause: boolean;
+}
+
 export interface ReplicateGroupSummary {
   id: number;
   name: string;
@@ -1139,6 +1162,8 @@ export interface AnalysisSpec {
     hidden_replicate_group_ids?: number[];
   };
   protocol_segments?: ProtocolSegment[];
+  /** User-reviewed protocol-family groupings used by the protocol editor. */
+  protocol_groups?: ProtocolFamilyGroup[];
   /** DCIR-only rest/pulse definitions. Never shared with other analysis tabs. */
   dcir_segments?: DcirSegment[];
   computation: {
