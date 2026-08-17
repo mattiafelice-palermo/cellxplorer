@@ -3,7 +3,7 @@
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a read-only protocol-family comparison modal beside the protocol selector, distinguishing
   strict semantic identity from workflow and custom comparability without silently merging
-  source-local targets. **Implementation in progress** on
+  source-local targets. **Implementation ready for remote review** on
   `feature/semantic-protocol-signature`; the generated HTML mockup is included as the spec asset.
 - [`048-test-fixture-runtime-optimization.md`](048-test-fixture-runtime-optimization.md)
   reduces redundant backend fixture/setup work and release/CI orchestration cost without changing

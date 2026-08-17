@@ -51,6 +51,13 @@ the reconstructed step and are used by the DCIR calculation. Exported and inferr
 normalized to the same semantic value. If neither a rate nor a nominal-capacity basis is available,
 the step remains absolute-current-controlled and retains its mA values.
 
+The shared protocol editor's `Compare protocol families` modal is diagnostic only. Strict mode
+uses the normalized semantic identity; Workflow mode compares ordered building blocks, loop
+structure, rates, and timing while showing voltage/protection and recording settings as ignored
+evidence by default; Custom mode lets the scientist opt those dimensions into the comparison.
+Even when families are workflow-comparable, DCIR targets remain scoped to the original protocol
+signature and source-local step indices: the modal never merges families or creates a step mapping.
+
 Candidate recognition is only an editing aid. It suggests adjacent rest/pulse pairs using editable
 minimum-rest, maximum-pulse, and rest-to-pulse ratio thresholds. Detection reads the reconstructed
 protocol's `time_limit_s`, so Neware millisecond duration fields must be normalized by

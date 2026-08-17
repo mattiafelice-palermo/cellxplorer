@@ -1,0 +1,157 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { FileProtocol, ProtocolGroup, ProtocolStep } from "../src/api.ts";
+import {
+  compareProtocolFamilies,
+  WORKFLOW_COMPARISON_DIMENSIONS,
+  type ProtocolComparisonDimensions,
+} from "../src/features/analyses/editor/protocol/protocolComparability.ts";
+
+const group = (repeat_count = 2): ProtocolGroup => ({
+  id: "loop",
+  kind: "repeated_block",
+  label: "Loop",
+  start_step: 1,
+  end_step: 3,
+  repeat_count,
+  control_step: 3,
+  depth: 0,
+  step_numbers: [1, 2],
+  all_step_numbers: [1, 2, 3],
+  children: [],
+  summary: `steps 1-3 x${repeat_count}`,
+});
+
+const step = (overrides: Partial<ProtocolStep> = {}): ProtocolStep => ({
+  number: 1,
+  type_id: 2,
+  type: "CC discharge",
+  direction: "discharge",
+  current_ma: 10,
+  c_rate: 0.5,
+  c_rate_source: "explicit",
+  target_voltage_v: null,
+  stop_voltage_v: 2,
+  stop_current_ma: 1,
+  stop_c_rate: 0.05,
+  stop_c_rate_source: "inferred",
+  time_limit_s: 10,
+  record_interval_s: 1,
+  record_voltage_delta_v: null,
+  protection_upper_v: 4.5,
+  protection_lower_v: 2,
+  loop_start_step: null,
+  loop_count: null,
+  summary: "CC discharge C/2 to 2 V",
+  facts: [],
+  conditions: [],
+  ...overrides,
+});
+
+const protocol = (overrides: Partial<FileProtocol> = {}): FileProtocol => ({
+  signature: "same-signature",
+  n_steps: 3,
+  n_executable_steps: 2,
+  steps: [step(), step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: 40 })],
+  groups: [group()],
+  nominal_capacity_mah: 20,
+  nominal_capacity_inferred: false,
+  summary: {
+    charge_cutoffs: [],
+    discharge_cutoffs: [{ voltage_v: 2, step_count: 1 }],
+    protection_windows: [{ lower_v: 2, upper_v: 4.5 }],
+    record_intervals_s: [1],
+  },
+  warnings: [],
+  ...overrides,
+});
+
+function row(result: ReturnType<typeof compareProtocolFamilies>, key: string) {
+  const found = result.rows.find((item) => item.key === key);
+  assert.ok(found, `missing comparison row: ${key}`);
+  return found;
+}
+
+test("workflow mode ignores voltage cutoffs while strict mode reports them", () => {
+  const reference = protocol();
+  const candidate = protocol({
+    signature: "different-voltage",
+    steps: [
+      step(),
+      step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: 40, stop_voltage_v: 2.8, protection_lower_v: 2.8 }),
+    ],
+  });
+
+  const workflow = compareProtocolFamilies(reference, candidate, "workflow");
+  assert.equal(workflow.comparable, true);
+  assert.equal(row(workflow, "voltage").status, "ignored");
+
+  const strict = compareProtocolFamilies(reference, candidate, "strict");
+  assert.equal(strict.comparable, false);
+  assert.equal(strict.strictIdentityMatch, false);
+  assert.equal(row(strict, "voltage").status, "different");
+});
+
+test("capacity-scaled currents do not make rate-controlled families different", () => {
+  const reference = protocol();
+  const candidate = protocol({
+    steps: [
+      step({ current_ma: 20, stop_current_ma: 2 }),
+      step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: 40 }),
+    ],
+  });
+
+  const result = compareProtocolFamilies(reference, candidate, "strict");
+  assert.equal(result.comparable, true);
+  assert.equal(row(result, "rates").status, "same");
+});
+
+test("custom mode can opt voltage back into the comparison", () => {
+  const reference = protocol();
+  const candidate = protocol({
+    signature: "different-voltage",
+    steps: [
+      step(),
+      step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: 40, stop_voltage_v: 2.8, protection_lower_v: 2.8 }),
+    ],
+  });
+  const custom: ProtocolComparisonDimensions = {
+    ...WORKFLOW_COMPARISON_DIMENSIONS,
+    voltage: true,
+  };
+
+  const result = compareProtocolFamilies(reference, candidate, "custom", custom);
+  assert.equal(result.comparable, false);
+  assert.equal(row(result, "voltage").status, "different");
+  assert.equal(row(result, "recording").status, "ignored");
+});
+
+test("workflow mode detects a changed loop structure", () => {
+  const result = compareProtocolFamilies(
+    protocol(),
+    protocol({ signature: "different-loop", groups: [group(3)] }),
+    "workflow",
+  );
+
+  assert.equal(result.comparable, false);
+  assert.equal(row(result, "structure").status, "different");
+});
+
+test("missing timing values are compared as missing, not as zero", () => {
+  const result = compareProtocolFamilies(
+    protocol(),
+    protocol({
+      signature: "missing-timing",
+      steps: [
+        step({ time_limit_s: null }),
+        step({ number: 2, type_id: 4, type: "Rest", direction: "rest", c_rate: null, current_ma: null, stop_current_ma: null, stop_c_rate: null, time_limit_s: null }),
+      ],
+    }),
+    "workflow",
+  );
+
+  assert.equal(result.comparable, false);
+  assert.equal(row(result, "timing").status, "different");
+  assert.match(row(result, "timing").candidate, /Unavailable/);
+});

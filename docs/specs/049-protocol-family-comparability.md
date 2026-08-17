@@ -1,6 +1,6 @@
 # 049 — Protocol-family comparability review
 
-**Status:** Plan — implementation follows this document
+**Status:** Implementation ready for remote review
 **Branch:** `feature/semantic-protocol-signature`
 **Depends on:** the semantic protocol signature contract already present on this branch
 
@@ -56,7 +56,8 @@ source-local semantic mappings, but this spec must not infer those mappings from
 
 ### Entry point
 
-In the existing protocol picker inside the protocol-segment editor:
+In the existing protocol picker inside the protocol-segment editor (including the compact
+protocol selector in the DCIR suggested-pairs surface):
 
 - keep the `Protocol` selector and `Cells (N)` control unchanged;
 - add a compact settings `ActionIcon` immediately beside the protocol selector;
@@ -158,8 +159,28 @@ implementation details disagree.
 8. One-family and missing-value states are explicit and fail closed.
 9. The helper tests cover matching families, voltage-only differences, capacity-scaled rate
    current differences, strict/workflow/custom selection, and missing values.
-10. Frontend type-check/build and the repository preflight pass; the modal is manually exercised
-    at desktop width in the in-app browser.
+10. Frontend type-check/build and the repository preflight pass. In-app browser verification is
+    intentionally deferred to the user for this handoff, per the explicit request to test the app
+    manually.
+
+## Implementation record
+
+- Added the selector-adjacent settings action in both the normal protocol picker and the DCIR
+  suggested-pairs picker.
+- Added the read-only Mantine comparison modal with Strict, Workflow, and Custom modes, explicit
+  Same/Different/Ignored evidence, and fail-closed unavailable-family states.
+- Added the pure comparison policy and focused frontend tests for voltage-only differences,
+  capacity-scaled currents, loop changes, custom dimensions, and missing values.
+- Kept analysis targets, protocol signatures, source data, and caches unchanged while comparing.
+
+## Verification record
+
+- `node --test frontend\\tests\\protocolComparability.test.ts` — PASS (5 tests).
+- `python -m unittest tests.test_protocol tests.test_dcir` — PASS (31 tests).
+- `npm.cmd run build` — PASS (TypeScript build and Vite production bundle).
+- `python scripts\\check_versions.py --expected-version 0.25.0-beta.1` — PASS.
+- `python scripts\\preflight.py` — PASS (4/4 stages; 131 backend/frontend test files/modules).
+- In-app browser check — NOT RUN, per the explicit request that the user test the app manually.
 
 ## Reference asset
 

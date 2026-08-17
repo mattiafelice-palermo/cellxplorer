@@ -20,6 +20,7 @@ import {
   SegmentedControl,
   Select,
   Stack,
+  Table,
   Text,
   TextInput,
   Tooltip,
@@ -39,6 +40,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconPlus,
+  IconSettings,
   IconSparkles,
   IconTrash,
   IconX,
@@ -65,6 +67,14 @@ import {
   stepMatches,
 } from "./protocolStepFilters";
 import { normalizeGroup } from "./protocolGroupNormalization";
+import {
+  compareProtocolFamilies,
+  comparisonDimensionsFor,
+  WORKFLOW_COMPARISON_DIMENSIONS,
+  type ProtocolComparisonDimensions,
+  type ProtocolComparisonMode,
+  type ProtocolComparisonStatus,
+} from "./protocolComparability";
 import {
   adjacentStepsAroundMatches,
   stepsInSameGroupsAsMatches,
@@ -768,13 +778,279 @@ function SegmentSidePanel({
   );
 }
 
+function ComparisonStatusBadge({ status }: { status: ProtocolComparisonStatus }) {
+  const color = status === "same" ? "teal" : status === "different" ? "orange" : "gray";
+  const label = status === "same" ? "Same" : status === "different" ? "Different" : "Ignored";
+  return (
+    <Badge size="xs" variant="light" color={color}>
+      {label}
+    </Badge>
+  );
+}
+
+const COMPARISON_MODE_OPTIONS = [
+  { value: "strict", label: "Strict" },
+  { value: "workflow", label: "Workflow" },
+  { value: "custom", label: "Custom" },
+];
+
+const COMPARISON_MODE_HELP: Record<ProtocolComparisonMode, string> = {
+  strict: "All supported protocol identity fields must match, including voltage cutoffs and protection limits.",
+  workflow: "Compare the ordered building blocks, loops, rates, and timing. Voltage and recording settings remain visible but are ignored.",
+  custom: "Choose which dimensions matter for this review. Excluded rows remain visible as ignored evidence.",
+};
+
+const CUSTOM_DIMENSION_OPTIONS: {
+  key: keyof ProtocolComparisonDimensions;
+  label: string;
+}[] = [
+  { key: "structure", label: "Step flow and loops" },
+  { key: "rates", label: "C-rates and pulse schedule" },
+  { key: "timing", label: "Rest and hold timing" },
+  { key: "voltage", label: "Voltage cutoffs and protection" },
+  { key: "recording", label: "Recording settings" },
+];
+
+function protocolFamilyLabel(families: ProtocolFamily[], family: ProtocolFamily): string {
+  const number = protocolNumber(families, family.signature) ?? "—";
+  const cells = [...new Set(family.files.map((file) => file.cellName))];
+  const steps = family.protocol?.n_executable_steps ?? family.unavailableSteps?.length ?? 0;
+  const where = cells.length === 0 ? "not in samples" : `${cells.length} cell${cells.length === 1 ? "" : "s"}`;
+  return `Protocol ${number} — ${steps} steps, ${where}`;
+}
+
+function ProtocolComparisonModal({
+  opened,
+  onClose,
+  families,
+  activeSignature,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  families: ProtocolFamily[];
+  activeSignature: string | null;
+}) {
+  const [mode, setMode] = useState<ProtocolComparisonMode>("workflow");
+  const [referenceSignature, setReferenceSignature] = useState<string | null>(activeSignature);
+  const [candidateSignature, setCandidateSignature] = useState<string | null>(null);
+  const [customDimensions, setCustomDimensions] = useState<ProtocolComparisonDimensions>({
+    ...WORKFLOW_COMPARISON_DIMENSIONS,
+  });
+
+  const familyOptions = families.map((family) => ({
+    value: family.signature,
+    label: protocolFamilyLabel(families, family),
+  }));
+
+  const openComparison = () => {
+    const reference = activeSignature ?? families[0]?.signature ?? null;
+    const candidate = families.find((family) => family.signature !== reference)?.signature ?? null;
+    setReferenceSignature(reference);
+    setCandidateSignature(candidate);
+    setMode("workflow");
+    setCustomDimensions({ ...WORKFLOW_COMPARISON_DIMENSIONS });
+  };
+
+  useEffect(() => {
+    if (opened) openComparison();
+    // Opening is the only time the active picker selection should reset the
+    // comparison pair. Selectors inside the modal remain user-controlled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
+
+  const reference = families.find((family) => family.signature === referenceSignature) ?? null;
+  const candidate = families.find((family) => family.signature === candidateSignature) ?? null;
+  const result = reference?.protocol && candidate?.protocol
+    ? compareProtocolFamilies(reference.protocol, candidate.protocol, mode, customDimensions)
+    : null;
+  const comparedDimensions = comparisonDimensionsFor(mode, customDimensions);
+
+  const chooseReference = (value: string | null) => {
+    if (!value) return;
+    setReferenceSignature(value);
+    if (value === candidateSignature) {
+      setCandidateSignature(families.find((family) => family.signature !== value)?.signature ?? null);
+    }
+  };
+
+  const resultTitle = result
+    ? result.comparable
+      ? mode === "strict"
+        ? "Strictly comparable"
+        : mode === "workflow"
+          ? "Comparable workflow"
+          : "Comparable for selected dimensions"
+      : mode === "strict"
+        ? "Not strictly comparable"
+        : "Selected dimensions differ"
+    : null;
+  const resultDetail = result
+    ? result.comparable
+      ? mode === "strict"
+        ? "The selected protocol identity fields match."
+        : "The families can be reviewed together for this basis; ignored limits remain attached to each source."
+      : mode === "strict" && !result.strictIdentityMatch
+        ? "The normalized semantic protocol signatures differ. Review the evidence rows before treating these families as the same protocol."
+        : `Different: ${result.rows.filter((row) => row.status === "different").map((row) => row.label.toLowerCase()).join(", ")}.`
+    : null;
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Compare protocol families"
+      size="xl"
+      centered
+      styles={{
+        content: { maxHeight: "calc(100dvh - 2rem)" },
+        body: { overflowY: "auto" },
+      }}
+    >
+      <Stack gap="sm">
+        <Alert color="teal" variant="light" title="Diagnostic comparison">
+          This review does not change source data, protocol signatures, or segment targets. A
+          workflow match is not an automatic step mapping between files.
+        </Alert>
+
+        <Box>
+          <Text size="xs" fw={700} mb={5}>Comparison basis</Text>
+          <SegmentedControl
+            fullWidth
+            size="xs"
+            data={COMPARISON_MODE_OPTIONS}
+            value={mode}
+            onChange={(value) => setMode(value as ProtocolComparisonMode)}
+          />
+          <Text size="xs" c="dimmed" mt={6}>
+            {COMPARISON_MODE_HELP[mode]}
+          </Text>
+        </Box>
+
+        <Group align="end" grow wrap="nowrap">
+          <Select
+            size="xs"
+            label="Reference family"
+            data={familyOptions}
+            value={referenceSignature}
+            onChange={chooseReference}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: true }}
+          />
+          <Select
+            size="xs"
+            label="Candidate family"
+            data={familyOptions.filter((option) => option.value !== referenceSignature)}
+            value={candidateSignature}
+            onChange={setCandidateSignature}
+            placeholder={families.length < 2 ? "No second family" : "Choose a family"}
+            allowDeselect={false}
+            disabled={families.length < 2}
+            comboboxProps={{ withinPortal: true }}
+          />
+        </Group>
+
+        {mode === "custom" && (
+          <Paper
+            withBorder
+            radius="md"
+            p="xs"
+            bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+          >
+            <Text size="xs" fw={700} mb={6}>Compare these dimensions</Text>
+            <Group gap="sm" wrap="wrap">
+              {CUSTOM_DIMENSION_OPTIONS.map((option) => (
+                <Checkbox
+                  key={option.key}
+                  size="xs"
+                  label={option.label}
+                  checked={customDimensions[option.key]}
+                  onChange={(event) =>
+                    setCustomDimensions((current) => ({
+                      ...current,
+                      [option.key]: event.currentTarget.checked,
+                    }))
+                  }
+                />
+              ))}
+            </Group>
+          </Paper>
+        )}
+
+        {families.length < 2 ? (
+          <Alert color="gray" title="One protocol family available">
+            Select at least two protocol families in the analysis samples to compare their evidence.
+          </Alert>
+        ) : !reference?.protocol || !candidate?.protocol ? (
+          <Alert color="gray" title="Protocol details unavailable">
+            The selected family does not have readable protocol details in the current sample set.
+          </Alert>
+        ) : result ? (
+          <>
+            <ScrollArea type="auto" offsetScrollbars>
+              <Table withTableBorder highlightOnHover={false} style={{ tableLayout: "fixed" }}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th w="25%">Dimension</Table.Th>
+                    <Table.Th w="26%">Reference</Table.Th>
+                    <Table.Th w="26%">Candidate</Table.Th>
+                    <Table.Th w="23%">Result</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {result.rows.map((row) => (
+                    <Table.Tr key={row.key}>
+                      <Table.Td>
+                        <Text size="xs" fw={600}>{row.label}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" ff="monospace" lineClamp={2} title={row.reference}>
+                          {row.reference}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" ff="monospace" lineClamp={2} title={row.candidate}>
+                          {row.candidate}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <ComparisonStatusBadge status={row.status} />
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+            <Alert color={result.comparable ? "teal" : "orange"} variant="light" title={resultTitle ?? "Comparison result"}>
+              {resultDetail}
+              {mode !== "strict" && (
+                <Text size="xs" c="dimmed" mt={4}>
+                  {Object.entries(comparedDimensions)
+                    .filter(([, selected]) => !selected)
+                    .map(([key]) => CUSTOM_DIMENSION_OPTIONS.find((option) => option.key === key)?.label.toLowerCase())
+                    .filter(Boolean)
+                    .join(", ") || "No dimensions"}{" "}
+                  remain visible as ignored evidence.
+                </Text>
+              )}
+            </Alert>
+          </>
+        ) : null}
+
+        <Group justify="flex-end">
+          <Button variant="default" size="sm" onClick={onClose}>Close</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
 /**
  * Choose which protocol to work on, and see which cells share it.
  *
- * Files are already grouped by protocol signature, so cells running byte-wise
- * identical programs collapse into one entry. Showing them all at once made
- * the list unreadable when an analysis holds several protocols; picking one
- * keeps the step table about a single program.
+ * Files are already grouped by semantic protocol signature, so cells running
+ * the same programmed protocol collapse into one entry. Showing them all at
+ * once made the list unreadable when an analysis holds several protocols;
+ * picking one keeps the step table about a single program.
  */
 function ProtocolPicker({
   families,
@@ -788,6 +1064,7 @@ function ProtocolPicker({
   targets: ProtocolSegmentTarget[];
 }) {
   const [showCells, setShowCells] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const active = families.find((f) => f.signature === activeSignature) ?? families[0];
   const label = (family: ProtocolFamily) => {
     const cells = [...new Set(family.files.map((file) => file.cellName))];
@@ -799,46 +1076,65 @@ function ProtocolPicker({
   };
 
   return (
-    <Stack gap={4}>
-      <Group gap={8} wrap="nowrap" align="end">
-        <Select
-          size="xs"
-          label="Protocol"
-          style={{ flex: 1 }}
-          data={families.map((family) => ({
-            value: family.signature,
-            label: label(family),
-          }))}
-          value={active?.signature ?? null}
-          onChange={(value) => value && onSelect(value)}
-          allowDeselect={false}
-          comboboxProps={{ withinPortal: true }}
-        />
-        <Button
-          size="compact-xs"
-          variant="default"
-          onClick={() => setShowCells((value) => !value)}
-          disabled={!active || active.files.length === 0}
-        >
-          {showCells ? "Hide cells" : `Cells (${new Set(active?.files.map((f) => f.cellName)).size ?? 0})`}
-        </Button>
-      </Group>
-      {showCells && active && (
-        <Paper withBorder radius="md" p={6} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
-          <Box className="cx-vertical-scroll" style={{ maxHeight: 96 }}>
-            <Stack gap={2}>
-              {active.files.map((file) => (
-                <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
-                  <Text size="10px" c="dimmed" truncate>
-                    {file.cellName} · {file.testName} / {file.filename}
-                  </Text>
-                </Tooltip>
-              ))}
-            </Stack>
-          </Box>
-        </Paper>
-      )}
-    </Stack>
+    <>
+      <Stack gap={4}>
+        <Group gap={8} wrap="nowrap" align="end">
+          <Select
+            size="xs"
+            label="Protocol"
+            style={{ flex: 1 }}
+            data={families.map((family) => ({
+              value: family.signature,
+              label: label(family),
+            }))}
+            value={active?.signature ?? null}
+            onChange={(value) => value && onSelect(value)}
+            allowDeselect={false}
+            comboboxProps={{ withinPortal: true }}
+          />
+          <Tooltip label="Compare protocol families">
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              onClick={() => setComparisonOpen(true)}
+              aria-label="Compare protocol families"
+            >
+              <IconSettings size={15} />
+            </ActionIcon>
+          </Tooltip>
+          <Button
+            size="compact-xs"
+            variant="default"
+            onClick={() => setShowCells((value) => !value)}
+            disabled={!active || active.files.length === 0}
+          >
+            {showCells ? "Hide cells" : `Cells (${new Set(active?.files.map((f) => f.cellName)).size ?? 0})`}
+          </Button>
+        </Group>
+        {showCells && active && (
+          <Paper withBorder radius="md" p={6} bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))">
+            <Box className="cx-vertical-scroll" style={{ maxHeight: 96 }}>
+              <Stack gap={2}>
+                {active.files.map((file) => (
+                  <Tooltip key={`${file.cellId}-${file.fileId}`} label={`${file.hash} — ${file.filename}`}>
+                    <Text size="10px" c="dimmed" truncate>
+                      {file.cellName} · {file.testName} / {file.filename}
+                    </Text>
+                  </Tooltip>
+                ))}
+              </Stack>
+            </Box>
+          </Paper>
+        )}
+      </Stack>
+      <ProtocolComparisonModal
+        opened={comparisonOpen}
+        onClose={() => setComparisonOpen(false)}
+        families={families}
+        activeSignature={active?.signature ?? activeSignature}
+      />
+    </>
   );
 }
 
@@ -1203,6 +1499,7 @@ function SegmentEditor({
   const [expandEpoch, setExpandEpoch] = useState(0);
   const [shownNeighbours, setShownNeighbours] = useState<Set<number> | null>(null);
   const [suggestionId, setSuggestionId] = useState<string | null>(null);
+  const [suggestionComparisonOpen, setSuggestionComparisonOpen] = useState(false);
   const [lastAutoGeneratedName, setLastAutoGeneratedName] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   // Pin the choice once, rather than falling back to families[0] on every
@@ -1487,6 +1784,17 @@ function SegmentEditor({
                   allowDeselect={false}
                   comboboxProps={{ withinPortal: true }}
                 />
+                <Tooltip label="Compare protocol families">
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color="gray"
+                    onClick={() => setSuggestionComparisonOpen(true)}
+                    aria-label="Compare protocol families"
+                  >
+                    <IconSettings size={15} />
+                  </ActionIcon>
+                </Tooltip>
                 <Button
                   size="compact-xs"
                   variant="default"
@@ -1579,6 +1887,15 @@ function SegmentEditor({
               )}
             </Stack>
           </Paper>
+        )}
+
+        {showSuggestions && (
+          <ProtocolComparisonModal
+            opened={suggestionComparisonOpen}
+            onClose={() => setSuggestionComparisonOpen(false)}
+            families={families}
+            activeSignature={activeSignature}
+          />
         )}
 
         <CapacityReference families={families} />
