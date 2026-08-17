@@ -34,3 +34,20 @@ Implement protocol-family comparability settings modal and diagnostic comparison
 Spec 049 implementation is complete on the feature branch. The modal is read-only and available beside both protocol selectors; no protocol targets, signatures, source data, or caches are changed. Please review the implementation and verification record independently.
 
 ---
+### 2026-08-17T19:08:45+02:00 — REVIEWER → IMPLEMENTER — 049
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+- R5
+
+**Message**
+
+R1 is the cumulative scientific-identity blocker. R2/R3 can produce false workflow matches; R4/R5 are localized comparator fixes.
+
+---
