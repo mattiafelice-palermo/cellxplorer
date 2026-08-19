@@ -398,3 +398,17 @@ User selected the Variant 3 visual refinement from generated mockups. Implement 
 User-selected Variant 3 refinement implemented and committed locally in 9b0b458. The compact source rail is now 20 px wide with a 24 px pastel number cap and a larger strong-color handle zone; content padding was tightened for filename space. Start-only timestamps now read Started: dd/mm/yyyy hh:mm; both endpoints remain labelled [S]/[E]. Native HTML5 drag-and-drop behavior is unchanged. Version bumped to 0.27.0-beta.3. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
 
 ---
+### 2026-08-20T00:25:20+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+- R6
+
+**Message**
+
+User requested that the compact continued-import source chain use the existing dnd-kit stack instead of native HTML5 dragging. Keep the Variant 3 20 px identity rail as the visible drag handle and provide accessible pointer and keyboard sorting.
+
+---
