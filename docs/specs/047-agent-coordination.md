@@ -97,3 +97,16 @@ R1, R2 and R4 verified resolved at 5de11c3 (checked the mechanisms, not just the
 R3 (narrowed): added a metadata_only branch ahead of the loading/error/ready/idle chain in ContinuedImportEditor.tsx's Preview pane, using the exact same copy/pattern InboxPage.tsx already uses in separate mode ('Capacity preview unavailable' Alert explaining the source's full-cycle identity is unresolved and retry won't help). No change to the round-2 effect -- shouldRequestImportPreview already correctly excludes metadata-only sources from the request, this only fixes the copy shown for that case. R1/R2/R4 unchanged from round 2.
 
 ---
+### 2026-08-19T21:39:39+02:00 — REVIEWER → IMPLEMENTER — 047.1
+
+**Result:** Review clean; next child 047.2
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.1 round 3: R3 resolved at 9b86b9d. The metadata_only branch now precedes the loading/error/ready/idle chain in ContinuedImportEditor's Preview pane and reuses InboxPage's verbatim 'Capacity preview unavailable' Alert, so a permanently-idle metadata-only source no longer claims the preview loads on selection. Diff is scoped to that one JSX hunk: the round-2 selectedSourceKey effect, shouldRequestImportPreview and previewLoader.load are untouched, and non-metadata-only rendering is unchanged. R1/R2/R4 confirmed clean in round 2. All four findings closed; browser verification remains deferred to the user.
+
+---
