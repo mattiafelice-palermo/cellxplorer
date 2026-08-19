@@ -59,27 +59,26 @@ def infer_contiguous_cycle_ids(status: pd.Series) -> pd.Series:
     return pd.Series(cycle_ids, index=status.index, dtype="int64")
 
 
-def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
-    """Return ordered raw rows with preview-only inferred cycles and provenance."""
+def prepare_segmented_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+    """Return ordered raw rows with preview-only source/time provenance."""
 
     if not source_frames:
         return pd.DataFrame()
 
     prepared: list[pd.DataFrame] = []
+    time_offset = 0.0
     for segment, source_frame in enumerate(source_frames):
         frame = source_frame.copy()
         if "record_index" in frame.columns:
             frame = frame.sort_values("record_index", kind="stable")
         frame = frame.reset_index(drop=True)
-        if "status" not in frame.columns:
-            raise ValueError("The raw source chain has no status column to infer cycles.")
 
         if "cycle" in frame.columns:
             frame["source_cycle"] = pd.to_numeric(frame["cycle"], errors="coerce")
         else:
             frame["source_cycle"] = pd.Series(pd.NA, index=frame.index, dtype="Int64")
         frame["segment"] = segment
-        # calc.per_cycle groups capacity counters by (cycle, step).  A step
+        # calc.per_cycle groups capacity counters by (cycle, step). A step
         # number can restart in every physical file, so make it source-local
         # without changing the raw scientific columns.
         if "step" in frame.columns:
@@ -90,9 +89,48 @@ def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
             step_values = pd.Series("0", index=frame.index, dtype="string")
         frame["__preview_step"] = f"{segment}:" + step_values
         frame["step"] = frame["__preview_step"]
+
+        # ``time_s`` is step-local in Neware data. Prefer canonical
+        # source-total elapsed time for a readable voltage timeline, then
+        # fall back to local time/record order for older raw fixtures.
+        time_column = next(
+            (
+                column
+                for column in ("total_time_s", "time_s", "record_index")
+                if column in frame.columns
+            ),
+            None,
+        )
+        if time_column is None:
+            frame["preview_time_s"] = pd.Series(
+                range(len(frame)), index=frame.index, dtype="float64"
+            ) + time_offset
+        else:
+            local_time = pd.to_numeric(frame[time_column], errors="coerce")
+            valid_time = local_time.dropna()
+            if valid_time.empty:
+                frame["preview_time_s"] = pd.Series(
+                    range(len(frame)), index=frame.index, dtype="float64"
+                ) + time_offset
+            else:
+                first_time = float(valid_time.iloc[0])
+                frame["preview_time_s"] = local_time - first_time + time_offset
+        valid_preview_time = pd.to_numeric(frame["preview_time_s"], errors="coerce").dropna()
+        if not valid_preview_time.empty:
+            time_offset = float(valid_preview_time.max())
         prepared.append(frame)
 
-    merged = pd.concat(prepared, ignore_index=True)
+    return pd.concat(prepared, ignore_index=True)
+
+
+def prepare_stitched_raw(source_frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+    """Return ordered raw rows with preview-only inferred cycles and provenance."""
+
+    merged = prepare_segmented_raw(source_frames)
+    if merged.empty:
+        return merged
+    if "status" not in merged.columns:
+        raise ValueError("The raw source chain has no status column to infer cycles.")
     merged["cycle"] = infer_contiguous_cycle_ids(merged["status"])
     return merged
 
@@ -102,17 +140,37 @@ def voltage_preview_from_raw(
     *,
     max_points: int | None = None,
 ) -> dict[str, object]:
-    """Build bounded mean-voltage points without changing a scientific cache."""
+    """Build bounded raw voltage-over-time points without changing a cache."""
 
-    if frame.empty or "cycle" not in frame.columns or "voltage_v" not in frame.columns:
-        return {"x": [], "y": [], "quantity": "voltage", "label": "Voltage (V)"}
-    rows = (
-        frame[["cycle", "voltage_v"]]
-        .dropna()
-        .groupby("cycle", sort=True)["voltage_v"]
-        .mean()
-        .reset_index()
+    empty = {
+        "x": [],
+        "y": [],
+        "quantity": "voltage",
+        "label": "Voltage (V)",
+        "x_start": None,
+        "x_end": None,
+    }
+    if frame.empty or "voltage_v" not in frame.columns:
+        return empty
+    time_column = next(
+        (
+            column
+            for column in ("preview_time_s", "total_time_s", "time_s", "record_index", "cycle")
+            if column in frame.columns
+        ),
+        None,
     )
+    if time_column is None:
+        return empty
+    rows = pd.DataFrame(
+        {
+            "x": pd.to_numeric(frame[time_column], errors="coerce"),
+            "y": pd.to_numeric(frame["voltage_v"], errors="coerce"),
+        }
+    ).dropna()
+    if rows.empty:
+        return empty
+    rows = rows.sort_values("x", kind="stable").reset_index(drop=True)
     if max_points is not None and max_points > 0 and len(rows) > max_points:
         if max_points == 1:
             rows = rows.iloc[[0]]
@@ -121,8 +179,10 @@ def voltage_preview_from_raw(
             positions = sorted({round(index * last / (max_points - 1)) for index in range(max_points)})
             rows = rows.iloc[positions]
     return {
-        "x": [int(value) for value in rows["cycle"]],
-        "y": [float(value) for value in rows["voltage_v"]],
+        "x": [float(value) for value in rows["x"]],
+        "y": [float(value) for value in rows["y"]],
         "quantity": "voltage",
         "label": "Voltage (V)",
+        "x_start": float(rows["x"].iloc[0]),
+        "x_end": float(rows["x"].iloc[-1]),
     }

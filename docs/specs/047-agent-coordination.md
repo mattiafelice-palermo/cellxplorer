@@ -460,3 +460,19 @@ User confirmed the full central-preview design. Implement automatic merged previ
 R5/R6 central-preview follow-up implemented locally. The continued import editor now starts continuity inspection automatically for two or more sources and renders the merged Plotly preview without an Inspect continuity action. Added Voltage, Discharge capacity, and Charge capacity tabs; default stitched-versus-Source chain interpretation toggle; white no-legend plotting; source-color traces; one dashed provenance marker and bottom file number per source in both interpretations. Stitched mode reads raw caches only for display and infers contiguous charge/discharge cycles; Source chain preserves existing stitch semantics. Compact source summaries now report cycle count plus explicit Started/Ended timestamps. Version bumped to 0.27.0-beta.5. No remote push per user instruction.
 
 ---
+### 2026-08-20T01:14:18+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R7
+- R8
+- R9
+- R10
+
+**Message**
+
+User actual-usage follow-up: R7 voltage must plot raw voltage over time and the metric selection must reach the backend; discharge-only files may legitimately have no charge-capacity points. R8 remove the plot title, replace the large interpretation selector with a compact Continuous cycles switch below the chart, restore the y-axis line, and move source-number badges above the plot in colored rounded boxes. R9 Raw data must be available whenever the source has plottable raw rows; canonical cycle-analysis metadata status must not incorrectly block raw inspection. R10 Selecting a source card must emphasize that source's trace/markers in the merged plot while preserving source colors and combined view.
+
+---

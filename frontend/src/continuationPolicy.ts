@@ -96,8 +96,15 @@ export function acknowledgedMetadataOnlySourceKeys(
 }
 
 export function continuationSourceCanOpenRawData(
-  source: Pick<ContinuationInspectSource, "metadata_only" | "canonical_cycling">,
+  source: Pick<ContinuationInspectSource, "metadata_only" | "canonical_cycling">
+    & Partial<Pick<ContinuationInspectSource, "inspection_status">>,
+  options?: { rawDataAvailable?: boolean },
 ): boolean {
+  // Raw inspection is a parser/data-availability surface, not a claim that
+  // the source has a verified canonical cycle interpretation. Continued
+  // import sources may therefore expose raw rows while their capacity
+  // analysis remains metadata-only or pending.
+  if (options?.rawDataAvailable === true) return source.inspection_status !== "error";
   return source.metadata_only !== true && source.canonical_cycling !== false;
 }
 

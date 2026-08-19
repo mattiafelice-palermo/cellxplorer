@@ -1844,19 +1844,12 @@ class ImportFlowTests(unittest.TestCase):
                 path.name: parsing.capture_source_fingerprint(path).hash
                 for path in (first, second)
             }
-            cycle_frames = {
-                (hashes[first.name], "parser"): pd.DataFrame(
-                    {"cycle": [1, 2], "discharge_capacity_mah": [1.0, 0.9]}
-                ),
-                (hashes[second.name], "parser"): pd.DataFrame(
-                    {"cycle": [1], "discharge_capacity_mah": [0.8]}
-                ),
-            }
             raw_frames = {
                 (hashes[first.name], "parser"): pd.DataFrame(
                     {
                         "cycle": [1, 1, 2],
                         "status": ["CC DChg", "CC DChg", "CC DChg"],
+                        "total_time_s": [0.0, 10.0, 20.0],
                         "voltage_v": [4.0, 3.8, 3.7],
                     }
                 ),
@@ -1864,6 +1857,7 @@ class ImportFlowTests(unittest.TestCase):
                     {
                         "cycle": [1, 1],
                         "status": ["CC DChg", "CC DChg"],
+                        "total_time_s": [0.0, 5.0],
                         "voltage_v": [3.6, 3.4],
                     }
                 ),
@@ -1873,15 +1867,51 @@ class ImportFlowTests(unittest.TestCase):
             with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
                 patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
                 patch.object(files.parsing, "parser_identity", return_value="parser"), \
-                patch.object(files.cache, "has_cycles", return_value=True), \
-                patch.object(files.cache, "load_cycles", side_effect=lambda file_hash, parser_version, _calc: cycle_frames[(file_hash, parser_version)]), \
+                patch.object(files.cache, "has_cycles", side_effect=AssertionError("voltage must not require cycle cache")), \
                 patch.object(files.cache, "load_raw", side_effect=lambda file_hash, parser_version: raw_frames[(file_hash, parser_version)]):
                 response = files.preview_continuation_sources(request)
 
         self.assertEqual(response["quantity"], "voltage")
         self.assertEqual(response["label"], "Voltage (V)")
-        self.assertEqual(response["segments"][0]["y"], [3.9, 3.7])
-        self.assertEqual(response["segments"][1]["y"], [3.5])
+        self.assertEqual(response["x_label"], "Time (s)")
+        self.assertEqual(response["segments"][0]["x"], [0.0, 10.0, 20.0])
+        self.assertEqual(response["segments"][0]["y"], [4.0, 3.8, 3.7])
+        self.assertEqual(response["segments"][1]["x"], [20.0, 25.0])
+        self.assertEqual(response["segments"][1]["y"], [3.6, 3.4])
+        self.assertEqual(response["segments"][0]["display_x_start"], 0.0)
+        self.assertEqual(response["segments"][1]["display_x_end"], 25.0)
+
+    def test_voltage_preview_remains_available_for_metadata_only_raw_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata-voltage.ndax"
+            path.write_bytes(b"metadata-only raw voltage source")
+            base_request = _continuation_preview_request([path])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="voltage",
+                interpretation="source_chain",
+            )
+            raw = pd.DataFrame(
+                {
+                    "total_time_s": [0.0, 2.0],
+                    "voltage_v": [4.2, 4.0],
+                }
+            )
+            metadata = {
+                "capabilities": {"canonical_cycling": False, "metadata_only": True},
+                "protocol_warnings": ["Canonical cycle interpretation is unavailable."],
+            }
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", side_effect=AssertionError("raw voltage must not require cycle cache")), \
+                patch.object(files.cache, "load_raw", return_value=raw):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual(response["quantity"], "voltage")
+        self.assertEqual(response["segments"][0]["x"], [0.0, 2.0])
+        self.assertEqual(response["segments"][0]["y"], [4.2, 4.0])
 
     def test_continuation_preview_sampling_is_bounded_and_preserves_segment_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:

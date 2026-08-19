@@ -10,8 +10,8 @@ import {
   Paper,
   ScrollArea,
   Select,
-  SegmentedControl,
   Stack,
+  Switch,
   Tabs,
   Text,
   Textarea,
@@ -324,6 +324,17 @@ export function ContinuedImportEditor({
   const hasFindings = continuationHasFindings(result);
   const selectedDraft = byKey.get(selectedSourceKey) ?? orderedDrafts[0];
   const selectedSource = orderedSources.find((source) => source.key === selectedSourceKey) ?? orderedSources[0];
+  const selectedRawDataAvailable = Boolean(
+    selectedDraft?.source_path
+    && selectedSource?.inspection_status !== "error",
+  );
+  const canOpenSelectedRawData = Boolean(
+    selectedDraft
+    && selectedSource
+    && continuationSourceCanOpenRawData(selectedSource, {
+      rawDataAvailable: selectedRawDataAvailable,
+    }),
+  );
   const combinedPreviewFailureSources = combinedPreviewQuery.isError
     ? continuationPreviewFailureSources(
       combinedPreviewQuery.error instanceof ApiError ? combinedPreviewQuery.error.detail : null,
@@ -466,15 +477,15 @@ export function ContinuedImportEditor({
                 label={
                   !selectedDraft
                     ? "Select a source to view raw data"
-                    : selectedSource && !continuationSourceCanOpenRawData(selectedSource)
-                      ? "Raw data is unavailable for a metadata-only source"
+                    : !canOpenSelectedRawData
+                      ? "Raw data is unavailable for this source"
                       : "Open raw cycling data"
                 }
               >
                 <Button
                   size="compact-sm"
                   variant="default"
-                  disabled={!selectedDraft || !selectedSource || !continuationSourceCanOpenRawData(selectedSource)}
+                  disabled={!canOpenSelectedRawData}
                   onClick={() => selectedDraft && onRawData?.(selectedDraft.staged_name)}
                 >
                   Raw data
@@ -501,23 +512,6 @@ export function ContinuedImportEditor({
                         <Tabs.Tab value="charge_capacity_mah">Charge capacity</Tabs.Tab>
                       </Tabs.List>
                     </Tabs>
-                    <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
-                      <Text size="xs" c="dimmed">Cycle interpretation</Text>
-                      <SegmentedControl
-                        size="xs"
-                        aria-label="Cycle interpretation"
-                        value={previewInterpretation}
-                        onChange={(value) => {
-                          if (value === "source_chain" || value === "stitched") {
-                            setPreviewInterpretation(value);
-                          }
-                        }}
-                        data={[
-                          { value: "source_chain", label: "Source chain" },
-                          { value: "stitched", label: `${orderedDrafts.length} files` },
-                        ]}
-                      />
-                    </Group>
                   </Stack>
                 )}
                 {previewMode === "combined" ? (
@@ -578,21 +572,36 @@ export function ContinuedImportEditor({
                   ) : combinedPreviewQuery.data && continuationPreviewHasPoints(combinedPreviewQuery.data) ? (
                     <Paper withBorder p="xs">
                       <Plot
-                        data={buildContinuationPreviewTraces(combinedPreviewQuery.data, colors)}
+                        data={buildContinuationPreviewTraces(
+                          combinedPreviewQuery.data,
+                          colors,
+                          selectedSourceKey,
+                        )}
                         layout={{
-                          height: 220,
-                          title: { text: combinedPreviewQuery.data.quantity === "voltage" ? "Voltage vs. cycle" : "Capacity vs. cycle" },
-                          margin: { l: 58, r: 16, t: 34, b: 62 },
+                          height: 240,
+                          margin: { l: 58, r: 16, t: 48, b: 48 },
                           xaxis: {
                             title: {
-                              text: previewInterpretation === "stitched"
-                                ? "Cycle number (stitched)"
-                                : "Cycle number (source chain)",
+                              text: combinedPreviewQuery.data.x_label
+                                ?? (combinedPreviewQuery.data.quantity === "voltage"
+                                  ? "Time (s)"
+                                  : previewInterpretation === "stitched"
+                                    ? "Cycle number (stitched)"
+                                    : "Cycle number (source chain)"),
                             },
                             gridcolor: "#e5e7eb",
                             zerolinecolor: "#cbd5e1",
+                            showline: true,
+                            linecolor: "#94a3b8",
+                            linewidth: 1,
                           },
-                          yaxis: { title: { text: combinedPreviewQuery.data.label } },
+                          yaxis: {
+                            title: { text: combinedPreviewQuery.data.label },
+                            showline: true,
+                            linecolor: "#94a3b8",
+                            linewidth: 1,
+                            zerolinecolor: "#cbd5e1",
+                          },
                           showlegend: false,
                           paper_bgcolor: "#ffffff",
                           plot_bgcolor: "#ffffff",
@@ -604,14 +613,15 @@ export function ContinuedImportEditor({
                       />
                     </Paper>
                   ) : (
-                    <Alert color="gray">No capacity preview points were found for this chain.</Alert>
+                    <Alert color="gray">
+                      No {previewQuantity === "voltage" ? "voltage" : previewQuantity === "charge_capacity_mah" ? "charge capacity" : "discharge capacity"} preview points were found for this chain.
+                    </Alert>
                   )
                 ) : selectedDraft ? (
                   selectedDraft.metadata_only ? (
-                    <Alert color="gray" title="Capacity preview unavailable">
-                      Canonical cycling preview and cache preparation are unavailable for this
-                      source until its full-cycle identity is independently resolved. Retry will
-                      not change that limitation.
+                    <Alert color="gray" title="Cycle preview unavailable">
+                      The canonical cycle summary is not available for this source yet. Its raw
+                      measurements remain available through the Raw data button.
                     </Alert>
                   ) : selectedDraft.preview_state.status === "loading" ? (
                     <Alert color="gray">Generating capacity preview…</Alert>
@@ -663,6 +673,22 @@ export function ContinuedImportEditor({
                   )
                 ) : (
                   <Text size="sm" c="dimmed">Select a source to preview it.</Text>
+                )}
+
+                {previewMode === "combined" && (
+                  <Switch
+                    size="sm"
+                    label="Continuous cycles"
+                    description={
+                      previewInterpretation === "stitched"
+                        ? "Interpret ordered files as one continuous cycle sequence"
+                        : "Keep each file's cycle numbering in the source chain"
+                    }
+                    checked={previewInterpretation === "stitched"}
+                    onChange={(event) => setPreviewInterpretation(
+                      event.currentTarget.checked ? "stitched" : "source_chain",
+                    )}
+                  />
                 )}
 
                 <Divider label="Selected source" labelPosition="left" />

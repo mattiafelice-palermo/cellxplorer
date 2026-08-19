@@ -2019,6 +2019,8 @@ export interface ContinuationPreviewSegment {
   filename: string;
   x: number[];
   y: number[];
+  display_x_start?: number | null;
+  display_x_end?: number | null;
   global_cycle_start: number | null;
   global_cycle_end: number | null;
   source_cycle_start: number | null;
@@ -2029,6 +2031,7 @@ export interface ContinuationPreviewSegment {
 export interface ContinuationPreviewResult {
   quantity: string;
   label: string;
+  x_label?: string;
   interpretation?: "source_chain" | "stitched";
   segments: ContinuationPreviewSegment[];
 }

@@ -82,6 +82,20 @@ test("continued raw-data access follows source capability", () => {
   assert.equal(continuationSourceCanOpenRawData({ metadata_only: false, canonical_cycling: true }), true);
   assert.equal(continuationSourceCanOpenRawData({ metadata_only: true, canonical_cycling: false }), false);
   assert.equal(continuationSourceCanOpenRawData({ metadata_only: false, canonical_cycling: false }), false);
+  assert.equal(
+    continuationSourceCanOpenRawData(
+      { metadata_only: true, canonical_cycling: false, inspection_status: "ready" },
+      { rawDataAvailable: true },
+    ),
+    true,
+  );
+  assert.equal(
+    continuationSourceCanOpenRawData(
+      { metadata_only: true, canonical_cycling: false, inspection_status: "error" },
+      { rawDataAvailable: true },
+    ),
+    false,
+  );
 });
 
 test("suggested order and keyboard movement keep the visible source order explicit", () => {

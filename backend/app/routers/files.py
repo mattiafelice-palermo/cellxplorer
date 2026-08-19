@@ -2764,8 +2764,17 @@ def _build_continuation_preview(
         )
         for source in ordered_sources
     ]
-    cycles, stitched_segments, missing = stitch.stitch_cycles(refs, CALC_VERSION)
-    if missing or not stitch.stitch_metadata(cycles)["complete"]:
+    if quantity == "voltage":
+        # Voltage is a raw-measurement view and must remain available even
+        # when canonical cycle summaries are absent or metadata-only.
+        cycles = pd.DataFrame()
+        stitched_segments = []
+        missing: list[str] = []
+        cycle_cache_complete = False
+    else:
+        cycles, stitched_segments, missing = stitch.stitch_cycles(refs, CALC_VERSION)
+        cycle_cache_complete = not missing and stitch.stitch_metadata(cycles)["complete"]
+    if quantity != "voltage" and not cycle_cache_complete:
         missing_hashes = set(missing)
         missing_sources = [
             {
@@ -2797,35 +2806,30 @@ def _build_continuation_preview(
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
 
     if quantity == "voltage":
-        raw, raw_segments, raw_missing = stitch.stitch_raw(refs)
-        if raw_missing or not stitch.stitch_metadata(raw)["complete"]:
-            missing_hashes = set(raw_missing)
-            missing_sources = [
-                {
-                    "source_key": source["source_key"],
-                    "filename": source["filename"],
-                    "kind": "raw_cache_incomplete",
-                    "reason": "The prepared raw cache is missing or incomplete for the voltage preview.",
-                }
-                for source in ordered_sources
-                if source["hash"] in missing_hashes
-            ]
+        raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
+        missing_sources = [
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "kind": "raw_cache_incomplete",
+                "reason": "The prepared raw cache is missing or incomplete for the voltage preview.",
+            }
+            for source, frame in zip(ordered_sources, raw_frames)
+            if frame is None
+        ]
+        if missing_sources:
             raise _continuation_preview_unavailable(
                 code="continuation_cache_incomplete",
                 message="The voltage preview is not ready; inspect continuity again before previewing.",
-                sources=missing_sources or [
-                    {
-                        "source_key": source["source_key"],
-                        "filename": source["filename"],
-                        "reason": "The prepared raw cache is missing or incomplete for the voltage preview.",
-                    }
-                    for source in ordered_sources
-                ],
+                sources=missing_sources,
                 status_code=409,
             )
+        prepared_raw = continuation_preview.prepare_segmented_raw(
+            [frame for frame in raw_frames if frame is not None]
+        )
         raw_by_segment = {
-            int(item["segment"]): raw[raw["segment"] == int(item["segment"])]
-            for item in raw_segments
+            segment_index: prepared_raw[prepared_raw["segment"] == segment_index]
+            for segment_index in range(len(ordered_sources))
         }
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
@@ -2835,6 +2839,14 @@ def _build_continuation_preview(
     response_segments = []
     for segment_index, source in enumerate(ordered_sources):
         metadata = metadata_by_segment.get(segment_index)
+        if metadata is None and selected_quantity == "voltage":
+            metadata = {
+                "cycle_start": None,
+                "cycle_end": None,
+                "source_cycle_start": None,
+                "source_cycle_end": None,
+                "source_cycle_count": 0,
+            }
         if metadata is None:
             raise _continuation_preview_unavailable(
                 code="continuation_cache_incomplete",
@@ -2861,6 +2873,13 @@ def _build_continuation_preview(
                 max_points=segment_limit,
                 quantity=selected_quantity,
             )
+        segment_points = segment_preview.get("x") or []
+        display_x_start = segment_preview.get("x_start")
+        display_x_end = segment_preview.get("x_end")
+        if display_x_start is None:
+            display_x_start = segment_points[0] if segment_points else metadata["cycle_start"]
+        if display_x_end is None:
+            display_x_end = segment_points[-1] if segment_points else metadata["cycle_end"]
         response_segments.append(
             {
                 "source_key": source["source_key"],
@@ -2872,11 +2891,18 @@ def _build_continuation_preview(
                 "source_cycle_start": metadata["source_cycle_start"],
                 "source_cycle_end": metadata["source_cycle_end"],
                 "source_cycle_count": metadata["source_cycle_count"],
+                "display_x_start": display_x_start,
+                "display_x_end": display_x_end,
             }
         )
     return {
         "quantity": selected_quantity,
         "label": label,
+        "x_label": (
+            "Time (s)"
+            if selected_quantity == "voltage"
+            else f"Cycle number ({interpretation})"
+        ),
         "interpretation": interpretation,
         "segments": response_segments,
     }
@@ -2916,8 +2942,11 @@ def _build_stitched_continuation_preview(
         )
 
     try:
-        merged = continuation_preview.prepare_stitched_raw(
-            [frame for frame in raw_frames if frame is not None]
+        prepared_frames = [frame for frame in raw_frames if frame is not None]
+        merged = (
+            continuation_preview.prepare_segmented_raw(prepared_frames)
+            if quantity == "voltage"
+            else continuation_preview.prepare_stitched_raw(prepared_frames)
         )
     except ValueError as exc:
         raise _continuation_preview_unavailable(
@@ -2938,7 +2967,7 @@ def _build_stitched_continuation_preview(
     # The cycle cache remains the fallback/quantity authority for the legacy
     # source-chain path.  Stitched mode derives display-only cycle summaries
     # from the raw rows and the existing calc.per_cycle semantics.
-    merged_cycles = calc.per_cycle(merged)
+    merged_cycles = pd.DataFrame() if quantity == "voltage" else calc.per_cycle(merged)
     if quantity == "voltage":
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
@@ -2951,7 +2980,11 @@ def _build_stitched_continuation_preview(
         local_labels, _ = stitch.observed_local_cycles(
             raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
         )
-        global_cycles = pd.to_numeric(segment_frame["cycle"], errors="coerce").dropna()
+        global_cycles = (
+            pd.to_numeric(segment_frame["cycle"], errors="coerce").dropna()
+            if "cycle" in segment_frame.columns
+            else pd.Series(dtype="float64")
+        )
         if selected_quantity == "voltage":
             segment_preview = continuation_preview.voltage_preview_from_raw(
                 segment_frame,
@@ -2964,6 +2997,17 @@ def _build_stitched_continuation_preview(
                 max_points=segment_limit,
                 quantity=selected_quantity,
             )
+        segment_points = segment_preview.get("x") or []
+        display_x_start = segment_preview.get("x_start")
+        display_x_end = segment_preview.get("x_end")
+        if display_x_start is None:
+            display_x_start = segment_points[0] if segment_points else (
+                int(global_cycles.min()) if not global_cycles.empty else None
+            )
+        if display_x_end is None:
+            display_x_end = segment_points[-1] if segment_points else (
+                int(global_cycles.max()) if not global_cycles.empty else None
+            )
         response_segments.append(
             {
                 "source_key": source["source_key"],
@@ -2975,11 +3019,14 @@ def _build_stitched_continuation_preview(
                 "source_cycle_start": local_labels[0] if local_labels else None,
                 "source_cycle_end": local_labels[-1] if local_labels else None,
                 "source_cycle_count": len(local_labels),
+                "display_x_start": display_x_start,
+                "display_x_end": display_x_end,
             }
         )
     return {
         "quantity": selected_quantity,
         "label": label,
+        "x_label": "Time (s)" if selected_quantity == "voltage" else "Cycle number (stitched)",
         "interpretation": "stitched",
         "segments": response_segments,
     }
@@ -3584,7 +3631,8 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 }
             )
             continue
-        if parsing.source_metadata_only(meta):
+        voltage_preview = req.quantity == "voltage"
+        if parsing.source_metadata_only(meta) and not voltage_preview:
             unavailable.append(
                 {
                     "source_key": source_key,
@@ -3607,7 +3655,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 }
             )
             continue
-        if not cache.has_cycles(fingerprint.hash, parser_version, CALC_VERSION):
+        if not voltage_preview and not cache.has_cycles(fingerprint.hash, parser_version, CALC_VERSION):
             unavailable.append(
                 {
                     "source_key": source_key,
@@ -3827,14 +3875,6 @@ def raw_import_file_data(req: ImportRawDataRequest):
     if not source_path.exists():
         raise HTTPException(404, "Source file is missing")
     try:
-        if source_path.suffix.casefold() == ".mpr":
-            metadata = parsing.read_header_metadata(source_path)
-            parsing.ensure_supported_source_metadata(source_path, metadata)
-            if parsing.source_metadata_only(metadata):
-                raise HTTPException(
-                    422,
-                    parsing.source_metadata_only_message(metadata),
-                )
         # served from the hash-keyed raw cache; the parse happens at most
         # once per file content, not once per page view
         file_hash = parsing.compute_hash(source_path)

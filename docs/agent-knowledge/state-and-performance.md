@@ -65,7 +65,9 @@ to a display-only stitched interpretation that reads raw caches and infers conti
 charge/discharge cycles; the explicit Source chain interpretation keeps the authoritative per-source
 cycle mapping. Both interpretations return bounded display data without creating a second scientific
 cache, and the selected voltage/capacity quantity is a request/display choice rather than a change
-to scientific cache meaning. Registration
+to scientific cache meaning. Voltage preview uses raw elapsed-time rows and remains available when
+cycle summaries are unavailable; raw-data inspection is gated by raw-row availability, not by the
+canonical cycle-analysis capability flag. Registration
 commits Cells first and returns a separate background cache-job handoff; missing scientific caches
 remain `parsing` until the existing cache worker marks them ready or reports a post-registration
 source error. The third-modal loaded-file panel is a fixed-row viewport window with bounded

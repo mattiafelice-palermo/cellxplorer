@@ -158,6 +158,35 @@ test("combined preview traces preserve backend global points and source colors w
   assert.equal(continuationPreviewHasPoints({ ...preview(), segments: [] }), false);
 });
 
+test("source selection highlights capacity markers and voltage lines", () => {
+  const colorsBySourceKey = {
+    "part-a.ndax": "#12b886",
+    "part-b.xlsx": "#228be6",
+  };
+  const capacityTraces = buildContinuationPreviewTraces(preview(), colorsBySourceKey, "part-b.xlsx");
+  const selectedCapacity = capacityTraces[0] as {
+    line?: { width?: number };
+    marker?: { size?: number };
+    opacity?: number;
+  };
+  const dimmedCapacity = capacityTraces[1] as { opacity?: number };
+  assert.equal(selectedCapacity.line?.width, 3);
+  assert.equal(selectedCapacity.marker?.size, 8);
+  assert.equal(dimmedCapacity.opacity, 0.62);
+
+  const voltageTraces = buildContinuationPreviewTraces(
+    { ...preview(), quantity: "voltage", label: "Voltage (V)" },
+    colorsBySourceKey,
+    "part-a.ndax",
+  );
+  const selectedVoltage = voltageTraces[1] as {
+    line?: { width?: number };
+    marker?: { size?: number };
+  };
+  assert.equal(selectedVoltage.line?.width, 4);
+  assert.equal(selectedVoltage.marker?.size, 5);
+});
+
 test("provenance guides keep one colored marker and file number for every segment", () => {
   const guides = buildContinuationPreviewProvenanceLayout(preview(), {
     "part-a.ndax": "#12b886",
@@ -168,5 +197,7 @@ test("provenance guides keep one colored marker and file number for every segmen
   assert.equal(guides.annotations?.length, 2);
   assert.deepEqual(guides.annotations?.map((annotation) => annotation.text), ["1", "2"]);
   assert.deepEqual(guides.shapes?.map((shape) => shape.line?.color), ["#228be6", "#12b886"]);
-  assert.deepEqual(guides.annotations?.map((annotation) => annotation.font?.color), ["#228be6", "#12b886"]);
+  assert.deepEqual(guides.annotations?.map((annotation) => annotation.bordercolor), ["#228be6", "#12b886"]);
+  assert.deepEqual(guides.annotations?.map((annotation) => annotation.y), [1.04, 1.04]);
+  assert.deepEqual(guides.annotations?.map((annotation) => annotation.font?.color), ["#1f2937", "#1f2937"]);
 });

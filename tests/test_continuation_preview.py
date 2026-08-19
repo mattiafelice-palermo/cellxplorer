@@ -30,6 +30,7 @@ class ContinuationPreviewServiceTests(unittest.TestCase):
                 "cycle": [1, 1],
                 "step": [1, 1],
                 "status": ["CC DChg", "CC DChg"],
+                "total_time_s": [0.0, 1.0],
                 "voltage_v": [4.1, 3.9],
                 "discharge_capacity_mah": [0.0, 1.0],
             }
@@ -40,6 +41,7 @@ class ContinuationPreviewServiceTests(unittest.TestCase):
                 "cycle": [1, 1],
                 "step": [1, 1],
                 "status": ["CC DChg", "CC DChg"],
+                "total_time_s": [0.0, 1.0],
                 "voltage_v": [3.8, 3.7],
                 "discharge_capacity_mah": [0.0, 2.0],
             }
@@ -55,8 +57,10 @@ class ContinuationPreviewServiceTests(unittest.TestCase):
         self.assertAlmostEqual(float(cycles.loc[0, "discharge_capacity_mah"]), 3.0)
 
         voltage = voltage_preview_from_raw(merged)
-        self.assertEqual(voltage["x"], [1])
-        self.assertAlmostEqual(float(voltage["y"][0]), 3.875)
+        self.assertEqual(voltage["x"], [0.0, 1.0, 1.0, 2.0])
+        self.assertEqual(voltage["y"], [4.1, 3.9, 3.8, 3.7])
+        self.assertEqual(voltage["x_start"], 0.0)
+        self.assertEqual(voltage["x_end"], 2.0)
 
 
 if __name__ == "__main__":

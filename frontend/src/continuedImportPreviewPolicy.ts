@@ -96,20 +96,24 @@ export function continuationPreviewRequest(
 export function buildContinuationPreviewTraces(
   preview: ContinuationPreviewResult,
   colorsBySourceKey: Record<string, string>,
+  selectedSourceKey?: string | null,
 ): Data[] {
   return preview.segments.map((segment, index) => {
     const color = colorsBySourceKey[segment.source_key] ?? "#12b886";
+    const selected = Boolean(selectedSourceKey && selectedSourceKey === segment.source_key);
+    const voltage = preview.quantity === "voltage";
     return {
       x: segment.x,
       y: segment.y,
       type: "scatter",
       mode: "lines+markers",
-      line: { width: 2, color },
-      marker: { size: 5, color },
+      line: { width: selected ? (voltage ? 4 : 3) : 2, color },
+      marker: { size: selected && !voltage ? 8 : 5, color },
+      opacity: selectedSourceKey ? (selected ? 1 : 0.62) : 1,
       name: `Source ${index + 1} — ${segment.filename}`,
       hovertemplate:
         `Source ${index + 1} — ${segment.filename}<br>`
-        + "Cycle %{x}<br>"
+        + `${voltage ? "Time" : "Cycle"} %{x}<br>`
         + `${preview.label} %{y:.3f}<extra></extra>`,
       showlegend: false,
     } as Data;
@@ -118,7 +122,7 @@ export function buildContinuationPreviewTraces(
 
 /**
  * Build file-provenance guides independently of the active interpretation.
- * Each backend segment gets one dashed marker and one bottom source number;
+ * Each backend segment gets one dashed marker and one top source number;
  * colors identify the physical file, not the inferred cycle grouping.
  */
 export function buildContinuationPreviewProvenanceLayout(
@@ -130,20 +134,26 @@ export function buildContinuationPreviewProvenanceLayout(
 
   preview.segments.forEach((segment, index) => {
     const points = segment.x.filter((value) => Number.isFinite(value));
-    const start = Number.isFinite(segment.global_cycle_start)
-      ? segment.global_cycle_start
-      : points[0] ?? null;
-    const end = Number.isFinite(segment.global_cycle_end)
-      ? segment.global_cycle_end
-      : points[points.length - 1] ?? null;
+    const start = finiteNumber(segment.display_x_start)
+      ?? finiteNumber(segment.global_cycle_start)
+      ?? points[0]
+      ?? null;
+    const end = finiteNumber(segment.display_x_end)
+      ?? finiteNumber(segment.global_cycle_end)
+      ?? points[points.length - 1]
+      ?? null;
     if (start === null || end === null) return;
 
     const next = preview.segments[index + 1];
-    const nextStart = next && Number.isFinite(next.global_cycle_start)
-      ? next.global_cycle_start
-      : next?.x.find((value) => Number.isFinite(value)) ?? null;
+    const nextStart = next
+      ? finiteNumber(next.display_x_start)
+        ?? finiteNumber(next.global_cycle_start)
+        ?? next.x.find((value) => Number.isFinite(value))
+        ?? null
+      : null;
     const boundary = nextStart !== null ? (end + nextStart) / 2 : end;
     const color = colorsBySourceKey[segment.source_key] ?? "#12b886";
+    const pastel = pastelSourceColor(color);
     shapes.push({
       type: "line",
       x0: boundary,
@@ -156,16 +166,33 @@ export function buildContinuationPreviewProvenanceLayout(
     });
     annotations.push({
       x: (start + end) / 2,
-      y: -0.18,
+      y: 1.04,
       xref: "x",
       yref: "paper",
       text: String(index + 1),
       showarrow: false,
-      font: { color, size: 11 },
+      yanchor: "bottom",
+      bgcolor: pastel,
+      bordercolor: color,
+      borderwidth: 1,
+      borderpad: 4,
+      font: { color: "#1f2937", size: 11 },
     });
   });
 
   return { shapes, annotations };
+}
+
+function finiteNumber(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function pastelSourceColor(color: string): string {
+  const match = color.trim().match(/^#([0-9a-f]{6})$/i);
+  if (!match) return "#eefbf7";
+  const channels = [0, 2, 4].map((offset) => parseInt(match[1].slice(offset, offset + 2), 16));
+  const softened = channels.map((channel) => Math.round(channel + (255 - channel) * 0.78));
+  return `#${softened.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function continuationPreviewHasPoints(preview: ContinuationPreviewResult | undefined): boolean {

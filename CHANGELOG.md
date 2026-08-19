@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.6 - 2026-08-20
+
+- Improve continued-import raw previews, chart controls, and source highlighting.
+
 ## 0.27.0-beta.5 - 2026-08-20
 
 ### New features
