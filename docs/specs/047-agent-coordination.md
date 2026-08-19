@@ -176,3 +176,22 @@ Implemented reviewer fixes R1-R4 for Spec 047.2: structured unavailability class
 047.2 round 2: all four findings resolved at 1dddf0a. R1 is now structural -- every unavailable entry carries an explicit kind and the 422/409 choice reads it, with no prose matching left anywhere in the endpoint's control flow. Its regression test is built from production code (mark_biologic_mpr_cycle_verification_failed) rather than a fixture string, and I confirmed it genuinely regresses the defect by re-running the retired sniff against that generated warning: still False -> 409, so the test would have failed before the fix. R2 renders per-source filename/reason with bounded geometry and defensive parsing; R3 asserts x/y/colour/showlegend across every trace, keyed by source_key, including a fallback segment; R4's _capacity_quantity_and_label removes the throwaway full-frame call and I traced all five branches to confirm ordinary /api/imports/preview behaviour is unchanged. No new defects. Browser manual checks 1-15 remain outstanding and are deferred to the user.
 
 ---
+### 2026-08-19T22:54:18+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused frontend policy suites: PASS (36 tests)
+- full frontend policy suite: PASS (616 tests)
+- focused backend suites: PASS (117 tests)
+- frontend TypeScript: PASS
+- frontend production build: PASS
+- canonical preflight: PASS (138 backend/frontend modules; all 4 stages passed)
+- browser checks: NOT RUN (not authorized)
+
+**Message**
+
+Implemented Spec 047.3: moved blocking/confirmation findings and acknowledgements into an auto-openable Continuity review modal, kept warning/info findings under collapsed Details, retained server-backed submission gating and exact continued payload, quieted compact source statuses, updated performance knowledge and project-context mirrors against current main, and closed the Spec 047 index. Local-only checkpoint; no remote push.
+
+---
