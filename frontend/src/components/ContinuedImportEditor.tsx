@@ -57,6 +57,7 @@ import {
 import {
   buildContinuationPreviewTraces,
   continuationPreviewHasPoints,
+  continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
 } from "../continuedImportPreviewPolicy";
@@ -293,6 +294,11 @@ export function ContinuedImportEditor({
   const confirmationIds = confirmationFindingIds(result);
   const selectedDraft = byKey.get(selectedSourceKey) ?? orderedDrafts[0];
   const selectedSource = orderedSources.find((source) => source.key === selectedSourceKey) ?? orderedSources[0];
+  const combinedPreviewFailureSources = combinedPreviewQuery.isError
+    ? continuationPreviewFailureSources(
+      combinedPreviewQuery.error instanceof ApiError ? combinedPreviewQuery.error.detail : null,
+    )
+    : [];
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
 
@@ -460,12 +466,23 @@ export function ContinuedImportEditor({
                       color={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 422 ? "gray" : "orange"}
                       title={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
                     >
-                      <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
-                        <Text size="sm">
-                          {combinedPreviewQuery.error instanceof Error
-                            ? combinedPreviewQuery.error.message
-                            : "The combined preview is unavailable."}
-                        </Text>
+                      <Group justify="space-between" align="start" gap="xs" wrap="nowrap">
+                        <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                          <Text size="sm">
+                            {combinedPreviewQuery.error instanceof Error
+                              ? combinedPreviewQuery.error.message
+                              : "The combined preview is unavailable."}
+                          </Text>
+                          {combinedPreviewFailureSources.length > 0 && (
+                            <Stack gap={2} mt={2} style={{ maxHeight: 96, overflowY: "auto" }}>
+                              {combinedPreviewFailureSources.map((source, index) => (
+                                <Text key={`${source.filename}-${index}`} size="xs" c="dimmed">
+                                  {source.filename}: {source.reason}
+                                </Text>
+                              ))}
+                            </Stack>
+                          )}
+                        </Stack>
                         {!(combinedPreviewQuery.error instanceof ApiError && (combinedPreviewQuery.error.status === 409 || combinedPreviewQuery.error.status === 422)) && (
                           <Button
                             size="compact-sm"

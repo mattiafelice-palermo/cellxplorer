@@ -1853,6 +1853,29 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
         self.assertIn("Canonical cycling", raised.exception.detail["sources"][0]["reason"])
 
+    def test_continuation_preview_classifies_production_biologic_downgrade_as_metadata_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "failed-single-direction.mpr"
+            path.write_bytes(b"failed single-direction continuation source")
+            request = _continuation_preview_request([path])
+            persisted = SimpleNamespace(header_meta={"capabilities": {}})
+            parsing.mark_biologic_mpr_cycle_verification_failed(
+                persisted,
+                detail="declared direction mismatch",
+            )
+            metadata = persisted.header_meta
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", side_effect=AssertionError("metadata-only source must not parse")), \
+                patch.object(files.cache, "has_cycles", side_effect=AssertionError("metadata-only source must not query cache")):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files.preview_continuation_sources(request)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
+        self.assertEqual(raised.exception.detail["sources"][0]["kind"], "metadata_only")
+        self.assertIn("single-direction cycle-1 contract", raised.exception.detail["sources"][0]["reason"])
+
     def test_continuation_preview_requires_reinspection_after_source_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "changed.ndax"

@@ -634,30 +634,33 @@ def _sample_preview_rows(rows, max_points: int | None):
     return rows.iloc[positions]
 
 
+def _capacity_quantity_and_label(cycles, quantity: str | None = None) -> tuple[str, str]:
+    """Resolve the ordinary capacity-preview quantity without materializing points."""
+
+    selected = quantity
+    if selected is None:
+        selected = "discharge_capacity_mah"
+        if not cycles.empty and "cycle" in cycles.columns and selected not in cycles.columns:
+            selected = "charge_capacity_mah"
+    if selected == "discharge_capacity_mah":
+        return selected, "Discharge capacity (mAh)"
+    if selected == "charge_capacity_mah":
+        return selected, "Charge capacity (mAh)"
+    return selected, "Capacity (mAh)"
+
+
 def capacity_preview_from_cycles(
     cycles,
     *,
     max_points: int | None = None,
     quantity: str | None = None,
 ) -> dict:
+    quantity, label = _capacity_quantity_and_label(cycles, quantity)
     if cycles.empty or "cycle" not in cycles.columns:
-        empty_quantity = quantity or "discharge_capacity_mah"
-        empty_label = (
-            "Discharge capacity (mAh)"
-            if empty_quantity == "discharge_capacity_mah"
-            else "Charge capacity (mAh)"
-            if empty_quantity == "charge_capacity_mah"
-            else "Capacity (mAh)"
-        )
-        return {"x": [], "y": [], "quantity": empty_quantity, "label": empty_label}
-    if quantity is None:
-        quantity = "discharge_capacity_mah"
-        if quantity not in cycles.columns:
-            quantity = "charge_capacity_mah"
+        return {"x": [], "y": [], "quantity": quantity, "label": label}
     if quantity not in cycles.columns:
         return {"x": [], "y": [], "quantity": quantity, "label": "Capacity (mAh)"}
     rows = _sample_preview_rows(cycles[["cycle", quantity]].dropna(), max_points)
-    label = "Discharge capacity (mAh)" if quantity == "discharge_capacity_mah" else "Charge capacity (mAh)"
     return {
         "x": [int(v) for v in rows["cycle"]],
         "y": [float(v) for v in rows[quantity]],
@@ -2746,6 +2749,7 @@ def _build_continuation_preview(
             {
                 "source_key": source["source_key"],
                 "filename": source["filename"],
+                "kind": "cache_incomplete",
                 "reason": "The prepared cycle cache is missing or incomplete.",
             }
             for source in ordered_sources
@@ -2767,7 +2771,7 @@ def _build_continuation_preview(
             status_code=409,
         )
 
-    capacity = capacity_preview_from_cycles(cycles)
+    quantity, label = _capacity_quantity_and_label(cycles)
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
     response_segments = []
@@ -2781,6 +2785,7 @@ def _build_continuation_preview(
                     {
                         "source_key": source["source_key"],
                         "filename": source["filename"],
+                        "kind": "cache_incomplete",
                         "reason": "The source segment is missing from the stitched cache.",
                     }
                 ],
@@ -2790,7 +2795,7 @@ def _build_continuation_preview(
         segment_preview = capacity_preview_from_cycles(
             segment_frame,
             max_points=segment_limit,
-            quantity=capacity["quantity"],
+            quantity=quantity,
         )
         response_segments.append(
             {
@@ -2806,8 +2811,8 @@ def _build_continuation_preview(
             }
         )
     return {
-        "quantity": capacity["quantity"],
-        "label": capacity["label"],
+        "quantity": quantity,
+        "label": label,
         "segments": response_segments,
     }
 
@@ -3375,6 +3380,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "missing",
                     "reason": "The source file is missing.",
                 }
             )
@@ -3384,6 +3390,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "unsupported",
                     "reason": "The source format is not supported for a combined cycling preview.",
                 }
             )
@@ -3404,6 +3411,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "unsupported",
                     "reason": str(exc),
                 }
             )
@@ -3413,6 +3421,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "metadata_only",
                     "reason": parsing.source_metadata_only_message(meta),
                 }
             )
@@ -3425,6 +3434,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "parser_error",
                     "reason": str(exc),
                 }
             )
@@ -3434,6 +3444,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
                 {
                     "source_key": source_key,
                     "filename": source_path.name,
+                    "kind": "cache_not_ready",
                     "reason": "The prepared cycle cache is not ready.",
                 }
             )
@@ -3448,11 +3459,7 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
         )
 
     if unavailable:
-        metadata_only = any(
-            "canonical cycling" in item["reason"].casefold()
-            or "cycle identity" in item["reason"].casefold()
-            for item in unavailable
-        )
+        metadata_only = any(item.get("kind") == "metadata_only" for item in unavailable)
         raise _continuation_preview_unavailable(
             code="continuation_preview_unavailable",
             message=(

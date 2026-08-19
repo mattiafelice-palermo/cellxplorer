@@ -5,6 +5,7 @@ import type { ContinuationPreviewResult } from "../src/api.ts";
 import {
   buildContinuationPreviewTraces,
   continuationPreviewHasPoints,
+  continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
 } from "../src/continuedImportPreviewPolicy.ts";
@@ -81,24 +82,62 @@ test("combined preview query identity changes for order or an inspected source i
   assert.notDeepEqual(reinspection, original);
 });
 
-test("combined preview traces preserve backend global points and source colors without a legend", () => {
-  const traces = buildContinuationPreviewTraces(preview(), {
-    "part-b.xlsx": "#228be6",
-    "part-a.ndax": "#12b886",
-  });
-  const first = traces[0] as {
-    x?: number[];
-    y?: number[];
-    line?: { color?: string };
-    marker?: { color?: string };
-    showlegend?: boolean;
-  };
+test("combined preview failure details retain usable affected-source reasons", () => {
+  assert.deepEqual(
+    continuationPreviewFailureSources({
+      sources: [
+        { filename: "part-a.ndax", reason: "The prepared cycle cache is not ready." },
+        { filename: "", reason: "ignore malformed source" },
+        "ignore malformed entry",
+      ],
+    }),
+    [{ filename: "part-a.ndax", reason: "The prepared cycle cache is not ready." }],
+  );
+  assert.deepEqual(continuationPreviewFailureSources({ message: "top-level only" }), []);
+  assert.deepEqual(continuationPreviewFailureSources(null), []);
+});
 
-  assert.deepEqual(first.x, [1, 2]);
-  assert.deepEqual(first.y, [2.1, 2.0]);
-  assert.equal(first.line?.color, "#228be6");
-  assert.equal(first.marker?.color, "#228be6");
-  assert.equal(first.showlegend, false);
-  assert.equal(continuationPreviewHasPoints(preview()), true);
+test("combined preview traces preserve backend global points and source colors without a legend", () => {
+  const colorsBySourceKey = {
+    "part-a.ndax": "#12b886",
+    "part-b.xlsx": "#228be6",
+  };
+  const sourcePreview = {
+    ...preview(),
+    segments: [
+      ...preview().segments,
+      {
+        source_key: "part-missing.ndax",
+        filename: "part-missing.ndax",
+        x: [5],
+        y: [1.7],
+        global_cycle_start: 5,
+        global_cycle_end: 5,
+        source_cycle_start: 1,
+        source_cycle_end: 1,
+        source_cycle_count: 1,
+      },
+    ],
+  };
+  const traces = buildContinuationPreviewTraces(sourcePreview, colorsBySourceKey);
+
+  assert.equal(traces.length, sourcePreview.segments.length);
+  traces.forEach((trace, index) => {
+    const rendered = trace as {
+      x?: number[];
+      y?: number[];
+      line?: { color?: string };
+      marker?: { color?: string };
+      showlegend?: boolean;
+    };
+    const segment = sourcePreview.segments[index];
+    const expectedColor = colorsBySourceKey[segment.source_key as keyof typeof colorsBySourceKey] ?? "#12b886";
+    assert.deepEqual(rendered.x, segment.x);
+    assert.deepEqual(rendered.y, segment.y);
+    assert.equal(rendered.line?.color, expectedColor);
+    assert.equal(rendered.marker?.color, expectedColor);
+    assert.equal(rendered.showlegend, false);
+  });
+  assert.equal(continuationPreviewHasPoints(sourcePreview), true);
   assert.equal(continuationPreviewHasPoints({ ...preview(), segments: [] }), false);
 });

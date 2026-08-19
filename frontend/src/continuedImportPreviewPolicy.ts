@@ -11,6 +11,24 @@ type PreviewDraft = Pick<
   "staged_name" | "source_path" | "hash" | "size" | "inspection" | "metadata_only"
 >;
 
+export type ContinuationPreviewFailureSource = {
+  filename: string;
+  reason: string;
+};
+
+export function continuationPreviewFailureSources(detail: unknown): ContinuationPreviewFailureSource[] {
+  if (!detail || typeof detail !== "object" || !("sources" in detail)) return [];
+  const sources = (detail as { sources?: unknown }).sources;
+  if (!Array.isArray(sources)) return [];
+  return sources.flatMap((source) => {
+    if (!source || typeof source !== "object") return [];
+    const record = source as Record<string, unknown>;
+    const filename = typeof record.filename === "string" ? record.filename.trim() : "";
+    const reason = typeof record.reason === "string" ? record.reason.trim() : "";
+    return filename && reason ? [{ filename, reason }] : [];
+  });
+}
+
 function draftIdentity(draft: PreviewDraft): string {
   return [
     draft.staged_name,
