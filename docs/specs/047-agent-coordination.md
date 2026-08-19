@@ -209,3 +209,19 @@ Implemented Spec 047.3: moved blocking/confirmation findings and acknowledgement
 R1 (Medium): section D's 'detailed reason belongs in Continuity review / tooltip' assumed the review surface carries source errors, but continuations.py emits the blocking inspection_failed finding only when the source has NO hash. Two reachable paths -- cycle-range extraction errors and cache-build failure -- set inspection_status='error' after the hash exists, so they produce no finding, appear nowhere in the new modal, and now have their inline reason replaced by a native title on a badge. Because inspection_complete is false, continuationReviewRequired early-returns false, so neither the modal nor the 'Continuity review required' line appears, and the footer falls through to 'Inspect continuity before importing.' -- instructing the user to repeat the action that just hard-failed. Import stays correctly blocked, so this is diagnosability, not safety, but it is a regression against the pre-047.3 inline reason. The footer string also conflates never-inspected, inspecting, and inspection-failed. R2 (Low): section H5 and 047.3's own acceptance criteria require telling the user exactly which uploaded Project mirror files are now stale; two changed (CELLXPLORER_ARCHITECTURE.md and CELLXPLORER_PROJECT_INSTRUCTIONS.md) and a repo-wide grep finds the required statement nowhere outside the spec template. Everything else verified clean: workspace quieted, severity-driven grouping, acknowledgement identity and reorder expiry, auto-open that does not re-fire on close/tick, unchanged server-backed submission and registration payload, default source-list variant byte-identical, state-and-performance and both project-context corrections accurate against current main at 5e50736, and the spec index closed.
 
 ---
+### 2026-08-19T23:07:04+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend continuation policy/workspace/preview suites: PASS (38 tests)
+- frontend TypeScript: PASS
+- canonical preflight: PASS (138 backend/frontend modules; all 4 stages passed)
+- browser checks: NOT RUN (not authorized)
+
+**Message**
+
+Resolved 047.3 reviewer findings R1-R2. Source inspection errors now open in Continuity review with filename/reason, compact command/preview/footer state distinguishes failed inspection from not-started or preparing, and retry is explicit. The handoff records the required Project mirror replacement notice. Local-only checkpoint; no remote push.\n\nReplace uploaded Project file:\n- CELLXPLORER_ARCHITECTURE.md\n- CELLXPLORER_PROJECT_INSTRUCTIONS.md
+
+---
