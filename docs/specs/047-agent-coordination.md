@@ -350,3 +350,20 @@ User has supplied authorized actual-usage feedback for the compact continued-cel
 User actual-usage follow-up accepted for implementation. R5: in the compact-import source chain, maximize readable filenames by removing the Ready chip for non-errors, widening the source pane by about 2-3%, equalizing card gutters, removing per-card up/down controls, removing Historical source and Tracked tail chips, and replacing the numbered circle plus separate handle with a narrow full-height two-section identity-color gutter (pastel number header, strong-color centered drag handle below). R6: replace the ambiguous cycle range/count line with the number of cycles in the file; retain the date/time but label and format it so its role is explicit: show [S] and [E] start/end timestamps when both exist, otherwise label the available timestamp. Preserve drag/drop, error visibility, source identity colors, and non-compact/default continuation surfaces.
 
 ---
+### 2026-08-20T00:09:31+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused continuation frontend suites: PASS (35 tests)
+- Frontend TypeScript check: PASS
+- Frontend production bundle: PASS
+- Canonical preflight --no-cache: PASS (4/4 stages; 138 backend/frontend test files)
+- Browser/manual visual verification: NOT RUN (user will check)
+
+**Message**
+
+Spec 047 actual-usage follow-up implemented and committed locally in 05c5a50. R5/R6 addressed: compact source cards now use a narrow full-height two-tone identity gutter with drag affordance, omit non-error status/role chips and per-card arrows, use the wider/equalized source pane, and show cycle counts plus labelled [S]/[E] local timestamps. Version bumped to 0.27.0-beta.2. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
+
+---
