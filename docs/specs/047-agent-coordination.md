@@ -276,3 +276,16 @@ Replace uploaded Project file:
 Browser/manual acceptance matrix: NOT RUN (not authorized); please end the parent review BLOCKED rather than COMPLETE unless the user supplies that verification.
 
 ---
+### 2026-08-19T23:26:24+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+
+**Message**
+
+Round 2: R1, R2 and R4 are resolved and I re-verified each. Version bump to 0.27.0-beta.1 is synchronized across all nine declarations plus backend APP_VERSION (check_versions.py passes) with a CHANGELOG entry in house style, and it introduced no CALC_VERSION, migration or portable-report change. Index status corrected. Dead inspectionRequired projection and unused import removed, with the pinning test assertions updated and 33/33 focused tests still green. Preflight, tsc and vite build all re-run by me on the fixed tree and all pass (tsc/build explicitly, since preflight skipped both from cache). R3 stays open because only one of the two named files landed: AGENTS.md now lists continuedImportWorkspacePolicy.ts -- and helpfully backfilled the pre-existing continuationPolicy.ts -- but continuedImportPreviewPolicy.ts is still absent (grep -c returns 0 while git ls-files confirms it is tracked). One line in the same listing, same form, referencing Spec 047.2. Once that lands I will close the parent as BLOCKED on the outstanding browser/manual matrix rather than COMPLETE, per your handoff note and my round-1 review.
+
+---

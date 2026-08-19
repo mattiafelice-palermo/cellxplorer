@@ -4,9 +4,9 @@
 **Children:** `047.1`, `047.2`, `047.3` (all individually review-clean)
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
-**Reviewed range:** `main..HEAD` = `05c268e..aec506e`, 18 commits
-**Round:** 1
-**Result:** Changes required — R1 (Medium), R2 (Low), R3 (Low), R4 (Low)
+**Reviewed range:** `main..HEAD` = `05c268e..0b00351`, 21 commits
+**Round:** 2
+**Result:** Changes required — R3 (Low) still open; R1, R2, R4 resolved
 
 This is a fresh cumulative review of the whole branch against the real merge base, not a re-read of
 the three child reviews. Child findings (047.1 R1–R4, 047.2 R1–R4, 047.3 R1–R2) are all closed and
@@ -223,6 +223,50 @@ it uses.
 - Focused frontend suites stay green.
 
 ---
+
+## Round 2 — R1, R2 and R4 resolved; R3 partially applied (`b6997e4`)
+
+**R1 — RESOLVED.** All nine maintained declarations plus `backend/app/config.py`'s `APP_VERSION`
+moved together to `0.27.0-beta.1`, and `python scripts\check_versions.py` confirms it:
+`PASS: all version declarations match 0.27.0-beta.1`. A minor bump is the right call for a
+backward-compatible workflow addition under the versioning policy. `CHANGELOG.md` gained a
+`### New features` entry naming the continued-cell import workspace with ordered source review and
+combined previews — one line, matching the house style of every neighbouring entry. I confirmed the
+bump introduced no `CALC_VERSION`, migration, model or portable-report change: the diff is version
+declarations, the changelog, and the R2–R4 edits only.
+
+**R2 — RESOLVED.** The spec index now reads "All three children implemented and review-clean;
+cumulative parent review in progress."
+
+**R4 — RESOLVED.** `inspectionRequired` is gone from `ContinuedImportSubmissionState`, from both
+`InboxPage` initializers and from the four test assertions that were pinning it; the unused
+`acknowledgementFindingIds` import is removed. `continuedInspectionStatus` coverage still
+distinguishes all four states, and the focused continuation suites pass 33/33.
+
+**R3 — STILL OPEN.** Half the acceptance criterion was met. `AGENTS.md` now lists
+
+```text
+│   │   ├── continuedImportWorkspacePolicy.ts  Continued-import workspace projection and source identity policy (Spec 047)
+```
+
+and, beyond what was asked, also backfilled the pre-existing `continuationPolicy.ts` — a welcome
+extra. But `frontend/src/continuedImportPreviewPolicy.ts` is still absent: `grep -c` over `AGENTS.md`
+returns `0`, while `git ls-files` confirms the module is tracked. The finding named both files
+explicitly, and the tree now lists every other pure policy module in that directory, so the omission
+of this one is more conspicuous than before the fix.
+
+Remaining work is a single line in the same listing, in the same form, referencing Spec 047.2.
+
+**Verification re-run by the reviewer on the fixed tree:**
+
+```text
+python scripts\preflight.py     PASS (4/4)
+npx.cmd tsc --noEmit            PASS
+npx.cmd vite build              PASS
+focused continuation suites     33/33 PASS
+```
+
+Preflight again skipped the type check and bundle from cache, so both were re-run explicitly.
 
 ## Cumulative verification against the parent acceptance criteria
 
