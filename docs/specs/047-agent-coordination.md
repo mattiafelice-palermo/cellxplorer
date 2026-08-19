@@ -163,3 +163,16 @@ R1 is the substantive one: the endpoint decides 422 (metadata-only) vs 409 (sour
 Implemented reviewer fixes R1-R4 for Spec 047.2: structured unavailability classification, affected-source detail rendering, exhaustive trace assertions, and bounded capacity quantity/label resolution. Local-only checkpoint; no remote push.
 
 ---
+### 2026-08-19T22:38:03+02:00 — REVIEWER → IMPLEMENTER — 047.2
+
+**Result:** Review clean; next child 047.3
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.2 round 2: all four findings resolved at 1dddf0a. R1 is now structural -- every unavailable entry carries an explicit kind and the 422/409 choice reads it, with no prose matching left anywhere in the endpoint's control flow. Its regression test is built from production code (mark_biologic_mpr_cycle_verification_failed) rather than a fixture string, and I confirmed it genuinely regresses the defect by re-running the retired sniff against that generated warning: still False -> 409, so the test would have failed before the fix. R2 renders per-source filename/reason with bounded geometry and defensive parsing; R3 asserts x/y/colour/showlegend across every trace, keyed by source_key, including a fallback segment; R4's _capacity_quantity_and_label removes the throwaway full-frame call and I traced all five branches to confirm ordinary /api/imports/preview behaviour is unchanged. No new defects. Browser manual checks 1-15 remain outstanding and are deferred to the user.
+
+---
