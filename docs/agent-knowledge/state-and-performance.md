@@ -58,9 +58,14 @@ Preview requests carry the inspection hash plus size/`mtime_ns`; matching finger
 verified hash, while a changed fingerprint is rehashed and rejected with a structured source-changed
 response when the content differs. The frontend cache key is the content hash, so switching back to
 a ready source or reopening identical content does not parse it again. The continued-chain combined
-preview never starts merely because Step 3 opened or the mode changed: it is explicitly gated behind
-continuity inspection, reads the already prepared ordered per-source caches through backend stitch
-semantics, and returns bounded display data without creating a second scientific cache. Registration
+preview is prepared automatically once the continued editor has at least two sources: the existing
+inspection worker polls in the background, then one abortable combined-preview request reads the
+already prepared ordered per-source caches through backend stitch semantics. The workspace defaults
+to a display-only stitched interpretation that reads raw caches and infers contiguous
+charge/discharge cycles; the explicit Source chain interpretation keeps the authoritative per-source
+cycle mapping. Both interpretations return bounded display data without creating a second scientific
+cache, and the selected voltage/capacity quantity is a request/display choice rather than a change
+to scientific cache meaning. Registration
 commits Cells first and returns a separate background cache-job handoff; missing scientific caches
 remain `parsing` until the existing cache worker marks them ready or reports a post-registration
 source error. The third-modal loaded-file panel is a fixed-row viewport window with bounded

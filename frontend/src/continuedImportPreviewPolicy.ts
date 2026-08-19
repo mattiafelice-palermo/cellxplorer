@@ -1,4 +1,4 @@
-import type { Data } from "plotly.js";
+import type { Data, Layout } from "plotly.js";
 
 import type {
   ContinuationPreviewRequest,
@@ -10,6 +10,13 @@ type PreviewDraft = Pick<
   ImportPreview,
   "staged_name" | "source_path" | "hash" | "size" | "inspection" | "metadata_only"
 >;
+
+export type ContinuationPreviewQuantity =
+  | "voltage"
+  | "discharge_capacity_mah"
+  | "charge_capacity_mah";
+
+export type ContinuationPreviewInterpretation = "source_chain" | "stitched";
 
 export type ContinuationPreviewFailureSource = {
   filename: string;
@@ -44,7 +51,9 @@ export function continuationPreviewQueryKey(
   order: readonly string[],
   drafts: readonly PreviewDraft[],
   inspectionRevision = 0,
-): readonly [string, string[], string[], number] {
+  quantity: ContinuationPreviewQuantity = "discharge_capacity_mah",
+  interpretation: ContinuationPreviewInterpretation = "stitched",
+): readonly [string, string[], string[], number, ContinuationPreviewQuantity, ContinuationPreviewInterpretation] {
   const draftsByKey = new Map(drafts.map((draft) => [draft.staged_name, draft]));
   return [
     "continued-import-preview",
@@ -54,6 +63,8 @@ export function continuationPreviewQueryKey(
       return draft ? draftIdentity(draft) : key;
     }),
     inspectionRevision,
+    quantity,
+    interpretation,
   ];
 }
 
@@ -61,6 +72,8 @@ export function continuationPreviewQueryKey(
 export function continuationPreviewRequest(
   drafts: readonly PreviewDraft[],
   order: readonly string[],
+  quantity: ContinuationPreviewQuantity = "discharge_capacity_mah",
+  interpretation: ContinuationPreviewInterpretation = "stitched",
 ): ContinuationPreviewRequest {
   const draftsByKey = new Map(drafts.map((draft) => [draft.staged_name, draft]));
   return {
@@ -72,8 +85,10 @@ export function continuationPreviewRequest(
         source_path: draft.source_path,
         inspection: draft.inspection,
         allow_metadata_only: draft.metadata_only,
-      })),
+    })),
     proposed_order: [...order],
+    quantity,
+    interpretation,
   };
 }
 
@@ -99,6 +114,58 @@ export function buildContinuationPreviewTraces(
       showlegend: false,
     } as Data;
   });
+}
+
+/**
+ * Build file-provenance guides independently of the active interpretation.
+ * Each backend segment gets one dashed marker and one bottom source number;
+ * colors identify the physical file, not the inferred cycle grouping.
+ */
+export function buildContinuationPreviewProvenanceLayout(
+  preview: ContinuationPreviewResult,
+  colorsBySourceKey: Record<string, string>,
+): Pick<Layout, "shapes" | "annotations"> {
+  const shapes: NonNullable<Layout["shapes"]> = [];
+  const annotations: NonNullable<Layout["annotations"]> = [];
+
+  preview.segments.forEach((segment, index) => {
+    const points = segment.x.filter((value) => Number.isFinite(value));
+    const start = Number.isFinite(segment.global_cycle_start)
+      ? segment.global_cycle_start
+      : points[0] ?? null;
+    const end = Number.isFinite(segment.global_cycle_end)
+      ? segment.global_cycle_end
+      : points[points.length - 1] ?? null;
+    if (start === null || end === null) return;
+
+    const next = preview.segments[index + 1];
+    const nextStart = next && Number.isFinite(next.global_cycle_start)
+      ? next.global_cycle_start
+      : next?.x.find((value) => Number.isFinite(value)) ?? null;
+    const boundary = nextStart !== null ? (end + nextStart) / 2 : end;
+    const color = colorsBySourceKey[segment.source_key] ?? "#12b886";
+    shapes.push({
+      type: "line",
+      x0: boundary,
+      x1: boundary,
+      y0: 0,
+      y1: 1,
+      yref: "paper",
+      line: { color, width: 1, dash: "dash" },
+      opacity: 0.72,
+    });
+    annotations.push({
+      x: (start + end) / 2,
+      y: -0.18,
+      xref: "x",
+      yref: "paper",
+      text: String(index + 1),
+      showarrow: false,
+      font: { color, size: 11 },
+    });
+  });
+
+  return { shapes, annotations };
 }
 
 export function continuationPreviewHasPoints(preview: ContinuationPreviewResult | undefined): boolean {

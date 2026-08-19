@@ -4,6 +4,16 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.5 - 2026-08-20
+
+### New features
+
+- Show automatic merged continuation previews with metric tabs, stitched/source-chain interpretation, and per-file Plotly provenance guides.
+
+### Bug fixes
+
+- Clarify continued-source cycle counts and start/end timestamps while preserving dnd-kit ordering.
+
 ## 0.27.0-beta.4 - 2026-08-20
 
 ### Bug fixes

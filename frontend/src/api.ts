@@ -2010,6 +2010,8 @@ export interface ContinuationInspectRequest {
 export interface ContinuationPreviewRequest {
   sources: ContinuationInspectSourceRequest[];
   proposed_order: string[];
+  quantity?: "voltage" | "discharge_capacity_mah" | "charge_capacity_mah" | null;
+  interpretation?: "source_chain" | "stitched";
 }
 
 export interface ContinuationPreviewSegment {
@@ -2027,6 +2029,7 @@ export interface ContinuationPreviewSegment {
 export interface ContinuationPreviewResult {
   quantity: string;
   label: string;
+  interpretation?: "source_chain" | "stitched";
   segments: ContinuationPreviewSegment[];
 }
 

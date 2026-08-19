@@ -443,3 +443,20 @@ User-requested dnd-kit migration implemented and committed locally in 1a54b40. T
 User confirmed the full central-preview design. Implement automatic merged preview without a manual Inspect continuity action; a white Plotly chart with no legend, per-file source colors, file provenance dashed markers and 1..N labels; three metric tabs for voltage, discharge capacity, and charge capacity; and a default stitched N-files interpretation toggle versus Source chain. Provenance colors and file markers remain present in both modes; only cycle interpretation changes.
 
 ---
+### 2026-08-20T01:03:34+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused frontend suites: PASS (42 tests)
+- Focused backend continuation/import suites: PASS (122 tests)
+- Frontend type check and Vite build: PASS
+- python scripts\\preflight.py --no-cache: PASS (4/4 stages; 139 backend/frontend test files)
+- In-app browser/manual verification: NOT RUN (user will test locally)
+
+**Message**
+
+R5/R6 central-preview follow-up implemented locally. The continued import editor now starts continuity inspection automatically for two or more sources and renders the merged Plotly preview without an Inspect continuity action. Added Voltage, Discharge capacity, and Charge capacity tabs; default stitched-versus-Source chain interpretation toggle; white no-legend plotting; source-color traces; one dashed provenance marker and bottom file number per source in both interpretations. Stitched mode reads raw caches only for display and infers contiguous charge/discharge cycles; Source chain preserves existing stitch semantics. Compact source summaries now report cycle count plus explicit Started/Ended timestamps. Version bumped to 0.27.0-beta.5. No remote push per user instruction.
+
+---

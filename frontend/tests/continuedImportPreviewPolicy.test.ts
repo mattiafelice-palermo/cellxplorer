@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ContinuationPreviewResult } from "../src/api.ts";
 import {
+  buildContinuationPreviewProvenanceLayout,
   buildContinuationPreviewTraces,
   continuationPreviewHasPoints,
   continuationPreviewFailureSources,
@@ -61,11 +62,18 @@ function preview(): ContinuationPreviewResult {
 }
 
 test("combined preview requests follow the visible source order and receipts", () => {
-  const request = continuationPreviewRequest(drafts, ["part-b.xlsx", "part-a.ndax"]);
+  const request = continuationPreviewRequest(
+    drafts,
+    ["part-b.xlsx", "part-a.ndax"],
+    "voltage",
+    "source_chain",
+  );
 
   assert.deepEqual(request.proposed_order, ["part-b.xlsx", "part-a.ndax"]);
   assert.deepEqual(request.sources.map((source) => source.staged_name), ["part-b.xlsx", "part-a.ndax"]);
   assert.deepEqual(request.sources.map((source) => source.inspection?.hash), ["hash-b", "hash-a"]);
+  assert.equal(request.quantity, "voltage");
+  assert.equal(request.interpretation, "source_chain");
 });
 
 test("combined preview query identity changes for order or an inspected source identity", () => {
@@ -76,10 +84,18 @@ test("combined preview query identity changes for order or an inspected source i
     [{ ...drafts[0], inspection: { ...drafts[0].inspection, mtime_ns: 99 } }, drafts[1]],
   );
   const reinspection = continuationPreviewQueryKey(["part-a.ndax", "part-b.xlsx"], drafts, 1);
+  const differentMetric = continuationPreviewQueryKey(
+    ["part-a.ndax", "part-b.xlsx"],
+    drafts,
+    0,
+    "voltage",
+    "stitched",
+  );
 
   assert.notDeepEqual(reordered, original);
   assert.notDeepEqual(changed, original);
   assert.notDeepEqual(reinspection, original);
+  assert.notDeepEqual(differentMetric, original);
 });
 
 test("combined preview failure details retain usable affected-source reasons", () => {
@@ -140,4 +156,17 @@ test("combined preview traces preserve backend global points and source colors w
   });
   assert.equal(continuationPreviewHasPoints(sourcePreview), true);
   assert.equal(continuationPreviewHasPoints({ ...preview(), segments: [] }), false);
+});
+
+test("provenance guides keep one colored marker and file number for every segment", () => {
+  const guides = buildContinuationPreviewProvenanceLayout(preview(), {
+    "part-a.ndax": "#12b886",
+    "part-b.xlsx": "#228be6",
+  });
+
+  assert.equal(guides.shapes?.length, 2);
+  assert.equal(guides.annotations?.length, 2);
+  assert.deepEqual(guides.annotations?.map((annotation) => annotation.text), ["1", "2"]);
+  assert.deepEqual(guides.shapes?.map((shape) => shape.line?.color), ["#228be6", "#12b886"]);
+  assert.deepEqual(guides.annotations?.map((annotation) => annotation.font?.color), ["#228be6", "#12b886"]);
 });

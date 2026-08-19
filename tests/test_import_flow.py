@@ -1768,6 +1768,121 @@ class ImportFlowTests(unittest.TestCase):
         self.assertEqual(parser_calls, [second.name, first.name])
         self.assertEqual([call[1] for call in cache_load_calls], ["parser-b", "parser-a"])
 
+    def test_continuation_preview_stitched_interpretation_infers_contiguous_file_fragments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "fragment-a.ndax"
+            second = root / "fragment-b.ndax"
+            first.write_bytes(b"first stitched fragment")
+            second.write_bytes(b"second stitched fragment")
+            base_request = _continuation_preview_request([first, second])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="discharge_capacity_mah",
+                interpretation="stitched",
+            )
+            hashes = {
+                path.name: parsing.capture_source_fingerprint(path).hash
+                for path in (first, second)
+            }
+            raw_frames = {
+                (hashes[first.name], "parser"): pd.DataFrame(
+                    {
+                        "record_index": [1, 2],
+                        "cycle": [1, 1],
+                        "step": [1, 1],
+                        "status": ["CC DChg", "CC DChg"],
+                        "voltage_v": [4.1, 3.9],
+                        "discharge_capacity_mah": [0.0, 1.0],
+                    }
+                ),
+                (hashes[second.name], "parser"): pd.DataFrame(
+                    {
+                        "record_index": [1, 2],
+                        "cycle": [1, 1],
+                        "step": [1, 1],
+                        "status": ["CC DChg", "CC DChg"],
+                        "voltage_v": [3.8, 3.7],
+                        "discharge_capacity_mah": [0.0, 2.0],
+                    }
+                ),
+            }
+
+            def load_raw(file_hash, parser_version):
+                return raw_frames[(file_hash, parser_version)]
+
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", return_value=True), \
+                patch.object(files.cache, "load_raw", side_effect=load_raw):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual(response["interpretation"], "stitched")
+        self.assertEqual(response["quantity"], "discharge_capacity_mah")
+        self.assertEqual([segment["x"] for segment in response["segments"]], [[1], [1]])
+        self.assertEqual([segment["y"] for segment in response["segments"]], [[1.0], [2.0]])
+        self.assertEqual([segment["global_cycle_start"] for segment in response["segments"]], [1, 1])
+
+    def test_continuation_preview_supports_voltage_quantity_from_raw_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "voltage-a.ndax"
+            second = root / "voltage-b.ndax"
+            first.write_bytes(b"first voltage source")
+            second.write_bytes(b"second voltage source")
+            base_request = _continuation_preview_request([first, second])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="voltage",
+                interpretation="source_chain",
+            )
+            hashes = {
+                path.name: parsing.capture_source_fingerprint(path).hash
+                for path in (first, second)
+            }
+            cycle_frames = {
+                (hashes[first.name], "parser"): pd.DataFrame(
+                    {"cycle": [1, 2], "discharge_capacity_mah": [1.0, 0.9]}
+                ),
+                (hashes[second.name], "parser"): pd.DataFrame(
+                    {"cycle": [1], "discharge_capacity_mah": [0.8]}
+                ),
+            }
+            raw_frames = {
+                (hashes[first.name], "parser"): pd.DataFrame(
+                    {
+                        "cycle": [1, 1, 2],
+                        "status": ["CC DChg", "CC DChg", "CC DChg"],
+                        "voltage_v": [4.0, 3.8, 3.7],
+                    }
+                ),
+                (hashes[second.name], "parser"): pd.DataFrame(
+                    {
+                        "cycle": [1, 1],
+                        "status": ["CC DChg", "CC DChg"],
+                        "voltage_v": [3.6, 3.4],
+                    }
+                ),
+            }
+
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", return_value=True), \
+                patch.object(files.cache, "load_cycles", side_effect=lambda file_hash, parser_version, _calc: cycle_frames[(file_hash, parser_version)]), \
+                patch.object(files.cache, "load_raw", side_effect=lambda file_hash, parser_version: raw_frames[(file_hash, parser_version)]):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual(response["quantity"], "voltage")
+        self.assertEqual(response["label"], "Voltage (V)")
+        self.assertEqual(response["segments"][0]["y"], [3.9, 3.7])
+        self.assertEqual(response["segments"][1]["y"], [3.5])
+
     def test_continuation_preview_sampling_is_bounded_and_preserves_segment_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

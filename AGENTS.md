@@ -199,6 +199,7 @@ Cellxplorer/
 │           ├── neware_excel.py     Structured Neware Excel raw parser (Spec 039.1)
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
+│           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
 │           └── scientific_preparation.py
 │                                  Durable post-copy cache-preparation state
 ├── frontend/

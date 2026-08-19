@@ -10,14 +10,16 @@ import {
   Paper,
   ScrollArea,
   Select,
+  SegmentedControl,
   Stack,
+  Tabs,
   Text,
   Textarea,
   TextInput,
   Tooltip,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { IconPlus, IconRefresh, IconSearch } from "@tabler/icons-react";
+import { IconPlus, IconRefresh } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -52,10 +54,13 @@ import {
 } from "../importPreviewPolicy";
 import {
   buildContinuationPreviewTraces,
+  buildContinuationPreviewProvenanceLayout,
   continuationPreviewHasPoints,
   continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
+  type ContinuationPreviewInterpretation,
+  type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationReviewModal } from "./ContinuationReviewModal";
@@ -176,8 +181,9 @@ export function ContinuedImportEditor({
   const [colors, setColors] = useState<SourceColorAssignments>({});
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
+  const [previewQuantity, setPreviewQuantity] = useState<ContinuationPreviewQuantity>("discharge_capacity_mah");
+  const [previewInterpretation, setPreviewInterpretation] = useState<ContinuationPreviewInterpretation>("stitched");
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
-  const [inspectionRequested, setInspectionRequested] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const previousOrderRef = useRef<string[]>(order);
 
@@ -196,21 +202,26 @@ export function ContinuedImportEditor({
       sources: orderedDrafts.map(draftSource),
       proposed_order: order,
     }),
-    enabled: opened && inspectionRequested && orderedDrafts.length >= 2,
+    enabled: opened && orderedDrafts.length >= 2,
     refetchInterval: (query) =>
-      opened && inspectionRequested && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
+      opened && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
   });
   const result = inspectionQuery.data;
   const sourceInspectionFailed = continuationInspectionHasErrors(result);
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
-    queryKey: continuationPreviewQueryKey(order, orderedDrafts, inspectionQuery.dataUpdatedAt),
+    queryKey: continuationPreviewQueryKey(
+      order,
+      orderedDrafts,
+      inspectionQuery.dataUpdatedAt,
+      previewQuantity,
+      previewInterpretation,
+    ),
     queryFn: ({ signal }) => previewContinuationSources(
-      continuationPreviewRequest(orderedDrafts, order),
+      continuationPreviewRequest(orderedDrafts, order, previewQuantity, previewInterpretation),
       { signal },
     ),
     enabled: opened
       && previewMode === "combined"
-      && inspectionRequested
       && Boolean(result?.inspection_complete)
       && orderedDrafts.length >= 2,
     staleTime: Infinity,
@@ -248,15 +259,15 @@ export function ContinuedImportEditor({
     previousOrderRef.current = order;
   }, [order]);
 
-  // Preview stays lazy (still one source, still on demand), but every way a
-  // source becomes selected -- an explicit click as well as the automatic
-  // initial/fallback selection above -- should request it, not only clicks.
+  // Individual previews remain lazy. The automatic merged preview uses the
+  // continuation endpoint and must not start an extra per-source request just
+  // because a row is selected for its summary/raw-data target.
   useEffect(() => {
     const selected = byKey.get(selectedSourceKey);
-    if (shouldRequestImportPreview(selected, true)) {
+    if (previewMode === "source" && shouldRequestImportPreview(selected, true)) {
       onPreviewRequested?.(selected);
     }
-  }, [selectedSourceKey]);
+  }, [byKey, onPreviewRequested, previewMode, selectedSourceKey]);
 
   useEffect(() => {
     if (result) setAcknowledged((current) => new Set(preserveAcknowledgements(current, result)));
@@ -275,8 +286,9 @@ export function ContinuedImportEditor({
 
   useEffect(() => {
     if (!opened) {
-      setInspectionRequested(false);
       setPreviewMode("combined");
+      setPreviewQuantity("discharge_capacity_mah");
+      setPreviewInterpretation("stitched");
       setAcknowledged(new Set());
       setReviewOpen(false);
     }
@@ -322,7 +334,6 @@ export function ContinuedImportEditor({
 
   const selectSource = (key: string) => {
     setSelectedSourceKey(key);
-    setPreviewMode("source");
   };
   const materialOptions = [
     { value: "custom", label: "Custom nominal capacity" },
@@ -358,34 +369,15 @@ export function ContinuedImportEditor({
           />
         </Group>
         <Group gap="xs" align="center">
+          {inspectionQuery.isFetching && (
+            <Text size="xs" c="dimmed">Preparing merged preview…</Text>
+          )}
           {inspectionQuery.isError && (
             <Text size="xs" c="red">
               {inspectionQuery.error instanceof Error ? inspectionQuery.error.message : "Continuation inspection failed."}
             </Text>
           )}
-          <Button
-            variant="default"
-            leftSection={<IconSearch size={16} />}
-            disabled={orderedDrafts.length < 2 || importing}
-            loading={inspectionQuery.isFetching}
-            onClick={() => {
-              setInspectionRequested(true);
-              if (sourceInspectionFailed || (result?.inspection_complete && hasFindings)) {
-                setReviewOpen(true);
-              } else {
-                void inspectionQuery.refetch();
-              }
-            }}
-          >
-            {sourceInspectionFailed
-              ? "Review source errors"
-              : result?.inspection_complete && hasFindings
-                ? "Review continuity"
-                : result?.inspection_complete
-                  ? "Inspected"
-                  : "Inspect continuity"}
-          </Button>
-          {sourceInspectionFailed && (
+          {(sourceInspectionFailed || inspectionQuery.isError) && (
             <Button
               size="compact-sm"
               variant="subtle"
@@ -393,11 +385,15 @@ export function ContinuedImportEditor({
               disabled={importing}
               onClick={() => {
                 setReviewOpen(false);
-                setInspectionRequested(true);
                 void inspectionQuery.refetch();
               }}
             >
-              Re-inspect
+              Retry inspection
+            </Button>
+          )}
+          {result?.inspection_complete && hasFindings && !sourceInspectionFailed && (
+            <Button size="compact-sm" variant="subtle" disabled={importing} onClick={() => setReviewOpen(true)}>
+              Review continuity
             </Button>
           )}
         </Group>
@@ -413,7 +409,7 @@ export function ContinuedImportEditor({
       )}
 
       <Group align="stretch" gap="md" wrap="nowrap" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-        <Paper withBorder p="xs" w={320} style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Paper withBorder p="xs" w={328} style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}>
           <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
             <Group justify="space-between" wrap="nowrap" style={{ flex: "none" }}>
               <Text size="sm" fw={700}>Source chain</Text>
@@ -447,7 +443,7 @@ export function ContinuedImportEditor({
             <Group justify="space-between" align="end" gap="xs" wrap="nowrap" style={{ flex: "none" }}>
               <Select
                 size="xs"
-                label="Preview source"
+                label="Preview"
                 value={previewMode === "combined" ? "combined" : selectedSourceKey || selectedDraft?.staged_name || null}
                 data={[
                   { value: "combined", label: "All sources (combined)" },
@@ -458,10 +454,13 @@ export function ContinuedImportEditor({
                 ]}
                 onChange={(value) => {
                   if (value === "combined") setPreviewMode("combined");
-                  else if (value) selectSource(value);
+                  else if (value) {
+                    setSelectedSourceKey(value);
+                    setPreviewMode("source");
+                  }
                 }}
                 searchable
-                styles={{ root: { minWidth: 260 } }}
+                styles={{ root: { minWidth: 240 } }}
               />
               <Tooltip
                 label={
@@ -484,11 +483,55 @@ export function ContinuedImportEditor({
             </Group>
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
+                {previewMode === "combined" && (
+                  <Stack gap="xs">
+                    <Tabs
+                      value={previewQuantity}
+                      onChange={(value) => {
+                        if (value === "voltage" || value === "discharge_capacity_mah" || value === "charge_capacity_mah") {
+                          setPreviewQuantity(value);
+                        }
+                      }}
+                      variant="default"
+                      keepMounted={false}
+                    >
+                      <Tabs.List grow>
+                        <Tabs.Tab value="voltage">Voltage</Tabs.Tab>
+                        <Tabs.Tab value="discharge_capacity_mah">Discharge capacity</Tabs.Tab>
+                        <Tabs.Tab value="charge_capacity_mah">Charge capacity</Tabs.Tab>
+                      </Tabs.List>
+                    </Tabs>
+                    <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+                      <Text size="xs" c="dimmed">Cycle interpretation</Text>
+                      <SegmentedControl
+                        size="xs"
+                        aria-label="Cycle interpretation"
+                        value={previewInterpretation}
+                        onChange={(value) => {
+                          if (value === "source_chain" || value === "stitched") {
+                            setPreviewInterpretation(value);
+                          }
+                        }}
+                        data={[
+                          { value: "source_chain", label: "Source chain" },
+                          { value: "stitched", label: `${orderedDrafts.length} files` },
+                        ]}
+                      />
+                    </Group>
+                  </Stack>
+                )}
                 {previewMode === "combined" ? (
                   sourceInspectionFailed ? (
                     <Text size="sm" c="red">Continuity inspection failed. Review the source error before retrying.</Text>
-                  ) : !inspectionRequested || !result?.inspection_complete || inspectionQuery.isError ? (
-                    <Text size="sm" c="dimmed">Inspect continuity to prepare the combined preview.</Text>
+                  ) : inspectionQuery.isError ? (
+                    <Text size="sm" c="red">The merged preview is waiting for a successful continuity inspection.</Text>
+                  ) : !result?.inspection_complete ? (
+                    <Alert color="gray">
+                      <Group gap="xs" align="center">
+                        <Loader size="sm" />
+                        <Text size="sm">Preparing continuity inspection…</Text>
+                      </Group>
+                    </Alert>
                   ) : inspectionQuery.isFetching ? (
                     <Alert color="gray">Waiting for continuity inspection…</Alert>
                   ) : combinedPreviewQuery.isPending
@@ -496,7 +539,7 @@ export function ContinuedImportEditor({
                     <Alert color="gray">
                       <Group gap="xs" align="center">
                         <Loader size="sm" />
-                        <Text size="sm">Preparing combined capacity preview…</Text>
+                        <Text size="sm">Preparing merged preview…</Text>
                       </Group>
                     </Alert>
                   ) : combinedPreviewQuery.isError ? (
@@ -538,13 +581,23 @@ export function ContinuedImportEditor({
                         data={buildContinuationPreviewTraces(combinedPreviewQuery.data, colors)}
                         layout={{
                           height: 220,
-                          title: { text: "Capacity vs. cycle" },
-                          margin: { l: 54, r: 16, t: 34, b: 48 },
-                          xaxis: { title: { text: "Cycle number (global)" } },
+                          title: { text: combinedPreviewQuery.data.quantity === "voltage" ? "Voltage vs. cycle" : "Capacity vs. cycle" },
+                          margin: { l: 58, r: 16, t: 34, b: 62 },
+                          xaxis: {
+                            title: {
+                              text: previewInterpretation === "stitched"
+                                ? "Cycle number (stitched)"
+                                : "Cycle number (source chain)",
+                            },
+                            gridcolor: "#e5e7eb",
+                            zerolinecolor: "#cbd5e1",
+                          },
                           yaxis: { title: { text: combinedPreviewQuery.data.label } },
                           showlegend: false,
-                          paper_bgcolor: "rgba(0,0,0,0)",
-                          plot_bgcolor: "rgba(0,0,0,0)",
+                          paper_bgcolor: "#ffffff",
+                          plot_bgcolor: "#ffffff",
+                          font: { color: "#1f2937" },
+                          ...buildContinuationPreviewProvenanceLayout(combinedPreviewQuery.data, colors),
                         }}
                         config={{ displayModeBar: false, responsive: true }}
                         style={{ width: "100%" }}
@@ -620,15 +673,15 @@ export function ContinuedImportEditor({
                   <SummaryRow label="Format" value={selectedDraft?.source_format} />
                   <SummaryRow label="Technique" value={selectedDraft?.technique} />
                   <SummaryRow
-                    label="Local cycles"
+                    label="Cycles in file"
                     value={
-                      selectedSource?.local_cycle_count
-                        ? `${selectedSource.local_cycle_start ?? "—"}–${selectedSource.local_cycle_end ?? "—"} (${selectedSource.local_cycle_count})`
+                      selectedSource?.local_cycle_count !== null && selectedSource?.local_cycle_count !== undefined
+                        ? `${selectedSource.local_cycle_count}`
                         : null
                     }
                   />
-                  <SummaryRow label="Start time" value={selectedSource?.start_time ?? selectedDraft?.start_time} />
-                  <SummaryRow label="End time" value={selectedSource?.end_time} />
+                  <SummaryRow label="Started" value={selectedSource?.start_time ?? selectedDraft?.start_time} />
+                  <SummaryRow label="Ended" value={selectedSource?.end_time} />
                   <SummaryRow label="Protocol" value={selectedSource?.protocol_signature} />
                 </Stack>
               </Stack>

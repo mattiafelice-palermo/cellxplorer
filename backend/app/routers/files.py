@@ -11,6 +11,7 @@ import hashlib
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from ..services.process_priority import apply_background_thread_priority, process_pool_executor
 from ..services import import_inspection
@@ -93,6 +94,12 @@ def _load_stitch():
     return module
 
 
+def _load_continuation_preview():
+    from ..services import continuation_preview as module
+
+    return module
+
+
 def _load_analysis_usage():
     from ..services import analysis_usage as module
 
@@ -113,6 +120,7 @@ parsing = LazyModule(_load_parsing)
 scanner = LazyModule(_load_scanner)
 continuations = LazyModule(_load_continuations)
 stitch = LazyModule(_load_stitch)
+continuation_preview = LazyModule(_load_continuation_preview)
 analysis_usage = LazyModule(_load_analysis_usage)
 cache_maintenance = LazyModule(_load_cache_maintenance)
 
@@ -1571,6 +1579,11 @@ class ContinuationInspectRequest(BaseModel):
 class ContinuationPreviewRequest(BaseModel):
     sources: list[ContinuationInspectSourceRequest]
     proposed_order: list[str]
+    quantity: Literal["voltage", "discharge_capacity_mah", "charge_capacity_mah"] | None = None
+    # Keep the legacy source-chain interpretation as the API compatibility
+    # default.  The continued-import UI sends "stitched" explicitly because
+    # that is its user-facing default.
+    interpretation: Literal["source_chain", "stitched"] = "source_chain"
 
 
 class ImportSourceListRequest(BaseModel):
@@ -2732,8 +2745,17 @@ _CONTINUATION_PREVIEW_MAX_POINTS = 600
 
 def _build_continuation_preview(
     ordered_sources: list[dict[str, str]],
+    *,
+    quantity: str | None = None,
+    interpretation: Literal["source_chain", "stitched"] = "source_chain",
 ) -> dict:
-    """Build bounded, source-segmented capacity points from ordered caches."""
+    """Build bounded source-segmented display points from prepared caches.
+
+    ``source_chain`` delegates cycle numbering to the existing authoritative
+    stitcher.  ``stitched`` is deliberately preview-only: it reads raw caches,
+    infers contiguous charge/discharge cycles, and never publishes a modified
+    cache or changes analysis semantics.
+    """
 
     refs = [
         stitch.CachedSourceRef(
@@ -2771,9 +2793,45 @@ def _build_continuation_preview(
             status_code=409,
         )
 
-    quantity, label = _capacity_quantity_and_label(cycles)
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
+
+    if quantity == "voltage":
+        raw, raw_segments, raw_missing = stitch.stitch_raw(refs)
+        if raw_missing or not stitch.stitch_metadata(raw)["complete"]:
+            missing_hashes = set(raw_missing)
+            missing_sources = [
+                {
+                    "source_key": source["source_key"],
+                    "filename": source["filename"],
+                    "kind": "raw_cache_incomplete",
+                    "reason": "The prepared raw cache is missing or incomplete for the voltage preview.",
+                }
+                for source in ordered_sources
+                if source["hash"] in missing_hashes
+            ]
+            raise _continuation_preview_unavailable(
+                code="continuation_cache_incomplete",
+                message="The voltage preview is not ready; inspect continuity again before previewing.",
+                sources=missing_sources or [
+                    {
+                        "source_key": source["source_key"],
+                        "filename": source["filename"],
+                        "reason": "The prepared raw cache is missing or incomplete for the voltage preview.",
+                    }
+                    for source in ordered_sources
+                ],
+                status_code=409,
+            )
+        raw_by_segment = {
+            int(item["segment"]): raw[raw["segment"] == int(item["segment"])]
+            for item in raw_segments
+        }
+        selected_quantity, label = "voltage", "Voltage (V)"
+    else:
+        selected_quantity, label = _capacity_quantity_and_label(cycles, quantity)
+        raw_by_segment = {}
+
     response_segments = []
     for segment_index, source in enumerate(ordered_sources):
         metadata = metadata_by_segment.get(segment_index)
@@ -2791,12 +2849,18 @@ def _build_continuation_preview(
                 ],
                 status_code=409,
             )
-        segment_frame = cycles[cycles["segment"] == segment_index]
-        segment_preview = capacity_preview_from_cycles(
-            segment_frame,
-            max_points=segment_limit,
-            quantity=quantity,
-        )
+        if selected_quantity == "voltage":
+            segment_preview = continuation_preview.voltage_preview_from_raw(
+                raw_by_segment.get(segment_index, pd.DataFrame()),
+                max_points=segment_limit,
+            )
+        else:
+            segment_frame = cycles[cycles["segment"] == segment_index]
+            segment_preview = capacity_preview_from_cycles(
+                segment_frame,
+                max_points=segment_limit,
+                quantity=selected_quantity,
+            )
         response_segments.append(
             {
                 "source_key": source["source_key"],
@@ -2811,8 +2875,112 @@ def _build_continuation_preview(
             }
         )
     return {
-        "quantity": quantity,
+        "quantity": selected_quantity,
         "label": label,
+        "interpretation": interpretation,
+        "segments": response_segments,
+    }
+
+
+def _build_stitched_continuation_preview(
+    ordered_sources: list[dict[str, str]],
+    *,
+    quantity: str | None,
+) -> dict:
+    """Build the explicit preview-only contiguous-cycle interpretation."""
+
+    refs = [
+        stitch.CachedSourceRef(
+            file_hash=source["hash"],
+            parser_version=source["parser_version"],
+        )
+        for source in ordered_sources
+    ]
+    raw_frames = [cache.load_raw(ref.file_hash, ref.parser_version) for ref in refs]
+    missing_sources = [
+        {
+            "source_key": source["source_key"],
+            "filename": source["filename"],
+            "kind": "raw_cache_incomplete",
+            "reason": "The prepared raw cache is missing or incomplete for the stitched preview.",
+        }
+        for source, frame in zip(ordered_sources, raw_frames)
+        if frame is None
+    ]
+    if missing_sources:
+        raise _continuation_preview_unavailable(
+            code="continuation_cache_incomplete",
+            message="The stitched preview is not ready; inspect continuity again before previewing.",
+            sources=missing_sources,
+            status_code=409,
+        )
+
+    try:
+        merged = continuation_preview.prepare_stitched_raw(
+            [frame for frame in raw_frames if frame is not None]
+        )
+    except ValueError as exc:
+        raise _continuation_preview_unavailable(
+            code="continuation_cycle_inference_unavailable",
+            message="The stitched preview cannot infer contiguous cycles from these sources.",
+            sources=[
+                {
+                    "source_key": source["source_key"],
+                    "filename": source["filename"],
+                    "kind": "cycle_inference_unavailable",
+                    "reason": str(exc),
+                }
+                for source in ordered_sources
+            ],
+            status_code=422,
+        ) from exc
+
+    # The cycle cache remains the fallback/quantity authority for the legacy
+    # source-chain path.  Stitched mode derives display-only cycle summaries
+    # from the raw rows and the existing calc.per_cycle semantics.
+    merged_cycles = calc.per_cycle(merged)
+    if quantity == "voltage":
+        selected_quantity, label = "voltage", "Voltage (V)"
+    else:
+        selected_quantity, label = _capacity_quantity_and_label(merged_cycles, quantity)
+    segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
+    response_segments = []
+
+    for segment_index, (source, raw_frame) in enumerate(zip(ordered_sources, raw_frames)):
+        segment_frame = merged[merged["segment"] == segment_index]
+        local_labels, _ = stitch.observed_local_cycles(
+            raw_frame["cycle"] if "cycle" in raw_frame.columns else pd.Series(dtype="float64")
+        )
+        global_cycles = pd.to_numeric(segment_frame["cycle"], errors="coerce").dropna()
+        if selected_quantity == "voltage":
+            segment_preview = continuation_preview.voltage_preview_from_raw(
+                segment_frame,
+                max_points=segment_limit,
+            )
+        else:
+            segment_cycles = calc.per_cycle(segment_frame)
+            segment_preview = capacity_preview_from_cycles(
+                segment_cycles,
+                max_points=segment_limit,
+                quantity=selected_quantity,
+            )
+        response_segments.append(
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "x": segment_preview["x"],
+                "y": segment_preview["y"],
+                "global_cycle_start": int(global_cycles.min()) if not global_cycles.empty else None,
+                "global_cycle_end": int(global_cycles.max()) if not global_cycles.empty else None,
+                "source_cycle_start": local_labels[0] if local_labels else None,
+                "source_cycle_end": local_labels[-1] if local_labels else None,
+                "source_cycle_count": len(local_labels),
+            }
+        )
+    return {
+        "quantity": selected_quantity,
+        "label": label,
+        "interpretation": "stitched",
         "segments": response_segments,
     }
 
@@ -3470,7 +3638,16 @@ def preview_continuation_sources(req: ContinuationPreviewRequest):
             sources=unavailable,
             status_code=422 if metadata_only else 409,
         )
-    return _build_continuation_preview(ordered_sources)
+    if req.interpretation == "stitched":
+        return _build_stitched_continuation_preview(
+            ordered_sources,
+            quantity=req.quantity,
+        )
+    return _build_continuation_preview(
+        ordered_sources,
+        quantity=req.quantity,
+        interpretation=req.interpretation,
+    )
 
 
 @router.post("/cells/{cell_id}/continuations/inspect")
