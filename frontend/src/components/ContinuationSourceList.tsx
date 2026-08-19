@@ -1,5 +1,23 @@
 import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip, VisuallyHidden } from "@mantine/core";
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   IconAlertTriangle,
   IconArrowDown,
   IconArrowUp,
@@ -58,11 +76,26 @@ function sourceGutterTextColor(color?: string): string {
 }
 
 /** A minimal full-height identity rail: a short position cap above a larger drag zone. */
-function SourceIdentityGutter({ number, color }: { number: number; color?: string }) {
+function SourceIdentityGutter({
+  number,
+  color,
+  handleRef,
+  handleAttributes,
+  handleListeners,
+  handleLabel,
+  isDragging,
+}: {
+  number: number;
+  color?: string;
+  handleRef?: (element: HTMLElement | null) => void;
+  handleAttributes?: DraggableAttributes;
+  handleListeners?: DraggableSyntheticListeners;
+  handleLabel?: string;
+  isDragging?: boolean;
+}) {
   const strongColor = color ?? "var(--mantine-color-gray-5)";
   return (
     <div
-      aria-hidden="true"
       style={{
         flex: "none",
         width: 20,
@@ -83,10 +116,15 @@ function SourceIdentityGutter({ number, color }: { number: number; color?: strin
           fontSize: "var(--mantine-font-size-xs)",
           fontWeight: 700,
         }}
+        aria-hidden="true"
       >
         {number}
       </div>
       <div
+        ref={handleRef}
+        {...handleAttributes}
+        {...handleListeners}
+        aria-label={handleLabel}
         style={{
           flex: 1,
           minHeight: 24,
@@ -95,7 +133,9 @@ function SourceIdentityGutter({ number, color }: { number: number; color?: strin
           justifyContent: "center",
           background: strongColor,
           color: sourceGutterTextColor(color),
-          cursor: "grab",
+          cursor: isDragging ? "grabbing" : "grab",
+          opacity: isDragging ? 0.8 : 1,
+          touchAction: "none",
         }}
       >
         <IconGripVertical size={14} aria-hidden="true" />
@@ -108,12 +148,109 @@ function compactMetaLine(source: ContinuationInspectSource): string | null {
   return formatCompactContinuationMetaLine(source);
 }
 
+function SortableCompactSourceCard({
+  source,
+  index,
+  selected,
+  metaLine,
+  sourceColor,
+  disabled,
+  onRemove,
+  canRemoveSource,
+  onSelect,
+}: {
+  source: ContinuationInspectSource;
+  index: number;
+  selected: boolean;
+  metaLine: string | null;
+  sourceColor?: string;
+  disabled: boolean;
+  onRemove?: (sourceKey: string) => void;
+  canRemoveSource?: (sourceKey: string) => boolean;
+  onSelect?: (sourceKey: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: source.key, disabled });
+  const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+
+  return (
+    <Paper
+      ref={setNodeRef}
+      withBorder
+      p={0}
+      onClick={() => onSelect?.(source.key)}
+      tabIndex={onSelect ? 0 : undefined}
+      role={onSelect ? "button" : undefined}
+      aria-pressed={onSelect ? selected : undefined}
+      onKeyDown={(event) => {
+        if (!onSelect) return;
+        // The drag handle owns its keyboard sensor events; only the row body
+        // itself should activate source selection.
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(source.key);
+        }
+      }}
+      style={{
+        cursor: onSelect ? "pointer" : undefined,
+        borderColor: selected ? "var(--mantine-primary-color-5)" : undefined,
+        background: selected ? "var(--mantine-primary-color-light)" : undefined,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "stretch",
+        width: "100%",
+        boxSizing: "border-box",
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+        zIndex: isDragging ? 1 : undefined,
+      }}
+    >
+      <SourceIdentityGutter
+        number={index + 1}
+        color={sourceColor}
+        handleRef={setActivatorNodeRef}
+        handleAttributes={attributes}
+        handleListeners={listeners}
+        handleLabel={`Reorder ${source.filename}`}
+        isDragging={isDragging}
+      />
+      <VisuallyHidden>Source {index + 1}. Use the drag handle to reorder.</VisuallyHidden>
+      <Stack gap={4} style={{ flex: 1, minWidth: 0, padding: "8px" }}>
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
+            {source.filename}
+          </Text>
+          {source.inspection_status === "error" && (
+            <Tooltip label={source.inspection_error ?? "Inspection failed"}>
+              <Badge size="xs" variant="light" color="red">Error</Badge>
+            </Tooltip>
+          )}
+          {onRemove && <Tooltip label={`Remove ${source.filename}`}>
+            <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
+          </Tooltip>}
+        </Group>
+        {metaLine && <Text size="xs" c="dimmed" truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
+      </Stack>
+    </Paper>
+  );
+}
+
 export function ContinuationSourceList({
   sources,
   findings,
   onMove,
   onDragStart,
   onDrop,
+  onReorder,
   onRemove,
   canRemoveSource,
   onUpdateSource,
@@ -131,6 +268,8 @@ export function ContinuationSourceList({
   onMove: (index: number, direction: -1 | 1) => void;
   onDragStart?: (index: number) => void;
   onDrop?: (index: number) => void;
+  /** Compact-import reorder callback; dnd-kit supplies source and target indices. */
+  onReorder?: (from: number, to: number) => void;
   onRemove?: (sourceKey: string) => void;
   canRemoveSource?: (sourceKey: string) => boolean;
   onUpdateSource?: (sourceKey: string) => void;
@@ -146,73 +285,44 @@ export function ContinuationSourceList({
   selectedSourceKey?: string | null;
   onSelect?: (sourceKey: string) => void;
 }) {
+  const compactSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
   if (!sources.length) return <Text size="sm" c="dimmed">{emptyMessage}</Text>;
 
   if (variant === "compact-import") {
+    const sourceIds = sources.map((source) => source.key);
+    const handleDragEnd = ({ active, over }: DragEndEvent) => {
+      if (!onReorder || disabled || !over || active.id === over.id) return;
+      const from = sourceIds.indexOf(String(active.id));
+      const to = sourceIds.indexOf(String(over.id));
+      if (from === -1 || to === -1) return;
+      onReorder(from, to);
+    };
+
     return (
-      <Stack gap={6}>
-        {sources.map((source, index) => {
-          const selected = selectedSourceKey === source.key;
-          const metaLine = compactMetaLine(source);
-          const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
-          const sourceColor = colorsBySourceKey?.[source.key];
-          return (
-            <Paper
-              key={source.key}
-              withBorder
-              p={0}
-              draggable={Boolean(onDragStart) && !disabled}
-              onDragStart={() => onDragStart?.(index)}
-              onDragOver={(event) => { if (onDrop && !disabled) event.preventDefault(); }}
-              onDrop={() => { if (!disabled) onDrop?.(index); }}
-              onClick={() => onSelect?.(source.key)}
-              tabIndex={onSelect ? 0 : undefined}
-              role={onSelect ? "button" : undefined}
-              aria-pressed={onSelect ? selected : undefined}
-              onKeyDown={(event) => {
-                if (!onSelect) return;
-                // Only the row's own key events select it -- a bubbled Enter/Space
-                // from a nested Move/Remove ActionIcon must reach that control's
-                // native activation, not be intercepted here.
-                if (event.target !== event.currentTarget) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onSelect(source.key);
-                }
-              }}
-              style={{
-                cursor: onSelect ? "pointer" : undefined,
-                borderColor: selected ? "var(--mantine-primary-color-5)" : undefined,
-                background: selected ? "var(--mantine-primary-color-light)" : undefined,
-                overflow: "hidden",
-                display: "flex",
-                alignItems: "stretch",
-                width: "100%",
-                boxSizing: "border-box",
-              }}
-            >
-              <SourceIdentityGutter number={index + 1} color={sourceColor} />
-              <VisuallyHidden>Source {index + 1}. Drag to reorder.</VisuallyHidden>
-              <Stack gap={4} style={{ flex: 1, minWidth: 0, padding: "8px" }}>
-                <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-                  <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
-                    {source.filename}
-                  </Text>
-                  {source.inspection_status === "error" && (
-                    <Tooltip label={source.inspection_error ?? "Inspection failed"}>
-                      <Badge size="xs" variant="light" color="red">Error</Badge>
-                    </Tooltip>
-                  )}
-                  {onRemove && <Tooltip label={`Remove ${source.filename}`}>
-                    <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || sources.length <= 1 || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
-                  </Tooltip>}
-                </Group>
-                {metaLine && <Text size="xs" c="dimmed" truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
-              </Stack>
-            </Paper>
-          );
-        })}
-      </Stack>
+      <DndContext sensors={compactSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={sourceIds} strategy={verticalListSortingStrategy}>
+          <Stack gap={6}>
+            {sources.map((source, index) => (
+              <SortableCompactSourceCard
+                key={source.key}
+                source={source}
+                index={index}
+                selected={selectedSourceKey === source.key}
+                metaLine={compactMetaLine(source)}
+                sourceColor={colorsBySourceKey?.[source.key]}
+                disabled={disabled || !onReorder}
+                onRemove={onRemove && sources.length > 1 ? onRemove : undefined}
+                canRemoveSource={canRemoveSource}
+                onSelect={onSelect}
+              />
+            ))}
+          </Stack>
+        </SortableContext>
+      </DndContext>
     );
   }
 

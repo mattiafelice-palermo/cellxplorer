@@ -42,6 +42,7 @@ import {
   assignContinuationSourceColors,
   buildContinuedImportSubmissionState,
   nextSelectedSourceKey,
+  reorderContinuationSourceKeys,
   type ContinuedImportSubmissionState,
   type SourceColorAssignments,
 } from "../continuedImportWorkspacePolicy";
@@ -176,7 +177,6 @@ export function ContinuedImportEditor({
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
   const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [inspectionRequested, setInspectionRequested] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const previousOrderRef = useRef<string[]>(order);
@@ -428,16 +428,8 @@ export function ContinuedImportEditor({
                 selectedSourceKey={selectedSourceKey}
                 onSelect={selectSource}
                 onMove={move}
-                onDragStart={disabled ? undefined : setDragIndex}
-                onDrop={disabled ? undefined : (index) => {
-                  if (dragIndex === null) return;
-                  setOrder((current) => {
-                    const next = [...current];
-                    const [item] = next.splice(dragIndex, 1);
-                    next.splice(index, 0, item);
-                    return next;
-                  });
-                  setDragIndex(null);
+                onReorder={disabled ? undefined : (from, to) => {
+                  setOrder((current) => reorderContinuationSourceKeys(current, from, to));
                 }}
                 onRemove={disabled ? undefined : (sourceKey) => {
                   onRemoveSource(sourceKey);

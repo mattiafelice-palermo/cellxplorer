@@ -9,6 +9,7 @@ import {
   compactContinuationMetaLine,
   formatContinuationTimestamp,
   nextSelectedSourceKey,
+  reorderContinuationSourceKeys,
 } from "../src/continuedImportWorkspacePolicy.ts";
 
 const PALETTE = ["#111111", "#222222", "#333333"];
@@ -111,6 +112,14 @@ test("compactContinuationMetaLine labels source dates and reports only the cycle
     compactContinuationMetaLine({ local_cycle_count: 4, start_time: "2026-07-10T14:41:20", end_time: null }),
     "4 cycles · Started: 10/07/2026 14:41",
   );
+});
+
+test("reorderContinuationSourceKeys moves stable source ids without changing invalid orders", () => {
+  assert.deepEqual(reorderContinuationSourceKeys(["a", "b", "c"], 0, 2), ["b", "c", "a"]);
+  assert.deepEqual(reorderContinuationSourceKeys(["a", "b", "c"], 2, 0), ["c", "a", "b"]);
+  const original = ["a", "b", "c"];
+  assert.equal(reorderContinuationSourceKeys(original, 1, 1), original);
+  assert.equal(reorderContinuationSourceKeys(original, -1, 2), original);
 });
 
 test("buildContinuedImportSubmissionState carries the exact visible order and acknowledgement ids", () => {

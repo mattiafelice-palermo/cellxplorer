@@ -44,6 +44,16 @@ export function compactContinuationMetaLine(
   return parts.length ? parts.join(" · ") : null;
 }
 
+/** Reorder source keys by the stable indices reported by a sortable drag. */
+export function reorderContinuationSourceKeys(keys: string[], from: number, to: number): string[] {
+  if (from === to || from < 0 || to < 0 || from >= keys.length || to >= keys.length) return keys;
+  const next = [...keys];
+  const [moved] = next.splice(from, 1);
+  if (moved === undefined) return keys;
+  next.splice(to, 0, moved);
+  return next;
+}
+
 /**
  * Assign each ordered source a stable session-only display color.
  *
