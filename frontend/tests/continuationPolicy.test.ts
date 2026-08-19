@@ -6,7 +6,9 @@ import {
   acknowledgementFindingIds,
   applySuggestedOrder,
   continuationHasFindings,
+  continuationInspectionHasErrors,
   continuationReviewRequired,
+  continuedInspectionStatus,
   findingSummary,
   isSubmitBlocked,
   scientificDraftIsValid,
@@ -152,6 +154,16 @@ test("continuity review separates required findings from warning and info findin
     findings: [{ id: "block", code: "duplicate", severity: "blocking", source_keys: ["a"], title: "Duplicate", message: "", details: {} }],
   })), true);
   assert.equal(continuationReviewRequired(makeResult({ inspection_complete: false, findings })), false);
+});
+
+test("continued inspection status distinguishes not-started, preparing, and errored results", () => {
+  assert.equal(continuedInspectionStatus(undefined), "not_started");
+  assert.equal(continuedInspectionStatus(makeResult({ inspection_complete: false })), "preparing");
+  assert.equal(continuedInspectionStatus(undefined, true), "error");
+  const failedSource = { inspection_status: "error" } as ContinuationInspectResult["sources"][number];
+  const failed = makeResult({ inspection_complete: false, sources: [failedSource] });
+  assert.equal(continuedInspectionStatus(failed), "error");
+  assert.equal(continuationInspectionHasErrors(failed), true);
 });
 
 test("continued scientific overrides reject incomplete preset combinations", () => {

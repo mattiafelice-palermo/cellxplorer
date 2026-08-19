@@ -14,6 +14,7 @@ import { IconAlertTriangle, IconInfoCircle } from "@tabler/icons-react";
 import type {
   ContinuationFinding,
   ContinuationInspectResult,
+  ContinuationInspectSource,
 } from "../api";
 import {
   blockingFindings,
@@ -37,6 +38,19 @@ function findingDescription(
 ): string {
   const sourceLabel = findingSourceLabel(finding, result);
   return sourceLabel ? `${finding.message} (${sourceLabel})` : finding.message;
+}
+
+function SourceErrorRow({ source }: { source: ContinuationInspectSource }) {
+  return (
+    <Paper withBorder p="xs">
+      <Stack gap={2}>
+        <Text size="sm" fw={700}>{source.filename}</Text>
+        <Text size="sm" c="red">
+          {source.inspection_error || "The source could not be prepared for continuation inspection."}
+        </Text>
+      </Stack>
+    </Paper>
+  );
 }
 
 function FindingHeader({
@@ -72,6 +86,7 @@ export function ContinuationReviewModal({
   const blocking = result ? blockingFindings(result) : [];
   const confirmations = result?.findings.filter((finding) => finding.severity === "confirmation") ?? [];
   const details = result ? informationalFindings(result) : [];
+  const sourceErrors = result?.sources.filter((source) => source.inspection_status === "error") ?? [];
 
   return (
     <Modal opened={opened} onClose={onClose} title="Continuity review" centered size="lg">
@@ -80,6 +95,17 @@ export function ContinuationReviewModal({
           Review the findings for this ordered source chain. Blocking findings cannot be
           acknowledged; confirmation findings must be checked before import.
         </Text>
+
+        {sourceErrors.length > 0 && (
+          <Stack gap="xs">
+            <Group gap="xs">
+              <IconAlertTriangle size={16} color="var(--mantine-color-red-6)" aria-hidden="true" />
+              <Text size="sm" fw={700} c="red">Source errors</Text>
+              <Badge size="xs" color="red" variant="light">{sourceErrors.length}</Badge>
+            </Group>
+            {sourceErrors.map((source) => <SourceErrorRow key={source.key} source={source} />)}
+          </Stack>
+        )}
 
         {blocking.length > 0 && result && (
           <Stack gap="xs">
@@ -139,7 +165,7 @@ export function ContinuationReviewModal({
           </Accordion>
         )}
 
-        {result && blocking.length === 0 && confirmations.length === 0 && details.length === 0 && (
+        {result && sourceErrors.length === 0 && blocking.length === 0 && confirmations.length === 0 && details.length === 0 && (
           <Text size="sm" c="teal">No continuity findings were reported.</Text>
         )}
 

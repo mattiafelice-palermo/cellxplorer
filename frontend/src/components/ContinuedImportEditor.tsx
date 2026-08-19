@@ -17,7 +17,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconPlus, IconRefresh, IconSearch } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -33,6 +33,7 @@ import {
 import {
   continuationSourceCanOpenRawData,
   continuationHasFindings,
+  continuationInspectionHasErrors,
   continuationReviewRequired,
   moveSource,
   preserveAcknowledgements,
@@ -200,6 +201,7 @@ export function ContinuedImportEditor({
       opened && inspectionRequested && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
   });
   const result = inspectionQuery.data;
+  const sourceInspectionFailed = continuationInspectionHasErrors(result);
   const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
     queryKey: continuationPreviewQueryKey(order, orderedDrafts, inspectionQuery.dataUpdatedAt),
     queryFn: ({ signal }) => previewContinuationSources(
@@ -264,12 +266,12 @@ export function ContinuedImportEditor({
   // complete inspection arrives. Reorders clear the result first, so a stale
   // review cannot remain open for a different source order.
   useEffect(() => {
-    if (!opened || !result?.inspection_complete || !inspectionQuery.dataUpdatedAt) {
+    if (!opened || !inspectionQuery.dataUpdatedAt || (!result?.inspection_complete && !sourceInspectionFailed)) {
       setReviewOpen(false);
       return;
     }
-    if (continuationReviewRequired(result)) setReviewOpen(true);
-  }, [inspectionQuery.dataUpdatedAt, opened, result]);
+    if (sourceInspectionFailed || continuationReviewRequired(result)) setReviewOpen(true);
+  }, [inspectionQuery.dataUpdatedAt, opened, result, sourceInspectionFailed]);
 
   useEffect(() => {
     if (!opened) {
@@ -281,8 +283,15 @@ export function ContinuedImportEditor({
   }, [opened]);
 
   const submissionState = useMemo(
-    () => buildContinuedImportSubmissionState(order, cellDraft, cellDraft.cell_name, result, acknowledged),
-    [order, cellDraft, result, acknowledged],
+    () => buildContinuedImportSubmissionState(
+      order,
+      cellDraft,
+      cellDraft.cell_name,
+      result,
+      acknowledged,
+      inspectionQuery.isError,
+    ),
+    [acknowledged, cellDraft, inspectionQuery.isError, order, result],
   );
   useEffect(() => {
     onSubmissionStateChange(submissionState);
@@ -361,15 +370,36 @@ export function ContinuedImportEditor({
             loading={inspectionQuery.isFetching}
             onClick={() => {
               setInspectionRequested(true);
-              if (result?.inspection_complete && hasFindings) {
+              if (sourceInspectionFailed || (result?.inspection_complete && hasFindings)) {
                 setReviewOpen(true);
               } else {
                 void inspectionQuery.refetch();
               }
             }}
           >
-            {result?.inspection_complete && hasFindings ? "Review continuity" : result?.inspection_complete ? "Inspected" : "Inspect continuity"}
+            {sourceInspectionFailed
+              ? "Review source errors"
+              : result?.inspection_complete && hasFindings
+                ? "Review continuity"
+                : result?.inspection_complete
+                  ? "Inspected"
+                  : "Inspect continuity"}
           </Button>
+          {sourceInspectionFailed && (
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              leftSection={<IconRefresh size={15} />}
+              disabled={importing}
+              onClick={() => {
+                setReviewOpen(false);
+                setInspectionRequested(true);
+                void inspectionQuery.refetch();
+              }}
+            >
+              Re-inspect
+            </Button>
+          )}
         </Group>
       </Group>
 
@@ -463,7 +493,9 @@ export function ContinuedImportEditor({
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
                 {previewMode === "combined" ? (
-                  !inspectionRequested || !result?.inspection_complete || inspectionQuery.isError ? (
+                  sourceInspectionFailed ? (
+                    <Text size="sm" c="red">Continuity inspection failed. Review the source error before retrying.</Text>
+                  ) : !inspectionRequested || !result?.inspection_complete || inspectionQuery.isError ? (
                     <Text size="sm" c="dimmed">Inspect continuity to prepare the combined preview.</Text>
                   ) : inspectionQuery.isFetching ? (
                     <Alert color="gray">Waiting for continuity inspection…</Alert>
@@ -632,7 +664,11 @@ export function ContinuedImportEditor({
         </Paper>
       </Group>
 
-      {reviewRequired && !reviewOpen && (
+      {sourceInspectionFailed && !reviewOpen ? (
+        <Text size="xs" c="red" style={{ flex: "none" }}>
+          Review source errors before importing.
+        </Text>
+      ) : reviewRequired && !reviewOpen && (
         <Text size="xs" c="orange" style={{ flex: "none" }}>
           Continuity review required before import.
         </Text>

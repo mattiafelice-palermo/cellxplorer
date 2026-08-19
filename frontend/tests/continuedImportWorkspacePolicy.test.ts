@@ -106,6 +106,7 @@ test("buildContinuedImportSubmissionState carries the exact visible order and ac
   assert.deepEqual(state.acknowledgedFindingIds, ["confirm-1"]);
   assert.equal(state.canSubmit, true);
   assert.equal(state.inspectionRequired, false);
+  assert.equal(state.inspectionStatus, "ready");
   assert.equal(state.reviewRequired, false);
 });
 
@@ -113,6 +114,7 @@ test("buildContinuedImportSubmissionState blocks submission under two sources ev
   const state = buildContinuedImportSubmissionState(["a"], validDraft(), "Cell A", result(), []);
   assert.equal(state.canSubmit, false);
   assert.equal(state.inspectionRequired, false);
+  assert.equal(state.inspectionStatus, "ready");
   assert.equal(state.reviewRequired, false);
 });
 
@@ -125,7 +127,25 @@ test("buildContinuedImportSubmissionState reports when inspection is still requi
     [],
   );
   assert.equal(state.inspectionRequired, true);
+  assert.equal(state.inspectionStatus, "preparing");
   assert.equal(state.reviewRequired, false);
+});
+
+test("buildContinuedImportSubmissionState reports inspection errors without changing submission safety", () => {
+  const state = buildContinuedImportSubmissionState(
+    ["a", "b"],
+    validDraft(),
+    "Cell A",
+    result({
+      inspection_complete: false,
+      can_submit: false,
+      sources: [{ inspection_status: "error" } as ContinuationInspectResult["sources"][number]],
+    }),
+    [],
+  );
+  assert.equal(state.canSubmit, false);
+  assert.equal(state.inspectionRequired, true);
+  assert.equal(state.inspectionStatus, "error");
 });
 
 test("buildContinuedImportSubmissionState blocks submission for an invalid scientific draft", () => {

@@ -167,3 +167,24 @@ export function continuationHasFindings(
 ): boolean {
   return Boolean(result?.findings.length);
 }
+
+export type ContinuedInspectionStatus = "not_started" | "preparing" | "ready" | "error";
+
+/** Keep footer copy honest about whether inspection has not run, is pending, or failed. */
+export function continuedInspectionStatus(
+  result: ContinuationInspectResult | null | undefined,
+  requestFailed = false,
+): ContinuedInspectionStatus {
+  if (requestFailed || result?.sources.some((source) => source.inspection_status === "error")) {
+    return "error";
+  }
+  if (!result) return "not_started";
+  if (!result.inspection_complete) return "preparing";
+  return "ready";
+}
+
+export function continuationInspectionHasErrors(
+  result: ContinuationInspectResult | null | undefined,
+): boolean {
+  return Boolean(result?.sources.some((source) => source.inspection_status === "error"));
+}

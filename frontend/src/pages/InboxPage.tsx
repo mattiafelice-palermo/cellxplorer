@@ -1104,6 +1104,7 @@ function ImportModal({
     acknowledgedFindingIds: [],
     metadataOnlySourceKeys: [],
     inspectionRequired: true,
+    inspectionStatus: "not_started",
     reviewRequired: false,
   });
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
@@ -1157,6 +1158,7 @@ function ImportModal({
         acknowledgedFindingIds: [],
         metadataOnlySourceKeys: [],
         inspectionRequired: true,
+        inspectionStatus: "not_started",
         reviewRequired: false,
       });
       setDoneCountdown(null);
@@ -1676,11 +1678,15 @@ function ImportModal({
                 : shouldShowContinue
                   ? "Registration is committed. Scientific data preparation continues in the background."
                 : continuedMode
-                  ? continuedSubmissionState.reviewRequired
-                    ? "Continuity review required before import."
-                    : continuedSubmissionState.inspectionRequired
-                      ? "Inspect continuity before importing."
-                      : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`
+                  ? continuedSubmissionState.inspectionStatus === "error"
+                    ? "Continuity inspection failed; resolve the source error before importing."
+                    : continuedSubmissionState.reviewRequired
+                      ? "Continuity review required before import."
+                      : continuedSubmissionState.inspectionStatus === "preparing"
+                        ? "Continuity inspection is still preparing."
+                        : continuedSubmissionState.inspectionStatus === "not_started"
+                          ? "Inspect continuity before importing."
+                          : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`
                   : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
             </Text>
             <ImportModalPrimaryActions>
