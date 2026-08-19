@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "spec": "047",
+  "branch": "feature/continued-cell-import-workspace",
+  "active_child": "047.1",
+  "children": [
+    "047.1",
+    "047.2",
+    "047.3"
+  ],
+  "turn": "IMPLEMENTER",
+  "action": "IMPLEMENT",
+  "findings": [],
+  "resume_review": null,
+  "updated_at": "2026-08-19T20:48:08+02:00"
+}
