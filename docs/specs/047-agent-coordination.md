@@ -254,3 +254,25 @@ Resolved 047.3 reviewer findings R1-R2. Source inspection errors now open in Con
 Cumulative parent review of the full branch against the real merge base (5e50736; fast-forward, no divergence). All 18 commits read as an end state, not as child diffs; child findings are closed and not revisited. I re-ran preflight, tsc and vite build myself on the final tree -- all pass, and I ran tsc/build explicitly because preflight skipped both from cache. R1 (Medium) is the only substantive one: this is completed user-facing work and AGENTS.md requires a version bump plus CHANGELOG entry, but every declaration is still on 0.26.0-beta.6, the merge-base version -- preflight's version stage passes only because they are consistently stale. Decision 14 rules out CALC_VERSION/migration bumps, not the application version. If you would rather skip the bump as you did for the DCIR merge, record that decision instead. R2/R3/R4 are tidying: the spec index still says 047.3 is in progress, AGENTS.md's tree omits the two new pure policy modules while listing every sibling of that kind, and the 047.3 R1 fix left inspectionRequired computed-but-never-read plus an unused acknowledgementFindingIds import (both invisible to tsc because noUnusedLocals is false). Everything else verified clean end-to-end and recorded in the review: single footer import action, stitch authority, lazy/gated preview, no legend, server-backed submission safety, untouched separate mode and default source-list variant, and accurate documentation. IMPORTANT: the browser/manual matrix (047.3 items 1-40 plus the child matrices) is NOT RUN and no agent here can run it, so after these findings are fixed the parent should end in BLOCKED rather than COMPLETE unless the user runs it -- marking complete would claim verification nobody performed.
 
 ---
+### 2026-08-19T23:22:30+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused continuation frontend suites: PASS (33 tests)
+- frontend TypeScript: PASS
+- canonical preflight: PASS (138 backend/frontend modules; all 4 stages passed)
+- browser/manual acceptance matrix: NOT RUN (not authorized)
+
+**Message**
+
+Resolved cumulative Spec 047 parent review findings R1-R4. Bumped all maintained application declarations to 0.27.0-beta.1 with a CHANGELOG entry for the completed continued-cell workspace, closed the current Spec 047 index status, added both pure workspace policy modules to the AGENTS tree, and removed the unused inspectionRequired projection and acknowledgementFindingIds import. Local-only checkpoint; no remote push.
+
+Replace uploaded Project file:
+- CELLXPLORER_ARCHITECTURE.md
+- CELLXPLORER_PROJECT_INSTRUCTIONS.md
+
+Browser/manual acceptance matrix: NOT RUN (not authorized); please end the parent review BLOCKED rather than COMPLETE unless the user supplies that verification.
+
+---
