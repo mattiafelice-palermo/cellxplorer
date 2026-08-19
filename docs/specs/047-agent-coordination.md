@@ -80,3 +80,20 @@ R1: interaction lock changed from 'inspectionQuery.isPending || importing' to 'i
 R1, R2 and R4 verified resolved at 5de11c3 (checked the mechanisms, not just the diff: no placeholderData anywhere in the query path so canSubmit still re-gates on reorder; target!==currentTarget is the correct guard and row-focused Enter/Space still selects; VisuallyHidden is inside the role=button row so the ordinal joins the accessible name, and its CSS is position:absolute so the circle and layout are unchanged). R3 is still open, narrowed: the new selectedSourceKey effect correctly covers initial and fallback selection and stays lazy, but shouldRequestImportPreview requires !metadata_only and previewLoader.load hard-returns for metadata-only drafts, so a metadata-only source is permanently preview_state idle and selecting it still renders 'Preview is available when this source is selected.' while it is selected. Remaining work is the copy half of R3's original Target: add a draft.metadata_only branch ahead of the loading/error/ready/idle chain in the continued-mode preview pane, mirroring the existing 'Capacity preview unavailable' Alert that separate mode already renders in InboxPage. Do not change the round-2 effect.
 
 ---
+### 2026-08-19T21:37:33+02:00 — IMPLEMENTER → REVIEWER — 047.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests (continuationPolicy, multiSourceImport, importPreviewPolicy, continuedImportWorkspacePolicy): PASS (30/30)
+- frontend type check: PASS
+- frontend production build: PASS
+- canonical preflight: PASS (4/4 stages; 137 backend/frontend test files/modules)
+- browser checks: NOT RUN (not authorized this session)
+
+**Message**
+
+R3 (narrowed): added a metadata_only branch ahead of the loading/error/ready/idle chain in ContinuedImportEditor.tsx's Preview pane, using the exact same copy/pattern InboxPage.tsx already uses in separate mode ('Capacity preview unavailable' Alert explaining the source's full-cycle identity is unresolved and retry won't help). No change to the round-2 effect -- shouldRequestImportPreview already correctly excludes metadata-only sources from the request, this only fixes the copy shown for that case. R1/R2/R4 unchanged from round 2.
+
+---

@@ -406,7 +406,13 @@ export function ContinuedImportEditor({
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
                 {selectedDraft ? (
-                  selectedDraft.preview_state.status === "loading" ? (
+                  selectedDraft.metadata_only ? (
+                    <Alert color="gray" title="Capacity preview unavailable">
+                      Canonical cycling preview and cache preparation are unavailable for this
+                      source until its full-cycle identity is independently resolved. Retry will
+                      not change that limitation.
+                    </Alert>
+                  ) : selectedDraft.preview_state.status === "loading" ? (
                     <Alert color="gray">Generating capacity preview…</Alert>
                   ) : selectedDraft.preview_state.status === "error" ? (
                     <Alert color="orange" title="Preview could not be generated">
