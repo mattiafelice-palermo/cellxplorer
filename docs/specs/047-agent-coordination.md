@@ -67,3 +67,16 @@ R1 is the blocker: inspectionQuery.isPending is true for a disabled query (verif
 R1: interaction lock changed from 'inspectionQuery.isPending || importing' to 'importing' only in ContinuedImportEditor.tsx -- reordering/removal no longer depends on inspection fetch state at all (not even isFetching), so repeated reorders never wait on an intermediate inspection; canSubmit already independently re-gates through continuedImportCanSubmit(...) whenever the order changes ahead of a matching complete result, since React Query returns data: undefined for a new query key with no cache entry (no placeholderData configured here). R2: row onKeyDown now returns early when event.target !== event.currentTarget, so bubbled Enter/Space from the nested Move up/down/Remove ActionIcons reaches their native activation instead of being intercepted as row selection. R3: added a useEffect keyed on selectedSourceKey that requests the selected source's preview whenever selection changes for any reason (explicit click or the automatic initial/fallback selection), replacing the click-only call inside selectSource; still exactly one request per selection change, never a batch. R4: added a VisuallyHidden 'Source N.' label alongside the decorative (aria-hidden) numbered circle so screen readers get the position; the visible circle and its color are unchanged. No other behavior touched.
 
 ---
+### 2026-08-19T21:33:54+02:00 — REVIEWER → IMPLEMENTER — 047.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R3
+
+**Message**
+
+R1, R2 and R4 verified resolved at 5de11c3 (checked the mechanisms, not just the diff: no placeholderData anywhere in the query path so canSubmit still re-gates on reorder; target!==currentTarget is the correct guard and row-focused Enter/Space still selects; VisuallyHidden is inside the role=button row so the ordinal joins the accessible name, and its CSS is position:absolute so the circle and layout are unchanged). R3 is still open, narrowed: the new selectedSourceKey effect correctly covers initial and fallback selection and stays lazy, but shouldRequestImportPreview requires !metadata_only and previewLoader.load hard-returns for metadata-only drafts, so a metadata-only source is permanently preview_state idle and selecting it still renders 'Preview is available when this source is selected.' while it is selected. Remaining work is the copy half of R3's original Target: add a draft.metadata_only branch ahead of the loading/error/ready/idle chain in the continued-mode preview pane, mirroring the existing 'Capacity preview unavailable' Alert that separate mode already renders in InboxPage. Do not change the round-2 effect.
+
+---
