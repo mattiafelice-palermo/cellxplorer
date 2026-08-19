@@ -16,6 +16,8 @@ import {
   sourceRoleLabel,
 } from "../continuationPolicy";
 
+export type ContinuationSourceListVariant = "default" | "compact-import";
+
 function sourceStatusColor(source: ContinuationInspectSource) {
   if (source.inspection_status === "error") return "red";
   if (source.inspection_status === "pending") return "yellow";
@@ -34,6 +36,39 @@ function sourceFindingIcon(finding: ContinuationFinding) {
   return <IconInfoCircle size={14} aria-hidden="true" />;
 }
 
+/** A source's stable session color on its visible position number. The number is always present, so color is never the only identifier. */
+function SourceColorCircle({ number, color }: { number: number; color?: string }) {
+  return (
+    <Text
+      aria-hidden="true"
+      size="xs"
+      fw={700}
+      style={{
+        flex: "none",
+        width: 20,
+        height: 20,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "white",
+        background: color ?? "var(--mantine-color-gray-5)",
+      }}
+    >
+      {number}
+    </Text>
+  );
+}
+
+function compactMetaLine(source: ContinuationInspectSource): string | null {
+  const parts: string[] = [];
+  if (source.local_cycle_count !== null && source.local_cycle_count !== undefined) {
+    parts.push(`Cycles ${source.local_cycle_start ?? "—"}–${source.local_cycle_end ?? "—"} (${source.local_cycle_count})`);
+  }
+  if (source.start_time) parts.push(source.start_time);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function ContinuationSourceList({
   sources,
   findings,
@@ -47,6 +82,10 @@ export function ContinuationSourceList({
   updateDisabled = false,
   disabled = false,
   emptyMessage = "No continuation sources selected.",
+  variant = "default",
+  colorsBySourceKey,
+  selectedSourceKey,
+  onSelect,
 }: {
   sources: ContinuationInspectSource[];
   findings: ContinuationFinding[];
@@ -60,8 +99,81 @@ export function ContinuationSourceList({
   onOpenRawData?: (sourceKey: string) => void;
   disabled?: boolean;
   emptyMessage?: string;
+  /** "compact-import" is used only by the continued-cell import workspace. Default callers (existing-cell continuation management) are unaffected. */
+  variant?: ContinuationSourceListVariant;
+  /** Stable session source colors, keyed by source key. Compact-import only. */
+  colorsBySourceKey?: Record<string, string>;
+  /** Currently selected source for preview/details. Compact-import only. */
+  selectedSourceKey?: string | null;
+  onSelect?: (sourceKey: string) => void;
 }) {
   if (!sources.length) return <Text size="sm" c="dimmed">{emptyMessage}</Text>;
+
+  if (variant === "compact-import") {
+    return (
+      <Stack gap={6}>
+        {sources.map((source, index) => {
+          const role = sourceRoleLabel(source, index, sources.length);
+          const selected = selectedSourceKey === source.key;
+          const metaLine = compactMetaLine(source);
+          const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+          return (
+            <Paper
+              key={source.key}
+              withBorder
+              p="xs"
+              draggable={Boolean(onDragStart) && !disabled}
+              onDragStart={() => onDragStart?.(index)}
+              onDragOver={(event) => { if (onDrop && !disabled) event.preventDefault(); }}
+              onDrop={() => { if (!disabled) onDrop?.(index); }}
+              onClick={() => onSelect?.(source.key)}
+              tabIndex={onSelect ? 0 : undefined}
+              role={onSelect ? "button" : undefined}
+              aria-pressed={onSelect ? selected : undefined}
+              onKeyDown={(event) => {
+                if (!onSelect) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(source.key);
+                }
+              }}
+              style={{
+                cursor: onSelect ? "pointer" : undefined,
+                borderColor: selected ? "var(--mantine-primary-color-5)" : undefined,
+                background: selected ? "var(--mantine-primary-color-light)" : undefined,
+              }}
+            >
+              <Stack gap={4}>
+                <Group gap={6} wrap="nowrap">
+                  <IconGripVertical size={14} color="var(--mantine-color-gray-5)" aria-hidden="true" />
+                  <SourceColorCircle number={index + 1} color={colorsBySourceKey?.[source.key]} />
+                  <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
+                    {source.filename}
+                  </Text>
+                  <Badge size="xs" variant="light" color={sourceStatusColor(source)}>{source.inspection_status}</Badge>
+                  <Tooltip label={`Move ${source.filename} up`}>
+                    <ActionIcon size="sm" variant="subtle" aria-label={`Move ${source.filename} up`} disabled={disabled || index === 0} onClick={(event) => { stop(event); onMove(index, -1); }}><IconArrowUp size={13} /></ActionIcon>
+                  </Tooltip>
+                  <Tooltip label={`Move ${source.filename} down`}>
+                    <ActionIcon size="sm" variant="subtle" aria-label={`Move ${source.filename} down`} disabled={disabled || index === sources.length - 1} onClick={(event) => { stop(event); onMove(index, 1); }}><IconArrowDown size={13} /></ActionIcon>
+                  </Tooltip>
+                  {onRemove && <Tooltip label={`Remove ${source.filename}`}>
+                    <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || sources.length <= 1 || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
+                  </Tooltip>}
+                </Group>
+                <Group gap={6} pl={22} wrap="wrap">
+                  {role && <Badge size="xs" variant="light" color={role === "Tracked tail" ? "teal" : "gray"}>{role}</Badge>}
+                  {metaLine && <Text size="xs" c="dimmed" truncate>{metaLine}</Text>}
+                </Group>
+                {source.inspection_error && <Text size="xs" c="red" pl={22}>{source.inspection_error}</Text>}
+              </Stack>
+            </Paper>
+          );
+        })}
+      </Stack>
+    );
+  }
+
   return (
     <Stack gap="xs">
       {sources.map((source, index) => {

@@ -73,6 +73,7 @@ import {
 } from "../api";
 import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
+import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
 import {
   ImportFilesystemPickerModal as SharedImportFilesystemPickerModal,
   type ImportSourceSelection,
@@ -1097,6 +1098,12 @@ function ImportModal({
   const loadedFilesViewportRef = useRef<HTMLDivElement | null>(null);
   const registerStartedAt = useRef<number | null>(null);
   const [continuedCellDraft, setContinuedCellDraft] = useState<ContinuedCellDraft>(() => continuedCellDraftFrom(drafts[0]));
+  const [continuedSubmissionState, setContinuedSubmissionState] = useState<ContinuedImportSubmissionState>({
+    canSubmit: false,
+    order: [],
+    acknowledgedFindingIds: [],
+    metadataOnlySourceKeys: [],
+  });
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
     queryKey: ["electrode-area-presets"],
@@ -1142,6 +1149,7 @@ function ImportModal({
       setRegistrationAccepted(false);
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
+      setContinuedSubmissionState({ canSubmit: false, order: [], acknowledgedFindingIds: [], metadataOnlySourceKeys: [] });
       setDoneCountdown(null);
       autoCloseFired.current = false;
       setClosingBranch(null);
@@ -1231,6 +1239,22 @@ function ImportModal({
     ) {
       onPreviewRequested(target);
     }
+  };
+
+  const submitContinuedImport = () => {
+    if (!continuedSubmissionState.canSubmit) return;
+    const jobToken = newImportJobToken();
+    registerStartedAt.current = Date.now();
+    setRegistrationAccepted(false);
+    setRegisterToken(jobToken);
+    save.mutate({
+      mode: "continued",
+      order: continuedSubmissionState.order,
+      acknowledgedFindingIds: continuedSubmissionState.acknowledgedFindingIds,
+      metadataOnlySourceKeys: continuedSubmissionState.metadataOnlySourceKeys,
+      continuedCellDraft,
+      jobToken,
+    });
   };
 
   const removeSource = (stagedName: string) => {
@@ -1666,7 +1690,16 @@ function ImportModal({
                   <Button variant="default" disabled={save.isPending} onClick={handleClose}>
                     Cancel
                   </Button>
-                  {!continuedMode && (
+                  {continuedMode ? (
+                    <Button
+                      leftSection={<IconDeviceFloppy size={16} />}
+                      disabled={!continuedSubmissionState.canSubmit}
+                      loading={save.isPending}
+                      onClick={submitContinuedImport}
+                    >
+                      Import one continued cell
+                    </Button>
+                  ) : (
                     <Button
                       leftSection={<IconDeviceFloppy size={16} />}
                       disabled={!canSave}
@@ -1736,20 +1769,7 @@ function ImportModal({
                 folderSelectData={folderSelectData}
                 materialPresets={materialPresetsQuery.data?.presets ?? []}
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
-                onImport={(order, acknowledgedFindingIds, metadataOnlySourceKeys) => {
-                  const jobToken = newImportJobToken();
-                  registerStartedAt.current = Date.now();
-                  setRegistrationAccepted(false);
-                  setRegisterToken(jobToken);
-                  save.mutate({
-                    mode: "continued",
-                    order,
-                    acknowledgedFindingIds,
-                    metadataOnlySourceKeys,
-                    continuedCellDraft,
-                    jobToken,
-                  });
-                }}
+                onSubmissionStateChange={setContinuedSubmissionState}
                 onRawData={(stagedName) => {
                   const targetIndex = drafts.findIndex((item) => item.staged_name === stagedName);
                   const target = targetIndex >= 0 ? drafts[targetIndex] : undefined;
