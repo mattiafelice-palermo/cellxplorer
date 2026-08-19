@@ -381,3 +381,20 @@ Spec 047 actual-usage follow-up implemented and committed locally in 05c5a50. R5
 User selected the Variant 3 visual refinement from generated mockups. Implement the narrower 20 px identity rail, short number cap with a clearly larger handle section, and Started: label for a start-only timestamp while preserving native drag-and-drop behavior.
 
 ---
+### 2026-08-20T00:22:22+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused continuation frontend suites: PASS (35 tests)
+- Frontend TypeScript check: PASS
+- Frontend production bundle: PASS
+- Canonical preflight --no-cache: PASS (4/4 stages; 138 backend/frontend test files)
+- Browser/manual visual verification: NOT RUN (user will check)
+
+**Message**
+
+User-selected Variant 3 refinement implemented and committed locally in 9b0b458. The compact source rail is now 20 px wide with a 24 px pastel number cap and a larger strong-color handle zone; content padding was tightened for filename space. Start-only timestamps now read Started: dd/mm/yyyy hh:mm; both endpoints remain labelled [S]/[E]. Native HTML5 drag-and-drop behavior is unchanged. Version bumped to 0.27.0-beta.3. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
+
+---
