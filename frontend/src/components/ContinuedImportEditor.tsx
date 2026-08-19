@@ -5,6 +5,7 @@ import {
   Checkbox,
   Divider,
   Group,
+  Loader,
   MultiSelect,
   NumberInput,
   Paper,
@@ -26,10 +27,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ActiveMaterialPresetSettings,
+  ApiError,
   ContinuationInspectResult,
+  ContinuationPreviewResult,
   ElectrodeAreaPresetSettings,
   ImportPreview,
   inspectContinuationSources,
+  previewContinuationSources,
 } from "../api";
 import {
   blockingFindings,
@@ -50,6 +54,12 @@ import {
   shouldRequestImportPreview,
   type ImportPreviewDraftState,
 } from "../importPreviewPolicy";
+import {
+  buildContinuationPreviewTraces,
+  continuationPreviewHasPoints,
+  continuationPreviewQueryKey,
+  continuationPreviewRequest,
+} from "../continuedImportPreviewPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 import Plot from "./Plot";
@@ -167,6 +177,7 @@ export function ContinuedImportEditor({
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
   const [colors, setColors] = useState<SourceColorAssignments>({});
   const [selectedSourceKey, setSelectedSourceKey] = useState<string>(() => drafts[0]?.staged_name ?? "");
+  const [previewMode, setPreviewMode] = useState<"combined" | "source">("combined");
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [inspectionRequested, setInspectionRequested] = useState(false);
@@ -192,6 +203,19 @@ export function ContinuedImportEditor({
       opened && inspectionRequested && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
   });
   const result = inspectionQuery.data;
+  const combinedPreviewQuery = useQuery<ContinuationPreviewResult>({
+    queryKey: continuationPreviewQueryKey(order, orderedDrafts, inspectionQuery.dataUpdatedAt),
+    queryFn: ({ signal }) => previewContinuationSources(
+      continuationPreviewRequest(orderedDrafts, order),
+      { signal },
+    ),
+    enabled: opened
+      && previewMode === "combined"
+      && inspectionRequested
+      && Boolean(result?.inspection_complete)
+      && orderedDrafts.length >= 2,
+    staleTime: Infinity,
+  });
   const orderedSources = useMemo(
     () => result?.sources.length
       ? order
@@ -242,6 +266,7 @@ export function ContinuedImportEditor({
   useEffect(() => {
     if (!opened) {
       setInspectionRequested(false);
+      setPreviewMode("combined");
       setAcknowledged(new Set());
     }
   }, [opened]);
@@ -271,7 +296,10 @@ export function ContinuedImportEditor({
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
 
-  const selectSource = (key: string) => setSelectedSourceKey(key);
+  const selectSource = (key: string) => {
+    setSelectedSourceKey(key);
+    setPreviewMode("source");
+  };
   const materialOptions = [
     { value: "custom", label: "Custom nominal capacity" },
     ...materialPresets.map((preset) => ({
@@ -378,9 +406,18 @@ export function ContinuedImportEditor({
               <Select
                 size="xs"
                 label="Preview source"
-                value={selectedSourceKey || selectedDraft?.staged_name || null}
-                data={orderedDrafts.map((source) => ({ value: source.staged_name, label: source.filename }))}
-                onChange={(value) => value && selectSource(value)}
+                value={previewMode === "combined" ? "combined" : selectedSourceKey || selectedDraft?.staged_name || null}
+                data={[
+                  { value: "combined", label: "All sources (combined)" },
+                  ...orderedDrafts.map((source, index) => ({
+                    value: source.staged_name,
+                    label: `Source ${index + 1} — ${source.filename}`,
+                  })),
+                ]}
+                onChange={(value) => {
+                  if (value === "combined") setPreviewMode("combined");
+                  else if (value) selectSource(value);
+                }}
                 searchable
                 styles={{ root: { minWidth: 260 } }}
               />
@@ -405,7 +442,63 @@ export function ContinuedImportEditor({
             </Group>
             <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
               <Stack gap="md" pr="xs">
-                {selectedDraft ? (
+                {previewMode === "combined" ? (
+                  !inspectionRequested || !result?.inspection_complete || inspectionQuery.isError ? (
+                    <Text size="sm" c="dimmed">Inspect continuity to prepare the combined preview.</Text>
+                  ) : inspectionQuery.isFetching ? (
+                    <Alert color="gray">Waiting for continuity inspection…</Alert>
+                  ) : combinedPreviewQuery.isPending
+                    || (combinedPreviewQuery.isFetching && !combinedPreviewQuery.data) ? (
+                    <Alert color="gray">
+                      <Group gap="xs" align="center">
+                        <Loader size="sm" />
+                        <Text size="sm">Preparing combined capacity preview…</Text>
+                      </Group>
+                    </Alert>
+                  ) : combinedPreviewQuery.isError ? (
+                    <Alert
+                      color={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 422 ? "gray" : "orange"}
+                      title={combinedPreviewQuery.error instanceof ApiError && combinedPreviewQuery.error.status === 409 ? "Re-inspect continuity" : "Combined preview could not be generated"}
+                    >
+                      <Group justify="space-between" align="center" gap="xs" wrap="nowrap">
+                        <Text size="sm">
+                          {combinedPreviewQuery.error instanceof Error
+                            ? combinedPreviewQuery.error.message
+                            : "The combined preview is unavailable."}
+                        </Text>
+                        {!(combinedPreviewQuery.error instanceof ApiError && (combinedPreviewQuery.error.status === 409 || combinedPreviewQuery.error.status === 422)) && (
+                          <Button
+                            size="compact-sm"
+                            variant="default"
+                            onClick={() => void combinedPreviewQuery.refetch()}
+                          >
+                            Retry
+                          </Button>
+                        )}
+                      </Group>
+                    </Alert>
+                  ) : combinedPreviewQuery.data && continuationPreviewHasPoints(combinedPreviewQuery.data) ? (
+                    <Paper withBorder p="xs">
+                      <Plot
+                        data={buildContinuationPreviewTraces(combinedPreviewQuery.data, colors)}
+                        layout={{
+                          height: 220,
+                          title: { text: "Capacity vs. cycle" },
+                          margin: { l: 54, r: 16, t: 34, b: 48 },
+                          xaxis: { title: { text: "Cycle number (global)" } },
+                          yaxis: { title: { text: combinedPreviewQuery.data.label } },
+                          showlegend: false,
+                          paper_bgcolor: "rgba(0,0,0,0)",
+                          plot_bgcolor: "rgba(0,0,0,0)",
+                        }}
+                        config={{ displayModeBar: false, responsive: true }}
+                        style={{ width: "100%" }}
+                      />
+                    </Paper>
+                  ) : (
+                    <Alert color="gray">No capacity preview points were found for this chain.</Alert>
+                  )
+                ) : selectedDraft ? (
                   selectedDraft.metadata_only ? (
                     <Alert color="gray" title="Capacity preview unavailable">
                       Canonical cycling preview and cache preparation are unavailable for this

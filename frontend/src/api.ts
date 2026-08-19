@@ -2007,6 +2007,29 @@ export interface ContinuationInspectRequest {
   proposed_order?: string[] | null;
 }
 
+export interface ContinuationPreviewRequest {
+  sources: ContinuationInspectSourceRequest[];
+  proposed_order: string[];
+}
+
+export interface ContinuationPreviewSegment {
+  source_key: string;
+  filename: string;
+  x: number[];
+  y: number[];
+  global_cycle_start: number | null;
+  global_cycle_end: number | null;
+  source_cycle_start: number | null;
+  source_cycle_end: number | null;
+  source_cycle_count: number;
+}
+
+export interface ContinuationPreviewResult {
+  quantity: string;
+  label: string;
+  segments: ContinuationPreviewSegment[];
+}
+
 export interface ImportSourceListRequest {
   file_paths: string[];
   folder_paths: string[];
@@ -2066,6 +2089,13 @@ export interface ContinuationInspectResult {
 
 export function inspectContinuationSources(body: ContinuationInspectRequest) {
   return post<ContinuationInspectResult>("/api/imports/continuations/inspect", body);
+}
+
+export function previewContinuationSources(
+  body: ContinuationPreviewRequest,
+  options?: Pick<RequestInit, "signal">,
+) {
+  return post<ContinuationPreviewResult>("/api/imports/continuations/preview", body, options);
 }
 
 export interface ImportSourceDraft {

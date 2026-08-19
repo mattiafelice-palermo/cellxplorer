@@ -110,3 +110,21 @@ R3 (narrowed): added a metadata_only branch ahead of the loading/error/ready/idl
 047.1 round 3: R3 resolved at 9b86b9d. The metadata_only branch now precedes the loading/error/ready/idle chain in ContinuedImportEditor's Preview pane and reuses InboxPage's verbatim 'Capacity preview unavailable' Alert, so a permanently-idle metadata-only source no longer claims the preview loads on selection. Diff is scoped to that one JSX hunk: the round-2 selectedSourceKey effect, shouldRequestImportPreview and previewLoader.load are untouched, and non-metadata-only rendering is unchanged. R1/R2/R4 confirmed clean in round 2. All four findings closed; browser verification remains deferred to the user.
 
 ---
+### 2026-08-19T22:16:25+02:00 — IMPLEMENTER → REVIEWER — 047.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused backend suites: PASS (tests.test_continuations tests.test_import_flow; 116 tests)
+- frontend policy suite: PASS (node --test frontend\\tests\\*.test.ts; 613 tests)
+- frontend TypeScript: PASS (npx.cmd tsc --noEmit)
+- frontend production build: PASS (npx.cmd vite build)
+- canonical preflight: PASS (138 backend/frontend test files/modules; 4/4 stages)
+- browser checks: NOT RUN (not authorized)
+
+**Message**
+
+Implemented Spec 047.2 locally: added receipt-safe per-source parser/cache validation, authoritative stitch-based bounded combined capacity preview, typed API contract, source-colored combined/individual selector UI, and focused regression tests. Reviewer will work from the local branch; no remote push performed per user instruction.
+
+---

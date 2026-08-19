@@ -87,6 +87,12 @@ def _load_continuations():
     return module
 
 
+def _load_stitch():
+    from ..services import stitch as module
+
+    return module
+
+
 def _load_analysis_usage():
     from ..services import analysis_usage as module
 
@@ -106,6 +112,7 @@ calc = LazyModule(_load_calc)
 parsing = LazyModule(_load_parsing)
 scanner = LazyModule(_load_scanner)
 continuations = LazyModule(_load_continuations)
+stitch = LazyModule(_load_stitch)
 analysis_usage = LazyModule(_load_analysis_usage)
 cache_maintenance = LazyModule(_load_cache_maintenance)
 
@@ -617,15 +624,39 @@ def remove_archived_cell_blocking_source(db: Session, sf: SourceFile) -> None:
     db.flush()
 
 
-def capacity_preview_from_cycles(cycles) -> dict:
+def _sample_preview_rows(rows, max_points: int | None):
+    if max_points is None or max_points <= 0 or len(rows) <= max_points:
+        return rows
+    if max_points == 1:
+        return rows.iloc[[0]]
+    last = len(rows) - 1
+    positions = sorted({round(index * last / (max_points - 1)) for index in range(max_points)})
+    return rows.iloc[positions]
+
+
+def capacity_preview_from_cycles(
+    cycles,
+    *,
+    max_points: int | None = None,
+    quantity: str | None = None,
+) -> dict:
     if cycles.empty or "cycle" not in cycles.columns:
-        return {"x": [], "y": [], "quantity": "discharge_capacity_mah", "label": "Discharge capacity (mAh)"}
-    quantity = "discharge_capacity_mah"
-    if quantity not in cycles.columns:
-        quantity = "charge_capacity_mah"
+        empty_quantity = quantity or "discharge_capacity_mah"
+        empty_label = (
+            "Discharge capacity (mAh)"
+            if empty_quantity == "discharge_capacity_mah"
+            else "Charge capacity (mAh)"
+            if empty_quantity == "charge_capacity_mah"
+            else "Capacity (mAh)"
+        )
+        return {"x": [], "y": [], "quantity": empty_quantity, "label": empty_label}
+    if quantity is None:
+        quantity = "discharge_capacity_mah"
+        if quantity not in cycles.columns:
+            quantity = "charge_capacity_mah"
     if quantity not in cycles.columns:
         return {"x": [], "y": [], "quantity": quantity, "label": "Capacity (mAh)"}
-    rows = cycles[["cycle", quantity]].dropna()
+    rows = _sample_preview_rows(cycles[["cycle", quantity]].dropna(), max_points)
     label = "Discharge capacity (mAh)" if quantity == "discharge_capacity_mah" else "Charge capacity (mAh)"
     return {
         "x": [int(v) for v in rows["cycle"]],
@@ -1532,6 +1563,11 @@ class ContinuationInspectRequest(BaseModel):
     existing_test_id: int | None = None
     existing_cell_id: int | None = None
     proposed_order: list[str] | None = None
+
+
+class ContinuationPreviewRequest(BaseModel):
+    sources: list[ContinuationInspectSourceRequest]
+    proposed_order: list[str]
 
 
 class ImportSourceListRequest(BaseModel):
@@ -2622,6 +2658,160 @@ def _established_source_fingerprint(
     )
 
 
+def _preview_source_fingerprint(
+    source_path: Path,
+    inspection: object,
+) -> parsing.SourceFingerprint:
+    """Resolve one preview identity using the same receipt/fingerprint rules as ordinary preview."""
+
+    values = _inspection_identity_values(inspection)
+    expected_hash = str(values.get("hash") or "").strip().lower() or None
+    try:
+        source_stat = source_path.stat()
+    except OSError as exc:
+        raise HTTPException(404, "Source file is unavailable") from exc
+
+    fingerprint_matches = bool(
+        expected_hash
+        and values.get("size") is not None
+        and values.get("mtime_ns") is not None
+        and int(values["size"]) == source_stat.st_size
+        and _mtime_fingerprint_matches(values["mtime_ns"], source_stat.st_mtime_ns)
+    )
+    if fingerprint_matches:
+        return parsing.SourceFingerprint(
+            expected_hash,
+            source_stat.st_size,
+            source_stat.st_mtime_ns,
+        )
+
+    try:
+        verified_hash = parsing.compute_hash(source_path).lower()
+    except OSError as exc:
+        raise HTTPException(422, "The source could not be hashed for preview.") from exc
+    if expected_hash is not None and verified_hash != expected_hash:
+        raise HTTPException(
+            409,
+            {
+                "code": "source_changed",
+                "message": "The source changed after inspection; inspect it again before previewing.",
+                "filename": source_path.name,
+                "expected_hash_prefix": expected_hash[:12],
+                "actual_hash_prefix": verified_hash[:12],
+            },
+        )
+    return parsing.SourceFingerprint(
+        verified_hash,
+        source_stat.st_size,
+        source_stat.st_mtime_ns,
+    )
+
+
+def _continuation_preview_unavailable(
+    *,
+    code: str,
+    message: str,
+    sources: list[dict[str, str]],
+    status_code: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code,
+        {
+            "code": code,
+            "message": message,
+            "sources": sources,
+        },
+    )
+
+
+_CONTINUATION_PREVIEW_MAX_POINTS = 600
+
+
+def _build_continuation_preview(
+    ordered_sources: list[dict[str, str]],
+) -> dict:
+    """Build bounded, source-segmented capacity points from ordered caches."""
+
+    refs = [
+        stitch.CachedSourceRef(
+            file_hash=source["hash"],
+            parser_version=source["parser_version"],
+        )
+        for source in ordered_sources
+    ]
+    cycles, stitched_segments, missing = stitch.stitch_cycles(refs, CALC_VERSION)
+    if missing or not stitch.stitch_metadata(cycles)["complete"]:
+        missing_hashes = set(missing)
+        missing_sources = [
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "reason": "The prepared cycle cache is missing or incomplete.",
+            }
+            for source in ordered_sources
+            if source["hash"] in missing_hashes
+        ]
+        if not missing_sources:
+            missing_sources = [
+                {
+                    "source_key": source["source_key"],
+                    "filename": source["filename"],
+                    "reason": "The prepared cycle cache is missing or incomplete.",
+                }
+                for source in ordered_sources
+            ]
+        raise _continuation_preview_unavailable(
+            code="continuation_cache_incomplete",
+            message="The combined preview is not ready; inspect continuity again before previewing.",
+            sources=missing_sources,
+            status_code=409,
+        )
+
+    capacity = capacity_preview_from_cycles(cycles)
+    segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
+    metadata_by_segment = {int(item["segment"]): item for item in stitched_segments}
+    response_segments = []
+    for segment_index, source in enumerate(ordered_sources):
+        metadata = metadata_by_segment.get(segment_index)
+        if metadata is None:
+            raise _continuation_preview_unavailable(
+                code="continuation_cache_incomplete",
+                message="The combined preview is not ready; inspect continuity again before previewing.",
+                sources=[
+                    {
+                        "source_key": source["source_key"],
+                        "filename": source["filename"],
+                        "reason": "The source segment is missing from the stitched cache.",
+                    }
+                ],
+                status_code=409,
+            )
+        segment_frame = cycles[cycles["segment"] == segment_index]
+        segment_preview = capacity_preview_from_cycles(
+            segment_frame,
+            max_points=segment_limit,
+            quantity=capacity["quantity"],
+        )
+        response_segments.append(
+            {
+                "source_key": source["source_key"],
+                "filename": source["filename"],
+                "x": segment_preview["x"],
+                "y": segment_preview["y"],
+                "global_cycle_start": metadata["cycle_start"],
+                "global_cycle_end": metadata["cycle_end"],
+                "source_cycle_start": metadata["source_cycle_start"],
+                "source_cycle_end": metadata["source_cycle_end"],
+                "source_cycle_count": metadata["source_cycle_count"],
+            }
+        )
+    return {
+        "quantity": capacity["quantity"],
+        "label": capacity["label"],
+        "segments": response_segments,
+    }
+
+
 def _ensure_import_source_admitted(source_path: Path, filename: str) -> str:
     """Enforce the central extension policy at final registration."""
 
@@ -3148,6 +3338,132 @@ def inspect_continuation_sources(req: ContinuationInspectRequest, db: Session = 
         staged_keys=staged_keys,
         proposed_staged_order=req.proposed_order,
     )
+
+
+@router.post("/imports/continuations/preview")
+def preview_continuation_sources(req: ContinuationPreviewRequest):
+    staged_keys = [source.staged_name for source in req.sources]
+    try:
+        continuations.validate_staged_keys(staged_keys)
+    except continuations.ContinuationValidationError as exc:
+        _raise_continuation_validation(exc)
+    if (
+        len(req.proposed_order) != len(staged_keys)
+        or set(req.proposed_order) != set(staged_keys)
+    ):
+        raise HTTPException(
+            409,
+            {
+                "code": "invalid_continuation_preview_order",
+                "message": "The proposed preview order must contain every staged source exactly once.",
+                "expected": staged_keys,
+                "proposed": req.proposed_order,
+            },
+        )
+
+    source_by_key = {source.staged_name: source for source in req.sources}
+    ordered_sources: list[dict[str, str]] = []
+    unavailable: list[dict[str, str]] = []
+    for source_key in req.proposed_order:
+        draft = source_by_key[source_key]
+        try:
+            source_path = resolve_import_source_path(draft.staged_name, draft.source_path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not source_path.exists() or not source_path.is_file():
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": "The source file is missing.",
+                }
+            )
+            continue
+        if not import_filename_allowed(source_path.name):
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": "The source format is not supported for a combined cycling preview.",
+                }
+            )
+            continue
+
+        fingerprint = _preview_source_fingerprint(source_path, draft.inspection)
+        meta = import_inspection.cached_header_metadata(
+            fingerprint.hash,
+            fingerprint.size,
+            fingerprint.mtime_ns,
+        )
+        if not isinstance(meta, dict):
+            meta = parsing.read_header_metadata(source_path)
+        try:
+            parsing.ensure_supported_source_metadata(source_path, meta)
+        except ValueError as exc:
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": str(exc),
+                }
+            )
+            continue
+        if parsing.source_metadata_only(meta):
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": parsing.source_metadata_only_message(meta),
+                }
+            )
+            continue
+
+        try:
+            parser_version = parsing.parser_identity(source_path)
+        except (OSError, ValueError) as exc:
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": str(exc),
+                }
+            )
+            continue
+        if not cache.has_cycles(fingerprint.hash, parser_version, CALC_VERSION):
+            unavailable.append(
+                {
+                    "source_key": source_key,
+                    "filename": source_path.name,
+                    "reason": "The prepared cycle cache is not ready.",
+                }
+            )
+            continue
+        ordered_sources.append(
+            {
+                "source_key": source_key,
+                "filename": source_path.name,
+                "hash": fingerprint.hash,
+                "parser_version": parser_version,
+            }
+        )
+
+    if unavailable:
+        metadata_only = any(
+            "canonical cycling" in item["reason"].casefold()
+            or "cycle identity" in item["reason"].casefold()
+            for item in unavailable
+        )
+        raise _continuation_preview_unavailable(
+            code="continuation_preview_unavailable",
+            message=(
+                "A combined cycling preview is unavailable for this source chain."
+                if metadata_only
+                else "The combined preview is not ready; inspect continuity again before previewing."
+            ),
+            sources=unavailable,
+            status_code=422 if metadata_only else 409,
+        )
+    return _build_continuation_preview(ordered_sources)
 
 
 @router.post("/cells/{cell_id}/continuations/inspect")

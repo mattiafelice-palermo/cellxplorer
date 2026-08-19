@@ -129,6 +129,27 @@ def _write_metadata_only_biologic_mpr(path: Path) -> None:
     )
 
 
+def _continuation_preview_request(paths: list[Path], order: list[str] | None = None):
+    sources = []
+    for path in paths:
+        fingerprint = parsing.capture_source_fingerprint(path)
+        sources.append(
+            files.ContinuationInspectSourceRequest(
+                staged_name=path.name,
+                source_path=str(path),
+                inspection={
+                    "hash": fingerprint.hash,
+                    "size": fingerprint.size,
+                    "mtime_ns": str(fingerprint.mtime_ns),
+                },
+            )
+        )
+    return files.ContinuationPreviewRequest(
+        sources=sources,
+        proposed_order=order or [path.name for path in paths],
+    )
+
+
 class ImportFlowTests(unittest.TestCase):
     def make_session(self):
         engine = create_engine(
@@ -1681,6 +1702,170 @@ class ImportFlowTests(unittest.TestCase):
                 "label": "Discharge capacity (mAh)",
             },
         )
+
+    def test_continuation_preview_stitches_ordered_segments_with_source_parser_identities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "part-a.ndax"
+            second = root / "part-b.ndax"
+            first.write_bytes(b"first continuation source")
+            second.write_bytes(b"second continuation source")
+            request = _continuation_preview_request(
+                [first, second],
+                order=[second.name, first.name],
+            )
+            fingerprints = {
+                path.name: parsing.capture_source_fingerprint(path).hash
+                for path in (first, second)
+            }
+            frames = {
+                (fingerprints[first.name], "parser-a"): pd.DataFrame(
+                    {
+                        "cycle": [1, 3, 7],
+                        "discharge_capacity_mah": [1.2, 1.1, 1.0],
+                    }
+                ),
+                (fingerprints[second.name], "parser-b"): pd.DataFrame(
+                    {
+                        "cycle": [2, 4],
+                        "discharge_capacity_mah": [2.2, 2.1],
+                    }
+                ),
+            }
+            parser_calls = []
+            cache_load_calls = []
+
+            def parser_for(path):
+                parser_calls.append(Path(path).name)
+                return "parser-a" if Path(path).name == first.name else "parser-b"
+
+            def load_cycles(file_hash, parser_version, calc_version):
+                cache_load_calls.append((file_hash, parser_version, calc_version))
+                return frames[(file_hash, parser_version)]
+
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", side_effect=parser_for), \
+                patch.object(files.cache, "has_cycles", return_value=True), \
+                patch.object(files.cache, "load_cycles", side_effect=load_cycles):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual([segment["source_key"] for segment in response["segments"]], [second.name, first.name])
+        self.assertEqual(response["quantity"], "discharge_capacity_mah")
+        self.assertEqual(response["segments"][0]["x"], [1, 2])
+        self.assertEqual(response["segments"][0]["y"], [2.2, 2.1])
+        self.assertEqual(response["segments"][0]["global_cycle_start"], 1)
+        self.assertEqual(response["segments"][0]["global_cycle_end"], 2)
+        self.assertEqual(response["segments"][0]["source_cycle_start"], 2)
+        self.assertEqual(response["segments"][0]["source_cycle_end"], 4)
+        self.assertEqual(response["segments"][1]["x"], [3, 4, 5])
+        self.assertEqual(response["segments"][1]["y"], [1.2, 1.1, 1.0])
+        self.assertEqual(response["segments"][1]["global_cycle_start"], 3)
+        self.assertEqual(response["segments"][1]["global_cycle_end"], 5)
+        self.assertEqual(response["segments"][1]["source_cycle_start"], 1)
+        self.assertEqual(response["segments"][1]["source_cycle_end"], 7)
+        self.assertEqual(parser_calls, [second.name, first.name])
+        self.assertEqual([call[1] for call in cache_load_calls], ["parser-b", "parser-a"])
+
+    def test_continuation_preview_sampling_is_bounded_and_preserves_segment_boundaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "large-a.ndax"
+            second = root / "large-b.ndax"
+            first.write_bytes(b"large first continuation source")
+            second.write_bytes(b"large second continuation source")
+            request = _continuation_preview_request(
+                [first, second],
+                order=[second.name, first.name],
+            )
+            hashes = {
+                path.name: parsing.capture_source_fingerprint(path).hash
+                for path in (first, second)
+            }
+            frames = {
+                (hashes[first.name], "parser"): pd.DataFrame(
+                    {
+                        "cycle": list(range(1, 401)),
+                        "discharge_capacity_mah": [float(value) for value in range(1, 401)],
+                    }
+                ),
+                (hashes[second.name], "parser"): pd.DataFrame(
+                    {
+                        "cycle": list(range(1, 401)),
+                        "discharge_capacity_mah": [float(value) for value in range(401, 801)],
+                    }
+                ),
+            }
+
+            def load_cycles(file_hash, parser_version, _calc_version):
+                return frames[(file_hash, parser_version)]
+
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", return_value=True), \
+                patch.object(files.cache, "load_cycles", side_effect=load_cycles):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual(sum(len(segment["x"]) for segment in response["segments"]), 600)
+        self.assertEqual(response["segments"][0]["x"][0], 1)
+        self.assertEqual(response["segments"][0]["x"][-1], 400)
+        self.assertEqual(response["segments"][1]["x"][0], 401)
+        self.assertEqual(response["segments"][1]["x"][-1], 800)
+
+    def test_continuation_preview_fails_closed_when_cache_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cold.ndax"
+            path.write_bytes(b"cold continuation source")
+            request = _continuation_preview_request([path])
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", return_value=False), \
+                patch.object(files.stitch, "stitch_cycles", side_effect=AssertionError("preview must not stitch a cold cache")):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files.preview_continuation_sources(request)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
+        self.assertIn("inspect continuity again", raised.exception.detail["message"])
+
+    def test_continuation_preview_rejects_metadata_only_sources_without_science(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata-only.ndax"
+            path.write_bytes(b"metadata-only continuation source")
+            request = _continuation_preview_request([path])
+            metadata = {
+                "capabilities": {"canonical_cycling": False, "metadata_only": True},
+                "protocol_warnings": ["Canonical cycling rows are unavailable."],
+            }
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", side_effect=AssertionError("metadata-only source must not parse")), \
+                patch.object(files.cache, "has_cycles", side_effect=AssertionError("metadata-only source must not query cache")):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files.preview_continuation_sources(request)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail["code"], "continuation_preview_unavailable")
+        self.assertIn("Canonical cycling", raised.exception.detail["sources"][0]["reason"])
+
+    def test_continuation_preview_requires_reinspection_after_source_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "changed.ndax"
+            path.write_bytes(b"original continuation source")
+            request = _continuation_preview_request([path])
+            path.write_bytes(b"changed continuation source with a new identity")
+            with patch.object(files.import_inspection, "cached_header_metadata", side_effect=AssertionError("changed source must stop before metadata")):
+                with self.assertRaises(files.HTTPException) as raised:
+                    files.preview_continuation_sources(request)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "source_changed")
+        self.assertIn("inspect it again", raised.exception.detail["message"])
 
     def test_xlsx_capacity_preview_and_raw_table_use_normal_cache_path(self):
         with tempfile.TemporaryDirectory() as tmp:
