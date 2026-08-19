@@ -367,3 +367,17 @@ User actual-usage follow-up accepted for implementation. R5: in the compact-impo
 Spec 047 actual-usage follow-up implemented and committed locally in 05c5a50. R5/R6 addressed: compact source cards now use a narrow full-height two-tone identity gutter with drag affordance, omit non-error status/role chips and per-card arrows, use the wider/equalized source pane, and show cycle counts plus labelled [S]/[E] local timestamps. Version bumped to 0.27.0-beta.2. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
 
 ---
+### 2026-08-20T00:19:33+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+- R6
+
+**Message**
+
+User selected the Variant 3 visual refinement from generated mockups. Implement the narrower 20 px identity rail, short number cap with a clearly larger handle section, and Started: label for a start-only timestamp while preserving native drag-and-drop behavior.
+
+---
