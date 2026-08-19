@@ -2,8 +2,8 @@
 
 Repository: `mattiafelice-palermo/cellxplorer`  
 Default branch: `main`  
-Context files last synchronized: 2026-07-26  
-Verified against: `main` at `d577d2b2eb959914e84575dd0bf12b05bff42693`
+Context files last synchronized: 2026-08-19
+Verified against: `main` at `5e50736` (`0.26.0-beta.6`)
 
 Use these instructions for every repository-specific task in this project.
 
@@ -85,9 +85,8 @@ Current project convention, decided 2026-07-26:
 - review findings use `R1`, `R2`, … with priority, Current, Target and Acceptance criteria;
 - subsequent review rounds update the same review file.
 
-`docs/specs/README.md` on the verified `main` commit still describes the older convention of
-appending reviews to the specification. Treat the separate-review-file convention above as the
-current user decision, and update the repository documentation when that workflow is next changed.
+`docs/specs/README.md` on the verified `main` commit documents the same separate-review-file
+convention directly.
 
 ## Code-review behavior
 

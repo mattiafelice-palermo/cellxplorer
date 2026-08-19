@@ -5,6 +5,8 @@ import type { ContinuationInspectResult } from "../src/api.ts";
 import {
   acknowledgementFindingIds,
   applySuggestedOrder,
+  continuationHasFindings,
+  continuationReviewRequired,
   findingSummary,
   isSubmitBlocked,
   scientificDraftIsValid,
@@ -130,6 +132,26 @@ test("findingSummary combines title, message, and source keys", () => {
   });
   assert.match(summary, /Gap between source files/);
   assert.match(summary, /staged-a → staged-b/);
+});
+
+test("continuity review separates required findings from warning and info findings", () => {
+  const findings = [
+    { id: "warning", code: "gap", severity: "warning" as const, source_keys: ["a"], title: "Gap", message: "", details: {} },
+    { id: "info", code: "note", severity: "info" as const, source_keys: [], title: "Note", message: "", details: {} },
+  ];
+  const informational = makeResult({ findings });
+  assert.equal(continuationHasFindings(informational), true);
+  assert.equal(continuationReviewRequired(informational), false);
+  assert.equal(continuationReviewRequired(makeResult({
+    findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
+  })), true);
+  assert.equal(continuationReviewRequired(makeResult({
+    findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
+  }), ["confirm"]), false);
+  assert.equal(continuationReviewRequired(makeResult({
+    findings: [{ id: "block", code: "duplicate", severity: "blocking", source_keys: ["a"], title: "Duplicate", message: "", details: {} }],
+  })), true);
+  assert.equal(continuationReviewRequired(makeResult({ inspection_complete: false, findings })), false);
 });
 
 test("continued scientific overrides reject incomplete preset combinations", () => {

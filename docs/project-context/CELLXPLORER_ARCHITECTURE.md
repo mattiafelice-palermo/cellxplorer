@@ -1,9 +1,8 @@
 # CellXplorer Architecture
 
 Repository: `mattiafelice-palermo/cellxplorer`  
-Context last synchronized: 2026-08-15
-Verified against: `main` at `aca39740039b4d7146afc9104f5c471bff7c7c46` (`0.22.0-beta.8`) plus the
-`feature/biologic-mpr-gcpl-support` BioLogic GCPL closure work (`0.23.0-beta.1`)
+Context last synchronized: 2026-08-19
+Verified against: `main` at `5e50736` (`0.26.0-beta.6`)
 
 This is a compact orientation document. The authoritative technical sources are `AGENTS.md`,
 `docs/agent-knowledge/`, the current code and tests.
@@ -12,10 +11,11 @@ This is a compact orientation document. The authoritative technical sources are 
 
 CellXplorer is a local-first Windows application for battery scientists. It imports, organizes,
 inspects, analyses and exports Neware cycling data from binary `.nda` and `.ndax` files and from
-structured Neware `.xlsx` exports, plus supported BioLogic GCPL-family `.mpr` sources. The
-currently verified MPR layout is metadata-only until an independently verified full-cycle
-identity is available.
-`.mpt` files are validation artifacts and are not user-imported sources.
+structured Neware `.xlsx` exports, plus supported BioLogic GCPL-family `.mpr` sources. Supported
+MPR sources have a narrow, independently verified source-local cycle-1 canonical path for
+charge-only/discharge-only runs, including the header-proven neutral setup/control preamble. Mixed,
+repeated, or otherwise unresolved cycle identity remains metadata-only. `.mpt` files are validation
+artifacts and are not user-imported sources.
 
 Major user workflows include:
 
@@ -98,15 +98,18 @@ operations must remain outside request transactions.
 
 ## Scientific data model
 
-The canonical hierarchy is:
+The canonical user-facing hierarchy is:
 
 ```text
-SourceFile → Test → Cell
+Cell
+└── ordered SourceFiles
 ```
 
-- `SourceFile` stores path, checksum, parser/source status and provenance.
-- `Test` represents a cycling procedure and can own an ordered sequence of source files.
 - `Cell` is the primary scientific object selected and analysed by users.
+- Ordered source positions define one continuation chain; the final source is the tracked tail.
+- `Test` / `TestFile` are internal compatibility storage only. Each Cell has exactly one internal
+  Test row, and a protocol restart or change does not create another Test.
+- `SourceFile` stores path, checksum, parser/source status and provenance.
 - Replicate groups reference cells; they do not copy scientific data.
 - Folders organize references to cells, replicate groups and analyses.
 - Analyses own one shared sample set.

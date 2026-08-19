@@ -2,7 +2,6 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Divider,
   Group,
   Loader,
@@ -18,11 +17,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
-import {
-  IconAlertTriangle,
-  IconPlus,
-  IconSearch,
-} from "@tabler/icons-react";
+import { IconPlus, IconSearch } from "@tabler/icons-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -36,16 +31,15 @@ import {
   previewContinuationSources,
 } from "../api";
 import {
-  blockingFindings,
   continuationSourceCanOpenRawData,
-  findingSummary,
+  continuationHasFindings,
+  continuationReviewRequired,
   moveSource,
   preserveAcknowledgements,
 } from "../continuationPolicy";
 import {
   assignContinuationSourceColors,
   buildContinuedImportSubmissionState,
-  confirmationFindingIds,
   nextSelectedSourceKey,
   type ContinuedImportSubmissionState,
   type SourceColorAssignments,
@@ -62,6 +56,7 @@ import {
   continuationPreviewRequest,
 } from "../continuedImportPreviewPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
+import { ContinuationReviewModal } from "./ContinuationReviewModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
 import Plot from "./Plot";
 
@@ -182,6 +177,7 @@ export function ContinuedImportEditor({
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [inspectionRequested, setInspectionRequested] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const previousOrderRef = useRef<string[]>(order);
 
   const byKey = useMemo(() => new Map(drafts.map((item) => [item.staged_name, item])), [drafts]);
@@ -264,11 +260,23 @@ export function ContinuedImportEditor({
     if (result) setAcknowledged((current) => new Set(preserveAcknowledgements(current, result)));
   }, [result]);
 
+  // Findings that require action get one focused review surface when a fresh,
+  // complete inspection arrives. Reorders clear the result first, so a stale
+  // review cannot remain open for a different source order.
+  useEffect(() => {
+    if (!opened || !result?.inspection_complete || !inspectionQuery.dataUpdatedAt) {
+      setReviewOpen(false);
+      return;
+    }
+    if (continuationReviewRequired(result)) setReviewOpen(true);
+  }, [inspectionQuery.dataUpdatedAt, opened, result]);
+
   useEffect(() => {
     if (!opened) {
       setInspectionRequested(false);
       setPreviewMode("combined");
       setAcknowledged(new Set());
+      setReviewOpen(false);
     }
   }, [opened]);
 
@@ -291,7 +299,8 @@ export function ContinuedImportEditor({
     if (disabled) return;
     setOrder((current) => moveSource(current, index, direction));
   };
-  const confirmationIds = confirmationFindingIds(result);
+  const reviewRequired = continuationReviewRequired(result, acknowledged);
+  const hasFindings = continuationHasFindings(result);
   const selectedDraft = byKey.get(selectedSourceKey) ?? orderedDrafts[0];
   const selectedSource = orderedSources.find((source) => source.key === selectedSourceKey) ?? orderedSources[0];
   const combinedPreviewFailureSources = combinedPreviewQuery.isError
@@ -352,10 +361,14 @@ export function ContinuedImportEditor({
             loading={inspectionQuery.isFetching}
             onClick={() => {
               setInspectionRequested(true);
-              void inspectionQuery.refetch();
+              if (result?.inspection_complete && hasFindings) {
+                setReviewOpen(true);
+              } else {
+                void inspectionQuery.refetch();
+              }
             }}
           >
-            Inspect continuity
+            {result?.inspection_complete && hasFindings ? "Review continuity" : result?.inspection_complete ? "Inspected" : "Inspect continuity"}
           </Button>
         </Group>
       </Group>
@@ -399,6 +412,7 @@ export function ContinuedImportEditor({
                 onRemove={disabled ? undefined : (sourceKey) => {
                   onRemoveSource(sourceKey);
                   setAcknowledged(new Set());
+                  setReviewOpen(false);
                 }}
                 disabled={disabled}
               />
@@ -618,40 +632,25 @@ export function ContinuedImportEditor({
         </Paper>
       </Group>
 
-      {result && (blockingFindings(result).length > 0 || confirmationIds.length > 0) && (
-        <Stack gap="xs" style={{ flex: "none", maxHeight: 160, overflowY: "auto" }}>
-          {blockingFindings(result).length > 0 && (
-            <Alert color="red" title="Resolve blocking findings" p="xs">
-              <Stack gap={2}>{blockingFindings(result).map((finding) => (
-                <Group key={finding.id} gap="xs" wrap="nowrap" align="start">
-                  <IconAlertTriangle size={16} aria-hidden="true" />
-                  <Text size="sm">{findingSummary(finding)}</Text>
-                </Group>
-              ))}</Stack>
-            </Alert>
-          )}
-          {confirmationIds.length > 0 && (
-            <Stack gap={4}>
-              <Divider label="Acknowledgements" labelPosition="left" />
-              {result.findings.filter((finding) => finding.severity === "confirmation").map((finding) => (
-                <Checkbox
-                  key={finding.id}
-                  size="xs"
-                  disabled={disabled}
-                  checked={acknowledged.has(finding.id)}
-                  onChange={(event) => setAcknowledged((current) => {
-                    const next = new Set(current);
-                    if (event.currentTarget.checked) next.add(finding.id);
-                    else next.delete(finding.id);
-                    return next;
-                  })}
-                  label={findingSummary(finding)}
-                />
-              ))}
-            </Stack>
-          )}
-        </Stack>
+      {reviewRequired && !reviewOpen && (
+        <Text size="xs" c="orange" style={{ flex: "none" }}>
+          Continuity review required before import.
+        </Text>
       )}
+
+      <ContinuationReviewModal
+        opened={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        result={result}
+        acknowledged={acknowledged}
+        onAcknowledgementChange={(findingId, checked) => setAcknowledged((current) => {
+          const next = new Set(current);
+          if (checked) next.add(findingId);
+          else next.delete(findingId);
+          return next;
+        })}
+        disabled={disabled}
+      />
     </Stack>
   );
 }

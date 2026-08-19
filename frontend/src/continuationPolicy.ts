@@ -149,3 +149,21 @@ export function informationalFindings(result: ContinuationInspectResult): Contin
     (finding) => finding.severity === "info" || finding.severity === "warning",
   );
 }
+
+/** Blocking or confirmation findings require the focused continuity review before import. */
+export function continuationReviewRequired(
+  result: ContinuationInspectResult | null | undefined,
+  acknowledged?: Iterable<string>,
+): boolean {
+  if (!result?.inspection_complete) return false;
+  if (blockingFindings(result).length > 0) return true;
+  const acknowledgedIds = new Set(acknowledged ?? []);
+  return acknowledgementFindingIds(result).some((id) => !acknowledgedIds.has(id));
+}
+
+/** Any server result with findings can be opened from the compact Review continuity action. */
+export function continuationHasFindings(
+  result: ContinuationInspectResult | null | undefined,
+): boolean {
+  return Boolean(result?.findings.length);
+}

@@ -3,6 +3,7 @@ import {
   acknowledgedMetadataOnlySourceKeys,
   acknowledgementFindingIds,
   continuedImportCanSubmit,
+  continuationReviewRequired,
   scientificDraftIsValid,
   type ContinuedScientificDraft,
 } from "./continuationPolicy.ts";
@@ -84,6 +85,8 @@ export type ContinuedImportSubmissionState = {
   order: string[];
   acknowledgedFindingIds: string[];
   metadataOnlySourceKeys: string[];
+  inspectionRequired: boolean;
+  reviewRequired: boolean;
 };
 
 /**
@@ -103,6 +106,7 @@ export function buildContinuedImportSubmissionState(
   acknowledged: Iterable<string>,
 ): ContinuedImportSubmissionState {
   const acknowledgedFindingIds = Array.from(acknowledged);
+  const inspectionRequired = !result?.inspection_complete;
   return {
     canSubmit:
       order.length >= 2
@@ -111,10 +115,7 @@ export function buildContinuedImportSubmissionState(
     order,
     acknowledgedFindingIds,
     metadataOnlySourceKeys: acknowledgedMetadataOnlySourceKeys(result, acknowledgedFindingIds, order),
+    inspectionRequired,
+    reviewRequired: continuationReviewRequired(result, acknowledgedFindingIds),
   };
-}
-
-/** Confirmation findings from the current inspection result, for the acknowledgement checklist. */
-export function confirmationFindingIds(result: ContinuationInspectResult | null | undefined): string[] {
-  return result ? acknowledgementFindingIds(result) : [];
 }

@@ -214,6 +214,7 @@ Cellxplorer/
 │   │   │   ├── QuickSettingsMenu.tsx
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── AppUpdateModal.tsx
+│   │   │   ├── ContinuationReviewModal.tsx  Focused findings/acknowledgement review (Spec 047.3)
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
 │   │   ├── features/               Feature-owned frontend modules
 │   │   │   └── analyses/

@@ -30,14 +30,14 @@
   `feature/continued-cell-import-workspace`:
   - [`047.1-continued-cell-workspace-and-source-chain.md`](047.1-continued-cell-workspace-and-source-chain.md)
     — compact draggable source rows, stable per-source colors, three-pane geometry, and one
-    footer-owned import action.
+    footer-owned import action. Review: [047.1 review](reviews/047.1-continued-cell-workspace-and-source-chain-review.md).
   - [`047.2-source-colored-combined-continuation-preview.md`](047.2-source-colored-combined-continuation-preview.md)
     — one bounded source-colored combined preview using authoritative backend global-cycle stitching,
-    with no Plotly legend and Raw data kept on demand.
+    with no Plotly legend and Raw data kept on demand. Review: [047.2 review](reviews/047.2-source-colored-combined-continuation-preview-review.md).
   - [`047.3-continuity-review-and-context-closure.md`](047.3-continuity-review-and-context-closure.md)
     — secondary continuity review, final regression/integration closure, performance-documentation
-    update, and correction of the stale Project architecture mirror.
-  **Plan.**
+    update, and correction of the stale Project architecture mirror. Review: [047.3 review](reviews/047.3-continuity-review-and-context-closure-review.md).
+  **047.1 and 047.2 implemented and review-clean; 047.3 implementation in progress.**
 - [`045-faster-local-verification.md`](045-faster-local-verification.md)
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend

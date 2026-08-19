@@ -1103,6 +1103,8 @@ function ImportModal({
     order: [],
     acknowledgedFindingIds: [],
     metadataOnlySourceKeys: [],
+    inspectionRequired: true,
+    reviewRequired: false,
   });
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
@@ -1149,7 +1151,14 @@ function ImportModal({
       setRegistrationAccepted(false);
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
-      setContinuedSubmissionState({ canSubmit: false, order: [], acknowledgedFindingIds: [], metadataOnlySourceKeys: [] });
+      setContinuedSubmissionState({
+        canSubmit: false,
+        order: [],
+        acknowledgedFindingIds: [],
+        metadataOnlySourceKeys: [],
+        inspectionRequired: true,
+        reviewRequired: false,
+      });
       setDoneCountdown(null);
       autoCloseFired.current = false;
       setClosingBranch(null);
@@ -1666,6 +1675,12 @@ function ImportModal({
                 ? "Import complete. Cells are ready."
                 : shouldShowContinue
                   ? "Registration is committed. Scientific data preparation continues in the background."
+                : continuedMode
+                  ? continuedSubmissionState.reviewRequired
+                    ? "Continuity review required before import."
+                    : continuedSubmissionState.inspectionRequired
+                      ? "Inspect continuity before importing."
+                      : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`
                   : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
             </Text>
             <ImportModalPrimaryActions>

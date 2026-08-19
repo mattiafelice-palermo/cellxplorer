@@ -53,16 +53,20 @@ executor itself still fail the request because they indicate infrastructure fail
 bad source file.
 
 The final import editor keeps preview work lazy: each staged draft owns an explicit idle/loading/
-ready/error state, and only the active source may request a capacity preview. Preview requests carry
-the inspection hash plus size/`mtime_ns`; matching fingerprints reuse that verified hash, while a
-changed fingerprint is rehashed and rejected with a structured source-changed response when the
-content differs. The frontend cache key is the content hash, so switching back to a ready source or
-reopening identical content does not parse it again. Registration commits Cells first and returns a
-separate background cache-job handoff; missing scientific caches remain `parsing` until the existing
-cache worker marks them ready or reports a post-registration source error. The third-modal loaded-
-file panel is a fixed-row viewport window with bounded overscan; do not restore a full
-`drafts.map(...)` render for large imports. Preview requests are session-scoped and abortable, so
-closing the modal must clear disposable drafts and invalidate late responses. The actual
+ready/error state, and only the active source may request an ordinary per-source capacity preview.
+Preview requests carry the inspection hash plus size/`mtime_ns`; matching fingerprints reuse that
+verified hash, while a changed fingerprint is rehashed and rejected with a structured source-changed
+response when the content differs. The frontend cache key is the content hash, so switching back to
+a ready source or reopening identical content does not parse it again. The continued-chain combined
+preview never starts merely because Step 3 opened or the mode changed: it is explicitly gated behind
+continuity inspection, reads the already prepared ordered per-source caches through backend stitch
+semantics, and returns bounded display data without creating a second scientific cache. Registration
+commits Cells first and returns a separate background cache-job handoff; missing scientific caches
+remain `parsing` until the existing cache worker marks them ready or reports a post-registration
+source error. The third-modal loaded-file panel is a fixed-row viewport window with bounded
+overscan; do not restore a full `drafts.map(...)` render for large imports. Preview requests are
+session-scoped and abortable, so closing the modal must clear disposable drafts and invalidate late
+responses. The actual
 `/api/imports/cells` submission returns `202` after atomically claiming its durable
 `ImportSubmission` token; registration then uses its own `SessionLocal` worker transaction, while
 cache preparation is a separate post-commit job and activity lifecycle. Separate-cell registration

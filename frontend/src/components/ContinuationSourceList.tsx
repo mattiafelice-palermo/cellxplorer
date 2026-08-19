@@ -24,6 +24,13 @@ function sourceStatusColor(source: ContinuationInspectSource) {
   return "teal";
 }
 
+function compactSourceStatusLabel(source: ContinuationInspectSource) {
+  if (source.inspection_status === "error") return "Error";
+  if (source.cache_build_status === "started" || source.cache_build_status === "building") return "Preparing";
+  if (source.inspection_status === "pending") return "Not inspected";
+  return "Ready";
+}
+
 function sourceFindingColor(finding: ContinuationFinding) {
   if (finding.severity === "blocking") return "red";
   if (finding.severity === "confirmation") return "orange";
@@ -155,7 +162,14 @@ export function ContinuationSourceList({
                   <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
                     {source.filename}
                   </Text>
-                  <Badge size="xs" variant="light" color={sourceStatusColor(source)}>{source.inspection_status}</Badge>
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={sourceStatusColor(source)}
+                    title={source.inspection_error ?? undefined}
+                  >
+                    {compactSourceStatusLabel(source)}
+                  </Badge>
                   <Tooltip label={`Move ${source.filename} up`}>
                     <ActionIcon size="sm" variant="subtle" aria-label={`Move ${source.filename} up`} disabled={disabled || index === 0} onClick={(event) => { stop(event); onMove(index, -1); }}><IconArrowUp size={13} /></ActionIcon>
                   </Tooltip>
@@ -170,7 +184,6 @@ export function ContinuationSourceList({
                   {role && <Badge size="xs" variant="light" color={role === "Tracked tail" ? "teal" : "gray"}>{role}</Badge>}
                   {metaLine && <Text size="xs" c="dimmed" truncate>{metaLine}</Text>}
                 </Group>
-                {source.inspection_error && <Text size="xs" c="red" pl={22}>{source.inspection_error}</Text>}
               </Stack>
             </Paper>
           );
