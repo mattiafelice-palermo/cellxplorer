@@ -34,8 +34,13 @@ export function compactContinuationMetaLine(
   }
   const start = formatContinuationTimestamp(source.start_time);
   const end = formatContinuationTimestamp(source.end_time);
-  if (start) parts.push(`[S] ${start}`);
-  if (end) parts.push(`[E] ${end}`);
+  if (start && end) {
+    parts.push(`[S] ${start}`, `[E] ${end}`);
+  } else if (start) {
+    parts.push(`Started: ${start}`);
+  } else if (end) {
+    parts.push(`[E] ${end}`);
+  }
   return parts.length ? parts.join(" · ") : null;
 }
 

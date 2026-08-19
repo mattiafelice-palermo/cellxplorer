@@ -109,7 +109,7 @@ test("compactContinuationMetaLine labels source dates and reports only the cycle
   );
   assert.equal(
     compactContinuationMetaLine({ local_cycle_count: 4, start_time: "2026-07-10T14:41:20", end_time: null }),
-    "4 cycles · [S] 10/07/2026 14:41",
+    "4 cycles · Started: 10/07/2026 14:41",
   );
 });
 

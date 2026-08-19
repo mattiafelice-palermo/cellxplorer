@@ -57,7 +57,7 @@ function sourceGutterTextColor(color?: string): string {
   return luminance > 0.67 ? "var(--mantine-color-dark-9)" : "var(--mantine-color-white)";
 }
 
-/** A narrow full-height identity gutter: readable position above, drag affordance below. */
+/** A minimal full-height identity rail: a short position cap above a larger drag zone. */
 function SourceIdentityGutter({ number, color }: { number: number; color?: string }) {
   const strongColor = color ?? "var(--mantine-color-gray-5)";
   return (
@@ -65,7 +65,7 @@ function SourceIdentityGutter({ number, color }: { number: number; color?: strin
       aria-hidden="true"
       style={{
         flex: "none",
-        width: 32,
+        width: 20,
         alignSelf: "stretch",
         display: "flex",
         flexDirection: "column",
@@ -74,13 +74,13 @@ function SourceIdentityGutter({ number, color }: { number: number; color?: strin
     >
       <div
         style={{
-          flex: "0 0 36px",
+          flex: "0 0 24px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           background: pastelSourceColor(color),
           color: "var(--mantine-color-dark-9)",
-          fontSize: "var(--mantine-font-size-sm)",
+          fontSize: "var(--mantine-font-size-xs)",
           fontWeight: 700,
         }}
       >
@@ -98,7 +98,7 @@ function SourceIdentityGutter({ number, color }: { number: number; color?: strin
           cursor: "grab",
         }}
       >
-        <IconGripVertical size={16} aria-hidden="true" />
+        <IconGripVertical size={14} aria-hidden="true" />
       </div>
     </div>
   );
@@ -193,7 +193,7 @@ export function ContinuationSourceList({
             >
               <SourceIdentityGutter number={index + 1} color={sourceColor} />
               <VisuallyHidden>Source {index + 1}. Drag to reorder.</VisuallyHidden>
-              <Stack gap={4} style={{ flex: 1, minWidth: 0, padding: "8px 8px 8px 10px" }}>
+              <Stack gap={4} style={{ flex: 1, minWidth: 0, padding: "8px" }}>
                 <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                   <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
                     {source.filename}

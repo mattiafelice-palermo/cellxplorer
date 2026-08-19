@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.3 - 2026-08-20
+
+### Bug fixes
+
+- Refine continued-cell source-chain gutter proportions and start labels.
+
 ## 0.27.0-beta.2 - 2026-08-20
 
 ### Bug fixes
