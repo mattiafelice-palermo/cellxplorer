@@ -412,3 +412,20 @@ User-selected Variant 3 refinement implemented and committed locally in 9b0b458.
 User requested that the compact continued-import source chain use the existing dnd-kit stack instead of native HTML5 dragging. Keep the Variant 3 20 px identity rail as the visible drag handle and provide accessible pointer and keyboard sorting.
 
 ---
+### 2026-08-20T00:31:13+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused continuation frontend suites: PASS (36 tests)
+- Frontend TypeScript check: PASS
+- Frontend production bundle: PASS
+- Canonical preflight --no-cache: PASS (4/4 stages; 138 backend/frontend test files)
+- Browser/manual visual verification: NOT RUN (user will check)
+
+**Message**
+
+User-requested dnd-kit migration implemented and committed locally in 1a54b40. The compact continued-import source chain now uses DndContext, SortableContext, PointerSensor with distance activation, and KeyboardSensor with sortableKeyboardCoordinates. The lower Variant 3 gutter remains the accessible activator; row content and remove controls are not drag-only. Stable source-key reorder handling is covered by reorderContinuationSourceKeys. Version bumped to 0.27.0-beta.4. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
+
+---
