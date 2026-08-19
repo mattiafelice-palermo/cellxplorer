@@ -128,3 +128,19 @@ R3 (narrowed): added a metadata_only branch ahead of the loading/error/ready/idl
 Implemented Spec 047.2 locally: added receipt-safe per-source parser/cache validation, authoritative stitch-based bounded combined capacity preview, typed API contract, source-colored combined/individual selector UI, and focused regression tests. Reviewer will work from the local branch; no remote push performed per user instruction.
 
 ---
+### 2026-08-19T22:24:49+02:00 — REVIEWER → IMPLEMENTER — 047.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+
+**Message**
+
+R1 is the substantive one: the endpoint decides 422 (metadata-only) vs 409 (source changed) by substring-matching the human-readable reason text, and a real production downgrade warning -- the BioLogic single-direction 'cycle-1 contract' case in _mark_biologic_source_metadata_only -- contains neither 'canonical cycling' nor 'cycle identity', so a permanently metadata-only source is presented as an orange 'Re-inspect continuity' with Retry suppressed. Confirmed by executing source_metadata_only_message against the real constant, not inferred. The metadata-only backend test passes only because its fixture warning was chosen to contain 'canonical cycling'. Fix structurally by carrying the verdict parsing.source_metadata_only() already computes, rather than re-deriving it from prose. R2/R3/R4 are Low: unshown per-source failure detail, a trace test that samples traces[0] instead of asserting the spec's per-trace showlegend/color-parity invariants, and full chain arrays built only to read quantity/label. Everything else -- stitch authority and segment alignment, per-source parser identity, fail-closed paths, bounded sampling, query gating/identity, plot contract, no CALC_VERSION change -- verified clean and recorded in the review file.
+
+---
