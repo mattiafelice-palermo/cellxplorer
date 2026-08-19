@@ -4,9 +4,9 @@
 **Children:** `047.1`, `047.2`, `047.3` (all individually review-clean)
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
-**Reviewed range:** `main..HEAD` = `05c268e..0b00351`, 21 commits
-**Round:** 2
-**Result:** Changes required — R3 (Low) still open; R1, R2, R4 resolved
+**Reviewed range:** `main..HEAD` = `05c268e..cf1742d`, 24 commits
+**Round:** 3 (final)
+**Result:** Review clean — all findings resolved. **BLOCKED** on outstanding browser/manual verification, which no agent in this workflow can perform.
 
 This is a fresh cumulative review of the whole branch against the real merge base, not a re-read of
 the three child reviews. Child findings (047.1 R1–R4, 047.2 R1–R4, 047.3 R1–R2) are all closed and
@@ -268,6 +268,59 @@ focused continuation suites     33/33 PASS
 
 Preflight again skipped the type check and bundle from cache, so both were re-run explicitly.
 
+## Round 3 — R3 resolved; cumulative review clean
+
+`AGENTS.md` now lists the second module in the same one-line form:
+
+```text
+│   │   ├── continuedImportPreviewPolicy.ts  Combined continuation preview request/trace policy (Spec 047.2)
+```
+
+The fix touched only `AGENTS.md` plus the two workflow files. **All parent findings R1–R4 are
+resolved, and no new defect was found.**
+
+### Final state verified by the reviewer
+
+```text
+tracked working tree            clean
+merge base                      5e50736 == main tip (0 main-only commits, 24 branch-only)
+python scripts\preflight.py     PASS (4/4 stages)
+npx.cmd tsc --noEmit            PASS
+npx.cmd vite build              PASS
+focused continuation suites     33/33 PASS
+python scripts\check_versions.py PASS (all declarations 0.27.0-beta.1)
+```
+
+The branch is a clean fast-forward onto `main` with no divergence.
+
+### Why this closes BLOCKED rather than COMPLETE
+
+No implementation finding remains, so there is nothing further for the implementer to do. But
+`COMPLETE` in this workflow asserts that the cumulative review is clean **and all required acceptance
+evidence is available**, and it is not: the browser/manual matrix is entirely unrun, because neither
+agent in this workflow was authorized to drive a browser.
+
+That is precisely the documented meaning of `BLOCKED` — clean enough that no implementer finding
+remains, but a required acceptance input is unavailable, so the feature is **not merge-ready**.
+Recording `COMPLETE` would claim verification nobody performed.
+
+This is resumable, not terminal. When the manual matrix has been run:
+
+```powershell
+python docs\specs\workflow\spec_workflow.py resume-final-review --message "Manual matrix run."
+```
+
+then the recorded results are folded into this same review and the parent completes normally. The
+workflow forbids transitioning directly from `BLOCKED` to `COMPLETE` without that resumed review.
+
+### What still needs a human at the keyboard
+
+The cumulative matrix in 047.3 (items 1–40), plus 047.1 items 1–19 and 047.2 items 1–15. The items
+that genuinely cannot be inferred from code are listed under *Browser / manual verification* above:
+pane geometry and horizontal overflow, rendered source-colour parity, real drag-and-drop reordering,
+light/dark and zoom legibility, keyboard reach of the nested row controls, and long-filename
+truncation.
+
 ## Cumulative verification against the parent acceptance criteria
 
 ### Workspace
@@ -375,15 +428,12 @@ Preflight again skipped the type check and bundle from cache, so both were re-ru
 
 ## Merge readiness
 
-**Not yet.** Two things stand between this branch and `main`:
+**Code-clean, not yet merge-ready.** Every review finding across the parent and all three children is
+resolved, and every automated gate available in this repository passes on the final tree. The one
+remaining gate is the browser/manual matrix, which is a human task.
 
-1. R1–R4 above, of which only R1 (version/CHANGELOG) is more than tidying.
-2. The browser/manual matrix, which no agent in this workflow was able to run.
-
-Once R1–R4 are resolved, the correct terminal state depends on the browser gap. If the user runs the
-cumulative matrix and reports results, the parent can complete normally. If it stays unrun, this
-workflow should end in `BLOCKED` rather than `COMPLETE` — the feature would be code-clean but not
-merge-ready, and marking it complete would claim verification that was never performed.
+Recommendation: run the cumulative matrix, then `resume-final-review` and complete. If any item fails,
+it returns through the ordinary finding loop.
 
 The branch itself is otherwise in good shape: it fast-forwards onto `5e50736` with no divergence, the
 working tree is clean, preflight and an explicit type-check and bundle all pass on the final tree, and

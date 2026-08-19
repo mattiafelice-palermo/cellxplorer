@@ -310,3 +310,16 @@ Replace uploaded Project file:
 Browser/manual acceptance matrix: NOT RUN (not authorized); please end the parent review BLOCKED rather than COMPLETE unless the user supplies that verification.
 
 ---
+### 2026-08-19T23:32:08+02:00 — REVIEWER — 047.3
+
+**Result:** Final review blocked on external dependency
+
+**Findings**
+
+- None.
+
+**Message**
+
+Cumulative parent review is clean: all four parent findings (R1 version/CHANGELOG, R2 index status, R3 AGENTS tree, R4 dead projection) are resolved, as are all ten child findings across 047.1, 047.2 and 047.3. No implementer work remains. Final tree verified by the reviewer: working tree clean, clean fast-forward onto main at 5e50736 with no divergence, preflight 4/4, tsc and vite build re-run explicitly because preflight skipped both from cache, 33/33 focused continuation tests, and check_versions passing at 0.27.0-beta.1. BLOCKED, not COMPLETE, because the required acceptance input is unavailable to both agents: the browser/manual matrix is entirely unrun -- 047.3 items 1-40 plus 047.1 items 1-19 and 047.2 items 1-15. The unverifiable-by-code items are pane geometry and horizontal overflow, rendered source-colour parity between the left number circles and plot segments, real drag-and-drop reordering, light/dark and zoom legibility, keyboard reach of the nested row controls (which is exactly what 047.1 R2 fixed), and long-filename truncation. Marking COMPLETE would claim verification nobody performed. Resume with resume-final-review once the matrix has been run; the workflow forbids going straight from BLOCKED to COMPLETE.
+
+---
