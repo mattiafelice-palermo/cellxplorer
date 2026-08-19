@@ -50,3 +50,20 @@ Spec 047 continued-cell import workspace. Branch rebased onto main at 5e50736. I
 R1 is the blocker: inspectionQuery.isPending is true for a disabled query (verified against installed TanStack Query 5.101.2), so drag/up-down/remove are all inert until Inspect continuity returns, and re-lock after every reorder because order is in the query key. R2: the row's unguarded Enter/Space preventDefault suppresses keyboard activation of the nested Move/Remove buttons. R3/R4 are small: misleading idle-preview copy for an auto-selected source, and aria-hidden on the source number. All four scope decisions you flagged were checked against the spec text and accepted; default ContinuationSourceList variant, submission safety, and footer ownership all verified clean.
 
 ---
+### 2026-08-19T21:28:27+02:00 — IMPLEMENTER → REVIEWER — 047.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests (continuationPolicy, multiSourceImport, importPreviewPolicy, continuedImportWorkspacePolicy): PASS (30/30)
+- frontend type check: PASS
+- frontend production build: PASS
+- canonical preflight: PASS (4/4 stages; 137 backend/frontend test files/modules)
+- browser checks: NOT RUN (not authorized this session)
+
+**Message**
+
+R1: interaction lock changed from 'inspectionQuery.isPending || importing' to 'importing' only in ContinuedImportEditor.tsx -- reordering/removal no longer depends on inspection fetch state at all (not even isFetching), so repeated reorders never wait on an intermediate inspection; canSubmit already independently re-gates through continuedImportCanSubmit(...) whenever the order changes ahead of a matching complete result, since React Query returns data: undefined for a new query key with no cache entry (no placeholderData configured here). R2: row onKeyDown now returns early when event.target !== event.currentTarget, so bubbled Enter/Space from the nested Move up/down/Remove ActionIcons reaches their native activation instead of being intercepted as row selection. R3: added a useEffect keyed on selectedSourceKey that requests the selected source's preview whenever selection changes for any reason (explicit click or the automatic initial/fallback selection), replacing the click-only call inside selectSource; still exactly one request per selection change, never a batch. R4: added a VisuallyHidden 'Source N.' label alongside the decorative (aria-hidden) numbered circle so screen readers get the position; the visible circle and its color are unchanged. No other behavior touched.
+
+---

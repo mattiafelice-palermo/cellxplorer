@@ -225,6 +225,16 @@ export function ContinuedImportEditor({
     previousOrderRef.current = order;
   }, [order]);
 
+  // Preview stays lazy (still one source, still on demand), but every way a
+  // source becomes selected -- an explicit click as well as the automatic
+  // initial/fallback selection above -- should request it, not only clicks.
+  useEffect(() => {
+    const selected = byKey.get(selectedSourceKey);
+    if (shouldRequestImportPreview(selected, true)) {
+      onPreviewRequested?.(selected);
+    }
+  }, [selectedSourceKey]);
+
   useEffect(() => {
     if (result) setAcknowledged((current) => new Set(preserveAcknowledgements(current, result)));
   }, [result]);
@@ -244,7 +254,13 @@ export function ContinuedImportEditor({
     onSubmissionStateChange(submissionState);
   }, [submissionState, onSubmissionStateChange]);
 
-  const disabled = inspectionQuery.isPending || importing;
+  // Reordering/removal must reflect work actually in flight (submission), not
+  // the query's resting "pending" status for an inspection that was never
+  // requested or that a reorder just invalidated. canSubmit already re-gates
+  // import through continuedImportCanSubmit(...) whenever the order changes
+  // without a matching complete inspection, so this lock does not need to
+  // track inspection fetch state for safety.
+  const disabled = importing;
   const move = (index: number, direction: -1 | 1) => {
     if (disabled) return;
     setOrder((current) => moveSource(current, index, direction));
@@ -255,13 +271,7 @@ export function ContinuedImportEditor({
   const updateDraft = (patch: Partial<ContinuedCellDraft>) =>
     onCellDraftChange({ ...cellDraft, ...patch });
 
-  const selectSource = (key: string) => {
-    setSelectedSourceKey(key);
-    const nextDraft = byKey.get(key);
-    if (shouldRequestImportPreview(nextDraft, true)) {
-      onPreviewRequested?.(nextDraft);
-    }
-  };
+  const selectSource = (key: string) => setSelectedSourceKey(key);
   const materialOptions = [
     { value: "custom", label: "Custom nominal capacity" },
     ...materialPresets.map((preset) => ({

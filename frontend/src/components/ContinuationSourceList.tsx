@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip, VisuallyHidden } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconArrowDown,
@@ -132,6 +132,10 @@ export function ContinuationSourceList({
               aria-pressed={onSelect ? selected : undefined}
               onKeyDown={(event) => {
                 if (!onSelect) return;
+                // Only the row's own key events select it -- a bubbled Enter/Space
+                // from a nested Move/Remove ActionIcon must reach that control's
+                // native activation, not be intercepted here.
+                if (event.target !== event.currentTarget) return;
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   onSelect(source.key);
@@ -147,6 +151,7 @@ export function ContinuationSourceList({
                 <Group gap={6} wrap="nowrap">
                   <IconGripVertical size={14} color="var(--mantine-color-gray-5)" aria-hidden="true" />
                   <SourceColorCircle number={index + 1} color={colorsBySourceKey?.[source.key]} />
+                  <VisuallyHidden>Source {index + 1}.</VisuallyHidden>
                   <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
                     {source.filename}
                   </Text>
