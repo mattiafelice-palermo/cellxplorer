@@ -163,6 +163,29 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(saved.presets[1].is_default)
         self.assertEqual(settings.get_plot_style_presets(db=db), saved)
 
+    def test_plot_style_presets_support_specialized_analysis_families(self):
+        db = self.make_session()
+        families = ["dcir", "crate", "chargeability", "steps"]
+        saved = settings.update_plot_style_presets(
+            settings.PlotStylePresetSettings(
+                presets=[
+                    settings.PlotStylePreset(
+                        id=family,
+                        name=f"{family} style",
+                        plot_family=family,
+                        style={"line_width": 3},
+                        is_default=True,
+                    )
+                    for family in families
+                ]
+            ),
+            db=db,
+        )
+
+        self.assertEqual([preset.plot_family for preset in saved.presets], families)
+        self.assertTrue(all(preset.is_default for preset in saved.presets))
+        self.assertEqual(settings.get_plot_style_presets(db=db), saved)
+
     def test_color_palettes_persist_and_validate_hex_values(self):
         db = self.make_session()
         saved = settings.update_color_palettes(

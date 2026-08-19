@@ -24,7 +24,7 @@ import {
   IconPalette,
   IconPlus,
 } from "@tabler/icons-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   AnalysisSpec,
@@ -33,6 +33,7 @@ import {
   ComputeResult,
   get,
   PlotStyle,
+  PlotStylePresetFamily,
   PlotStylePresetSettings,
   put,
   SeriesStyleOverride,
@@ -59,6 +60,7 @@ import {
   writeScopedStyle,
   plotPalette,
   normalizePlotStyle,
+  plotStylePresetFamilyForTab,
 } from "./plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "./paletteDraft";
 
@@ -92,6 +94,7 @@ export function PlotStylePanel({
   buildSeriesPreview,
   ceOverlayActive = false,
   timeCapacityStacked = false,
+  xAxisNumeric = true,
   yTitlePlaceholder,
   seriesDescriptors: seriesDescriptorsProp,
 }: {
@@ -112,6 +115,8 @@ export function PlotStylePanel({
   ceOverlayActive?: boolean;
   /** Whether the time/capacity stacked view's right-axis controls apply here. */
   timeCapacityStacked?: boolean;
+  /** Whether numeric X ranges and tick settings apply to this view. */
+  xAxisNumeric?: boolean;
   /** Placeholder shown in the Y-axis title input when it is empty. */
   yTitlePlaceholder?: string;
   /**
@@ -138,14 +143,17 @@ export function PlotStylePanel({
   const [applyPresetTicks, setApplyPresetTicks] = useState(false);
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
-  const [presetFamily, setPresetFamily] = useState<"all" | "cycles" | "time_capacity">(
-    axisScope === "time_capacity" ? "time_capacity" : "cycles",
+  const [presetFamily, setPresetFamily] = useState<PlotStylePresetFamily>(() =>
+    plotStylePresetFamilyForTab(axisScope),
   );
   const [presetDefault, setPresetDefault] = useState(false);
   const [seriesStyleOpen, setSeriesStyleOpen] = useState(false);
   const style = currentPlotStyle(spec, axisScope);
   const computeResult = result && "cell_traces" in result ? undefined : result;
   const showRightAxisControls = ceOverlayActive || timeCapacityStacked;
+  useEffect(() => {
+    setPresetFamily(plotStylePresetFamilyForTab(axisScope));
+  }, [axisScope]);
   const setStyle = (fn: (style: PlotStyle) => void) => {
     update((s) => writeScopedStyle(s, axisScope, fn));
   };
@@ -182,6 +190,7 @@ export function PlotStylePanel({
       markerSymbol: style.marker_symbol,
       markerSize: style.marker_size,
       markerOpen: style.marker_open,
+      individualOpacity: style.individual_opacity,
       ceLineWidth: style.ce_line_width,
       ceLineDash: style.ce_line_dash,
       ceMarkerMode: style.ce_marker_mode,
@@ -206,7 +215,11 @@ export function PlotStylePanel({
         markerSymbol: isCe ? seriesBaseDefaults.ceMarkerSymbol : seriesBaseDefaults.markerSymbol,
         markerSize: isCe ? seriesBaseDefaults.ceMarkerSize : seriesBaseDefaults.markerSize,
         markerOpen: isCe ? seriesBaseDefaults.ceMarkerOpen : seriesBaseDefaults.markerOpen,
-        opacity: isCe ? seriesBaseDefaults.ceOpacity : 1,
+        opacity: isCe
+          ? seriesBaseDefaults.ceOpacity
+          : axisScope === "cycles"
+            ? 1
+            : seriesBaseDefaults.individualOpacity,
       };
     },
     [seriesKeyOrder, seriesBaseDefaults],
@@ -474,16 +487,18 @@ export function PlotStylePanel({
                     setStyle((next) => void (next.individual_opacity = value ?? 0.35))
                   }
                 />
-                <DebouncedNumberInput
-                  label="Band opacity"
-                  min={0.02}
-                  max={0.6}
-                  step={0.02}
-                  value={style.band_opacity}
-                  onCommit={(value) =>
-                    setStyle((next) => void (next.band_opacity = value ?? 0.18))
-                  }
-                />
+                {axisScope === "cycles" && (
+                  <DebouncedNumberInput
+                    label="Band opacity"
+                    min={0.02}
+                    max={0.6}
+                    step={0.02}
+                    value={style.band_opacity}
+                    onCommit={(value) =>
+                      setStyle((next) => void (next.band_opacity = value ?? 0.18))
+                    }
+                  />
+                )}
               </Group>
               {axisScope === "cycles" && (
                 <>
@@ -557,37 +572,45 @@ export function PlotStylePanel({
                 value={style.y_title ?? ""}
                 onCommit={(value) => setAxisTitle("y_title", value)}
               />
-              <Select
-                label="X range"
-                data={[
-                  { value: "auto", label: "Auto" },
-                  { value: "manual", label: "Manual" },
-                ]}
-                value={style.x_axis.mode}
-                onChange={(value) =>
-                  value && setAxis("x_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
-                }
-              />
-              {style.x_axis.mode === "manual" && (
-                <Group grow>
-                  <DebouncedNumberInput
-                    label="X min"
-                    placeholder="Auto"
-                    step={0.1}
-                    decimalScale={8}
-                    error={axisRangeError(style.x_axis)}
-                    value={style.x_axis.min}
-                    onCommit={(value) => setAxis("x_axis", (axis) => void (axis.min = value))}
+              {xAxisNumeric ? (
+                <>
+                  <Select
+                    label="X range"
+                    data={[
+                      { value: "auto", label: "Auto" },
+                      { value: "manual", label: "Manual" },
+                    ]}
+                    value={style.x_axis.mode}
+                    onChange={(value) =>
+                      value && setAxis("x_axis", (axis) => void (axis.mode = value as "auto" | "manual"))
+                    }
                   />
-                  <DebouncedNumberInput
-                    label="X max"
-                    placeholder="Auto"
-                    step={0.1}
-                    decimalScale={8}
-                    value={style.x_axis.max}
-                    onCommit={(value) => setAxis("x_axis", (axis) => void (axis.max = value))}
-                  />
-                </Group>
+                  {style.x_axis.mode === "manual" && (
+                    <Group grow>
+                      <DebouncedNumberInput
+                        label="X min"
+                        placeholder="Auto"
+                        step={0.1}
+                        decimalScale={8}
+                        error={axisRangeError(style.x_axis)}
+                        value={style.x_axis.min}
+                        onCommit={(value) => setAxis("x_axis", (axis) => void (axis.min = value))}
+                      />
+                      <DebouncedNumberInput
+                        label="X max"
+                        placeholder="Auto"
+                        step={0.1}
+                        decimalScale={8}
+                        value={style.x_axis.max}
+                        onCommit={(value) => setAxis("x_axis", (axis) => void (axis.max = value))}
+                      />
+                    </Group>
+                  )}
+                </>
+              ) : (
+                <Text size="10px" c="dimmed">
+                  Numeric X range and tick controls apply when the view uses proportional spacing.
+                </Text>
               )}
               <Select
                 label="Y range"
@@ -624,51 +647,53 @@ export function PlotStylePanel({
               <Text size="10px" c="dimmed">
                 Leave one bound empty to clamp only that side.
               </Text>
-              <Group grow align="start">
-                <Select
-                  label="X ticks"
-                  data={[
-                    { value: "auto", label: "Automatic" },
-                    { value: "step", label: "Step size" },
-                    { value: "count", label: "Tick count" },
-                  ]}
-                  value={style.x_axis.tick_mode}
-                  onChange={(value) =>
-                    value &&
-                    setAxis(
-                      "x_axis",
-                      (axis) => void (axis.tick_mode = value as PlotStyle["x_axis"]["tick_mode"])
-                    )
-                  }
-                />
-                {style.x_axis.tick_mode === "step" ? (
-                  <DebouncedNumberInput
-                    label="X step"
-                    min={0}
-                    step={0.1}
-                    decimalScale={8}
-                    value={style.x_axis.dtick}
-                    onCommit={(value) =>
-                      setAxis("x_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
-                    }
-                  />
-                ) : style.x_axis.tick_mode === "count" ? (
-                  <DebouncedNumberInput
-                    label="X tick count"
-                    min={2}
-                    max={30}
-                    step={1}
-                    allowDecimal={false}
-                    value={style.x_axis.tick_count}
-                    onCommit={(value) =>
+              {xAxisNumeric && (
+                <Group grow align="start">
+                  <Select
+                    label="X ticks"
+                    data={[
+                      { value: "auto", label: "Automatic" },
+                      { value: "step", label: "Step size" },
+                      { value: "count", label: "Tick count" },
+                    ]}
+                    value={style.x_axis.tick_mode}
+                    onChange={(value) =>
+                      value &&
                       setAxis(
                         "x_axis",
-                        (axis) => void (axis.tick_count = value && value >= 2 ? Math.round(value) : null)
+                        (axis) => void (axis.tick_mode = value as PlotStyle["x_axis"]["tick_mode"])
                       )
                     }
                   />
-                ) : <div />}
-              </Group>
+                  {style.x_axis.tick_mode === "step" ? (
+                    <DebouncedNumberInput
+                      label="X step"
+                      min={0}
+                      step={0.1}
+                      decimalScale={8}
+                      value={style.x_axis.dtick}
+                      onCommit={(value) =>
+                        setAxis("x_axis", (axis) => void (axis.dtick = value && value > 0 ? value : null))
+                      }
+                    />
+                  ) : style.x_axis.tick_mode === "count" ? (
+                    <DebouncedNumberInput
+                      label="X tick count"
+                      min={2}
+                      max={30}
+                      step={1}
+                      allowDecimal={false}
+                      value={style.x_axis.tick_count}
+                      onCommit={(value) =>
+                        setAxis(
+                          "x_axis",
+                          (axis) => void (axis.tick_count = value && value >= 2 ? Math.round(value) : null)
+                        )
+                      }
+                    />
+                  ) : <div />}
+                </Group>
+              )}
               <Group grow align="start">
                 <Select
                   label="Y ticks"
@@ -1163,10 +1188,14 @@ export function PlotStylePanel({
               { value: "all", label: "All plot types" },
               { value: "cycles", label: "Cycles plots" },
               { value: "time_capacity", label: "Time / capacity plots" },
+              { value: "steps", label: "Steps plots" },
+              { value: "crate", label: "C-rate plots" },
+              { value: "chargeability", label: "Chargeability plots" },
+              { value: "dcir", label: "DCIR plots" },
             ]}
             onChange={(value) =>
               value &&
-              setPresetFamily(value as "all" | "cycles" | "time_capacity")
+              setPresetFamily(value as PlotStylePresetFamily)
             }
           />
           <Switch

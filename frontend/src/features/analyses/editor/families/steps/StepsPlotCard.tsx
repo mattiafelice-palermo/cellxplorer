@@ -44,11 +44,7 @@ import {
   type StepsSeriesSpec,
   type StepsViewSpec,
 } from "../../../../../api";
-import {
-  axisTitleFont,
-  plotAxisStyle,
-  plotLayoutStyle,
-} from "../../plotting/plotLayout";
+import { simpleCartesianLayout } from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
@@ -760,7 +756,7 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
         markerSymbol: style.marker_symbol,
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
-        opacity: 1,
+        opacity: style.individual_opacity,
       };
       const resolved = resolveSeriesStyle(
         baseStyle,
@@ -791,25 +787,20 @@ export function stepsTracesForResult(result: StepsResult, spec: AnalysisSpec): P
     .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
-export function stepsLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
+export function stepsLayoutForSpec(
+  spec: AnalysisSpec,
+  traces: Plotly.Data[] = [],
+): Partial<Plotly.Layout> {
   const view = readStepsView(spec);
   const style = currentPlotStyle(spec, "steps");
   const defaultXTitle = xTitle(view.x_axis);
   const yLabel = quantityLabel(view);
-  return {
-    ...plotLayoutStyle(style, spec),
-    margin: { l: 66, r: 20, t: 12, b: 52 },
-    xaxis: {
-      ...plotAxisStyle(style, { axis: style.x_axis }),
-      title: { text: style.x_title ?? defaultXTitle, font: axisTitleFont(style) },
-    },
-    yaxis: {
-      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
-      title: { text: style.y_title ?? yLabel, font: axisTitleFont(style) },
-    },
-    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
-    hovermode: "closest",
-  } as Partial<Plotly.Layout>;
+  return simpleCartesianLayout(style, spec, {
+    traces,
+    xTitle: defaultXTitle,
+    yTitle: yLabel,
+    baseMargin: { l: 66, r: 20, t: 12, b: 52 },
+  });
 }
 
 export function StepsPlotCard({
@@ -851,7 +842,7 @@ export function StepsPlotCard({
   const yLabel = quantityLabel(view);
   const defaultXTitle = xTitle(view.x_axis);
   const traces = useMemo(() => (data ? stepsTracesForResult(data, spec) : []), [data, spec]);
-  const layout = useMemo(() => stepsLayoutForSpec(spec), [spec]);
+  const layout = useMemo(() => stepsLayoutForSpec(spec, traces), [spec, traces]);
   const showComputeProgress = useDelayedFlag(result.isLoading);
   const plotUpdating = result.isFetching && traces.length > 0;
   const rememberPlotDiv = (graphDiv: unknown) => {
@@ -894,7 +885,7 @@ export function StepsPlotCard({
         },
       };
       const previewTraces = decimatePreviewTraces(stepsTracesForResult(data, draftSpec));
-      return { data: previewTraces, layout: stepsLayoutForSpec(draftSpec) };
+      return { data: previewTraces, layout: stepsLayoutForSpec(draftSpec, previewTraces) };
     },
     [data, spec],
   );

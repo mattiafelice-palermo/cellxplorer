@@ -41,6 +41,7 @@ import {
   IconBolt,
   IconChartLine,
   IconStack2,
+  IconCheckbox,
   IconChevronDown,
   IconChevronRight,
   IconClock,
@@ -57,6 +58,7 @@ import {
   IconRefresh,
   IconSearch,
   IconSettings,
+  IconSquareCheck,
   IconTable,
   IconTrash,
   IconX,
@@ -178,6 +180,12 @@ import {
   dcirTracesForResult,
   type DcirResult,
 } from "./families/dcir/DcirPlotCard";
+import {
+  dcirSampleEntryKey,
+  dcirSampleKeysInRange,
+  filterAndSortDcirSampleItems,
+  type DcirSampleSort,
+} from "./families/dcir/dcirSampleListPolicy";
 import { normalizeProtocolGroups } from "./protocol/protocolGroupPolicy";
 import {
   ChargeabilityPlotCard,
@@ -229,6 +237,7 @@ import {
   plotPalette,
   cePalette,
   plotMode,
+  plotStylePresetFamilyForTab,
 } from "./plotting/plotStyle";
 import { paletteColorAt, paletteOverflowMode } from "./plotting/paletteDraft";
 import {
@@ -1557,6 +1566,64 @@ function selectionContextsForCell(
   );
 }
 
+function setCellVisibilityInDraft(
+  draft: AnalysisSpec,
+  groups: { id: number; cells: { id: number }[] }[],
+  cellId: number,
+  context: VisibilityContext,
+  visible: boolean,
+) {
+  const isHidden = draft.selection.exclusions.some((exclusion) =>
+    exclusionAppliesToContext(exclusion, cellId, context),
+  );
+
+  if (!visible) {
+    if (!isHidden) {
+      draft.selection.exclusions.push({
+        cell_id: cellId,
+        entry_kind: context.kind,
+        entry_ref_id: context.ref_id,
+        reason: null,
+        excluded_at: new Date().toISOString(),
+      });
+    }
+    return;
+  }
+
+  if (!isHidden) return;
+
+  const hadLegacyExclusion = draft.selection.exclusions.some(
+    (exclusion) =>
+      exclusion.cell_id === cellId &&
+      exclusion.entry_kind == null &&
+      exclusion.entry_ref_id == null,
+  );
+  draft.selection.exclusions = draft.selection.exclusions.filter((exclusion) => {
+    const legacy =
+      exclusion.cell_id === cellId &&
+      exclusion.entry_kind == null &&
+      exclusion.entry_ref_id == null;
+    return !legacy && !isExactContextExclusion(exclusion, cellId, context);
+  });
+
+  // Legacy plots hid a cell everywhere. Showing one occurrence converts the
+  // other occurrences to explicit scoped exclusions.
+  if (hadLegacyExclusion) {
+    for (const other of selectionContextsForCell(draft.selection.entries, groups, cellId)) {
+      if (other.kind === context.kind && other.ref_id === context.ref_id) continue;
+      if (!draft.selection.exclusions.some((exclusion) => isExactContextExclusion(exclusion, cellId, other))) {
+        draft.selection.exclusions.push({
+          cell_id: cellId,
+          entry_kind: other.kind,
+          entry_ref_id: other.ref_id,
+          reason: null,
+          excluded_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+}
+
 function SamplePanel({
   spec,
   groups,
@@ -1568,6 +1635,9 @@ function SamplePanel({
   onToggleCell,
   onToggleReplicate,
   onImportEntries,
+  bulkActionsEnabled = false,
+  onSetEntriesVisibility,
+  onRemoveEntries,
 }: {
   spec: AnalysisSpec;
   groups: {
@@ -1584,6 +1654,9 @@ function SamplePanel({
   onToggleCell: (cellId: number, context: VisibilityContext) => void;
   onToggleReplicate: (groupId: number) => void;
   onImportEntries: (entries: { kind: "cell" | "replicate_group"; ref_id: number }[]) => void;
+  bulkActionsEnabled?: boolean;
+  onSetEntriesVisibility?: (entries: SelectionEntry[], visible: boolean) => void;
+  onRemoveEntries?: (entries: SelectionEntry[]) => void;
 }) {
   const hiddenGroups = new Set(spec.selection.hidden_replicate_group_ids ?? []);
   const groupById = new Map(groups.map((g) => [g.id, g]));
@@ -1642,11 +1715,172 @@ function SamplePanel({
     );
 
   const [collapsed, setCollapsed] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortMode, setSortMode] = useState<DcirSampleSort>("name_asc");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [selectionAnchorKey, setSelectionAnchorKey] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState(false);
+
+  const dcirSampleItems = spec.selection.entries.map((entry) => {
+    if (entry.kind === "replicate_group") {
+      const group = groupById.get(entry.ref_id);
+      return {
+        key: dcirSampleEntryKey(entry),
+        label: group?.name ?? `replicate #${entry.ref_id}`,
+        visible: !hiddenGroups.has(entry.ref_id),
+        entry,
+      };
+    }
+
+    const context = { kind: "cell" as const, ref_id: entry.ref_id };
+    return {
+      key: dcirSampleEntryKey(entry),
+      label: cellById.get(entry.ref_id)?.name ?? `cell #${entry.ref_id}`,
+      visible: !spec.selection.exclusions.some((exclusion) =>
+        exclusionAppliesToContext(exclusion, entry.ref_id, context),
+      ),
+      entry,
+    };
+  });
+  const filteredDcirSampleItems = filterAndSortDcirSampleItems(
+    dcirSampleItems,
+    searchTerm,
+    sortMode,
+  );
+  const shownDcirKeys = filteredDcirSampleItems.map((item) => item.key);
+  const selectedShownCount = shownDcirKeys.filter((key) => selectedKeys.has(key)).length;
+  const allShownSelected = shownDcirKeys.length > 0 && selectedShownCount === shownDcirKeys.length;
+  const someShownSelected = selectedShownCount > 0 && !allShownSelected;
+  const dcirSortOptions = [
+    { value: "name_asc", label: "A/Z \u2191" },
+    { value: "name_desc", label: "A/Z \u2193" },
+    { value: "visible_first_asc", label: "\u{1F441} \u2191" },
+    { value: "visible_first_desc", label: "\u{1F441} \u2193" },
+  ];
+  const selectedDcirEntries = spec.selection.entries.filter((entry) =>
+    selectedKeys.has(dcirSampleEntryKey(entry)),
+  );
+  const entryIndexByKey = new Map(
+    spec.selection.entries.map((entry, index) => [dcirSampleEntryKey(entry), index]),
+  );
+  const entriesForRender = bulkActionsEnabled
+    ? filteredDcirSampleItems.map((item) => ({
+        entry: item.entry,
+        index: entryIndexByKey.get(item.key) ?? -1,
+      }))
+    : spec.selection.entries.map((entry, index) => ({ entry, index }));
+
+  useEffect(() => {
+    if (bulkActionsEnabled) return;
+    setSelectionMode(false);
+    setSelectedKeys(new Set());
+    setSelectionAnchorKey(null);
+    setPendingDelete(false);
+    setSearchTerm("");
+    setSortMode("name_asc");
+  }, [bulkActionsEnabled]);
+
+  useEffect(() => {
+    const liveKeys = new Set(spec.selection.entries.map(dcirSampleEntryKey));
+    setSelectedKeys((current) => {
+      const next = new Set([...current].filter((key) => liveKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+    setSelectionAnchorKey((current) => (current && liveKeys.has(current) ? current : null));
+  }, [spec.selection.entries]);
+
+  useEffect(() => {
+    if (selectedKeys.size === 0 && pendingDelete) setPendingDelete(false);
+  }, [pendingDelete, selectedKeys.size]);
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((current) => {
+      const next = !current;
+      if (!next) {
+        setSelectedKeys(new Set());
+        setSelectionAnchorKey(null);
+        setPendingDelete(false);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectedEntry = (
+    entry: SelectionEntry,
+    checked: boolean,
+    shiftKey = false,
+  ) => {
+    const key = dcirSampleEntryKey(entry);
+    const keysToUpdate = shiftKey
+      ? dcirSampleKeysInRange(filteredDcirSampleItems, selectionAnchorKey, key)
+      : [key];
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      keysToUpdate.forEach((rangeKey) => {
+        if (checked) next.add(rangeKey);
+        else next.delete(rangeKey);
+      });
+      return next;
+    });
+    setSelectionAnchorKey(key);
+    setPendingDelete(false);
+  };
+
+  const toggleSelectAllShown = () => {
+    if (shownDcirKeys.length === 0) return;
+    const shouldSelect = !allShownSelected;
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      shownDcirKeys.forEach((key) => {
+        if (shouldSelect) next.add(key);
+        else next.delete(key);
+      });
+      return next;
+    });
+    setSelectionAnchorKey(shouldSelect ? shownDcirKeys[shownDcirKeys.length - 1] : null);
+    setPendingDelete(false);
+  };
+
+  const applySelectedVisibility = (visible: boolean) => {
+    if (selectedDcirEntries.length === 0 || !onSetEntriesVisibility) return;
+    onSetEntriesVisibility(selectedDcirEntries, visible);
+    setPendingDelete(false);
+  };
+
+  const confirmSelectedDelete = () => {
+    if (selectedDcirEntries.length === 0 || !onRemoveEntries) return;
+    onRemoveEntries(selectedDcirEntries);
+    setSelectedKeys(new Set());
+    setSelectionAnchorKey(null);
+    setPendingDelete(false);
+    setSelectionMode(false);
+  };
+
+  const toggleCellVisibilityOnDoubleClick = (
+    event: ReactMouseEvent<HTMLElement>,
+    cellId: number,
+    context: VisibilityContext,
+  ) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("button, input, [role='button']")
+    ) {
+      return;
+    }
+    onToggleCell(cellId, context);
+  };
 
   return (
     <Paper p="sm" withBorder>
-      <Group justify="space-between" mb={collapsed ? 0 : "xs"} wrap="nowrap">
-        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+      <Group
+        justify="space-between"
+        gap="xs"
+        mb={collapsed ? 0 : "xs"}
+        wrap="nowrap"
+        style={{ minWidth: 0 }}
+      >
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: "1 1 auto" }}>
           <ActionIcon
             variant="subtle"
             color="gray"
@@ -1656,18 +1890,34 @@ function SamplePanel({
           >
             {collapsed ? <IconChevronRight size={16} /> : <IconChevronDown size={16} />}
           </ActionIcon>
-          <Text fw={700} size="sm">
+          <Text fw={700} size="sm" truncate style={{ minWidth: 0, flex: "0 1 auto" }}>
             Analysis samples
           </Text>
           {spec.selection.entries.length > 0 && (
-            <Badge size="xs" variant="light" color="gray">
+            <Badge size="xs" variant="light" color="gray" style={{ flex: "0 0 auto" }}>
               {spec.selection.entries.length}
             </Badge>
           )}
         </Group>
-        <Button size="compact-xs" leftSection={<IconPlus size={12} />} onClick={onAdd}>
-          Add
-        </Button>
+        <Group gap="xs" wrap="nowrap" style={{ flex: "0 0 auto" }}>
+          {bulkActionsEnabled && spec.selection.entries.length > 0 && (
+            <Tooltip label={selectionMode ? "Exit sample selection mode" : "Select samples"}>
+              <ActionIcon
+                size="sm"
+                variant={selectionMode ? "light" : "subtle"}
+                color={selectionMode ? "var(--mantine-primary-color-6)" : "gray"}
+                aria-pressed={selectionMode}
+                aria-label={selectionMode ? "Exit sample selection mode" : "Select samples"}
+                onClick={toggleSelectionMode}
+              >
+                {selectionMode ? <IconSquareCheck size={16} /> : <IconCheckbox size={16} />}
+              </ActionIcon>
+            </Tooltip>
+          )}
+          <Button size="compact-xs" leftSection={<IconPlus size={12} />} onClick={onAdd}>
+            Add
+          </Button>
+        </Group>
       </Group>
       <Collapse in={!collapsed}>
       {spec.selection.entries.length === 0 ? (
@@ -1676,43 +1926,192 @@ function SamplePanel({
         </Text>
       ) : (
         <Stack gap="xs">
-          {spec.selection.entries.map((entry, index) => {
+          {bulkActionsEnabled && (
+            <>
+              <Group gap="xs" wrap="nowrap" align="end">
+                <TextInput
+                  size="xs"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.currentTarget.value)}
+                  placeholder="Search samples"
+                  leftSection={<IconSearch size={14} />}
+                  aria-label="Search analysis samples"
+                  style={{ flex: "1 1 auto", minWidth: 0 }}
+                />
+                <Select
+                  size="xs"
+                  value={sortMode}
+                  onChange={(value) => value && setSortMode(value as DcirSampleSort)}
+                  data={dcirSortOptions}
+                  aria-label="Order analysis samples by name or visibility"
+                  allowDeselect={false}
+                  style={{ flex: "0 0 112px", width: 112, minWidth: 0 }}
+                />
+              </Group>
+              {selectionMode && (
+                <Paper
+                  withBorder
+                  radius="sm"
+                  p="xs"
+                  bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+                >
+                  <Group gap={4} align="center" wrap="wrap">
+                    <Checkbox
+                      size="xs"
+                      radius="xl"
+                      label="All"
+                      checked={allShownSelected}
+                      indeterminate={someShownSelected}
+                      disabled={shownDcirKeys.length === 0}
+                      onChange={toggleSelectAllShown}
+                      aria-label={
+                        allShownSelected
+                          ? "Deselect all shown samples"
+                          : "Select all shown samples"
+                      }
+                      style={{ flex: "0 0 auto" }}
+                    />
+                    <Button
+                      size="compact-xs"
+                      variant="default"
+                      leftSection={<IconEye size={13} />}
+                      disabled={selectedKeys.size === 0}
+                      onClick={() => applySelectedVisibility(true)}
+                      style={{ flex: "1 1 72px" }}
+                    >
+                      Show
+                    </Button>
+                    <Button
+                      size="compact-xs"
+                      variant="default"
+                      leftSection={<IconEyeOff size={13} />}
+                      disabled={selectedKeys.size === 0}
+                      onClick={() => applySelectedVisibility(false)}
+                      style={{ flex: "1 1 72px" }}
+                    >
+                      Hide
+                    </Button>
+                    <Button
+                      size="compact-xs"
+                      variant="default"
+                      color="red"
+                      leftSection={<IconTrash size={13} />}
+                      disabled={selectedKeys.size === 0}
+                      onClick={() => setPendingDelete(true)}
+                      style={{ flex: "1 1 72px" }}
+                    >
+                      Delete
+                    </Button>
+                  </Group>
+                </Paper>
+              )}
+              {selectionMode && pendingDelete && selectedKeys.size > 0 && (
+                <Alert color="red" variant="light" py="xs">
+                  <Group gap="xs" justify="space-between" align="flex-start" wrap="wrap">
+                    <Box style={{ minWidth: 0, flex: "1 1 150px" }}>
+                      <Text size="xs" fw={600}>
+                        Delete {selectedKeys.size} selected sample{selectedKeys.size === 1 ? "" : "s"}?
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={2}>
+                        Only this analysis membership is removed.
+                      </Text>
+                    </Box>
+                    <Group gap={4} wrap="wrap" style={{ flex: "0 1 auto" }}>
+                      <Button
+                        size="compact-xs"
+                        variant="default"
+                        onClick={() => setPendingDelete(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button size="compact-xs" color="red" onClick={confirmSelectedDelete}>
+                        Delete selected
+                      </Button>
+                    </Group>
+                  </Group>
+                </Alert>
+              )}
+            </>
+          )}
+          {bulkActionsEnabled && filteredDcirSampleItems.length === 0 ? (
+            <Text size="xs" c="dimmed" ta="center" py={"xs"}>
+              No matching samples.
+            </Text>
+          ) : entriesForRender.map(({ entry, index }) => {
             if (entry.kind === "replicate_group") {
               const group = groupById.get(entry.ref_id);
               const groupHidden = hiddenGroups.has(entry.ref_id);
+              const selected = selectedKeys.has(dcirSampleEntryKey(entry));
               return (
-                <Box key={`${entry.kind}-${entry.ref_id}-${index}`}>
-                  <Group justify="space-between" gap={6} wrap="nowrap">
-                    <Box style={{ minWidth: 0 }}>
-                      <Text size="sm" fw={700} c={groupHidden ? "dimmed" : undefined} truncate>
-                        {group?.name ?? `replicate #${entry.ref_id}`}
-                      </Text>
-                      <Text size="10px" c="dimmed" tt="uppercase">
-                        Replicate
-                      </Text>
-                    </Box>
-                    <Group gap={2} wrap="nowrap">
-                      <Tooltip label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}>
-                        <ActionIcon
+                <Box key={`${entry.kind}-${entry.ref_id}`}>
+                  <Group
+                    justify="space-between"
+                    gap={6}
+                    wrap="nowrap"
+                    bg={selected ? "var(--mantine-primary-color-light)" : undefined}
+                    px={4}
+                    py={2}
+                    style={{ borderRadius: "var(--mantine-radius-sm)" }}
+                  >
+                    <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                      {selectionMode && (
+                        <Checkbox
+                          size="xs"
+                          radius="xl"
+                          checked={selected}
+                          style={{ flex: "0 0 auto" }}
+                          onChange={(event) => {
+                            const nativeEvent = event.nativeEvent as Event & { shiftKey?: boolean };
+                            toggleSelectedEntry(
+                              entry,
+                              event.currentTarget.checked,
+                              Boolean(nativeEvent.shiftKey),
+                            );
+                          }}
+                          aria-label={`Select ${group?.name ?? `replicate #${entry.ref_id}`}`}
+                        />
+                      )}
+                      <Box style={{ minWidth: 0, flex: "1 1 auto" }}>
+                        <Text
                           size="sm"
-                          variant="subtle"
-                          color={groupHidden ? "gray" : "var(--mantine-primary-color-6)"}
-                          onClick={() => onToggleReplicate(entry.ref_id)}
-                          aria-label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}
+                          fw={700}
+                          c={groupHidden ? "dimmed" : undefined}
+                          truncate
+                          title={group?.name ?? `replicate #${entry.ref_id}`}
                         >
-                          {groupHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Remove replicate from this analysis">
-                        <ActionIcon
-                          size="sm"
-                          variant="subtle"
-                          color="red"
-                          onClick={() => onRemoveEntry(index)}
-                        >
-                          <IconX size={14} />
-                        </ActionIcon>
-                      </Tooltip>
+                          {group?.name ?? `replicate #${entry.ref_id}`}
+                        </Text>
+                        <Text size="10px" c="dimmed" tt="uppercase">
+                          Replicate
+                        </Text>
+                      </Box>
+                    </Group>
+                    <Group gap={2} wrap="nowrap" style={{ flex: "0 0 auto" }}>
+                      {!selectionMode && (
+                        <Tooltip label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}>
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color={groupHidden ? "gray" : "var(--mantine-primary-color-6)"}
+                            onClick={() => onToggleReplicate(entry.ref_id)}
+                            aria-label={groupHidden ? "Show replicate in plot" : "Hide replicate from plot"}
+                          >
+                            {groupHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                      {!selectionMode && (
+                        <Tooltip label="Remove replicate from this analysis">
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => onRemoveEntry(index)}
+                          >
+                            <IconX size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
                     </Group>
                   </Group>
                   <Stack gap={2} mt={4} pl="md">
@@ -1722,29 +2121,50 @@ function SamplePanel({
                         exclusionAppliesToContext(exclusion, cell.id, context)
                       );
                       return (
-                        <Group key={cell.id} justify="space-between" gap={6} wrap="nowrap">
-                          <CellHoverCard cell={cellFactsById.get(cell.id) ?? cell} result={result}>
-                            <Text size="xs" c={groupHidden || isHidden ? "dimmed" : undefined} truncate>
-                              {cell.name}
-                            </Text>
-                          </CellHoverCard>
+                        <Group
+                          key={cell.id}
+                          justify="space-between"
+                          gap={6}
+                          wrap="nowrap"
+                          onDoubleClick={
+                            selectionMode && !groupHidden
+                              ? (event) =>
+                                  toggleCellVisibilityOnDoubleClick(event, cell.id, context)
+                              : undefined
+                          }
+                          style={{ cursor: selectionMode && !groupHidden ? "pointer" : undefined }}
+                        >
+                          <Box style={{ minWidth: 0, flex: "1 1 auto" }}>
+                            <CellHoverCard cell={cellFactsById.get(cell.id) ?? cell} result={result}>
+                              <Text
+                                size="xs"
+                                c={groupHidden || isHidden ? "dimmed" : undefined}
+                                truncate
+                                title={cell.name}
+                              >
+                                {cell.name}
+                              </Text>
+                            </CellHoverCard>
+                          </Box>
                           <RelatedAnalysesPopover
                             related={relatedFor(cell.id)}
                             onImport={onImportEntries}
                             label={`Other analyses using ${cell.name}`}
                           />
-                          <Tooltip label={groupHidden ? "Show the replicate before changing member visibility" : isHidden ? "Show in plot" : "Hide from plot"}>
-                            <ActionIcon
-                              size="xs"
-                              variant="subtle"
-                              color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
-                              disabled={groupHidden}
-                              onClick={() => onToggleCell(cell.id, context)}
-                              aria-label={`${isHidden ? "Show" : "Hide"} ${cell.name} in replicate ${group?.name ?? entry.ref_id}`}
-                            >
-                              {isHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
-                            </ActionIcon>
-                          </Tooltip>
+                          {!selectionMode && (
+                            <Tooltip label={groupHidden ? "Show the replicate before changing member visibility" : isHidden ? "Show in plot" : "Hide from plot"}>
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
+                                disabled={groupHidden}
+                                onClick={() => onToggleCell(cell.id, context)}
+                                aria-label={`${isHidden ? "Show" : "Hide"} ${cell.name} in replicate ${group?.name ?? entry.ref_id}`}
+                              >
+                                {isHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
                         </Group>
                       );
                     })}
@@ -1757,52 +2177,107 @@ function SamplePanel({
             const isHidden = spec.selection.exclusions.some((exclusion) =>
               exclusionAppliesToContext(exclusion, entry.ref_id, context)
             );
+            const selected = selectedKeys.has(dcirSampleEntryKey(entry));
             return (
-              <Group key={`${entry.kind}-${entry.ref_id}-${index}`} justify="space-between" gap={6} wrap="nowrap">
-                <CellHoverCard
-                  cell={cellFactsById.get(entry.ref_id) ?? cell ?? { id: entry.ref_id, name: `cell #${entry.ref_id}` }}
-                  result={result}
-                >
-                  <Box style={{ minWidth: 0 }}>
-                    <Text size="sm" fw={700} truncate>
-                      {cell?.name ?? `cell #${entry.ref_id}`}
-                    </Text>
-                    <Text size="10px" c="dimmed" tt="uppercase">
-                      Cell
-                    </Text>
+              <Group
+                key={`${entry.kind}-${entry.ref_id}`}
+                justify="space-between"
+                gap={6}
+                wrap="nowrap"
+                bg={selected ? "var(--mantine-primary-color-light)" : undefined}
+                px={4}
+                py={2}
+                onDoubleClick={
+                  selectionMode
+                    ? (event) =>
+                        toggleCellVisibilityOnDoubleClick(event, entry.ref_id, context)
+                    : undefined
+                }
+                style={{
+                  borderRadius: "var(--mantine-radius-sm)",
+                  cursor: selectionMode ? "pointer" : undefined,
+                }}
+              >
+                <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                  {selectionMode && (
+                    <Checkbox
+                      size="xs"
+                      radius="xl"
+                      checked={selected}
+                      style={{ flex: "0 0 auto" }}
+                      onChange={(event) => {
+                        const nativeEvent = event.nativeEvent as Event & { shiftKey?: boolean };
+                        toggleSelectedEntry(
+                          entry,
+                          event.currentTarget.checked,
+                          Boolean(nativeEvent.shiftKey),
+                        );
+                      }}
+                      aria-label={`Select ${cell?.name ?? `cell #${entry.ref_id}`}`}
+                    />
+                  )}
+                  <Box style={{ minWidth: 0, flex: "1 1 auto" }}>
+                    <CellHoverCard
+                      cell={cellFactsById.get(entry.ref_id) ?? cell ?? { id: entry.ref_id, name: `cell #${entry.ref_id}` }}
+                      result={result}
+                    >
+                      <Box style={{ minWidth: 0 }}>
+                        <Text
+                          size="sm"
+                          fw={700}
+                          c={isHidden ? "dimmed" : undefined}
+                          truncate
+                          title={cell?.name ?? `cell #${entry.ref_id}`}
+                        >
+                          {cell?.name ?? `cell #${entry.ref_id}`}
+                        </Text>
+                        <Text size="10px" c="dimmed" tt="uppercase">
+                          Cell
+                        </Text>
+                      </Box>
+                    </CellHoverCard>
                   </Box>
-                </CellHoverCard>
-                <Group gap={2} wrap="nowrap">
+                </Group>
+                <Group gap={2} wrap="nowrap" style={{ flex: "0 0 auto" }}>
                   <RelatedAnalysesPopover
                     related={relatedFor(entry.ref_id)}
                     onImport={onImportEntries}
                     label={`Other analyses using ${cell?.name ?? entry.ref_id}`}
                   />
-                  <Tooltip label={isHidden ? "Show in plot" : "Hide from plot"}>
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
-                      onClick={() => onToggleCell(entry.ref_id, context)}
-                      aria-label={`${isHidden ? "Show" : "Hide"} standalone cell ${cell?.name ?? entry.ref_id}`}
-                    >
-                      {isHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label="Remove cell from this analysis">
-                    <ActionIcon
-                      size="sm"
-                      variant="subtle"
-                      color="red"
-                      onClick={() => onRemoveEntry(index)}
-                    >
-                      <IconX size={14} />
-                    </ActionIcon>
-                  </Tooltip>
+                  {!selectionMode && (
+                    <Tooltip label={isHidden ? "Show in plot" : "Hide from plot"}>
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color={isHidden ? "gray" : "var(--mantine-primary-color-6)"}
+                        onClick={() => onToggleCell(entry.ref_id, context)}
+                        aria-label={`${isHidden ? "Show" : "Hide"} standalone cell ${cell?.name ?? entry.ref_id}`}
+                      >
+                        {isHidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                  {!selectionMode && (
+                    <Tooltip label="Remove cell from this analysis">
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color="red"
+                        onClick={() => onRemoveEntry(index)}
+                      >
+                        <IconX size={14} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
                 </Group>
               </Group>
             );
           })}
+          {bulkActionsEnabled && searchTerm.trim() && (
+            <Text size="xs" c="dimmed">
+              {`${filteredDcirSampleItems.length} of ${spec.selection.entries.length} samples match`}
+            </Text>
+          )}
         </Stack>
       )}
       </Collapse>
@@ -2651,52 +3126,11 @@ function AnalysisEditorView({
   const plotUpdating = Boolean(compute.isFetching && rendered && activeTab === "cycles");
 
   const toggleCellVisibility = (cellId: number, context: VisibilityContext) => {
-    const groups = sampleGroups;
     update((s) => {
       const isHidden = s.selection.exclusions.some((exclusion) =>
-        exclusionAppliesToContext(exclusion, cellId, context)
+        exclusionAppliesToContext(exclusion, cellId, context),
       );
-      if (!isHidden) {
-        s.selection.exclusions.push({
-          cell_id: cellId,
-          entry_kind: context.kind,
-          entry_ref_id: context.ref_id,
-          reason: null,
-          excluded_at: new Date().toISOString(),
-        });
-        return;
-      }
-
-      const hadLegacyExclusion = s.selection.exclusions.some(
-        (exclusion) =>
-          exclusion.cell_id === cellId &&
-          exclusion.entry_kind == null &&
-          exclusion.entry_ref_id == null
-      );
-      s.selection.exclusions = s.selection.exclusions.filter((exclusion) => {
-        const legacy =
-          exclusion.cell_id === cellId &&
-          exclusion.entry_kind == null &&
-          exclusion.entry_ref_id == null;
-        return !legacy && !isExactContextExclusion(exclusion, cellId, context);
-      });
-
-      // Legacy plots hid a cell everywhere. Showing one occurrence converts
-      // the other occurrences to explicit scoped exclusions.
-      if (hadLegacyExclusion) {
-        for (const other of selectionContextsForCell(s.selection.entries, groups, cellId)) {
-          if (other.kind === context.kind && other.ref_id === context.ref_id) continue;
-          if (!s.selection.exclusions.some((exclusion) => isExactContextExclusion(exclusion, cellId, other))) {
-            s.selection.exclusions.push({
-              cell_id: cellId,
-              entry_kind: other.kind,
-              entry_ref_id: other.ref_id,
-              reason: null,
-              excluded_at: new Date().toISOString(),
-            });
-          }
-        }
-      }
+      setCellVisibilityInDraft(s, sampleGroups, cellId, context, !isHidden);
     });
   };
 
@@ -2706,6 +3140,31 @@ function AnalysisEditorView({
       s.selection.hidden_replicate_group_ids = hidden.includes(groupId)
         ? hidden.filter((id) => id !== groupId)
         : [...hidden, groupId];
+    });
+  };
+
+  const setAnalysisEntriesVisibility = (entries: SelectionEntry[], visible: boolean) => {
+    update((s) => {
+      let hiddenGroups = s.selection.hidden_replicate_group_ids ?? [];
+      for (const entry of entries) {
+        if (entry.kind === "replicate_group") {
+          hiddenGroups = visible
+            ? hiddenGroups.filter((id) => id !== entry.ref_id)
+            : hiddenGroups.includes(entry.ref_id)
+              ? hiddenGroups
+              : [...hiddenGroups, entry.ref_id];
+          continue;
+        }
+
+        setCellVisibilityInDraft(
+          s,
+          sampleGroups,
+          entry.ref_id,
+          { kind: "cell", ref_id: entry.ref_id },
+          visible,
+        );
+      }
+      s.selection.hidden_replicate_group_ids = hiddenGroups;
     });
   };
 
@@ -2733,20 +3192,35 @@ function AnalysisEditorView({
     });
   };
 
-  const removeAnalysisEntry = (index: number) => {
+  const removeAnalysisEntries = (entries: SelectionEntry[]) => {
+    const keys = new Set(entries.map(dcirSampleEntryKey));
     update((s) => {
-      const [removed] = s.selection.entries.splice(index, 1);
-      if (!removed) return;
+      const removed = s.selection.entries.filter((entry) => keys.has(dcirSampleEntryKey(entry)));
+      if (removed.length === 0) return;
+      s.selection.entries = s.selection.entries.filter(
+        (entry) => !keys.has(dcirSampleEntryKey(entry)),
+      );
       s.selection.exclusions = s.selection.exclusions.filter(
         (exclusion) =>
-          exclusion.entry_kind !== removed.kind || exclusion.entry_ref_id !== removed.ref_id
+          !removed.some(
+            (entry) =>
+              exclusion.entry_kind === entry.kind && exclusion.entry_ref_id === entry.ref_id,
+          ),
       );
-      if (removed.kind === "replicate_group") {
-        s.selection.hidden_replicate_group_ids = (
-          s.selection.hidden_replicate_group_ids ?? []
-        ).filter((id) => id !== removed.ref_id);
-      }
+      const removedGroupIds = new Set(
+        removed
+          .filter((entry) => entry.kind === "replicate_group")
+          .map((entry) => entry.ref_id),
+      );
+      s.selection.hidden_replicate_group_ids = (
+        s.selection.hidden_replicate_group_ids ?? []
+      ).filter((id) => !removedGroupIds.has(id));
     });
+  };
+
+  const removeAnalysisEntry = (index: number) => {
+    const entry = spec.selection.entries[index];
+    if (entry) removeAnalysisEntries([entry]);
   };
 
   const saveProtocolSegment = (segment: ProtocolSegment) => {
@@ -3095,12 +3569,7 @@ function AnalysisEditorView({
     if (spec && !(hasUnsavedPlot && activeSavedPlotId === null)) {
       normalWorkspaceRef.current = captureNormalWorkspace(spec, activeTab);
     }
-    const family =
-      activeTab === "time_capacity"
-        ? "time_capacity"
-        : activeTab === "cycles"
-          ? "cycles"
-          : "all";
+    const family = plotStylePresetFamilyForTab(activeTab);
     const defaults = plotPresetQuery.data?.presets ?? [];
     const preset =
       defaults.find(
@@ -3333,6 +3802,9 @@ function AnalysisEditorView({
         onToggleCell={toggleCellVisibility}
         onToggleReplicate={toggleReplicateVisibility}
         onImportEntries={importAnalysisEntries}
+        bulkActionsEnabled={activeTab === "dcir"}
+        onSetEntriesVisibility={setAnalysisEntriesVisibility}
+        onRemoveEntries={removeAnalysisEntries}
       />
       {(["cycles", "steps", "recap", "time_capacity"] as AnalysisTabKey[]).includes(activeTab) &&
         !hasMetadataOnlySources &&

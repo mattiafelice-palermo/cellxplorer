@@ -98,6 +98,7 @@ export function RelatedAnalysesPopover({
             variant="subtle"
             color={related.length === 0 ? "gray" : "var(--mantine-primary-color-6)"}
             disabled={related.length === 0}
+            style={related.length === 0 ? { backgroundColor: "transparent" } : undefined}
             onClick={() => setOpened((v) => !v)}
             aria-label={label}
           >

@@ -281,6 +281,12 @@ plot, thumbnail, image export, portable figure, and CSV/XLSX export must describ
 figure and visibility state. A new plot tab is incomplete if only its on-screen Plotly figure
 works.
 
+Simple single-axis families (DCIR, C-rate, chargeability, and steps) use
+`plotting/plotLayout.ts:simpleCartesianLayout` and pass the final rendered traces into it. This
+keeps manual ranges, tick modes, title standoffs, legend placement, dynamic margins, exports, and
+saved previews on the same path. Numeric X controls should be hidden when a family deliberately
+uses categorical X positions.
+
 ## Feedback and state
 
 ### Loading

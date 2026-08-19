@@ -48,11 +48,7 @@ import {
   type SeriesStyleOverride,
   type SeriesStyleRule,
 } from "../../../../../api";
-import {
-  axisTitleFont,
-  plotAxisStyle,
-  plotLayoutStyle,
-} from "../../plotting/plotLayout";
+import { simpleCartesianLayout } from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
@@ -256,7 +252,7 @@ export function dcirTracesForResult(
         markerSymbol: style.marker_symbol,
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
-        opacity: 1,
+        opacity: style.individual_opacity,
       };
       const resolved = resolveSeriesStyle(
         baseStyle,
@@ -291,25 +287,20 @@ export function dcirTracesForResult(
     .filter((trace): trace is Plotly.Data => trace !== null);
 }
 
-export function dcirLayoutForSpec(spec: AnalysisSpec): Partial<Plotly.Layout> {
+export function dcirLayoutForSpec(
+  spec: AnalysisSpec,
+  traces: Plotly.Data[] = [],
+): Partial<Plotly.Layout> {
   const view = dcirViewFor(spec);
   const style = currentPlotStyle(spec, "dcir");
   const yTitle = view.quantity === "relative" ? "DCIR change from first (%)" : "DCIR (mΩ)";
   const defaultXTitle = dcirXTitle(view.x_axis);
-  return {
-    ...plotLayoutStyle(style, spec),
-    margin: { l: 72, r: 20, t: 12, b: 56 },
-    xaxis: {
-      ...plotAxisStyle(style, { axis: style.x_axis }),
-      title: { text: style.x_title ?? defaultXTitle, font: axisTitleFont(style) },
-    },
-    yaxis: {
-      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
-      title: { text: style.y_title ?? yTitle, font: axisTitleFont(style) },
-    },
-    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
-    hovermode: "closest",
-  };
+  return simpleCartesianLayout(style, spec, {
+    traces,
+    xTitle: defaultXTitle,
+    yTitle,
+    baseMargin: { l: 72, r: 20, t: 12, b: 56 },
+  });
 }
 
 export function useDcirResult(
@@ -1146,7 +1137,7 @@ export function DcirPlotCard({
     () => (result.data ? dcirTracesForResult(result.data, spec) : []),
     [result.data, spec]
   );
-  const layout = useMemo(() => dcirLayoutForSpec(spec), [spec]);
+  const layout = useMemo(() => dcirLayoutForSpec(spec, traces), [spec, traces]);
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
     result.isLoading,
@@ -1192,7 +1183,7 @@ export function DcirPlotCard({
         },
       };
       const data = decimatePreviewTraces(dcirTracesForResult(result.data, draftSpec));
-      return { data, layout: dcirLayoutForSpec(draftSpec) };
+      return { data, layout: dcirLayoutForSpec(draftSpec, data) };
     },
     [result.data, spec],
   );

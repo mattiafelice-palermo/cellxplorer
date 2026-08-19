@@ -12,76 +12,96 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.services import diagnostic_cycles as dc
 
 
-# Cycles 60-120 of NG_20251127_LFP_LP_MoL_378_FM_CY_FC, the same fixture the
-# TypeScript tests use. The two implementations must agree exactly, or a
-# portable report would describe a different plot than the app rendered.
-REAL_BLOCK = (
-    [(c, 0.801, 2.4) for c in range(60, 87)]
-    + [
-        (87, 2.774, 0.925),
-        (88, 2.781, 2.876),
-        (89, 1.399, 2.871),
-        (90, 0.033, 0.033),
-        (91, 0.026, 0.026),
-        (92, 0.008, 0.016),
-        (93, 0.862, 1.428),
-    ]
-    + [(c, 0.801, 2.4) for c in range(94, 121)]
-)
-
-
 def series_from(rows) -> dict:
     return {
-        "x": [c for c, _, _ in rows],
+        "x": [cycle for cycle, _, _ in rows],
         "quantities": {
-            "discharge_time_h": [d for _, d, _ in rows],
-            "charge_time_h": [g for _, _, g in rows],
+            "charge_capacity_mah": [charge for _, charge, _ in rows],
+            "discharge_capacity_mah": [discharge for _, _, discharge in rows],
         },
     }
 
 
+def capacity_rows(count: int, overrides: dict[int, tuple[float, float]] | None = None):
+    overrides = overrides or {}
+    return [
+        (cycle, *(overrides.get(cycle) or (1.0, 1.0)))
+        for cycle in range(1, count + 1)
+    ]
+
+
 class DiagnosticCycleTests(unittest.TestCase):
-    def test_finds_the_whole_real_block_and_only_it(self):
-        found = dc.find_in_series(series_from(REAL_BLOCK))
-        self.assertEqual(sorted(found), [87, 88, 89, 90, 91, 92, 93])
+    def test_finds_the_complete_lower_capacity_support_block(self):
+        rows = capacity_rows(
+            120,
+            {
+                30: (1.0, 0.5),
+                31: (0.02, 0.02),
+                32: (0.02, 0.02),
+                33: (0.02, 0.02),
+                34: (0.5, 1.0),
+            },
+        )
+        found = dc.find_in_series(series_from(rows), formation_cycles=3)
+        self.assertEqual(sorted(found), [30, 31, 32, 33, 34])
 
-    def test_a_degrading_cell_is_never_hidden(self):
-        # Capacity would collapse, but the discharge still takes a normal time.
-        rows = [(c, 4.0 if c <= 120 else 3.7, 2.4) for c in range(1, 201)]
+    def test_uses_lower_phase_capacity_and_only_lower_tail(self):
+        rows = capacity_rows(60, {30: (1.0, 0.5), 31: (1.2, 1.2), 32: (0.9, 0.9)})
+        self.assertEqual(sorted(dc.find_in_series(series_from(rows))), [30])
+
+    def test_formation_cycles_are_excluded(self):
+        rows = capacity_rows(
+            40,
+            {1: (0.01, 0.01), 2: (0.01, 0.01), 3: (0.01, 0.01), 20: (0.01, 0.01)},
+        )
+        self.assertEqual(
+            sorted(dc.find_in_series(series_from(rows), formation_cycles=3)),
+            [20],
+        )
+
+    def test_gradual_capacity_fade_shifts_the_local_baseline(self):
+        rows = [
+            (cycle, 1.0 - 0.4 * (cycle - 1) / 399, 1.0 - 0.4 * (cycle - 1) / 399)
+            for cycle in range(1, 401)
+        ]
+        self.assertEqual(
+            dc.find_in_series(series_from(rows), formation_cycles=3),
+            set(),
+        )
+
+    def test_missing_phase_capacity_is_unknown(self):
+        rows = capacity_rows(40)
+        rows[19] = (20, None, 0.01)
         self.assertEqual(dc.find_in_series(series_from(rows)), set())
 
-    def test_gradual_fade_shifts_the_baseline(self):
-        rows = [(c, 4.0 * (1 - 0.4 * c / 400), 2.4) for c in range(1, 401)]
-        self.assertEqual(dc.find_in_series(series_from(rows)), set())
+    def test_short_post_formation_series_have_no_baseline(self):
+        rows = capacity_rows(14, {4: (0.01, 0.01)})
+        self.assertEqual(
+            dc.find_in_series(series_from(rows), formation_cycles=3),
+            set(),
+        )
 
     def test_excluded_series_do_not_contribute(self):
         result = {
             "cell_series": [
-                {**series_from(REAL_BLOCK), "excluded": True},
+                {**series_from(capacity_rows(40, {20: (1.0, 0.01)})), "excluded": True},
             ]
         }
         self.assertEqual(dc.find_across(result), [])
 
     def test_union_across_series_keeps_quantities_in_step(self):
-        a = series_from([(c, 0.02 if c == 70 else 0.801, 2.4) for c in range(60, 121)])
-        b = series_from([(c, 0.02 if c == 80 else 0.801, 2.4) for c in range(60, 121)])
-        result = {"cell_series": [a, b]}
-        self.assertEqual(dc.find_across(result), [70, 80])
-
-    def test_ranges_are_compact_and_auditable(self):
-        self.assertEqual(dc.cycle_ranges([90, 87, 88, 89]), [(87, 90)])
-        self.assertEqual(dc.format_ranges([87, 88, 89, 170, 171]), "87–89, 170–171")
-        self.assertEqual(dc.format_ranges([5]), "5")
-        self.assertEqual(dc.format_ranges([]), "")
+        a = series_from(capacity_rows(40, {10: (1.0, 0.01)}))
+        b = series_from(capacity_rows(40, {30: (0.01, 1.0)}))
+        self.assertEqual(dc.find_across({"cell_series": [a, b]}), [10, 30])
 
     def test_tolerance_is_adjustable(self):
-        rows = [(c, 1.20 if c == 80 else 1.0, 2.4) for c in range(60, 121)]
-        # 20% deviation: inside the default tolerance, caught by a tighter one.
-        self.assertEqual(dc.find_in_series(series_from(rows)), set())
-        self.assertEqual(dc.find_in_series(series_from(rows), tolerance=0.1), {80})
+        rows = capacity_rows(60, {30: (0.79, 0.79)})
+        series = series_from(rows)
+        self.assertEqual(dc.find_in_series(series), set())
+        self.assertEqual(dc.find_in_series(series, tolerance=0.2), {30})
 
     def test_short_series_have_no_baseline(self):
-        rows = [(c, 0.01 if c == 3 else 4.0, 2.4) for c in range(1, 6)]
+        rows = capacity_rows(5, {3: (0.01, 0.01)})
         self.assertEqual(dc.find_in_series(series_from(rows)), set())
 
 

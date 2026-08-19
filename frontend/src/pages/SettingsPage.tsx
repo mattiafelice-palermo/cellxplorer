@@ -48,6 +48,7 @@ import {
   type DownloadSettings,
   type ElectrodeAreaPreset,
   type ElectrodeAreaPresetSettings,
+  type PlotStylePreset,
   type PlotStylePresetSettings,
   type AutomationPauseState,
   type SourceMonitoringSettings,
@@ -81,6 +82,25 @@ function formatBytes(value: number): string {
     unit = units[index];
   }
   return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${unit}`;
+}
+
+function plotStylePresetFamilyLabel(family: PlotStylePreset["plot_family"]): string {
+  switch (family) {
+    case "time_capacity":
+      return "Time / capacity";
+    case "crate":
+      return "C-rate";
+    case "dcir":
+      return "DCIR";
+    case "chargeability":
+      return "Chargeability";
+    case "steps":
+      return "Steps";
+    case "cycles":
+      return "Cycles";
+    default:
+      return "All plot types";
+  }
 }
 
 const CACHE_CATEGORY_HINTS = {
@@ -933,7 +953,7 @@ export function SettingsPage() {
                       {(plotStylePresets.data?.presets ?? []).map((preset) => (
                         <Table.Tr key={preset.id}>
                           <Table.Td>{preset.name}</Table.Td>
-                          <Table.Td>{preset.plot_family.replace("_", " / ")}</Table.Td>
+                          <Table.Td>{plotStylePresetFamilyLabel(preset.plot_family)}</Table.Td>
                           <Table.Td>
                             <Switch
                               checked={preset.is_default}

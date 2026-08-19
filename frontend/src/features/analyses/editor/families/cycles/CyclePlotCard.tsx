@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Accordion,
   Alert,
   Badge,
@@ -396,7 +397,10 @@ export function diagnosticCyclesFor(result: ComputeResult, spec: AnalysisSpec): 
   if (!spec.presentation.hide_diagnostic_cycles) return new Set();
   return findDiagnosticCyclesAcross(
     result.cell_series.filter((s) => !s.excluded),
-    { tolerance: spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance },
+    {
+      tolerance: spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance,
+      formationCycles: spec.computation.formation_cycles,
+    },
   );
 }
 
@@ -924,17 +928,7 @@ export function CycleSettings({
                   update((s) => void (s.presentation.show_individual_cells = e.currentTarget.checked))
                 }
               />
-              <Tooltip
-                label={
-                  "Hides protocol diagnostics — DCIR pulses and rate checks — found from cycle " +
-                  "durations rather than capacity, so a genuinely degrading cell is never hidden. " +
-                  "Display only: exports keep every cycle."
-                }
-                multiline
-                maw={320}
-                withArrow
-                openDelay={300}
-              >
+              <Group gap={4} wrap="nowrap">
                 <Switch
                   label="Hide diagnostic cycles"
                   checked={spec.presentation.hide_diagnostic_cycles ?? false}
@@ -945,7 +939,33 @@ export function CycleSettings({
                     })
                   }
                 />
-              </Tooltip>
+                <Tooltip
+                  label={
+                    `For each cell, the filter takes the lower of charge and discharge capacity. ` +
+                    `After the first ${spec.computation.formation_cycles} formation cycles, it ` +
+                    `compares that value with the median of the neighbouring post-formation ` +
+                    `${DIAGNOSTIC_DEFAULTS.window}-cycle window. A cycle is hidden when its ` +
+                    `lower capacity is more than ${Math.round(
+                      (spec.presentation.diagnostic_tolerance ?? DIAGNOSTIC_DEFAULTS.tolerance) * 100,
+                    )}% ` +
+                    `below that local median. The percentage below controls this cutoff; the ` +
+                    `filter is display-only and does not use DCIR recognition.`
+                  }
+                  multiline
+                  maw={360}
+                  withArrow
+                  openDelay={300}
+                >
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color="gray"
+                    aria-label="How diagnostic cycles are detected"
+                  >
+                    <IconInfoCircle size={15} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
               {(spec.presentation.hide_diagnostic_cycles ?? false) && (
                 <Tooltip
                   label={
@@ -1186,6 +1206,7 @@ export function CyclePlotCard({
         hideDiagnostics: spec.presentation.hide_diagnostic_cycles ?? false,
         reindexDiagnostics: spec.presentation.reindex_diagnostic_cycles ?? false,
         diagnosticTolerance: spec.presentation.diagnostic_tolerance ?? null,
+        formationCycles: spec.computation.formation_cycles,
         style: currentPlotStyle(spec, "cycles"),
       }),
     [spec],
@@ -1206,7 +1227,12 @@ export function CyclePlotCard({
       .flatMap((s) => s.x);
     return summarizeHidden(everyCycle, hidden);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result, spec.presentation.hide_diagnostic_cycles, spec.presentation.diagnostic_tolerance]);
+  }, [
+    result,
+    spec.computation.formation_cycles,
+    spec.presentation.hide_diagnostic_cycles,
+    spec.presentation.diagnostic_tolerance,
+  ]);
   const segmentsActive =
     (spec.computation.protocol_filter?.only_segment_ids?.length ?? 0) > 0 ||
     (spec.computation.protocol_filter?.excluded_segment_ids?.length ?? 0) > 0 ||

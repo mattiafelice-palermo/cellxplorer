@@ -308,10 +308,19 @@ export interface ActiveMaterialPresetSettings {
 export interface PlotStylePreset {
   id: string;
   name: string;
-  plot_family: "all" | "cycles" | "time_capacity";
+  plot_family: PlotStylePresetFamily;
   style: Partial<PlotStyle>;
   is_default: boolean;
 }
+
+export type PlotStylePresetFamily =
+  | "all"
+  | "cycles"
+  | "time_capacity"
+  | "steps"
+  | "crate"
+  | "chargeability"
+  | "dcir";
 
 export interface PlotStylePresetSettings {
   presets: PlotStylePreset[];
@@ -1258,9 +1267,9 @@ export interface AnalysisSpec {
     chargeability_view?: ChargeabilityViewSpec;
     rate_capability_view?: RateCapabilityViewSpec;
     /**
-     * Hide protocol diagnostic cycles (DCIR pulses, rate checks) detected from
-     * cycle durations. Presentation-only: the computed result and every export
-     * keep the full data, so the choice is always reversible.
+     * Hide protocol diagnostic/support cycles detected from lower phase
+     * capacity outliers. Presentation-only: the computed result and every
+     * export keep the full data, so the choice is always reversible.
      */
     hide_diagnostic_cycles?: boolean;
     /**
@@ -1268,7 +1277,7 @@ export interface AnalysisSpec {
      * points from the axis and renumber the survivors 1..N (display only).
      */
     reindex_diagnostic_cycles?: boolean;
-    /** Deviation from the local baseline that marks a cycle as diagnostic. */
+    /** Lower-capacity deviation from the local post-formation median. */
     diagnostic_tolerance?: number;
     /** Legacy single style shared by all tabs; superseded by plot_styles. */
     plot_style?: PlotStyle;

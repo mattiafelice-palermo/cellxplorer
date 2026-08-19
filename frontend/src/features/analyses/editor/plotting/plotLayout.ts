@@ -1,4 +1,5 @@
 import type { AnalysisSpec, PlotStyle } from "../../../../api";
+import { axisLayout, numericTraceExtent } from "./plotAxisLayout.ts";
 
 export function plotAxisStyle(
   style: PlotStyle,
@@ -153,5 +154,93 @@ export function hoverLabelLayout(style: PlotStyle) {
     font: { size: Math.max(10, style.tick_font_size - 1), family: "inherit" },
     align: "left" as const,
     namelength: 28,
+  };
+}
+
+export interface SimpleCartesianLayoutOptions {
+  traces: Plotly.Data[];
+  xTitle: string;
+  yTitle: string;
+  /** Extra X-axis settings such as a category axis or a reference range mode. */
+  xAxis?: Partial<Plotly.LayoutAxis>;
+  /** Extra Y-axis settings such as a bar range mode or formatted tick labels. */
+  yAxis?: Partial<Plotly.LayoutAxis>;
+  /** Trace axis names to include when deriving the observed X extent. */
+  xAxisNames?: string[];
+  /** Trace axis names to include when deriving the observed Y extent. */
+  yAxisNames?: string[];
+  /** Numeric range/tick controls are not meaningful for a categorical X axis. */
+  xAxisNumeric?: boolean;
+  /** Base margins before legend and title/label standoffs are added. */
+  baseMargin?: { l: number; r: number; t: number; b: number };
+  /** Additional layout fields owned by the family, for example bar settings or shapes. */
+  extra?: Partial<Plotly.Layout>;
+}
+
+/**
+ * Complete layout for the simple single-X/single-Y analysis families.
+ *
+ * Keeping this in one helper prevents the smaller plot cards from drifting
+ * away from the shared axis, legend, and margin policy used by cycles and
+ * time/capacity. The family still supplies its labels and any view-specific
+ * axis fields, while all persisted style controls are applied here.
+ */
+export function simpleCartesianLayout(
+  style: PlotStyle,
+  spec: AnalysisSpec,
+  options: SimpleCartesianLayoutOptions,
+): Partial<Plotly.Layout> {
+  const {
+    traces,
+    xTitle,
+    yTitle,
+    xAxis = {},
+    yAxis = {},
+    xAxisNames = ["x"],
+    yAxisNames = ["y"],
+    xAxisNumeric = true,
+    baseMargin = { l: 72, r: 20, t: 12, b: 56 },
+    extra = {},
+  } = options;
+  const legend = legendMargins(style, spec.presentation.legend);
+  const xRange = xAxisNumeric
+    ? numericTraceExtent(traces, "x", xAxisNames)
+    : undefined;
+  const yRange = numericTraceExtent(traces, "y", yAxisNames);
+  const leftGap = axisGapDelta(style.y_axis);
+  const bottomGap = axisGapDelta(style.x_axis);
+
+  return {
+    ...plotLayoutStyle(style, spec),
+    ...extra,
+    margin: {
+      l: baseMargin.l + legend.l + leftGap,
+      r: Math.max(baseMargin.r, legend.r ? legend.r + 24 : 0),
+      t: baseMargin.t + legend.t,
+      b: baseMargin.b + legend.b + bottomGap,
+    },
+    xaxis: {
+      ...plotAxisStyle(style, { axis: style.x_axis }),
+      ...xAxis,
+      title: {
+        text: style.x_title ?? xTitle,
+        font: axisTitleFont(style),
+        standoff: style.x_axis.title_standoff,
+      },
+      ...(xAxisNumeric ? axisLayout(style.x_axis, xRange) : {}),
+    },
+    yaxis: {
+      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
+      ...yAxis,
+      title: {
+        text: style.y_title ?? yTitle,
+        font: axisTitleFont(style),
+        standoff: style.y_axis.title_standoff,
+      },
+      ...axisLayout(style.y_axis, yRange),
+    },
+    showlegend: spec.presentation.legend,
+    legend: { ...legendLayout(style), font: { size: style.legend_font_size } },
+    hovermode: "closest",
   };
 }

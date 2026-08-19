@@ -33,11 +33,7 @@ import {
   type SeriesStyleRule,
 } from "../../../../../api";
 import { isCellHiddenInAnalysis, type CellSelectionContext } from "../../policies/analysisVisibility";
-import {
-  axisTitleFont,
-  plotAxisStyle,
-  plotLayoutStyle,
-} from "../../plotting/plotLayout";
+import { simpleCartesianLayout } from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
@@ -505,7 +501,7 @@ export function rateCapabilityTracesForResult(
         markerSymbol: style.marker_symbol,
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
-        opacity: 1,
+        opacity: style.individual_opacity,
       };
       const resolved = resolveSeriesStyle(
         baseStyle,
@@ -549,7 +545,7 @@ export function rateCapabilityTracesForResult(
             alignmentgroup: "rate-capability",
             marker: {
               color: resolved.color,
-              line: { color: "#1f2937", width: 0.5 },
+              line: { color: "#1f2937", width: resolved.lineWidth },
             },
           } as Plotly.Data,
         ];
@@ -601,12 +597,12 @@ export function rateCapabilityTracesForResult(
       const baseStyle = {
         color,
         lineWidth: style.line_width,
-        lineDash: block.family === "discharge" ? "dash" : style.line_dash,
+        lineDash: style.line_dash,
         markerMode: style.marker_mode,
         markerSymbol: style.marker_symbol,
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
-        opacity: 1,
+        opacity: style.individual_opacity,
       };
       const resolved = resolveSeriesStyle(
         baseStyle,
@@ -651,7 +647,7 @@ export function rateCapabilityTracesForResult(
           alignmentgroup: "rate-capability",
           marker: {
             color: resolved.color,
-            line: { color: "#1f2937", width: 0.5 },
+            line: { color: "#1f2937", width: resolved.lineWidth },
             pattern:
               block.family === "discharge"
                 ? {
@@ -677,11 +673,7 @@ export function rateCapabilityTracesForResult(
         marker: {
           color: resolved.color,
           size: resolved.markerSize,
-          // Charge/discharge stay distinguishable by shape here; the style panel's
-          // open/filled choice still applies on top of that family shape.
-          symbol:
-            (block.family === "charge" ? "circle" : "diamond") +
-            (resolved.markerOpen ? "-open" : ""),
+          symbol: seriesPlotlySymbol(resolved),
         },
       } as Plotly.Data;
     })
@@ -691,6 +683,7 @@ export function rateCapabilityTracesForResult(
 export function rateCapabilityLayoutForSpec(
   spec: AnalysisSpec,
   result?: RateCapabilityResult,
+  traces: Plotly.Data[] = [],
 ): Partial<Plotly.Layout> {
   const view = rateCapabilityViewFor(spec);
   const style = currentPlotStyle(spec, "crate");
@@ -702,12 +695,11 @@ export function rateCapabilityLayoutForSpec(
       : view.y_axis === "retention_pct"
         ? 100
         : null;
-  return {
-    ...plotLayoutStyle(style, spec),
-    margin: { l: 76, r: 20, t: 12, b: 58 },
-    xaxis: {
-      ...plotAxisStyle(style, { axis: style.x_axis }),
-      title: { text: style.x_title ?? xTitle(view), font: axisTitleFont(style) },
+  return simpleCartesianLayout(style, spec, {
+    traces,
+    xTitle: xTitle(view),
+    yTitle: yTitle(view),
+    xAxis: {
       type: equalSpacing ? "category" : "linear",
       ...(equalSpacing
         ? {
@@ -716,31 +708,29 @@ export function rateCapabilityLayoutForSpec(
           }
         : {}),
     },
-    yaxis: {
-      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
-      title: { text: style.y_title ?? yTitle(view), font: axisTitleFont(style) },
-      ...(view.visualization === "bar" ? { rangemode: "tozero" } : {}),
+    yAxis: view.visualization === "bar" ? { rangemode: "tozero" } : {},
+    xAxisNumeric: !equalSpacing,
+    baseMargin: { l: 76, r: 20, t: 12, b: 58 },
+    extra: {
+      barmode: "group",
+      bargap: 0.16,
+      bargroupgap: 0.06,
+      shapes:
+        referenceLine == null
+          ? []
+          : [
+              {
+                type: "line",
+                xref: "paper",
+                x0: 0,
+                x1: 1,
+                y0: referenceLine,
+                y1: referenceLine,
+                line: { color: "#868e96", width: 1, dash: "dot" },
+              },
+            ],
     },
-    barmode: "group",
-    bargap: 0.16,
-    bargroupgap: 0.06,
-    shapes:
-      referenceLine == null
-        ? []
-        : [
-            {
-              type: "line",
-              xref: "paper",
-              x0: 0,
-              x1: 1,
-              y0: referenceLine,
-              y1: referenceLine,
-              line: { color: "#868e96", width: 1, dash: "dot" },
-            },
-          ],
-    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
-    hovermode: "closest",
-  };
+  });
 }
 
 function compatibilityLabel(
@@ -1334,8 +1324,8 @@ export function RateCapabilityPlotCard({
     [result.data, spec],
   );
   const layout = useMemo(
-    () => rateCapabilityLayoutForSpec(spec, result.data),
-    [spec, result.data],
+    () => rateCapabilityLayoutForSpec(spec, result.data, traces),
+    [spec, result.data, traces],
   );
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
@@ -1399,7 +1389,7 @@ export function RateCapabilityPlotCard({
         },
       };
       const data = decimatePreviewTraces(rateCapabilityTracesForResult(result.data, draftSpec));
-      return { data, layout: rateCapabilityLayoutForSpec(draftSpec, result.data) };
+      return { data, layout: rateCapabilityLayoutForSpec(draftSpec, result.data, data) };
     },
     [result.data, spec],
   );
@@ -1583,6 +1573,7 @@ export function RateCapabilityPlotCard({
         update={update}
         onToggle={() => setStylePanelOpen((open) => !open)}
         axisScope="crate"
+        xAxisNumeric={view.x_spacing !== "equal"}
         seriesDescriptors={seriesDescriptors}
         buildSeriesPreview={buildSeriesPreview}
       />

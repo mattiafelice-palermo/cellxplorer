@@ -338,18 +338,20 @@ export function SavedPlotPreview({
     setGenerationFailed(false);
     const layout =
       plot.tab === "steps"
-        ? stepsLayoutForSpec(previewSpec)
+        ? stepsLayoutForSpec(previewSpec, traces)
         : plot.tab === "dcir"
-        ? dcirLayoutForSpec(previewSpec)
+        ? dcirLayoutForSpec(previewSpec, traces)
         : plot.tab === "chargeability"
         ? chargeabilityLayoutForSpec(
             previewSpec,
-            preview.data as ChargeabilityResult
+            preview.data as ChargeabilityResult,
+            traces,
           )
         : plot.tab === "crate"
         ? rateCapabilityLayoutForSpec(
             previewSpec,
-            preview.data as RateCapabilityResult
+            preview.data as RateCapabilityResult,
+            traces,
           )
         : cyclePlotLayout(preview.data as ComputeResult, previewSpec, traces);
     const figure = portableFigure(traces, layout);
@@ -1350,7 +1352,7 @@ export async function buildPortablePlotSnapshots(
           { spec: viewSpec, job_id: job.id }
         );
         const traces = stepsTracesForResult(result, viewSpec);
-        const layout = stepsLayoutForSpec(viewSpec);
+        const layout = stepsLayoutForSpec(viewSpec, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
         const svg = images?.svg ?? null;
@@ -1402,7 +1404,7 @@ export async function buildPortablePlotSnapshots(
           { spec: viewSpec, job_id: job.id }
         );
         const traces = dcirTracesForResult(result, viewSpec);
-        const layout = dcirLayoutForSpec(viewSpec);
+        const layout = dcirLayoutForSpec(viewSpec, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
         const svg = images?.svg ?? null;
@@ -1457,7 +1459,7 @@ export async function buildPortablePlotSnapshots(
           { spec: viewSpec, job_id: job.id }
         );
         const traces = chargeabilityTracesForResult(result, viewSpec);
-        const layout = chargeabilityLayoutForSpec(viewSpec, result);
+        const layout = chargeabilityLayoutForSpec(viewSpec, result, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
         const svg = images?.svg ?? null;
@@ -1517,7 +1519,7 @@ export async function buildPortablePlotSnapshots(
           { spec: viewSpec, job_id: job.id }
         );
         const traces = rateCapabilityTracesForResult(result, viewSpec);
-        const layout = rateCapabilityLayoutForSpec(viewSpec, result);
+        const layout = rateCapabilityLayoutForSpec(viewSpec, result, traces);
         const figure = traces.length ? portableFigure(traces, layout) : null;
         const images = figure ? await queuedPortableArtifactImages(figure) : null;
         const svg = images?.svg ?? null;

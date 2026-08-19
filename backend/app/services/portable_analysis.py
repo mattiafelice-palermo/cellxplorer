@@ -404,11 +404,16 @@ def _report_views(db: Session, analysis: Analysis) -> list[dict]:
         # when the original source files are long gone.
         hidden_cycles: list[int] = []
         if presentation.get("hide_diagnostic_cycles") and tab != "time_capacity":
+            computation = spec.get("computation") or {}
             hidden_cycles = diagnostic_cycles.find_across(
                 result,
                 tolerance=float(
                     presentation.get("diagnostic_tolerance")
                     or diagnostic_cycles.DEFAULT_TOLERANCE
+                ),
+                formation_cycles=int(
+                    computation.get("formation_cycles")
+                    or diagnostic_cycles.DEFAULT_FORMATION_CYCLES
                 ),
             )
         views.append(
@@ -1606,10 +1611,11 @@ def _html_tail() -> str:
     const summary = document.createElement("p");
     summary.className = "muted";
     text(summary,
-      "Cycles removed from the plot because their charge or discharge time " +
-      "deviates from neighbouring cycles \\u2014 typically DCIR pulses and rate " +
-      "checks. This affects the plot only: the report still contains every " +
-      "cycle, so re-importing it into CellXplorer restores them.");
+      "Cycles removed from the plot because the lower of their charge and " +
+      "discharge capacities is more than the configured cutoff below the " +
+      "local post-formation median. This is a generic diagnostic/support-cycle " +
+      "filter, not DCIR recognition. It affects the plot only: the report still " +
+      "contains every cycle, so re-importing it into CellXplorer restores them.");
     const list = document.createElement("p");
     list.style.fontFamily = "ui-monospace,SFMono-Regular,Menlo,monospace";
     list.style.fontSize = "12px";

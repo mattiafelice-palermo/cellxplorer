@@ -8,7 +8,13 @@
  *
  * Extracted verbatim from the editor controller; behaviour is unchanged.
  */
-import type { AnalysisSpec, AnalysisTabKey, PlotAxisScope, PlotStyle } from "../../../../api";
+import type {
+  AnalysisSpec,
+  AnalysisTabKey,
+  PlotAxisScope,
+  PlotStyle,
+  PlotStylePresetFamily,
+} from "../../../../api";
 
 export const PALETTE = [
   "#12b886",
@@ -48,6 +54,21 @@ export const PALETTE_OPTIONS: { value: PlotStyle["palette"]; label: string }[] =
   { value: "monochrome", label: "Monochrome" },
   { value: "custom", label: "Custom" },
 ];
+
+const PLOT_STYLE_PRESET_FAMILIES: PlotStylePresetFamily[] = [
+  "cycles",
+  "time_capacity",
+  "steps",
+  "crate",
+  "chargeability",
+  "dcir",
+];
+
+export function plotStylePresetFamilyForTab(scope: AnalysisTabKey): PlotStylePresetFamily {
+  return PLOT_STYLE_PRESET_FAMILIES.includes(scope as PlotStylePresetFamily)
+    ? (scope as PlotStylePresetFamily)
+    : "all";
+}
 
 const DEFAULT_AXIS: PlotStyle["x_axis"] = {
   mode: "auto",

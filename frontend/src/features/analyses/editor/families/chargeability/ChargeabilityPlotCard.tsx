@@ -28,11 +28,7 @@ import {
   type SeriesStyleOverride,
   type SeriesStyleRule,
 } from "../../../../../api";
-import {
-  axisTitleFont,
-  plotAxisStyle,
-  plotLayoutStyle,
-} from "../../plotting/plotLayout";
+import { simpleCartesianLayout } from "../../plotting/plotLayout";
 import {
   downloadDataExport,
   downloadStyledPlotExport,
@@ -332,7 +328,7 @@ export function chargeabilityTracesForResult(
         markerSymbol: style.marker_symbol,
         markerSize: style.marker_size,
         markerOpen: style.marker_open,
-        opacity: 1,
+        opacity: style.individual_opacity,
       };
       const resolved = resolveSeriesStyle(
         baseStyle,
@@ -386,27 +382,25 @@ function cRateTicks(result?: ChargeabilityResult) {
 export function chargeabilityLayoutForSpec(
   spec: AnalysisSpec,
   result?: ChargeabilityResult,
+  traces: Plotly.Data[] = [],
 ): Partial<Plotly.Layout> {
   const view = chargeabilityViewFor(spec);
   const style = currentPlotStyle(spec, "chargeability");
-  const rateTicks = view.y_axis === "c_rate" ? cRateTicks(result) : null;
-  return {
-    ...plotLayoutStyle(style, spec),
-    margin: { l: 76, r: 20, t: 12, b: 58 },
-    xaxis: {
-      ...plotAxisStyle(style, { axis: style.x_axis }),
-      title: { text: style.x_title ?? xTitle(view), font: axisTitleFont(style) },
-    },
-    yaxis: {
-      ...plotAxisStyle(style, { zeroLine: true, axis: style.y_axis }),
-      title: { text: style.y_title ?? yTitle(view), font: axisTitleFont(style) },
-      ...(rateTicks
-        ? { tickmode: "array", tickvals: rateTicks.tickvals, ticktext: rateTicks.ticktext }
-        : {}),
-    },
-    legend: { orientation: "h", y: -0.22, font: { size: style.legend_font_size } },
-    hovermode: "closest",
-  };
+  // Keep the compact C-rate labels for the automatic mode only. Manual step
+  // and count settings must be allowed to reach Plotly through axisLayout.
+  const rateTicks =
+    view.y_axis === "c_rate" && style.y_axis.tick_mode === "auto"
+      ? cRateTicks(result)
+      : null;
+  return simpleCartesianLayout(style, spec, {
+    traces,
+    xTitle: xTitle(view),
+    yTitle: yTitle(view),
+    yAxis: rateTicks
+      ? { tickmode: "array", tickvals: rateTicks.tickvals, ticktext: rateTicks.ticktext }
+      : {},
+    baseMargin: { l: 76, r: 20, t: 12, b: 58 },
+  });
 }
 
 export function ChargeabilitySettings({
@@ -701,8 +695,8 @@ export function ChargeabilityPlotCard({
     [result.data, spec],
   );
   const layout = useMemo(
-    () => chargeabilityLayoutForSpec(spec, result.data),
-    [spec, result.data],
+    () => chargeabilityLayoutForSpec(spec, result.data, traces),
+    [spec, result.data, traces],
   );
   const recognitionProgress = useDelayedRecognitionProgress(
     result.computeToken,
@@ -775,7 +769,7 @@ export function ChargeabilityPlotCard({
         },
       };
       const data = decimatePreviewTraces(chargeabilityTracesForResult(result.data, draftSpec));
-      return { data, layout: chargeabilityLayoutForSpec(draftSpec, result.data) };
+      return { data, layout: chargeabilityLayoutForSpec(draftSpec, result.data, data) };
     },
     [result.data, spec],
   );

@@ -82,7 +82,15 @@ class ActiveMaterialPresetSettings(BaseModel):
 class PlotStylePreset(BaseModel):
     id: str
     name: str
-    plot_family: Literal["all", "cycles", "time_capacity"] = "all"
+    plot_family: Literal[
+        "all",
+        "cycles",
+        "time_capacity",
+        "steps",
+        "crate",
+        "chargeability",
+        "dcir",
+    ] = "all"
     style: dict
     is_default: bool = False
 
