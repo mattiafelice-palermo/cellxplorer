@@ -429,3 +429,17 @@ User requested that the compact continued-import source chain use the existing d
 User-requested dnd-kit migration implemented and committed locally in 1a54b40. The compact continued-import source chain now uses DndContext, SortableContext, PointerSensor with distance activation, and KeyboardSensor with sortableKeyboardCoordinates. The lower Variant 3 gutter remains the accessible activator; row content and remove controls are not drag-only. Stable source-key reorder handling is covered by reorderContinuationSourceKeys. Version bumped to 0.27.0-beta.4. No remote push per user instruction. Replace uploaded Project file: CELLXPLORER_ARCHITECTURE.md; CELLXPLORER_PROJECT_INSTRUCTIONS.md.
 
 ---
+### 2026-08-20T00:42:53+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+- R6
+
+**Message**
+
+User confirmed the full central-preview design. Implement automatic merged preview without a manual Inspect continuity action; a white Plotly chart with no legend, per-file source colors, file provenance dashed markers and 1..N labels; three metric tabs for voltage, discharge capacity, and charge capacity; and a default stitched N-files interpretation toggle versus Source chain. Provenance colors and file markers remain present in both modes; only cycle interpretation changes.
+
+---
