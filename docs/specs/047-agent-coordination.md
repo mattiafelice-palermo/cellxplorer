@@ -225,3 +225,16 @@ R1 (Medium): section D's 'detailed reason belongs in Continuity review / tooltip
 Resolved 047.3 reviewer findings R1-R2. Source inspection errors now open in Continuity review with filename/reason, compact command/preview/footer state distinguishes failed inspection from not-started or preparing, and retry is explicit. The handoff records the required Project mirror replacement notice. Local-only checkpoint; no remote push.\n\nReplace uploaded Project file:\n- CELLXPLORER_ARCHITECTURE.md\n- CELLXPLORER_PROJECT_INSTRUCTIONS.md
 
 ---
+### 2026-08-19T23:09:00+02:00 — REVIEWER — 047.3
+
+**Result:** Child review clean; entering final parent review
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.3 round 2: both findings resolved at 174cb46. R1 was fixed more completely than the finding required -- the review modal gained a Source errors section carrying filename and inspection_error for any errored source regardless of whether a finding was emitted, it auto-opens on that condition, the command relabels to 'Review source errors', retry became an explicit Re-inspect button, and continuedInspectionStatus now maps not_started/preparing/ready/error to distinct footer and preview copy. Submission safety is untouched: canSubmit still composes the same three checks and inspectionRequired is equivalent to the old expression because the server's inspection_complete already requires every source ready. Pure coverage distinguishes the states as criterion 3 asked; 33 focused tests pass. R2's mirror-replacement statement now names both changed files (the block carries literal escape sequences rather than real newlines, which I am not reopening -- the content is complete and is restated cleanly at closure). Entering the cumulative parent review.
+
+---
