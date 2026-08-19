@@ -6,6 +6,8 @@ import type { ContinuedScientificDraft } from "../src/continuationPolicy.ts";
 import {
   assignContinuationSourceColors,
   buildContinuedImportSubmissionState,
+  compactContinuationMetaLine,
+  formatContinuationTimestamp,
   nextSelectedSourceKey,
 } from "../src/continuedImportWorkspacePolicy.ts";
 
@@ -87,6 +89,28 @@ test("nextSelectedSourceKey falls back to the first source when there is no vali
 
 test("nextSelectedSourceKey returns null when no sources remain", () => {
   assert.equal(nextSelectedSourceKey("a", ["a"], []), null);
+});
+
+test("formatContinuationTimestamp keeps source wall-clock time while making it readable", () => {
+  assert.equal(formatContinuationTimestamp("2026-07-10T14:41:20.7440"), "10/07/2026 14:41");
+  assert.equal(formatContinuationTimestamp("2026-07-10 14:41:20"), "10/07/2026 14:41");
+  assert.equal(formatContinuationTimestamp("not-a-timestamp"), "not-a-timestamp");
+  assert.equal(formatContinuationTimestamp(null), null);
+});
+
+test("compactContinuationMetaLine labels source dates and reports only the cycle count", () => {
+  assert.equal(
+    compactContinuationMetaLine({
+      local_cycle_count: 1,
+      start_time: "2026-07-10T14:41:20.7440",
+      end_time: "2026-07-10T15:42:21.7440",
+    }),
+    "1 cycle · [S] 10/07/2026 14:41 · [E] 10/07/2026 15:42",
+  );
+  assert.equal(
+    compactContinuationMetaLine({ local_cycle_count: 4, start_time: "2026-07-10T14:41:20", end_time: null }),
+    "4 cycles · [S] 10/07/2026 14:41",
+  );
 });
 
 test("buildContinuedImportSubmissionState carries the exact visible order and acknowledgement ids", () => {

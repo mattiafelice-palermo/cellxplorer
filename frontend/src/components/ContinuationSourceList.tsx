@@ -15,6 +15,7 @@ import {
   findingSummary,
   sourceRoleLabel,
 } from "../continuationPolicy";
+import { compactContinuationMetaLine as formatCompactContinuationMetaLine } from "../continuedImportWorkspacePolicy";
 
 export type ContinuationSourceListVariant = "default" | "compact-import";
 
@@ -22,13 +23,6 @@ function sourceStatusColor(source: ContinuationInspectSource) {
   if (source.inspection_status === "error") return "red";
   if (source.inspection_status === "pending") return "yellow";
   return "teal";
-}
-
-function compactSourceStatusLabel(source: ContinuationInspectSource) {
-  if (source.inspection_status === "error") return "Error";
-  if (source.cache_build_status === "started" || source.cache_build_status === "building") return "Preparing";
-  if (source.inspection_status === "pending") return "Not inspected";
-  return "Ready";
 }
 
 function sourceFindingColor(finding: ContinuationFinding) {
@@ -43,37 +37,75 @@ function sourceFindingIcon(finding: ContinuationFinding) {
   return <IconInfoCircle size={14} aria-hidden="true" />;
 }
 
-/** A source's stable session color on its visible position number. The number is always present, so color is never the only identifier. */
-function SourceColorCircle({ number, color }: { number: number; color?: string }) {
+function pastelSourceColor(color?: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color ?? "");
+  if (!match) return "light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4))";
+  const red = Number.parseInt(match[1]!.slice(0, 2), 16);
+  const green = Number.parseInt(match[1]!.slice(2, 4), 16);
+  const blue = Number.parseInt(match[1]!.slice(4, 6), 16);
+  const tint = (channel: number) => Math.round(channel + (255 - channel) * 0.78);
+  return `rgb(${tint(red)} ${tint(green)} ${tint(blue)})`;
+}
+
+function sourceGutterTextColor(color?: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color ?? "");
+  if (!match) return "var(--mantine-color-white)";
+  const red = Number.parseInt(match[1]!.slice(0, 2), 16);
+  const green = Number.parseInt(match[1]!.slice(2, 4), 16);
+  const blue = Number.parseInt(match[1]!.slice(4, 6), 16);
+  const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+  return luminance > 0.67 ? "var(--mantine-color-dark-9)" : "var(--mantine-color-white)";
+}
+
+/** A narrow full-height identity gutter: readable position above, drag affordance below. */
+function SourceIdentityGutter({ number, color }: { number: number; color?: string }) {
+  const strongColor = color ?? "var(--mantine-color-gray-5)";
   return (
-    <Text
+    <div
       aria-hidden="true"
-      size="xs"
-      fw={700}
       style={{
         flex: "none",
-        width: 20,
-        height: 20,
-        borderRadius: "50%",
+        width: 32,
+        alignSelf: "stretch",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "white",
-        background: color ?? "var(--mantine-color-gray-5)",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
-      {number}
-    </Text>
+      <div
+        style={{
+          flex: "0 0 36px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: pastelSourceColor(color),
+          color: "var(--mantine-color-dark-9)",
+          fontSize: "var(--mantine-font-size-sm)",
+          fontWeight: 700,
+        }}
+      >
+        {number}
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 24,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: strongColor,
+          color: sourceGutterTextColor(color),
+          cursor: "grab",
+        }}
+      >
+        <IconGripVertical size={16} aria-hidden="true" />
+      </div>
+    </div>
   );
 }
 
 function compactMetaLine(source: ContinuationInspectSource): string | null {
-  const parts: string[] = [];
-  if (source.local_cycle_count !== null && source.local_cycle_count !== undefined) {
-    parts.push(`Cycles ${source.local_cycle_start ?? "—"}–${source.local_cycle_end ?? "—"} (${source.local_cycle_count})`);
-  }
-  if (source.start_time) parts.push(source.start_time);
-  return parts.length ? parts.join(" · ") : null;
+  return formatCompactContinuationMetaLine(source);
 }
 
 export function ContinuationSourceList({
@@ -120,15 +152,15 @@ export function ContinuationSourceList({
     return (
       <Stack gap={6}>
         {sources.map((source, index) => {
-          const role = sourceRoleLabel(source, index, sources.length);
           const selected = selectedSourceKey === source.key;
           const metaLine = compactMetaLine(source);
           const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+          const sourceColor = colorsBySourceKey?.[source.key];
           return (
             <Paper
               key={source.key}
               withBorder
-              p="xs"
+              p={0}
               draggable={Boolean(onDragStart) && !disabled}
               onDragStart={() => onDragStart?.(index)}
               onDragOver={(event) => { if (onDrop && !disabled) event.preventDefault(); }}
@@ -152,38 +184,30 @@ export function ContinuationSourceList({
                 cursor: onSelect ? "pointer" : undefined,
                 borderColor: selected ? "var(--mantine-primary-color-5)" : undefined,
                 background: selected ? "var(--mantine-primary-color-light)" : undefined,
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "stretch",
+                width: "100%",
+                boxSizing: "border-box",
               }}
             >
-              <Stack gap={4}>
-                <Group gap={6} wrap="nowrap">
-                  <IconGripVertical size={14} color="var(--mantine-color-gray-5)" aria-hidden="true" />
-                  <SourceColorCircle number={index + 1} color={colorsBySourceKey?.[source.key]} />
-                  <VisuallyHidden>Source {index + 1}.</VisuallyHidden>
+              <SourceIdentityGutter number={index + 1} color={sourceColor} />
+              <VisuallyHidden>Source {index + 1}. Drag to reorder.</VisuallyHidden>
+              <Stack gap={4} style={{ flex: 1, minWidth: 0, padding: "8px 8px 8px 10px" }}>
+                <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
                   <Text size="sm" fw={selected ? 700 : 600} truncate title={source.filename} style={{ flex: 1, minWidth: 0 }}>
                     {source.filename}
                   </Text>
-                  <Badge
-                    size="xs"
-                    variant="light"
-                    color={sourceStatusColor(source)}
-                    title={source.inspection_error ?? undefined}
-                  >
-                    {compactSourceStatusLabel(source)}
-                  </Badge>
-                  <Tooltip label={`Move ${source.filename} up`}>
-                    <ActionIcon size="sm" variant="subtle" aria-label={`Move ${source.filename} up`} disabled={disabled || index === 0} onClick={(event) => { stop(event); onMove(index, -1); }}><IconArrowUp size={13} /></ActionIcon>
-                  </Tooltip>
-                  <Tooltip label={`Move ${source.filename} down`}>
-                    <ActionIcon size="sm" variant="subtle" aria-label={`Move ${source.filename} down`} disabled={disabled || index === sources.length - 1} onClick={(event) => { stop(event); onMove(index, 1); }}><IconArrowDown size={13} /></ActionIcon>
-                  </Tooltip>
+                  {source.inspection_status === "error" && (
+                    <Tooltip label={source.inspection_error ?? "Inspection failed"}>
+                      <Badge size="xs" variant="light" color="red">Error</Badge>
+                    </Tooltip>
+                  )}
                   {onRemove && <Tooltip label={`Remove ${source.filename}`}>
                     <ActionIcon size="sm" variant="subtle" color="red" aria-label={`Remove ${source.filename}`} disabled={disabled || sources.length <= 1 || canRemoveSource?.(source.key) === false} onClick={(event) => { stop(event); onRemove(source.key); }}><IconX size={13} /></ActionIcon>
                   </Tooltip>}
                 </Group>
-                <Group gap={6} pl={22} wrap="wrap">
-                  {role && <Badge size="xs" variant="light" color={role === "Tracked tail" ? "teal" : "gray"}>{role}</Badge>}
-                  {metaLine && <Text size="xs" c="dimmed" truncate>{metaLine}</Text>}
-                </Group>
+                {metaLine && <Text size="xs" c="dimmed" truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
               </Stack>
             </Paper>
           );

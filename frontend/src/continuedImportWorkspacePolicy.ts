@@ -1,4 +1,4 @@
-import type { ContinuationInspectResult } from "./api";
+import type { ContinuationInspectResult, ContinuationInspectSource } from "./api";
 import {
   acknowledgedMetadataOnlySourceKeys,
   continuedImportCanSubmit,
@@ -10,6 +10,34 @@ import {
 } from "./continuationPolicy.ts";
 
 export type SourceColorAssignments = Record<string, string>;
+
+/** Format a source timestamp without changing its source-local wall-clock value. */
+export function formatContinuationTimestamp(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/.exec(trimmed);
+  if (!match) return trimmed;
+
+  const [, year, month, day, hour, minute] = match;
+  const date = `${day!.padStart(2, "0")}/${month!.padStart(2, "0")}/${year}`;
+  return hour === undefined ? date : `${date} ${hour.padStart(2, "0")}:${minute}`;
+}
+
+/** Compact, labelled source facts for the continued-import source chain. */
+export function compactContinuationMetaLine(
+  source: Pick<ContinuationInspectSource, "local_cycle_count" | "start_time" | "end_time">,
+): string | null {
+  const parts: string[] = [];
+  if (source.local_cycle_count !== null && source.local_cycle_count !== undefined) {
+    parts.push(`${source.local_cycle_count} cycle${source.local_cycle_count === 1 ? "" : "s"}`);
+  }
+  const start = formatContinuationTimestamp(source.start_time);
+  const end = formatContinuationTimestamp(source.end_time);
+  if (start) parts.push(`[S] ${start}`);
+  if (end) parts.push(`[E] ${end}`);
+  return parts.length ? parts.join(" · ") : null;
+}
 
 /**
  * Assign each ordered source a stable session-only display color.

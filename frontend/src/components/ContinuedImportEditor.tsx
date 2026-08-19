@@ -413,13 +413,13 @@ export function ContinuedImportEditor({
       )}
 
       <Group align="stretch" gap="md" wrap="nowrap" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-        <Paper withBorder p="xs" w={310} style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Paper withBorder p="xs" w={320} style={{ flex: "none", display: "flex", flexDirection: "column", minHeight: 0 }}>
           <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
             <Group justify="space-between" wrap="nowrap" style={{ flex: "none" }}>
               <Text size="sm" fw={700}>Source chain</Text>
               <Badge size="xs" variant="light">{orderedSources.length}</Badge>
             </Group>
-            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto" offsetScrollbars>
+            <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
               <ContinuationSourceList
                 variant="compact-import"
                 sources={orderedSources}
