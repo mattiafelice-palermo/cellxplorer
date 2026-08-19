@@ -336,3 +336,17 @@ Cumulative parent review is clean: all four parent findings (R1 version/CHANGELO
 User has supplied authorized actual-usage feedback for the compact continued-cell source-chain panel and explicitly overrides the prior BLOCKED state for this implementation follow-up. Resume the Spec 047 final review so the follow-up can be recorded through the workflow.
 
 ---
+### 2026-08-19T23:58:14+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R5
+- R6
+
+**Message**
+
+User actual-usage follow-up accepted for implementation. R5: in the compact-import source chain, maximize readable filenames by removing the Ready chip for non-errors, widening the source pane by about 2-3%, equalizing card gutters, removing per-card up/down controls, removing Historical source and Tracked tail chips, and replacing the numbered circle plus separate handle with a narrow full-height two-section identity-color gutter (pastel number header, strong-color centered drag handle below). R6: replace the ambiguous cycle range/count line with the number of cycles in the file; retain the date/time but label and format it so its role is explicit: show [S] and [E] start/end timestamps when both exist, otherwise label the available timestamp. Preserve drag/drop, error visibility, source identity colors, and non-compact/default continuation surfaces.
+
+---
