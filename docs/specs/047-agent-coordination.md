@@ -476,3 +476,16 @@ R5/R6 central-preview follow-up implemented locally. The continued import editor
 User actual-usage follow-up: R7 voltage must plot raw voltage over time and the metric selection must reach the backend; discharge-only files may legitimately have no charge-capacity points. R8 remove the plot title, replace the large interpretation selector with a compact Continuous cycles switch below the chart, restore the y-axis line, and move source-number badges above the plot in colored rounded boxes. R9 Raw data must be available whenever the source has plottable raw rows; canonical cycle-analysis metadata status must not incorrectly block raw inspection. R10 Selecting a source card must emphasize that source's trace/markers in the merged plot while preserving source colors and combined view.
 
 ---
+### 2026-08-20T01:34:01+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- Focused frontend 25 tests; focused backend continuation/import 90 tests; frontend npx tsc --noEmit PASS; frontend npm.cmd run build PASS; check_versions.py --expected-version 0.27.0-beta.6 PASS; preflight.py --no-cache PASS (4/4 stages; 139 backend/frontend test files); browser/manual verification NOT RUN (user will test locally)
+
+**Message**
+
+R7-R10 implemented locally: voltage preview now uses bounded raw voltage over elapsed time and can operate without canonical cycle summaries; charge capacity remains empty when source rows contain no charge data; the chart has no title, uses a compact Continuous cycles switch below it, restores axis lines, and shows colored top provenance badges; raw inspection is enabled by raw-row availability rather than canonical-cycle metadata capability; selecting a source highlights its merged trace or markers. Version bumped to 0.27.0-beta.6. No remote push per user instruction.
+
+---
