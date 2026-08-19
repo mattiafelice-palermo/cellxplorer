@@ -4,6 +4,12 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.1 - 2026-08-19
+
+### New features
+
+- Add the compact continued-cell import workspace with ordered source review and combined previews.
+
 ## 0.26.0-beta.6 - 2026-08-18
 
 - Normalize cross-source protocol comparisons and preserve grouped segment provenance.

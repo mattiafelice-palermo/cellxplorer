@@ -1,7 +1,6 @@
 import type { ContinuationInspectResult } from "./api";
 import {
   acknowledgedMetadataOnlySourceKeys,
-  acknowledgementFindingIds,
   continuedImportCanSubmit,
   continuedInspectionStatus,
   continuationReviewRequired,
@@ -87,7 +86,6 @@ export type ContinuedImportSubmissionState = {
   order: string[];
   acknowledgedFindingIds: string[];
   metadataOnlySourceKeys: string[];
-  inspectionRequired: boolean;
   inspectionStatus: ContinuedInspectionStatus;
   reviewRequired: boolean;
 };
@@ -119,7 +117,6 @@ export function buildContinuedImportSubmissionState(
     order,
     acknowledgedFindingIds,
     metadataOnlySourceKeys: acknowledgedMetadataOnlySourceKeys(result, acknowledgedFindingIds, order),
-    inspectionRequired: inspectionStatus !== "ready",
     inspectionStatus,
     reviewRequired: continuationReviewRequired(result, acknowledgedFindingIds),
   };

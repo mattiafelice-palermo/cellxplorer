@@ -236,6 +236,8 @@ Cellxplorer/
 │   │   ├── importPathBreadcrumbs.ts  Windows path parsing and edit-mode policy (Spec 035.2)
 │   │   ├── importProgress.ts         Truthful staged import progress policy (Spec 035.6)
 │   │   ├── useImportJobProgress.ts   Tokenized staged import progress polling (Spec 035.6)
+│   │   ├── continuationPolicy.ts     Continuation ordering, findings, and submission policy
+│   │   ├── continuedImportWorkspacePolicy.ts  Continued-import workspace projection and source identity policy (Spec 047)
 │   │   ├── librarySelectionScope.ts  Page-versus-result selection policy (Spec 035.12)
 │   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations

@@ -37,7 +37,7 @@
   - [`047.3-continuity-review-and-context-closure.md`](047.3-continuity-review-and-context-closure.md)
     — secondary continuity review, final regression/integration closure, performance-documentation
     update, and correction of the stale Project architecture mirror. Review: [047.3 review](reviews/047.3-continuity-review-and-context-closure-review.md).
-  **047.1 and 047.2 implemented and review-clean; 047.3 implementation in progress.**
+  **All three children implemented and review-clean; cumulative parent review in progress.**
 - [`045-faster-local-verification.md`](045-faster-local-verification.md)
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend

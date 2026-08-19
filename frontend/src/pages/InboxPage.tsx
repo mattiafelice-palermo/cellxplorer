@@ -1103,7 +1103,6 @@ function ImportModal({
     order: [],
     acknowledgedFindingIds: [],
     metadataOnlySourceKeys: [],
-    inspectionRequired: true,
     inspectionStatus: "not_started",
     reviewRequired: false,
   });
@@ -1157,7 +1156,6 @@ function ImportModal({
         order: [],
         acknowledgedFindingIds: [],
         metadataOnlySourceKeys: [],
-        inspectionRequired: true,
         inspectionStatus: "not_started",
         reviewRequired: false,
       });
