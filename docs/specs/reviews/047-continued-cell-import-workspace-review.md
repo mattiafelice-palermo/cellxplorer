@@ -1,13 +1,13 @@
 # 047 — Continued-cell import workspace — Cumulative parent review
 
 **Spec:** `docs/specs/047-continued-cell-import-workspace.md`
-**Children:** `047.1`, `047.2`, `047.3` (all individually review-clean)
+**Children:** `047.1`, `047.2`, `047.3`, `047.4` (all individually review-clean)
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
-**Reviewed range:** `main..HEAD` = `05c268e..cf1742d`, 24 commits
-**Round:** 4
-**Result:** Changes required — R11 (High), R12 (Medium). Parent review **reopened**: child 047.4 was
-added after round 3, so this is no longer a final review.
+**Reviewed range:** `main..HEAD` = 55 commits at `a0d6471` (round 5); earlier rounds reviewed 24
+**Round:** 5 (cumulative, current)
+**Result:** Changes required — R30 (Medium). See the round-5 section at the end of this file;
+earlier rounds are history, not current merge evidence.
 
 > Rounds 1–3 below reviewed the branch at `0.27.0-beta.1` / 24 commits and closed BLOCKED on the
 > unrun browser matrix. The user then resumed and ran further tranches (R5–R10) that this file never
@@ -650,3 +650,144 @@ directly from "one cycle, one point" and is honest, but it should be seen on rea
 
 047.3 is review-clean. The workflow advances to 047.4; the cumulative parent review will be performed
 once, after that child lands.
+
+---
+
+# Round 5 — cumulative parent review at `a0d6471`
+
+**Reviewed range:** `main..HEAD` = 55 commits, merge base `5e50736` (still `main`'s tip — clean
+fast-forward, no divergence). Four children, all individually review-clean. Version
+`0.27.0-beta.11`.
+
+This supersedes rounds 1–3 of this file, which reviewed `0.27.0-beta.1` at 24 commits and are now
+history rather than merge evidence.
+
+**Result:** Changes required — R30 (Medium). Everything else in the cumulative scope is clean.
+
+---
+
+## R30 — Medium: remove the Continuity review ceremony, but relocate the two parts that carry safety
+
+Affected files:
+- `frontend/src/components/ContinuedImportEditor.tsx`
+- `frontend/src/components/ContinuationReviewModal.tsx`
+- `frontend/src/continuationPolicy.ts`
+
+**Current**
+
+The user reports the Continuity review surface as friction whose purpose is unclear, and asks for it
+to go. Having traced what it still does, the *ceremony* can go — but two of its jobs cannot, and
+deleting the surface outright would break the import flow rather than smooth it.
+
+What is genuinely vestigial: the explicit inspection gate is already gone. `inspectionQuery` now runs
+on `enabled: opened && orderedDrafts.length >= 1`, so continuity is inspected automatically. The
+command that remains says **Review continuity** and does nothing except open a modal. That button,
+the modal, and the auto-open interruption are pure overhead.
+
+What is not vestigial:
+
+1. **Blocking findings.** `continuations.py` raises `duplicate_hash`, `source_missing`,
+   `source_unreadable`, `unsupported_extension`, `hash_already_linked`, `cache_build_failed` and
+   others at `severity="blocking"`. These set `can_submit = false` server-side. If the only surface
+   that displays them is deleted, the footer Import button is disabled with no visible reason — the
+   exact dead end that 047.3 R1 was raised to fix.
+
+2. **Confirmation findings.** `metadata_only_source`, `timestamp_overlap`, `path_refresh` and the
+   capacity/mass mismatch are `severity="confirmation"`. Submission requires their IDs in
+   `acknowledged_finding_ids`, and the server rejects a payload without them. Delete the only place
+   they can be ticked and **those imports become impossible** — a metadata-only BioLogic source, or
+   any pair with overlapping timestamps, could never be imported at all. That is a far worse outcome
+   than the friction being removed.
+
+**Target**
+
+Delete the ceremony; keep the two obligations, inline and compact.
+
+- Remove the **Review continuity** command, `ContinuationReviewModal.tsx`, and the auto-open effect.
+- **Blocking findings** render inline in the workspace, attached to the source row they name where a
+  source key is present, plus the existing one-line footer reason. Red, concise, no Alert stack.
+- **Confirmation findings** render as a compact inline checkbox row above the footer, shown *only*
+  when at least one exists. One checkbox per finding, still bound to the finding ID, still driving
+  `acknowledged_finding_ids`.
+- **Warning/info findings** are simply dropped from the UI. Nothing depends on them and Parent 047
+  decision 7 already bans them from the workspace.
+
+The result is less friction than today, not more: no extra button, no modal, no interruption, and in
+the clean case — which is the common one — nothing appears at all.
+
+Do not weaken any gate. `continuedImportCanSubmit(...)`, `preserveAcknowledgements(...)` and
+`acknowledgedMetadataOnlySourceKeys(...)` keep their current semantics; only where the user reads and
+ticks changes. The server stays authoritative.
+
+**Acceptance criteria**
+
+- No Review continuity command and no continuity modal anywhere in the import flow.
+- A chain with a blocking finding shows the reason inline and keeps Import disabled.
+- A chain with a confirmation finding can be acknowledged inline and imported, and cannot be imported
+  without acknowledging — proving the path still exists end to end.
+- A clean chain shows no finding UI whatsoever.
+- Acknowledgement identity is unchanged: reordering or changing a source still expires a stale
+  acknowledgement.
+- Existing `continuationPolicy` coverage stays green; `continuationReviewRequired` /
+  `continuationHasFindings` are removed or repurposed rather than left orphaned.
+- Existing-cell continuation management (`ContinuationManagementPanel`) is unaffected.
+
+---
+
+## Cumulative verification — clean
+
+Run by the reviewer on `a0d6471`:
+
+```text
+python scripts\preflight.py       PASS (4/4)
+npx.cmd tsc --noEmit              PASS
+npx.cmd vite build                PASS
+check_versions.py                 PASS (0.27.0-beta.11, all declarations)
+focused backend + frontend suites PASS
+```
+
+### Invariants held across all four children
+
+- **Merge base `5e50736` is still `main`'s tip** — 0 commits on main only, 55 on the branch. The
+  branch fast-forwards; no divergence, no rebase needed.
+- **No scientific meaning changed.** `CALC_VERSION` is unmodified across the whole range. No change
+  to cache identity, checksum ownership, or the portable-report format.
+- **Schema changes are forward-safe.** `v0004` describes what a database stamped `0004` actually
+  contains, and `v0005` carries it forward; both paths converge, verified against a real failing
+  database (R22).
+- **Separate-cell mode is untouched.** Zero lines of the branch diff touch its payload branch,
+  replicate groups, or its import button.
+- **Existing-cell continuation management is untouched.** `ContinuationManagementPanel` passes no
+  `variant`, so the default detailed source list is preserved.
+- **Automation cannot act on the user's behalf.** The watcher parks blocking and confirmation
+  findings and never acknowledges; and after R26 it never attaches a file the user declined.
+- **Documentation closed.** `state-and-performance.md` records the combined-preview boundary;
+  `CELLXPLORER_ARCHITECTURE.md` carries the corrected `Cell → ordered SourceFiles` hierarchy and the
+  current MPR capability; both project-context files carry updated synchronization metadata.
+
+### Checked and accepted
+
+`ContinuationManagementPanel` also calls `navigate("/settings/monitoring")`, the pattern R29 removed
+from the tracking dialog. It is safe there: the panel renders inside `CellDetailTabs` on a Cell page,
+not inside a modal flow, so navigating away discards no staged work. No finding.
+
+---
+
+## Merge readiness
+
+Two gates remain, unchanged in character from the first cumulative review:
+
+1. **R30** above.
+2. **The browser/manual matrix, still NOT RUN.** It now covers four children — including R13's
+   checkbox fix, R23's relocated command row, R26's baseline behavior and R27's banner toggle, none
+   of which any automated check in this repository can confirm.
+
+Everything a machine can verify on this branch passes. What remains is what a machine cannot.
+
+## Project mirror handoff
+
+```text
+Replace uploaded Project file:
+- CELLXPLORER_ARCHITECTURE.md
+- CELLXPLORER_PROJECT_INSTRUCTIONS.md
+```
