@@ -579,3 +579,16 @@ Implemented 047.4 continued-cell folder tracking plus the requested Shift-click 
 Fixed reviewer findings R13-R21: controlled checkbox Shift/Ctrl handling, picker selection preservation across Back with fresh-session reset, Cell-draft folder tracking controls, concise settings summary and real folder browser, central multi-extension watch policy, immediate-folder scanning, and global source-monitor cadence. Local commit 518beb6; no remote push.
 
 ---
+### 2026-08-20T19:24:10+02:00 — REVIEWER — 047.4
+
+**Result:** Child review clean; entering final parent review
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.4 round 2 clean: all nine findings resolved at 518beb6. R13 was fixed exactly as diagnosed -- preventDefault is gone from the controlled checkbox, onClick only stops propagation, and the toggle runs from onChange reading modifiers off nativeEvent, so the one-render-behind artifact disappears by construction. R14 threads an initialSelection prop seeding both file and folder paths, so Back restores the selection while a fresh import still opens empty. R15-R18: the toggle and a real Settings Button moved into the Cell draft pane under a Folder tracking divider, the folder is chosen through the existing ImportFilesystemPickerModal, and the Pattern guidance is now an ImportInfoHint. R19-R21 landed at the schema level too -- formats are a MultiSelect fed by the backend source_extensions, recursion and cadence are gone from dialog, service and model, v0004 was amended in place with no v0005, and test_database_migrations now asserts extensions/source_formats present and recursive/cadence_value absent so the removals cannot silently return. The spec was updated in the same commit. I re-ran verification myself rather than taking the report: 21 focused backend tests, 37 focused frontend tests, preflight 4/4, and tsc and vite build explicitly because preflight reported both as cache skips. This closes the last child. The parent now needs one fresh cumulative review across the whole branch, and the browser/manual matrix remains the only gate no agent here can satisfy.
+
+---
