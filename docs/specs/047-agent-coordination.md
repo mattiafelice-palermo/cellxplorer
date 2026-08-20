@@ -545,3 +545,24 @@ R11/R12 fixed in _build_stitched_continuation_preview (backend/app/routers/files
 Implemented 047.4 continued-cell folder tracking plus the requested Shift-click contiguous file selection and readable voltage time-axis units. Local checkpoint 2235efe; no remote push per user instruction.
 
 ---
+### 2026-08-20T18:53:12+02:00 — REVIEWER → IMPLEMENTER — 047.4
+
+**Result:** Changes required
+
+**Findings**
+
+- R13
+- R14
+- R15
+- R16
+- R17
+- R18
+- R19
+- R20
+- R21
+
+**Message**
+
+047.4 round 1. Verified clean first: the hard safety line holds (blocking parks as blocked_by_finding, confirmation parks as needs_confirmation, both break before attachment, nothing auto-acknowledges), prefix-only attachment is real via stop_index, single-source submission is gated exactly as decided, v0004 is registered with migration coverage, and attachment reuses attach_cell_continuations. R13 (High) is the checkbox bug and I found the cause: onClick calls preventDefault() on a controlled Checkbox, which cancels the native toggle AND suppresses the change event, so for files onChange never fires and the DOM checkbox drifts one render behind React -- exactly matching the reported flash on Continue. Fix is to stop preventing default and drive the toggle from onChange, reading modifiers off event.nativeEvent; full recipe and anchor semantics are in the review file. R14 (Medium): selection is component-local and wiped by setSelected(new Map()) in the opened effect, so Back from step 2 discards it; lift it to ImportModal or seed it on Back while keeping a fresh import empty. R15-R18 are the UI corrections: move the toggle out of the footer status slot into the Cell draft pane because tracking is a durable property of the Cell rather than transient submission status (no screenshot reached me this round, so confirm on screen), make Settings a real Button and cut the inline summary to one line, reuse the existing ImportFilesystemPickerModal for folder choice instead of free text, and move the Pattern subtitle into an ImportInfoHint so the inputs share a baseline. R19-R21 also amend the 047.4 spec: multi-format selection changes the single-extension model and relaxes the trackability rule, and subfolders and the cadence override are removed -- cadence removal is consistent with the locked decision that tracking follows the global monitor. Important: amend v0004 in place rather than adding v0005, since it has never shipped, and re-verify the forward path from a real v0003 database. Full Current/Target/Acceptance criteria for every finding are in reviews/047.4-continued-cell-folder-tracking-review.md.
+
+---
