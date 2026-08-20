@@ -592,3 +592,22 @@ Fixed reviewer findings R13-R21: controlled checkbox Shift/Ctrl handling, picker
 047.4 round 2 clean: all nine findings resolved at 518beb6. R13 was fixed exactly as diagnosed -- preventDefault is gone from the controlled checkbox, onClick only stops propagation, and the toggle runs from onChange reading modifiers off nativeEvent, so the one-render-behind artifact disappears by construction. R14 threads an initialSelection prop seeding both file and folder paths, so Back restores the selection while a fresh import still opens empty. R15-R18: the toggle and a real Settings Button moved into the Cell draft pane under a Folder tracking divider, the folder is chosen through the existing ImportFilesystemPickerModal, and the Pattern guidance is now an ImportInfoHint. R19-R21 landed at the schema level too -- formats are a MultiSelect fed by the backend source_extensions, recursion and cadence are gone from dialog, service and model, v0004 was amended in place with no v0005, and test_database_migrations now asserts extensions/source_formats present and recursive/cadence_value absent so the removals cannot silently return. The spec was updated in the same commit. I re-ran verification myself rather than taking the report: 21 focused backend tests, 37 focused frontend tests, preflight 4/4, and tsc and vite build explicitly because preflight reported both as cache skips. This closes the last child. The parent now needs one fresh cumulative review across the whole branch, and the browser/manual matrix remains the only gate no agent here can satisfy.
 
 ---
+### 2026-08-20T22:08:22+02:00 — REVIEWER → IMPLEMENTER — 047.4
+
+**Result:** Changes required
+
+**Findings**
+
+- R23
+- R24
+- R25
+- R26
+- R27
+- R28
+- R29
+
+**Message**
+
+047.4 round 3, from the user running the build. Full Current/Target/Acceptance criteria are in reviews/047.4-continued-cell-folder-tracking-review.md. Two of these supersede earlier findings of mine and one corrects an instruction I gave, so do not treat R15, R17 or R21's link as still binding. R26 (High) is the one that matters most and it is a safety issue, not a layout preference: the scan loop takes any file in the folder matching extension and pattern that is not already attached, with no baseline, so every pre-existing match the user deliberately did NOT select becomes an attach candidate. With the watched folder being Downloads and the pattern *.mpr, every unrelated .mpr in Downloads would be auto-attached to that Cell, silently reversing the user's decision to exclude it. This is the mirror of the auto-acknowledgement rule: nothing unrequested may be silently added. Record a baseline at save time, keep those files visible as ignored candidates with a way to include one deliberately, and attach only files first observed after the watch exists. R29 (High) is also serious and is my fault from R21: the Source monitoring settings link navigates away, unmounting the import modal and destroying every staged source and draft value with no warning -- remove the link, keep the cadence as text, and fix the 'every 1 days' pluralisation. R23 moves the tracking toggle and Settings button into the empty left half of the command row and right-aligns Add more sources and the destination folder to match Separate cells, superseding R15's Cell-draft-pane placement. R25 removes the folder input and Browse entirely and derives the watched folder from the staged sources' shared parent, superseding R17 -- the user is right that a freely retargetable folder is inconsistent with the files already staged. R24 deletes the explanatory grey Alert, R27 moves Enable tracking into the banner whose state it controls with a semantic colour change, and R28 removes the read-only Scan scope input left over when recursion was dropped.
+
+---
