@@ -1,6 +1,6 @@
-# CellXplorer Implementer Prompt
+# CellXplorer Implementer Role Instructions
 
-You are the implementation agent for the current CellXplorer feature/spec.
+This is the persistent role manual for the implementation agent. For a short copy/paste session starter, use `implementer-launch-prompt.md`.
 
 Repository: `mattiafelice-palermo/cellxplorer`
 
@@ -15,7 +15,7 @@ Your session should remain active for the **entire parent-spec implementation/re
    - `docs/specs/workflow/README.md`
    - relevant topic-specific agent knowledge
    - parent spec
-   - active child spec
+   - active numeric child spec
    - active canonical review file, if any
    - latest entries in `docs/specs/NNN-agent-coordination.md`
 3. Run:
@@ -31,6 +31,8 @@ Determine and retain:
 - the shared feature branch name;
 - the parent spec number `NNN`;
 - the path `docs/specs/NNN-agent-state.json`.
+
+If the workflow state does not exist yet, do no repository-changing work. The reviewer owns initialization.
 
 ## Turn ownership
 
@@ -74,17 +76,34 @@ TURN: REVIEWER
 
 you must make **no repository changes**. If `ACTION` is `BLOCKED` or `COMPLETE`, stop as above. Otherwise enter the waiting loop described below.
 
+## Proto-children and user messages
+
+Files named `NNN.P1-*`, `NNN.P2-*`, etc. are **proto-children**. They are planning context only. Never implement, test, review-fix, or otherwise act on a proto-child unless it has first been promoted to a normal numeric child and that numeric child is `ACTIVE_CHILD`.
+
+The state may show pending reviewer-directed user messages:
+
+```text
+USER_MESSAGES_PENDING: 1
+USER_MESSAGE_TIMESTAMPS: U3=...
+```
+
+Those `U*` messages are **USER → REVIEWER**, not direct implementation instructions. You may read them for context, but do not change implementation scope because of them. Only act after the reviewer translates applicable user input into the governing spec, canonical review findings, or a reviewer → implementer handoff while returning `TURN: IMPLEMENTER`.
+
+This preserves one authoritative implementation channel even when the user is communicating with the reviewer during your work.
+
 ## Implementation rules
 
 Inspect the actual implementation and tests before editing.
 
 Do not:
 
-- pre-implement later children;
+- pre-implement later numeric children;
+- implement proto-children;
 - perform unrelated cleanup;
 - change locked parent decisions;
 - modify reviewer findings;
 - renumber, delete, or self-resolve `R` findings;
+- act directly on pending reviewer-directed `U*` messages;
 - perform repository changes while the reviewer owns the turn.
 
 For each review finding, satisfy its:
@@ -125,7 +144,7 @@ YES → DO NOT run a standalone full backend/frontend-policy suite.
 NO  → run one only if the active spec/reviewer finding literally requires a separate full-suite invocation/result, or the user explicitly requests one.
 ```
 
-Do not infer a separate full-suite requirement from the scientific importance, breadth, risk, or complexity of the change. Those are reasons to choose strong **focused** regression tests; they are not permission to duplicate preflight.
+Do not infer a separate full-suite requirement from the scientific importance, breadth, risk, or complexity of a change. Those are reasons to choose strong **focused** regression tests; they are not permission to duplicate preflight.
 
 Failure diagnosis is also not permission to run the whole suite by default. Diagnose failures with the narrowest relevant test/module first.
 
@@ -167,7 +186,7 @@ python docs/specs/workflow/spec_workflow.py handoff-review \
   --message "Optional concise context for the reviewer."
 ```
 
-The script updates the JSON state and appends a timestamped coordination entry.
+The script updates the JSON state and appends a timestamped coordination entry. Pending `U*` user messages remain pending for the reviewer; the implementer handoff does not consume them.
 
 Stage together:
 
@@ -260,9 +279,11 @@ Read:
 1. the updated JSON state;
 2. the latest coordination entry;
 3. the canonical review file when applicable;
-4. the newly active child spec when `ACTION: IMPLEMENT`.
+4. the newly active numeric child spec when `ACTION: IMPLEMENT`.
 
 Then continue according to `ACTION`.
+
+If state still reports pending `U*` messages after ownership returns, do not act on them directly. They remain reviewer-owned input until a reviewer transition consumes/translates them.
 
 ### If the remote state says `ACTION: BLOCKED` or `ACTION: COMPLETE`
 
