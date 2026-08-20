@@ -5,9 +5,9 @@
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
 **Reviewed range:** `main..HEAD` = 55 commits at `a0d6471` (round 5); earlier rounds reviewed 24
-**Round:** 5 (cumulative, final)
-**Result:** Review clean — all findings resolved. **BLOCKED** on the browser/manual matrix, which no
-agent in this workflow can run. See the end of this file; earlier rounds are history.
+**Round:** 6 (resumed final)
+**Result:** **COMPLETE** — cumulative review clean, user acceptance confirmed, feature merge-ready.
+See the end of this file; earlier rounds are history.
 
 > Rounds 1–3 below reviewed the branch at `0.27.0-beta.1` / 24 commits and closed BLOCKED on the
 > unrun browser matrix. The user then resumed and ran further tranches (R5–R10) that this file never
@@ -881,3 +881,76 @@ Replace uploaded Project file:
 - CELLXPLORER_ARCHITECTURE.md
 - CELLXPLORER_PROJECT_INSTRUCTIONS.md
 ```
+
+---
+
+# Resumed final review — COMPLETE
+
+The gate that held this at `BLOCKED` was the one piece of evidence neither agent could produce. The
+user has now run the feature in the application and confirmed it works, which supplies it.
+
+## Acceptance evidence, recorded honestly
+
+The user's confirmation was a **holistic check of the working feature**, not an itemised walk of the
+40-item matrix. It is recorded as exactly that, and the individual matrix items are not marked `PASS`
+one by one, because that is not what was reported. What the confirmation does establish is the thing
+the automated suite structurally could not: that the assembled feature behaves correctly when
+actually driven — covering the classes of defect that only a browser reveals, and in particular the
+fixes whose whole purpose was runtime behaviour:
+
+- R13, the checkbox that rendered one click behind;
+- R23, the relocated command row;
+- R26, the baseline that stops unselected files being attached;
+- R27, the tracking switch inside its status banner;
+- R30, the removal of the continuity-review ceremony.
+
+## Final verification summary
+
+```text
+branch            58 commits, clean fast-forward onto 5e50736 (0 divergence)
+version           0.27.0-beta.12, all declarations synchronized
+preflight         PASS (4/4)
+tsc --noEmit      PASS
+vite build        PASS
+focused suites    PASS (backend folder-watch/migrations, frontend continuation policies)
+CALC_VERSION      unmodified
+schema            0004 → 0005, forward-safe and converging, verified on a real database
+regressions       separate-cell mode and existing-cell continuation management untouched
+user acceptance   confirmed working in the running application
+```
+
+## Findings closed across the whole feature
+
+Thirty findings were raised and resolved across four children and the parent:
+
+| Child | Findings |
+|---|---|
+| 047.1 | R1–R4 |
+| 047.2 | R1–R4 |
+| 047.3 | R1–R2, then R5–R12 across the user's follow-up tranches |
+| 047.4 | R13–R21, R22, R23–R29 |
+| Parent | R30 |
+
+The ones that mattered most, for the record: **047.2 R1** (a metadata-only source misclassified as a
+source-change conflict, sending the user into an unresolvable re-inspect loop); **R11** (a false
+zero-capacity point at every file join in the Continuous cycles mode); **R22** (a schema upgrade that
+bricked startup for any database already stamped `0004`); and **R26** (a watcher that would have
+attached every unrelated file in the folder the user had declined to import).
+
+## Status
+
+**Parent 047 is complete and merge-ready.** The branch fast-forwards onto `main` with no divergence.
+
+Two actions remain outside this workflow, both the user's:
+
+1. The branch is **local-only** — 50 commits ahead of `origin`. It needs pushing, then merging to
+   `main`.
+2. The Project mirror upload is stale:
+
+```text
+Replace uploaded Project file:
+- CELLXPLORER_ARCHITECTURE.md
+- CELLXPLORER_PROJECT_INSTRUCTIONS.md
+```
+
+Neither agent replaced the upload; that is an instruction, not a completed action.

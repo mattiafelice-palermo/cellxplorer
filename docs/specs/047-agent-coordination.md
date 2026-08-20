@@ -686,3 +686,16 @@ Fixed R30: removed the Review continuity command, ContinuationReviewModal, and a
 Cumulative parent review clean at 4834c78. R30 resolved: ContinuationReviewModal is deleted along with the Review continuity command and the auto-open effect, while blocking findings now render inline on the source row that names them and confirmation findings render as compact checkboxes shown only when one exists, still keyed to finding.id. That matters because without it a metadata-only BioLogic source or an overlapping-timestamp pair could never be imported at all. canSubmit is byte-identical -- reviewRequired became findingAction as reporting state only, no gate moved, and the server stays authoritative. Existing-cell continuation management still uses the default detailed source list. Verified myself: focused continuation suites, preflight 4/4, tsc and vite build explicitly, check_versions at 0.27.0-beta.12. All four children are review-clean and no finding remains open across the whole branch. BLOCKED rather than COMPLETE because the required acceptance input is unavailable to both agents: the browser/manual matrix has never been run and now spans four children, covering exactly what no test here can reach -- rendered colour parity, real drag-and-drop, the R13 checkbox behaviour, the relocated command row, the R27 banner toggle, light/dark, zoom and keyboard reach. Marking COMPLETE would claim verification nobody performed. Resume with resume-final-review once the matrix has been run; the workflow forbids going straight from BLOCKED to COMPLETE.
 
 ---
+### 2026-08-20T23:28:08+02:00 — REVIEWER — 047.4
+
+**Result:** External dependency available; resuming final parent review
+
+**Findings**
+
+- None.
+
+**Message**
+
+User confirmed the feature works in the running application, supplying the acceptance evidence that was previously unavailable to both agents. Resuming the cumulative final review to record it and close.
+
+---
