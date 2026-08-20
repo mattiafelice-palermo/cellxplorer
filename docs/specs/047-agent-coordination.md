@@ -519,3 +519,16 @@ Parent review REOPENED: 047.4 was added as a fourth child after round 3, so this
 R11/R12 fixed in _build_stitched_continuation_preview (backend/app/routers/files.py). calc.per_cycle(merged) is now computed exactly once for the whole chain; a boundary-spanning cycle (one cycle id shared across a file join, by infer_contiguous_cycle_ids design) is attributed to exactly one segment -- the segment holding that cycle's first merged row -- via a cycle-to-segment owner map built from merged[[cycle, segment]].drop_duplicates(keep=first). The per-segment calc.per_cycle(segment_frame) re-aggregation is removed entirely, so no segment can report a false 0.0 for a phase it has no rows of, and the aggregation runs N+1 -> 1 times. Voltage mode is untouched (still reads merged raw rows directly per segment). Updated the existing symmetric test (both files discharge-only) to assert the new one-point-per-cycle behavior: segment 0 gets [1]/[3.0] (the whole cycle's aggregated discharge, summed across both files' step deltas), segment 1 gets []/[] instead of the old two-partial-points-at-one-x assertion. Added a new asymmetric regression test (charge-only file A, then discharge-only file B) that asserts no segment's y values contain 0.0 and that the single aggregated point (1.5 mAh) is attributed to segment 0. Version bumped to 0.27.0-beta.7 with a CHANGELOG entry. No remote push per user instruction (local commit only).
 
 ---
+### 2026-08-20T16:32:39+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Review clean; next child 047.4
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.3 round 4 clean: R11 and R12 both resolved at b11c65d by the shared fix -- calc.per_cycle now runs exactly once over the merged chain and its rows are partitioned by a first-row cycle-ownership map instead of being recomputed per segment. I re-ran my own reproduction against the fixed path rather than trusting the report: the boundary cycle that previously plotted (1, 0.0) in segment 0 and (1, 1.0) in segment 1 now plots a single (1, 1.0) on segment 0 and nothing on segment 1, which is the single-file value on exactly one segment. The new asymmetric charge-then-discharge regression test asserts 0.0 is absent from every segment, the symmetric fixture was updated from two partial points to one aggregated point, voltage mode is untouched, and the per-segment max_points budget still applies. First-row attribution is the right choice because it is stable when the user switches capacity metric. One consequence for the browser matrix, not a finding: a source holding only the tail of a cycle started in the previous file renders an empty trace in stitched mode, so R10's selection emphasis highlights nothing for it -- worth seeing on real data. Advancing to 047.4; the cumulative parent review happens once, after it lands.
+
+---

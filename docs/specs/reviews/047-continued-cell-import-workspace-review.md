@@ -617,3 +617,36 @@ Fixing R11 as described removes this too: one `calc.per_cycle(merged)`, then par
   source-change conflict.
 - `interpretation` defaults to `source_chain` on the API for compatibility while the continued-import
   UI sends `stitched` explicitly, so existing callers are unaffected.
+
+## Round 4 resolution — R11 and R12 resolved (`b11c65d`)
+
+Both findings shared one root cause and were fixed together, as the Target proposed:
+`calc.per_cycle(merged)` now runs **exactly once** (a single call site remains in the stitched
+builder), and its rows are partitioned between segments through a cycle-ownership map
+(`merged[["cycle","segment"]].drop_duplicates(subset="cycle", keep="first")`) rather than being
+recomputed on `merged[merged["segment"] == i]` slices.
+
+I re-ran my original reproduction against the fixed path rather than trusting the report:
+
+```text
+before: segment 0 -> (cycle 1, 0.0)   segment 1 -> (cycle 1, 1.0)
+after : segment 0 -> (cycle 1, 1.0)   segment 1 -> []
+```
+
+The boundary cycle now carries the value it would have had in a single file, on exactly one segment,
+with no false zero — R11 criteria 1 and 2. The new
+`test_continuation_preview_stitched_interpretation_attributes_boundary_cycle_to_one_segment` covers
+the asymmetric charge-then-discharge case and asserts `0.0 not in segment["y"]` (criterion 3), and the
+symmetric fixture was updated from two partial points to one aggregated point (criterion 4). Voltage
+mode never used `calc.per_cycle` and is untouched (criterion 5). The per-segment `max_points`
+budget still applies, so the bounded-response guarantee is intact (R12 criterion 3).
+
+**Attribution choice, endorsed.** First-merged-row ownership is stable across metric changes — a
+phase-based rule would move a boundary cycle between traces when the user switches capacity metric,
+which would be worse. One consequence to watch in the browser matrix rather than fix now: a source
+consisting only of the tail of a cycle started in the previous file renders an **empty trace** in
+stitched mode, and R10's selection emphasis then highlights nothing for that source. That follows
+directly from "one cycle, one point" and is honest, but it should be seen on real data before merge.
+
+047.3 is review-clean. The workflow advances to 047.4; the cumulative parent review will be performed
+once, after that child lands.
