@@ -489,3 +489,17 @@ User actual-usage follow-up: R7 voltage must plot raw voltage over time and the 
 R7-R10 implemented locally: voltage preview now uses bounded raw voltage over elapsed time and can operate without canonical cycle summaries; charge capacity remains empty when source rows contain no charge data; the chart has no title, uses a compact Continuous cycles switch below it, restores axis lines, and shows colored top provenance badges; raw inspection is enabled by raw-row availability rather than canonical-cycle metadata capability; selecting a source highlights its merged trace or markers. Version bumped to 0.27.0-beta.6. No remote push per user instruction.
 
 ---
+### 2026-08-20T16:25:13+02:00 — REVIEWER → IMPLEMENTER — 047.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R11
+- R12
+
+**Message**
+
+Parent review REOPENED: 047.4 was added as a fourth child after round 3, so this is no longer a final review, and review-clean on 047.3 will now advance to 047.4 automatically. R7-R10 are implemented and verified. R11 (High) is a real display defect in the headline Continuous cycles mode: infer_contiguous_cycle_ids deliberately gives one cycle id across a file join, then the endpoint recomputes capacity per segment on merged[segment == i], and calc.per_cycle phase_total ends in fillna(0.0) -- so a cycle that charges in file A and discharges in file B yields a literal 0.0 discharge point in segment 0. I ran the real functions to confirm rather than infer: segment 0 plots (cycle 1, 0.0) while segment 1 plots (cycle 1, 1.0). That draws a spike to zero at every join, exactly the artifact this mode exists to remove, and an interrupted-then-resumed run is the normal case. The existing test misses it because its fixture is symmetric (both files discharge-only), and that same assertion locks in the related facet: one shared cycle emitted twice at the same x with partial values each. R12 (Medium) is the same root cause seen as cost -- calc.per_cycle runs N+1 times over raw rows, and the whole-chain run exists only to pick quantity/label, reintroducing the pattern 047.2 R4 removed. Aggregating once over merged and partitioning the resulting rows resolves both. Process note, not a code finding: R3-R10 were never written to any canonical review file, so R7-R10 could only be checked against one prose sentence each with no acceptance criteria. Please record findings in the review file from here on. Full detail for R11/R12 is in reviews/047-continued-cell-import-workspace-review.md round 4.
+
+---

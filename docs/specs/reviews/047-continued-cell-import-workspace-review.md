@@ -5,8 +5,15 @@
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
 **Reviewed range:** `main..HEAD` = `05c268e..cf1742d`, 24 commits
-**Round:** 3 (final)
-**Result:** Review clean — all findings resolved. **BLOCKED** on outstanding browser/manual verification, which no agent in this workflow can perform.
+**Round:** 4
+**Result:** Changes required — R11 (High), R12 (Medium). Parent review **reopened**: child 047.4 was
+added after round 3, so this is no longer a final review.
+
+> Rounds 1–3 below reviewed the branch at `0.27.0-beta.1` / 24 commits and closed BLOCKED on the
+> unrun browser matrix. The user then resumed and ran further tranches (R5–R10) that this file never
+> recorded, and afterwards added 047.4 as a fourth child. Round 4 reviews the R7–R10 fixes at
+> `398b3c3` / `0.27.0-beta.6`. The cumulative parent review must be performed again, once, after
+> 047.4 lands — rounds 1–3 are history, not current merge evidence.
 
 This is a fresh cumulative review of the whole branch against the real merge base, not a re-read of
 the three child reviews. Child findings (047.1 R1–R4, 047.2 R1–R4, 047.3 R1–R2) are all closed and
@@ -454,3 +461,159 @@ Replace uploaded Project file:
 ```
 
 Neither agent replaced the upload; this is an instruction to the user, not a completed action.
+
+---
+
+# Round 4 — R7–R10 fixes reviewed at `398b3c3`
+
+## Process note: R3–R10 were never written to a canonical review file
+
+The workflow guide makes the review file the canonical technical record, with each finding carrying
+**Current / Target / Acceptance criteria**. This file stops at R4 and the 047.3 review file stops at
+R2, yet the state file has cycled through R5, R6 and R7–R10. Those findings exist only as
+one-paragraph coordination messages.
+
+The practical cost is immediate: R7–R10 can only be checked against a single prose sentence each,
+with no acceptance criteria to test against, and a later reader cannot reconstruct what was asked or
+why. R11 below is a defect that acceptance criteria would plausibly have caught at authoring time.
+
+Not a code finding, and not something to fix retroactively — but the remaining rounds should record
+findings in this file.
+
+## R7–R10 themselves: implemented
+
+- **R7** — `ContinuationPreviewRequest` now carries `quantity` and `interpretation`, and the frontend
+  sends both, so metric selection genuinely reaches the backend. `voltage_preview_from_raw` plots raw
+  voltage against a source-total elapsed timeline. Discharge-only sources no longer error on absent
+  charge points.
+- **R8** — no layout-level plot title remains (the surviving `title` keys are axis titles);
+  `showline: true` restores both axis lines; the interpretation selector is now a compact
+  `Continuous cycles` switch below the chart.
+- **R9** — `continuationSourceCanOpenRawData` takes a `rawDataAvailable` option and no longer keys
+  raw inspection off `canonical_cycling`, with a comment stating the distinction correctly: raw
+  inspection is a data-availability surface, not a canonical-cycle claim.
+- **R10** — `buildContinuationPreviewTraces` dims unselected segments to `opacity: 0.62` while
+  keeping every source's own colour, so emphasis does not break colour parity.
+
+---
+
+### R11 — High: in stitched mode, a cycle spanning a source boundary plots a false zero-capacity point
+
+Affected files:
+- `backend/app/routers/files.py`
+- `tests/test_import_flow.py`
+
+**Current**
+
+`infer_contiguous_cycle_ids` deliberately assigns **one** cycle id across a file join — that is the
+whole point of the Continuous cycles interpretation, and its docstring says so:
+
+> "This makes a chain of discharge-only file fragments one logical cycle while retaining the source
+> boundaries separately on the returned frame."
+
+The endpoint then tears that logical cycle apart again. Capacity is computed per segment, on a slice
+of the merged frame:
+
+```python
+segment_frame = merged[merged["segment"] == segment_index]
+segment_cycles = calc.per_cycle(segment_frame)
+segment_preview = capacity_preview_from_cycles(segment_cycles, ..., quantity=selected_quantity)
+```
+
+`calc.per_cycle`'s `phase_total` ends in `.reindex(index).fillna(0.0)`, so a cycle with **no rows of
+the selected phase in that slice yields 0.0, not NaN**. `capacity_preview_from_cycles` only drops
+NaN, so the zero survives into the response and is plotted.
+
+Verified by running the real functions on a two-file chain whose cycle charges in file A and
+discharges in file B:
+
+```text
+inferred cycle ids per segment: {0: [1], 1: [1]}      # same cycle spans the join, by design
+segment 0: discharge points plotted = [(1, 0.0)]      # false zero
+segment 1: discharge points plotted = [(1, 0.9999999999999999)]
+```
+
+So every boundary-spanning cycle draws a spike down to zero in the earlier source's trace — the exact
+discontinuity artifact that Continuous cycles exists to remove, manufactured by the feature itself.
+An interrupted-then-resumed run is the normal case for continued cells, so this is the common path,
+not an edge case.
+
+The existing test does not catch it because its fixture is symmetric — both files contain discharge
+rows, so both segments produce a real value:
+
+```python
+self.assertEqual([segment["y"] for segment in response["segments"]], [[1.0], [2.0]])
+```
+
+That assertion also locks in the second facet of the same root cause: a shared cycle is emitted
+**twice at the same x**, each value computed from only part of the cycle. Whether two partial points
+at one x is acceptable display is a decision that was never made explicitly; a false `0.0` is not
+defensible either way.
+
+**Target**
+
+A stitched cycle is aggregated once, over all of its rows, regardless of how many source files it
+spans. `calc.per_cycle(merged)` is already computed for the quantity/label decision — reuse that
+single result and partition the resulting per-cycle rows between segments (for example by the segment
+that owns each cycle's first row, or its selected-phase rows), instead of re-running `per_cycle` on
+segment slices.
+
+Decide and document what a boundary cycle looks like on the chart: one point attributed to one
+segment is the natural reading, and it also removes the duplicate-x question.
+
+**Acceptance criteria**
+
+- With a chain whose cycle charges in file A and discharges in file B, no segment reports a `0.0`
+  capacity point for that cycle.
+- Each stitched cycle contributes **one** point across the whole response, with the value it would
+  have if the chain were a single file.
+- A regression test covers the asymmetric case specifically (charge-only segment followed by
+  discharge-only segment), not only the symmetric discharge/discharge fixture.
+- The existing symmetric test is updated to whatever the decided behavior is, rather than continuing
+  to assert two partial points at one x.
+- Voltage mode is unaffected.
+
+---
+
+### R12 — Medium: `calc.per_cycle` is recomputed once per segment plus once for the whole chain, on the import path
+
+Affected files:
+- `backend/app/routers/files.py`
+
+**Current**
+
+The stitched capacity path runs the scientific per-cycle aggregation `N + 1` times over **raw** rows:
+
+```python
+merged_cycles = pd.DataFrame() if quantity == "voltage" else calc.per_cycle(merged)   # whole chain
+...
+    segment_cycles = calc.per_cycle(segment_frame)                                    # once per source
+```
+
+`merged_cycles` is used only to choose the quantity and label. This is the same wasteful shape as
+047.2's R4 — a full-frame computation whose result is discarded except for a label — reintroduced at
+a higher cost, because it now aggregates raw records rather than an already-reduced per-cycle table.
+Parent 047 requires the combined preview to "remain cheap enough for import UX".
+
+Fixing R11 as described removes this too: one `calc.per_cycle(merged)`, then partition its rows.
+
+**Acceptance criteria**
+
+- The stitched capacity path aggregates per-cycle data once for the chain, not once per segment.
+- Quantity/label selection does not require a discarded full-frame computation.
+- The bounded-response guarantees and per-segment point budget are unchanged.
+
+---
+
+## Verified clean in round 4
+
+- No cache is written: the preview reads through `cache.load_raw(...)` only. `CALC_VERSION` is
+  unmodified across the whole range, and no migration or model change appears.
+- The preview-local mutations in `prepare_segmented_raw` (`__preview_step`, `preview_time_s`,
+  `segment`) operate on copies and never reach a cache or the database.
+- Missing raw caches fail closed with structured per-source detail and `409`, consistent with the
+  classification model established in 047.2 R1.
+- Cycle-inference failure is reported as its own `422` kind rather than being folded into a
+  source-change conflict.
+- `interpretation` defaults to `source_chain` on the API for compatibility while the continued-import
+  UI sends `stitched` explicitly, so existing callers are unaffected.
