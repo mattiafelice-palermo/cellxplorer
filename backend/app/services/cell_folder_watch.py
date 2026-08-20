@@ -21,7 +21,6 @@ DEFAULT_PATTERN = "*"
 DEFAULT_ORDERING = "timestamp_filename_hash"
 WATCHABLE_ORDERINGS = {DEFAULT_ORDERING, "filename"}
 PATTERN_KINDS = {"glob", "regex"}
-CADENCE_UNITS = {"minutes": 60, "hours": 3600, "days": 86400}
 TERMINAL_CANDIDATE_STATUSES = {
     "duplicate",
     "unsupported",
@@ -51,13 +50,25 @@ def normalize_folder_path(value: str) -> str:
     return str(Path(path).expanduser().resolve())
 
 
-def normalize_extension(value: str) -> str:
-    extension = str(value or "").strip().lower().lstrip(".")
-    if not extension:
-        raise ValueError("A supported source extension is required for folder tracking.")
-    if not parsing.source_filename_allowed(f"source.{extension}"):
-        raise ValueError(f"The source extension .{extension} is not supported by the importer.")
-    return extension
+def normalize_extensions(value: object) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    extensions = {
+        str(item or "").strip().lower().lstrip(".")
+        for item in values
+        if str(item or "").strip()
+    }
+    if not extensions:
+        raise ValueError("At least one supported source extension is required for folder tracking.")
+    unsupported = sorted(
+        extension for extension in extensions
+        if not parsing.source_filename_allowed(f"source.{extension}")
+    )
+    if unsupported:
+        raise ValueError(
+            f"The source extension(s) {', '.join(f'.{item}' for item in unsupported)} "
+            "are not supported by the importer."
+        )
+    return sorted(extensions)
 
 
 def validate_pattern(pattern_kind: str, pattern: str) -> str:
@@ -79,40 +90,23 @@ def validate_watch_config(config: dict[str, Any]) -> dict[str, Any]:
     folder_path = normalize_folder_path(str(config.get("folder_path") or ""))
     pattern_kind = str(config.get("pattern_kind") or "glob").strip().lower()
     pattern = validate_pattern(pattern_kind, str(config.get("pattern") or DEFAULT_PATTERN))
-    extension = normalize_extension(str(config.get("extension") or ""))
+    extensions = normalize_extensions(config.get("extensions"))
+    source_formats = sorted({
+        str(item or "").strip()
+        for item in (config.get("source_formats") or [])
+        if str(item or "").strip()
+    })
     ordering_rule = str(config.get("ordering_rule") or DEFAULT_ORDERING).strip().lower()
     if ordering_rule not in WATCHABLE_ORDERINGS:
         raise ValueError("Folder tracking has an unsupported ordering rule.")
-    recursive = bool(config.get("recursive", False))
-    recursion_depth = int(config.get("recursion_depth") or 0)
-    if recursion_depth < 0 or recursion_depth > 32:
-        raise ValueError("Recursive folder tracking depth must be between 0 and 32.")
-    if recursive and recursion_depth == 0:
-        recursion_depth = 1
-    cadence_value = config.get("cadence_value")
-    cadence_unit = config.get("cadence_unit")
-    if cadence_value is not None:
-        cadence_value = int(cadence_value)
-        cadence_unit = str(cadence_unit or "hours").strip().lower()
-        if cadence_value < 1 or cadence_value > 365:
-            raise ValueError("A folder-tracking cadence must be between 1 and 365 units.")
-        if cadence_unit not in CADENCE_UNITS:
-            raise ValueError("Folder-tracking cadence must use minutes, hours, or days.")
-    else:
-        cadence_unit = None
-    source_format = str(config.get("source_format") or "").strip() or None
     return {
         "folder_path": folder_path,
         "enabled": bool(config.get("enabled", True)),
         "pattern_kind": pattern_kind,
         "pattern": pattern,
-        "extension": extension,
-        "source_format": source_format,
+        "extensions": extensions,
+        "source_formats": source_formats,
         "ordering_rule": ordering_rule,
-        "recursive": recursive,
-        "recursion_depth": recursion_depth,
-        "cadence_value": cadence_value,
-        "cadence_unit": cadence_unit,
     }
 
 
@@ -132,8 +126,8 @@ def validate_import_watch(
         path = Path(source_path).expanduser().resolve()
         if path.parent != folder:
             raise ValueError("All tracked sources must be in the same parent folder.")
-        if path.suffix.lower().lstrip(".") != clean["extension"]:
-            raise ValueError("All tracked sources must use the configured extension.")
+        if path.suffix.lower().lstrip(".") not in clean["extensions"]:
+            raise ValueError("All tracked sources must use one of the configured extensions.")
         if not matches_filename(filename or path.name, clean["pattern_kind"], clean["pattern"]):
             raise ValueError(f"The selected source {filename or path.name} does not match the filename pattern.")
     return clean
@@ -193,18 +187,9 @@ def candidate_order_key(
 
 def _iter_files(watch: CellFolderWatch) -> Iterable[Path]:
     root = Path(watch.folder_path)
-    if not watch.recursive:
-        try:
-            yield from (entry for entry in root.iterdir() if entry.is_file())
-        except OSError:
-            return
-        return
-    max_depth = max(1, int(watch.recursion_depth or 1))
     try:
-        for entry in root.rglob("*"):
-            if entry.is_file() and len(entry.relative_to(root).parts) <= max_depth:
-                yield entry
-    except (OSError, ValueError):
+        yield from (entry for entry in root.iterdir() if entry.is_file())
+    except OSError:
         return
 
 
@@ -218,26 +203,15 @@ def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str
             "truncated": False,
             "error": f"Folder is missing or unavailable: {clean['folder_path']}",
         }
-    if clean["recursive"]:
-        max_depth = max(1, int(clean["recursion_depth"] or 1))
-        try:
-            paths = [
-                path
-                for path in root.rglob("*")
-                if path.is_file() and len(path.relative_to(root).parts) <= max_depth
-            ]
-        except (OSError, ValueError):
-            paths = []
-    else:
-        try:
-            paths = [path for path in root.iterdir() if path.is_file()]
-        except OSError:
-            paths = []
+    try:
+        paths = [path for path in root.iterdir() if path.is_file()]
+    except OSError:
+        paths = []
     matching = sorted(
         (
             path
             for path in paths
-            if path.suffix.lower().lstrip(".") == clean["extension"]
+            if path.suffix.lower().lstrip(".") in clean["extensions"]
             and matches_filename(path.name, clean["pattern_kind"], clean["pattern"])
         ),
         key=lambda path: str(path.relative_to(root)).casefold(),
@@ -255,16 +229,6 @@ def preview_watch_files(config: dict[str, Any], *, limit: int = 200) -> dict[str
         "truncated": len(matching) > len(bounded),
         "error": None,
     }
-
-
-def _watch_due(watch: CellFolderWatch, now: datetime) -> bool:
-    if watch.cadence_value is None:
-        return True
-    previous = _aware(watch.last_scan_at)
-    if previous is None:
-        return True
-    seconds = int(watch.cadence_value) * CADENCE_UNITS.get(watch.cadence_unit or "hours", 3600)
-    return (now - previous).total_seconds() >= seconds
 
 
 def _candidate_payload(candidate: CellFolderWatchCandidate) -> dict[str, Any]:
@@ -309,13 +273,9 @@ def watch_payload(
         "enabled": watch.enabled,
         "pattern_kind": watch.pattern_kind,
         "pattern": watch.pattern,
-        "extension": watch.extension,
-        "source_format": watch.source_format,
+        "extensions": watch.extensions,
+        "source_formats": watch.source_formats,
         "ordering_rule": watch.ordering_rule,
-        "recursive": watch.recursive,
-        "recursion_depth": watch.recursion_depth,
-        "cadence_value": watch.cadence_value,
-        "cadence_unit": watch.cadence_unit,
         "status": status,
         "status_message": status_message,
         "last_scan_at": _aware(watch.last_scan_at).isoformat() if watch.last_scan_at else None,
@@ -463,7 +423,7 @@ def _scan_one_watch(
                 CellFolderWatchCandidate.path == normalized,
             ).delete(synchronize_session=False)
             continue
-        if path.suffix.lower().lstrip(".") != watch.extension:
+        if path.suffix.lower().lstrip(".") not in watch.extensions:
             continue
         if not matches_filename(path.name, watch.pattern_kind, watch.pattern):
             continue
@@ -528,13 +488,19 @@ def _scan_one_watch(
         candidate.hash = inspection.hash
         candidate.last_seen_at = now
         metadata_format = str(inspection.metadata.get("source_format") or "").strip()
-        if watch.source_format and metadata_format and metadata_format.casefold() != watch.source_format.casefold():
+        if (
+            watch.source_formats
+            and metadata_format
+            and metadata_format.casefold() not in {
+                item.casefold() for item in watch.source_formats
+            }
+        ):
             _mark_candidate(
                 candidate,
                 status="unsupported",
                 message=(
                     f"The file reports format {metadata_format}, but this watch expects "
-                    f"{watch.source_format}."
+                    f"{', '.join(watch.source_formats)}."
                 ),
                 attempt=True,
             )
@@ -730,8 +696,6 @@ def run_folder_watch_pass(
     watches = db.query(CellFolderWatch).filter(CellFolderWatch.enabled == True).all()  # noqa: E712
     results: list[dict[str, Any]] = []
     for watch in watches:
-        if not _watch_due(watch, current):
-            continue
         try:
             result = _scan_one_watch(
                 db,

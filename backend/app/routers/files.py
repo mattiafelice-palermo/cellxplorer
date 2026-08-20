@@ -1341,13 +1341,9 @@ class FolderWatchDraft(BaseModel):
     folder_path: str
     pattern_kind: Literal["glob", "regex"] = "glob"
     pattern: str = "*"
-    extension: str
-    source_format: str | None = None
+    extensions: list[str]
+    source_formats: list[str] = []
     ordering_rule: Literal["timestamp_filename_hash", "filename"] = "timestamp_filename_hash"
-    recursive: bool = False
-    recursion_depth: int = 0
-    cadence_value: int | None = None
-    cadence_unit: Literal["minutes", "hours", "days"] | None = None
 
 
 class FolderWatchPreviewRequest(FolderWatchDraft):
@@ -5411,9 +5407,8 @@ def update_cell_folder_watch(
             entity_id=cell_id,
             details={
                 "enabled": bool(watch.enabled),
-                "extension": watch.extension,
+                "extensions": watch.extensions,
                 "ordering_rule": watch.ordering_rule,
-                "recursive": bool(watch.recursive),
             },
         )
         db.commit()

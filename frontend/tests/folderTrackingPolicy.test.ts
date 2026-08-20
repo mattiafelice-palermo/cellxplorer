@@ -5,8 +5,8 @@ import type { ImportPreview } from "../src/api.ts";
 import {
   folderTrackingEligibility,
   compareFolderTrackingCandidates,
+  folderTrackingInlineSummary,
   folderTrackingPatternMatches,
-  folderTrackingSummary,
   validateFolderTrackingPattern,
 } from "../src/folderTrackingPolicy.ts";
 
@@ -32,14 +32,10 @@ test("folderTrackingEligibility offers a default watch for one source", () => {
     enabled: true,
     folder_path: "C:\\data",
     pattern_kind: "glob",
-    pattern: "*.ndax",
-    extension: "ndax",
-    source_format: null,
+    pattern: "*",
+    extensions: ["ndax"],
+    source_formats: [],
     ordering_rule: "timestamp_filename_hash",
-    recursive: false,
-    recursion_depth: 0,
-    cadence_value: null,
-    cadence_unit: null,
   });
 });
 
@@ -49,10 +45,10 @@ test("folderTrackingEligibility accepts same-folder sources with one format", ()
     source("C:/data/part-02.ndax", "part-02.ndax", "ndax", "neware-ndax"),
   ]);
   assert.equal(eligibility.eligible, true);
-  assert.equal(eligibility.sourceFormat, "neware-ndax");
+  assert.deepEqual(eligibility.sourceFormats, ["neware-ndax"]);
 });
 
-test("folderTrackingEligibility rejects mixed folders and parser formats", () => {
+test("folderTrackingEligibility accepts mixed supported formats in one folder", () => {
   assert.match(
     folderTrackingEligibility([
       source("C:/data/part-01.ndax", "part-01.ndax"),
@@ -60,13 +56,13 @@ test("folderTrackingEligibility rejects mixed folders and parser formats", () =>
     ]).reason ?? "",
     /one parent folder/,
   );
-  assert.match(
-    folderTrackingEligibility([
-      source("C:/data/part-01.ndax", "part-01.ndax", "ndax", "format-a"),
-      source("C:/data/part-02.ndax", "part-02.ndax", "ndax", "format-b"),
-    ]).reason ?? "",
-    /one parser format/,
-  );
+  const eligibility = folderTrackingEligibility([
+    source("C:/data/part-01.ndax", "part-01.ndax", "ndax", "format-a"),
+    source("C:/data/part-02.mpr", "part-02.mpr", "mpr", "format-b"),
+  ]);
+  assert.equal(eligibility.eligible, true);
+  assert.deepEqual(eligibility.extensions, ["mpr", "ndax"]);
+  assert.deepEqual(eligibility.sourceFormats, ["format-a", "format-b"]);
 });
 
 test("folder tracking validates glob and regex patterns", () => {
@@ -78,15 +74,13 @@ test("folder tracking validates glob and regex patterns", () => {
   assert.equal(folderTrackingPatternMatches("part-01.mpr", "glob", "*.ndax"), false);
 });
 
-test("folderTrackingSummary states the selected folder policy", () => {
+test("folderTrackingInlineSummary states the selected folder and extensions", () => {
   assert.equal(
-    folderTrackingSummary({
+    folderTrackingInlineSummary({
       folder_path: "C:\\data",
-      pattern: "*.ndax",
-      recursive: false,
-      ordering_rule: "timestamp_filename_hash",
+      extensions: ["mpr", "ndax"],
     }),
-    "C:\\data · *.ndax · files directly in this folder · source start time, then filename",
+    "data · matching .mpr, .ndax files",
   );
 });
 

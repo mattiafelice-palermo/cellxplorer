@@ -31,7 +31,7 @@ class CellFolderWatchTests(unittest.TestCase):
         factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
         return factory(), engine
 
-    def add_watch(self, db, folder: Path, *, recursive=False, depth=0):
+    def add_watch(self, db, folder: Path):
         source_path = folder / "part-01.ndax"
         source_path.write_bytes(b"existing")
         source = SourceFile(
@@ -52,10 +52,9 @@ class CellFolderWatchTests(unittest.TestCase):
             enabled=True,
             pattern_kind="glob",
             pattern="*.ndax",
-            extension="ndax",
+            extensions=["ndax"],
+            source_formats=[],
             ordering_rule="timestamp_filename_hash",
-            recursive=recursive,
-            recursion_depth=depth,
         )
         db.add_all([cell, source, test, link, watch])
         db.commit()
@@ -100,11 +99,11 @@ class CellFolderWatchTests(unittest.TestCase):
                     "folder_path": directory,
                     "pattern_kind": "glob",
                     "pattern": "*.ndax",
-                    "extension": ".ndax",
+                    "extensions": [".ndax"],
                     "ordering_rule": "filename",
                 }
             )
-            self.assertEqual(clean["extension"], "ndax")
+            self.assertEqual(clean["extensions"], ["ndax"])
             self.assertEqual(clean["ordering_rule"], "filename")
             with self.assertRaisesRegex(ValueError, "regular expression"):
                 cell_folder_watch.validate_watch_config(
@@ -112,7 +111,7 @@ class CellFolderWatchTests(unittest.TestCase):
                         "folder_path": directory,
                         "pattern_kind": "regex",
                         "pattern": "[",
-                        "extension": "ndax",
+                        "extensions": ["ndax"],
                     }
                 )
         self.assertLess(
@@ -120,7 +119,7 @@ class CellFolderWatchTests(unittest.TestCase):
             cell_folder_watch.candidate_order_key("part-10.ndax", "2026-08-20T10:00:00", "a" * 64),
         )
 
-    def test_settings_preview_respects_pattern_extension_and_depth(self):
+    def test_settings_preview_ignores_subfolders_and_filters_extensions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "part-01.ndax").write_bytes(b"one")
@@ -133,14 +132,30 @@ class CellFolderWatchTests(unittest.TestCase):
                     "folder_path": str(root),
                     "pattern_kind": "glob",
                     "pattern": "part-*.ndax",
-                    "extension": "ndax",
-                    "recursive": True,
-                    "recursion_depth": 2,
+                    "extensions": ["ndax"],
                 }
             )
             self.assertEqual(
                 [item["relative_path"] for item in preview["files"]],
-                ["nested/part-02.ndax", "part-01.ndax"],
+                ["part-01.ndax"],
+            )
+
+    def test_settings_preview_accepts_multiple_supported_extensions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "part-01.ndax").write_bytes(b"one")
+            (root / "part-02.mpr").write_bytes(b"two")
+            preview = cell_folder_watch.preview_watch_files(
+                {
+                    "folder_path": str(root),
+                    "pattern_kind": "glob",
+                    "pattern": "part-*",
+                    "extensions": ["ndax", ".mpr", "ndax"],
+                }
+            )
+            self.assertEqual(
+                [item["filename"] for item in preview["files"]],
+                ["part-01.ndax", "part-02.mpr"],
             )
 
     def test_stable_candidate_is_inspected_and_attached_through_existing_lifecycle(self):
@@ -356,12 +371,12 @@ class CellFolderWatchTests(unittest.TestCase):
         finally:
             engine.dispose()
 
-    def test_ambiguous_recursive_ordering_attaches_nothing(self):
+    def test_ambiguous_ordering_attaches_nothing(self):
         db, engine = self.make_session()
         try:
             with tempfile.TemporaryDirectory() as directory:
                 folder = Path(directory)
-                _cell, _watch = self.add_watch(db, folder, recursive=True, depth=2)
+                _cell, _watch = self.add_watch(db, folder)
                 first_path = folder / "one" / "same.ndax"
                 second_path = folder / "two" / "same.ndax"
                 first_path.parent.mkdir()
@@ -376,6 +391,11 @@ class CellFolderWatchTests(unittest.TestCase):
                 }
                 attach = Mock()
                 with (
+                    patch.object(
+                        cell_folder_watch,
+                        "_iter_files",
+                        return_value=[first_path, second_path],
+                    ),
                     patch.object(
                         cell_folder_watch.import_inspection,
                         "inspect_file",

@@ -134,15 +134,11 @@ class CellFolderWatch(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     pattern_kind: Mapped[str] = mapped_column(String(20), default="glob")
     pattern: Mapped[str] = mapped_column(Text, default="*")
-    extension: Mapped[str] = mapped_column(String(10))
-    source_format: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    extensions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    source_formats: Mapped[list[str]] = mapped_column(JSON, default=list)
     ordering_rule: Mapped[str] = mapped_column(
         String(40), default="timestamp_filename_hash"
     )
-    recursive: Mapped[bool] = mapped_column(Boolean, default=False)
-    recursion_depth: Mapped[int] = mapped_column(Integer, default=0)
-    cadence_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cadence_unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_scan_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

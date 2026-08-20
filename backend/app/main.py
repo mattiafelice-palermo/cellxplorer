@@ -219,6 +219,9 @@ def meta():
         "quantities": [
             {"value": key, "label": label} for key, (_, label) in calc.QUANTITIES.items()
         ],
+        "source_extensions": sorted(
+            extension.lstrip(".") for extension in parsing.SUPPORTED_SOURCE_EXTENSIONS
+        ),
     }
 
 

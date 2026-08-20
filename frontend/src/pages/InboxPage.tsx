@@ -77,7 +77,7 @@ import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
 import { FolderTrackingSettingsModal } from "../components/FolderTrackingSettingsModal";
 import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
-import { folderTrackingEligibility, folderTrackingSummary } from "../folderTrackingPolicy";
+import { folderTrackingEligibility, folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import {
   ImportFilesystemPickerModal as SharedImportFilesystemPickerModal,
   type ImportSourceSelection,
@@ -404,7 +404,7 @@ function FolderImportSelectionModal({
   failures: ImportInspectionFailure[];
   loading: boolean;
   progress?: ReactNode;
-  onBack: () => void;
+  onBack: (selected: FolderImportCandidate[]) => void;
   onClose: () => void;
   onConfirm: (selected: FolderImportCandidate[]) => void;
 }) {
@@ -636,7 +636,7 @@ function FolderImportSelectionModal({
       closeDisabled={loading}
       title="Choose files to import"
       step={2}
-      titleInfo="Selected folders are expanded recursively. Use checkboxes to choose files and Preview to inspect them."
+      titleInfo="Selected folders are expanded for import selection. Use checkboxes to choose files and Preview to inspect them."
       notice={failures.length > 0 ? (
         <Alert color="orange" icon={<IconAlertTriangle size={17} />} title="Some files were excluded">
           <Text size="sm">
@@ -655,7 +655,7 @@ function FolderImportSelectionModal({
               variant="default"
               leftSection={<IconArrowLeft size={15} />}
               disabled={loading}
-              onClick={onBack}
+              onClick={() => onBack(selectedCandidates)}
             >
               Back
             </Button>
@@ -1199,7 +1199,7 @@ function ImportModal({
       if (
         current
         && current.folder_path === trackingEligibility.defaultWatch?.folder_path
-        && current.extension === trackingEligibility.defaultWatch?.extension
+        && JSON.stringify(current.extensions) === JSON.stringify(trackingEligibility.defaultWatch?.extensions)
       ) {
         return current;
       }
@@ -1716,20 +1716,9 @@ function ImportModal({
               ) : continuedSubmissionState.inspectionStatus === "not_started" ? (
                 <Text size="sm" c="dimmed">Inspect continuity before importing.</Text>
               ) : trackingEligibility.eligible && folderWatch ? (
-                <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                  <Switch
-                    size="sm"
-                    label="Track this folder for new files"
-                    checked={folderWatch.enabled}
-                    onChange={(event) => setFolderWatch((current) => current ? { ...current, enabled: event.currentTarget.checked } : current)}
-                  />
-                  <Button size="compact-xs" variant="subtle" onClick={() => setFolderTrackingSettingsOpen(true)}>
-                    Settings
-                  </Button>
-                  <Text size="xs" c="dimmed" truncate title={folderTrackingSummary(folderWatch)} style={{ minWidth: 0, flex: 1 }}>
-                    {folderTrackingSummary(folderWatch)}
-                  </Text>
-                </Group>
+                <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
+                  {folderWatch.enabled ? "Folder tracking enabled" : "Folder tracking disabled"} · {folderTrackingInlineSummary(folderWatch)}
+                </Text>
               ) : (
                 <Text size="xs" c="dimmed">{trackingEligibility.reason ?? "Folder tracking is unavailable for this selection."}</Text>
               )
@@ -1839,6 +1828,9 @@ function ImportModal({
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
                 onSubmissionStateChange={setContinuedSubmissionState}
                 folderWatch={folderWatch}
+                onFolderWatchChange={setFolderWatch}
+                folderTrackingReason={trackingEligibility.reason}
+                onOpenFolderTrackingSettings={() => setFolderTrackingSettingsOpen(true)}
                 onRawData={(stagedName) => {
                   const targetIndex = drafts.findIndex((item) => item.staged_name === stagedName);
                   const target = targetIndex >= 0 ? drafts[targetIndex] : undefined;
@@ -2715,6 +2707,8 @@ export function ImportCellsLauncher({
   const [active, setActive] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [sourcePickerKey, setSourcePickerKey] = useState(0);
+  const [sourceSelection, setSourceSelection] = useState<ImportSourceSelection | null>(null);
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
@@ -2811,6 +2805,8 @@ export function ImportCellsLauncher({
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setSourceSelection(null);
+    setSourcePickerKey((current) => current + 1);
     setInspectionFailures([]);
     setProgressStage(null);
     setProgressToken(null);
@@ -2821,6 +2817,7 @@ export function ImportCellsLauncher({
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
+    setSourceSelection({ filePaths, folderPaths });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
@@ -2828,6 +2825,10 @@ export function ImportCellsLauncher({
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    setSourceSelection({
+      filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+      folderPaths: [],
+    });
     const jobToken = newImportJobToken();
     inspectionStartedAt.current = Date.now();
     setProgressStage("inspect");
@@ -2847,6 +2848,7 @@ export function ImportCellsLauncher({
         selectedCount: drafts.length,
       })}
       <SharedImportFilesystemPickerModal
+        key={sourcePickerKey}
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
         progress={progressStage === "scan" ? (
@@ -2857,6 +2859,8 @@ export function ImportCellsLauncher({
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
+        initialSelection={sourceSelection}
+        selectionKey={sourcePickerKey}
         onConfirm={continueSourceSelection}
       />
       <FolderImportSelectionModal
@@ -2872,7 +2876,12 @@ export function ImportCellsLauncher({
             error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
-        onBack={() => {
+        onBack={(selected) => {
+          setSourceSelection({
+            filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+            folderPaths: [],
+          });
+          setSourcePickerKey((current) => current + 1);
           setFolderModalOpen(false);
           setInspectionFailures([]);
           setSourcePickerOpen(true);
@@ -2933,6 +2942,8 @@ export function InboxPage() {
   const [active, setActive] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [sourcePickerKey, setSourcePickerKey] = useState(0);
+  const [sourceSelection, setSourceSelection] = useState<ImportSourceSelection | null>(null);
   const [sourceAppend, setSourceAppend] = useState(false);
   const [folderModalOpen, setFolderModalOpen] = useState(false);
   const [folderRootName, setFolderRootName] = useState("Selected folder");
@@ -3041,6 +3052,8 @@ export function InboxPage() {
 
   const startSourceSelection = (append: boolean) => {
     setSourceAppend(append);
+    setSourceSelection(null);
+    setSourcePickerKey((current) => current + 1);
     setInspectionFailures([]);
     setProgressStage(null);
     setProgressToken(null);
@@ -3051,6 +3064,7 @@ export function InboxPage() {
   };
 
   const continueSourceSelection = ({ filePaths, folderPaths }: ImportSourceSelection) => {
+    setSourceSelection({ filePaths, folderPaths });
     const jobToken = newImportJobToken();
     setProgressStage("scan");
     setProgressToken(jobToken);
@@ -3058,6 +3072,10 @@ export function InboxPage() {
   };
 
   const confirmFolderSelection = (selected: FolderImportCandidate[]) => {
+    setSourceSelection({
+      filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+      folderPaths: [],
+    });
     const jobToken = newImportJobToken();
     inspectionStartedAt.current = Date.now();
     setProgressStage("inspect");
@@ -3088,6 +3106,7 @@ export function InboxPage() {
       </Group>
 
       <SharedImportFilesystemPickerModal
+        key={sourcePickerKey}
         opened={sourcePickerOpen}
         loading={listSources.isPending || inspectPaths.isPending}
         progress={progressStage === "scan" ? (
@@ -3098,6 +3117,8 @@ export function InboxPage() {
           />
         ) : undefined}
         onClose={() => setSourcePickerOpen(false)}
+        initialSelection={sourceSelection}
+        selectionKey={sourcePickerKey}
         onConfirm={continueSourceSelection}
       />
       <FolderImportSelectionModal
@@ -3113,7 +3134,12 @@ export function InboxPage() {
             error={inspectPaths.isError && inspectPaths.error instanceof Error ? inspectPaths.error.message : null}
           />
         ) : undefined}
-        onBack={() => {
+        onBack={(selected) => {
+          setSourceSelection({
+            filePaths: selected.map((candidate) => candidate.path).filter((path): path is string => Boolean(path)),
+            folderPaths: [],
+          });
+          setSourcePickerKey((current) => current + 1);
           setFolderModalOpen(false);
           setInspectionFailures([]);
           setSourcePickerOpen(true);

@@ -1840,6 +1840,7 @@ export interface Meta {
   parser_version: string;
   calc_version: string;
   quantities: { value: string; label: string }[];
+  source_extensions: string[];
 }
 
 export interface ImportPreview {
@@ -2117,13 +2118,9 @@ export interface ImportFolderWatchDraft {
   folder_path: string;
   pattern_kind: "glob" | "regex";
   pattern: string;
-  extension: string;
-  source_format?: string | null;
+  extensions: string[];
+  source_formats: string[];
   ordering_rule: "timestamp_filename_hash" | "filename";
-  recursive: boolean;
-  recursion_depth: number;
-  cadence_value?: number | null;
-  cadence_unit?: "minutes" | "hours" | "days" | null;
 }
 
 export interface ImportCellDraft {
@@ -2211,13 +2208,9 @@ export interface CellFolderWatch {
   enabled: boolean;
   pattern_kind: "glob" | "regex";
   pattern: string;
-  extension: string;
-  source_format: string | null;
+  extensions: string[];
+  source_formats: string[];
   ordering_rule: "timestamp_filename_hash" | "filename";
-  recursive: boolean;
-  recursion_depth: number;
-  cadence_value: number | null;
-  cadence_unit: "minutes" | "hours" | "days" | null;
   status: "active" | "paused" | "disabled";
   status_message: string | null;
   last_scan_at: string | null;

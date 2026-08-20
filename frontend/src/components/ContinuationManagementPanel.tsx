@@ -38,6 +38,7 @@ import {
   reorderCellSources,
 } from "../api";
 import { acknowledgementFindingIds, findingSummary, moveSource, preserveAcknowledgements } from "../continuationPolicy";
+import { folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import {
   invalidateAnalysisQueries,
   invalidateSourceScientificQueries,
@@ -162,13 +163,9 @@ export function ContinuationManagementPanel({
       folder_path: folderWatch.folder_path,
       pattern_kind: folderWatch.pattern_kind,
       pattern: folderWatch.pattern,
-      extension: folderWatch.extension,
-      source_format: folderWatch.source_format,
+      extensions: folderWatch.extensions,
+      source_formats: folderWatch.source_formats,
       ordering_rule: folderWatch.ordering_rule,
-      recursive: folderWatch.recursive,
-      recursion_depth: folderWatch.recursion_depth,
-      cadence_value: folderWatch.cadence_value,
-      cadence_unit: folderWatch.cadence_unit,
     };
   }, [folderWatch]);
 
@@ -374,7 +371,7 @@ export function ContinuationManagementPanel({
           <Group justify="space-between" align="flex-start" wrap="nowrap">
             <div style={{ minWidth: 0 }}>
               <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
-                {folderWatch.folder_path} · {folderWatch.pattern}
+                {folderTrackingInlineSummary(folderWatch)}
               </Text>
               <Text size="xs">{folderWatch.status_message ?? folderWatch.last_status ?? "Waiting for the next source-monitor pass."}</Text>
               <Text size="xs" c="dimmed">

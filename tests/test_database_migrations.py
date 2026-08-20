@@ -127,7 +127,12 @@ class DatabaseMigrationTests(unittest.TestCase):
             inspector = inspect(engine)
             self.assertIn("cell_folder_watches", inspector.get_table_names())
             self.assertIn("cell_folder_watch_candidates", inspector.get_table_names())
-            self.assertIn("folder_path", {column["name"] for column in inspector.get_columns("cell_folder_watches")})
+            watch_columns = {column["name"] for column in inspector.get_columns("cell_folder_watches")}
+            self.assertIn("folder_path", watch_columns)
+            self.assertIn("extensions", watch_columns)
+            self.assertIn("source_formats", watch_columns)
+            self.assertNotIn("recursive", watch_columns)
+            self.assertNotIn("cadence_value", watch_columns)
             self.assertIn("stability_state", {column["name"] for column in inspector.get_columns("cell_folder_watch_candidates")})
             engine.dispose()
 

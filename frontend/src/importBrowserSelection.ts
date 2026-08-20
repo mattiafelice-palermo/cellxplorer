@@ -161,7 +161,7 @@ export function clampImportBrowserLeftPaneWidth(
   );
 }
 
-/** Selecting a folder is represented by its folder path; the backend expands it recursively. */
+/** Selecting a folder is represented by its folder path; import selection expands it for review. */
 export function toggleImportFolderSelection(
   selected: ImportSelection,
   folder: ImportBrowseEntry,

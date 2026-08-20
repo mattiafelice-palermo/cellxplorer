@@ -95,12 +95,22 @@ export function ImportFilesystemPickerModal({
   progress,
   onClose,
   onConfirm,
+  mode = "files",
+  initialPath,
+  initialSelection,
+  selectionKey,
+  onFolderConfirm,
 }: {
   opened: boolean;
   loading: boolean;
   progress?: ReactNode;
   onClose: () => void;
-  onConfirm: (selection: ImportSourceSelection) => void;
+  onConfirm?: (selection: ImportSourceSelection) => void;
+  mode?: "files" | "folder";
+  initialPath?: string | null;
+  initialSelection?: ImportSourceSelection | null;
+  selectionKey?: number;
+  onFolderConfirm?: (path: string) => void;
 }) {
   const [requestedPath, setRequestedPath] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState("");
@@ -109,7 +119,25 @@ export function ImportFilesystemPickerModal({
   const pathInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
   const [entryScrollTop, setEntryScrollTop] = useState(0);
-  const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(new Map());
+  const [selected, setSelected] = useState<Map<string, ImportBrowseEntry>>(() => {
+    const entries = [
+      ...(initialSelection?.filePaths ?? []).map((path) => ({
+        path,
+        name: path.split(/[\\/]/).pop() || path,
+        kind: "file" as const,
+        size: null,
+        modified_at: null,
+      })),
+      ...(initialSelection?.folderPaths ?? []).map((path) => ({
+        path,
+        name: path.split(/[\\/]/).pop() || path,
+        kind: "folder" as const,
+        size: null,
+        modified_at: null,
+      })),
+    ];
+    return new Map(entries.map((entry) => [entry.path, entry]));
+  });
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
   const [knownFolderImportability, setKnownFolderImportability] = useState<Map<string, boolean>>(new Map());
   const [leftPaneWidth, setLeftPaneWidth] = useState(235);
@@ -139,16 +167,18 @@ export function ImportFilesystemPickerModal({
 
   useEffect(() => {
     if (!opened) return;
-    setRequestedPath(null);
+    setRequestedPath(mode === "folder" ? initialPath ?? null : null);
     setPathInput("");
     setPathEditing(false);
     setPendingPathEditTarget(null);
     setSearch("");
     setEntryScrollTop(0);
-    setSelected(new Map());
-    setLastSelectedPath(null);
+    if (selectionKey === undefined) {
+      setSelected(new Map());
+      setLastSelectedPath(null);
+    }
     setKnownFolderImportability(new Map());
-  }, [opened]);
+  }, [mode, opened, selectionKey]);
 
   useEffect(() => () => resizeCleanup.current?.(), []);
 
@@ -355,32 +385,46 @@ export function ImportFilesystemPickerModal({
       opened={opened}
       onClose={onClose}
       closeDisabled={loading}
-      title="Load cell files"
+      title={mode === "folder" ? "Choose a folder" : "Load cell files"}
       step={1}
-      titleInfo="Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family (.mpr; canonical cycling is verified per source), plus folders. Click a folder row to open it; use its checkbox to select the folder recursively."
+      titleInfo={mode === "folder"
+        ? "Choose the folder to monitor. The watcher checks source files directly in this folder."
+        : "Select cycler files: Neware (.nda, .ndax, structured .xlsx) and BioLogic GCPL-family (.mpr; canonical cycling is verified per source), plus folders. Click a folder row to open it; use its checkbox to select the folder."}
       progress={progress ? <Paper withBorder p="xs">{progress}</Paper> : null}
       actions={
         <>
           <Text size="sm" c="dimmed">
-            {folderCount} folder{folderCount === 1 ? "" : "s"}
-            {fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}
+            {mode === "folder"
+              ? (browseQuery.data?.current_path ?? (pathInput || "Choose a folder"))
+              : `${folderCount} folder${folderCount === 1 ? "" : "s"}${fileCount ? `, ${fileCount} file${fileCount === 1 ? "" : "s"}` : ""}`}
           </Text>
           <ImportModalPrimaryActions>
             <Button variant="default" disabled={loading} onClick={onClose}>
               Cancel
             </Button>
-            <Button
-              loading={loading}
-              disabled={selectedEntries.length === 0}
-              onClick={() =>
-                onConfirm({
+            {mode === "folder" ? (
+              <Button
+                loading={loading}
+                disabled={browseQuery.isError || !browseQuery.data?.current_path}
+                onClick={() => {
+                  const path = browseQuery.data?.current_path ?? pathInput.trim();
+                  if (path) onFolderConfirm?.(path);
+                }}
+              >
+                Use this folder
+              </Button>
+            ) : (
+              <Button
+                loading={loading}
+                disabled={selectedEntries.length === 0}
+                onClick={() => onConfirm?.({
                   filePaths: selectedEntries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
                   folderPaths: selectedEntries.filter((entry) => entry.kind === "folder").map((entry) => entry.path),
-                })
-              }
-            >
-              Continue
-            </Button>
+                })}
+              >
+                Continue
+              </Button>
+            )}
           </ImportModalPrimaryActions>
         </>
       }
@@ -517,15 +561,14 @@ export function ImportFilesystemPickerModal({
                       checked={isFolder ? folderState === "all" : selected.has(entry.path)}
                       indeterminate={isFolder && folderState === "some"}
                       disabled={isFolder ? folderCheckboxDisabled : false}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (!isFolder) {
-                          event.preventDefault();
-                          toggleFile(entry, event.shiftKey, event.ctrlKey, event.metaKey);
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => {
+                        if (isFolder) {
+                          activateFolderCheckbox(entry);
+                          return;
                         }
-                      }}
-                      onChange={() => {
-                        if (isFolder) activateFolderCheckbox(entry);
+                        const native = event.nativeEvent as MouseEvent;
+                        toggleFile(entry, native.shiftKey, native.ctrlKey, native.metaKey);
                       }}
                     />
                     {isFolder ? <IconFolder size={17} color="var(--mantine-primary-color-6)" /> : <IconFile size={17} color="var(--mantine-color-gray-6)" />}<Text size="sm" truncate title={entry.name} style={{ flex: 1 }}>{entry.name}</Text><Text size="xs" c="dimmed" w={90} ta="right">{entry.size === null ? "" : formatBytes(entry.size)}</Text><Text size="xs" c="dimmed" w={145}>{entry.modified_at ? new Date(entry.modified_at).toLocaleString() : ""}</Text>

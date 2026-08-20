@@ -64,6 +64,7 @@ import {
   type ContinuationPreviewInterpretation,
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
+import { folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationReviewModal } from "./ContinuationReviewModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
@@ -160,6 +161,9 @@ export function ContinuedImportEditor({
   onPreviewRequested,
   importing,
   folderWatch,
+  onFolderWatchChange,
+  folderTrackingReason,
+  onOpenFolderTrackingSettings,
 }: {
   opened: boolean;
   drafts: DraftSource[];
@@ -180,6 +184,9 @@ export function ContinuedImportEditor({
   onPreviewRequested?: (draft: DraftSource, retry?: boolean) => void;
   importing: boolean;
   folderWatch: ImportFolderWatchDraft | null;
+  onFolderWatchChange?: (watch: ImportFolderWatchDraft) => void;
+  folderTrackingReason?: string | null;
+  onOpenFolderTrackingSettings?: () => void;
 }) {
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
   const [colors, setColors] = useState<SourceColorAssignments>({});
@@ -746,6 +753,36 @@ export function ContinuedImportEditor({
                 <Select label="Electrode-area preset" data={areaOptions} value={cellDraft.electrode_area_selection} searchable onChange={(value) => { const preset = areaPresets.find((item) => item.id === value); updateDraft({ electrode_area_selection: value ?? "custom", electrode_area_preset_id: preset?.id ?? null, electrode_area_preset_name: preset?.name ?? null, electrode_area_cm2_override: preset?.area_cm2 ?? cellDraft.electrode_area_cm2_override }); }} />
                 <NumberInput label="Electrode area (cm²)" min={0.000001} decimalScale={6} value={cellDraft.electrode_area_cm2_override ?? ""} disabled={cellDraft.electrode_area_selection !== "custom"} onChange={(value) => updateDraft({ electrode_area_cm2_override: value === "" ? null : Number(value) })} />
               </Group>
+              <Divider label="Folder tracking" labelPosition="left" />
+              {folderWatch ? (
+                <Stack gap={4}>
+                  <Group gap="xs" wrap="nowrap" align="center">
+                    <Switch
+                      size="sm"
+                      label="Track this folder for new files"
+                      checked={folderWatch.enabled}
+                      onChange={(event) => onFolderWatchChange?.({
+                        ...folderWatch,
+                        enabled: event.currentTarget.checked,
+                      })}
+                    />
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      onClick={onOpenFolderTrackingSettings}
+                    >
+                      Settings
+                    </Button>
+                  </Group>
+                  <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
+                    {folderTrackingInlineSummary(folderWatch)}
+                  </Text>
+                </Stack>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  {folderTrackingReason || "Folder tracking is available when the selected sources share a folder."}
+                </Text>
+              )}
               <Alert color="gray"><Text size="xs">Cell metadata belongs to this Cell draft and stays unchanged when sources are reordered or previewed.</Text></Alert>
             </Stack>
           </ScrollArea>

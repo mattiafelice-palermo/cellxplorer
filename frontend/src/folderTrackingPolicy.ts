@@ -4,8 +4,8 @@ export type FolderTrackingEligibility = {
   eligible: boolean;
   reason: string | null;
   folderPath: string | null;
-  extension: string | null;
-  sourceFormat: string | null;
+  extensions: string[];
+  sourceFormats: string[];
   defaultWatch: ImportFolderWatchDraft | null;
 };
 
@@ -31,7 +31,7 @@ function extensionOf(draft: Pick<ImportPreview, "ext" | "filename">): string {
 }
 
 function formatKey(draft: Pick<ImportPreview, "ext" | "filename" | "source_format">): string {
-  return (draft.source_format || extensionOf(draft)).trim().toLocaleLowerCase();
+  return (draft.source_format || "").trim().toLocaleLowerCase();
 }
 
 /** Decide whether the staged selection can seed a per-Cell folder watch. */
@@ -39,43 +39,34 @@ export function folderTrackingEligibility(
   drafts: readonly ImportPreview[],
 ): FolderTrackingEligibility {
   if (drafts.length === 0) {
-    return { eligible: false, reason: "Select at least one source first.", folderPath: null, extension: null, sourceFormat: null, defaultWatch: null };
+    return { eligible: false, reason: "Select at least one source first.", folderPath: null, extensions: [], sourceFormats: [], defaultWatch: null };
   }
   const folderPath = parentPath(drafts[0]?.source_path);
   if (!folderPath || drafts.some((draft) => !draft.source_path)) {
-    return { eligible: false, reason: "Folder tracking needs source files from one local folder.", folderPath, extension: null, sourceFormat: null, defaultWatch: null };
+    return { eligible: false, reason: "Folder tracking needs source files from one local folder.", folderPath, extensions: [], sourceFormats: [], defaultWatch: null };
   }
   if (drafts.some((draft) => parentPath(draft.source_path) === null || normalizedPath(parentPath(draft.source_path)) !== normalizedPath(folderPath))) {
-    return { eligible: false, reason: "Folder tracking is available only when all selected files share one parent folder.", folderPath, extension: null, sourceFormat: null, defaultWatch: null };
+    return { eligible: false, reason: "Folder tracking is available only when all selected files share one parent folder.", folderPath, extensions: [], sourceFormats: [], defaultWatch: null };
   }
-  const extensions = new Set(drafts.map(extensionOf));
-  if (extensions.size !== 1 || [...extensions][0] === "") {
-    return { eligible: false, reason: "Folder tracking is available only when all selected files use one supported format.", folderPath, extension: null, sourceFormat: null, defaultWatch: null };
+  const extensions = [...new Set(drafts.map(extensionOf).filter(Boolean))].sort();
+  const sourceFormats = [...new Set(drafts.map(formatKey).filter(Boolean))].sort();
+  if (extensions.length === 0) {
+    return { eligible: false, reason: "Folder tracking needs supported source files.", folderPath, extensions, sourceFormats, defaultWatch: null };
   }
-  const formats = new Set(drafts.map(formatKey));
-  if (formats.size !== 1) {
-    return { eligible: false, reason: "Folder tracking is available only when all selected files use one parser format.", folderPath, extension: [...extensions][0]!, sourceFormat: null, defaultWatch: null };
-  }
-  const extension = [...extensions][0]!;
-  const sourceFormat = drafts[0]?.source_format || null;
   return {
     eligible: true,
     reason: null,
     folderPath,
-    extension,
-    sourceFormat,
+    extensions,
+    sourceFormats,
     defaultWatch: {
       enabled: true,
       folder_path: folderPath,
       pattern_kind: "glob",
-      pattern: `*.${extension}`,
-      extension,
-      source_format: sourceFormat,
+      pattern: "*",
+      extensions,
+      source_formats: sourceFormats,
       ordering_rule: "timestamp_filename_hash",
-      recursive: false,
-      recursion_depth: 0,
-      cadence_value: null,
-      cadence_unit: null,
     },
   };
 }
@@ -170,8 +161,10 @@ export function compareFolderTrackingCandidates(
   return leftHash < rightHash ? -1 : leftHash > rightHash ? 1 : 0;
 }
 
-export function folderTrackingSummary(watch: Pick<ImportFolderWatchDraft, "folder_path" | "pattern" | "recursive" | "ordering_rule">): string {
-  const depth = watch.recursive ? " · including subfolders" : " · files directly in this folder";
-  const order = watch.ordering_rule === "filename" ? "filename" : "source start time, then filename";
-  return `${watch.folder_path} · ${watch.pattern}${depth} · ${order}`;
+export function folderTrackingInlineSummary(
+  watch: Pick<ImportFolderWatchDraft, "folder_path" | "extensions">,
+): string {
+  const folderName = watch.folder_path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || watch.folder_path;
+  const extensions = watch.extensions.map((extension) => `.${extension}`).join(", ");
+  return `${folderName} · matching ${extensions || "supported source"} files`;
 }
