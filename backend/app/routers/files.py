@@ -2964,14 +2964,29 @@ def _build_stitched_continuation_preview(
             status_code=422,
         ) from exc
 
-    # The cycle cache remains the fallback/quantity authority for the legacy
-    # source-chain path.  Stitched mode derives display-only cycle summaries
-    # from the raw rows and the existing calc.per_cycle semantics.
+    # infer_contiguous_cycle_ids deliberately assigns one cycle id across a
+    # file join, so the per-cycle aggregation must run once over the whole
+    # merged chain rather than once per segment: aggregating a slice would
+    # split a boundary-spanning cycle and let calc.per_cycle's fillna(0.0)
+    # report a false zero for whichever segment holds none of the selected
+    # phase (see Spec 047 review R11/R12). A boundary-spanning cycle is
+    # therefore attributed to exactly one segment -- the segment holding
+    # that cycle's first merged row -- so it contributes one point, with the
+    # value it would have if the chain were a single file.
     merged_cycles = pd.DataFrame() if quantity == "voltage" else calc.per_cycle(merged)
     if quantity == "voltage":
         selected_quantity, label = "voltage", "Voltage (V)"
     else:
         selected_quantity, label = _capacity_quantity_and_label(merged_cycles, quantity)
+        if not merged_cycles.empty:
+            cycle_owner = (
+                merged[["cycle", "segment"]]
+                .drop_duplicates(subset="cycle", keep="first")
+                .set_index("cycle")["segment"]
+            )
+            merged_cycles = merged_cycles.assign(
+                segment=merged_cycles["cycle"].map(cycle_owner)
+            )
     segment_limit = max(2, _CONTINUATION_PREVIEW_MAX_POINTS // max(1, len(ordered_sources)))
     response_segments = []
 
@@ -2991,7 +3006,10 @@ def _build_stitched_continuation_preview(
                 max_points=segment_limit,
             )
         else:
-            segment_cycles = calc.per_cycle(segment_frame)
+            if merged_cycles.empty or "segment" not in merged_cycles.columns:
+                segment_cycles = merged_cycles
+            else:
+                segment_cycles = merged_cycles[merged_cycles["segment"] == segment_index]
             segment_preview = capacity_preview_from_cycles(
                 segment_cycles,
                 max_points=segment_limit,

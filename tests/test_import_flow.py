@@ -1822,9 +1822,87 @@ class ImportFlowTests(unittest.TestCase):
 
         self.assertEqual(response["interpretation"], "stitched")
         self.assertEqual(response["quantity"], "discharge_capacity_mah")
-        self.assertEqual([segment["x"] for segment in response["segments"]], [[1], [1]])
-        self.assertEqual([segment["y"] for segment in response["segments"]], [[1.0], [2.0]])
+        # infer_contiguous_cycle_ids assigns one cycle id (1) across the file
+        # join, so the aggregated cycle is attributed once, to the segment
+        # that holds its first row (segment 0). It carries the whole cycle's
+        # discharge capacity (1.0 + 2.0 mAh across the two step deltas), not
+        # two independent partial values at the same x.
+        self.assertEqual([segment["x"] for segment in response["segments"]], [[1], []])
+        self.assertEqual([segment["y"] for segment in response["segments"]], [[3.0], []])
         self.assertEqual([segment["global_cycle_start"] for segment in response["segments"]], [1, 1])
+
+    def test_continuation_preview_stitched_interpretation_attributes_boundary_cycle_to_one_segment(self):
+        """R11 regression: a cycle that charges in file A and discharges in file B.
+
+        infer_contiguous_cycle_ids deliberately keeps this as one logical
+        cycle spanning the join. Before the fix, per-segment aggregation
+        split it and calc.per_cycle's fillna(0.0) reported a false 0.0
+        discharge point in the charge-only segment. The fix aggregates once
+        over the merged chain and attributes the cycle to the segment
+        holding its first row, so no segment reports a false 0.0.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "boundary-a.ndax"
+            second = root / "boundary-b.ndax"
+            first.write_bytes(b"first boundary fragment")
+            second.write_bytes(b"second boundary fragment")
+            base_request = _continuation_preview_request([first, second])
+            request = files.ContinuationPreviewRequest(
+                sources=base_request.sources,
+                proposed_order=base_request.proposed_order,
+                quantity="discharge_capacity_mah",
+                interpretation="stitched",
+            )
+            hashes = {
+                path.name: parsing.capture_source_fingerprint(path).hash
+                for path in (first, second)
+            }
+            raw_frames = {
+                (hashes[first.name], "parser"): pd.DataFrame(
+                    {
+                        "record_index": [1, 2],
+                        "cycle": [1, 1],
+                        "step": [1, 1],
+                        "status": ["CC Chg", "CC Chg"],
+                        "voltage_v": [3.0, 4.0],
+                        "charge_capacity_mah": [0.0, 1.5],
+                    }
+                ),
+                (hashes[second.name], "parser"): pd.DataFrame(
+                    {
+                        "record_index": [1, 2],
+                        "cycle": [1, 1],
+                        "step": [1, 1],
+                        "status": ["CC DChg", "CC DChg"],
+                        "voltage_v": [4.0, 3.0],
+                        "discharge_capacity_mah": [0.0, 1.5],
+                    }
+                ),
+            }
+
+            def load_raw(file_hash, parser_version):
+                return raw_frames[(file_hash, parser_version)]
+
+            metadata = {"capabilities": {"canonical_cycling": True}, "raw": {}}
+            with patch.object(files.import_inspection, "cached_header_metadata", return_value=None), \
+                patch.object(files.parsing, "read_header_metadata", return_value=metadata), \
+                patch.object(files.parsing, "parser_identity", return_value="parser"), \
+                patch.object(files.cache, "has_cycles", return_value=True), \
+                patch.object(files.cache, "load_raw", side_effect=load_raw):
+                response = files.preview_continuation_sources(request)
+
+        self.assertEqual(response["interpretation"], "stitched")
+        self.assertEqual(response["quantity"], "discharge_capacity_mah")
+        segment_x = [segment["x"] for segment in response["segments"]]
+        segment_y = [segment["y"] for segment in response["segments"]]
+        # No segment reports a false 0.0 for the boundary-spanning cycle: the
+        # charge-only segment (0) carries the single aggregated point and the
+        # discharge-only segment (1) reports no point for it at all.
+        self.assertEqual(segment_x, [[1], []])
+        self.assertEqual(segment_y, [[1.5], []])
+        for segment in response["segments"]:
+            self.assertNotIn(0.0, segment["y"])
 
     def test_continuation_preview_supports_voltage_quantity_from_raw_cache(self):
         with tempfile.TemporaryDirectory() as tmp:

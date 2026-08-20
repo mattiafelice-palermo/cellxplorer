@@ -503,3 +503,19 @@ R7-R10 implemented locally: voltage preview now uses bounded raw voltage over el
 Parent review REOPENED: 047.4 was added as a fourth child after round 3, so this is no longer a final review, and review-clean on 047.3 will now advance to 047.4 automatically. R7-R10 are implemented and verified. R11 (High) is a real display defect in the headline Continuous cycles mode: infer_contiguous_cycle_ids deliberately gives one cycle id across a file join, then the endpoint recomputes capacity per segment on merged[segment == i], and calc.per_cycle phase_total ends in fillna(0.0) -- so a cycle that charges in file A and discharges in file B yields a literal 0.0 discharge point in segment 0. I ran the real functions to confirm rather than infer: segment 0 plots (cycle 1, 0.0) while segment 1 plots (cycle 1, 1.0). That draws a spike to zero at every join, exactly the artifact this mode exists to remove, and an interrupted-then-resumed run is the normal case. The existing test misses it because its fixture is symmetric (both files discharge-only), and that same assertion locks in the related facet: one shared cycle emitted twice at the same x with partial values each. R12 (Medium) is the same root cause seen as cost -- calc.per_cycle runs N+1 times over raw rows, and the whole-chain run exists only to pick quantity/label, reintroducing the pattern 047.2 R4 removed. Aggregating once over merged and partitioning the resulting rows resolves both. Process note, not a code finding: R3-R10 were never written to any canonical review file, so R7-R10 could only be checked against one prose sentence each with no acceptance criteria. Please record findings in the review file from here on. Full detail for R11/R12 is in reviews/047-continued-cell-import-workspace-review.md round 4.
 
 ---
+### 2026-08-20T16:30:09+02:00 — IMPLEMENTER → REVIEWER — 047.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused tests: tests.test_import_flow, tests.test_continuations, tests.test_stitch: PASS (142 tests)
+- check_versions.py --expected-version 0.27.0-beta.7: PASS
+- preflight.py: PASS (4/4 stages; 139 backend/frontend test files)
+- browser/manual verification: NOT RUN
+
+**Message**
+
+R11/R12 fixed in _build_stitched_continuation_preview (backend/app/routers/files.py). calc.per_cycle(merged) is now computed exactly once for the whole chain; a boundary-spanning cycle (one cycle id shared across a file join, by infer_contiguous_cycle_ids design) is attributed to exactly one segment -- the segment holding that cycle's first merged row -- via a cycle-to-segment owner map built from merged[[cycle, segment]].drop_duplicates(keep=first). The per-segment calc.per_cycle(segment_frame) re-aggregation is removed entirely, so no segment can report a false 0.0 for a phase it has no rows of, and the aggregation runs N+1 -> 1 times. Voltage mode is untouched (still reads merged raw rows directly per segment). Updated the existing symmetric test (both files discharge-only) to assert the new one-point-per-cycle behavior: segment 0 gets [1]/[3.0] (the whole cycle's aggregated discharge, summed across both files' step deltas), segment 1 gets []/[] instead of the old two-partial-points-at-one-x assertion. Added a new asymmetric regression test (charge-only file A, then discharge-only file B) that asserts no segment's y values contain 0.0 and that the single aggregated point (1.5 mAh) is attributed to segment 0. Version bumped to 0.27.0-beta.7 with a CHANGELOG entry. No remote push per user instruction (local commit only).
+
+---
