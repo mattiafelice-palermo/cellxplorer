@@ -55,6 +55,10 @@ function sourceFindingIcon(finding: ContinuationFinding) {
   return <IconInfoCircle size={14} aria-hidden="true" />;
 }
 
+function compactBlockingFindingLabel(finding: ContinuationFinding): string {
+  return `${finding.title}: ${finding.message}`;
+}
+
 function pastelSourceColor(color?: string): string {
   const match = /^#([0-9a-f]{6})$/i.exec(color ?? "");
   if (!match) return "light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4))";
@@ -158,6 +162,7 @@ function SortableCompactSourceCard({
   onRemove,
   canRemoveSource,
   onSelect,
+  findings,
 }: {
   source: ContinuationInspectSource;
   index: number;
@@ -168,6 +173,7 @@ function SortableCompactSourceCard({
   onRemove?: (sourceKey: string) => void;
   canRemoveSource?: (sourceKey: string) => boolean;
   onSelect?: (sourceKey: string) => void;
+  findings: ContinuationFinding[];
 }) {
   const {
     attributes,
@@ -239,6 +245,19 @@ function SortableCompactSourceCard({
           </Tooltip>}
         </Group>
         {metaLine && <Text size="xs" c="dimmed" truncate title={metaLine} style={{ minWidth: 0, maxWidth: "100%" }}>{metaLine}</Text>}
+        {source.inspection_error && (
+          <Text size="xs" c="red" title={source.inspection_error}>
+            {source.inspection_error}
+          </Text>
+        )}
+        {findings
+          .filter((finding) => finding.severity === "blocking" && finding.source_keys.includes(source.key))
+          .map((finding) => (
+            <Group key={finding.id} gap={4} wrap="nowrap" c="red" align="start">
+              <span>{sourceFindingIcon(finding)}</span>
+              <Text size="xs" c="inherit">{compactBlockingFindingLabel(finding)}</Text>
+            </Group>
+          ))}
       </Stack>
     </Paper>
   );
@@ -294,6 +313,10 @@ export function ContinuationSourceList({
 
   if (variant === "compact-import") {
     const sourceIds = sources.map((source) => source.key);
+    const unassignedBlockingFindings = findings.filter((finding) =>
+      finding.severity === "blocking"
+      && (finding.source_keys.length === 0 || !finding.source_keys.some((key) => sourceIds.includes(key))),
+    );
     const handleDragEnd = ({ active, over }: DragEndEvent) => {
       if (!onReorder || disabled || !over || active.id === over.id) return;
       const from = sourceIds.indexOf(String(active.id));
@@ -318,10 +341,21 @@ export function ContinuationSourceList({
                 onRemove={onRemove && sources.length > 1 ? onRemove : undefined}
                 canRemoveSource={canRemoveSource}
                 onSelect={onSelect}
+                findings={findings}
               />
             ))}
           </Stack>
         </SortableContext>
+        {unassignedBlockingFindings.length > 0 && (
+          <Stack gap={2} mt={4}>
+            {unassignedBlockingFindings.map((finding) => (
+              <Group key={finding.id} gap={4} wrap="nowrap" c="red" align="start">
+                <span>{sourceFindingIcon(finding)}</span>
+                <Text size="xs" c="inherit">{compactBlockingFindingLabel(finding)}</Text>
+              </Group>
+            ))}
+          </Stack>
+        )}
       </DndContext>
     );
   }

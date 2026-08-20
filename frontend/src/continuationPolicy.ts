@@ -151,28 +151,19 @@ export function blockingFindings(result: ContinuationInspectResult): Continuatio
   return result.findings.filter((finding) => finding.severity === "blocking");
 }
 
-export function informationalFindings(result: ContinuationInspectResult): ContinuationFinding[] {
-  return result.findings.filter(
-    (finding) => finding.severity === "info" || finding.severity === "warning",
-  );
-}
+export type ContinuationFindingAction = "blocking" | "acknowledgement" | null;
 
-/** Blocking or confirmation findings require the focused continuity review before import. */
-export function continuationReviewRequired(
+/** Describe the inline action required before a continued import can be submitted. */
+export function continuationFindingAction(
   result: ContinuationInspectResult | null | undefined,
   acknowledged?: Iterable<string>,
-): boolean {
-  if (!result?.inspection_complete) return false;
-  if (blockingFindings(result).length > 0) return true;
+): ContinuationFindingAction {
+  if (!result?.inspection_complete) return null;
+  if (blockingFindings(result).length > 0) return "blocking";
   const acknowledgedIds = new Set(acknowledged ?? []);
-  return acknowledgementFindingIds(result).some((id) => !acknowledgedIds.has(id));
-}
-
-/** Any server result with findings can be opened from the compact Review continuity action. */
-export function continuationHasFindings(
-  result: ContinuationInspectResult | null | undefined,
-): boolean {
-  return Boolean(result?.findings.length);
+  return acknowledgementFindingIds(result).some((id) => !acknowledgedIds.has(id))
+    ? "acknowledgement"
+    : null;
 }
 
 export type ContinuedInspectionStatus = "not_started" | "preparing" | "ready" | "error";

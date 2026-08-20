@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.12 - 2026-08-20
+
+- Inline continued-import findings and remove the continuity review ceremony.
+
 ## 0.27.0-beta.11 - 2026-08-20
 
 - Keep folder tracking to newly arriving files and simplify its import controls.

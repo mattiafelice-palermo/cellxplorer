@@ -3,8 +3,9 @@ import {
   acknowledgedMetadataOnlySourceKeys,
   continuedImportCanSubmit,
   continuedInspectionStatus,
-  continuationReviewRequired,
+  continuationFindingAction,
   scientificDraftIsValid,
+  type ContinuationFindingAction,
   type ContinuedInspectionStatus,
   type ContinuedScientificDraft,
 } from "./continuationPolicy.ts";
@@ -130,7 +131,7 @@ export type ContinuedImportSubmissionState = {
   acknowledgedFindingIds: string[];
   metadataOnlySourceKeys: string[];
   inspectionStatus: ContinuedInspectionStatus;
-  reviewRequired: boolean;
+  findingAction: ContinuationFindingAction;
   trackingEnabled: boolean;
 };
 
@@ -163,7 +164,7 @@ export function buildContinuedImportSubmissionState(
     acknowledgedFindingIds,
     metadataOnlySourceKeys: acknowledgedMetadataOnlySourceKeys(result, acknowledgedFindingIds, order),
     inspectionStatus,
-    reviewRequired: continuationReviewRequired(result, acknowledgedFindingIds),
+    findingAction: continuationFindingAction(result, acknowledgedFindingIds),
     trackingEnabled,
   };
 }

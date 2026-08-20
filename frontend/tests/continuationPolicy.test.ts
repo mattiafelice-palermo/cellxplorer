@@ -5,9 +5,8 @@ import type { ContinuationInspectResult } from "../src/api.ts";
 import {
   acknowledgementFindingIds,
   applySuggestedOrder,
-  continuationHasFindings,
+  continuationFindingAction,
   continuationInspectionHasErrors,
-  continuationReviewRequired,
   continuedInspectionStatus,
   findingSummary,
   isSubmitBlocked,
@@ -136,24 +135,23 @@ test("findingSummary combines title, message, and source keys", () => {
   assert.match(summary, /staged-a → staged-b/);
 });
 
-test("continuity review separates required findings from warning and info findings", () => {
+test("inline finding action keeps warning and info findings out of the import gate", () => {
   const findings = [
     { id: "warning", code: "gap", severity: "warning" as const, source_keys: ["a"], title: "Gap", message: "", details: {} },
     { id: "info", code: "note", severity: "info" as const, source_keys: [], title: "Note", message: "", details: {} },
   ];
   const informational = makeResult({ findings });
-  assert.equal(continuationHasFindings(informational), true);
-  assert.equal(continuationReviewRequired(informational), false);
-  assert.equal(continuationReviewRequired(makeResult({
+  assert.equal(continuationFindingAction(informational), null);
+  assert.equal(continuationFindingAction(makeResult({
     findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
-  })), true);
-  assert.equal(continuationReviewRequired(makeResult({
+  })), "acknowledgement");
+  assert.equal(continuationFindingAction(makeResult({
     findings: [{ id: "confirm", code: "overlap", severity: "confirmation", source_keys: ["a", "b"], title: "Overlap", message: "", details: {} }],
-  }), ["confirm"]), false);
-  assert.equal(continuationReviewRequired(makeResult({
+  }), ["confirm"]), null);
+  assert.equal(continuationFindingAction(makeResult({
     findings: [{ id: "block", code: "duplicate", severity: "blocking", source_keys: ["a"], title: "Duplicate", message: "", details: {} }],
-  })), true);
-  assert.equal(continuationReviewRequired(makeResult({ inspection_complete: false, findings })), false);
+  })), "blocking");
+  assert.equal(continuationFindingAction(makeResult({ inspection_complete: false, findings })), null);
 });
 
 test("continued inspection status distinguishes not-started, preparing, and errored results", () => {

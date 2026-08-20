@@ -655,3 +655,21 @@ Fixed R23-R29: moved tracking controls to the command row, removed the Cell-draf
 Cumulative parent review at a0d6471, 55 commits against merge base 5e50736 which is still main's tip, so the branch fast-forwards cleanly. Everything a machine can check on this branch passes: preflight 4/4, tsc and vite build explicitly, check_versions at 0.27.0-beta.11, CALC_VERSION unmodified, no cache-identity or portable-report change, separate-cell mode untouched by a single line of the diff, existing-cell continuation management still on the default source-list variant, both schema revisions forward-safe and converging, and the documentation closure in place. One finding. R30: the user asks to remove the Continuity review surface as unexplained friction, and the ceremony should indeed go -- inspection is already automatic since inspectionQuery runs on enabled: opened && orderedDrafts.length >= 1, so the Review continuity command now only opens a modal and the auto-open is pure interruption. But do NOT delete the surface outright, because two of its jobs are load-bearing. Blocking findings (duplicate_hash, source_missing, unsupported_extension, hash_already_linked, cache_build_failed and others) set can_submit false server-side, so removing their only display leaves Import disabled with no visible reason -- the dead end 047.3 R1 existed to fix. Confirmation findings (metadata_only_source, timestamp_overlap, path_refresh, capacity mismatch) require their IDs in acknowledged_finding_ids and the server rejects a payload without them, so deleting the only place they can be ticked makes those imports impossible outright: a metadata-only BioLogic source or any overlapping-timestamp pair could never be imported at all. Target: delete the command, the modal and the auto-open; render blocking findings inline on the source row they name plus the existing footer reason; render confirmations as a compact inline checkbox row shown only when one exists, still bound to the finding ID; drop warning/info from the UI entirely. That is strictly less friction than today -- no button, no modal, no interruption, and nothing at all in the clean case -- while keeping every gate and the server authoritative. Full acceptance criteria are in the round-5 section of reviews/047-continued-cell-import-workspace-review.md. After this lands the only remaining gate is the browser/manual matrix, which now spans four children and which no agent here can run.
 
 ---
+### 2026-08-20T22:49:10+02:00 — IMPLEMENTER → REVIEWER — 047.4
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend: continuationPolicy and continuedImportWorkspacePolicy PASS (27 tests)
+- frontend TypeScript: npx.cmd tsc --noEmit PASS
+- frontend production bundle: npx.cmd vite build PASS
+- version consistency: check_versions.py --expected-version 0.27.0-beta.12 PASS
+- preflight.py --no-cache: PASS (4/4 stages; all 141 backend/frontend modules)
+- browser/manual verification: NOT RUN (user will test locally)
+
+**Message**
+
+Fixed R30: removed the Review continuity command, ContinuationReviewModal, and auto-open effect; kept blocking/source errors inline in compact source rows, added compact confirmation checkboxes above the footer with unchanged acknowledgement IDs, filtered warning/info findings from the continued-import workspace, and replaced reviewRequired with inline findingAction footer state. Existing-cell continuation management remains on the default source-list variant. Bumped version to 0.27.0-beta.12 per repository instructions. No remote push per user instruction.
+
+---

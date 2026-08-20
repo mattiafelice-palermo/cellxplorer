@@ -1110,7 +1110,7 @@ function ImportModal({
     acknowledgedFindingIds: [],
     metadataOnlySourceKeys: [],
     inspectionStatus: "not_started",
-    reviewRequired: false,
+    findingAction: null,
     trackingEnabled: false,
   });
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
@@ -1167,7 +1167,7 @@ function ImportModal({
         acknowledgedFindingIds: [],
         metadataOnlySourceKeys: [],
         inspectionStatus: "not_started",
-        reviewRequired: false,
+        findingAction: null,
         trackingEnabled: false,
       });
       setDoneCountdown(null);
@@ -1709,8 +1709,10 @@ function ImportModal({
             ) : continuedMode ? (
               continuedSubmissionState.inspectionStatus === "error" ? (
                 <Text size="sm" c="red">Continuity inspection failed; resolve the source error before importing.</Text>
-              ) : continuedSubmissionState.reviewRequired ? (
-                <Text size="sm" c="orange">Continuity review required before import.</Text>
+              ) : continuedSubmissionState.findingAction === "blocking" ? (
+                <Text size="sm" c="red">Resolve the blocking continuity findings above before importing.</Text>
+              ) : continuedSubmissionState.findingAction === "acknowledgement" ? (
+                <Text size="sm" c="orange">Acknowledge the continuity confirmations above before importing.</Text>
               ) : continuedSubmissionState.inspectionStatus === "preparing" ? (
                 <Text size="sm" c="dimmed">Continuity inspection is still preparing.</Text>
               ) : continuedSubmissionState.inspectionStatus === "not_started" ? (

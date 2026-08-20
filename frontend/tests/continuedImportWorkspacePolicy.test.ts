@@ -139,14 +139,14 @@ test("buildContinuedImportSubmissionState carries the exact visible order and ac
   assert.deepEqual(state.acknowledgedFindingIds, ["confirm-1"]);
   assert.equal(state.canSubmit, true);
   assert.equal(state.inspectionStatus, "ready");
-  assert.equal(state.reviewRequired, false);
+  assert.equal(state.findingAction, null);
 });
 
 test("buildContinuedImportSubmissionState blocks submission under two sources even with a clean inspection", () => {
   const state = buildContinuedImportSubmissionState(["a"], validDraft(), "Cell A", result(), []);
   assert.equal(state.canSubmit, false);
   assert.equal(state.inspectionStatus, "ready");
-  assert.equal(state.reviewRequired, false);
+  assert.equal(state.findingAction, null);
 });
 
 test("buildContinuedImportSubmissionState allows one source only when folder tracking is enabled", () => {
@@ -166,7 +166,7 @@ test("buildContinuedImportSubmissionState reports when inspection is still requi
     [],
   );
   assert.equal(state.inspectionStatus, "preparing");
-  assert.equal(state.reviewRequired, false);
+  assert.equal(state.findingAction, null);
 });
 
 test("buildContinuedImportSubmissionState reports inspection errors without changing submission safety", () => {
