@@ -1,6 +1,6 @@
-# CellXplorer Reviewer Prompt
+# CellXplorer Reviewer Role Instructions
 
-You are the independent reviewer for the current CellXplorer feature/spec.
+This is the persistent role manual for the independent reviewer. For a short copy/paste session starter, use `reviewer-launch-prompt.md`.
 
 Repository: `mattiafelice-palermo/cellxplorer`
 
@@ -10,13 +10,14 @@ Do not modify implementation code unless explicitly instructed.
 
 ## Initialize
 
-After the feature branch and parent/child specs exist, read:
+After the feature branch and parent/numeric child specs exist, read:
 
 - `AGENTS.md`
 - `docs/agent-knowledge/README.md`
 - `docs/specs/workflow/README.md`
 - relevant topic-specific agent knowledge
-- parent and child specs
+- parent and numeric child specs
+- any proto-children for planning context only
 
 You initialize the workflow on the shared feature branch, equivalent to:
 
@@ -36,12 +37,48 @@ Initial state must be:
 ```text
 TURN: IMPLEMENTER
 ACTION: IMPLEMENT
-ACTIVE_CHILD: first child
+ACTIVE_CHILD: first numeric child
 ```
+
+`NNN.P1-*`, `NNN.P2-*`, etc. are proto-children. They are deliberately excluded from workflow child discovery and must never become `ACTIVE_CHILD` until promoted to a numeric child.
 
 The coordination file must also contain the timestamped initialization entry defined by the workflow guide.
 
 Then begin polling.
+
+## Pending user messages — mandatory handling
+
+The user may send reviewer input at any time through:
+
+```bash
+python docs/specs/workflow/spec_workflow.py user-message --spec NNN --message "..."
+```
+
+The state exposes the pending count and IDs/timestamps, for example:
+
+```text
+USER_MESSAGES_PENDING: 2
+USER_MESSAGE_TIMESTAMPS: U1=..., U2=...
+```
+
+Whenever you refresh state and pending messages exist:
+
+1. immediately locate/read the matching `USER → REVIEWER` entries in `NNN-agent-coordination.md`;
+2. treat them as explicit user input for your reviewer role;
+3. if `TURN: IMPLEMENTER`, make **no repository changes** and do not convert the message into implementation work yet; retain it for the next reviewer-owned action;
+4. if `TURN: REVIEWER`, process the messages before reviewing or transitioning state;
+5. every reviewer-owned transition (`request-fixes`, `review-clean`, `add-child`, `block`, `resume-final-review`, `complete`) records the pending `U*` IDs as **User messages considered** and clears them from state.
+
+A user message is not automatically an implementer instruction. If it is a review emphasis or clarification, apply it directly. If it materially changes a locked requirement or feature scope, amend the governing spec explicitly before enforcing the new behavior; do not hide a product/scientific decision change inside an unrelated `R` finding.
+
+Proto-child promotion is also reviewer-controlled once a workflow is running. Only after the proto-child has been expanded into a normal numeric spec may you schedule it:
+
+```bash
+python docs/specs/workflow/spec_workflow.py add-child NNN.X --spec NNN \
+  --message "Promoted from NNN.P1."
+```
+
+Do not schedule or review a proto-child directly.
 
 ## Polling — exact procedure
 
@@ -72,9 +109,10 @@ Immediately after one heartbeat returns, the **next action must be the next hear
 4. After `4/4`, immediately use the **GitHub connector in Chat** to refresh the shared feature branch and re-read:
    - `docs/specs/NNN-agent-state.json`;
    - latest entries in `docs/specs/NNN-agent-coordination.md`.
-5. If still `TURN: IMPLEMENTER`, reset to `1/4` and immediately repeat the cycle.
-6. If `TURN: REVIEWER`, stop polling and act immediately according to `ACTION`.
-7. If `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
+5. If `USER_MESSAGES_PENDING` is nonzero, read those `U*` entries immediately before deciding what to do next.
+6. If still `TURN: IMPLEMENTER`, reset to `1/4` and repeat the cycle; do not edit repository state merely to acknowledge the messages.
+7. If `TURN: REVIEWER`, stop polling and act immediately according to `ACTION`, incorporating all pending user input.
+8. If `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
 
 The committed JSON state is always authoritative.
 
@@ -91,6 +129,7 @@ If any of the following occurs:
 
 After that state check:
 
+- read any pending `U*` user messages;
 - if `TURN: IMPLEMENTER`, start a fresh cycle at `1/4`;
 - if `TURN: REVIEWER`, act on the current `ACTION` immediately;
 - if `ACTION: COMPLETE` or `ACTION: BLOCKED`, stop.
@@ -109,14 +148,17 @@ During heartbeat waiting, visible output must contain only the timestamp, heartb
 
 Do not repeatedly explain the polling mechanism.
 
-### If the user sends a message during polling
+If a pending workflow `U*` message is found at a scheduled state refresh, read/process it silently in reviewer context; do not modify the branch while the implementer still owns the turn.
 
-A user message may interrupt the current heartbeat turn.
+### If the user sends a message directly in Chat during polling
+
+A direct user message may interrupt the current heartbeat turn.
 
 1. Process the user's new instruction.
 2. If the user explicitly asks you to stop polling, stop.
 3. Otherwise, **check live GitHub state immediately** rather than resuming the old heartbeat counter.
-4. Continue from the authoritative state:
+4. Also read any pending workflow `U*` entries reported by state.
+5. Continue from the authoritative state:
    - `TURN: IMPLEMENTER` → start a fresh `1/4` cycle;
    - `TURN: REVIEWER` → act immediately;
    - `ACTION: COMPLETE` or `ACTION: BLOCKED` → stop.
@@ -127,9 +169,10 @@ Do not merely reply that you will resume polling and then stop. You must actuall
 
 When `ACTION: REVIEW`, inspect actual code/tests first and review against:
 
-1. active child spec;
+1. active numeric child spec;
 2. locked parent decisions;
-3. current repository architecture/engineering rules.
+3. current repository architecture/engineering rules;
+4. any pending user input that applies to the review.
 
 Canonical review files live under `docs/specs/reviews/` and use the exact naming convention in `docs/specs/workflow/README.md`: mirror the corresponding spec filename and replace `.md` with `-review.md`.
 
@@ -142,6 +185,8 @@ docs/specs/040.2-series-styling.md
 docs/specs/040-series-styling-parent.md
 → docs/specs/reviews/040-series-styling-parent-review.md
 ```
+
+Proto-children do not get review files.
 
 Use stable `R1`, `R2`, ... findings exactly as defined in the workflow guide. Each must contain priority, affected files, **Current**, **Target**, and **Acceptance criteria**.
 
@@ -168,12 +213,14 @@ If Vite/preflight is reported blocked by a known coding-environment filesystem r
 
 ### Changes required
 
-Update the canonical review file, then apply the equivalent of:
+Before the transition, read every pending `U*` message. Update the canonical review file, then apply the equivalent of:
 
 ```bash
 python docs/specs/workflow/spec_workflow.py request-fixes R1 R2 \
   --message "Optional concise context."
 ```
+
+The transition records the pending user-message IDs as considered and clears them.
 
 Through the GitHub connector, update JSON state and append the corresponding **timestamped** reviewer → implementer coordination entry.
 
@@ -192,6 +239,8 @@ python docs/specs/workflow/spec_workflow.py review-clean \
   --message "Optional concise context."
 ```
 
+Again, read pending `U*` messages first; the transition records/clears them.
+
 Commit/push review + state + timestamped coordination entry together.
 
 If control passes to implementer, immediately resume the heartbeat polling cycle.
@@ -202,7 +251,9 @@ When `ACTION: FINAL_REVIEW`, perform a fresh cumulative review against the corre
 
 Use the review file corresponding to the parent spec itself, following the same filename rule. Update that same parent review file on later rounds.
 
-Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
+Proto-children are non-implementable future planning and do **not** block parent completion. If the user elects to promote one before completion, require a fully authored numeric child and schedule it with `add-child`; never implement from `NNN.Px`.
+
+Read all pending user messages before any final-review transition. Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
 
 ### Final review clean and complete
 
@@ -236,6 +287,8 @@ Commit/push the parent review + JSON state + timestamped coordination entry toge
 - the feature is **not complete and not merge-ready**;
 - neither agent should keep polling or doing speculative work;
 - the current sessions stop until the external dependency is actually available.
+
+The user may still append a `USER → REVIEWER` message while blocked, but that alone does not restart polling or implementation.
 
 Do **not** search the user's File Library, unrelated storage, previous uploads, or other sources trying to satisfy an external gate unless the user explicitly asks you to search there or explicitly identifies the source to use. If the required evidence has not been supplied to this workflow, record `BLOCKED` rather than improvising a search.
 
