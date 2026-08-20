@@ -5,9 +5,9 @@
 **Branch:** `feature/continued-cell-import-workspace`
 **Merge base:** `5e50736` (current `main` tip — the branch fast-forwards, no divergence)
 **Reviewed range:** `main..HEAD` = 55 commits at `a0d6471` (round 5); earlier rounds reviewed 24
-**Round:** 5 (cumulative, current)
-**Result:** Changes required — R30 (Medium). See the round-5 section at the end of this file;
-earlier rounds are history, not current merge evidence.
+**Round:** 5 (cumulative, final)
+**Result:** Review clean — all findings resolved. **BLOCKED** on the browser/manual matrix, which no
+agent in this workflow can run. See the end of this file; earlier rounds are history.
 
 > Rounds 1–3 below reviewed the branch at `0.27.0-beta.1` / 24 commits and closed BLOCKED on the
 > unrun browser matrix. The user then resumed and ran further tranches (R5–R10) that this file never
@@ -783,6 +783,96 @@ Two gates remain, unchanged in character from the first cumulative review:
    of which any automated check in this repository can confirm.
 
 Everything a machine can verify on this branch passes. What remains is what a machine cannot.
+
+## Project mirror handoff
+
+```text
+Replace uploaded Project file:
+- CELLXPLORER_ARCHITECTURE.md
+- CELLXPLORER_PROJECT_INSTRUCTIONS.md
+```
+
+---
+
+## R30 resolution — resolved at `4834c78`
+
+The ceremony is gone and both obligations survived, which was the whole point of the finding.
+
+**Removed:** `ContinuationReviewModal.tsx` is deleted, the **Review continuity** command is gone, and
+the auto-open effect with it. A repository grep finds no residue.
+
+**Kept, relocated:**
+
+- **Blocking findings** render inline on the source row that names them —
+  `.filter((finding) => finding.severity === "blocking" && finding.source_keys.includes(source.key))`
+  — in red, one compact line each, plus the footer reason. A disabled Import button is never
+  unexplained.
+- **Confirmation findings** render as compact checkboxes above the footer, and only when at least one
+  exists (`{confirmationFindings.length > 0 && result && …}`). Each is still keyed to `finding.id`
+  and still drives `acknowledged`, so the acknowledgement path that makes metadata-only and
+  overlapping-timestamp chains importable at all is intact.
+- **Warning/info** are filtered out of the workspace entirely, as Parent 047 decision 7 requires.
+
+**Submission safety is provably unchanged.** `canSubmit` is byte-identical to before:
+
+```ts
+(order.length >= 2 || (order.length === 1 && trackingEnabled))
+&& scientificDraftIsValid(cellDraft)
+&& continuedImportCanSubmit(result, cellName, acknowledgedFindingIds)
+```
+
+`reviewRequired` was replaced by `findingAction` as reporting state only; no gate moved. The server
+remains authoritative.
+
+**Existing-cell continuation management is unaffected** — `ContinuationManagementPanel` still passes
+no `compact-import` variant, so its detailed source list renders as before.
+
+Net effect: fewer controls than before the finding, no modal, no interruption, and nothing at all on
+screen for a clean chain — while a blocking chain still explains itself and a confirmation chain can
+still be imported.
+
+### Verification run by the reviewer on `4834c78`
+
+```text
+continuationPolicy + continuedImportWorkspacePolicy + multiSourceImport   PASS
+python scripts\preflight.py                                              PASS (4/4)
+npx.cmd tsc --noEmit                                                     PASS
+npx.cmd vite build                                                       PASS
+python scripts\check_versions.py                                         PASS (0.27.0-beta.12)
+```
+
+---
+
+# Cumulative parent review — clean
+
+**All four children are review-clean and no finding remains open.** Every gate a machine can apply to
+this branch passes, and the cumulative invariants recorded in round 5 still hold at `4834c78`: clean
+fast-forward onto `5e50736`, `CALC_VERSION` unmodified, forward-safe converging schema revisions,
+separate-cell mode untouched, existing-cell continuation management untouched, no automation acting
+on the user's behalf, and the documentation closure in place.
+
+## Why this closes BLOCKED rather than COMPLETE
+
+`COMPLETE` asserts that the review is clean **and all required acceptance evidence exists**. The
+second half is still false: the browser/manual matrix has never been run, because no agent in this
+workflow was authorized to drive a browser. It now spans four children, and the items it covers are
+exactly the ones no test in this repository can reach — rendered colour parity, real drag-and-drop,
+the R13 checkbox behaviour, the relocated command row, the R27 banner toggle, light/dark, zoom, and
+keyboard reach.
+
+Recording `COMPLETE` would claim verification nobody performed. `BLOCKED` is the honest terminal
+state and is explicitly resumable:
+
+```powershell
+python docs\specs\workflow\spec_workflow.py resume-final-review --message "Manual matrix run."
+```
+
+After that, the recorded results fold into this file and the parent completes normally. A failure
+returns through the ordinary finding loop.
+
+## Merge readiness
+
+Code-complete, not yet merge-ready. The single outstanding gate is human.
 
 ## Project mirror handoff
 

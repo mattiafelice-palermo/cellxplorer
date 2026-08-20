@@ -673,3 +673,16 @@ Cumulative parent review at a0d6471, 55 commits against merge base 5e50736 which
 Fixed R30: removed the Review continuity command, ContinuationReviewModal, and auto-open effect; kept blocking/source errors inline in compact source rows, added compact confirmation checkboxes above the footer with unchanged acknowledgement IDs, filtered warning/info findings from the continued-import workspace, and replaced reviewRequired with inline findingAction footer state. Existing-cell continuation management remains on the default source-list variant. Bumped version to 0.27.0-beta.12 per repository instructions. No remote push per user instruction.
 
 ---
+### 2026-08-20T22:53:43+02:00 — REVIEWER — 047.4
+
+**Result:** Final review blocked on external dependency
+
+**Findings**
+
+- None.
+
+**Message**
+
+Cumulative parent review clean at 4834c78. R30 resolved: ContinuationReviewModal is deleted along with the Review continuity command and the auto-open effect, while blocking findings now render inline on the source row that names them and confirmation findings render as compact checkboxes shown only when one exists, still keyed to finding.id. That matters because without it a metadata-only BioLogic source or an overlapping-timestamp pair could never be imported at all. canSubmit is byte-identical -- reviewRequired became findingAction as reporting state only, no gate moved, and the server stays authoritative. Existing-cell continuation management still uses the default detailed source list. Verified myself: focused continuation suites, preflight 4/4, tsc and vite build explicitly, check_versions at 0.27.0-beta.12. All four children are review-clean and no finding remains open across the whole branch. BLOCKED rather than COMPLETE because the required acceptance input is unavailable to both agents: the browser/manual matrix has never been run and now spans four children, covering exactly what no test here can reach -- rendered colour parity, real drag-and-drop, the R13 checkbox behaviour, the relocated command row, the R27 banner toggle, light/dark, zoom and keyboard reach. Marking COMPLETE would claim verification nobody performed. Resume with resume-final-review once the matrix has been run; the workflow forbids going straight from BLOCKED to COMPLETE.
+
+---
