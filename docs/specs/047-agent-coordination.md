@@ -532,3 +532,16 @@ R11/R12 fixed in _build_stitched_continuation_preview (backend/app/routers/files
 047.3 round 4 clean: R11 and R12 both resolved at b11c65d by the shared fix -- calc.per_cycle now runs exactly once over the merged chain and its rows are partitioned by a first-row cycle-ownership map instead of being recomputed per segment. I re-ran my own reproduction against the fixed path rather than trusting the report: the boundary cycle that previously plotted (1, 0.0) in segment 0 and (1, 1.0) in segment 1 now plots a single (1, 1.0) on segment 0 and nothing on segment 1, which is the single-file value on exactly one segment. The new asymmetric charge-then-discharge regression test asserts 0.0 is absent from every segment, the symmetric fixture was updated from two partial points to one aggregated point, voltage mode is untouched, and the per-segment max_points budget still applies. First-row attribution is the right choice because it is stable when the user switches capacity metric. One consequence for the browser matrix, not a finding: a source holding only the tail of a cycle started in the previous file renders an empty trace in stitched mode, so R10's selection emphasis highlights nothing for it -- worth seeing on real data. Advancing to 047.4; the cumulative parent review happens once, after it lands.
 
 ---
+### 2026-08-20T18:46:31+02:00 — IMPLEMENTER → REVIEWER — 047.4
+
+**Result:** Implementation ready
+
+**Verification**
+
+- python scripts\\preflight.py --no-cache (PASS: 4/4 stages, all 141 backend/frontend modules); focused folder-watch/migration and frontend policy tests PASS; npx.cmd tsc --noEmit PASS; npx.cmd vite build PASS; python scripts\\check_versions.py --expected-version 0.27.0-beta.8 PASS
+
+**Message**
+
+Implemented 047.4 continued-cell folder tracking plus the requested Shift-click contiguous file selection and readable voltage time-axis units. Local checkpoint 2235efe; no remote push per user instruction.
+
+---
