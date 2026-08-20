@@ -25,6 +25,7 @@ from ..config import CALC_VERSION, IMPORT_DIR
 from ..db import SessionLocal, get_db
 from ..models import (
     Cell,
+    CellFolderWatch,
     CellMetadata,
     CellTag,
     Folder,
@@ -100,6 +101,12 @@ def _load_continuation_preview():
     return module
 
 
+def _load_cell_folder_watch():
+    from ..services import cell_folder_watch as module
+
+    return module
+
+
 def _load_analysis_usage():
     from ..services import analysis_usage as module
 
@@ -121,6 +128,7 @@ scanner = LazyModule(_load_scanner)
 continuations = LazyModule(_load_continuations)
 stitch = LazyModule(_load_stitch)
 continuation_preview = LazyModule(_load_continuation_preview)
+cell_folder_watch = LazyModule(_load_cell_folder_watch)
 analysis_usage = LazyModule(_load_analysis_usage)
 cache_maintenance = LazyModule(_load_cache_maintenance)
 
@@ -1328,6 +1336,24 @@ class ImportSourceDraft(BaseModel):
     allow_metadata_only: bool = False
 
 
+class FolderWatchDraft(BaseModel):
+    enabled: bool = True
+    folder_path: str
+    pattern_kind: Literal["glob", "regex"] = "glob"
+    pattern: str = "*"
+    extension: str
+    source_format: str | None = None
+    ordering_rule: Literal["timestamp_filename_hash", "filename"] = "timestamp_filename_hash"
+    recursive: bool = False
+    recursion_depth: int = 0
+    cadence_value: int | None = None
+    cadence_unit: Literal["minutes", "hours", "days"] | None = None
+
+
+class FolderWatchPreviewRequest(FolderWatchDraft):
+    pass
+
+
 class ImportCellDraft(BaseModel):
     staged_name: str | None = None
     source_path: str | None = None
@@ -1347,6 +1373,7 @@ class ImportCellDraft(BaseModel):
     electrode_area_preset_id: str | None = None
     electrode_area_preset_name: str | None = None
     acknowledged_finding_ids: list[str] = []
+    folder_watch: FolderWatchDraft | None = None
 
 
 class ImportReplicateGroupDraft(BaseModel):
@@ -3937,6 +3964,28 @@ def _create_imported_cells_impl_raw(
         continuations.validate_staged_keys(all_staged_keys)
     except continuations.ContinuationValidationError as exc:
         _raise_continuation_validation(exc)
+    validated_folder_watches: dict[int, dict] = {}
+    for draft in req.cells:
+        sources = normalize_import_cell_sources(draft)
+        # A non-empty `sources` list is the explicit continued-cell payload;
+        # separate-cell drafts use the legacy single staged_name fields.
+        if draft.sources and len(sources) == 1 and not (
+            draft.folder_watch is not None and draft.folder_watch.enabled
+        ):
+            raise HTTPException(
+                422,
+                "A single-source continued Cell requires folder tracking to be enabled.",
+            )
+        if draft.folder_watch is not None:
+            try:
+                clean_watch = cell_folder_watch.validate_import_watch(
+                    draft.folder_watch.model_dump(),
+                    [(source.filename, source.source_path) for source in sources],
+                )
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if clean_watch["enabled"]:
+                validated_folder_watches[id(draft)] = clean_watch
     target_folder_ids = list(dict.fromkeys(
         ([req.folder_id] if req.folder_id is not None else []) + req.folder_ids
     ))
@@ -3971,8 +4020,9 @@ def _create_imported_cells_impl_raw(
     continuation_drafts = [
         draft
         for draft in req.cells
-        if len(normalize_import_cell_sources(draft)) > 1
+        if (draft.sources and len(normalize_import_cell_sources(draft)) > 1)
         or bool(draft.acknowledged_finding_ids)
+        or id(draft) in validated_folder_watches
     ]
     continuation_draft_ids = {id(draft) for draft in continuation_drafts}
 
@@ -4131,6 +4181,13 @@ def _create_imported_cells_impl_raw(
         # one row for the newly created Cell.
         test = Test(cell=cell, name="Imported file")
         db.add_all([cell, test])
+        if id(draft) in validated_folder_watches:
+            db.add(
+                CellFolderWatch(
+                    cell=cell,
+                    **validated_folder_watches[id(draft)],
+                )
+            )
 
         if sources:
             first_prepared = prepared_sources_by_staged_name[sources[0].staged_name]
@@ -5304,3 +5361,125 @@ def detach_cell_source(
 ):
     _cell, test = _load_cell_single_test_or_404(db, cell_id)
     return _cell_level_mutation_response(detach_file(test.id, file_id, req, db))
+
+
+def _folder_watch_response(db: Session, cell_id: int) -> dict:
+    from ..services import automation, source_monitor
+
+    watch = db.query(CellFolderWatch).filter(CellFolderWatch.cell_id == cell_id).one_or_none()
+    monitoring = source_monitor.monitoring_state(db)
+    return {
+        "watch": cell_folder_watch.watch_payload(
+            watch,
+            global_monitor_enabled=bool(monitoring["enabled"]),
+            automation_paused=automation.is_paused(db),
+        ),
+        "global_monitor_enabled": bool(monitoring["enabled"]),
+        "automation_paused": automation.is_paused(db),
+    }
+
+
+@router.get("/cells/{cell_id}/folder-watch")
+def get_cell_folder_watch(cell_id: int, db: Session = Depends(get_db)):
+    _load_cell_single_test_or_404(db, cell_id)
+    return _folder_watch_response(db, cell_id)
+
+
+@router.post("/imports/folder-watch-preview")
+def preview_folder_watch(payload: FolderWatchPreviewRequest):
+    try:
+        return cell_folder_watch.preview_watch_files(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.put("/cells/{cell_id}/folder-watch")
+def update_cell_folder_watch(
+    cell_id: int,
+    payload: FolderWatchDraft,
+    db: Session = Depends(get_db),
+):
+    cell, _test = _load_cell_single_test_or_404(db, cell_id)
+    try:
+        watch = cell_folder_watch.create_or_update_watch(db, cell_id, payload.model_dump())
+        record_activity(
+            db,
+            category="cell",
+            action="update_folder_watch",
+            message=f"Updated folder tracking for Cell {cell.name}",
+            entity_type="cell",
+            entity_id=cell_id,
+            details={
+                "enabled": bool(watch.enabled),
+                "extension": watch.extension,
+                "ordering_rule": watch.ordering_rule,
+                "recursive": bool(watch.recursive),
+            },
+        )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+    return _folder_watch_response(db, cell_id)
+
+
+@router.delete("/cells/{cell_id}/folder-watch")
+def delete_cell_folder_watch(cell_id: int, db: Session = Depends(get_db)):
+    cell, _test = _load_cell_single_test_or_404(db, cell_id)
+    watch = db.query(CellFolderWatch).filter(CellFolderWatch.cell_id == cell_id).one_or_none()
+    if watch is not None:
+        db.delete(watch)
+        record_activity(
+            db,
+            category="cell",
+            action="delete_folder_watch",
+            message=f"Disabled folder tracking for Cell {cell.name}",
+            entity_type="cell",
+            entity_id=cell_id,
+        )
+        db.commit()
+    return _folder_watch_response(db, cell_id)
+
+
+@router.post("/cells/{cell_id}/folder-watch/candidates/{candidate_id}/retry")
+def retry_cell_folder_watch_candidate(
+    cell_id: int,
+    candidate_id: int,
+    db: Session = Depends(get_db),
+):
+    cell, _test = _load_cell_single_test_or_404(db, cell_id)
+    try:
+        cell_folder_watch.reset_candidate(db, cell_id, candidate_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    record_activity(
+        db,
+        category="cell",
+        action="retry_folder_watch_candidate",
+        message=f"Retried a folder-tracking candidate for Cell {cell.name}",
+        entity_type="cell",
+        entity_id=cell_id,
+    )
+    db.commit()
+    return _folder_watch_response(db, cell_id)
+
+
+@router.delete("/cells/{cell_id}/folder-watch/candidates/{candidate_id}")
+def ignore_cell_folder_watch_candidate(
+    cell_id: int,
+    candidate_id: int,
+    db: Session = Depends(get_db),
+):
+    cell, _test = _load_cell_single_test_or_404(db, cell_id)
+    if not cell_folder_watch.delete_candidate(db, cell_id, candidate_id):
+        raise HTTPException(404, "Folder-tracking candidate was not found.")
+    record_activity(
+        db,
+        category="cell",
+        action="ignore_folder_watch_candidate",
+        message=f"Ignored a folder-tracking candidate for Cell {cell.name}",
+        entity_type="cell",
+        entity_id=cell_id,
+    )
+    db.commit()
+    return _folder_watch_response(db, cell_id)

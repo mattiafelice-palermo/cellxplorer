@@ -100,6 +100,37 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(status, "pending")
             self.assertIn("max_discharge_capacity_mah", columns)
 
+    def test_migration_0004_creates_folder_watch_tables_from_0003(self):
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        from app.migrations.versions import (
+            v0001_initial,
+            v0002_max_discharge_summary,
+            v0003_import_submissions,
+        )
+        from app.migrations.versions import v0004_cell_folder_watch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _path, engine = self.make_database(root)
+            with engine.begin() as connection:
+                context = MigrationContext.configure(connection)
+                operations = Operations(context)
+                v0001_initial.upgrade(operations, connection)
+                connection.exec_driver_sql("DROP TABLE cell_folder_watch_candidates")
+                connection.exec_driver_sql("DROP TABLE cell_folder_watches")
+                v0002_max_discharge_summary.upgrade(operations, connection)
+                v0003_import_submissions.upgrade(operations, connection)
+                v0004_cell_folder_watch.upgrade(operations, connection)
+
+            inspector = inspect(engine)
+            self.assertIn("cell_folder_watches", inspector.get_table_names())
+            self.assertIn("cell_folder_watch_candidates", inspector.get_table_names())
+            self.assertIn("folder_path", {column["name"] for column in inspector.get_columns("cell_folder_watches")})
+            self.assertIn("stability_state", {column["name"] for column in inspector.get_columns("cell_folder_watch_candidates")})
+            engine.dispose()
+
     def test_unversioned_cellxplorer_database_is_backed_up_and_stamped(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

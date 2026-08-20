@@ -227,7 +227,7 @@ def _running_background_work() -> bool:
 
 def _run_scheduler() -> None:
     from ..routers import library
-    from . import automation
+    from . import automation, cell_folder_watch
 
     apply_background_thread_priority()
     while not _stop_event.is_set():
@@ -286,6 +286,27 @@ def _run_scheduler() -> None:
                         _set(db, NEXT_RUN_KEY, calculate_next_run(latest_config, finished_at).isoformat())
                     else:
                         _set(db, NEXT_RUN_KEY, None)
+                    # Folder tracking is deliberately a pass in this same
+                    # scheduler. It inherits the global monitor's enabled,
+                    # pause, idle and stability gates instead of creating a
+                    # competing watcher thread per Cell.
+                    folder_automation_paused = automation.is_paused(db)
+                    folder_work_is_idle = not (
+                        library.source_check_running() or _running_background_work()
+                    )
+                    if not folder_automation_paused and folder_work_is_idle:
+                        cell_folder_watch.run_folder_watch_pass(
+                            db,
+                            monitor_enabled=bool(latest_config["enabled"]),
+                            automation_paused=False,
+                            stability_seconds=stability_seconds(latest_config),
+                            retry_count=int(latest_config["retry_count"]),
+                            now=finished_at,
+                        )
+                    elif folder_automation_paused:
+                        _set(db, LAST_STATUS_KEY, "paused")
+                    else:
+                        _set(db, LAST_STATUS_KEY, "waiting_for_idle")
                     db.commit()
                     wait_seconds = 1
         except Exception:

@@ -17,6 +17,7 @@ import {
   Select,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
   Textarea,
@@ -64,6 +65,7 @@ import {
   ImportFolderFile,
   ImportFolderSelectionResult,
   ImportPreview,
+  ImportFolderWatchDraft,
   ImportPreviewResult,
   ImportRawDataResult,
   BackgroundJob,
@@ -73,7 +75,9 @@ import {
 } from "../api";
 import Plot from "../components/Plot";
 import { ContinuedImportEditor, type ContinuedCellDraft } from "../components/ContinuedImportEditor";
+import { FolderTrackingSettingsModal } from "../components/FolderTrackingSettingsModal";
 import type { ContinuedImportSubmissionState } from "../continuedImportWorkspacePolicy";
+import { folderTrackingEligibility, folderTrackingSummary } from "../folderTrackingPolicy";
 import {
   ImportFilesystemPickerModal as SharedImportFilesystemPickerModal,
   type ImportSourceSelection,
@@ -1088,6 +1092,8 @@ function ImportModal({
   const [replicateGroups, setReplicateGroups] = useState<ImportReplicateDraft[]>([]);
   const [newGroupName, setNewGroupName] = useState("");
   const [continuedMode, setContinuedMode] = useState(false);
+  const [folderWatch, setFolderWatch] = useState<ImportFolderWatchDraft | null>(null);
+  const [folderTrackingSettingsOpen, setFolderTrackingSettingsOpen] = useState(false);
   const [registerToken, setRegisterToken] = useState<string | null>(null);
   const [registrationAccepted, setRegistrationAccepted] = useState(false);
   const [handoffPending, setHandoffPending] = useState(false);
@@ -1105,6 +1111,7 @@ function ImportModal({
     metadataOnlySourceKeys: [],
     inspectionStatus: "not_started",
     reviewRequired: false,
+    trackingEnabled: false,
   });
   const treeQuery = useQuery({ queryKey: ["tree"], queryFn: () => get<Tree>("/api/tree") });
   const areaPresetsQuery = useQuery({
@@ -1140,6 +1147,7 @@ function ImportModal({
     ],
     [materialPresetsQuery.data]
   );
+  const trackingEligibility = useMemo(() => folderTrackingEligibility(drafts), [drafts]);
 
   useEffect(() => {
     if (opened) {
@@ -1148,6 +1156,8 @@ function ImportModal({
       setReplicateGroups([]);
       setNewGroupName(drafts.length > 1 ? `${drafts[0]?.cell_name ?? "Imported"} replicates` : "");
       setContinuedMode(false);
+      setFolderWatch(null);
+      setFolderTrackingSettingsOpen(false);
       setRegistrationAccepted(false);
       setRegisterToken(null);
       setContinuedCellDraft(continuedCellDraftFrom(drafts[0]));
@@ -1158,6 +1168,7 @@ function ImportModal({
         metadataOnlySourceKeys: [],
         inspectionStatus: "not_started",
         reviewRequired: false,
+        trackingEnabled: false,
       });
       setDoneCountdown(null);
       autoCloseFired.current = false;
@@ -1175,8 +1186,26 @@ function ImportModal({
       setDoneCountdown(null);
       autoCloseFired.current = false;
       setClosingBranch(null);
+      setFolderTrackingSettingsOpen(false);
     }
   }, [opened, targetFolderId]);
+
+  useEffect(() => {
+    if (!continuedMode || !trackingEligibility.eligible || !trackingEligibility.defaultWatch) {
+      setFolderWatch(null);
+      return;
+    }
+    setFolderWatch((current) => {
+      if (
+        current
+        && current.folder_path === trackingEligibility.defaultWatch?.folder_path
+        && current.extension === trackingEligibility.defaultWatch?.extension
+      ) {
+        return current;
+      }
+      return trackingEligibility.defaultWatch;
+    });
+  }, [continuedMode, trackingEligibility]);
 
   const loadRawData = (offset = 0, targetDraft = draft) => {
     if (!targetDraft) return;
@@ -1262,6 +1291,7 @@ function ImportModal({
       acknowledgedFindingIds: continuedSubmissionState.acknowledgedFindingIds,
       metadataOnlySourceKeys: continuedSubmissionState.metadataOnlySourceKeys,
       continuedCellDraft,
+      folderWatch,
       jobToken,
     });
   };
@@ -1384,6 +1414,7 @@ function ImportModal({
       acknowledgedFindingIds?: string[];
       metadataOnlySourceKeys?: string[];
       continuedCellDraft?: ContinuedCellDraft;
+      folderWatch?: ImportFolderWatchDraft | null;
       jobToken: string;
     }) => {
       return post<{
@@ -1429,6 +1460,7 @@ function ImportModal({
               electrode_area_preset_id: variables.continuedCellDraft?.electrode_area_preset_id,
               electrode_area_preset_name: variables.continuedCellDraft?.electrode_area_preset_name,
               acknowledged_finding_ids: variables.acknowledgedFindingIds ?? [],
+              folder_watch: variables.folderWatch?.enabled ? variables.folderWatch : null,
             }]
           : includedDrafts.map((d) => ({
           staged_name: d.staged_name,
@@ -1670,23 +1702,40 @@ function ImportModal({
         }
         actions={
           <>
-            <Text size="sm" c="dimmed">
-              {shouldShowDone
-                ? "Import complete. Cells are ready."
-                : shouldShowContinue
-                  ? "Registration is committed. Scientific data preparation continues in the background."
-                : continuedMode
-                  ? continuedSubmissionState.inspectionStatus === "error"
-                    ? "Continuity inspection failed; resolve the source error before importing."
-                    : continuedSubmissionState.reviewRequired
-                      ? "Continuity review required before import."
-                      : continuedSubmissionState.inspectionStatus === "preparing"
-                        ? "Continuity inspection is still preparing."
-                        : continuedSubmissionState.inspectionStatus === "not_started"
-                          ? "Inspect continuity before importing."
-                          : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`
-                  : `Review ${drafts.length} selected file${drafts.length === 1 ? "" : "s"} before saving.`}
-            </Text>
+            {shouldShowDone ? (
+              <Text size="sm" c="dimmed">Import complete. Cells are ready.</Text>
+            ) : shouldShowContinue ? (
+              <Text size="sm" c="dimmed">Registration is committed. Scientific data preparation continues in the background.</Text>
+            ) : continuedMode ? (
+              continuedSubmissionState.inspectionStatus === "error" ? (
+                <Text size="sm" c="red">Continuity inspection failed; resolve the source error before importing.</Text>
+              ) : continuedSubmissionState.reviewRequired ? (
+                <Text size="sm" c="orange">Continuity review required before import.</Text>
+              ) : continuedSubmissionState.inspectionStatus === "preparing" ? (
+                <Text size="sm" c="dimmed">Continuity inspection is still preparing.</Text>
+              ) : continuedSubmissionState.inspectionStatus === "not_started" ? (
+                <Text size="sm" c="dimmed">Inspect continuity before importing.</Text>
+              ) : trackingEligibility.eligible && folderWatch ? (
+                <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                  <Switch
+                    size="sm"
+                    label="Track this folder for new files"
+                    checked={folderWatch.enabled}
+                    onChange={(event) => setFolderWatch((current) => current ? { ...current, enabled: event.currentTarget.checked } : current)}
+                  />
+                  <Button size="compact-xs" variant="subtle" onClick={() => setFolderTrackingSettingsOpen(true)}>
+                    Settings
+                  </Button>
+                  <Text size="xs" c="dimmed" truncate title={folderTrackingSummary(folderWatch)} style={{ minWidth: 0, flex: 1 }}>
+                    {folderTrackingSummary(folderWatch)}
+                  </Text>
+                </Group>
+              ) : (
+                <Text size="xs" c="dimmed">{trackingEligibility.reason ?? "Folder tracking is unavailable for this selection."}</Text>
+              )
+            ) : (
+              <Text size="sm" c="dimmed">Review {drafts.length} selected file{drafts.length === 1 ? "" : "s"} before saving.</Text>
+            )}
             <ImportModalPrimaryActions>
               {shouldShowDone ? (
                 <Button
@@ -1757,7 +1806,7 @@ function ImportModal({
             }}
           >
           <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-            {drafts.length >= 2 && (
+            {drafts.length >= 1 && (
               <SegmentedControl
                 fullWidth
                 style={{ flex: "none" }}
@@ -1789,6 +1838,7 @@ function ImportModal({
                 materialPresets={materialPresetsQuery.data?.presets ?? []}
                 areaPresets={areaPresetsQuery.data?.presets ?? []}
                 onSubmissionStateChange={setContinuedSubmissionState}
+                folderWatch={folderWatch}
                 onRawData={(stagedName) => {
                   const targetIndex = drafts.findIndex((item) => item.staged_name === stagedName);
                   const target = targetIndex >= 0 ? drafts[targetIndex] : undefined;
@@ -2634,6 +2684,16 @@ function ImportModal({
           ) : null}
         </Stack>
       </Modal>
+
+      <FolderTrackingSettingsModal
+        opened={folderTrackingSettingsOpen}
+        config={folderWatch}
+        onClose={() => setFolderTrackingSettingsOpen(false)}
+        onSave={(next) => {
+          setFolderWatch(next);
+          setFolderTrackingSettingsOpen(false);
+        }}
+      />
     </>
   );
 }

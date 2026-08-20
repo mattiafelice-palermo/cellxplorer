@@ -29,6 +29,7 @@ import {
   ContinuationPreviewResult,
   ElectrodeAreaPresetSettings,
   ImportPreview,
+  ImportFolderWatchDraft,
   inspectContinuationSources,
   previewContinuationSources,
 } from "../api";
@@ -59,6 +60,7 @@ import {
   continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
+  scaleContinuationPreviewTimeAxis,
   type ContinuationPreviewInterpretation,
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
@@ -157,6 +159,7 @@ export function ContinuedImportEditor({
   onRawData,
   onPreviewRequested,
   importing,
+  folderWatch,
 }: {
   opened: boolean;
   drafts: DraftSource[];
@@ -176,6 +179,7 @@ export function ContinuedImportEditor({
   onRawData?: (stagedName: string) => void;
   onPreviewRequested?: (draft: DraftSource, retry?: boolean) => void;
   importing: boolean;
+  folderWatch: ImportFolderWatchDraft | null;
 }) {
   const [order, setOrder] = useState<string[]>(() => drafts.map((item) => item.staged_name));
   const [colors, setColors] = useState<SourceColorAssignments>({});
@@ -202,9 +206,9 @@ export function ContinuedImportEditor({
       sources: orderedDrafts.map(draftSource),
       proposed_order: order,
     }),
-    enabled: opened && orderedDrafts.length >= 2,
+    enabled: opened && orderedDrafts.length >= 1,
     refetchInterval: (query) =>
-      opened && orderedDrafts.length >= 2 && !query.state.data?.inspection_complete ? 1000 : false,
+      opened && orderedDrafts.length >= 1 && !query.state.data?.inspection_complete ? 1000 : false,
   });
   const result = inspectionQuery.data;
   const sourceInspectionFailed = continuationInspectionHasErrors(result);
@@ -226,6 +230,12 @@ export function ContinuedImportEditor({
       && orderedDrafts.length >= 2,
     staleTime: Infinity,
   });
+  const displayCombinedPreview = useMemo(
+    () => combinedPreviewQuery.data
+      ? scaleContinuationPreviewTimeAxis(combinedPreviewQuery.data)
+      : undefined,
+    [combinedPreviewQuery.data],
+  );
   const orderedSources = useMemo(
     () => result?.sources.length
       ? order
@@ -302,8 +312,9 @@ export function ContinuedImportEditor({
       result,
       acknowledged,
       inspectionQuery.isError,
+      folderWatch?.enabled === true,
     ),
-    [acknowledged, cellDraft, inspectionQuery.isError, order, result],
+    [acknowledged, cellDraft, folderWatch?.enabled, inspectionQuery.isError, order, result],
   );
   useEffect(() => {
     onSubmissionStateChange(submissionState);
@@ -410,9 +421,11 @@ export function ContinuedImportEditor({
         </Group>
       </Group>
 
-      {orderedDrafts.length < 2 && (
-        <Alert color="orange" title="A continued Cell needs at least two sources" style={{ flex: "none" }}>
-          Add another source to continue, or switch back to the separate-cell import workflow.
+      {orderedDrafts.length < 2 && !folderWatch?.enabled && (
+        <Alert color="orange" style={{ flex: "none" }}>
+          {orderedDrafts.length === 1
+            ? "A single-source continued Cell requires folder tracking. Enable “Track this folder for new files” below, or add another source."
+            : "Add a source to continue, or switch back to the separate-cell import workflow."}
           <Button mt="xs" size="compact-sm" variant="default" onClick={onSwitchToSeparate}>
             Use separate cells
           </Button>
@@ -528,6 +541,10 @@ export function ContinuedImportEditor({
                     </Alert>
                   ) : inspectionQuery.isFetching ? (
                     <Alert color="gray">Waiting for continuity inspection…</Alert>
+                  ) : orderedDrafts.length < 2 ? (
+                    <Alert color="gray">
+                      This source is ready. The merged preview will appear when another source is added.
+                    </Alert>
                   ) : combinedPreviewQuery.isPending
                     || (combinedPreviewQuery.isFetching && !combinedPreviewQuery.data) ? (
                     <Alert color="gray">
@@ -569,11 +586,11 @@ export function ContinuedImportEditor({
                         )}
                       </Group>
                     </Alert>
-                  ) : combinedPreviewQuery.data && continuationPreviewHasPoints(combinedPreviewQuery.data) ? (
+                  ) : displayCombinedPreview && continuationPreviewHasPoints(displayCombinedPreview) ? (
                     <Paper withBorder p="xs">
                       <Plot
                         data={buildContinuationPreviewTraces(
-                          combinedPreviewQuery.data,
+                          displayCombinedPreview,
                           colors,
                           selectedSourceKey,
                         )}
@@ -582,8 +599,8 @@ export function ContinuedImportEditor({
                           margin: { l: 58, r: 16, t: 48, b: 48 },
                           xaxis: {
                             title: {
-                              text: combinedPreviewQuery.data.x_label
-                                ?? (combinedPreviewQuery.data.quantity === "voltage"
+                              text: displayCombinedPreview.x_label
+                                ?? (displayCombinedPreview.quantity === "voltage"
                                   ? "Time (s)"
                                   : previewInterpretation === "stitched"
                                     ? "Cycle number (stitched)"
@@ -606,7 +623,7 @@ export function ContinuedImportEditor({
                           paper_bgcolor: "#ffffff",
                           plot_bgcolor: "#ffffff",
                           font: { color: "#1f2937" },
-                          ...buildContinuationPreviewProvenanceLayout(combinedPreviewQuery.data, colors),
+                          ...buildContinuationPreviewProvenanceLayout(displayCombinedPreview, colors),
                         }}
                         config={{ displayModeBar: false, responsive: true }}
                         style={{ width: "100%" }}

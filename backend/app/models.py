@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     DateTime,
     Float,
@@ -100,6 +101,9 @@ class Cell(Base):
         back_populates="cell", cascade="all, delete-orphan"
     )
     tag_links: Mapped[list[CellTag]] = relationship(cascade="all, delete-orphan")
+    folder_watch: Mapped[CellFolderWatch | None] = relationship(
+        back_populates="cell", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class CellMetadata(Base):
@@ -114,6 +118,67 @@ class CellMetadata(Base):
     value: Mapped[str] = mapped_column(Text)
 
     cell: Mapped[Cell] = relationship(back_populates="metadata_entries")
+
+
+class CellFolderWatch(Base):
+    """Per-Cell folder discovery configuration for continued imports."""
+
+    __tablename__ = "cell_folder_watches"
+    __table_args__ = (UniqueConstraint("cell_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cell_id: Mapped[int] = mapped_column(
+        ForeignKey("cells.id", ondelete="CASCADE"), index=True
+    )
+    folder_path: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    pattern_kind: Mapped[str] = mapped_column(String(20), default="glob")
+    pattern: Mapped[str] = mapped_column(Text, default="*")
+    extension: Mapped[str] = mapped_column(String(10))
+    source_format: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    ordering_rule: Mapped[str] = mapped_column(
+        String(40), default="timestamp_filename_hash"
+    )
+    recursive: Mapped[bool] = mapped_column(Boolean, default=False)
+    recursion_depth: Mapped[int] = mapped_column(Integer, default=0)
+    cadence_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cadence_unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    folder_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    cell: Mapped[Cell] = relationship(back_populates="folder_watch")
+    candidates: Mapped[list[CellFolderWatchCandidate]] = relationship(
+        back_populates="watch", cascade="all, delete-orphan", order_by="CellFolderWatchCandidate.id"
+    )
+
+
+class CellFolderWatchCandidate(Base):
+    """A matching file that needs another scan or user action."""
+
+    __tablename__ = "cell_folder_watch_candidates"
+    __table_args__ = (UniqueConstraint("watch_id", "path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    watch_id: Mapped[int] = mapped_column(
+        ForeignKey("cell_folder_watches.id", ondelete="CASCADE"), index=True
+    )
+    path: Mapped[str] = mapped_column(Text)
+    filename: Mapped[str] = mapped_column(String(255))
+    hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    stability_state: Mapped[str] = mapped_column(String(30), default="pending")
+    observed_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observed_mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending_stability", index=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    watch: Mapped[CellFolderWatch] = relationship(back_populates="candidates")
 
 
 class Test(Base):

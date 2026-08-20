@@ -11,6 +11,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconAlertTriangle, IconArrowUp, IconDeviceFloppy, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -22,6 +23,12 @@ import {
   ImportFolderSelectionResult,
   ImportInspectResult,
   ImportPreview,
+  ImportFolderWatchDraft,
+  CellFolderWatchResponse,
+  getCellFolderWatch,
+  updateCellFolderWatch,
+  retryCellFolderWatchCandidate,
+  ignoreCellFolderWatchCandidate,
   SourceChangeImpactPreview,
   attachCellContinuations,
   detachCellSource,
@@ -37,6 +44,7 @@ import {
 } from "../features/analyses/workspace/analysisQueryCache";
 import { ImportFilesystemPickerModal, ImportSourceSelection } from "./ImportFilesystemPickerModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
+import { FolderTrackingSettingsModal } from "./FolderTrackingSettingsModal";
 
 type SourceChainFile = Omit<CellSource, "position" | "tracked_tail">;
 
@@ -112,6 +120,7 @@ export function ContinuationManagementPanel({
   onUpdateFile?: (file: CellSource) => void;
   updating?: boolean;
 }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const files = useMemo(() => flattenFiles(cell), [cell]);
   const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files]);
@@ -124,6 +133,7 @@ export function ContinuationManagementPanel({
   const [mode, setMode] = useState<Mode>(null);
   const [detachFileId, setDetachFileId] = useState<number | null>(null);
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
+  const [trackingSettingsOpen, setTrackingSettingsOpen] = useState(false);
 
   useEffect(() => {
     setOrder(currentFileIds);
@@ -137,6 +147,52 @@ export function ContinuationManagementPanel({
     }),
     enabled: currentFileIds.length > 0,
     refetchInterval: (query) => query.state.status === "success" && !query.state.data?.inspection_complete ? 1000 : false,
+  });
+
+  const folderWatchQuery = useQuery<CellFolderWatchResponse>({
+    queryKey: ["cell-folder-watch", cell.id],
+    queryFn: () => getCellFolderWatch(cell.id),
+    enabled: cell.id > 0,
+  });
+  const folderWatch = folderWatchQuery.data?.watch ?? null;
+  const folderWatchDraft = useMemo<ImportFolderWatchDraft | null>(() => {
+    if (!folderWatch) return null;
+    return {
+      enabled: folderWatch.enabled,
+      folder_path: folderWatch.folder_path,
+      pattern_kind: folderWatch.pattern_kind,
+      pattern: folderWatch.pattern,
+      extension: folderWatch.extension,
+      source_format: folderWatch.source_format,
+      ordering_rule: folderWatch.ordering_rule,
+      recursive: folderWatch.recursive,
+      recursion_depth: folderWatch.recursion_depth,
+      cadence_value: folderWatch.cadence_value,
+      cadence_unit: folderWatch.cadence_unit,
+    };
+  }, [folderWatch]);
+
+  const setFolderWatchResponse = (response: CellFolderWatchResponse) => {
+    queryClient.setQueryData(["cell-folder-watch", cell.id], response);
+  };
+  const folderWatchMutation = useMutation({
+    mutationFn: (config: ImportFolderWatchDraft) => updateCellFolderWatch(cell.id, config),
+    onSuccess: (response) => {
+      setFolderWatchResponse(response);
+      setTrackingSettingsOpen(false);
+      notifications.show({ message: "Folder tracking settings saved.", color: "teal" });
+    },
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  const folderWatchRetryMutation = useMutation({
+    mutationFn: (candidateId: number) => retryCellFolderWatchCandidate(cell.id, candidateId),
+    onSuccess: setFolderWatchResponse,
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
+  });
+  const folderWatchIgnoreMutation = useMutation({
+    mutationFn: (candidateId: number) => ignoreCellFolderWatchCandidate(cell.id, candidateId),
+    onSuccess: setFolderWatchResponse,
+    onError: (error: Error) => notifications.show({ message: error.message, color: "red" }),
   });
 
   const proposalQuery = useQuery<SourceChangeImpactPreview>({
@@ -310,6 +366,72 @@ export function ContinuationManagementPanel({
           <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setPickerOpen(true)}>Add continuation</Button>
         </Group>
       </Group>
+      {folderWatch && (
+        <Alert
+          color={folderWatch.status === "active" ? "teal" : folderWatch.status === "paused" ? "yellow" : "gray"}
+          title={folderWatch.status === "active" ? "Folder tracking active" : folderWatch.status === "paused" ? "Folder tracking paused" : "Folder tracking disabled"}
+        >
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
+            <div style={{ minWidth: 0 }}>
+              <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
+                {folderWatch.folder_path} · {folderWatch.pattern}
+              </Text>
+              <Text size="xs">{folderWatch.status_message ?? folderWatch.last_status ?? "Waiting for the next source-monitor pass."}</Text>
+              <Text size="xs" c="dimmed">
+                {folderWatch.last_scan_at
+                  ? `Last scan: ${new Date(folderWatch.last_scan_at).toLocaleString()}`
+                  : "No scan has run yet."}
+              </Text>
+              {folderWatch.last_error && <Text size="xs" c="red">{folderWatch.last_error}</Text>}
+            </div>
+            <Group gap={4} wrap="nowrap">
+              {folderWatch.status === "paused" && !folderWatchQuery.data?.global_monitor_enabled && (
+                <Button size="compact-xs" variant="subtle" onClick={() => navigate("/settings/monitoring")}>
+                  Source monitoring settings
+                </Button>
+              )}
+              <Button size="compact-xs" variant="subtle" onClick={() => setTrackingSettingsOpen(true)}>
+                Settings
+              </Button>
+            </Group>
+          </Group>
+          {folderWatch.candidates.length > 0 && (
+            <Stack gap={4} mt="xs">
+              <Text size="xs" fw={700}>Files needing attention</Text>
+              {folderWatch.candidates.map((candidate) => (
+                <Group key={candidate.id} justify="space-between" gap="xs" wrap="nowrap">
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <Group gap={4} wrap="nowrap">
+                      <Text size="xs" fw={600} truncate title={candidate.filename}>{candidate.filename}</Text>
+                      <Badge size="xs" variant="light">{candidate.status}</Badge>
+                    </Group>
+                    {candidate.message && <Text size="xs" c="dimmed">{candidate.message}</Text>}
+                  </div>
+                  <Group gap={4} wrap="nowrap">
+                    <Button
+                      size="compact-xs"
+                      variant="default"
+                      disabled={folderWatchRetryMutation.isPending || folderWatchIgnoreMutation.isPending}
+                      onClick={() => folderWatchRetryMutation.mutate(candidate.id)}
+                    >
+                      Retry
+                    </Button>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="red"
+                      disabled={folderWatchRetryMutation.isPending || folderWatchIgnoreMutation.isPending}
+                      onClick={() => folderWatchIgnoreMutation.mutate(candidate.id)}
+                    >
+                      Ignore
+                    </Button>
+                  </Group>
+                </Group>
+              ))}
+            </Stack>
+          )}
+        </Alert>
+      )}
       {currentInspection.isError && <Alert color="red">{currentInspection.error instanceof Error ? currentInspection.error.message : "Source details could not be prepared."}</Alert>}
       {currentInspection.data && !currentInspection.data.inspection_complete && <Alert color="blue">Preparing source details from the current Cell caches…</Alert>}
       <ContinuationSourceList
@@ -343,6 +465,13 @@ export function ContinuationManagementPanel({
       />
 
       <ImportFilesystemPickerModal opened={pickerOpen} loading={pickerLoading} onClose={() => setPickerOpen(false)} onConfirm={loadStagedSources} />
+      <FolderTrackingSettingsModal
+        opened={trackingSettingsOpen}
+        config={folderWatchDraft}
+        onClose={() => setTrackingSettingsOpen(false)}
+        onSave={(config) => folderWatchMutation.mutate(config)}
+        statusMessage={folderWatch?.status_message}
+      />
       <Modal opened={mode !== null} onClose={closeProposal} title={mode === "attach" ? "Review added sources" : mode === "reorder" ? "Review source order" : "Review source detachment"} size="70rem">
         <Stack gap="sm">
           {proposalQuery.isPending && <Alert color="blue">Preparing the complete Cell proposal…</Alert>}

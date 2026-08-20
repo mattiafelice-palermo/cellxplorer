@@ -160,6 +160,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
 - `backend/app/services/analysis_engine.py`: analysis computation
 - `backend/app/services/continuations.py`: continuation compatibility inspection (Spec 034.2) and lifecycle submit validation helpers (Spec 034.3)
+- `backend/app/services/cell_folder_watch.py`: continued-Cell folder discovery, candidate state, and deterministic append decisions (Spec 047.4)
 - `backend/app/services/import_inspection.py`: bounded file inspection workers and immutable batch identity matching (Spec 035.7)
 - `backend/app/services/portable_analysis.py`: versioned single-HTML analysis export/import
 - `frontend/src/pages/LibraryPage.tsx`: cell and replicate databases
@@ -200,6 +201,7 @@ Cellxplorer/
 │           ├── import_inspection.py Bounded import inspection and identity snapshot helpers (Spec 035.7)
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
+│           ├── cell_folder_watch.py     Per-Cell continued-import folder tracking (Spec 047.4)
 │           └── scientific_preparation.py
 │                                  Durable post-copy cache-preparation state
 ├── frontend/
@@ -216,6 +218,7 @@ Cellxplorer/
 │   │   │   ├── AppUpdateCoordinator.tsx
 │   │   │   ├── AppUpdateModal.tsx
 │   │   │   ├── ContinuationReviewModal.tsx  Focused findings/acknowledgement review (Spec 047.3)
+│   │   │   ├── FolderTrackingSettingsModal.tsx  Continued-Cell folder tracking settings (Spec 047.4)
 │   │   │   └── ImportProgressPanel.tsx  Staged import scan, inspection, and registration progress (Spec 035.6)
 │   │   ├── features/               Feature-owned frontend modules
 │   │   │   └── analyses/
@@ -240,6 +243,7 @@ Cellxplorer/
 │   │   ├── continuationPolicy.ts     Continuation ordering, findings, and submission policy
 │   │   ├── continuedImportWorkspacePolicy.ts  Continued-import workspace projection and source identity policy (Spec 047)
 │   │   ├── continuedImportPreviewPolicy.ts  Combined continuation preview request/trace policy (Spec 047.2)
+│   │   ├── folderTrackingPolicy.ts      Continued-Cell folder watch eligibility and matching policy (Spec 047.4)
 │   │   ├── librarySelectionScope.ts  Page-versus-result selection policy (Spec 035.12)
 │   │   ├── cellMetadataDisplay.ts  Cell-level metadata display filter (hides raw/override keys)
 │   │   ├── destructiveImpact.ts    Stable callbacks for deferred destructive confirmations

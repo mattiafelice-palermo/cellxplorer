@@ -131,6 +131,7 @@ export type ContinuedImportSubmissionState = {
   metadataOnlySourceKeys: string[];
   inspectionStatus: ContinuedInspectionStatus;
   reviewRequired: boolean;
+  trackingEnabled: boolean;
 };
 
 /**
@@ -149,12 +150,13 @@ export function buildContinuedImportSubmissionState(
   result: ContinuationInspectResult | null | undefined,
   acknowledged: Iterable<string>,
   requestFailed = false,
+  trackingEnabled = false,
 ): ContinuedImportSubmissionState {
   const acknowledgedFindingIds = Array.from(acknowledged);
   const inspectionStatus = continuedInspectionStatus(result, requestFailed);
   return {
     canSubmit:
-      order.length >= 2
+      (order.length >= 2 || (order.length === 1 && trackingEnabled))
       && scientificDraftIsValid(cellDraft)
       && continuedImportCanSubmit(result, cellName, acknowledgedFindingIds),
     order,
@@ -162,5 +164,6 @@ export function buildContinuedImportSubmissionState(
     metadataOnlySourceKeys: acknowledgedMetadataOnlySourceKeys(result, acknowledgedFindingIds, order),
     inspectionStatus,
     reviewRequired: continuationReviewRequired(result, acknowledgedFindingIds),
+    trackingEnabled,
   };
 }

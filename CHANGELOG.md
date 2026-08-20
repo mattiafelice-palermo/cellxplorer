@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.8 - 2026-08-20
+
+- Add continued-cell folder tracking and clearer import selection previews.
+
 ## 0.27.0-beta.7 - 2026-08-20
 
 - Fix continued-import stitched preview reporting a false zero-capacity point for cycles spanning a file join.

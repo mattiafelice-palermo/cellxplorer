@@ -18,6 +18,14 @@ export type ContinuationPreviewQuantity =
 
 export type ContinuationPreviewInterpretation = "source_chain" | "stitched";
 
+export type ContinuationPreviewTimeUnit = "seconds" | "minutes" | "hours" | "days";
+
+export type ContinuationPreviewTimeAxis = {
+  unit: ContinuationPreviewTimeUnit;
+  divisor: number;
+  label: string;
+};
+
 export type ContinuationPreviewFailureSource = {
   filename: string;
   reason: string;
@@ -92,6 +100,45 @@ export function continuationPreviewRequest(
   };
 }
 
+/** Choose a human-scale voltage time unit from the visible elapsed-time span. */
+export function continuationPreviewTimeAxis(
+  preview: ContinuationPreviewResult,
+): ContinuationPreviewTimeAxis | null {
+  if (preview.quantity !== "voltage") return null;
+  const points = preview.segments.flatMap((segment) => [
+    ...segment.x,
+    segment.display_x_start ?? Number.NaN,
+    segment.display_x_end ?? Number.NaN,
+  ]).filter((value) => Number.isFinite(value));
+  const span = points.length > 0 ? Math.max(...points.map((value) => Math.abs(value))) : 0;
+  if (span >= 86_400) return { unit: "days", divisor: 86_400, label: "Time (days)" };
+  if (span >= 3_600) return { unit: "hours", divisor: 3_600, label: "Time (hours)" };
+  if (span >= 60) return { unit: "minutes", divisor: 60, label: "Time (minutes)" };
+  return { unit: "seconds", divisor: 1, label: "Time (seconds)" };
+}
+
+/** Scale only the display copy of a voltage preview; scientific/cache values stay in seconds. */
+export function scaleContinuationPreviewTimeAxis(
+  preview: ContinuationPreviewResult,
+): ContinuationPreviewResult {
+  const axis = continuationPreviewTimeAxis(preview);
+  if (!axis || axis.divisor === 1) {
+    return axis && !preview.x_label ? { ...preview, x_label: axis.label } : preview;
+  }
+  const scale = (value: number | null | undefined) =>
+    typeof value === "number" && Number.isFinite(value) ? value / axis.divisor : value;
+  return {
+    ...preview,
+    x_label: axis.label,
+    segments: preview.segments.map((segment) => ({
+      ...segment,
+      x: segment.x.map((value) => value / axis.divisor),
+      display_x_start: scale(segment.display_x_start),
+      display_x_end: scale(segment.display_x_end),
+    })),
+  };
+}
+
 /** Translate the backend's source-segment response into legend-free Plotly traces. */
 export function buildContinuationPreviewTraces(
   preview: ContinuationPreviewResult,
@@ -113,7 +160,7 @@ export function buildContinuationPreviewTraces(
       name: `Source ${index + 1} — ${segment.filename}`,
       hovertemplate:
         `Source ${index + 1} — ${segment.filename}<br>`
-        + `${voltage ? "Time" : "Cycle"} %{x}<br>`
+        + `${voltage ? (preview.x_label ?? "Time") : "Cycle"} %{x}<br>`
         + `${preview.label} %{y:.3f}<extra></extra>`,
       showlegend: false,
     } as Data;

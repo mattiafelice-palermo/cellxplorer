@@ -9,6 +9,8 @@ import {
   continuationPreviewFailureSources,
   continuationPreviewQueryKey,
   continuationPreviewRequest,
+  continuationPreviewTimeAxis,
+  scaleContinuationPreviewTimeAxis,
 } from "../src/continuedImportPreviewPolicy.ts";
 
 const drafts = [
@@ -96,6 +98,39 @@ test("combined preview query identity changes for order or an inspected source i
   assert.notDeepEqual(changed, original);
   assert.notDeepEqual(reinspection, original);
   assert.notDeepEqual(differentMetric, original);
+});
+
+test("voltage preview chooses a readable time unit and scales only display values", () => {
+  const voltage = {
+    ...preview(),
+    quantity: "voltage",
+    label: "Voltage (V)",
+    x: undefined,
+    segments: preview().segments.map((segment) => ({
+      ...segment,
+      x: segment.x.map((value) => value * 1000),
+      display_x_start: segment.display_x_start ?? 0,
+      display_x_end: segment.display_x_end ?? 120_000,
+    })),
+  } as ContinuationPreviewResult;
+  assert.deepEqual(continuationPreviewTimeAxis(voltage), {
+    unit: "days",
+    divisor: 86_400,
+    label: "Time (days)",
+  });
+  const scaled = scaleContinuationPreviewTimeAxis(voltage);
+  assert.equal(scaled.x_label, "Time (days)");
+  assert.deepEqual(scaled.segments[0]?.x, [1000 / 86_400, 2000 / 86_400]);
+  assert.deepEqual(voltage.segments[0]?.x, [1000, 2000]);
+});
+
+test("voltage time-axis helper uses seconds for short traces and ignores capacity previews", () => {
+  assert.deepEqual(continuationPreviewTimeAxis({ ...preview(), quantity: "voltage", segments: [{ ...preview().segments[0]!, x: [0, 45] }] }), {
+    unit: "seconds",
+    divisor: 1,
+    label: "Time (seconds)",
+  });
+  assert.equal(continuationPreviewTimeAxis(preview()), null);
 });
 
 test("combined preview failure details retain usable affected-source reasons", () => {

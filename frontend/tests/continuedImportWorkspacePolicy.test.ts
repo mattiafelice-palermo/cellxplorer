@@ -149,6 +149,14 @@ test("buildContinuedImportSubmissionState blocks submission under two sources ev
   assert.equal(state.reviewRequired, false);
 });
 
+test("buildContinuedImportSubmissionState allows one source only when folder tracking is enabled", () => {
+  const untracked = buildContinuedImportSubmissionState(["a"], validDraft(), "Cell A", result(), [], false, false);
+  const tracked = buildContinuedImportSubmissionState(["a"], validDraft(), "Cell A", result(), [], false, true);
+  assert.equal(untracked.canSubmit, false);
+  assert.equal(tracked.canSubmit, true);
+  assert.equal(tracked.trackingEnabled, true);
+});
+
 test("buildContinuedImportSubmissionState reports when inspection is still required", () => {
   const state = buildContinuedImportSubmissionState(
     ["a", "b"],

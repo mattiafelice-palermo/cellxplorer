@@ -82,6 +82,16 @@ is handed to the post-commit worker rather than read inside the registration tra
 results are applied with `as_completed()` and committed per source; batches of 25 or fewer use the
 serial path, while larger batches use at most four workers and at most half the logical CPUs.
 
+Folder tracking for a continued Cell is also scheduler-owned. `source_monitor._run_scheduler()`
+runs the bounded folder-watch pass only after the global source check and only when automation is
+not paused and no source-check or background job is still running; do not add a per-Cell watcher
+thread or a second scheduler. Each watch keeps its scan and candidate state in the database, so
+stability, malformed-source, ordering, and continuation-review failures survive restart. A stable
+candidate is still inspected through the normal import-inspection path and attached through the
+existing continuation lifecycle; the watcher must not create a parallel registration or cache
+identity. Settings previews may enumerate matching paths, but they must not hash, parse, or attach
+files.
+
 The inspection response carries an identity proof only — `hash`, `size`, `mtime_ns` — never the
 parsed header. The header is ~56 KB per file, so returning it cost ~58 MB to the browser and another
 ~58 MB back on submit for a 1,000-file import, for data the server already held. Inspection stores

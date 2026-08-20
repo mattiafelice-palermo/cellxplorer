@@ -2112,6 +2112,20 @@ export interface ImportSourceDraft {
   allow_metadata_only?: boolean;
 }
 
+export interface ImportFolderWatchDraft {
+  enabled: boolean;
+  folder_path: string;
+  pattern_kind: "glob" | "regex";
+  pattern: string;
+  extension: string;
+  source_format?: string | null;
+  ordering_rule: "timestamp_filename_hash" | "filename";
+  recursive: boolean;
+  recursion_depth: number;
+  cadence_value?: number | null;
+  cadence_unit?: "minutes" | "hours" | "days" | null;
+}
+
 export interface ImportCellDraft {
   staged_name?: string | null;
   source_path?: string | null;
@@ -2131,6 +2145,7 @@ export interface ImportCellDraft {
   electrode_area_preset_id?: string | null;
   electrode_area_preset_name?: string | null;
   acknowledged_finding_ids?: string[];
+  folder_watch?: ImportFolderWatchDraft | null;
 }
 
 export interface ImportCellsRequest {
@@ -2174,6 +2189,55 @@ export interface DetachSourceRequest {
   confirm?: boolean;
   confirmation_token?: string | null;
   acknowledged_finding_ids?: string[];
+}
+
+export interface CellFolderWatchCandidate {
+  id: number;
+  path: string;
+  filename: string;
+  hash: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  stability_state: string;
+  status: string;
+  message: string | null;
+  attempt_count: number;
+}
+
+export interface CellFolderWatch {
+  id: number;
+  cell_id: number;
+  folder_path: string;
+  enabled: boolean;
+  pattern_kind: "glob" | "regex";
+  pattern: string;
+  extension: string;
+  source_format: string | null;
+  ordering_rule: "timestamp_filename_hash" | "filename";
+  recursive: boolean;
+  recursion_depth: number;
+  cadence_value: number | null;
+  cadence_unit: "minutes" | "hours" | "days" | null;
+  status: "active" | "paused" | "disabled";
+  status_message: string | null;
+  last_scan_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  folder_last_seen_at: string | null;
+  consecutive_failures: number;
+  candidates: CellFolderWatchCandidate[];
+}
+
+export interface CellFolderWatchResponse {
+  watch: CellFolderWatch | null;
+  global_monitor_enabled: boolean;
+  automation_paused: boolean;
+}
+
+export interface FolderWatchPreviewResponse {
+  files: Array<{ path: string; filename: string; relative_path: string }>;
+  truncated: boolean;
+  error: string | null;
 }
 
 export interface SourceChangeImpactAnalysis {
@@ -2256,5 +2320,34 @@ export function detachCellSource(cellId: number, fileId: number, body?: DetachSo
   return post<SourceLifecycleMutationResult>(
     `/api/cells/${cellId}/detach/${fileId}`,
     body ?? {},
+  );
+}
+
+export function getCellFolderWatch(cellId: number) {
+  return get<CellFolderWatchResponse>(`/api/cells/${cellId}/folder-watch`);
+}
+
+export function previewFolderWatch(body: ImportFolderWatchDraft) {
+  return post<FolderWatchPreviewResponse>("/api/imports/folder-watch-preview", body);
+}
+
+export function updateCellFolderWatch(cellId: number, body: ImportFolderWatchDraft) {
+  return put<CellFolderWatchResponse>(`/api/cells/${cellId}/folder-watch`, body);
+}
+
+export function deleteCellFolderWatch(cellId: number) {
+  return del<CellFolderWatchResponse>(`/api/cells/${cellId}/folder-watch`);
+}
+
+export function retryCellFolderWatchCandidate(cellId: number, candidateId: number) {
+  return post<CellFolderWatchResponse>(
+    `/api/cells/${cellId}/folder-watch/candidates/${candidateId}/retry`,
+    {},
+  );
+}
+
+export function ignoreCellFolderWatchCandidate(cellId: number, candidateId: number) {
+  return del<CellFolderWatchResponse>(
+    `/api/cells/${cellId}/folder-watch/candidates/${candidateId}`,
   );
 }
