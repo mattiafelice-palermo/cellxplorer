@@ -2680,6 +2680,7 @@ function ImportModal({
       <FolderTrackingSettingsModal
         opened={folderTrackingSettingsOpen}
         config={folderWatch}
+        selectedSourcePaths={drafts.map((draft) => draft.source_path)}
         onClose={() => setFolderTrackingSettingsOpen(false)}
         onSave={(next) => {
           setFolderWatch(next);

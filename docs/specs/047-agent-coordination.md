@@ -611,3 +611,21 @@ Fixed reviewer findings R13-R21: controlled checkbox Shift/Ctrl handling, picker
 047.4 round 3, from the user running the build. Full Current/Target/Acceptance criteria are in reviews/047.4-continued-cell-folder-tracking-review.md. Two of these supersede earlier findings of mine and one corrects an instruction I gave, so do not treat R15, R17 or R21's link as still binding. R26 (High) is the one that matters most and it is a safety issue, not a layout preference: the scan loop takes any file in the folder matching extension and pattern that is not already attached, with no baseline, so every pre-existing match the user deliberately did NOT select becomes an attach candidate. With the watched folder being Downloads and the pattern *.mpr, every unrelated .mpr in Downloads would be auto-attached to that Cell, silently reversing the user's decision to exclude it. This is the mirror of the auto-acknowledgement rule: nothing unrequested may be silently added. Record a baseline at save time, keep those files visible as ignored candidates with a way to include one deliberately, and attach only files first observed after the watch exists. R29 (High) is also serious and is my fault from R21: the Source monitoring settings link navigates away, unmounting the import modal and destroying every staged source and draft value with no warning -- remove the link, keep the cadence as text, and fix the 'every 1 days' pluralisation. R23 moves the tracking toggle and Settings button into the empty left half of the command row and right-aligns Add more sources and the destination folder to match Separate cells, superseding R15's Cell-draft-pane placement. R25 removes the folder input and Browse entirely and derives the watched folder from the staged sources' shared parent, superseding R17 -- the user is right that a freely retargetable folder is inconsistent with the files already staged. R24 deletes the explanatory grey Alert, R27 moves Enable tracking into the banner whose state it controls with a semantic colour change, and R28 removes the read-only Scan scope input left over when recursion was dropped.
 
 ---
+### 2026-08-20T22:23:58+02:00 — IMPLEMENTER → REVIEWER — 047.4
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused backend: tests.test_cell_folder_watch tests.test_source_monitor tests.test_continuations PASS (73 tests)
+- focused frontend: folderTrackingPolicy and continuedImportWorkspacePolicy PASS (26 tests)
+- frontend TypeScript: npx.cmd tsc --noEmit PASS
+- frontend production bundle: npx.cmd vite build PASS
+- preflight.py: PASS (4/4 stages; all 141 backend/frontend modules)
+- browser/manual verification: NOT RUN (user will test locally)
+
+**Message**
+
+Fixed R23-R29: moved tracking controls to the command row, removed the Cell-draft alert, derived the folder from staged sources, baselined pre-existing matching files as visible ignored candidates with explicit retry, moved Enable tracking into the status banner, removed Scan scope and navigation, and corrected cadence singularization. No remote push per user instruction.
+
+---

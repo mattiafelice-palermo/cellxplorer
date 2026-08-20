@@ -4250,6 +4250,18 @@ def _create_imported_cells_impl_raw(
 
     db.flush()
 
+    # A newly created watch must remember matching files that were already in
+    # the selected folder but were not part of this import. They remain
+    # visible as ignored candidates until the user deliberately retries one.
+    for pending in pending_cells:
+        watch = (
+            db.query(CellFolderWatch)
+            .filter(CellFolderWatch.cell_id == pending["cell"].id)
+            .one_or_none()
+        )
+        if watch is not None:
+            cell_folder_watch.initialize_watch_baseline(db, watch)
+
     for pending in pending_cells:
         cell = pending["cell"]
         test = pending["test"]

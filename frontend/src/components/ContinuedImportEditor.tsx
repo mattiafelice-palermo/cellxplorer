@@ -64,7 +64,6 @@ import {
   type ContinuationPreviewInterpretation,
   type ContinuationPreviewQuantity,
 } from "../continuedImportPreviewPolicy";
-import { folderTrackingInlineSummary } from "../folderTrackingPolicy";
 import { PALETTE } from "../features/analyses/editor/plotting/plotStyle";
 import { ContinuationReviewModal } from "./ContinuationReviewModal";
 import { ContinuationSourceList } from "./ContinuationSourceList";
@@ -381,23 +380,39 @@ export function ContinuedImportEditor({
 
   return (
     <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
-      <Group justify="space-between" align="center" wrap="wrap" style={{ flex: "none" }}>
-        <Group gap="xs">
-          <Button variant="default" leftSection={<IconPlus size={16} />} loading={addingMore} disabled={importing} onClick={onAddMoreSources}>
-            Add more sources
-          </Button>
-          <MultiSelect
-            w={280}
-            size="xs"
-            placeholder="No folder"
-            data={folderSelectData}
-            value={destinationFolders}
-            onChange={onDestinationFoldersChange}
-            clearable
-            searchable
-          />
+      <Group justify="space-between" align="center" gap="sm" wrap="wrap" style={{ flex: "none" }}>
+        <Group gap="xs" align="center" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+          {folderWatch ? (
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Group gap="xs" align="center" wrap="nowrap">
+                <Switch
+                  size="sm"
+                  label="Track this folder for new files"
+                  checked={folderWatch.enabled}
+                  onChange={(event) => onFolderWatchChange?.({
+                    ...folderWatch,
+                    enabled: event.currentTarget.checked,
+                  })}
+                />
+                <Button
+                  variant="default"
+                  size="compact-sm"
+                  onClick={onOpenFolderTrackingSettings}
+                >
+                  Settings
+                </Button>
+              </Group>
+              <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
+                {folderWatch.folder_path}
+              </Text>
+            </Stack>
+          ) : (
+            <Text size="xs" c="dimmed" truncate title={folderTrackingReason ?? undefined}>
+              {folderTrackingReason || "Folder tracking is available when the selected sources share a folder."}
+            </Text>
+          )}
         </Group>
-        <Group gap="xs" align="center">
+        <Group gap="xs" justify="flex-end" align="center">
           {inspectionQuery.isFetching && (
             <Text size="xs" c="dimmed">Preparing merged preview…</Text>
           )}
@@ -425,13 +440,26 @@ export function ContinuedImportEditor({
               Review continuity
             </Button>
           )}
+          <Button variant="default" leftSection={<IconPlus size={16} />} loading={addingMore} disabled={importing} onClick={onAddMoreSources}>
+            Add more sources
+          </Button>
+          <MultiSelect
+            w={280}
+            size="xs"
+            placeholder="No folder"
+            data={folderSelectData}
+            value={destinationFolders}
+            onChange={onDestinationFoldersChange}
+            clearable
+            searchable
+          />
         </Group>
       </Group>
 
       {orderedDrafts.length < 2 && !folderWatch?.enabled && (
         <Alert color="orange" style={{ flex: "none" }}>
           {orderedDrafts.length === 1
-            ? "A single-source continued Cell requires folder tracking. Enable “Track this folder for new files” below, or add another source."
+            ? "A single-source continued Cell requires folder tracking. Enable “Track this folder for new files” in the command row, or add another source."
             : "Add a source to continue, or switch back to the separate-cell import workflow."}
           <Button mt="xs" size="compact-sm" variant="default" onClick={onSwitchToSeparate}>
             Use separate cells
@@ -753,37 +781,6 @@ export function ContinuedImportEditor({
                 <Select label="Electrode-area preset" data={areaOptions} value={cellDraft.electrode_area_selection} searchable onChange={(value) => { const preset = areaPresets.find((item) => item.id === value); updateDraft({ electrode_area_selection: value ?? "custom", electrode_area_preset_id: preset?.id ?? null, electrode_area_preset_name: preset?.name ?? null, electrode_area_cm2_override: preset?.area_cm2 ?? cellDraft.electrode_area_cm2_override }); }} />
                 <NumberInput label="Electrode area (cm²)" min={0.000001} decimalScale={6} value={cellDraft.electrode_area_cm2_override ?? ""} disabled={cellDraft.electrode_area_selection !== "custom"} onChange={(value) => updateDraft({ electrode_area_cm2_override: value === "" ? null : Number(value) })} />
               </Group>
-              <Divider label="Folder tracking" labelPosition="left" />
-              {folderWatch ? (
-                <Stack gap={4}>
-                  <Group gap="xs" wrap="nowrap" align="center">
-                    <Switch
-                      size="sm"
-                      label="Track this folder for new files"
-                      checked={folderWatch.enabled}
-                      onChange={(event) => onFolderWatchChange?.({
-                        ...folderWatch,
-                        enabled: event.currentTarget.checked,
-                      })}
-                    />
-                    <Button
-                      variant="default"
-                      size="compact-sm"
-                      onClick={onOpenFolderTrackingSettings}
-                    >
-                      Settings
-                    </Button>
-                  </Group>
-                  <Text size="xs" c="dimmed" truncate title={folderWatch.folder_path}>
-                    {folderTrackingInlineSummary(folderWatch)}
-                  </Text>
-                </Stack>
-              ) : (
-                <Text size="xs" c="dimmed">
-                  {folderTrackingReason || "Folder tracking is available when the selected sources share a folder."}
-                </Text>
-              )}
-              <Alert color="gray"><Text size="xs">Cell metadata belongs to this Cell draft and stays unchanged when sources are reordered or previewed.</Text></Alert>
             </Stack>
           </ScrollArea>
         </Paper>

@@ -31,6 +31,10 @@ TERMINAL_CANDIDATE_STATUSES = {
     "attach_failed",
     "ignored",
 }
+BASELINE_CANDIDATE_MESSAGE = (
+    "Already present when folder tracking was enabled and not selected for this Cell. "
+    "Retry to include it deliberately."
+)
 
 
 def utcnow() -> datetime:
@@ -288,9 +292,66 @@ def watch_payload(
         "candidates": [
             _candidate_payload(candidate)
             for candidate in watch.candidates
-            if candidate.status != "ignored"
         ],
     }
+
+
+def initialize_watch_baseline(db: Session, watch: CellFolderWatch) -> int:
+    """Park matching files already present when a watch is created.
+
+    The candidate table is the durable baseline: ignored rows remain visible in
+    the Cell's tracking panel and can be explicitly retried later. Existing
+    source paths are excluded because they were selected and attached as part
+    of the same import.
+    """
+    _test, links = _source_chain(db, watch.cell_id)
+    existing_paths = {
+        str(Path(link.file.path).expanduser().resolve())
+        for link in links
+        if link.file is not None
+    }
+    created = 0
+    now = utcnow()
+    for path in _iter_files(watch):
+        normalized = str(path.resolve())
+        if normalized in existing_paths:
+            continue
+        if path.suffix.lower().lstrip(".") not in watch.extensions:
+            continue
+        if not matches_filename(path.name, watch.pattern_kind, watch.pattern):
+            continue
+        existing = (
+            db.query(CellFolderWatchCandidate)
+            .filter(
+                CellFolderWatchCandidate.watch_id == watch.id,
+                CellFolderWatchCandidate.path == normalized,
+            )
+            .one_or_none()
+        )
+        if existing is not None:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        db.add(
+            CellFolderWatchCandidate(
+                watch_id=watch.id,
+                path=normalized,
+                filename=path.name,
+                first_seen_at=now,
+                last_seen_at=now,
+                stability_state="stable",
+                observed_size=stat.st_size,
+                observed_mtime_ns=stat.st_mtime_ns,
+                status="ignored",
+                message=BASELINE_CANDIDATE_MESSAGE,
+            )
+        )
+        created += 1
+    if created:
+        db.flush()
+    return created
 
 
 def create_or_update_watch(
@@ -300,6 +361,7 @@ def create_or_update_watch(
 ) -> CellFolderWatch:
     clean = validate_watch_config(config)
     watch = db.query(CellFolderWatch).filter(CellFolderWatch.cell_id == cell_id).one_or_none()
+    is_new = watch is None
     if watch is None:
         watch = CellFolderWatch(cell_id=cell_id)
         db.add(watch)
@@ -308,6 +370,8 @@ def create_or_update_watch(
     watch.last_error = None
     watch.consecutive_failures = 0
     db.flush()
+    if is_new:
+        initialize_watch_baseline(db, watch)
     return watch
 
 
@@ -433,6 +497,9 @@ def _scan_one_watch(
             continue
         candidate = _candidate_for(db, watch.id, normalized)
         candidate.filename = path.name
+        if candidate.status == "ignored":
+            candidate.last_seen_at = now
+            continue
         signature_changed = (
             candidate.observed_size != stat.st_size
             or candidate.observed_mtime_ns != stat.st_mtime_ns
@@ -448,8 +515,6 @@ def _scan_one_watch(
             pending += 1
             continue
         candidate.last_seen_at = now
-        if candidate.status == "ignored":
-            continue
         if candidate.status in TERMINAL_CANDIDATE_STATUSES and candidate.attempt_count >= retry_count:
             unresolved += 1
             continue

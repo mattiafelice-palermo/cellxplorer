@@ -5,6 +5,7 @@ import type { ImportPreview } from "../src/api.ts";
 import {
   folderTrackingEligibility,
   compareFolderTrackingCandidates,
+  formatFolderTrackingCadence,
   folderTrackingInlineSummary,
   folderTrackingPatternMatches,
   validateFolderTrackingPattern,
@@ -100,5 +101,38 @@ test("folder tracking candidate ordering matches timestamp then natural filename
       { filename: "same.ndax", start_time: null, hash: "b" },
     ) < 0,
     true,
+  );
+});
+
+test("formatFolderTrackingCadence uses singular units for one interval", () => {
+  assert.equal(
+    formatFolderTrackingCadence({
+      schedule_mode: "interval",
+      interval_value: 1,
+      interval_unit: "days",
+      scheduled_every_value: 1,
+      scheduled_every_unit: "weeks",
+    }),
+    "every day",
+  );
+  assert.equal(
+    formatFolderTrackingCadence({
+      schedule_mode: "interval",
+      interval_value: 3,
+      interval_unit: "hours",
+      scheduled_every_value: 1,
+      scheduled_every_unit: "weeks",
+    }),
+    "every 3 hours",
+  );
+  assert.equal(
+    formatFolderTrackingCadence({
+      schedule_mode: "scheduled",
+      interval_value: 3,
+      interval_unit: "hours",
+      scheduled_every_value: 1,
+      scheduled_every_unit: "weeks",
+    }),
+    "on the global schedule (every week)",
   );
 });

@@ -189,6 +189,70 @@ class CellFolderWatchTests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_baseline_file_is_ignored_until_explicit_retry(self):
+        db, engine = self.make_session()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                folder = Path(directory)
+                cell, watch = self.add_watch(db, folder)
+                baseline_path = folder / "part-02.ndax"
+                baseline_path.write_bytes(b"already present")
+                cell_folder_watch.initialize_watch_baseline(db, watch)
+                db.commit()
+
+                baseline = db.query(CellFolderWatchCandidate).one()
+                self.assertEqual(baseline.status, "ignored")
+                self.assertIn("not selected", baseline.message or "")
+                self.assertEqual(
+                    cell_folder_watch.watch_payload(watch, global_monitor_enabled=True)["candidates"][0]["status"],
+                    "ignored",
+                )
+
+                inspection = self.inspection(baseline_path, hash_value="b" * 64)
+                inspect_chain = Mock(
+                    return_value={"inspection_complete": True, "findings": [], "can_submit": True}
+                )
+                attach = Mock()
+                with (
+                    patch.object(cell_folder_watch.import_inspection, "inspect_file", return_value=inspection) as inspect,
+                    patch.object(files, "inspect_cell_continuation_sources", inspect_chain),
+                    patch.object(files, "attach_cell_continuations", attach),
+                ):
+                    result = cell_folder_watch.run_folder_watch_pass(
+                        db,
+                        monitor_enabled=True,
+                        automation_paused=False,
+                        stability_seconds=0,
+                        retry_count=3,
+                        now=datetime(2026, 8, 20, tzinfo=timezone.utc),
+                    )
+                self.assertEqual(result[0]["status"], "ready")
+                inspect.assert_not_called()
+                attach.assert_not_called()
+
+                cell_folder_watch.reset_candidate(db, cell.id, baseline.id)
+                db.commit()
+                retry_now = datetime.now(timezone.utc) + timedelta(seconds=1)
+                with (
+                    patch.object(cell_folder_watch.import_inspection, "inspect_file", return_value=inspection),
+                    patch.object(files, "inspect_cell_continuation_sources", inspect_chain),
+                    patch.object(files, "attach_cell_continuations", attach),
+                ):
+                    result = cell_folder_watch.run_folder_watch_pass(
+                        db,
+                        monitor_enabled=True,
+                        automation_paused=False,
+                        stability_seconds=0,
+                        retry_count=3,
+                        now=retry_now,
+                    )
+                self.assertEqual(result[0]["status"], "attached")
+                self.assertEqual(result[0]["attached"], 1)
+                inspect_chain.assert_called()
+                attach.assert_called_once()
+        finally:
+            engine.dispose()
+
     def test_unstable_candidate_is_not_inspected_until_stability_window_elapses(self):
         db, engine = self.make_session()
         try:
@@ -467,7 +531,7 @@ class CellFolderWatchTests(unittest.TestCase):
         finally:
             engine.dispose()
 
-    def test_ignored_candidate_is_hidden_until_retry_or_file_change(self):
+    def test_ignored_candidate_remains_visible_until_retry(self):
         db, engine = self.make_session()
         try:
             with tempfile.TemporaryDirectory() as directory:
@@ -484,7 +548,10 @@ class CellFolderWatchTests(unittest.TestCase):
                 db.commit()
                 self.assertTrue(cell_folder_watch.delete_candidate(db, cell.id, candidate.id))
                 db.commit()
-                self.assertEqual(cell_folder_watch.watch_payload(watch, global_monitor_enabled=True)["candidates"], [])
+                self.assertEqual(
+                    cell_folder_watch.watch_payload(watch, global_monitor_enabled=True)["candidates"][0]["status"],
+                    "ignored",
+                )
                 cell_folder_watch.reset_candidate(db, cell.id, candidate.id)
                 db.commit()
                 self.assertEqual(

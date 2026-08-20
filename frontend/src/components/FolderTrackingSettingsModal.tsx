@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Checkbox,
   Group,
@@ -13,7 +14,6 @@ import {
 } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 import {
   get,
@@ -22,16 +22,15 @@ import {
   type Meta,
   type SourceMonitoringSettings,
 } from "../api";
-import { folderTrackingInlineSummary, validateFolderTrackingPattern } from "../folderTrackingPolicy";
-import { ImportFilesystemPickerModal } from "./ImportFilesystemPickerModal";
+import {
+  folderTrackingInlineSummary,
+  formatFolderTrackingCadence,
+  validateFolderTrackingPattern,
+} from "../folderTrackingPolicy";
 import { ImportInfoHint } from "./ImportModalShell";
 
-function monitorCadence(settings: SourceMonitoringSettings | undefined): string {
-  if (!settings) return "Loading global source-monitor cadence…";
-  if (settings.schedule_mode === "scheduled") {
-    return `on the global schedule (${settings.scheduled_every_value} ${settings.scheduled_every_unit})`;
-  }
-  return `every ${settings.interval_value} ${settings.interval_unit}`;
+function normalizedFilePath(value: string): string {
+  return value.trim().replaceAll("/", "\\").replace(/[\\]+$/, "").toLocaleLowerCase();
 }
 
 export function FolderTrackingSettingsModal({
@@ -40,20 +39,20 @@ export function FolderTrackingSettingsModal({
   onClose,
   onSave,
   statusMessage,
+  selectedSourcePaths,
 }: {
   opened: boolean;
   config: ImportFolderWatchDraft | null;
   onClose: () => void;
   onSave: (config: ImportFolderWatchDraft) => void;
   statusMessage?: string | null;
+  /** Staged source paths are supplied by the import flow to label its baseline preview. */
+  selectedSourcePaths?: readonly (string | null | undefined)[];
 }) {
-  const navigate = useNavigate();
   const [draft, setDraft] = useState<ImportFolderWatchDraft | null>(config);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   useEffect(() => {
     if (opened) setDraft(config);
-    if (!opened) setFolderPickerOpen(false);
   }, [config, opened]);
 
   const patternError = draft
@@ -81,6 +80,14 @@ export function FolderTrackingSettingsModal({
       label: `.${extension.replace(/^\./, "")}`,
     }));
   }, [draft?.extensions, metaQuery.data?.source_extensions]);
+  const selectedPathSet = useMemo(
+    () => new Set(
+      (selectedSourcePaths ?? [])
+        .filter((path): path is string => Boolean(path))
+        .map(normalizedFilePath),
+    ),
+    [selectedSourcePaths],
+  );
   const previewQuery = useQuery({
     queryKey: [
       "folder-watch-preview",
@@ -105,7 +112,7 @@ export function FolderTrackingSettingsModal({
   const update = (patch: Partial<ImportFolderWatchDraft>) =>
     setDraft((current) => current ? { ...current, ...patch } : current);
   const folderPathError = !draft.folder_path.trim()
-    ? "A folder is required."
+    ? "The source folder is not available for this selection."
     : previewQuery.data?.error
       ?? (previewQuery.isError ? "This folder could not be read." : null);
   const extensionsError = draft.extensions.length === 0
@@ -120,29 +127,27 @@ export function FolderTrackingSettingsModal({
   );
 
   return (
-    <>
-      <Modal opened={opened} onClose={onClose} title="Folder tracking settings" size="lg">
-        <Stack gap="sm">
-          <Alert color={draft.enabled ? "teal" : "gray"} title={draft.enabled ? "Tracking enabled" : "Tracking disabled"}>
-            <Text size="xs" c="dimmed" truncate title={draft.folder_path}>
-              {folderTrackingInlineSummary(draft)}
-            </Text>
-            {statusMessage && <Text size="xs" mt={4}>{statusMessage}</Text>}
-          </Alert>
-          <Group align="end" wrap="nowrap">
-            <TextInput
-              label="Folder"
-              value={draft.folder_path}
-              error={folderPathError}
-              onChange={(event) => update({ folder_path: event.currentTarget.value })}
-              style={{ flex: 1 }}
-              title={draft.folder_path}
+    <Modal opened={opened} onClose={onClose} title="Folder tracking settings" size="lg">
+      <Stack gap="sm">
+        <Alert color={draft.enabled ? "teal" : "gray"} title={draft.enabled ? "Tracking enabled" : "Tracking disabled"}>
+          <Group justify="space-between" align="flex-start" gap="sm" wrap="nowrap">
+            <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+              <Text size="xs" c="dimmed" truncate title={draft.folder_path}>
+                Folder: {draft.folder_path}
+              </Text>
+              <Text size="xs" c="dimmed" truncate title={folderTrackingInlineSummary(draft)}>
+                {folderTrackingInlineSummary(draft)} · files directly in this folder
+              </Text>
+              {statusMessage && <Text size="xs" mt={4}>{statusMessage}</Text>}
+              {folderPathError && <Text size="xs" c="red">{folderPathError}</Text>}
+            </Stack>
+            <Switch
+              label="Enable tracking"
+              checked={draft.enabled}
+              onChange={(event) => update({ enabled: event.currentTarget.checked })}
             />
-            <Button variant="default" onClick={() => setFolderPickerOpen(true)}>
-              Browse…
-            </Button>
           </Group>
-          {folderPathError && <Text size="xs" c="red">{folderPathError}</Text>}
+        </Alert>
           <Group grow align="start">
             <Select
               label="Filename matching"
@@ -183,65 +188,57 @@ export function FolderTrackingSettingsModal({
           </Text>
           <Stack gap={4}>
             <Text size="xs" fw={700}>Current matching files</Text>
+            {selectedSourcePaths !== undefined && (
+              <Text size="xs" c="dimmed">
+                Selected files will be imported; other files already present are baselined and will not be attached automatically.
+              </Text>
+            )}
             {previewQuery.isFetching ? (
               <Text size="xs" c="dimmed">Checking the folder…</Text>
             ) : previewQuery.data?.error ? (
               <Text size="xs" c="red">{previewQuery.data.error}</Text>
             ) : previewQuery.data && previewQuery.data.files.length > 0 ? (
               <Stack gap={2} mah={100} style={{ overflowY: "auto" }}>
-                {previewQuery.data.files.map((file) => (
-                  <Text key={file.path} size="xs" c="dimmed" truncate title={file.relative_path}>{file.relative_path}</Text>
-                ))}
+                {previewQuery.data.files.map((file) => {
+                  const selected = selectedPathSet.has(normalizedFilePath(file.path));
+                  return (
+                    <Group key={file.path} gap="xs" wrap="nowrap">
+                      {selectedSourcePaths !== undefined && (
+                        <Badge size="xs" variant="light" color={selected ? "teal" : "gray"}>
+                          {selected ? "Selected" : "Baselined"}
+                        </Badge>
+                      )}
+                      <Text size="xs" c="dimmed" truncate title={file.relative_path}>{file.relative_path}</Text>
+                    </Group>
+                  );
+                })}
                 {previewQuery.data.truncated && <Text size="xs" c="dimmed">Showing the first 200 matching files.</Text>}
               </Stack>
             ) : (
               <Text size="xs" c="dimmed">No matching files found.</Text>
             )}
           </Stack>
-          <Group grow align="start">
-            <TextInput label="Scan scope" value="Files directly in this folder" readOnly />
-            <Select
-              label="Ordering"
-              data={[
-                { value: "timestamp_filename_hash", label: "Source start time, then filename" },
-                { value: "filename", label: "Filename" },
-              ]}
-              value={draft.ordering_rule}
-              onChange={(value) => update({ ordering_rule: value === "filename" ? "filename" : "timestamp_filename_hash" })}
-            />
-          </Group>
+          <Select
+            label="Ordering"
+            data={[
+              { value: "timestamp_filename_hash", label: "Source start time, then filename" },
+              { value: "filename", label: "Filename" },
+            ]}
+            value={draft.ordering_rule}
+            onChange={(value) => update({ ordering_rule: value === "filename" ? "filename" : "timestamp_filename_hash" })}
+          />
           <Group justify="space-between" align="center" gap="xs">
             <Text size="xs" c="dimmed">
-              Checked with source monitoring: {monitorCadence(monitoringQuery.data)}.
+              Checked with source monitoring: {formatFolderTrackingCadence(monitoringQuery.data)}.
             </Text>
-            <Button variant="subtle" size="compact-xs" onClick={() => navigate("/settings/monitoring")}>
-              Source monitoring settings
-            </Button>
           </Group>
           <Group justify="flex-end" gap="xs" mt="xs">
-            <Switch
-              label="Enable tracking"
-              checked={draft.enabled}
-              onChange={(event) => update({ enabled: event.currentTarget.checked })}
-            />
             <Button variant="default" onClick={onClose}>Cancel</Button>
             <Button disabled={saveDisabled} onClick={() => onSave(draft)}>
               Save settings
             </Button>
           </Group>
-        </Stack>
-      </Modal>
-      <ImportFilesystemPickerModal
-        mode="folder"
-        opened={folderPickerOpen}
-        loading={false}
-        initialPath={draft.folder_path || null}
-        onClose={() => setFolderPickerOpen(false)}
-        onFolderConfirm={(path) => {
-          update({ folder_path: path });
-          setFolderPickerOpen(false);
-        }}
-      />
-    </>
+      </Stack>
+    </Modal>
   );
 }

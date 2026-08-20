@@ -1,4 +1,4 @@
-import type { ImportFolderWatchDraft, ImportPreview } from "./api";
+import type { ImportFolderWatchDraft, ImportPreview, SourceMonitoringSettings } from "./api";
 
 export type FolderTrackingEligibility = {
   eligible: boolean;
@@ -167,4 +167,24 @@ export function folderTrackingInlineSummary(
   const folderName = watch.folder_path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || watch.folder_path;
   const extensions = watch.extensions.map((extension) => `.${extension}`).join(", ");
   return `${folderName} · matching ${extensions || "supported source"} files`;
+}
+
+function cadenceText(value: number, unit: string): string {
+  const numericValue = Number.isFinite(value) ? value : 1;
+  const singular = numericValue === 1 ? unit.replace(/s$/, "") : unit;
+  return numericValue === 1 ? singular : `${numericValue} ${singular}`;
+}
+
+/** Render the inherited source-monitor cadence without adding a local schedule control. */
+export function formatFolderTrackingCadence(
+  settings: Pick<
+    SourceMonitoringSettings,
+    "schedule_mode" | "interval_value" | "interval_unit" | "scheduled_every_value" | "scheduled_every_unit"
+  > | undefined,
+): string {
+  if (!settings) return "Loading global source-monitor cadence…";
+  if (settings.schedule_mode === "scheduled") {
+    return `on the global schedule (every ${cadenceText(settings.scheduled_every_value, settings.scheduled_every_unit)})`;
+  }
+  return `every ${cadenceText(settings.interval_value, settings.interval_unit)}`;
 }
