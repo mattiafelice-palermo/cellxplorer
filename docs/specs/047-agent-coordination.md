@@ -629,3 +629,16 @@ Fixed reviewer findings R13-R21: controlled checkbox Shift/Ctrl handling, picker
 Fixed R23-R29: moved tracking controls to the command row, removed the Cell-draft alert, derived the folder from staged sources, baselined pre-existing matching files as visible ignored candidates with explicit retry, moved Enable tracking into the status banner, removed Scan scope and navigation, and corrected cadence singularization. No remote push per user instruction.
 
 ---
+### 2026-08-20T22:27:43+02:00 — REVIEWER — 047.4
+
+**Result:** Child review clean; entering final parent review
+
+**Findings**
+
+- None.
+
+**Message**
+
+047.4 round 3 clean: R23-R29 all resolved. R26 is properly closed -- initialize_watch_baseline runs once at watch creation, skips already-attached sources, records every other current match as an ignored candidate, and the scan loop skips ignored, so a pre-existing file the user declined can no longer be auto-attached; the candidate table is the durable baseline so it survives restart, and reset_candidate behind the candidates/{id}/retry endpoint is the deliberate re-include path. The Downloads/*.mpr scenario is closed. R29: no navigate or useNavigate remains in the dialog, so nothing there can unmount the import flow, and cadence now reads 'every day' for 1 with tests for both singular and plural. R23 right-aligns Add more sources and the destination folder to match Separate cells with the tracking Switch and Settings in the left half; R24 removed the grey alert; R25 removed the folder input and Browse in favour of a derived read-only folder; R27 moved the Switch into the banner which changes colour AND title so state is never colour-only; R28 removed the dead Scan scope input. I specifically checked that the two toggles R23 and R27 create share one source of truth -- both read folderWatch.enabled and write through onFolderWatchChange, so they cannot disagree. Verified myself: 23 focused backend tests, focused frontend suites, preflight 4/4, tsc and vite build explicitly. Two housekeeping gaps I completed rather than bounce back: the implementer transitioned state but left all implementation files uncommitted, and no version bump accompanied user-facing changes -- committed here and bumped to 0.27.0-beta.11 with a CHANGELOG entry. Please commit work with the state transition next time. This closes the last child; the cumulative parent review and the browser matrix remain.
+
+---

@@ -4,6 +4,10 @@ This changelog is based on the git history after the initial CellXplorer baselin
 (`81b79a1`). Technical-only changes and test updates are summarized in terms of their
 user-facing impact.
 
+## 0.27.0-beta.11 - 2026-08-20
+
+- Keep folder tracking to newly arriving files and simplify its import controls.
+
 ## 0.27.0-beta.10 - 2026-08-20
 
 - Fix the folder-tracking database upgrade for installs already on schema 0004.
