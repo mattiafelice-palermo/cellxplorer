@@ -8,6 +8,7 @@ from .versions import (
     v0002_max_discharge_summary,
     v0003_import_submissions,
     v0004_cell_folder_watch,
+    v0005_folder_watch_multi_format,
 )
 
 
@@ -38,6 +39,11 @@ REVISIONS = (
         revision=v0004_cell_folder_watch.revision,
         down_revision=v0004_cell_folder_watch.down_revision,
         module=v0004_cell_folder_watch,
+    ),
+    MigrationRevision(
+        revision=v0005_folder_watch_multi_format.revision,
+        down_revision=v0005_folder_watch_multi_format.down_revision,
+        module=v0005_folder_watch_multi_format,
     ),
 )
 

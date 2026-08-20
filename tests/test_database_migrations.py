@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import sys
@@ -109,7 +110,10 @@ class DatabaseMigrationTests(unittest.TestCase):
             v0002_max_discharge_summary,
             v0003_import_submissions,
         )
-        from app.migrations.versions import v0004_cell_folder_watch
+        from app.migrations.versions import (
+            v0004_cell_folder_watch,
+            v0005_folder_watch_multi_format,
+        )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -124,6 +128,20 @@ class DatabaseMigrationTests(unittest.TestCase):
                 v0003_import_submissions.upgrade(operations, connection)
                 v0004_cell_folder_watch.upgrade(operations, connection)
 
+            # 0004 shipped the single-extension shape to real databases before the
+            # 047.4 review retired it, so a database stamped 0004 still carries the
+            # retired columns and must be upgraded forward rather than rewritten.
+            inspector = inspect(engine)
+            stamped_0004 = {column["name"] for column in inspector.get_columns("cell_folder_watches")}
+            self.assertIn("extension", stamped_0004)
+            self.assertIn("recursive", stamped_0004)
+            self.assertIn("cadence_value", stamped_0004)
+
+            with engine.begin() as connection:
+                context = MigrationContext.configure(connection)
+                operations = Operations(context)
+                v0005_folder_watch_multi_format.upgrade(operations, connection)
+
             inspector = inspect(engine)
             self.assertIn("cell_folder_watches", inspector.get_table_names())
             self.assertIn("cell_folder_watch_candidates", inspector.get_table_names())
@@ -131,10 +149,67 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("folder_path", watch_columns)
             self.assertIn("extensions", watch_columns)
             self.assertIn("source_formats", watch_columns)
+            self.assertNotIn("extension", watch_columns)
+            self.assertNotIn("source_format", watch_columns)
             self.assertNotIn("recursive", watch_columns)
+            self.assertNotIn("recursion_depth", watch_columns)
             self.assertNotIn("cadence_value", watch_columns)
+            self.assertNotIn("cadence_unit", watch_columns)
             self.assertIn("stability_state", {column["name"] for column in inspector.get_columns("cell_folder_watch_candidates")})
             engine.dispose()
+
+    def test_migration_0005_carries_single_extension_watches_into_lists(self):
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        from app.migrations.versions import (
+            v0001_initial,
+            v0002_max_discharge_summary,
+            v0003_import_submissions,
+            v0004_cell_folder_watch,
+            v0005_folder_watch_multi_format,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, engine = self.make_database(root)
+            with engine.begin() as connection:
+                context = MigrationContext.configure(connection)
+                operations = Operations(context)
+                v0001_initial.upgrade(operations, connection)
+                connection.exec_driver_sql("DROP TABLE cell_folder_watch_candidates")
+                connection.exec_driver_sql("DROP TABLE cell_folder_watches")
+                v0002_max_discharge_summary.upgrade(operations, connection)
+                v0003_import_submissions.upgrade(operations, connection)
+                v0004_cell_folder_watch.upgrade(operations, connection)
+
+            # Seed a configured 0004-era watch. Only the watch row matters here,
+            # and SQLite does not enforce the foreign key unless asked, so this
+            # avoids depending on the full NOT NULL shape of `cells`.
+            with closing(sqlite3.connect(path)) as seed:
+                seed.execute(
+                    "INSERT INTO cell_folder_watches (cell_id, folder_path, enabled, pattern_kind,"
+                    " pattern, extension, source_format, ordering_rule, recursive, recursion_depth,"
+                    " consecutive_failures, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+                    (1, r"C:\Data", 1, "glob", "*.mpr", "MPR", "biologic_mpr", "start_time", 0, 0, 0),
+                )
+                seed.commit()
+
+            with engine.begin() as connection:
+                context = MigrationContext.configure(connection)
+                operations = Operations(context)
+                v0005_folder_watch_multi_format.upgrade(operations, connection)
+            engine.dispose()
+
+            with closing(sqlite3.connect(path)) as reader:
+                rows = reader.execute(
+                    "SELECT extensions, source_formats FROM cell_folder_watches"
+                ).fetchall()
+
+            # The configured watch keeps matching exactly what it matched before.
+            extensions, source_formats = rows[0]
+            self.assertEqual(json.loads(extensions), ["mpr"])
+            self.assertEqual(json.loads(source_formats), ["biologic_mpr"])
 
     def test_unversioned_cellxplorer_database_is_backed_up_and_stamped(self):
         with tempfile.TemporaryDirectory() as directory:
