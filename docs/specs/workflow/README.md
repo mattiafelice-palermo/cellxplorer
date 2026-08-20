@@ -4,11 +4,13 @@ This folder contains the lightweight two-agent workflow used to implement CellXp
 
 The workflow deliberately separates three responsibilities:
 
-- `docs/specs/NNN-agent-state.json` — the **single source of truth for turn/state**;
-- `docs/specs/NNN-agent-coordination.md` — the **timestamped communication log** between agents;
+- `docs/specs/NNN-agent-state.json` — the **single source of truth for turn/state** plus compact pending user-message metadata;
+- `docs/specs/NNN-agent-coordination.md` — the **timestamped append-only communication log** between user, implementer, and reviewer;
 - `docs/specs/reviews/...-review.md` — the **canonical technical review**, including `R1`, `R2`, etc.
 
 The specs define what to build. `AGENTS.md` and `docs/agent-knowledge/` define how CellXplorer code should be changed.
+
+The long files `reviewer-prompt.md` and `implementer-prompt.md` are role instructions. For starting a fresh agent session, use the short copy/paste prompts in `reviewer-launch-prompt.md` and `implementer-launch-prompt.md`.
 
 ## 1. Complete workflow
 
@@ -38,7 +40,7 @@ REVIEWER reviews actual code/tests
         │
         └── child clean
                ↓
-            another child?
+            another scheduled child?
              ├── yes → IMPLEMENTER implements next child
              └── no  → REVIEWER performs cumulative parent review
                               │
@@ -50,6 +52,8 @@ REVIEWER reviews actual code/tests
 ```
 
 The remote Git branch is authoritative. A new agent should be able to resume by reading the state file, recent coordination entries, active spec, and canonical review file.
+
+Proto-children (`NNN.P1-*`, `NNN.P2-*`, ...) are planning placeholders only and are **not scheduled children**. They never enter the diagram above until explicitly promoted to a numeric child.
 
 ## 2. Reviewer initializes the workflow
 
@@ -66,7 +70,7 @@ docs/specs/NNN-agent-state.json
 docs/specs/NNN-agent-coordination.md
 ```
 
-Child specs named `NNN.1-*.md`, `NNN.2-*.md`, etc. are discovered automatically.
+Child specs named `NNN.1-*.md`, `NNN.2-*.md`, etc. are discovered automatically. Proto-children named `NNN.P1-*.md`, `NNN.P2-*.md`, etc. are intentionally ignored by child discovery.
 
 Initial state:
 
@@ -78,17 +82,20 @@ ACTIVE_CHILD: first child
 
 Initialization also appends the first timestamped reviewer → implementer communication entry. Commit/push both workflow files together.
 
-## 3. JSON state: turn/state only
+## 3. JSON state: turn/state plus compact user-message metadata
 
 The JSON file is the only authority for whose turn it is.
 
 Important fields:
 
 - `active_child` — the only work unit currently allowed;
+- `children` — the scheduled numeric children for this workflow;
 - `turn` — `IMPLEMENTER` or `REVIEWER`;
 - `action` — what that role must do;
 - `findings` — unresolved canonical review finding IDs;
-- `resume_review` — internal state used to return fixes to ordinary or final review.
+- `resume_review` — internal state used to return fixes to ordinary or final review;
+- `pending_user_messages` — message IDs and timestamps only, so the reviewer can immediately see that user input is waiting;
+- `user_message_seq` — monotonic counter used to assign stable `U1`, `U2`, ... IDs.
 
 Normal states:
 
@@ -103,11 +110,20 @@ REVIEWER    + COMPLETE
 
 `BLOCKED` is terminal for the current agent sessions but resumable later. It means the implementation/review is clean enough that no implementer finding remains, but a required external dependency or acceptance input is unavailable, so the feature is not complete or merge-ready.
 
-Do not put prose communication in the JSON and do not edit it manually when the workflow script is available.
+Do not put user-message bodies or other prose communication in the JSON. Message text belongs only in the coordination Markdown. Old version-1 state files without the two user-message fields remain readable; the helper supplies empty defaults when loading them.
 
-## 4. Coordination Markdown: communication between agents
+A normal `status` makes pending user input obvious:
 
-`docs/specs/NNN-agent-coordination.md` is append-only from the agents' perspective. The workflow script appends one entry on every transition.
+```text
+USER_MESSAGES_PENDING: 2
+USER_MESSAGE_TIMESTAMPS: U1=2026-08-21T01:25:00+02:00, U2=2026-08-21T01:31:00+02:00
+```
+
+The reviewer can then search the coordination file for `U1`, `U2`, etc.
+
+## 4. Coordination Markdown: communication and handoffs
+
+`docs/specs/NNN-agent-coordination.md` is append-only from the agents' perspective. The workflow script appends one entry on every transition and every user message.
 
 Every entry includes an ISO-8601 timestamp with UTC offset.
 
@@ -131,8 +147,6 @@ Saved-plot persistence was the only sensitive area touched.
 
 For review fixes, the result is `Review fixes ready`.
 
-The implementer supplies verification with repeated `--verification` options and may add one concise `--message`.
-
 ### Reviewer → implementer
 
 ```markdown
@@ -150,7 +164,31 @@ The implementer supplies verification with repeated `--verification` options and
 R1 is the functional blocker. R2 is isolated.
 ```
 
-Keep messages short. Detailed defects belong in the canonical review file.
+### User → reviewer
+
+The user may add review input at any point while the workflow is not `COMPLETE`:
+
+```bash
+python docs/specs/workflow/spec_workflow.py user-message --spec NNN \
+  --message "Please verify that reopening the analysis remains effectively immediate."
+```
+
+This does **not** change `TURN`, `ACTION`, `ACTIVE_CHILD`, or findings. It:
+
+1. allocates the next stable ID (`U1`, `U2`, ...);
+2. appends the full user message to the coordination log as `USER → REVIEWER`;
+3. stores only `{id, timestamp}` in `pending_user_messages`;
+4. updates `status` so the reviewer sees the pending count/timestamps immediately.
+
+Commit and push the state + coordination files after adding the message; the remote branch is what the reviewer reads.
+
+A user message is addressed to the reviewer, **not directly to the implementer**. The implementer must not treat a pending `U*` entry as new implementation scope. The reviewer interprets it during the next reviewer-owned action and translates any actionable change into the spec/review/handoff in the normal way.
+
+Before any reviewer-owned transition, the reviewer must read every pending `U*` message. Reviewer transitions record the message IDs under **User messages considered** and clear them from `pending_user_messages`. If a user message materially changes a locked product/scientific decision, amend the governing spec explicitly rather than smuggling the change into an unrelated review finding.
+
+A message may be added while `BLOCKED`, but neither agent is polling in `BLOCKED`; the user must explicitly resume the workflow when the external dependency is genuinely available. `user-message` is rejected after `COMPLETE`.
+
+Keep ordinary handoff messages short. Detailed defects belong in the canonical review file.
 
 ## 5. Always start a turn by reading state + communication
 
@@ -166,11 +204,50 @@ Then read the latest entries in:
 docs/specs/NNN-agent-coordination.md
 ```
 
+If `USER_MESSAGES_PENDING` is nonzero and you are the reviewer, locate/read those `U*` entries before taking the next reviewer action.
+
 Act only when `TURN` matches your role. Work only on `ACTIVE_CHILD`.
 
 If `ACTION: BLOCKED` or `ACTION: COMPLETE`, stop the current agent session.
 
-## 6. Implementer workflow
+## 6. Proto-children and promotion
+
+A proto-child is a deliberate planning placeholder for work that has been identified but is not yet sufficiently scoped or authorized for implementation.
+
+Naming:
+
+```text
+NNN.P1-short-title.md
+NNN.P2-short-title.md
+```
+
+Rules:
+
+- Proto-child IDs (`P1`, `P2`, ...) are stable and never reused.
+- A proto-child must say `Status: Proto-child — non-implementable until promoted` near the top.
+- It may capture motivation, verified observations, likely ownership boundaries, questions to answer, dependencies, and promotion criteria.
+- It is **not** an implementation instruction. It does not get an `ACTIVE_CHILD`, implementation commit, child review, or acceptance gate.
+- Proto-children are excluded from automatic workflow child discovery and do not block final parent review or merge readiness.
+- A parent may therefore complete with one or more proto-children still present as documented future work.
+- Do not pre-implement a proto-child.
+
+Promotion is an explicit user/spec-author decision. To promote one:
+
+1. expand it into a normal self-contained numeric child using the next appropriate unused child number;
+2. record `Promoted from NNN.Px` in the new child;
+3. remove/rename the proto-child file so `NNN.Px` is no longer an active placeholder (the ID remains reserved historically and must not be reused);
+4. update the parent child sequence/dependencies;
+5. if workflow has **not** been initialized, normal `init` discovery will pick up the numeric child;
+6. if workflow is already running, the reviewer schedules the newly authored numeric child while owning `REVIEW` or `FINAL_REVIEW`:
+
+```bash
+python docs/specs/workflow/spec_workflow.py add-child NNN.X --spec NNN \
+  --message "Promoted from NNN.P1."
+```
+
+`add-child` refuses retroactive child numbers and cannot be run while the implementer owns the turn. If called during `FINAL_REVIEW`, it returns the workflow to `IMPLEMENTER + IMPLEMENT` for the promoted child.
+
+## 7. Implementer workflow
 
 ### IMPLEMENT
 
@@ -187,6 +264,8 @@ For each finding, satisfy:
 - **Acceptance criteria** — what proves resolution.
 
 The implementer does not edit, renumber, delete, or self-resolve reviewer findings.
+
+Pending `U*` user messages are reviewer input. Do not implement them directly unless the reviewer has translated them into the active spec/review/handoff while returning `TURN: IMPLEMENTER`.
 
 ### Verification efficiency — mandatory sequence
 
@@ -244,17 +323,11 @@ python docs/specs/workflow/spec_workflow.py handoff-review \
   --message "Optional concise context."
 ```
 
-Then stage:
-
-- implementation changes;
-- `NNN-agent-state.json`;
-- `NNN-agent-coordination.md`.
-
-Commit them together and push once.
+Then stage implementation changes plus `NNN-agent-state.json` and `NNN-agent-coordination.md`, commit them together, and push once.
 
 **After pushing the handoff, the implementer must stop repository work completely.** Do not begin the next child, do not make speculative fixes, and do not continue editing while `TURN: REVIEWER`. Wait until the reviewer commits/pushes a new state with `TURN: IMPLEMENTER`; only then resume from the new `ACTION` and `FINDINGS`. If the reviewer instead commits `ACTION: BLOCKED` or `ACTION: COMPLETE`, stop the current implementer session.
 
-## 7. Review files and exact naming
+## 8. Review files and exact naming
 
 Canonical reviews live under:
 
@@ -262,7 +335,7 @@ Canonical reviews live under:
 docs/specs/reviews/
 ```
 
-The review filename must mirror the corresponding spec filename exactly, replacing `.md` with `-review.md`.
+The review filename must mirror the corresponding implemented spec filename exactly, replacing `.md` with `-review.md`.
 
 Examples:
 
@@ -276,11 +349,12 @@ docs/specs/040-series-styling-parent.md
 
 Therefore:
 
-- each child gets its own corresponding review file;
+- each numeric child gets its own corresponding review file;
+- proto-children do not get review files;
 - the final cumulative parent review uses the review filename corresponding to the parent spec itself;
 - subsequent review rounds update the same review file rather than creating `-review-2`, `-v2`, etc.
 
-## 8. Reviewer and R findings
+## 9. Reviewer and R findings
 
 Each actionable finding must use:
 
@@ -306,6 +380,8 @@ Required behavior or implementation.
 
 The reviewer owns finding creation, numbering, updates, and resolution.
 
+Before `request-fixes` or `review-clean`, read all pending `U*` user messages. The workflow transition automatically records their IDs as considered and clears the pending list.
+
 ### Changes required
 
 After writing/updating the review file:
@@ -330,11 +406,11 @@ python docs/specs/workflow/spec_workflow.py review-clean \
   --message "Optional concise context."
 ```
 
-The script either advances to the next child or enters `FINAL_REVIEW`.
+The script either advances to the next scheduled child or enters `FINAL_REVIEW`. Proto-children are not considered by this transition.
 
 Commit/push review + JSON state + coordination together.
 
-## 9. Final parent review
+## 10. Final parent review
 
 When state is:
 
@@ -347,6 +423,8 @@ perform a fresh cumulative review against the correct merge base.
 
 Check complete branch scope, all locked parent requirements, cumulative regressions, final architecture/ownership, required verification, documentation/status closure, and merge readiness.
 
+Outstanding proto-children are documented future work and **do not block completion**. If the user decides to promote one before completion, author its numeric child first and use `add-child`; do not implement from the proto-child itself.
+
 Use the same R-finding loop if implementation defects or agent-actionable verification gaps exist.
 
 ### Clean and complete
@@ -358,16 +436,14 @@ python docs/specs/workflow/spec_workflow.py complete \
   --message "Cumulative parent review clean; feature ready to merge."
 ```
 
-Commit/push final review + JSON state + coordination together.
-
-Final state:
+`complete` records any still-pending user-message IDs as considered, clears them, and transitions to:
 
 ```text
 TURN: REVIEWER
 ACTION: COMPLETE
 ```
 
-Both agents stop.
+Commit/push final review + JSON state + coordination together. Both agents stop.
 
 ### Clean but externally blocked
 
@@ -396,23 +472,27 @@ python docs/specs/workflow/spec_workflow.py resume-final-review \
   --message "Required external dependency is now available."
 ```
 
-This returns the state to:
+This returns the state to `REVIEWER + FINAL_REVIEW`. Commit/push the resumed JSON state + coordination entry, then perform the cumulative final review with the newly available evidence. Do not transition directly from `BLOCKED` to `COMPLETE`.
 
-```text
-TURN: REVIEWER
-ACTION: FINAL_REVIEW
-```
+## 11. Short launch prompts
 
-Commit/push the resumed JSON state + coordination entry, then perform the cumulative final review with the newly available evidence. Do not transition directly from `BLOCKED` to `COMPLETE`.
+Use these when starting fresh reviewer/implementer agent sessions. The branch already exists and the specs are already written.
 
-## 10. Important rules
+- `reviewer-launch-prompt.md` — short prompt for the independent reviewer; it initializes the workflow if needed and then follows `reviewer-prompt.md`.
+- `implementer-launch-prompt.md` — short prompt for the implementer; it follows `implementer-prompt.md` and waits if the reviewer has not initialized state yet.
+
+The launch prompts are intentionally short. The repository-owned role instructions remain authoritative and can evolve without requiring the user to maintain a long external prompt.
+
+## 12. Important rules
 
 - Reviewer initializes the workflow.
 - JSON is the sole authority for turn/action.
 - Coordination Markdown is append-only communication history.
 - Review Markdown is the canonical technical review.
+- User messages are addressed to the reviewer; only IDs/timestamps live in JSON.
 - Always read state and latest communication before acting.
 - Work only on `ACTIVE_CHILD`.
+- Numeric children are implementable; proto-children are not.
 - Implementer does not edit reviewer findings.
 - Reviewer does not modify implementation code unless explicitly instructed.
 - After implementer handoff/push, the implementer waits and does no repository work until `TURN: IMPLEMENTER` returns.
@@ -423,11 +503,13 @@ Commit/push the resumed JSON state + coordination entry, then perform the cumula
 - Push once, then stop when ownership changes.
 - Never invent verification results.
 
-## 11. Command summary
+## 13. Command summary
 
 ```text
 python docs/specs/workflow/spec_workflow.py init NNN [--message "..."]
-python docs/specs/workflow/spec_workflow.py status
+python docs/specs/workflow/spec_workflow.py status [--spec NNN]
+python docs/specs/workflow/spec_workflow.py user-message --spec NNN --message "..."
+python docs/specs/workflow/spec_workflow.py add-child NNN.X --spec NNN [--message "..."]
 python docs/specs/workflow/spec_workflow.py handoff-review \
   [--verification "..."] [--verification "..."] [--message "..."]
 python docs/specs/workflow/spec_workflow.py request-fixes R1 R2 ... [--message "..."]
