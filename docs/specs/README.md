@@ -37,7 +37,13 @@
   - [`047.3-continuity-review-and-context-closure.md`](047.3-continuity-review-and-context-closure.md)
     — secondary continuity review, final regression/integration closure, performance-documentation
     update, and correction of the stale Project architecture mirror. Review: [047.3 review](reviews/047.3-continuity-review-and-context-closure-review.md).
-  **All three children implemented and review-clean; cumulative parent review in progress.**
+  - [`047.4-continued-cell-folder-tracking.md`](047.4-continued-cell-folder-tracking.md)
+    — optional per-Cell folder tracking that appends new stable matching files to the source chain
+    under the global source monitor's gates, with deterministic ordering and no silent attachment.
+    **Plan.**
+  **047.1-047.3 implemented and review-clean; the first cumulative parent review was clean but
+  BLOCKED on the outstanding browser/manual matrix. 047.4 was added afterwards by user decision and
+  is now the active child; the parent review must be repeated once it lands.**
 - [`045-faster-local-verification.md`](045-faster-local-verification.md)
   unifies backend modules and frontend policy files in one bounded preflight test pool, adds
   monotonic stage/task timing and slow-task reporting, and safely caches unchanged frontend

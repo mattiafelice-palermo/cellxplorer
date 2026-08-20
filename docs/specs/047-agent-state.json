@@ -6,7 +6,8 @@
   "children": [
     "047.1",
     "047.2",
-    "047.3"
+    "047.3",
+    "047.4"
   ],
   "turn": "REVIEWER",
   "action": "FINAL_REVIEW",
