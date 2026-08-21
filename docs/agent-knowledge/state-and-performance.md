@@ -362,6 +362,39 @@ analysis data; both can be changed or made unlimited in Settings. Automatic clea
 remove the SQLite database, imported/source files, or a scientific cache whose source is offline.
 The UI may allow an explicit, separately confirmed cleanup of an offline scientific item.
 
+Spec 050.2 keeps the parser-versioned `raw__p<parser>.parquet` file as the one canonical raw
+dataset and gives newly written/prepared files a separate physical access sidecar:
+`raw_index__p<parser>__l<layout>.json`. `cache.RAW_CACHE_LAYOUT_VERSION` describes only that
+row-group/index format; it is independent of `CANONICAL_RAW_VERSION`, parser identity,
+`CALC_VERSION`, and analysis-result generations. The sidecar records exact observed source-local
+cycle labels, row-group membership (including cycles spanning multiple groups), raw schema/shape
+metadata, finite full-source availability for each canonical voltage quantity, and bounded timestamp
+start/end facts. It never stores source paths. `cache.load_raw_cycles()` returns exact requested
+cycle rows after filtering the selected groups and exposes deterministic group/row/column
+diagnostics; a missing or invalid sidecar is a layout fallback, not a scientifically missing raw
+cache. Existing `load_raw()` and `load_raw_columns()` remain the compatibility readers.
+
+The deliberate raw writer uses 4,096-row Parquet groups. This was selected under the pinned
+`pyarrow 24.0.0` runtime from the approved `cycles_time_steps.ndax` regression source (71,190
+rows, 193 observed cycles): the legacy writer produced one group; 4,096/8,192/16,384-row
+prototypes produced 18/9/5 groups. The 4,096 layout physically selected 4,096 rows for one
+cycle, 12,288 for the first 20 cycles, 57,344 for a 150-cycle range, and 71,190 for all cycles,
+with about 0.3% file-size growth. Write timings varied across profiling runs, so the target was
+chosen for the bounded structural read reduction rather than a single wall-clock result. It is
+not a scientific constant or a cache-key input. `scripts/profile_raw_cache_layout.py` repeats the
+baseline/candidate comparison.
+
+Legacy raw caches are converted from Parquet bytes alone by the existing background scientific
+preparation path. Conversion stages and parity-checks a temporary candidate, removes any old
+sidecar before atomically replacing raw bytes, and publishes the validated sidecar last; a failure
+leaves the old raw file readable and falls back to full reads. The existing per-hash cleanup
+protection covers conversion, and sidecars/temporary artifacts stay inside the checksum directory
+so scientific inventory, budget, LRU touches, and deletion remain authoritative. Offline sources
+may be converted without their original path, while layout-only failures do not change
+`SourceFile` lifecycle, parser, cycle, or capacity-summary fields. Normal startup only selects
+compact raw-layout candidates for the already existing bounded background preparation worker; it
+does not rewrite Parquet on a list/request path.
+
 A Stable-to-Beta database snapshot deliberately excludes `cache/`. Staging writes the durable
 `beta.scientific_preparation` setting into the copied database. After activation, the normal
 background backfill uses that marker to prepare every missing current-version scientific cache,

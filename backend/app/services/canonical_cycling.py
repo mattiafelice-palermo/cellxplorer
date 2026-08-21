@@ -36,6 +36,44 @@ import pandas as pd
 
 CANONICAL_RAW_VERSION = 1
 
+
+def observed_cycle_labels(cycle_series: pd.Series) -> tuple[list[int], list[str]]:
+    """Return exact observed numeric cycle labels in stable sorted order.
+
+    Source-local cycle labels are compact scientific metadata used by both
+    continuation stitching and the physical raw-cache index.  Keep the
+    acceptance rule in this canonical helper so those two consumers cannot
+    drift: nulls are ignored, numeric finite integer-like labels are retained,
+    and missing labels are never synthesized.
+    """
+    if cycle_series.empty:
+        return [], []
+
+    raw = cycle_series.dropna()
+    if raw.empty:
+        return [], []
+
+    numeric = pd.to_numeric(raw, errors="coerce")
+    errors: list[str] = []
+    invalid = raw[numeric.isna()]
+    if not invalid.empty:
+        sample = ", ".join(str(value) for value in invalid.unique()[:5])
+        errors.append(f"non-numeric cycle values: {sample}")
+        return [], errors
+
+    numeric_values = numeric.to_numpy(dtype="float64")
+    if not np.isfinite(numeric_values).all():
+        errors.append("non-finite cycle values")
+        return [], errors
+
+    rounded = numeric.round()
+    if not np.allclose(numeric_values, rounded.to_numpy(dtype="float64")):
+        errors.append("non-integer cycle values")
+        return [], errors
+
+    labels = sorted(int(value) for value in rounded.unique())
+    return labels, errors
+
 # Bounded normalized metadata blocks may remain in ``SourceFile.header_meta``
 # without becoming CellMetadata rows.  Adapters use this key for source-level
 # capabilities that must still be available after the original file is

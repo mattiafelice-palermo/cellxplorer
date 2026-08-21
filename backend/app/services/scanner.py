@@ -88,6 +88,20 @@ def _has_current_scientific_cache(sf: SourceFile) -> bool:
     )
 
 
+def _needs_raw_layout_preparation(sf: SourceFile) -> bool:
+    """Return a bounded cache-metadata predicate for legacy raw layout.
+
+    Checking the sidecar/footer only inspects compact Parquet metadata.  The
+    expensive raw conversion is left to the existing background preparation
+    worker and is never performed while a list endpoint or startup renderer is
+    waiting on this predicate.
+    """
+    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    if not cache.raw_path(sf.hash, expected).is_file():
+        return False
+    return not cache.raw_layout_is_current(sf.hash, expected)
+
+
 def _needs_identity_bring_forward(sf: SourceFile) -> bool:
     """True when an upgrade — not a deliberate cache clean — left this
     source's own registration behind its format's current parser identity.
@@ -326,6 +340,7 @@ def start_capacity_summary_backfill(
             if sf.capacity_summary_status != "ready"
             or (prepare_all_missing and not _has_current_scientific_cache(sf))
             or sf.id in identity_bring_forward_ids
+            or _needs_raw_layout_preparation(sf)
         ]
 
         if not sources:
@@ -359,7 +374,14 @@ def start_capacity_summary_backfill(
         # correctly showing a moment before the upgrade. `location_status`
         # already carries the truthful "source unreachable" signal for that
         # source; `capacity_summary_status` is deliberately left alone.
-        prepare_effective = prepare_all_missing or bool(identity_bring_forward_ids)
+        layout_preparation_ids = {
+            sf.id for sf in sources if _needs_raw_layout_preparation(sf)
+        }
+        prepare_effective = (
+            prepare_all_missing
+            or bool(identity_bring_forward_ids)
+            or bool(layout_preparation_ids)
+        )
         for sf in sources:
             if sf.capacity_summary_status != "ready":
                 sf.capacity_summary_status = "pending"
@@ -473,12 +495,14 @@ def _capacity_source_job(
         },
         "summary_was_ready": sf.capacity_summary_status == "ready",
         "prepare_all_missing": prepare_all_missing,
+        "prepare_layout": _needs_raw_layout_preparation(sf),
     }
 
 
 def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
     """Build one source cache without touching SQLite or process-local job state."""
     location_status: str | None = None
+    layout_only = False
     source_fingerprint = job.get("source_fingerprint")
     try:
         if not isinstance(source_fingerprint, dict):
@@ -550,9 +574,26 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
                 "location_status": location_status,
                 "source_fingerprint": source_fingerprint,
             }
+        if raw_ready and not cache.raw_layout_is_current(job["hash"], expected):
+            # Existing raw bytes are sufficient.  This is deliberately kept
+            # separate from source parsing so offline caches can be converted
+            # without changing their SourceFile lifecycle state.
+            layout_only = True
+            cache.prepare_raw_layout(job["hash"], expected)
+            return {
+                "ok": True,
+                "built": False,
+                "layout_prepared": True,
+                "layout_only": True,
+                "info": cache.capacity_totals(cycles),
+                "location_status": location_status,
+                "source_fingerprint": source_fingerprint,
+            }
         return {
             "ok": True,
             "built": False,
+            "layout_prepared": False,
+            "layout_only": False,
             "info": cache.capacity_totals(cycles),
             "location_status": location_status,
             "source_fingerprint": source_fingerprint,
@@ -561,6 +602,7 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
         return {
             "ok": False,
             "error": str(exc),
+            "layout_only": layout_only,
             "location_status": location_status,
             "source_fingerprint": source_fingerprint,
         }
@@ -710,18 +752,38 @@ def _apply_capacity_source_result(
             sf.parse_error = None
             if pending_biologic_candidate:
                 parsing.mark_biologic_mpr_canonical(sf)
-        apply_capacity_summary(sf, info)
+        if result.get("built") or not source_job["summary_was_ready"]:
+            apply_capacity_summary(sf, info)
         background_jobs.record_result(
             job_id,
             sf.id,
             status="ready",
-            detail="Scientific cache and capacity totals ready",
+            detail=(
+                "Raw cache access layout ready"
+                if result.get("layout_only")
+                else "Scientific cache and capacity totals ready"
+            ),
             counter="ready",
         )
         db.commit()
         return 1, 0
 
     error = str(result.get("error") or "Scientific cache preparation failed")
+    if result.get("layout_only"):
+        # A layout-only conversion is allowed to operate on an offline raw
+        # cache.  Its failure must not rewrite SourceFile lifecycle/scientific
+        # state or turn a readable legacy cache into a parse error.
+        logger.error("raw cache layout preparation failed for %s: %s", sf.filename, error)
+        background_jobs.record_result(
+            job_id,
+            sf.id,
+            status="failed",
+            detail="Raw cache layout preparation failed; the existing raw cache was retained",
+            error=error,
+            counter="failed",
+        )
+        db.commit()
+        return 0, 1
     if result.get("location_status") == "offline":
         background_jobs.record_result(
             job_id,

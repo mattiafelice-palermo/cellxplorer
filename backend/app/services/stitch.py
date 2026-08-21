@@ -20,10 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
-from . import cache
+from . import cache, canonical_cycling
 
 
 @dataclass(frozen=True)
@@ -45,33 +44,7 @@ def stitch_metadata(frame: pd.DataFrame) -> dict[str, Any]:
 
 def observed_local_cycles(cycle_series: pd.Series) -> tuple[list[int], list[str]]:
     """Return distinct numeric local cycle labels in stable sorted order."""
-    if cycle_series.empty:
-        return [], []
-
-    raw = cycle_series.dropna()
-    if raw.empty:
-        return [], []
-
-    numeric = pd.to_numeric(raw, errors="coerce")
-    errors: list[str] = []
-    invalid = raw[numeric.isna()]
-    if not invalid.empty:
-        sample = ", ".join(str(value) for value in invalid.unique()[:5])
-        errors.append(f"non-numeric cycle values: {sample}")
-        return [], errors
-
-    numeric_values = numeric.to_numpy(dtype="float64")
-    if not np.isfinite(numeric_values).all():
-        errors.append("non-finite cycle values")
-        return [], errors
-
-    rounded = numeric.round()
-    if not np.allclose(numeric_values, rounded.to_numpy(dtype="float64")):
-        errors.append("non-integer cycle values")
-        return [], errors
-
-    labels = sorted(int(value) for value in rounded.unique())
-    return labels, errors
+    return canonical_cycling.observed_cycle_labels(cycle_series)
 
 
 def build_dense_cycle_map(local_labels: list[int], global_start: int) -> dict[int, int]:

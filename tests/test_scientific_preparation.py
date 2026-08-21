@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -20,7 +21,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import SourceFile
-from app.services import background_jobs, parsing, scanner, scientific_preparation
+from app.services import background_jobs, cache, parsing, scanner, scientific_preparation
 
 
 class ScientificPreparationTests(unittest.TestCase):
@@ -178,6 +179,78 @@ class ScientificPreparationTests(unittest.TestCase):
 
             self.assertEqual(result["total"], 0)
             self.assertFalse(scanner._capacity_backfill_running)
+
+    def test_offline_legacy_raw_cache_gets_layout_prepared_without_source_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "offline.ndax"
+            source_path.write_bytes(b"offline source bytes")
+            db = self.factory()
+            current_identity = (
+                parsing.current_parser_identity_for_extension("ndax")
+                or parsing.PARSER_VERSION
+            )
+            source = self._source(
+                db,
+                source_path,
+                summary_status="ready",
+                parser_version=current_identity,
+                location_status="offline",
+            )
+            original_location = source.location_status
+            original_parser = source.parser_version
+            original_summary = source.capacity_summary_status
+            db.close()
+            source_path.unlink()
+
+            frame = pd.DataFrame(
+                {
+                    "record_index": [0, 1],
+                    "cycle": [1, 1],
+                    "step_index": [1, 1],
+                    "step": [1, 1],
+                    "status": ["CC_Chg", "CC_Chg"],
+                    "time_s": [0.0, 1.0],
+                    "voltage_v": [3.0, 3.1],
+                    "current_ma": [1.0, 1.0],
+                    "charge_capacity_mah": [0.0, 1.0],
+                    "discharge_capacity_mah": [0.0, 0.0],
+                }
+            )
+            cache_root = Path(folder) / "cache"
+            with patch.object(cache, "CACHE_DIR", cache_root):
+                raw_target = cache.raw_path(source.hash, current_identity)
+                raw_target.parent.mkdir(parents=True, exist_ok=True)
+                frame.to_parquet(raw_target, index=False)
+                with (
+                    patch.object(scanner, "SessionLocal", self.factory),
+                    patch.object(scanner.threading, "Thread") as thread,
+                ):
+                    result = scanner.start_capacity_summary_backfill()
+                    self.assertEqual(result["total"], 1)
+                    self.assertEqual(
+                        background_jobs.get_job(result["id"])["kind"],
+                        "scientific_preparation",
+                    )
+                    scanner._run_capacity_summary_backfill(
+                        [source.id],
+                        result["id"],
+                        False,
+                        False,
+                    )
+                thread.return_value.start.assert_called_once_with()
+                self.assertTrue(cache.raw_index_path(source.hash, current_identity).exists())
+
+            verify = self.factory()
+            refreshed = verify.get(SourceFile, source.id)
+            self.assertEqual(refreshed.location_status, original_location)
+            self.assertEqual(refreshed.parser_version, original_parser)
+            self.assertEqual(refreshed.capacity_summary_status, original_summary)
+            self.assertIsNone(refreshed.parse_error)
+            self.assertEqual(
+                background_jobs.get_job(result["id"])["counters"]["ready"],
+                1,
+            )
+            verify.close()
 
     def test_identity_mismatched_reachable_source_is_prepared_at_startup(self):
         """Spec 042 test 1: an ordinary startup (no prepare_missing, no
