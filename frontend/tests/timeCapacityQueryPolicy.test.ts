@@ -1,0 +1,187 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import type { AnalysisSpec } from "../src/api.ts";
+import {
+  timeCapacityCompatibilitySignature,
+  timeCapacityPlaceholderCompatible,
+  timeCapacityPlaceholderData,
+  type TimeCapacityQueryConfig,
+} from "../src/features/analyses/editor/policies/timeCapacityQueryPolicy.ts";
+
+type CompatibilitySpec = Pick<
+  AnalysisSpec,
+  "selection" | "protocol_segments" | "computation" | "presentation"
+>;
+
+function makeSpec(): CompatibilitySpec {
+  return {
+    selection: {
+      entries: [{ kind: "cell", ref_id: 7 }],
+      exclusions: [],
+    },
+    protocol_segments: [
+      {
+        id: "rpt",
+        name: "RPT",
+        targets: [{ protocol_signature: "protocol-a", step_indices: [1, 2] }],
+      },
+    ],
+    computation: {
+      cycle_range: { start: 1, end: 3 },
+      exclude_check_cycles_every_n: 0,
+      retention_reference: { mode: "max_first_n", n: 5, cycle: null },
+      formation_cycles: 3,
+      polarization: { method: "mean", direction: "charge_minus_discharge" },
+      protocol_filter: { excluded_segment_ids: [], only_segment_ids: [] },
+    },
+    presentation: {
+      quantity: "discharge_capacity",
+      ce_overlay: true,
+      show_individual_cells: true,
+      legend: true,
+      hidden_protocol_segment_ids: [],
+    },
+  };
+}
+
+function makeConfig(): TimeCapacityQueryConfig {
+  return {
+    x_axis: "time",
+    time_unit: "min",
+    display_mode: "consecutive",
+    stacked: false,
+    current_left: "current_ma",
+    current_right: "none",
+    electrode_area_cm2: null,
+    view: "voltage_current",
+    derivative_phase: "both",
+    derivative_specific: false,
+    derivative_absolute_discharge: true,
+    smoothing_window: 7,
+    cycle_start: 1,
+    cycle_end: 3,
+    cycles: [],
+    max_points_per_cell: 4000,
+    voltage_channel: "voltage",
+  };
+}
+
+function signature(
+  spec: CompatibilitySpec = makeSpec(),
+  config: TimeCapacityQueryConfig = makeConfig(),
+  viewportWidth = 1200,
+): string {
+  return timeCapacityCompatibilitySignature(spec, config, viewportWidth);
+}
+
+test("range and density changes are compatible placeholder identities", () => {
+  const range = makeConfig();
+  const widerRange = { ...range, cycle_end: 20 };
+  const explicitCycles = { ...range, cycle_start: null, cycle_end: null, cycles: [1, 20] };
+  const denser = { ...range, max_points_per_cell: 8000 };
+
+  assert.equal(signature(makeSpec(), range), signature(makeSpec(), widerRange));
+  assert.equal(signature(makeSpec(), range), signature(makeSpec(), explicitCycles));
+  assert.equal(signature(makeSpec(), range), signature(makeSpec(), denser));
+});
+
+test("selection and protocol visibility changes are incompatible", () => {
+  const selected = makeSpec();
+  const changedSelection = makeSpec();
+  changedSelection.selection.entries = [{ kind: "cell", ref_id: 8 }];
+  const changedFilter = makeSpec();
+  changedFilter.computation.protocol_filter = {
+    excluded_segment_ids: ["rpt"],
+    only_segment_ids: [],
+  };
+  const changedHidden = makeSpec();
+  changedHidden.presentation.hidden_protocol_segment_ids = ["rpt"];
+
+  assert.notEqual(signature(selected), signature(changedSelection));
+  assert.notEqual(signature(selected), signature(changedFilter));
+  assert.notEqual(signature(selected), signature(changedHidden));
+});
+
+test("coordinate, mode, normalization, voltage, and derivative changes are incompatible", () => {
+  const changes: Array<(config: TimeCapacityQueryConfig) => TimeCapacityQueryConfig> = [
+    (config) => ({ ...config, x_axis: "capacity_mah" }),
+    (config) => ({ ...config, time_unit: "h" }),
+    (config) => ({ ...config, display_mode: "overlap_mirror" }),
+    (config) => ({ ...config, electrode_area_cm2: 2.5 }),
+    (config) => ({ ...config, voltage_channel: "working_potential" }),
+    (config) => ({ ...config, view: "dqdv" }),
+    (config) => ({ ...config, derivative_phase: "discharge" }),
+    (config) => ({ ...config, derivative_specific: true }),
+    (config) => ({ ...config, derivative_absolute_discharge: false }),
+    (config) => ({ ...config, smoothing_window: 11 }),
+  ];
+
+  for (const change of changes) {
+    assert.notEqual(signature(), signature(makeSpec(), change(makeConfig())));
+  }
+});
+
+test("placeholder data is retained only for the same compatibility identity", () => {
+  const compatible = signature();
+  const incompatible = signature(makeSpec(), { ...makeConfig(), x_axis: "capacity_mah" });
+  const previous = { cell_traces: [{ cycle: [1, 2] }] };
+
+  assert.equal(timeCapacityPlaceholderCompatible(compatible, compatible), true);
+  assert.equal(timeCapacityPlaceholderCompatible(compatible, incompatible), false);
+  assert.deepEqual(
+    timeCapacityPlaceholderData(
+      previous,
+      ["time-capacity", 7, compatible, "old-range"],
+      7,
+      compatible,
+    ),
+    previous,
+  );
+  assert.equal(
+    timeCapacityPlaceholderData(
+      previous,
+      ["time-capacity", 7, incompatible, "old-axis"],
+      7,
+      compatible,
+    ),
+    undefined,
+  );
+  assert.equal(
+    timeCapacityPlaceholderData(
+      previous,
+      ["time-capacity", 8, compatible, "other-analysis"],
+      7,
+      compatible,
+    ),
+    undefined,
+  );
+});
+
+test("live and saved-preview Time/Capacity queries forward React Query cancellation", () => {
+  const liveSource = readFileSync(
+    new URL("../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx", import.meta.url),
+    "utf8",
+  );
+  const savedPreviewSource = readFileSync(
+    new URL("../src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx", import.meta.url),
+    "utf8",
+  );
+  const editorSource = readFileSync(
+    new URL("../src/features/analyses/editor/AnalysisEditor.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(liveSource, /queryFn: async \(\{ signal \}\) =>/);
+  assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
+  assert.match(savedPreviewSource, /queryFn: \(\{ signal \}\) =>/);
+  assert.match(savedPreviewSource, /background: warmup,\s*\n\s*\}, \{ signal \}\),/);
+
+  const autosaveStart = editorSource.indexOf("const signatureAtSchedule = autosaveSignature;");
+  const autosaveEnd = editorSource.indexOf("const displayResult", autosaveStart);
+  assert.ok(autosaveStart >= 0 && autosaveEnd > autosaveStart);
+  const autosaveSource = editorSource.slice(autosaveStart, autosaveEnd);
+  assert.match(autosaveSource, /refreshPersistedAnalysisQueries\(qc, aid, saved\)/);
+  assert.doesNotMatch(autosaveSource, /invalidateAnalysisQueries/);
+});

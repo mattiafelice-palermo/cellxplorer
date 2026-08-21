@@ -43,6 +43,21 @@ export async function clearAnalysisQueryCache(qc: QueryClient, analysisId: numbe
   qc.removeQueries({ predicate });
 }
 
+/**
+ * Apply a persisted Analysis response without treating the editor save as a
+ * source/scientific-data mutation. The detail response is already available,
+ * so replacing it directly avoids a second GET; the compact index is still
+ * invalidated so its title/modified-time/plot summary can refresh.
+ */
+export async function refreshPersistedAnalysisQueries<T>(
+  qc: QueryClient,
+  analysisId: number,
+  saved: T,
+): Promise<void> {
+  qc.setQueryData(["analysis", analysisId], saved);
+  await qc.invalidateQueries({ queryKey: ["analyses"] });
+}
+
 export async function invalidateAnalysisQueries(
   qc: QueryClient,
   activeAnalysisId?: number | null,

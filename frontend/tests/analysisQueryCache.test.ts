@@ -5,6 +5,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   invalidateAnalysisQueries,
   invalidateSourceScientificQueries,
+  refreshPersistedAnalysisQueries,
   sourceUpdateCellId,
 } from "../src/features/analyses/workspace/analysisQueryCache.ts";
 
@@ -132,6 +133,36 @@ test("analysis invalidation cancels a superseded active result before refreshing
     version: "fresh",
   });
   unsubscribe();
+  queryClient.clear();
+});
+
+test("persisted analysis refresh updates detail/index without scientific invalidation", async () => {
+  const queryClient = new QueryClient();
+  const saved = { id: 7, title: "Saved title", spec: { selection: { entries: [] } } };
+  const scientificKeys = [
+    ["compute", 7],
+    ["time-capacity", 7, "compatible", "range-20"],
+    ["steps", 7, "steps-signature"],
+    ["dcir", 7, "dcir-signature"],
+    ["chargeability", 7, "chargeability-signature"],
+    ["rate-capability", 7, "rate-signature"],
+    ["saved-plot-preview", 7, "plot-1", "preview"],
+    ["plot-thumbnail", 7, "plot-1", "preview"],
+    ["plot-artifact", 7, "plot-1", "preview"],
+  ] as const;
+  for (const key of scientificKeys) queryClient.setQueryData(key, { ready: true });
+  queryClient.setQueryData(["analysis", 7], { id: 7, title: "Old title" });
+  queryClient.setQueryData(["analysis", 8], { id: 8, title: "Other title" });
+  queryClient.setQueryData(["analyses"], [{ id: 7, title: "Old title" }]);
+
+  await refreshPersistedAnalysisQueries(queryClient, 7, saved);
+
+  assert.deepEqual(queryClient.getQueryData(["analysis", 7]), saved);
+  assert.equal(queryClient.getQueryState(["analyses"])?.isInvalidated, true);
+  assert.deepEqual(queryClient.getQueryData(["analysis", 8]), { id: 8, title: "Other title" });
+  for (const key of scientificKeys) {
+    assert.notEqual(queryClient.getQueryState(key)?.isInvalidated, true, String(key));
+  }
   queryClient.clear();
 });
 

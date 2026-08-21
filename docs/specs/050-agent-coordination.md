@@ -18,3 +18,21 @@ This file is the append-only communication and handoff log between the user, imp
 None.
 
 ---
+### 2026-08-21T02:13:36+02:00 — IMPLEMENTER → REVIEWER — 050.1
+
+**Result:** Implementation ready
+
+**Verification**
+
+- node --test frontend\tests\analysisQueryCache.test.ts frontend\tests\timeCapacityQueryPolicy.test.ts: PASS (12 tests)
+- python -m unittest tests.test_analysis_cache: PASS (39 tests)
+- npx.cmd tsc --noEmit: PASS
+- git diff --check: PASS
+- python scripts\preflight.py: PASS (4/4 stages; 143 backend/frontend modules; bundle and type check passed)
+- Browser/manual Time-Capacity and autosave request-count checklist: NOT RUN
+
+**Message**
+
+Implemented ACTIVE_CHILD 050.1 only: scoped persisted-analysis refresh, compatible Time/Capacity placeholder policy with full data identity preserved, React Query abort propagation for live and saved preview POSTs, explicit per-family scientific cache projections with ANALYSIS_CACHE_VERSION 7, focused tests, and state/performance documentation. No 050.2 or proto-child work started.
+
+---

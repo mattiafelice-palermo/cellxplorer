@@ -1,0 +1,74 @@
+import type { AnalysisSpec } from "../../../../api";
+
+export type TimeCapacityQueryConfig = NonNullable<
+  AnalysisSpec["computation"]["time_capacity"]
+>;
+
+type TimeCapacityCompatibilitySpec = Pick<
+  AnalysisSpec,
+  "selection" | "protocol_segments" | "computation" | "presentation"
+>;
+
+/**
+ * Return the identity of the meaning carried by a compact Time/Capacity
+ * response. Range and density are intentionally absent: those fields select
+ * which records are returned, but do not relabel the records already on the
+ * plot. Every coordinate/series semantic is kept here so placeholder data
+ * cannot be shown under a different meaning while a new request is pending.
+ */
+export function timeCapacityCompatibilitySignature(
+  spec: TimeCapacityCompatibilitySpec,
+  config: TimeCapacityQueryConfig,
+  viewportWidth: number,
+): string {
+  return JSON.stringify({
+    selection: spec.selection,
+    protocol_segments: spec.protocol_segments ?? [],
+    protocol_filter: spec.computation.protocol_filter ?? {},
+    hidden_protocol_segment_ids: spec.presentation.hidden_protocol_segment_ids ?? [],
+    x_axis: config.x_axis,
+    time_unit: config.time_unit,
+    display_mode: config.display_mode,
+    electrode_area_cm2: config.electrode_area_cm2,
+    voltage_channel: config.voltage_channel,
+    view: config.view,
+    derivative_phase: config.derivative_phase,
+    derivative_specific: config.derivative_specific,
+    derivative_absolute_discharge: config.derivative_absolute_discharge,
+    smoothing_window: config.smoothing_window,
+    viewport_width: viewportWidth,
+  });
+}
+
+export function timeCapacityPlaceholderCompatible(
+  previousSignature: string | undefined,
+  nextSignature: string,
+): boolean {
+  return previousSignature !== undefined && previousSignature === nextSignature;
+}
+
+/**
+ * React Query supplies the last query key alongside placeholder data. The
+ * compatibility signature is the third key component; the full data
+ * signature remains the fourth component and still owns fetching/cache
+ * identity for the complete request.
+ */
+export function timeCapacityPlaceholderData<T>(
+  previousData: T | undefined,
+  previousQueryKey: readonly unknown[] | undefined,
+  analysisId: number,
+  nextSignature: string,
+): T | undefined {
+  if (
+    previousData === undefined ||
+    previousQueryKey?.[0] !== "time-capacity" ||
+    Number(previousQueryKey[1]) !== analysisId
+  ) {
+    return undefined;
+  }
+  const previousSignature =
+    typeof previousQueryKey[2] === "string" ? previousQueryKey[2] : undefined;
+  return timeCapacityPlaceholderCompatible(previousSignature, nextSignature)
+    ? previousData
+    : undefined;
+}

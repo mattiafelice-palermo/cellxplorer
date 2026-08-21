@@ -105,6 +105,7 @@ import {
 import {
   clearAnalysisQueryCache,
   invalidateAnalysisQueries,
+  refreshPersistedAnalysisQueries,
 } from "../workspace/analysisQueryCache";
 import {
   clearAnalysisWorkspaceEditorState,
@@ -2828,10 +2829,8 @@ function AnalysisEditorView({
       if (!persistSpec) return;
       setAutosaveStatus("saving");
       put<AnalysisFull>(`/api/analyses/${aid}`, { title, spec: persistSpec })
-        .then(() => {
-          qc.invalidateQueries({ queryKey: ["analysis", aid] });
-          qc.invalidateQueries({ queryKey: ["analyses"] });
-          void invalidateAnalysisQueries(qc, aid);
+        .then((saved) => {
+          void refreshPersistedAnalysisQueries(qc, aid, saved);
           if (autosaveSignatureRef.current === signatureAtSchedule) {
             setDirty(false);
             setAutosaveStatus("saved");

@@ -46,6 +46,10 @@ import {
   voltageChannelSelectorOptions,
   type VoltageChannel,
 } from "../../policies/voltageChannelPolicy";
+import {
+  timeCapacityCompatibilitySignature,
+  timeCapacityPlaceholderData,
+} from "../../policies/timeCapacityQueryPolicy";
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
@@ -1138,6 +1142,14 @@ function TimeCapacityPlotCardView({
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = 1200;
+  // Keep this separate from dataSignature. Range and point-density changes
+  // may retain the old compact result while the replacement is fetched, but
+  // a semantic/display change must never relabel that result temporarily.
+  const compatibilitySignature = timeCapacityCompatibilitySignature(
+    spec,
+    cfg,
+    viewportWidth,
+  );
   // Refetch when fields that change the returned data change. The compact
   // response ships only the canonical `display_x` (and the one raw array) for
   // the *currently selected* x axis, so the x quantity, its unit, the display
@@ -1200,8 +1212,8 @@ function TimeCapacityPlotCardView({
   const voltageChannelRef = useRef(cfg.voltage_channel);
   voltageChannelRef.current = cfg.voltage_channel;
   const timeResult = useQuery({
-    queryKey: ["time-capacity", analysisId, dataSignature],
-    queryFn: async () => {
+    queryKey: ["time-capacity", analysisId, compatibilitySignature, dataSignature],
+    queryFn: async ({ signal }) => {
       // The server opens an activity entry only if the cache misses, so send a
       // token instead of pre-creating a job: a cached load costs one request
       // and leaves no spurious "Preparing..." entry behind.
@@ -1214,7 +1226,7 @@ function TimeCapacityPlotCardView({
           viewport_width: viewportWidth,
           precision: "standard",
           compact: true,
-        });
+        }, { signal });
       } finally {
         window.setTimeout(
           () => setComputeToken((current) => (current === token ? null : current)),
@@ -1222,6 +1234,13 @@ function TimeCapacityPlotCardView({
         );
       }
     },
+    placeholderData: (previous, previousQuery) =>
+      timeCapacityPlaceholderData(
+        previous,
+        previousQuery?.queryKey,
+        analysisId,
+        compatibilitySignature,
+      ),
     enabled: spec.selection.entries.length > 0,
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..config import CACHE_DIR, CALC_VERSION
 
-ANALYSIS_CACHE_VERSION = 6
+ANALYSIS_CACHE_VERSION = 7
 # ^ Spec 049: protocol targets now resolve current, version-3, and version-1 /
 # legacy protocol-signature aliases. Existing result files are therefore
 # deterministically invalidated so a warm cache cannot disagree with a
@@ -35,6 +35,10 @@ ANALYSIS_CACHE_VERSION = 6
 # the digest changed — but bumping documents the generation change explicitly
 # per this module's own guidance ("changes that genuinely affect every
 # analysis result family").
+# Spec 050.1: result keys now use explicit per-family dependency projections
+# instead of hashing unrelated computation-family settings. This is a cache
+# identity generation change; scientific meaning and response schemas are
+# unchanged.
 RESULT_SCHEMA_VERSIONS = {
     # Spec 040.3: each kind's persisted "sources" entries gained a "files"
     # array (per-source {hash, position, parser_version}), so a legacy
@@ -64,6 +68,10 @@ _THUMBNAILS = _ROOT / "thumbnails"
 _THUMBNAIL_INDEXES = _ROOT / "thumbnail-index"
 _PREPARED = _ROOT / "prepared"
 _lock = threading.RLock()
+
+_SCIENTIFIC_RESULT_KINDS = frozenset(
+    {"cycles", "time_capacity", "steps", "dcir", "chargeability", "rate_capability"}
+)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -145,8 +153,23 @@ def _forget_budgeted(path: Path) -> None:
             _budget_total -= _file_size(path)
 
 
-def _scientific_spec(spec: dict) -> dict:
+def _scientific_spec(spec: dict, kind: str) -> dict:
+    """Project only the scientific settings consumed by one result family.
+
+    Analysis specs are shared by all tabs, but the compute services do not
+    consume every family block. Keeping this projection explicit prevents a
+    presentation edit or an unrelated family's configuration from evicting a
+    valid result while retaining the exact legacy/current values each family
+    reads. Unknown kinds fail closed so a new endpoint cannot accidentally use
+    an incomplete cache identity.
+    """
+    if kind not in _SCIENTIFIC_RESULT_KINDS:
+        raise ValueError(f"No scientific cache projection configured for result kind: {kind}")
+
+    computation = spec.get("computation") or {}
     presentation = spec.get("presentation") or {}
+    selection = spec.get("selection") or {}
+    aggregation = spec.get("aggregation") or {}
 
     def scientific_segments(value: object) -> list[object]:
         """Exclude editor-only provenance while retaining scientific fields."""
@@ -164,13 +187,66 @@ def _scientific_spec(spec: dict) -> dict:
             result.append(normalized)
         return result
 
+    protocol_segments = scientific_segments(spec.get("protocol_segments"))
+    hidden_protocol_segment_ids = presentation.get("hidden_protocol_segment_ids") or []
+
+    if kind == "cycles":
+        return {
+            "selection": selection,
+            "computation": {
+                "cycle_range": computation.get("cycle_range") or {},
+                "exclude_check_cycles_every_n": computation.get(
+                    "exclude_check_cycles_every_n"
+                )
+                or 0,
+                "retention_reference": computation.get("retention_reference") or {},
+                "formation_cycles": computation.get("formation_cycles") or 0,
+                "polarization": computation.get("polarization") or {},
+                "protocol_filter": computation.get("protocol_filter") or {},
+            },
+            "aggregation": aggregation,
+            "protocol_segments": protocol_segments,
+            "hidden_protocol_segment_ids": hidden_protocol_segment_ids,
+        }
+
+    if kind == "time_capacity":
+        return {
+            "selection": selection,
+            "computation": {
+                "time_capacity": computation.get("time_capacity") or {},
+                # Time/Capacity retains the generic cycle-range fallback used
+                # by time_capacity_settings() for legacy specs without a
+                # dedicated time_capacity range.
+                "cycle_range": computation.get("cycle_range") or {},
+                "protocol_filter": computation.get("protocol_filter") or {},
+            },
+            "protocol_segments": protocol_segments,
+            "hidden_protocol_segment_ids": hidden_protocol_segment_ids,
+        }
+
+    if kind == "steps":
+        return {
+            "selection": selection,
+            "computation": {"steps": computation.get("steps") or {}},
+            "protocol_segments": protocol_segments,
+        }
+
+    if kind == "dcir":
+        return {
+            "selection": selection,
+            "computation": {"dcir": computation.get("dcir") or {}},
+            "dcir_segments": scientific_segments(spec.get("dcir_segments")),
+        }
+
+    if kind == "chargeability":
+        return {
+            "selection": selection,
+            "computation": {"chargeability": computation.get("chargeability") or {}},
+        }
+
     return {
-        "selection": spec.get("selection") or {},
-        "computation": spec.get("computation") or {},
-        "aggregation": spec.get("aggregation") or {},
-        "protocol_segments": scientific_segments(spec.get("protocol_segments")),
-        "dcir_segments": scientific_segments(spec.get("dcir_segments")),
-        "hidden_protocol_segment_ids": presentation.get("hidden_protocol_segment_ids") or [],
+        "selection": selection,
+        "computation": {"rate_capability": computation.get("rate_capability") or {}},
     }
 
 
@@ -183,6 +259,9 @@ def result_key(
     use_current_versions: bool,
     request_options: dict | None = None,
 ) -> str:
+    if kind not in _SCIENTIFIC_RESULT_KINDS:
+        raise ValueError(f"No scientific cache projection configured for result kind: {kind}")
+
     # Local import avoids analysis_engine -> cache -> analysis_cache cycles.
     from . import analysis_engine as engine
 
@@ -236,10 +315,10 @@ def result_key(
     return _digest(
         {
             "cache_version": ANALYSIS_CACHE_VERSION,
-            "result_schema_version": RESULT_SCHEMA_VERSIONS.get(kind, 1),
+            "result_schema_version": RESULT_SCHEMA_VERSIONS[kind],
             "kind": kind,
             "calc_version": calc_version,
-            "spec": _scientific_spec(spec),
+            "spec": _scientific_spec(spec, kind),
             "units": unit_fingerprints,
             "missing": missing,
             "options": request_options or {},

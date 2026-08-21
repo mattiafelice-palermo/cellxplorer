@@ -652,14 +652,14 @@ export function SavedTimeCapacityPreview({
   });
   const preview = useQuery({
     queryKey: previewQueryKey,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
         spec: previewSpec,
         viewport_width: 1200,
         precision: "standard",
         compact: true,
         background: warmup,
-      }),
+      }, { signal }),
     // Warmup must not recompute plots that are already cached: the compute
     // only runs when neither a thumbnail nor a full artifact exists, exactly
     // like the visible path.

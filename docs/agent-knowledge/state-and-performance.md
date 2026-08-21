@@ -263,9 +263,23 @@ voltage column `computation.time_capacity.voltage_channel` selects
 (`voltage`/`working_potential`/`counter_potential`). This is a scientific input exactly like
 `x_axis`, so `voltage_channel` must be in the frontend query signature too — omitting it would
 reuse a cached primary-voltage response after the user switched to an electrode potential.
-`analysis_cache._scientific_spec` already hashes the whole `computation` object, so the backend
-cache key needs no separate wiring for a new field like this; only the frontend's own React Query
-key (`TimeCapacityPlotCard.tsx`'s `dataSignature`) has to list it explicitly.
+The frontend keeps that full `dataSignature` as the fetch/cache identity and carries a second
+`timeCapacityCompatibilitySignature` in the React Query key. Only cycle-window and point-density
+changes reuse the previous result as placeholder data; changing selection, protocol filtering,
+coordinate/unit/display meaning, normalization, voltage channel, or derivative semantics clears
+the old visible result until the new response arrives. Both live and saved Time/Capacity POSTs
+consume React Query's abort signal, while backend synchronous work remains outside the browser
+cancellation guarantee.
+
+Spec 050.1 also makes `analysis_cache._scientific_spec(spec, kind)` an explicit dependency
+projection. Cycles owns its generic calculation/filter/aggregation settings, Time/Capacity owns
+its dedicated settings plus the generic cycle-range fallback and protocol filtering, Steps owns
+its series and shared protocol targets, DCIR owns its private segments and series, and
+Chargeability/Rate capability own their respective recognition settings. Shared selection and
+the documented protocol-filter/segment inputs remain in the families that actually consume them;
+presentation-only fields and unrelated computation blocks do not. `ANALYSIS_CACHE_VERSION` is
+bumped for this identity-generation change; `CALC_VERSION` and response schema versions remain
+unchanged. Unknown result kinds fail closed instead of falling back to a broad whole-spec hash.
 
 ## Analysis workspace tabs
 
@@ -307,6 +321,11 @@ The generic cycle query must stay disabled while any of those tabs is active; ot
 saved-plot change starts an unrelated cycle computation beside the visible request. Their query
 observers should retain previous data during a key change, and a delayed loading indicator should
 appear only when no plot is available.
+An ordinary editor autosave is a persistence update, not a scientific invalidation: its returned
+`AnalysisFull` is written directly to `['analysis', analysisId]` and `['analyses']` is invalidated
+for compact index metadata. Source/cell/scientific mutations continue to use the broad scoped
+invalidation helper. Saved-plot create/update/delete paths retain their explicit artifact,
+thumbnail, prepared-marker, and preview lifecycle rather than depending on autosave side effects.
 Within a newly mounted analysis family, the live plot has request priority. Saved rows may look up
 and display already-cached thumbnails immediately, but missing saved-plot computations are admitted
 sequentially during idle time only after the live plot is ready. Do not prefetch every thumbnail

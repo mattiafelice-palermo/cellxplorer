@@ -34,6 +34,81 @@ class AnalysisCacheTests(unittest.TestCase):
             patcher.stop()
         self.temporary.cleanup()
 
+    def _family_spec(self):
+        return {
+            "selection": {
+                "units": [{"kind": "cell", "ref_id": 7}],
+                "exclusions": [],
+                "hidden_replicate_group_ids": [],
+            },
+            "computation": {
+                "cycle_range": {"start": 1, "end": 3},
+                "exclude_check_cycles_every_n": 5,
+                "retention_reference": {"mode": "max_first_n", "n": 5, "cycle": None},
+                "formation_cycles": 3,
+                "polarization": {"method": "mean", "direction": "charge_minus_discharge"},
+                "protocol_filter": {"excluded_segment_ids": [], "only_segment_ids": []},
+                "time_capacity": {
+                    "x_axis": "time",
+                    "time_unit": "min",
+                    "display_mode": "consecutive",
+                    "electrode_area_cm2": None,
+                    "voltage_channel": "voltage",
+                },
+                "steps": {"series": [{"id": "s1", "cell_id": 7}], "mode": "union"},
+                "dcir": {"series": [{"id": "d1", "cell_id": 7}]},
+                "chargeability": {"initial_soc_max_pct": 20.0},
+                "rate_capability": {"min_points": 3},
+            },
+            "aggregation": {"mode": "replicate_mean", "dispersion": "std", "min_n_for_band": 2},
+            "protocol_segments": [
+                {
+                    "id": "shared-rpt",
+                    "name": "Shared RPT",
+                    "protocol_group_id": "group-a",
+                    "targets": [
+                        {"protocol_signature": "protocol-a", "step_indices": [1, 2]}
+                    ],
+                }
+            ],
+            "dcir_segments": [
+                {
+                    "id": "dcir-discharge",
+                    "name": "Discharge pulse",
+                    "protocol_group_id": "group-a",
+                    "targets": [
+                        {
+                            "protocol_signature": "protocol-a",
+                            "rest_step_index": 12,
+                            "pulse_step_index": 13,
+                        }
+                    ],
+                }
+            ],
+            "presentation": {"hidden_protocol_segment_ids": []},
+        }
+
+    def _family_result_keys(self, spec):
+        db = object()
+        with (
+            patch.object(analysis_engine, "resolve_selection", return_value=([], [])),
+            patch.object(analysis_engine, "preload_cell_sources"),
+            patch.object(analysis_engine, "load_scalar_metadata", return_value={}),
+        ):
+            return {
+                kind: analysis_cache.result_key(
+                    db, kind, spec, None, use_current_versions=True
+                )
+                for kind in (
+                    "cycles",
+                    "time_capacity",
+                    "steps",
+                    "dcir",
+                    "chargeability",
+                    "rate_capability",
+                )
+            }
+
     def test_result_cache_survives_memory_lifetimes(self):
         value = {"cell_traces": [{"x": [1, 2], "y": [3.25, 4.5]}]}
         analysis_cache.store_result("time_capacity", "a" * 64, value)
@@ -199,6 +274,102 @@ class AnalysisCacheTests(unittest.TestCase):
             analysis_cache.load_indexed_thumbnail(7, "plot-partial", "client")
         )
 
+    def test_result_key_family_projection_uses_only_family_owned_computation(self):
+        base = self._family_spec()
+        base_keys = self._family_result_keys(base)
+        own_changes = {
+            "cycles": lambda spec: spec["computation"].update(formation_cycles=4),
+            "time_capacity": lambda spec: spec["computation"]["time_capacity"].update(
+                x_axis="capacity_mah"
+            ),
+            "steps": lambda spec: spec["computation"]["steps"].update(mode="contiguous"),
+            "dcir": lambda spec: spec["computation"]["dcir"]["series"][0].update(
+                cell_id=8
+            ),
+            "chargeability": lambda spec: spec["computation"]["chargeability"].update(
+                initial_soc_max_pct=25.0
+            ),
+            "rate_capability": lambda spec: spec["computation"]["rate_capability"].update(
+                min_points=4
+            ),
+        }
+
+        for owner, change in own_changes.items():
+            changed = deepcopy(base)
+            change(changed)
+            changed_keys = self._family_result_keys(changed)
+            self.assertNotEqual(changed_keys[owner], base_keys[owner], owner)
+            for other, key in base_keys.items():
+                if other != owner:
+                    self.assertEqual(changed_keys[other], key, f"{owner} leaked into {other}")
+
+    def test_result_key_family_projection_keeps_shared_dependencies_and_excludes_presentation(self):
+        base = self._family_spec()
+        base_keys = self._family_result_keys(base)
+
+        shared_changes = []
+        changed = deepcopy(base)
+        changed["selection"]["units"][0]["ref_id"] = 8
+        shared_changes.append(("selection", changed, set(base_keys)))
+
+        changed = deepcopy(base)
+        changed["computation"]["cycle_range"]["end"] = 20
+        shared_changes.append(("cycle range", changed, {"cycles", "time_capacity"}))
+
+        changed = deepcopy(base)
+        changed["computation"]["protocol_filter"]["only_segment_ids"] = ["shared-rpt"]
+        shared_changes.append(("protocol filter", changed, {"cycles", "time_capacity"}))
+
+        changed = deepcopy(base)
+        changed["computation"]["exclude_check_cycles_every_n"] = 7
+        shared_changes.append(("check-cycle filter", changed, {"cycles"}))
+
+        changed = deepcopy(base)
+        changed["computation"]["retention_reference"]["n"] = 8
+        shared_changes.append(("retention reference", changed, {"cycles"}))
+
+        changed = deepcopy(base)
+        changed["computation"]["polarization"]["method"] = "first_first"
+        shared_changes.append(("polarization", changed, {"cycles"}))
+
+        changed = deepcopy(base)
+        changed["protocol_segments"][0]["targets"][0]["step_indices"] = [1, 3]
+        shared_changes.append(("shared protocol segments", changed, {"cycles", "time_capacity", "steps"}))
+
+        changed = deepcopy(base)
+        changed["presentation"]["hidden_protocol_segment_ids"] = ["shared-rpt"]
+        shared_changes.append(("hidden protocol segments", changed, {"cycles", "time_capacity"}))
+
+        changed = deepcopy(base)
+        changed["aggregation"]["dispersion"] = "sem"
+        shared_changes.append(("aggregation", changed, {"cycles"}))
+
+        changed = deepcopy(base)
+        changed["dcir_segments"][0]["targets"][0]["pulse_step_index"] = 15
+        shared_changes.append(("private dcir segments", changed, {"dcir"}))
+
+        changed = deepcopy(base)
+        changed["presentation"]["unrelated_style"] = {"line_width": 4}
+        shared_changes.append(("presentation-only style", changed, set()))
+
+        for label, changed, affected in shared_changes:
+            changed_keys = self._family_result_keys(changed)
+            for kind, key in base_keys.items():
+                if kind in affected:
+                    self.assertNotEqual(changed_keys[kind], key, f"{label} missing from {kind}")
+                else:
+                    self.assertEqual(changed_keys[kind], key, f"{label} leaked into {kind}")
+
+    def test_unknown_result_kind_fails_closed_before_cache_key_construction(self):
+        with self.assertRaisesRegex(ValueError, "No scientific cache projection"):
+            analysis_cache.result_key(
+                object(),
+                "future_family",
+                self._family_spec(),
+                None,
+                use_current_versions=True,
+            )
+
     def test_steps_view_does_not_change_scientific_cache_spec(self):
         base = {
             "selection": {"units": [{"kind": "cell", "ref_id": 7}]},
@@ -234,8 +405,8 @@ class AnalysisCacheTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_view),
+            analysis_cache._scientific_spec(base, "steps"),
+            analysis_cache._scientific_spec(changed_view, "steps"),
         )
 
     def test_steps_series_and_mode_change_scientific_cache_spec(self):
@@ -275,12 +446,12 @@ class AnalysisCacheTests(unittest.TestCase):
         }
 
         self.assertNotEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_series),
+            analysis_cache._scientific_spec(base, "steps"),
+            analysis_cache._scientific_spec(changed_series, "steps"),
         )
         self.assertNotEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_mode),
+            analysis_cache._scientific_spec(base, "steps"),
+            analysis_cache._scientific_spec(changed_mode, "steps"),
         )
 
     def test_time_capacity_voltage_channel_changes_scientific_cache_spec(self):
@@ -301,10 +472,10 @@ class AnalysisCacheTests(unittest.TestCase):
         legacy = deepcopy(base)
         del legacy["computation"]["time_capacity"]["voltage_channel"]
 
-        specs = analysis_cache._scientific_spec(base)
-        specs_working = analysis_cache._scientific_spec(working)
-        specs_counter = analysis_cache._scientific_spec(counter)
-        specs_legacy = analysis_cache._scientific_spec(legacy)
+        specs = analysis_cache._scientific_spec(base, "time_capacity")
+        specs_working = analysis_cache._scientific_spec(working, "time_capacity")
+        specs_counter = analysis_cache._scientific_spec(counter, "time_capacity")
+        specs_legacy = analysis_cache._scientific_spec(legacy, "time_capacity")
 
         self.assertNotEqual(specs, specs_working)
         self.assertNotEqual(specs, specs_counter)
@@ -422,8 +593,8 @@ class AnalysisCacheTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_view),
+            analysis_cache._scientific_spec(base, "dcir"),
+            analysis_cache._scientific_spec(changed_view, "dcir"),
         )
 
     def test_dcir_series_and_private_targets_change_scientific_cache_spec(self):
@@ -465,12 +636,12 @@ class AnalysisCacheTests(unittest.TestCase):
         changed_target["dcir_segments"][0]["targets"][0]["pulse_step_index"] = 15
 
         self.assertNotEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_series),
+            analysis_cache._scientific_spec(base, "dcir"),
+            analysis_cache._scientific_spec(changed_series, "dcir"),
         )
         self.assertNotEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_target),
+            analysis_cache._scientific_spec(base, "dcir"),
+            analysis_cache._scientific_spec(changed_target, "dcir"),
         )
 
     def test_editor_only_protocol_group_provenance_does_not_change_cache_identity(self):
@@ -517,16 +688,16 @@ class AnalysisCacheTests(unittest.TestCase):
         changed_provenance["dcir_segments"][0]["protocol_group_id"] = "group-b"
 
         self.assertEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_provenance),
+            analysis_cache._scientific_spec(base, "steps"),
+            analysis_cache._scientific_spec(changed_provenance, "steps"),
         )
 
         changed_target = deepcopy(base)
         changed_target["protocol_segments"][0]["targets"][0]["step_indices"] = [12, 14]
         changed_target["dcir_segments"][0]["targets"][0]["pulse_step_index"] = 15
         self.assertNotEqual(
-            analysis_cache._scientific_spec(base),
-            analysis_cache._scientific_spec(changed_target),
+            analysis_cache._scientific_spec(base, "steps"),
+            analysis_cache._scientific_spec(changed_target, "steps"),
         )
 
         db = object()
@@ -537,9 +708,7 @@ class AnalysisCacheTests(unittest.TestCase):
         ):
             for kind in ("steps", "dcir"):
                 self.assertEqual(
-                    analysis_cache.result_key(
-                        db, kind, base, None, use_current_versions=True
-                    ),
+                    analysis_cache.result_key(db, kind, base, None, use_current_versions=True),
                     analysis_cache.result_key(
                         db, kind, changed_provenance, None, use_current_versions=True
                     ),
