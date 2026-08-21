@@ -269,7 +269,9 @@ changes reuse the previous result as placeholder data; changing selection, proto
 coordinate/unit/display meaning, normalization, voltage channel, or derivative semantics clears
 the old visible result until the new response arrives. Both live and saved Time/Capacity POSTs
 consume React Query's abort signal, while backend synchronous work remains outside the browser
-cancellation guarantee.
+cancellation guarantee. A retained placeholder is display-only: plot/image/vector export stays
+disabled until the current query resolves, while the separate data-export path requests and validates
+full-resolution data for the current identity.
 
 Spec 050.1 also makes `analysis_cache._scientific_spec(spec, kind)` an explicit dependency
 projection. Cycles owns its generic calculation/filter/aggregation settings, Time/Capacity owns

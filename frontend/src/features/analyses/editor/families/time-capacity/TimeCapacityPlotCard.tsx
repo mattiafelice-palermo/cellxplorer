@@ -48,6 +48,7 @@ import {
 } from "../../policies/voltageChannelPolicy";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityPlotExportReady,
   timeCapacityPlaceholderData,
 } from "../../policies/timeCapacityQueryPolicy";
 import Plot from "../../../../../components/Plot";
@@ -1319,6 +1320,12 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentResult, selectedVoltageUnavailable, viewSignature]
   );
+  const plotExportReady = timeCapacityPlotExportReady(
+    timeResult.isPlaceholderData,
+    Boolean(currentResult),
+    selectedVoltageUnavailable,
+    exportTraces.length > 0,
+  );
   const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
@@ -1368,7 +1375,7 @@ function TimeCapacityPlotCardView({
 
   // faithful mini-render of the export output for the settings popover
   const getExportPreview = async (): Promise<string | null> => {
-    if (!plotDivRef.current || exportTraces.length === 0) return null;
+    if (!plotExportReady || !plotDivRef.current || exportTraces.length === 0) return null;
     const plan = resolveExportPlan(style, currentViewSize(), layout);
     const toImage = (
       PlotlyLib as unknown as { toImage: (fig: unknown, options: unknown) => Promise<string> }
@@ -1424,7 +1431,7 @@ function TimeCapacityPlotCardView({
   };
 
   const exportPlot = async (format: PlotExportFormat, baseName: string) => {
-    if (!plotDivRef.current || !currentResult || selectedVoltageUnavailable) return;
+    if (!plotExportReady || !plotDivRef.current || !currentResult || selectedVoltageUnavailable) return;
     try {
       const plan = resolveExportPlan(style, currentViewSize(), layout);
       const ppi = Math.max(36, style.export_ppi ?? 96);
@@ -1545,9 +1552,10 @@ function TimeCapacityPlotCardView({
           getExportPreview={getExportPreview}
           style={style}
           updateStyle={updatePlotStyle}
-           viewSize={plotSize}
-           layout={layout}
-           canExport={Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
+          viewSize={plotSize}
+          layout={layout}
+          canExport={Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
+          canPlotExport={plotExportReady && !dataExporting}
           edited={edited}
           onNewPlot={onNewPlot}
           newPlotEnabled={newPlotEnabled}

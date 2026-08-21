@@ -5,6 +5,7 @@ import test from "node:test";
 import type { AnalysisSpec } from "../src/api.ts";
 import {
   timeCapacityCompatibilitySignature,
+  timeCapacityPlotExportReady,
   timeCapacityPlaceholderCompatible,
   timeCapacityPlaceholderData,
   type TimeCapacityQueryConfig,
@@ -159,6 +160,14 @@ test("placeholder data is retained only for the same compatibility identity", ()
   );
 });
 
+test("plot export is unavailable while a compatible placeholder is displayed", () => {
+  assert.equal(timeCapacityPlotExportReady(true, true, false, true), false);
+  assert.equal(timeCapacityPlotExportReady(false, true, false, true), true);
+  assert.equal(timeCapacityPlotExportReady(false, false, false, true), false);
+  assert.equal(timeCapacityPlotExportReady(false, true, true, true), false);
+  assert.equal(timeCapacityPlotExportReady(false, true, false, false), false);
+});
+
 test("live and saved-preview Time/Capacity queries forward React Query cancellation", () => {
   const liveSource = readFileSync(
     new URL("../src/features/analyses/editor/families/time-capacity/TimeCapacityPlotCard.tsx", import.meta.url),
@@ -168,6 +177,10 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
     new URL("../src/features/analyses/editor/artifacts/SavedPlotPreviews.tsx", import.meta.url),
     "utf8",
   );
+  const headerSource = readFileSync(
+    new URL("../src/features/analyses/editor/plotting/PlotHeader.tsx", import.meta.url),
+    "utf8",
+  );
   const editorSource = readFileSync(
     new URL("../src/features/analyses/editor/AnalysisEditor.tsx", import.meta.url),
     "utf8",
@@ -175,6 +188,12 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
 
   assert.match(liveSource, /queryFn: async \(\{ signal \}\) =>/);
   assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
+  assert.match(liveSource, /timeCapacityPlotExportReady/);
+  assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
+  assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);
+  assert.match(headerSource, /const plotExportEnabled = canPlotExport \?\? canExport/);
+  assert.match(headerSource, /getExportPreview && plotExportEnabled/);
+  assert.match(headerSource, /disabled=\{!plotExportEnabled\}/);
   assert.match(savedPreviewSource, /queryFn: \(\{ signal \}\) =>/);
   assert.match(savedPreviewSource, /background: warmup,\s*\n\s*\}, \{ signal \}\),/);
 

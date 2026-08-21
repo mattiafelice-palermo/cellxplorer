@@ -72,3 +72,17 @@ export function timeCapacityPlaceholderData<T>(
     ? previousData
     : undefined;
 }
+
+/**
+ * A retained compatible result is visible plot content, but it is not the
+ * resolved result for the current request identity and must not be serialized
+ * as a plot export.
+ */
+export function timeCapacityPlotExportReady(
+  isPlaceholderData: boolean,
+  hasCurrentResult: boolean,
+  voltageUnavailable: boolean,
+  hasTraces: boolean,
+): boolean {
+  return !isPlaceholderData && hasCurrentResult && !voltageUnavailable && hasTraces;
+}

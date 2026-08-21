@@ -147,6 +147,7 @@ export function PlotHeader({
   viewSize,
   layout,
   canExport = false,
+  canPlotExport,
   edited = false,
   onNewPlot,
   newPlotEnabled = false,
@@ -170,6 +171,8 @@ export function PlotHeader({
   viewSize?: { width: number; height: number } | null;
   layout?: Partial<Plotly.Layout>;
   canExport?: boolean;
+  /** Plot/image/vector export readiness; defaults to the data-export readiness. */
+  canPlotExport?: boolean;
   /** Amber chip when the open saved plot has unsaved edits. */
   edited?: boolean;
   onNewPlot?: () => void;
@@ -182,6 +185,7 @@ export function PlotHeader({
   updatePlotLabel?: string;
 }) {
   const exportStyle = style ?? DEFAULT_PLOT_STYLE;
+  const plotExportEnabled = canPlotExport ?? canExport;
   const selectedFormat = exportStyle.export_format ?? "png";
   const [exportPopoverOpen, setExportPopoverOpen] = useState(false);
   const [dataExportPopoverOpen, setDataExportPopoverOpen] = useState(false);
@@ -247,7 +251,7 @@ export function PlotHeader({
   // live thumbnail of the actual export output (same figure, scaled down),
   // regenerated while the popover is open and settings change
   useEffect(() => {
-    if (!exportPopoverOpen || !getExportPreview) return;
+    if (!exportPopoverOpen || !getExportPreview || !plotExportEnabled) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       getExportPreview()
@@ -266,9 +270,16 @@ export function PlotHeader({
   }, [
     exportPopoverOpen,
     exportPreviewSignature,
+    plotExportEnabled,
     viewSize?.width,
     viewSize?.height,
   ]);
+
+  useEffect(() => {
+    if (plotExportEnabled) return;
+    setPreviewUrl(null);
+    setExportPopoverOpen(false);
+  }, [plotExportEnabled]);
 
   return (
     <>
@@ -426,7 +437,7 @@ export function PlotHeader({
               size="xs"
               variant="default"
               leftSection={<IconDownload size={14} />}
-              disabled={!canExport}
+              disabled={!plotExportEnabled}
               onClick={exportPlot}
             >
               {selectedFormat.toUpperCase()}
@@ -444,7 +455,7 @@ export function PlotHeader({
                   size="xs"
                   variant="default"
                   px={6}
-                  disabled={!canExport}
+                  disabled={!plotExportEnabled}
                   aria-label="Export settings"
                   onClick={() => setExportPopoverOpen((open) => !open)}
                 >
@@ -462,7 +473,7 @@ export function PlotHeader({
                     alignItems: "start",
                   }}
                 >
-                  {getExportPreview && (
+                  {getExportPreview && plotExportEnabled && (
                     <Stack gap={6}>
                       <Text size="xs" fw={600} c="dimmed">
                         {selectedFormat === "png"
@@ -592,6 +603,7 @@ export function PlotHeader({
                       <Button
                         fullWidth
                         leftSection={<IconDownload size={14} />}
+                        disabled={!plotExportEnabled}
                         onClick={exportPlot}
                       >
                         Download {selectedFormat.toUpperCase()}
