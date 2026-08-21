@@ -464,6 +464,15 @@ cycle, index and derived publication boundary. Focused parity and golden tests a
 boundary; profiler output must keep raw/prepared group counts and phase/capacity source facts
 separate from wall-clock claims.
 
+Spec 050.7 keeps derivative science in `analysis_engine._derivative_curve()` unchanged while
+removing two repeat costs: explicit-CV status is classified once for the selected frame through
+`calc.status_matches()`, and contiguous `(cycle, segment, phase)` boundaries are computed once
+before the exact per-run numerical kernels. The bounded derivative profile therefore reports a
+separate `status_classification` stage alongside scan, prepare, rolling, gradient, ratio, and
+postprocess. Any later derivative optimization must preserve the status mask's row-local behavior,
+the exact run counters, committed golden digests, and the existing frontend trace-count evidence;
+the derivative arrays are not a persisted cache or a new scientific version boundary.
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):

@@ -1,4 +1,4 @@
-"""Profile the 050.6 Time/Capacity transform and prepared-cache boundaries.
+"""Profile the 050.6 transform/cache boundaries and 050.7 derivatives.
 
 This is an isolated, diagnostic-only harness.  It uses the committed golden
 source in a temporary CellXplorer database, creates disposable Cell records
@@ -78,7 +78,16 @@ def _range_settings(settings: dict, cycles: list[int], cycle_end: int | None) ->
     settings["max_points_per_cell"] = 4000
 
 
-def make_spec(base: dict, cell_ids: list[int], cycles: list[int], cycle_end: int | None, *, x_axis: str = "time", view: str = "voltage_current") -> dict:
+def make_spec(
+    base: dict,
+    cell_ids: list[int],
+    cycles: list[int],
+    cycle_end: int | None,
+    *,
+    x_axis: str = "time",
+    view: str = "voltage_current",
+    derivative_specific: bool = False,
+) -> dict:
     spec = deepcopy(base)
     spec["selection"]["entries"] = [
         {"kind": "cell", "ref_id": cell_id}
@@ -90,7 +99,7 @@ def make_spec(base: dict, cell_ids: list[int], cycles: list[int], cycle_end: int
     settings["view"] = view
     if view != "voltage_current":
         settings["derivative_phase"] = "both"
-        settings["derivative_specific"] = False
+        settings["derivative_specific"] = derivative_specific
         settings["smoothing_window"] = 7
     return spec
 
@@ -113,6 +122,7 @@ def summarize_sample(
     scenario: str,
     x_axis: str,
     view: str,
+    derivative_specific: bool,
     prepared_state: str,
 ) -> dict:
     stages = profile.get("backend_stages_ms") or {}
@@ -123,6 +133,7 @@ def summarize_sample(
         "cells": cells,
         "x_axis": x_axis,
         "view": view,
+        "derivative_specific": derivative_specific if view != "voltage_current" else None,
         "prepared_state": prepared_state,
         "result_cache": "miss",
         "raw_access": profile.get("raw_access"),
@@ -148,6 +159,7 @@ def summarize_sample(
             "derivative": stages.get("derivative"),
             "derivative_segment_scan": derivative.get("stages_ms", {}).get("segment_scan"),
             "derivative_segment_prepare": derivative.get("stages_ms", {}).get("segment_prepare"),
+            "derivative_status_classification": derivative.get("stages_ms", {}).get("status_classification"),
             "derivative_rolling": derivative.get("stages_ms", {}).get("rolling"),
             "derivative_gradient": derivative.get("stages_ms", {}).get("gradient"),
             "derivative_ratio_filter": derivative.get("stages_ms", {}).get("ratio_filter"),
@@ -190,6 +202,7 @@ def run_engine_sample(
     x_axis: str,
     view: str,
     cells: int,
+    derivative_specific: bool,
     prepared_state: str,
 ) -> dict:
     from unittest.mock import patch
@@ -213,7 +226,7 @@ def run_engine_sample(
     from app.services.time_capacity_profiling import build_time_capacity_profile
 
     profile = build_time_capacity_profile(
-        request_id=f"050.6-{prepared_state}-{scenario}",
+        request_id=f"050.7-{prepared_state}-{scenario}",
         result_cache="miss",
         diagnostics=diagnostics,
         result=result,
@@ -227,6 +240,7 @@ def run_engine_sample(
         scenario=scenario,
         x_axis=x_axis,
         view=view,
+        derivative_specific=derivative_specific,
         prepared_state=prepared_state,
     )
 
@@ -243,16 +257,26 @@ def run_repetitions(
     view: str,
     label: str,
     prepared_state: str,
+    derivative_specific: bool = False,
 ) -> dict:
     samples = [
         run_engine_sample(
             engine,
             env,
-            make_spec(base, cell_ids, cycles, cycle_end, x_axis=x_axis, view=view),
+            make_spec(
+                base,
+                cell_ids,
+                cycles,
+                cycle_end,
+                x_axis=x_axis,
+                view=view,
+                derivative_specific=derivative_specific,
+            ),
             scenario=label,
             x_axis=x_axis,
             view=view,
             cells=len(cell_ids),
+            derivative_specific=derivative_specific,
             prepared_state=prepared_state,
         )
         for _ in range(REPETITIONS)
@@ -293,6 +317,7 @@ def run_repetitions(
         "cells": len(cell_ids),
         "x_axis": x_axis,
         "view": view,
+        "derivative_specific": derivative_specific if view != "voltage_current" else None,
         "prepared_state": prepared_state,
         "repetitions": REPETITIONS,
         "median": median,
@@ -608,12 +633,37 @@ def main() -> int:
                         prepared_state=prepared_state,
                     )
                 )
+        for view, label, cycles, cycle_end, derivative_specific in (
+            ("dvdq", "all", [], None, False),
+            ("dqdv", "all-specific", [], None, True),
+        ):
+            for prepared_state in ("fallback", "prepared"):
+                print(
+                    f"profiling {view} {label} specific={derivative_specific} "
+                    f"state={prepared_state}",
+                    flush=True,
+                )
+                matrix.append(
+                    run_repetitions(
+                        analysis_engine,
+                        env,
+                        base,
+                        [GOLDEN_CELL_ID],
+                        cycles,
+                        cycle_end,
+                        x_axis="capacity_mah",
+                        view=view,
+                        label=f"{view}/{label}/specific={derivative_specific}",
+                        derivative_specific=derivative_specific,
+                        prepared_state=prepared_state,
+                    )
+                )
         print("profiling persisted result-cache miss/hit", flush=True)
         cache_probe = run_cache_probe(env, base, GOLDEN_CELL_ID)
         print("profiling controlled five-cell route gap", flush=True)
         route_gap_probe = run_route_gap_probe(env, base, clone_ids[:5])
     evidence = {
-        "spec": "050.6",
+        "spec": "050.7",
         "fixture": "golden cycles_time_steps.ndax (71,190 rows, 193 cycles)",
         "multi_cell_note": "3- and 6-Cell matrices use disposable Cell/source clones of the committed golden raw cache; they are not the user's six-cell dataset.",
         "prepared_artifact": preparation,
@@ -625,6 +675,9 @@ def main() -> int:
             "repetitions_per_scenario": REPETITIONS,
         },
         "matrix": matrix,
+        "derivative_matrix": [
+            item for item in matrix if item["view"] in {"dqdv", "dvdq"}
+        ],
         "persisted_cache_probe": cache_probe,
         "route_gap_probe": route_gap_probe,
         "http_gap_interpretation": "Direct route-level repetitions are not a browser transport measurement; use the route-minus-profile distribution to test for local server prelude/response overhead. Browser/network gaps remain external evidence.",

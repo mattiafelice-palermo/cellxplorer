@@ -169,6 +169,7 @@ def _derivative_profile(cells: list[Mapping[str, Any]]) -> dict[str, Any] | None
         stages = cell.get("stages")
         if isinstance(stages, Mapping):
             for name in (
+                "derivative_status_classification",
                 "derivative_segment_scan",
                 "derivative_segment_prepare",
                 "derivative_rolling",

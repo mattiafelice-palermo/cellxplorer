@@ -1096,6 +1096,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("derivative_ratio_filter", derivative_diagnostics["cells"][0]["stages"])
         self.assertIn("derivative_segment_scan", derivative_diagnostics["cells"][0]["stages"])
         self.assertIn("derivative_segment_prepare", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_status_classification", derivative_diagnostics["cells"][0]["stages"])
         self.assertIn("derivative_postprocess", derivative_diagnostics["cells"][0]["stages"])
 
     def test_time_capacity_profile_route_real_interactive_request_exposes_diagnostics(self):
@@ -2100,6 +2101,194 @@ def synth_three_electrode_raw(n_cycles: int, cap0: float, fade: float) -> pd.Dat
                     "timestamp": pd.Timestamp("2026-01-01") + pd.Timedelta(seconds=t),
                 })
     return pd.DataFrame(rows)
+
+
+class DerivativeCurveTests(unittest.TestCase):
+    @staticmethod
+    def _settings(**overrides):
+        settings = {
+            "view": "dqdv",
+            "derivative_phase": "both",
+            "derivative_specific": False,
+            "derivative_absolute_discharge": True,
+            "smoothing_window": 1,
+        }
+        settings.update(overrides)
+        return settings
+
+    def _run(
+        self,
+        q,
+        v,
+        *,
+        phases=None,
+        cycles=None,
+        segments=None,
+        statuses=None,
+        include_status=True,
+        q_specific=None,
+        settings=None,
+    ):
+        q = np.asarray(q, dtype="float64")
+        v = np.asarray(v, dtype="float64")
+        n = len(q)
+        phases = list(phases) if phases is not None else ["charge"] * n
+        cycles = list(cycles) if cycles is not None else [1] * n
+        segments = list(segments) if segments is not None else [1] * n
+        frame = pd.DataFrame({
+            "cycle": cycles,
+            "segment": segments,
+            "voltage_v": v,
+        })
+        if include_status:
+            frame["status"] = statuses if statuses is not None else ["CC_Chg"] * n
+        diagnostics = {}
+        x_out, y_out = engine._derivative_curve(
+            frame,
+            phases,
+            q,
+            q if q_specific is None else np.asarray(q_specific, dtype="float64"),
+            self._settings(**(settings or {})),
+            diagnostics,
+        )
+        return x_out, y_out, diagnostics
+
+    def test_dqdv_charge_segment(self):
+        x_out, y_out, _ = self._run([0, 1, 2, 3], [0, 1, 2, 3])
+        np.testing.assert_allclose(x_out, [0, 1, 2, 3])
+        np.testing.assert_allclose(y_out, [1, 1, 1, 1])
+
+    def test_dqdv_discharge_absolute_toggle(self):
+        _, absolute, _ = self._run(
+            [0, 1, 2, 3], [3, 2, 1, 0], phases=["discharge"] * 4
+        )
+        _, signed, _ = self._run(
+            [0, 1, 2, 3],
+            [3, 2, 1, 0],
+            phases=["discharge"] * 4,
+            settings={"derivative_absolute_discharge": False},
+        )
+        np.testing.assert_allclose(absolute, [1, 1, 1, 1])
+        np.testing.assert_allclose(signed, [-1, -1, -1, -1])
+
+    def test_dvdq(self):
+        x_out, y_out, _ = self._run(
+            [0, 1, 2, 3], [0, 2, 4, 6], settings={"view": "dvdq"}
+        )
+        np.testing.assert_allclose(x_out, [0, 1, 2, 3])
+        np.testing.assert_allclose(y_out, [2, 2, 2, 2])
+
+    def test_derivative_specific_capacity(self):
+        x_out, y_out, _ = self._run(
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+            q_specific=[0, 0.5, 1, 1.5],
+            settings={"derivative_specific": True},
+        )
+        np.testing.assert_allclose(x_out, [0, 1, 2, 3])
+        np.testing.assert_allclose(y_out, [0.5, 0.5, 0.5, 0.5])
+
+    def test_even_smoothing_window_is_equivalent_to_next_odd_window(self):
+        even_x, even_y, _ = self._run(
+            range(7), [0, 1, 4, 9, 16, 25, 36], settings={"smoothing_window": 2}
+        )
+        odd_x, odd_y, _ = self._run(
+            range(7), [0, 1, 4, 9, 16, 25, 36], settings={"smoothing_window": 3}
+        )
+        np.testing.assert_array_equal(even_x, odd_x)
+        np.testing.assert_array_equal(even_y, odd_y)
+
+    def test_explicit_cv_only_rows_are_masked(self):
+        _, y_out, diagnostics = self._run(
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+            statuses=["CV_Chg"] * 4,
+        )
+        self.assertTrue(np.isnan(y_out).all())
+        self.assertIn("derivative_status_classification", diagnostics["stages"])
+
+    def test_cccv_is_not_masked_by_explicit_cv_rule(self):
+        _, y_out, _ = self._run(
+            [0, 1, 2, 3], [0, 1, 2, 3], statuses=["CCCV_Chg"] * 4
+        )
+        np.testing.assert_allclose(y_out, [1, 1, 1, 1])
+
+    def test_mixed_status_rows_are_masked_locally(self):
+        _, y_out, _ = self._run(
+            [0, 1, 2, 3],
+            [0, 1, 2, 3],
+            statuses=["CC_Chg", "CV_Chg", "CCCV_Chg", "CC_Chg"],
+        )
+        self.assertTrue(np.isfinite(y_out[[0, 2, 3]]).all())
+        self.assertTrue(np.isnan(y_out[1]))
+
+    def test_denominator_near_zero_is_nan(self):
+        _, y_out, _ = self._run([0, 1, 2, 3], [2, 2, 2, 2])
+        self.assertTrue(np.isnan(y_out).all())
+
+    def test_local_scale_outlier_is_rejected(self):
+        _, y_out, _ = self._run(
+            range(6), [0, 1, 1.000001, 1.000002, 1.000003, 2]
+        )
+        self.assertTrue(np.isnan(y_out).any())
+        self.assertTrue(np.isfinite(y_out).any())
+
+    def test_nan_capacity_or_voltage_does_not_escape_segment(self):
+        _, y_out, _ = self._run([0, 1, np.nan, 3, 4], [0, 1, 2, 3, 4])
+        self.assertEqual(np.isnan(y_out).tolist(), [False, True, False, True, False])
+
+    def test_contiguous_boundaries_preserve_segment_counts_and_phase_rows(self):
+        _, y_out, diagnostics = self._run(
+            range(14),
+            range(14),
+            cycles=[1] * 8 + [2] * 6,
+            segments=[1] * 6 + [2] * 2 + [1] * 4 + [2] * 2,
+            phases=["charge"] * 4 + ["discharge"] * 4 + ["charge"] * 4 + ["rest"] * 2,
+        )
+        profile = diagnostics["derivative_profile"]
+        self.assertEqual(profile["segments_processed"], 5)
+        self.assertEqual(profile["eligible_segments"], 4)
+        self.assertEqual(profile["output_segments"], 4)
+        self.assertEqual(profile["phase_rows"], {"charge": 8, "discharge": 4, "rest": 2})
+        self.assertTrue(all(type(value) is int for value in profile["phase_rows"].values()))
+        self.assertTrue(np.isfinite(y_out[:12]).all())
+        self.assertTrue(np.isnan(y_out[12:]).all())
+
+    def test_selected_phase_limits_output_to_matching_runs(self):
+        phases = ["charge"] * 4 + ["discharge"] * 4
+        q = range(8)
+        v = range(8)
+        for selected, expected in (
+            ("charge", ([True] * 4 + [False] * 4)),
+            ("discharge", ([False] * 4 + [True] * 4)),
+            ("both", ([True] * 8)),
+        ):
+            _, y_out, _ = self._run(
+                q,
+                v,
+                phases=phases,
+                segments=[1] * 4 + [2] * 4,
+                settings={"derivative_phase": selected},
+            )
+            self.assertEqual(np.isfinite(y_out).tolist(), expected)
+
+    def test_frame_without_status_preserves_derivative(self):
+        _, y_out, _ = self._run(
+            [0, 1, 2, 3], [0, 1, 2, 3], include_status=False
+        )
+        np.testing.assert_allclose(y_out, [1, 1, 1, 1])
+
+    def test_empty_and_no_eligible_runs_are_empty_or_nan(self):
+        x_out, y_out, diagnostics = self._run([], [])
+        self.assertEqual(x_out.size, 0)
+        self.assertEqual(y_out.size, 0)
+        self.assertEqual(diagnostics["derivative_profile"]["segments_processed"], 0)
+
+        _, rest_y, rest_diagnostics = self._run(
+            [0, 1, 2], [0, 1, 2], phases=["rest"] * 3
+        )
+        self.assertTrue(np.isnan(rest_y).all())
+        self.assertEqual(rest_diagnostics["derivative_profile"]["eligible_segments"], 0)
 
 
 class TimeCapacitySettingsVoltageChannelTests(unittest.TestCase):

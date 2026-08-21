@@ -521,3 +521,22 @@ R1 removes the measured phase-only prepared-sidecar regression: compact Voltage/
 R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axis Voltage/Current computes phase from selected raw rows, reports derived_access=not_needed, and retains exact fallback parity; the profiler now records the actual production path without claiming a phase-sidecar win. R2 fixed by preventing only the write-behind owner from joining itself; external readers still wait for the complete publication boundary. Added focused coverage and updated the 050.6 implementation record and durable performance knowledge. No 050.P1 or derivative optimization was implemented.
 
 ---
+### 2026-08-21T22:58:12+02:00 — IMPLEMENTER → REVIEWER — 050.7
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused derivative + Time/Capacity tests: PASS (99 tests)
+- supporting cache/path tests: PASS (61 tests)
+- golden analysis: PASS (30 tests; all 8 committed digests SAME)
+- paired derivative profiling: PASS (5 repetitions per scenario; All and 1-3 thresholds met)
+- git diff --check and py_compile: PASS
+- preflight: PASS (4/4 stages; 77 backend modules; frontend checks skipped unchanged)
+- browser/manual checks: NOT REQUIRED (backend-only child)
+
+**Message**
+
+050.7 implemented: frame-wide explicit-CV classification via calc.status_matches, exact precomputed contiguous boundaries, unchanged derivative kernels, focused edge coverage, profiler aggregation, and paired evidence recorded in the child spec.
+
+---

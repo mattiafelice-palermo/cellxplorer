@@ -1557,21 +1557,36 @@ def _derivative_curve(
         }
         diagnostics["derivative_profile"] = derivative_profile
 
-    start = 0
-    while start < n:
-        with time_capacity_path.timed_stage(diagnostics, "derivative_segment_scan"):
-            key = (cycles[start], segments[start], phase_arr[start])
-            end = start + 1
-            while end < n and (cycles[end], segments[end], phase_arr[end]) == key:
-                end += 1
-            phase = phase_arr[start]
-            if derivative_profile is not None:
-                derivative_profile["segments_processed"] += 1
-                phase_rows = derivative_profile["phase_rows"]
-                phase_rows[phase] = phase_rows.get(phase, 0) + end - start
-            eligible = phase in {"charge", "discharge"} and (
-                selected_phase == "both" or selected_phase == phase
+    if "status" in frame.columns:
+        with time_capacity_path.timed_stage(diagnostics, "derivative_status_classification"):
+            explicit_cv_only = calc.status_matches(frame["status"], "cv") & ~calc.status_matches(
+                frame["status"], "cccv"
             )
+    else:
+        explicit_cv_only = np.zeros(n, dtype=bool)
+
+    with time_capacity_path.timed_stage(diagnostics, "derivative_segment_scan"):
+        if n:
+            changed = (
+                (cycles[1:] != cycles[:-1])
+                | (segments[1:] != segments[:-1])
+                | (phase_arr[1:] != phase_arr[:-1])
+            )
+            starts = np.concatenate((np.array([0], dtype=int), np.flatnonzero(changed) + 1))
+            ends = np.concatenate((starts[1:], np.array([n], dtype=int)))
+        else:
+            starts = np.empty(0, dtype=int)
+            ends = np.empty(0, dtype=int)
+
+    for start, end in zip(starts.tolist(), ends.tolist()):
+        phase = phase_arr[start]
+        if derivative_profile is not None:
+            derivative_profile["segments_processed"] += 1
+            phase_rows = derivative_profile["phase_rows"]
+            phase_rows[phase] = phase_rows.get(phase, 0) + end - start
+        eligible = phase in {"charge", "discharge"} and (
+            selected_phase == "both" or selected_phase == phase
+        )
         if eligible:
             if derivative_profile is not None:
                 derivative_profile["eligible_segments"] += 1
@@ -1602,10 +1617,7 @@ def _derivative_curve(
                     # be split from status alone, so reject values far beyond the
                     # local Q/V scale rather than allowing a near-zero denominator
                     # to dominate the plot axis.
-                    if "status" in frame.columns:
-                        step_status = frame["status"].iloc[start:end].astype(str).str.lower()
-                        explicit_cv = step_status.str.contains("cv") & ~step_status.str.contains("cccv")
-                        derivative[explicit_cv.to_numpy()] = np.nan
+                    derivative[explicit_cv_only[start:end]] = np.nan
                     q_finite = q_s[np.isfinite(q_s)]
                     v_finite = v_s[np.isfinite(v_s)]
                     if len(q_finite) >= 2 and len(v_finite) >= 2:
@@ -1624,7 +1636,6 @@ def _derivative_curve(
                         derivative_profile["output_finite_rows"] += output_finite
                         if output_finite:
                             derivative_profile["output_segments"] += 1
-        start = end
     return x_out, y_out
 
 
