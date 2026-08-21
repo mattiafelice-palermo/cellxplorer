@@ -308,3 +308,23 @@ Parent R1 is resolved in 1fe2beb. At the user's explicit request, reserved 050.4
 R1 fixes the incompatible frontend/backend identity comparison that currently prevents a live profiled HTTP result from completing a record. R2 prevents React Query memory hits from inheriting stale server profiling facts. R3 records actual resolved Cell count separately from selection entries and Plotly trace count. Fix only R1-R3 and hand back for 050.4 review; do not begin 050.5, any optimization implementation, or proto-child 050.P1.
 
 ---
+### 2026-08-21T14:37:10+02:00 — IMPLEMENTER → REVIEWER — 050.4
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 identity regression: PASS
+- R2 React Query memory-cache hygiene regression: PASS
+- R3 resolved Cell versus Plotly trace counts: PASS
+- frontend tests: PASS (648)
+- backend/preflight modules: PASS (147)
+- frontend type check and production bundle: PASS
+- canonical preflight: PASS (4/4)
+- browser/end-to-end matrix: NOT RUN
+
+**Message**
+
+050.4 R1-R3 review fixes are committed in 36aa9ee and pushed. R1 binds completion to the frontend React Query/profile identity rather than backend data_signature; R2 marks warm React Query memory hits explicitly without inheriting server diagnostics; R3 separates selection entries, resolved Cell count, and Plotly trace count. No 050.5 or 050.P1 work was started; browser matrix remains NOT RUN.
+
+---
