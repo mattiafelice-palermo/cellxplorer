@@ -1681,6 +1681,27 @@ export interface TimeCapacityBackendProfile {
   backend_serialize_ms?: number;
   response_bytes?: number;
   backend_stages_ms?: Record<string, number>;
+  transform_stages?: Record<
+    string,
+    {
+      elapsed_ms: number;
+      input_rows: number;
+      output_rows: number;
+      cells: number;
+      consumed_by: string[];
+    }
+  >;
+  derivative_profile?: {
+    cells: number;
+    input_rows: number;
+    segments_processed: number;
+    eligible_segments: number;
+    finite_input_rows: number;
+    output_finite_rows: number;
+    output_segments: number;
+    phase_rows: Record<string, number>;
+    stages_ms: Record<string, number>;
+  };
   row_groups_read?: number | "full";
   row_groups_total?: number | "full";
   raw_rows_materialized?: number;

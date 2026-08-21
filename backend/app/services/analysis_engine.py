@@ -1502,12 +1502,32 @@ def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
     return out
 
 
+def _record_transform_profile(
+    diagnostics: dict[str, Any] | None,
+    name: str,
+    *,
+    input_rows: int,
+    output_rows: int,
+    consumed_by: tuple[str, ...],
+) -> None:
+    """Record safe row/dependency facts for the opt-in 050.5 profiler."""
+
+    if diagnostics is None:
+        return
+    diagnostics.setdefault("transform_profile", {})[name] = {
+        "input_rows": int(input_rows),
+        "output_rows": int(output_rows),
+        "consumed_by": list(consumed_by),
+    }
+
+
 def _derivative_curve(
     frame: pd.DataFrame,
     phases: list[str],
     capacity_mah: np.ndarray,
     capacity_mah_g: np.ndarray,
     settings: dict,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return x/y arrays for ICA (dQ/dV) or DVA (dV/dQ)."""
     n = len(frame)
@@ -1525,6 +1545,18 @@ def _derivative_curve(
     if window % 2 == 0:
         window += 1
     selected_phase = settings.get("derivative_phase") or "both"
+    derivative_profile: dict[str, Any] | None = None
+    if diagnostics is not None:
+        derivative_profile = {
+            "input_rows": n,
+            "segments_processed": 0,
+            "eligible_segments": 0,
+            "finite_input_rows": 0,
+            "output_finite_rows": 0,
+            "output_segments": 0,
+            "phase_rows": {"charge": 0, "discharge": 0, "rest": 0},
+        }
+        diagnostics["derivative_profile"] = derivative_profile
 
     start = 0
     while start < n:
@@ -1533,21 +1565,32 @@ def _derivative_curve(
         while end < n and (cycles[end], segments[end], phase_arr[end]) == key:
             end += 1
         phase = phase_arr[start]
+        if derivative_profile is not None:
+            derivative_profile["segments_processed"] += 1
+            phase_rows = derivative_profile["phase_rows"]
+            phase_rows[phase] = phase_rows.get(phase, 0) + end - start
         if phase in {"charge", "discharge"} and (selected_phase == "both" or selected_phase == phase):
+            if derivative_profile is not None:
+                derivative_profile["eligible_segments"] += 1
             q = capacity[start:end]
             v = voltage[start:end]
             finite = np.isfinite(q) & np.isfinite(v)
             if finite.sum() >= 2:
+                if derivative_profile is not None:
+                    derivative_profile["finite_input_rows"] += int(finite.sum())
                 min_periods = min(window, 3, int(finite.sum()))
-                q_s = pd.Series(q).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
-                v_s = pd.Series(v).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
-                dq = np.gradient(q_s)
-                dv = np.gradient(v_s)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    derivative = np.divide(dq, dv) if mode == "dqdv" else np.divide(dv, dq)
-                denominator = dv if mode == "dqdv" else dq
-                derivative[np.abs(denominator) < 1e-10] = np.nan
-                derivative[~np.isfinite(derivative)] = np.nan
+                with time_capacity_path.timed_stage(diagnostics, "derivative_rolling"):
+                    q_s = pd.Series(q).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
+                    v_s = pd.Series(v).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
+                with time_capacity_path.timed_stage(diagnostics, "derivative_gradient"):
+                    dq = np.gradient(q_s)
+                    dv = np.gradient(v_s)
+                with time_capacity_path.timed_stage(diagnostics, "derivative_ratio_filter"):
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        derivative = np.divide(dq, dv) if mode == "dqdv" else np.divide(dv, dq)
+                    denominator = dv if mode == "dqdv" else dq
+                    derivative[np.abs(denominator) < 1e-10] = np.nan
+                    derivative[~np.isfinite(derivative)] = np.nan
                 # Explicit CV-only steps have dV ~= 0 by design and therefore
                 # no finite ICA/DVA interpretation. Combined CCCV steps cannot
                 # be split from status alone, so reject values far beyond the
@@ -1570,6 +1613,11 @@ def _derivative_curve(
                 x_values = v_s if mode == "dqdv" else q_s
                 x_out[start:end] = x_values
                 y_out[start:end] = derivative
+                if derivative_profile is not None:
+                    output_finite = int(np.isfinite(derivative).sum())
+                    derivative_profile["output_finite_rows"] += output_finite
+                    if output_finite:
+                        derivative_profile["output_segments"] += 1
         start = end
     return x_out, y_out
 
@@ -2636,6 +2684,7 @@ def compute_time_capacity(
             "cell_id": cell.id,
             "cell_name": cell.name,
         }
+        profile_diagnostics = cell_diagnostics if access_diagnostics is not None else None
         if access_diagnostics is not None:
             access_diagnostics["cells"].append(cell_diagnostics)
         if progress:
@@ -2852,40 +2901,167 @@ def compute_time_capacity(
         with time_capacity_path.timed_stage(
             cell_diagnostics, "continuous_time_phase_capacity"
         ):
-            raw = _continuous_time(raw)
-            source_values = source_columns(raw, files)
-            source_boundary_indices = (
-                np.flatnonzero(
-                    raw["segment"].to_numpy()[1:]
-                    != raw["segment"].to_numpy()[:-1]
+            transform_rows = len(raw)
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_continuous_time"
+            ):
+                raw = _continuous_time(raw)
+            _record_transform_profile(
+                profile_diagnostics,
+                "continuous_time",
+                input_rows=transform_rows,
+                output_rows=len(raw),
+                consumed_by=tuple(
+                    [
+                        *(
+                            ["time_axis"]
+                            if settings["view"] == "voltage_current"
+                            and settings["x_axis"] == "time"
+                            else []
+                        ),
+                        *(["full_export"] if precision == "full" or not compact else []),
+                    ]
+                ),
+            )
+
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_source_provenance"
+            ):
+                source_values = source_columns(raw, files)
+            _record_transform_profile(
+                profile_diagnostics,
+                "source_provenance",
+                input_rows=len(raw),
+                output_rows=len(raw),
+                consumed_by=("provenance_output",),
+            )
+
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_source_boundaries"
+            ):
+                source_boundary_indices = (
+                    np.flatnonzero(
+                        raw["segment"].to_numpy()[1:]
+                        != raw["segment"].to_numpy()[:-1]
+                    )
+                    + 1
+                    if "segment" in raw.columns and len(raw) > 1
+                    else np.array([], dtype="int64")
                 )
-                + 1
-                if "segment" in raw.columns and len(raw) > 1
-                else np.array([], dtype="int64")
+            _record_transform_profile(
+                profile_diagnostics,
+                "source_boundaries",
+                input_rows=len(raw),
+                output_rows=len(source_boundary_indices),
+                consumed_by=("provenance_output", "display_downsampling"),
             )
-            phases = _phase_from_raw(raw)
-            capacity = _phase_capacity(raw, phases)
-            active_mass_mg = cell_active_mass_mg(cell)
-            nominal_capacity_mah = cell_nominal_capacity_mah(cell)
-            electrode_area_cm2 = cell_electrode_area_cm2(cell)
+
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_phase_classification"
+            ):
+                phases = _phase_from_raw(raw)
+            _record_transform_profile(
+                profile_diagnostics,
+                "phase_classification",
+                input_rows=len(raw),
+                output_rows=len(phases),
+                consumed_by=("phase_output", "display_coordinate", "derivative"),
+            )
+
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_phase_capacity"
+            ):
+                capacity = _phase_capacity(raw, phases)
+            capacity_consumers = [
+                *(["derivative"] if settings["view"] != "voltage_current" else []),
+                *(
+                    ["capacity_axis"]
+                    if settings["view"] == "voltage_current"
+                    and settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
+                    else []
+                ),
+                *(["full_export"] if precision == "full" or not compact else []),
+            ]
+            _record_transform_profile(
+                profile_diagnostics,
+                "phase_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity),
+                consumed_by=tuple(capacity_consumers),
+            )
+
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_capacity_metadata"
+            ):
+                active_mass_mg = cell_active_mass_mg(cell)
+                nominal_capacity_mah = cell_nominal_capacity_mah(cell)
+                electrode_area_cm2 = cell_electrode_area_cm2(cell)
+            _record_transform_profile(
+                profile_diagnostics,
+                "capacity_metadata",
+                input_rows=len(raw),
+                output_rows=1,
+                consumed_by=("capacity_normalization", "trace_metadata"),
+            )
+
             active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
-            capacity_g = (
-                capacity / active_mass_g
-                if active_mass_g and active_mass_g > 0
-                else np.full(len(raw), np.nan)
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_specific_capacity"
+            ):
+                capacity_g = (
+                    capacity / active_mass_g
+                    if active_mass_g and active_mass_g > 0
+                    else np.full(len(raw), np.nan)
+                )
+            _record_transform_profile(
+                profile_diagnostics,
+                "specific_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity_g),
+                consumed_by=tuple(
+                    [
+                        *(["derivative"] if settings["view"] != "voltage_current" and settings["derivative_specific"] else []),
+                        *(
+                            ["capacity_axis"]
+                            if settings["view"] == "voltage_current" and settings["x_axis"] == "capacity_mah_g"
+                            else []
+                        ),
+                        *(["full_export"] if precision == "full" or not compact else []),
+                    ]
+                ),
             )
+
             # A user-supplied area overrides the metadata; areal capacity is
             # area-normalised here so switching to it needs no client-side area.
             area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
-            capacity_area = (
-                capacity / area_cm2
-                if area_cm2 and area_cm2 > 0
-                else np.full(len(raw), np.nan)
+            with time_capacity_path.timed_stage(
+                profile_diagnostics, "transform_areal_capacity"
+            ):
+                capacity_area = (
+                    capacity / area_cm2
+                    if area_cm2 and area_cm2 > 0
+                    else np.full(len(raw), np.nan)
+                )
+            _record_transform_profile(
+                profile_diagnostics,
+                "areal_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity_area),
+                consumed_by=tuple(
+                    [
+                        *(
+                            ["capacity_axis"]
+                            if settings["view"] == "voltage_current" and settings["x_axis"] == "capacity_mah_cm2"
+                            else []
+                        ),
+                        *(["full_export"] if precision == "full" or not compact else []),
+                    ]
+                ),
             )
 
         with time_capacity_path.timed_stage(cell_diagnostics, "derivative"):
             derivative_x, derivative_y = _derivative_curve(
-                raw, phases, capacity, capacity_g, settings
+                raw, phases, capacity, capacity_g, settings, profile_diagnostics
             )
 
         with time_capacity_path.timed_stage(cell_diagnostics, "protocol_masking"):
@@ -2922,15 +3098,25 @@ def compute_time_capacity(
             if "current_ma" in raw.columns
             else np.full(len(raw), np.nan)
         )
-        capacity = capacity.copy()
-        capacity_g = capacity_g.copy()
-        derivative_x = derivative_x.copy()
-        derivative_y = derivative_y.copy()
-        for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
-            values[plot_mask] = np.nan
+        with time_capacity_path.timed_stage(
+            profile_diagnostics, "transform_plot_array_materialization"
+        ):
+            capacity = capacity.copy()
+            capacity_g = capacity_g.copy()
+            derivative_x = derivative_x.copy()
+            derivative_y = derivative_y.copy()
+            for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
+                values[plot_mask] = np.nan
 
-        for values in (capacity_area,):
-            values[plot_mask] = np.nan
+            for values in (capacity_area,):
+                values[plot_mask] = np.nan
+        _record_transform_profile(
+            profile_diagnostics,
+            "plot_array_materialization",
+            input_rows=len(raw),
+            output_rows=len(raw),
+            consumed_by=("response_projection",),
+        )
         with time_capacity_path.timed_stage(cell_diagnostics, "display_coordinate"):
             display_x = _time_capacity_display_x(
                 raw, phases, capacity, capacity_g, capacity_area, settings

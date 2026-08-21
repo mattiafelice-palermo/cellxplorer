@@ -72,6 +72,101 @@ def _stage_totals_ms(cells: list[Mapping[str, Any]]) -> dict[str, float] | None:
     return totals or None
 
 
+def _transform_stage_profiles(cells: list[Mapping[str, Any]]) -> dict[str, dict[str, Any]] | None:
+    """Aggregate profiler-only transform rows and downstream consumers."""
+
+    profiles: dict[str, dict[str, Any]] = {}
+    for cell in cells:
+        transform_profile = cell.get("transform_profile")
+        stages = cell.get("stages")
+        if not isinstance(transform_profile, Mapping):
+            continue
+        for name, details in transform_profile.items():
+            if not isinstance(name, str) or not isinstance(details, Mapping):
+                continue
+            if not isinstance(stages, Mapping):
+                continue
+            elapsed = stages.get(f"transform_{name}")
+            if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or not isfinite(float(elapsed)):
+                continue
+            item = profiles.setdefault(
+                name,
+                {
+                    "elapsed_ms": 0.0,
+                    "input_rows": 0,
+                    "output_rows": 0,
+                    "cells": 0,
+                    "consumed_by": set(),
+                },
+            )
+            item["elapsed_ms"] += float(elapsed) * 1000.0
+            input_rows = details.get("input_rows")
+            if isinstance(input_rows, int) and not isinstance(input_rows, bool):
+                item["input_rows"] += input_rows
+            output_rows = details.get("output_rows")
+            if isinstance(output_rows, int) and not isinstance(output_rows, bool):
+                item["output_rows"] += output_rows
+            item["cells"] += 1
+            consumers = details.get("consumed_by")
+            if isinstance(consumers, list):
+                item["consumed_by"].update(value for value in consumers if isinstance(value, str))
+    if not profiles:
+        return None
+    for item in profiles.values():
+        item["consumed_by"] = sorted(item["consumed_by"])
+    return profiles
+
+
+def _derivative_profile(cells: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Aggregate safe derivative counts while keeping raw data out of the payload."""
+
+    totals = {
+        "cells": 0,
+        "input_rows": 0,
+        "segments_processed": 0,
+        "eligible_segments": 0,
+        "finite_input_rows": 0,
+        "output_finite_rows": 0,
+        "output_segments": 0,
+        "phase_rows": {"charge": 0, "discharge": 0, "rest": 0},
+        "stages_ms": {},
+    }
+    found = False
+    for cell in cells:
+        profile = cell.get("derivative_profile")
+        if not isinstance(profile, Mapping):
+            continue
+        found = True
+        totals["cells"] += 1
+        for key in (
+            "input_rows",
+            "segments_processed",
+            "eligible_segments",
+            "finite_input_rows",
+            "output_finite_rows",
+            "output_segments",
+        ):
+            value = profile.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] += value
+        phase_rows = profile.get("phase_rows")
+        if isinstance(phase_rows, Mapping):
+            for phase in totals["phase_rows"]:
+                value = phase_rows.get(phase)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    totals["phase_rows"][phase] += value
+        stages = cell.get("stages")
+        if isinstance(stages, Mapping):
+            for name in ("derivative_rolling", "derivative_gradient", "derivative_ratio_filter"):
+                value = stages.get(name)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value)):
+                    totals["stages_ms"][name.removeprefix("derivative_")] = (
+                        totals["stages_ms"].get(name.removeprefix("derivative_"), 0.0)
+                        + float(value) * 1000.0
+                    )
+    return totals if found else None
+
+
 def _resolved_cell_count(
     result: Mapping[str, Any], diagnostics: Mapping[str, Any] | None,
 ) -> int | None:
@@ -133,6 +228,12 @@ def build_time_capacity_profile(
         stages = _stage_totals_ms(cells)
         if stages is not None:
             profile["backend_stages_ms"] = stages
+        transform_stages = _transform_stage_profiles(cells)
+        if transform_stages is not None:
+            profile["transform_stages"] = transform_stages
+        derivative_profile = _derivative_profile(cells)
+        if derivative_profile is not None:
+            profile["derivative_profile"] = derivative_profile
         for key in ("row_groups_read", "row_groups_total"):
             value = _row_group_total(cells, key)
             if value is not None:

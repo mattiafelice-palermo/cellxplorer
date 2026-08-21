@@ -1038,6 +1038,62 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
         self.assertEqual(profile["resolved_cell_count"], 1)
 
+    def test_time_capacity_fine_transform_profile_is_opt_in_and_scientific_projection_is_unchanged(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 20,
+            "max_points_per_cell": 4000,
+        }
+        ordinary = engine.compute_time_capacity(
+            self.db,
+            deepcopy(spec),
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+        )
+        diagnostics: dict = {}
+        profiled = engine.compute_time_capacity(
+            self.db,
+            deepcopy(spec),
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+            access_diagnostics=diagnostics,
+        )
+
+        self.assertEqual(profiled["cell_traces"], ordinary["cell_traces"])
+        self.assertNotIn("transform_profile", profiled)
+        cell = diagnostics["cells"][0]
+        self.assertEqual(
+            cell["transform_profile"]["phase_capacity"]["input_rows"],
+            cell["selected_rows_before_transforms"],
+        )
+        self.assertEqual(cell["transform_profile"]["phase_capacity"]["consumed_by"], [])
+        self.assertGreaterEqual(cell["stages"]["transform_phase_capacity"], 0)
+
+        derivative_spec = deepcopy(spec)
+        derivative_spec["computation"]["time_capacity"].update({
+            "view": "dqdv",
+            "x_axis": "capacity_mah",
+        })
+        derivative_diagnostics: dict = {}
+        engine.compute_time_capacity(
+            self.db,
+            derivative_spec,
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+            access_diagnostics=derivative_diagnostics,
+        )
+        derivative_profile = derivative_diagnostics["cells"][0]["derivative_profile"]
+        self.assertGreater(derivative_profile["segments_processed"], 0)
+        self.assertIn("derivative_rolling", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_gradient", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_ratio_filter", derivative_diagnostics["cells"][0]["stages"])
+
     def test_time_capacity_profile_route_real_interactive_request_exposes_diagnostics(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {

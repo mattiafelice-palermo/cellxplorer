@@ -93,6 +93,58 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(profile["row_groups_read"], "full")
         self.assertEqual(profile["row_groups_total"], "full")
 
+    def test_aggregates_transform_and_derivative_profiles_without_private_fields(self):
+        profile = build_time_capacity_profile(
+            request_id="request-transform",
+            result_cache="miss",
+            diagnostics={
+                "cells": [
+                    {
+                        "path": "indexed",
+                        "stages": {
+                            "transform_continuous_time": 0.004,
+                            "transform_phase_capacity": 0.012,
+                            "derivative_rolling": 0.003,
+                            "derivative_gradient": 0.002,
+                            "derivative_ratio_filter": 0.001,
+                        },
+                        "transform_profile": {
+                            "continuous_time": {
+                                "input_rows": 100,
+                                "output_rows": 100,
+                                "consumed_by": ["time_axis"],
+                            },
+                            "phase_capacity": {
+                                "input_rows": 100,
+                                "output_rows": 100,
+                                "consumed_by": [],
+                            },
+                        },
+                        "derivative_profile": {
+                            "input_rows": 100,
+                            "segments_processed": 4,
+                            "eligible_segments": 3,
+                            "finite_input_rows": 90,
+                            "output_finite_rows": 80,
+                            "output_segments": 3,
+                            "phase_rows": {"charge": 40, "discharge": 40, "rest": 20},
+                        },
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(profile["transform_stages"]["continuous_time"]["input_rows"], 100)
+        self.assertEqual(profile["transform_stages"]["phase_capacity"]["consumed_by"], [])
+        self.assertAlmostEqual(profile["transform_stages"]["continuous_time"]["elapsed_ms"], 4.0)
+        derivative = profile["derivative_profile"]
+        self.assertEqual(derivative["cells"], 1)
+        self.assertEqual(derivative["segments_processed"], 4)
+        self.assertEqual(derivative["phase_rows"]["discharge"], 40)
+        self.assertAlmostEqual(derivative["stages_ms"]["rolling"], 3.0)
+        self.assertNotIn("path", profile)
+        self.assertNotIn("transform_profile", str(profile))
+
 
 if __name__ == "__main__":
     unittest.main()
