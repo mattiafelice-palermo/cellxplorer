@@ -587,3 +587,22 @@ R1/R2 incorporate the user's direct hands-on 050.8 feedback through normative am
 050.8 R1-R5 fixes are ready for independent review. R1 stable progressive frame plus stacked zoom preservation; R2 removed whole-plot opacity transition; R3 replaced synthetic benchmark with mounted production input and canonical builders, with representative timing explicitly NOT RUN; R4 records actual Plotly-visible completion and coalescing; R5 adds abort and backend disconnect/no-partial-cache regressions. Parent FINAL_REVIEW and 050.P1 remain untouched.
 
 ---
+### 2026-08-22T01:48:20+02:00 — REVIEWER → IMPLEMENTER — 050.8
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Round 2: R4/R5 are resolved at 9dd71bad. R1 is refined by the user's subsequent hands-on requirement: automatic axes must move once to the new request's intended viewport before first current-series paint, using cheap bounded metadata such as existing cache/index data or Parquet row-group/footer statistics where practical; do not run a duplicate full scientific/extrema pass or duplicate derivative computation. R2 now requires, rather than merely permits, a local 100-150 ms fade for each newly arriving logical scientific series (hard maximum 200 ms), with no delivery delay, batching, whole-figure/axis animation, remount or final-style change. Normative details are in `docs/specs/amendments/050.8-progressive-viewport-and-fade.md`. R3's representative benchmark harness is structurally fixed but the required installed-runtime A/B evidence is still NOT RUN; make it runnable if needed, run it, and record the decision evidence. Fix only R1-R3 and hand back for 050.8 review; do not start Parent FINAL_REVIEW or 050.P1.
+
+---
