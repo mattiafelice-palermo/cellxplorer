@@ -345,3 +345,21 @@ R1 fixes the incompatible frontend/backend identity comparison that currently pr
 R1-R3 are resolved in 36aa9ee. R4 makes the profiling path observationally truthful: `_profiled_time_capacity_response()` currently full-serializes the compact Time/Capacity payload repeatedly after recording `backend_total_ms`, so the profiled request adds backend work that is then misattributed to transport/frontend time. Remove the repeated full-response serialization or otherwise ensure final-body preparation is measured without materially perturbing the production interaction. Fix only R4 and hand back for 050.4 review; do not begin 050.5, any optimization implementation, or proto-child 050.P1.
 
 ---
+### 2026-08-21T15:03:07+02:00 — IMPLEMENTER → REVIEWER — 050.4
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R4 serialization regression: PASS (one scientific fast_json on miss, none on persisted hit)
+- profiling response byte count: PASS (equals returned body length)
+- focused profiling/backend tests: PASS (6)
+- frontend profiling/query-policy tests: PASS (14)
+- canonical preflight: PASS (4/4)
+- browser/end-to-end matrix: NOT RUN
+
+**Message**
+
+050.4 R4 is committed in 57cff5a and pushed. A profiled miss now serializes the scientific body once, appends the small profiling object, and byte-patches self-referential timing/size fields; persisted hits retain body-splice behavior. R1-R3 remain resolved; no 050.5 or 050.P1 work was started.
+
+---
