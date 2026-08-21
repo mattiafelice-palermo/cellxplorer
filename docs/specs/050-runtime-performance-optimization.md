@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Plan — extensible parent; Children 050.1-050.3 authored, implement sequentially**  
+Status: **Plan — extensible parent; Children 050.1-050.4 authored, implement sequentially**  
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -159,18 +159,23 @@ not:
 load every selected Cell's complete raw data into RAM and keep it there
 ```
 
-### Investigation result: separate storage and scientific-consumer changes
+### Investigation result: separate storage, scientific-consumer and end-to-end profiling work
 
 The work is split deliberately:
 
 - **050.2** owns persistent raw physical layout/index, safe existing-cache conversion, selective
   source-local cycle reading, cache maintenance and storage-level profiling/parity;
 - **050.3** owns Time/Capacity global stitch planning, selective source reads, scientific parity,
-  provenance, full-source capability use, exports and end-to-end request profiling.
+  provenance, full-source capability use, exports and backend request profiling;
+- **050.4** owns end-to-end profiling of the real interactive Time/Capacity path and the evidence-
+  backed decision about whether another optimization child is needed.
 
-A third Time/Capacity child is **reserved, not authored**. 050.4 is created only if post-050.3
-measurements prove a distinct remaining problem such as all-cycle detail cost, repeated neighboring
-I/O, serialization, or frontend Plotly rendering.
+050.3 demonstrated that narrow indexed requests no longer materialize complete raw sources, but its
+profiler intentionally exercised a full-detail backend contract and recorded `frontend_profile: not
+run`. During Parent 050 final review on 2026-08-21, the user therefore reopened the 050.4 decision:
+backend structural improvement alone is not sufficient evidence that the original `1-3 -> 1-20`
+user interaction is solved. 050.4 must measure the live compact/standard request plus frontend
+trace/layout and Plotly completion before choosing any additional optimization.
 
 ## Target interaction model
 
@@ -186,7 +191,7 @@ The end-state direction for Time/Capacity is:
 | Change derivative settings | bounded calculation on selected complete cycles |
 | Full-resolution selected-range export | exact selected raw detail, no display approximation |
 | Full-resolution all-cycle export | all exact raw detail; expensive work is acceptable |
-| All-cycle interactive overview | evaluate after 050.3; 050.4 only if measurements justify it |
+| All-cycle interactive overview | profile end-to-end in 050.4 before deciding whether overview acceleration is needed |
 
 The key product rule is:
 
@@ -323,9 +328,16 @@ tests/test_golden_analysis.py
     row/column/request counts plus profiler timings over subjective UI timing alone.
 21. **One child, one review checkpoint.** Do not begin the next child until the active child is
     implementation-complete and review-clean.
-22. **The parent is intentionally extensible.** A clean 050.1-050.3 does not automatically close
-    Parent 050; future unrelated measured runtime children may still be added.
-23. Never modify, reset, or discard unrelated branch work.
+22. **The parent is intentionally extensible.** A clean 050.1-050.4 does not automatically require
+    further optimization; later measured runtime children are added only when evidence justifies
+    them.
+23. **End-to-end claims require end-to-end evidence.** Backend structural profiling may prove an
+    architectural cost was removed, but it must not be used alone to claim the user-visible
+    interaction is solved when frontend/Plotly time was not measured.
+24. **050.4 is measurement-only.** It may add bounded local profiling instrumentation, but it must
+    not implement a speculative overview/LRU/prefetch/payload/Plotly optimization. Any measured
+    follow-up becomes a separately authored later child.
+25. Never modify, reset, or discard unrelated branch work.
 
 ## Child sequence
 
@@ -377,26 +389,33 @@ Scientific-consumer child. It must:
   than scanning complete raw frames;
 - preserve legacy full-read fallback for valid unprepared caches;
 - preserve compact plot and full-resolution export semantics;
-- prove indexed versus legacy Time/Capacity parity and record end-to-end profiling;
-- make an explicit evidence-backed decision whether 050.4 is needed.
+- prove indexed versus legacy Time/Capacity parity and record backend profiling;
+- hand the unresolved end-to-end interaction question to 050.4.
 
-### 050.4 — Interactive overview / working-set acceleration — **reserved conditionally; not authored**
+### 050.4 — End-to-end Time/Capacity profiling and optimization decision gate
 
-Do not create or implement this child merely because the number is reserved.
+File: [`050.4-end-to-end-time-capacity-profiling-and-decision-gate.md`](050.4-end-to-end-time-capacity-profiling-and-decision-gate.md)
 
-Author it only after 050.3 profiling identifies a distinct remaining bottleneck. Candidate scopes
-may include:
+Profiling/decision child. It must:
 
-- a precomputed all-cycle/multiresolution overview if full-range detail remains dominant;
-- a small bounded recent-cycle backend LRU or neighbor prefetch if repeated nearby selective reads
-  remain I/O-bound;
-- payload/serialization/frontend Plotly optimization if backend detail access is already fast and
-  the browser becomes dominant.
+- instrument the real live Time/Capacity interaction contract (`compact=true`, standard precision,
+  normal display point budget) without altering ordinary behavior;
+- bind timing stages to the current request identity so placeholders, cancelled/superseded requests
+  and late Plotly callbacks cannot be misattributed;
+- distinguish persisted analysis-result cache hit/miss and indexed/legacy raw access state;
+- separate backend/HTTP, frontend result-to-plot preparation, Plotly completion and total
+  interaction time;
+- keep profiling opt-in, bounded and local with no external telemetry or persistent database;
+- profile the representative range/neighbor/broad/all-cycle/cache-hit/multi-cell matrix where the
+  runnable environment permits;
+- preserve 050.1-050.3 scientific/cache/export behavior and all version identities;
+- end with an explicit evidence-backed decision: no further optimization, or a separately authored
+  later child scoped to the measured dominant cost.
 
-The measured bottleneck must determine the scope. Do not combine all three by default.
-
-If 050.3 achieves the desired interaction without another layer, record 050.4 as **not needed** and
-do not create a placeholder implementation spec.
+If neither implementation nor review environment can run the required desktop/browser matrix,
+050.4 may become implementation/review-clean after the instrumentation is verified, but Parent 050
+must remain blocked in final review until the user supplies the local exported profile needed to
+make the optimization decision. Do not replace missing end-to-end evidence with backend-only timing.
 
 ### 050.5+ — additional measured runtime issues
 
@@ -408,6 +427,10 @@ profiling. Before adding one:
 3. identify the dominant unnecessary/expensive work;
 4. decide whether it belongs to this parent rather than an unrelated feature;
 5. update this parent and add a self-contained child spec.
+
+For a follow-up arising directly from 050.4, its implementation scope must match the measured
+bottleneck. Do not combine backend working-set caching, multiresolution overview, payload transport
+and Plotly changes by default.
 
 ## Parent-level cache, migration, and version policy
 
@@ -421,6 +444,9 @@ profiling. Before adding one:
   `CALC_VERSION`; it must instead prove result parity.
 - A child that changes persisted analysis-result payload shape must update the corresponding
   per-kind result schema version.
+- Profiling-only diagnostics in 050.4 must stay out of ordinary scientific responses/cache identity;
+  if current ownership makes that impossible, redesign the instrumentation rather than silently
+  creating a scientific generation change.
 - Do not edit released migrations.
 
 ## Parent verification policy
@@ -441,13 +467,18 @@ For 050.2 and 050.3, performance evidence must include structural counters (row 
 read) as well as timings. A fast one-off warm run is not sufficient proof that the architectural
 cause was removed.
 
+For 050.4, performance evidence must additionally separate the live compact-request backend/HTTP,
+frontend preparation, Plotly completion and total user-visible interaction. If browser execution is
+unavailable to the agents, record `NOT RUN` and preserve an explicit external final-review gate for
+the user's exported local profile.
+
 The final Parent 050 review, when the user declares the performance workstream ready to close, must:
 
 - compare the complete branch against its correct `main` merge base;
 - enumerate every authored child and its measured/verified performance boundary;
 - confirm scientific golden/regression outputs required by affected children remain unchanged;
 - confirm cache/migration/version consequences are coherent cumulatively;
-- record whether reserved 050.4 was implemented, judged unnecessary, or remains deferred;
+- record the 050.4 end-to-end profiling outcome and any resulting 050.5+ decision;
 - record which browser/manual performance checks were actually run;
 - state explicitly whether the branch is ready to merge.
 
