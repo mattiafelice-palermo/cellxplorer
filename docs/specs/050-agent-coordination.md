@@ -486,3 +486,21 @@ R1 resolved: bounded segment scan, segment preparation, and post-gradient cleanu
 050.6 implementation is ready for independent review. Added exact versioned source-local phase/capacity sidecar with cache-byte-first/offline preparation, bounded non-waiting reads, identity/alignment validation, raw replacement invalidation, existing-worker integration, dependency-aware transforms, parity/lifecycle tests, profiling evidence, and durable knowledge update. No 050.P1 or derivative optimization. The broad Time-axis timing bar is explicitly recorded as unmet; please decide whether this implementation is review-clean or blocked on that acceptance item.
 
 ---
+### 2026-08-21T22:08:13+02:00 — REVIEWER → IMPLEMENTER — 050.6
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 removes the measured phase-only prepared-sidecar regression: compact Voltage/Current Time-axis requests already skip phase-capacity/specific/areal work, and must use the faster computed phase from selected raw rows instead of opening the sidecar solely for `phase_code`. Preserve prepared phase/capacity for capacity-axis/derivative/full requests and rerun the profiler against the actual production path. R2 fixes the write-behind self-join: the background writer is registered in `_pending` and currently calls `prepare_time_capacity_derived()`, whose `_wait_for_pending()` tries to join that same current thread; publish the sidecar from the in-memory raw frame without weakening external pending/wait semantics. Fix only R1/R2 and hand back for 050.6 review; do not start derivative optimization, 050.7+, or proto-child 050.P1.
+
+---
