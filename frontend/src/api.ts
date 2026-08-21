@@ -108,6 +108,15 @@ export interface JsonOrNdjsonOptions<TEvent> {
   parseEvent?: (value: unknown) => TEvent;
 }
 
+function progressiveAbortError(): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException("The progressive response was aborted.", "AbortError");
+  }
+  const error = new Error("The progressive response was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
 /**
  * POST a response that may be one complete JSON document or a validated
  * newline-delimited event stream. The parser consumes arbitrary fetch chunks,
@@ -165,6 +174,21 @@ export async function postJsonOrNdjson<TJson, TEvent = never>(
   const encoder = new TextEncoder();
   let buffer = "";
   let sawEvent = false;
+  let aborted = options.signal?.aborted ?? false;
+  const abortReader = () => {
+    aborted = true;
+    void reader.cancel().catch(() => undefined);
+  };
+  if (options.signal) options.signal.addEventListener("abort", abortReader, { once: true });
+  if (aborted) {
+    try {
+      await reader.cancel().catch(() => undefined);
+    } finally {
+      options.signal?.removeEventListener("abort", abortReader);
+      reader.releaseLock();
+    }
+    throw progressiveAbortError();
+  }
   const consumeLines = (text: string, final: boolean): void => {
     buffer += text;
     const lines = buffer.split("\n");
@@ -198,11 +222,13 @@ export async function postJsonOrNdjson<TJson, TEvent = never>(
   try {
     while (true) {
       const next = await reader.read();
+      if (aborted) throw progressiveAbortError();
       if (next.done) break;
       consumeLines(decoder.decode(next.value, { stream: true }), false);
     }
     consumeLines(decoder.decode(), true);
   } finally {
+    options.signal?.removeEventListener("abort", abortReader);
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }

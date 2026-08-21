@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.routers import analyses as analyses_router
 from app.routers.library import get_cell_protocol
 from app.services import analysis_cache
 from app.services import analysis_engine as engine
+from app.services import background_jobs
 from app.services import cache, calc, canonical_cycling, parsing, protocol, scanner
 from app.services import time_capacity_profiling
 
@@ -883,6 +885,80 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual([event["type"] for event in events], ["start", "series", "error"])
         self.assertEqual(events[-1]["error"]["code"], "compute_failed")
         self.assertEqual(stored, [])
+
+    def test_time_capacity_stream_disconnect_after_partial_does_not_store_and_fails_job(self):
+        background_jobs.clear_jobs()
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        analysis = Analysis(title="stream-disconnect", spec=spec, provenance=None)
+        self.db.add(analysis)
+        self.db.commit()
+        trace = {"cell_id": self.cells["c1"].id, "cycle": [1]}
+        trace_2 = {"cell_id": self.cells["c2"].id, "cycle": [1]}
+        stored: list[bool] = []
+        allow_second_series = threading.Event()
+
+        async def read_until_first_series(response):
+            iterator = response.body_iterator
+            start = await anext(iterator)
+            series = await anext(iterator)
+            close_task = asyncio.create_task(iterator.aclose())
+            # body() sets the disconnect event before it waits for the worker
+            # in its cleanup. Let the worker continue only after that boundary
+            # has been crossed, so its next callback must observe cancellation.
+            await asyncio.sleep(0.01)
+            allow_second_series.set()
+            await close_task
+            return start, series
+
+        def fake_compute(_db, _spec, _provenance, *, trace_callback=None, **_options):
+            trace_callback(1, 2, trace)
+            allow_second_series.wait(1.0)
+            trace_callback(2, 2, trace_2)
+            return {"cell_traces": [trace, trace_2]}
+
+        worker_session = sessionmaker(
+            bind=self.db.get_bind(), autoflush=False, expire_on_commit=False
+        )
+        token = "stream-disconnect-token"
+        with (
+            patch.object(analyses_router.engine, "canonical_cycling_capability", return_value=None),
+            patch.object(analyses_router.engine, "compute_time_capacity", side_effect=fake_compute),
+            patch.object(analyses_router.analysis_cache, "time_capacity_data_signature", return_value="source-disconnect"),
+            patch.object(analyses_router.analysis_cache, "result_key", return_value="result-disconnect"),
+            patch.object(analyses_router.analysis_cache, "load_result_body", return_value=None),
+            patch.object(analyses_router.analysis_cache, "load_result", return_value=None),
+            patch.object(
+                analyses_router.analysis_cache,
+                "store_result",
+                side_effect=lambda *_args, **_kwargs: stored.append(True),
+            ),
+            patch.object(analyses_router, "SessionLocal", side_effect=worker_session),
+        ):
+            response = analyses_router.stream_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(
+                    spec=spec,
+                    compact=True,
+                    job_token=token,
+                    stream_request_id="stream-disconnect",
+                ),
+                self.db,
+            )
+            start, series = asyncio.run(read_until_first_series(response))
+
+        self.assertEqual(json.loads(start)["type"], "start")
+        self.assertEqual(json.loads(series)["type"], "series")
+        self.assertEqual(stored, [])
+        job = background_jobs.find_by_token(token)
+        self.assertIsNotNone(job)
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error"], "Time/capacity stream disconnected")
+        background_jobs.clear_jobs()
 
     def test_time_capacity_stream_exact_hit_returns_complete_json_without_recompute(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

@@ -488,9 +488,17 @@ pure request-generation-bound reducer. React Query receives only the assembled t
 partial traces remain ephemeral render state, selection-wide voltage capability remains complete-only,
 and export/save/artifact/portable actions remain complete-only. The selected Plotly strategy is
 declarative `react-plotly.js`/`Plotly.react()` with a stable stacked/flat key; one-series requests
-hold their intermediate event so they do not render a partial-then-final duplicate. The opt-in
-profiler records stream identity, per-series bytes/timestamps, first-useful and terminal boundaries,
+hold their intermediate event so they do not render a partial-then-final duplicate. During a
+multi-series request, the Time/Capacity card captures one stable automatic x/y frame (and stacked
+y2/y3 frame) from the first current series or a compatible retained result, while pointer-armed
+zoom memory remains authoritative for explicit user ranges. The retained complete plot stays at full
+opacity until the first current series is ready; there is no whole-plot fade. The opt-in profiler
+records stream identity, per-series receipt timestamps and actual Plotly visible-completion
+timestamps, event-to-visible latency, coalescing/update ids, first-useful and terminal boundaries,
 partial Plotly completions, remounts, and the selected strategy without raw data or source identity.
+The optional strategy benchmark is fed by the mounted complete Time/Capacity result and canonical
+builders, not synthetic traces; it must report representative evidence before a strategy change is
+claimed.
 
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,

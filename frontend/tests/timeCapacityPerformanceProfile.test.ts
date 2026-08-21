@@ -107,10 +107,13 @@ test("progressive profiling records bounded stream and Plotly boundaries", () =>
   profiler.streamStart("stream", { streamRequestId: "wire-1", totalSeries: 2 });
   timer.advance(2);
   profiler.streamSeries("stream", { index: 1, totalSeries: 2, bytes: 128 });
-  profiler.partialPlotlyComplete("stream");
+  timer.advance(5);
+  profiler.partialPlotlyComplete("stream", [1]);
   profiler.plotlyInitialized("stream", { remounted: true });
   timer.advance(3);
   profiler.streamSeries("stream", { index: 2, totalSeries: 2, bytes: 256 });
+  timer.advance(2);
+  profiler.partialPlotlyComplete("stream", [2]);
   profiler.streamComplete("stream");
   profiler.response("stream", {
     profile_version: 1,
@@ -125,8 +128,13 @@ test("progressive profiling records bounded stream and Plotly boundaries", () =>
   assert.equal(record?.stream_request_id, "wire-1");
   assert.equal(record?.stream_total_series, 2);
   assert.deepEqual(record?.stream_series?.map((series) => series.index), [1, 2]);
-  assert.equal(record?.partial_plotly_completions, 1);
-  assert.equal(record?.partial_update_count, 1);
+  assert.deepEqual(record?.stream_series?.map((series) => series.visible_at_ms), [7, 12]);
+  assert.deepEqual(record?.stream_series?.map((series) => series.event_to_visible_ms), [5, 2]);
+  assert.equal(record?.stream_first_useful_ms, 7);
+  assert.equal(record?.stream_final_series_received_ms, 10);
+  assert.equal(record?.stream_final_metadata_received_ms, 12);
+  assert.equal(record?.partial_plotly_completions, 2);
+  assert.equal(record?.partial_update_count, 2);
   assert.equal(record?.plotly_remount_count, 1);
   assert.equal(record?.selected_plot_strategy, "react_plotly_react");
 });

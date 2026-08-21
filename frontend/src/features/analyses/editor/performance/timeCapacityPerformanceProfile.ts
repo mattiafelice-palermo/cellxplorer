@@ -3,7 +3,13 @@ import {
   SELECTED_TIME_CAPACITY_PLOT_STRATEGY,
 } from "./timeCapacityPlotStrategyBenchmark.ts";
 
-export { SELECTED_TIME_CAPACITY_PLOT_STRATEGY } from "./timeCapacityPlotStrategyBenchmark.ts";
+export {
+  registerTimeCapacityPlotStrategyBenchmarkInput,
+  SELECTED_TIME_CAPACITY_PLOT_STRATEGY,
+} from "./timeCapacityPlotStrategyBenchmark.ts";
+export type {
+  TimeCapacityPlotStrategyBenchmarkInput,
+} from "./timeCapacityPlotStrategyBenchmark.ts";
 
 export type TimeCapacityResultCache = "hit" | "miss" | "unknown";
 export type TimeCapacityRawAccess =
@@ -100,8 +106,15 @@ export interface TimeCapacityInteractionProfile extends TimeCapacityPerformanceC
     total_series: number;
     received_at_ms: number;
     bytes: number;
+    visible_at_ms?: number;
+    event_to_visible_ms?: number;
+    visible_update_id?: number;
+    visible_coalesced?: boolean;
   }>;
   stream_first_useful_ms?: number;
+  stream_final_series_received_ms?: number;
+  stream_final_metadata_received_ms?: number;
+  /** @deprecated retained as an alias for older exported captures. */
   stream_final_received_ms?: number;
   partial_plotly_completions?: number;
   partial_update_count?: number;
@@ -152,7 +165,7 @@ export interface TimeCapacityPerformanceProfiler {
   streamStart(requestId: string, details: TimeCapacityStreamStartDetails): void;
   streamSeries(requestId: string, details: TimeCapacityStreamSeriesDetails): void;
   streamComplete(requestId: string): void;
-  partialPlotlyComplete(requestId: string): void;
+  partialPlotlyComplete(requestId: string, visibleSeriesIndices?: number[]): void;
   plotlyInitialized(requestId: string, details?: { remounted?: boolean }): void;
   plotlyComplete(requestId: string): void;
   cancel(requestId: string): void;
@@ -367,6 +380,8 @@ export function createTimeCapacityPerformanceProfiler(
       current.record.selected_plot_strategy = SELECTED_TIME_CAPACITY_PLOT_STRATEGY;
       current.record.stream_series = [];
       current.record.stream_first_useful_ms = undefined;
+      current.record.stream_final_series_received_ms = undefined;
+      current.record.stream_final_metadata_received_ms = undefined;
       current.record.stream_final_received_ms = undefined;
     },
     streamSeries(requestId, details) {
@@ -387,22 +402,40 @@ export function createTimeCapacityPerformanceProfiler(
       }
       current.record.stream_series = series;
       current.record.stream_total_series = details.totalSeries;
-      if (current.record.stream_first_useful_ms === undefined) {
-        current.record.stream_first_useful_ms = nonNegative(receivedAt - current.record.started_at_ms);
+      if (details.index === details.totalSeries) {
+        current.record.stream_final_series_received_ms = nonNegative(
+          receivedAt - current.record.started_at_ms,
+        );
       }
     },
     streamComplete(requestId) {
       const current = active.get(requestId);
       if (!current) return;
       current.record.mode = "ndjson";
-      current.record.stream_final_received_ms = nonNegative(clock() - current.record.started_at_ms);
+      const receivedAt = nonNegative(clock() - current.record.started_at_ms);
+      current.record.stream_final_metadata_received_ms = receivedAt;
+      current.record.stream_final_received_ms = receivedAt;
     },
-    partialPlotlyComplete(requestId) {
+    partialPlotlyComplete(requestId, visibleSeriesIndices = []) {
       const current = active.get(requestId);
       if (!current) return;
-      current.record.partial_plotly_completions =
-        (current.record.partial_plotly_completions ?? 0) + 1;
+      const completedAt = clock();
+      const visibleAt = nonNegative(completedAt - current.record.started_at_ms);
+      const updateId = (current.record.partial_plotly_completions ?? 0) + 1;
+      current.record.partial_plotly_completions = updateId;
       current.record.partial_update_count = (current.record.partial_update_count ?? 0) + 1;
+      if (current.record.stream_first_useful_ms === undefined && visibleSeriesIndices.length > 0) {
+        current.record.stream_first_useful_ms = visibleAt;
+      }
+      const coalesced = visibleSeriesIndices.length > 1;
+      for (const index of visibleSeriesIndices) {
+        const series = current.record.stream_series?.find((entry) => entry.index === index);
+        if (!series || series.visible_at_ms !== undefined) continue;
+        series.visible_at_ms = visibleAt;
+        series.event_to_visible_ms = nonNegative(completedAt - series.received_at_ms);
+        series.visible_update_id = updateId;
+        series.visible_coalesced = coalesced;
+      }
     },
     plotlyInitialized(requestId, details) {
       const current = active.get(requestId);

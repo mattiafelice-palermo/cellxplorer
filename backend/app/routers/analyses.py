@@ -7,6 +7,7 @@ versions; recompute (explicit) moves to current versions.
 """
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1233,7 +1234,7 @@ def stream_time_capacity_analysis(
         job_id = _open_compute_job(db, analysis, spec, "time_capacity", req.job_token)
     stream_request_id = req.stream_request_id or f"stream-{uuid4().hex}"
 
-    def body():
+    async def body():
         events: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
         disconnected = threading.Event()
 
@@ -1411,13 +1412,16 @@ def stream_time_capacity_analysis(
         producer.start()
         try:
             while True:
-                kind, payload = events.get()
+                try:
+                    kind, payload = await asyncio.to_thread(events.get, True, 0.1)
+                except queue.Empty:
+                    continue
                 if kind == "done":
                     return
                 yield fast_json(payload).body + b"\n"
         finally:
             disconnected.set()
-            producer.join(timeout=2.0)
+            await asyncio.to_thread(producer.join, 2.0)
 
     return StreamingResponse(body(), media_type="application/x-ndjson")
 

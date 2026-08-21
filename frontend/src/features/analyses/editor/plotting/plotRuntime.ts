@@ -88,11 +88,30 @@ type ZoomMemory = {
   armOnPointerDown: () => void;
 };
 
+type AxisRange = [number, number];
+
+function relayoutRange(
+  event: Record<string, unknown>,
+  axis: "xaxis" | "xaxis2" | "yaxis" | "yaxis2" | "yaxis3",
+): AxisRange | undefined {
+  const range = Array.isArray(event[`${axis}.range`])
+    ? event[`${axis}.range`] as unknown[]
+    : [];
+  const first = event[`${axis}.range[0]`] ?? range[0];
+  const second = event[`${axis}.range[1]`] ?? range[1];
+  return typeof first === "number" && typeof second === "number"
+    ? [first, second]
+    : undefined;
+}
+
 export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
   const stored = useRef<{
     signature: string;
-    x?: [number, number];
-    y?: [number, number];
+    x?: AxisRange;
+    x2?: AxisRange;
+    y?: AxisRange;
+    y2?: AxisRange;
+    y3?: AxisRange;
   } | null>(null);
   // Plotly also emits relayout events with range keys on PROGRAMMATIC paths
   // (an autosize echo after Plots.resize once recorded the plain autorange
@@ -111,27 +130,33 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
   const onRelayout = (event: Readonly<Plotly.PlotRelayoutEvent>) => {
     if (!enabled) return;
     const ev = event as Record<string, unknown>;
-    if (ev["xaxis.autorange"] === true || ev["yaxis.autorange"] === true) {
+    if (
+      ev["xaxis.autorange"] === true ||
+      ev["xaxis2.autorange"] === true ||
+      ev["yaxis.autorange"] === true ||
+      ev["yaxis2.autorange"] === true ||
+      ev["yaxis3.autorange"] === true
+    ) {
       stored.current = null; // double-click / modebar autoscale
       armed.current = false;
       return;
     }
     if (!armed.current) return; // programmatic echo â€” never record
-    const xRange = Array.isArray(ev["xaxis.range"]) ? ev["xaxis.range"] as unknown[] : [];
-    const yRange = Array.isArray(ev["yaxis.range"]) ? ev["yaxis.range"] as unknown[] : [];
-    const xr0 = ev["xaxis.range[0]"] ?? xRange[0];
-    const xr1 = ev["xaxis.range[1]"] ?? xRange[1];
-    const yr0 = ev["yaxis.range[0]"] ?? yRange[0];
-    const yr1 = ev["yaxis.range[1]"] ?? yRange[1];
-    const hasX = typeof xr0 === "number" && typeof xr1 === "number";
-    const hasY = typeof yr0 === "number" && typeof yr1 === "number";
-    if (!hasX && !hasY) return;
+    const xRange = relayoutRange(ev, "xaxis");
+    const x2Range = relayoutRange(ev, "xaxis2");
+    const yRange = relayoutRange(ev, "yaxis");
+    const y2Range = relayoutRange(ev, "yaxis2");
+    const y3Range = relayoutRange(ev, "yaxis3");
+    if (!xRange && !x2Range && !yRange && !y2Range && !y3Range) return;
     armed.current = false;
     const prev = stored.current?.signature === signature ? stored.current : null;
     stored.current = {
       signature,
-      x: hasX ? [xr0 as number, xr1 as number] : prev?.x,
-      y: hasY ? [yr0 as number, yr1 as number] : prev?.y,
+      x: xRange ?? prev?.x,
+      x2: x2Range ?? prev?.x2,
+      y: yRange ?? prev?.y,
+      y2: y2Range ?? prev?.y2,
+      y3: y3Range ?? prev?.y3,
     };
   };
 
@@ -140,9 +165,21 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
     const mem = stored.current;
     if (mem && mem.signature === signature) {
       const out = { ...layout } as Record<string, unknown>;
-      if (mem.x) out.xaxis = { ...(layout.xaxis ?? {}), range: [...mem.x], autorange: false };
-      if (mem.y) out.yaxis = { ...(layout.yaxis ?? {}), range: [...mem.y], autorange: false };
-      injected.current = true;
+      const x = mem.x2 ?? mem.x;
+      const y = mem.y;
+      const x2 = mem.x2 ?? mem.x;
+      if (x) out.xaxis = { ...(layout.xaxis ?? {}), range: [...x], autorange: false };
+      if (x2 && layout.xaxis2) {
+        out.xaxis2 = { ...(layout.xaxis2 ?? {}), range: [...x2], autorange: false };
+      }
+      if (y) out.yaxis = { ...(layout.yaxis ?? {}), range: [...y], autorange: false };
+      if (mem.y2 && layout.yaxis2) {
+        out.yaxis2 = { ...(layout.yaxis2 ?? {}), range: [...mem.y2], autorange: false };
+      }
+      if (mem.y3 && layout.yaxis3) {
+        out.yaxis3 = { ...(layout.yaxis3 ?? {}), range: [...mem.y3], autorange: false };
+      }
+      injected.current = Boolean(x || y || x2 || mem.y2 || mem.y3);
       return out as Partial<Plotly.Layout>;
     }
     if (injected.current) {
@@ -152,6 +189,9 @@ export function useZoomMemory(signature: string, enabled = true): ZoomMemory {
       const out = { ...layout } as Record<string, unknown>;
       out.xaxis = { ...(layout.xaxis ?? {}), autorange: true };
       out.yaxis = { ...(layout.yaxis ?? {}), autorange: true };
+      if (layout.xaxis2) out.xaxis2 = { ...(layout.xaxis2 ?? {}), autorange: true };
+      if (layout.yaxis2) out.yaxis2 = { ...(layout.yaxis2 ?? {}), autorange: true };
+      if (layout.yaxis3) out.yaxis3 = { ...(layout.yaxis3 ?? {}), autorange: true };
       return out as Partial<Plotly.Layout>;
     }
     return layout;

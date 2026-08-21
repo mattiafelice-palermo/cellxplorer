@@ -55,9 +55,13 @@ import {
 import Plot from "../../../../../components/Plot";
 import { getTimeCapacityExplainer } from "../../plotting/plotExplainers";
 import {
-  axisLayout,
   numericTraceExtent,
 } from "../../plotting/plotAxisLayout";
+import {
+  progressiveAxisLayout,
+  timeCapacityProgressiveFrameForTraces,
+  type TimeCapacityProgressiveFrame,
+} from "./timeCapacityRenderingPolicy";
 import {
   blobFromDataUrl,
   downloadBlob,
@@ -105,10 +109,12 @@ import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
 import {
   newTimeCapacityProfileRequestId,
+  registerTimeCapacityPlotStrategyBenchmarkInput,
   timeCapacityPerformanceNow,
   timeCapacityPerformanceProfiler,
   timeCapacityProfileResultIsCurrent,
   timeCapacityResolvedCellCount,
+  type TimeCapacityPlotStrategyBenchmarkInput,
   type TimeCapacityPerformanceContext,
 } from "../../performance/timeCapacityPerformanceProfile";
 import {
@@ -609,14 +615,15 @@ export function timeCapacityTracesForResult(
 export function timeCapacityLayout(
   result: TimeCapacityResult | undefined,
   spec: AnalysisSpec,
-  traces: Plotly.Data[] = []
+  traces: Plotly.Data[] = [],
+  progressiveFrame?: TimeCapacityProgressiveFrame,
 ): Partial<Plotly.Layout> {
   const style = currentPlotStyle(spec, "time_capacity");
   const cfg = timeCapacityConfig(spec);
   const xTitle = result?.cell_traces[0] ? timeCapacityX(result.cell_traces[0], spec).title : "Time (min)";
   const leftCurrentLabel = currentAxisLabel(cfg.current_left ?? "current_ma");
   const rightCurrentLabel = currentAxisLabel(cfg.current_right ?? "none");
-  const hasRightCurrent = hasRightCurrentValues(result, spec);
+  const hasRightCurrent = progressiveFrame?.hasRightCurrent ?? hasRightCurrentValues(result, spec);
   const lm = legendMargins(style, spec.presentation.legend);
   const leftGap = axisGapDelta(style.y_axis);
   const bottomGap = axisGapDelta(style.x_axis);
@@ -664,12 +671,12 @@ export function timeCapacityLayout(
       xaxis: {
         ...baseAxis(style.x_axis),
         title: { text: style.x_title ?? xTitle, font: titleFont, standoff: style.x_axis.title_standoff },
-        ...axisLayout(style.x_axis, xRange),
+        ...progressiveAxisLayout(style.x_axis, xRange, progressiveFrame?.xRange),
       },
       yaxis: {
         ...baseAxis(style.y_axis),
         title: { text: style.y_title ?? yTitle, font: titleFont, standoff: style.y_axis.title_standoff },
-        ...axisLayout(style.y_axis, yRange),
+        ...progressiveAxisLayout(style.y_axis, yRange, progressiveFrame?.yRange),
       },
     };
   }
@@ -722,7 +729,9 @@ export function timeCapacityLayout(
       showline: cfg.stacked ? false : style.show_frame,
       mirror: cfg.stacked ? false : style.show_frame,
       ...(cfg.stacked ? { matches: "x2" as const } : {}),
-      ...(cfg.stacked ? {} : axisLayout(style.x_axis, xRange)),
+      ...(cfg.stacked
+        ? {}
+        : progressiveAxisLayout(style.x_axis, xRange, progressiveFrame?.xRange)),
     },
     yaxis: {
       ...baseAxis(style.y_axis),
@@ -735,7 +744,7 @@ export function timeCapacityLayout(
       },
       domain: cfg.stacked ? [0.39, 1] : [0, 1],
       ...(cfg.stacked ? { showline: false, mirror: false } : {}),
-      ...axisLayout(style.y_axis, yRange),
+      ...progressiveAxisLayout(style.y_axis, yRange, progressiveFrame?.yRange),
     },
     ...(cfg.stacked
       ? {
@@ -750,7 +759,7 @@ export function timeCapacityLayout(
             anchor: "y2",
             showline: false,
             mirror: false,
-            ...axisLayout(style.x_axis, xRange),
+            ...progressiveAxisLayout(style.x_axis, xRange, progressiveFrame?.xRange),
           },
           yaxis2: {
             ...baseAxis(style.y2_axis),
@@ -763,7 +772,7 @@ export function timeCapacityLayout(
             anchor: "x2",
             showline: false,
             mirror: false,
-            ...axisLayout(style.y2_axis, y2Range),
+            ...progressiveAxisLayout(style.y2_axis, y2Range, progressiveFrame?.y2Range),
           },
           ...(hasRightCurrent
             ? {
@@ -780,7 +789,7 @@ export function timeCapacityLayout(
                   showgrid: false,
                   showline: false,
                   mirror: false,
-                  ...axisLayout(style.y2_axis, y2Range),
+                  ...progressiveAxisLayout(style.y2_axis, y2Range, progressiveFrame?.y2Range),
                 },
               }
             : {}),
@@ -1182,6 +1191,13 @@ function TimeCapacityPlotCardView({
   const [dataExporting, setDataExporting] = useState(false);
   const [progressive, setProgressive] = useState<TimeCapacityProgressState | null>(null);
   const progressiveRequestRef = useRef<{ generation: string; requestId: string } | null>(null);
+  const progressiveFrameRef = useRef<{
+    generation: string;
+    requestId: string;
+    frame?: TimeCapacityProgressiveFrame;
+  } | null>(null);
+  const pendingPartialSeriesRef = useRef<number[]>([]);
+  const compatibleResultRef = useRef<TimeCapacityResult | undefined>(undefined);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
@@ -1302,6 +1318,22 @@ function TimeCapacityPlotCardView({
       setComputeToken(token);
       const streamRequestId = newTimeCapacityProfileRequestId();
       progressiveRequestRef.current = { generation: dataSignature, requestId: streamRequestId };
+      pendingPartialSeriesRef.current = [];
+      const previousResult = compatibleResultRef.current;
+      const previousTraces = previousResult
+        ? timeCapacityTracesForResult(previousResult, spec)
+        : [];
+      progressiveFrameRef.current = {
+        generation: dataSignature,
+        requestId: streamRequestId,
+        frame:
+          previousTraces.length > 0
+            ? timeCapacityProgressiveFrameForTraces(
+                previousTraces,
+                cfg.stacked && cfg.current_right !== "none",
+              )
+            : undefined,
+      };
       setProgressive(null);
       if (profileRequest) {
         timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
@@ -1354,7 +1386,27 @@ function TimeCapacityPlotCardView({
               } else if (event.type === "series") {
                 // A one-series request has no useful progressive interval;
                 // keep its render to the ordinary terminal promotion.
-                if (event.total_series > 1) setProgressive(next);
+                if (event.total_series > 1) {
+                  if (profileRequest) pendingPartialSeriesRef.current.push(event.index);
+                  const frameState = progressiveFrameRef.current;
+                  if (
+                    frameState &&
+                    frameState.generation === dataSignature &&
+                    frameState.requestId === streamRequestId &&
+                    !frameState.frame
+                  ) {
+                    const firstResult = timeCapacityPartialRenderResult(
+                      cfg,
+                      next.traces,
+                      previousResult,
+                    );
+                    frameState.frame = timeCapacityProgressiveFrameForTraces(
+                      timeCapacityTracesForResult(firstResult, spec),
+                      cfg.stacked && cfg.current_right !== "none",
+                    );
+                  }
+                  setProgressive(next);
+                }
                 if (profileRequest) {
                   timeCapacityPerformanceProfiler.streamSeries(profileRequest.requestId, {
                     index: event.index,
@@ -1366,6 +1418,10 @@ function TimeCapacityPlotCardView({
                 if (!next.result) throw new Error("Progressive complete response was incomplete.");
                 streamedResult = next.result;
                 setProgressive(null);
+                pendingPartialSeriesRef.current = [];
+                if (progressiveFrameRef.current?.requestId === streamRequestId) {
+                  progressiveFrameRef.current = null;
+                }
                 if (profileRequest) {
                   timeCapacityPerformanceProfiler.streamComplete(profileRequest.requestId);
                 }
@@ -1390,6 +1446,7 @@ function TimeCapacityPlotCardView({
         ) {
           setProgressive(null);
         }
+        pendingPartialSeriesRef.current = [];
         if (profileRequest) {
           timeCapacityPerformanceProfiler.cancel(profileRequest.requestId);
         }
@@ -1456,6 +1513,7 @@ function TimeCapacityPlotCardView({
   )
     ? timeResult.data
     : undefined;
+  compatibleResultRef.current = currentResult;
   const progressiveIsCurrent = Boolean(
     progressive &&
       progressive.generation === dataSignature &&
@@ -1548,11 +1606,65 @@ function TimeCapacityPlotCardView({
   );
   const traces = useMemo(() => interactivePlotTraces(exportTraces), [exportTraces]);
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
-  const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
+  // The progressive frame owns automatic ranges, while the zoom memory owns
+  // explicit user ranges for flat and stacked axes alike.
+  const zoom = useZoomMemory(zoomSignature, true);
+  useEffect(() => {
+    if (!currentResult || timeResult.isFetching || timeResult.isPlaceholderData) return;
+    const input: TimeCapacityPlotStrategyBenchmarkInput = {
+      analysis_id: analysisId,
+      data_signature: currentResult.data_signature,
+      source_data_signature: currentResult.source_data_signature,
+      total_series: currentResult.cell_traces.length,
+      build_progressive_frame: () => {
+        const firstResult = {
+          ...currentResult,
+          cell_traces: currentResult.cell_traces.slice(0, 1),
+        };
+        const firstTraces = timeCapacityTracesForResult(firstResult, spec);
+        return timeCapacityProgressiveFrameForTraces(
+          firstTraces,
+          cfg.stacked && cfg.current_right !== "none",
+        );
+      },
+      build_partial: (completedSeries, frame) => {
+        const partialResult = {
+          ...currentResult,
+          cell_traces: currentResult.cell_traces.slice(0, completedSeries),
+        };
+        const data = timeCapacityTracesForResult(partialResult, spec);
+        return {
+          data,
+          layout: zoom.apply(timeCapacityLayout(partialResult, spec, data, frame)),
+        };
+      },
+      build_complete: () => {
+        const data = timeCapacityTracesForResult(currentResult, spec);
+        return {
+          data,
+          layout: zoom.apply(timeCapacityLayout(currentResult, spec, data)),
+        };
+      },
+    };
+    return registerTimeCapacityPlotStrategyBenchmarkInput(input);
+  }, [
+    analysisId,
+    cfg.current_right,
+    cfg.stacked,
+    currentResult,
+    spec,
+    timeResult.isFetching,
+    timeResult.isPlaceholderData,
+    zoom,
+  ]);
+  const progressiveFrame =
+    progressiveIsCurrent && progressiveFrameRef.current?.generation === dataSignature
+      ? progressiveFrameRef.current.frame
+      : undefined;
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(renderResult, spec, exportTraces)),
+    () => zoom.apply(timeCapacityLayout(renderResult, spec, exportTraces, progressiveFrame)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [renderResult, viewSignature, exportTraces]
+    [renderResult, viewSignature, exportTraces, progressiveFrame]
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(
@@ -1610,7 +1722,13 @@ function TimeCapacityPlotCardView({
   const completeTimeCapacityProfile = () => {
     if (!profileRequest) return;
     if (progressiveIsCurrent) {
-      timeCapacityPerformanceProfiler.partialPlotlyComplete(profileRequest.requestId);
+      const visibleSeries = pendingPartialSeriesRef.current.splice(0);
+      if (visibleSeries.length > 0) {
+        timeCapacityPerformanceProfiler.partialPlotlyComplete(
+          profileRequest.requestId,
+          visibleSeries,
+        );
+      }
       return;
     }
     if (!profileResultIsCurrent) return;
@@ -1775,8 +1893,8 @@ function TimeCapacityPlotCardView({
         withBorder
         style={{ minHeight: 590, position: "relative", flex: 1, minWidth: 520, overflow: "hidden" }}
       >
-        {/* spinner only when there is nothing to show yet — background
-            refetches of cached data keep the subtle opacity dim instead */}
+        {/* spinner only when there is nothing to show yet — a retained
+            compatible result remains fully readable during replacement. */}
         <LoadingOverlay
           visible={
             timeResult.isFetching &&
@@ -1862,8 +1980,6 @@ function TimeCapacityPlotCardView({
             style={{
               width: "100%",
               minWidth: 0,
-              opacity: timeResult.isFetching && !progressiveIsCurrent ? 0.42 : 1,
-              transition: "opacity 160ms ease",
             }}
           >
             <Plot

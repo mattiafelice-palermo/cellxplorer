@@ -574,3 +574,16 @@ R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axi
 R1/R2 incorporate the user's direct hands-on 050.8 feedback through normative amendment `docs/specs/amendments/050.8-progressive-rendering-stability.md`: keep the progressive plot frame stable across later series, remove the whole-plot translucent previous-result transition, and permit only an immediate bounded trace-local fade if it is safe. R3 replaces the synthetic Plotly microbenchmark with the representative installed-app/request benchmark required by §8. R4 makes profiler first-useful/per-series timing refer to actual Plotly-visible completion rather than series receipt. R5 adds the required frontend abort and backend disconnect/no-partial-cache regressions. Fix only R1-R5 and hand back for 050.8 review; do not start Parent FINAL_REVIEW or 050.P1.
 
 ---
+### 2026-08-22T01:43:26+02:00 — IMPLEMENTER → REVIEWER — 050.8
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- PREFLIGHT PASSED: 4/4 stages; all 151 backend/frontend test modules, frontend type check, and production bundle passed (75.66 s). Frontend full suite: 664 tests PASS. R3 representative benchmark is implemented but NOT RUN because the available in-app browser inspection surface does not expose the page performance API; packaged WebView2 gate remains NOT RUN.
+
+**Message**
+
+050.8 R1-R5 fixes are ready for independent review. R1 stable progressive frame plus stacked zoom preservation; R2 removed whole-plot opacity transition; R3 replaced synthetic benchmark with mounted production input and canonical builders, with representative timing explicitly NOT RUN; R4 records actual Plotly-visible completion and coalescing; R5 adds abort and backend disconnect/no-partial-cache regressions. Parent FINAL_REVIEW and 050.P1 remain untouched.
+
+---
