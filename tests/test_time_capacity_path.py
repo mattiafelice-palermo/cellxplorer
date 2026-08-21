@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -136,6 +137,86 @@ class TimeCapacityPathTests(unittest.TestCase):
             [[2], [7]],
         )
 
+    def test_layout_preparation_does_not_block_legacy_request(self) -> None:
+        file_hash = "5" * 64
+        parser_version = "legacy-parser"
+        frame = raw_frame([1, 2])
+        target = cache.raw_path(file_hash, parser_version)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(target, index=False)
+        ref = stitch.CachedSourceRef(file_hash, parser_version)
+        expected, _, _ = stitch.stitch_raw([ref])
+
+        preparation_started = threading.Event()
+        release_preparation = threading.Event()
+        request_finished = threading.Event()
+        result: dict[str, object] = {}
+        original_publish = cache._publish_optimized_raw
+
+        def blocking_publish(*args, **kwargs):
+            preparation_started.set()
+            if not release_preparation.wait(10):
+                raise TimeoutError("test did not release raw-layout preparation")
+            return original_publish(*args, **kwargs)
+
+        def prepare() -> None:
+            try:
+                result["preparation"] = cache.prepare_raw_layout(file_hash, parser_version)
+            except BaseException as exc:  # surface worker failures in the test thread
+                result["preparation_error"] = exc
+
+        def request() -> None:
+            try:
+                read_diagnostics = cache.RawCycleReadDiagnostics()
+                result["indexed_read"] = cache.load_raw_cycles(
+                    file_hash,
+                    parser_version,
+                    [1],
+                    list(canonical_cycling.REQUIRED_CYCLING_COLUMNS),
+                    diagnostics=read_diagnostics,
+                    wait_for_layout=False,
+                )
+                result["indexed_read_status"] = read_diagnostics.status
+                result["plan"] = time_capacity_path.build_time_capacity_stitch_plan([ref])
+                result["raw"], _, _ = stitch.stitch_raw([ref])
+            except BaseException as exc:  # surface worker failures in the test thread
+                result["request_error"] = exc
+            finally:
+                request_finished.set()
+
+        with patch.object(cache, "_publish_optimized_raw", side_effect=blocking_publish):
+            preparation_thread = threading.Thread(target=prepare)
+            request_thread: threading.Thread | None = None
+            preparation_thread.start()
+            try:
+                self.assertTrue(preparation_started.wait(5))
+                request_thread = threading.Thread(target=request)
+                request_thread.start()
+                self.assertTrue(
+                    request_finished.wait(2),
+                    "Time/Capacity request waited for layout conversion",
+                )
+            finally:
+                release_preparation.set()
+                preparation_thread.join(10)
+                if request_thread is not None:
+                    request_thread.join(10)
+
+        self.assertFalse(preparation_thread.is_alive())
+        self.assertIn("preparation", result)
+        self.assertNotIn("preparation_error", result)
+        self.assertNotIn("request_error", result)
+        self.assertIsNone(result["indexed_read"])
+        self.assertEqual(result["indexed_read_status"], "layout_preparing")
+        plan = result["plan"]
+        self.assertIsInstance(plan, time_capacity_path.TimeCapacityStitchPlan)
+        self.assertEqual(plan.path, "legacy")
+        pd.testing.assert_frame_equal(result["raw"], expected, check_dtype=False)
+
+        prepared_plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+        self.assertEqual(prepared_plan.path, "indexed")
+
+
     def test_missing_middle_source_fails_closed_and_skips_suffix(self) -> None:
         first = self._publish("f" * 64, "parser-a", [1, 2])
         missing = stitch.CachedSourceRef("1" * 64, "parser-missing")
@@ -183,6 +264,52 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertTrue(stitch.stitch_metadata(selected)["complete"])
         self.assertEqual(diagnostics["selected_rows"], 0)
 
+    def test_extreme_range_endpoints_are_clamped_to_known_cycles(self) -> None:
+        ref = self._publish("6" * 64, "parser-a", [1, 2])
+        plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+        huge = 10**100
+
+        with self.subTest("upper endpoint"):
+            self.assertEqual(
+                time_capacity_path.requested_global_cycles(
+                    plan,
+                    explicit_cycles=[],
+                    cycle_start=1,
+                    cycle_end=huge,
+                ),
+                (1, 2),
+            )
+        with self.subTest("lower endpoint"):
+            self.assertEqual(
+                time_capacity_path.requested_global_cycles(
+                    plan,
+                    explicit_cycles=[],
+                    cycle_start=-huge,
+                    cycle_end=2,
+                ),
+                (1, 2),
+            )
+        with self.subTest("wholly above"):
+            self.assertEqual(
+                time_capacity_path.requested_global_cycles(
+                    plan,
+                    explicit_cycles=[],
+                    cycle_start=huge,
+                    cycle_end=huge,
+                ),
+                (),
+            )
+        with self.subTest("wholly below"):
+            self.assertEqual(
+                time_capacity_path.requested_global_cycles(
+                    plan,
+                    explicit_cycles=[],
+                    cycle_start=-huge,
+                    cycle_end=-1,
+                ),
+                (),
+            )
+
 
 class IndexedLegacyTimeCapacityParityTests(unittest.TestCase):
     def test_golden_time_capacity_result_is_equal_on_both_access_paths(self) -> None:
@@ -224,7 +351,7 @@ class IndexedLegacyTimeCapacityParityTests(unittest.TestCase):
                     precision="full",
                     compact=False,
                 )
-                with patch.object(active_cache, "load_raw_layout_index", return_value=None):
+                with patch.object(active_cache, "try_load_raw_layout_index", return_value=None):
                     legacy = analysis_engine.compute_time_capacity(
                         environment.db,
                         deepcopy(spec),

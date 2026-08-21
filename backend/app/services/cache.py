@@ -71,6 +71,19 @@ class RawCycleReadDiagnostics:
 _raw_layout_io_lock = threading.RLock()
 
 
+@contextmanager
+def _raw_layout_access(*, wait: bool):
+    """Acquire the raw/index consistency boundary, optionally without waiting."""
+    acquired = _raw_layout_io_lock.acquire(blocking=wait)
+    if not acquired:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _raw_layout_io_lock.release()
+
+
 class SourceChangedDuringBuild(parsing.SourceIdentityError):
     """The source changed while a scientific cache was being built."""
 
@@ -725,6 +738,27 @@ def load_raw_layout_index(
             return None
 
 
+def try_load_raw_layout_index(
+    file_hash: str,
+    parser_version: str,
+) -> dict[str, Any] | None:
+    """Load a stable raw-layout pair without waiting for layout preparation.
+
+    A ``None`` result means the pair is missing, invalid, or currently behind
+    the raw-layout I/O boundary.  The last case is deliberately useful to
+    request paths that can render the canonical raw cache through their
+    compatibility reader while a background conversion is in progress.
+    """
+    _wait_for_pending(file_hash)
+    with _raw_layout_access(wait=False) as acquired:
+        if not acquired:
+            return None
+        try:
+            return _load_raw_layout_index_unlocked(file_hash, parser_version)
+        except RawLayoutError:
+            return None
+
+
 def _normalize_requested_cycles(source_cycles: Iterable[object]) -> tuple[int, ...]:
     values: list[int] = []
     seen: set[int] = set()
@@ -751,13 +785,16 @@ def load_raw_cycles(
     columns: Iterable[str],
     *,
     diagnostics: RawCycleReadDiagnostics | None = None,
+    wait_for_layout: bool = True,
 ) -> pd.DataFrame | None:
     """Load exact source-local cycles from the indexed row groups.
 
     ``None`` means the raw cache is missing, legacy/unprepared, invalid, or
     lacks a requested column.  Pass ``diagnostics`` when the caller needs to
     distinguish those safe fallback states or record the physical groups and
-    rows selected for a benchmark/test.
+    rows selected for a benchmark/test.  Request paths may set
+    ``wait_for_layout=False`` to return ``None`` immediately when background
+    raw-layout conversion owns the raw/index consistency boundary.
     """
     try:
         requested_cycles = _normalize_requested_cycles(source_cycles)
@@ -777,7 +814,11 @@ def load_raw_cycles(
     _wait_for_pending(file_hash)
     parquet_path = raw_path(file_hash, parser_version)
     index_path = raw_index_path(file_hash, parser_version)
-    with _raw_layout_io_lock:
+    with _raw_layout_access(wait=wait_for_layout) as acquired:
+        if not acquired:
+            if diagnostics is not None:
+                diagnostics.status = "layout_preparing"
+            return None
         if not parquet_path.is_file():
             if diagnostics is not None:
                 diagnostics.status = "missing"

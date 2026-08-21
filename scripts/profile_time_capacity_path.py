@@ -59,9 +59,13 @@ def profile_request(
     started = time.perf_counter()
     tracemalloc.start()
     layout_patch = (
-        patch.object(cache, "load_raw_layout_index", return_value=None)
+        patch.object(cache, "try_load_raw_layout_index", return_value=None)
         if path == "legacy"
-        else patch.object(cache, "load_raw_layout_index", wraps=cache.load_raw_layout_index)
+        else patch.object(
+            cache,
+            "try_load_raw_layout_index",
+            wraps=cache.try_load_raw_layout_index,
+        )
     )
     with patch.object(cache, "load_raw", side_effect=load_raw), patch.object(
         cache, "load_raw_cycles", side_effect=load_raw_cycles

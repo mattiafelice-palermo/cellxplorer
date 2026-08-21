@@ -168,10 +168,10 @@ def build_time_capacity_stitch_plan(
             skipped_segments.append(segment)
             continue
 
-        # ``load_raw_layout_index`` waits for an in-flight 050.2 preparation
-        # before deciding whether the pair is ready.  Only then distinguish a
-        # genuinely absent raw cache from a valid legacy cache.
-        index = cache.load_raw_layout_index(ref.file_hash, ref.parser_version)
+        # A plot request must not wait for an in-flight 050.2 conversion.  The
+        # probe validates the raw/index pair only when the consistency boundary
+        # is immediately available; a busy boundary takes the legacy path.
+        index = cache.try_load_raw_layout_index(ref.file_hash, ref.parser_version)
         if index is None:
             if not cache.raw_path(ref.file_hash, ref.parser_version).is_file():
                 missing.append(ref.file_hash)
@@ -260,15 +260,22 @@ def requested_global_cycles(
                 continue
         return tuple(sorted(values))
 
-    known = [
+    known = tuple(
         int(global_cycle)
         for source in plan.sources
         for global_cycle in source.cycle_map.values()
-    ]
+    )
     if not known:
         return ()
-    lower = min(known) if cycle_start is None else int(cycle_start)
-    upper = max(known) if cycle_end is None else int(cycle_end)
+    known_lower = min(known)
+    known_upper = max(known)
+    lower = known_lower if cycle_start is None else int(cycle_start)
+    upper = known_upper if cycle_end is None else int(cycle_end)
+    # Clamp before materializing the range.  Saved/direct requests can carry
+    # stale or adversarially large endpoints, but the valid dense cycle plan is
+    # always bounded by the indexed source chain.
+    lower = max(lower, known_lower)
+    upper = min(upper, known_upper)
     if upper < lower:
         return ()
     return tuple(range(lower, upper + 1))
@@ -343,6 +350,7 @@ def load_indexed_time_capacity_raw(
                 local_cycles,
                 columns,
                 diagnostics=read_diagnostics,
+                wait_for_layout=False,
             )
         if loaded is None:
             _set_diagnostic(

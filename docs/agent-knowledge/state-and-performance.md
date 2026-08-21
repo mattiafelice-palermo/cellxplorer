@@ -403,7 +403,13 @@ helpers, removes row-group spillover before transforms, and obtains full-source 
 availability and descriptor timestamp bounds from index facts. It retains `stitch_raw()` as a
 whole-Cell fallback for valid legacy/unusable layouts; a missing raw cache remains fail-closed and
 never becomes a legacy fallback. The optional `compute_time_capacity(...,
-access_diagnostics=...)` hook is test/profiler-only and is not part of the response payload.
+access_diagnostics=...)` hook is test/profiler-only and is not part of the response payload. The
+request path probes the raw-layout consistency boundary without waiting for background conversion;
+when that boundary is busy, it uses the canonical legacy reader, and indexed row reads use the
+same non-waiting boundary so a conversion that starts after planning falls back safely as well.
+Range endpoints are clamped to the known dense global-cycle bounds before a request tuple is
+materialized, so stale extreme saved endpoints cannot create work proportional to their numeric
+distance from the Cell's actual cycles.
 
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
