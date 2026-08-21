@@ -72,6 +72,33 @@ def _stage_totals_ms(cells: list[Mapping[str, Any]]) -> dict[str, float] | None:
     return totals or None
 
 
+def _resolved_cell_count(
+    result: Mapping[str, Any], diagnostics: Mapping[str, Any] | None,
+) -> int | None:
+    diagnostic_cells = diagnostics.get("cells", []) if diagnostics else []
+    diagnostic_ids = {
+        cell.get("cell_id")
+        for cell in diagnostic_cells
+        if isinstance(cell, Mapping)
+        and isinstance(cell.get("cell_id"), int)
+        and not isinstance(cell.get("cell_id"), bool)
+    }
+    if diagnostic_ids:
+        return len(diagnostic_ids)
+
+    traces = result.get("cell_traces")
+    if not isinstance(traces, list):
+        return None
+    cell_ids = {
+        trace.get("cell_id")
+        for trace in traces
+        if isinstance(trace, Mapping)
+        and isinstance(trace.get("cell_id"), int)
+        and not isinstance(trace.get("cell_id"), bool)
+    }
+    return len(cell_ids)
+
+
 def build_time_capacity_profile(
     *,
     request_id: str,
@@ -119,7 +146,9 @@ def build_time_capacity_profile(
         rendering = result.get("rendering")
         if isinstance(rendering, Mapping) and isinstance(rendering.get("total_points"), int):
             profile["returned_points"] = rendering["total_points"]
-        traces = result.get("cell_traces")
-        if isinstance(traces, list):
-            profile["trace_count"] = len(traces)
+        resolved_cells = _resolved_cell_count(result, diagnostics)
+        if resolved_cells is not None:
+            # One resolved Cell can produce more than one Plotly trace. The
+            # frontend owns the separate Plotly trace count at completion.
+            profile["resolved_cell_count"] = resolved_cells
     return profile

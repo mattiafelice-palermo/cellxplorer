@@ -6,6 +6,8 @@ export type TimeCapacityRawAccess =
   | "not_applicable"
   | "unknown";
 
+export type TimeCapacityResponseSource = "http" | "react_query_memory";
+
 export interface TimeCapacityPerformanceContext {
   analysis_id: number;
   selection_count: number;
@@ -35,7 +37,7 @@ export interface TimeCapacityBackendProfile {
   raw_rows_materialized?: number;
   selected_rows_before_transforms?: number;
   returned_points?: number;
-  trace_count?: number;
+  resolved_cell_count?: number;
 }
 
 export interface TimeCapacityInteractionProfile extends TimeCapacityPerformanceContext {
@@ -43,6 +45,7 @@ export interface TimeCapacityInteractionProfile extends TimeCapacityPerformanceC
   request_id: string;
   started_at_ms: number;
   placeholder_was_visible: boolean;
+  response_source?: TimeCapacityResponseSource;
   result_cache: TimeCapacityResultCache;
   raw_access: TimeCapacityRawAccess;
   backend_total_ms?: number;
@@ -59,7 +62,13 @@ export interface TimeCapacityInteractionProfile extends TimeCapacityPerformanceC
   raw_rows_materialized?: number;
   selected_rows_before_transforms?: number;
   returned_points?: number;
+  resolved_cell_count?: number;
   trace_count?: number;
+}
+
+export interface TimeCapacityFrontendPreparedDetails {
+  resolvedCellCount?: number;
+  plotlyTraceCount?: number;
 }
 
 interface ActiveProfile {
@@ -80,7 +89,10 @@ export interface TimeCapacityPerformanceProfiler {
     backend: TimeCapacityBackendProfile | undefined,
     httpRoundTripMs: number,
   ): void;
-  frontendPrepared(requestId: string, traceCount?: number): void;
+  /** Mark the result-to-Plotly preparation boundary for the current request. */
+  frontendPrepared(requestId: string, details?: TimeCapacityFrontendPreparedDetails): void;
+  /** Mark a result satisfied from React Query memory without reusing server facts. */
+  memoryCacheHit(requestId: string): void;
   plotlyComplete(requestId: string): void;
   cancel(requestId: string): void;
   records(): TimeCapacityInteractionProfile[];
@@ -136,7 +148,7 @@ function applyBackendProfile(
     "raw_rows_materialized",
     "selected_rows_before_transforms",
     "returned_points",
-    "trace_count",
+    "resolved_cell_count",
   ] as const) {
     const value = backend[key];
     if (value !== undefined) {
@@ -146,6 +158,53 @@ function applyBackendProfile(
   if (backend.backend_stages_ms) {
     record.backend_stages_ms = { ...backend.backend_stages_ms };
   }
+}
+
+function clearBackendFacts(record: TimeCapacityInteractionProfile): void {
+  record.result_cache = "unknown";
+  record.raw_access = "not_applicable";
+  delete record.backend_total_ms;
+  delete record.backend_compute_ms;
+  delete record.backend_serialize_ms;
+  delete record.response_bytes;
+  delete record.backend_stages_ms;
+  delete record.row_groups_read;
+  delete record.row_groups_total;
+  delete record.raw_rows_materialized;
+  delete record.selected_rows_before_transforms;
+  delete record.returned_points;
+  delete record.resolved_cell_count;
+}
+
+/**
+ * The React Query JSON identity and backend data_signature are different
+ * namespaces. Only the current query identity and non-placeholder result may
+ * authorize the frontend completion boundary.
+ */
+export function timeCapacityProfileResultIsCurrent(
+  currentQuerySignature: string | null,
+  profileQuerySignature: string | null,
+  result: { data_signature?: string } | null | undefined,
+  isPlaceholderData: boolean,
+): boolean {
+  return (
+    currentQuerySignature !== null &&
+    currentQuerySignature === profileQuerySignature &&
+    Boolean(result) &&
+    !isPlaceholderData
+  );
+}
+
+export function timeCapacityResolvedCellCount(
+  traces: ReadonlyArray<{ cell_id: number }>,
+): number {
+  const cellIds = new Set<number>();
+  for (const trace of traces) {
+    if (typeof trace.cell_id === "number" && Number.isFinite(trace.cell_id)) {
+      cellIds.add(trace.cell_id);
+    }
+  }
+  return cellIds.size;
 }
 
 export function createTimeCapacityPerformanceProfiler(
@@ -202,11 +261,20 @@ export function createTimeCapacityPerformanceProfiler(
       const current = active.get(requestId);
       if (!current) return;
       if (backend && backend.request_id !== requestId) return;
+      current.record.response_source = "http";
       applyBackendProfile(current.record, backend);
       current.record.http_round_trip_ms = nonNegative(httpRoundTripMs);
       current.response_received_at_ms = clock();
     },
-    frontendPrepared(requestId, traceCount) {
+    memoryCacheHit(requestId) {
+      const current = active.get(requestId);
+      if (!current) return;
+      current.record.response_source = "react_query_memory";
+      clearBackendFacts(current.record);
+      current.record.http_round_trip_ms = 0;
+      current.response_received_at_ms = clock();
+    },
+    frontendPrepared(requestId, details) {
       const current = active.get(requestId);
       if (!current || current.response_received_at_ms === null) return;
       if (current.plot_props_ready_at_ms === null) {
@@ -216,7 +284,12 @@ export function createTimeCapacityPerformanceProfiler(
           current.plot_props_ready_at_ms - current.response_received_at_ms,
         );
       }
-      if (traceCount !== undefined) current.record.trace_count = traceCount;
+      if (details?.resolvedCellCount !== undefined) {
+        current.record.resolved_cell_count = details.resolvedCellCount;
+      }
+      if (details?.plotlyTraceCount !== undefined) {
+        current.record.trace_count = details.plotlyTraceCount;
+      }
     },
     plotlyComplete(requestId) {
       const current = active.get(requestId);

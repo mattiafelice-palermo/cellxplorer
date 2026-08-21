@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   createTimeCapacityPerformanceProfiler,
+  timeCapacityProfileResultIsCurrent,
+  timeCapacityResolvedCellCount,
   type TimeCapacityPerformanceContext,
 } from "../src/features/analyses/editor/performance/timeCapacityPerformanceProfile.ts";
 
@@ -49,7 +51,10 @@ function finish(
     12,
   );
   timer.advance(3);
-  profiler.frontendPrepared(requestId, 3);
+  profiler.frontendPrepared(requestId, {
+    resolvedCellCount: 3,
+    plotlyTraceCount: 3,
+  });
   timer.advance(4);
   profiler.plotlyComplete(requestId);
 }
@@ -78,6 +83,7 @@ test("one request produces one completed record with separated boundaries", () =
       request_id: "request-1",
       started_at_ms: 100,
       placeholder_was_visible: false,
+      response_source: "http",
       result_cache: "miss",
       raw_access: "indexed",
       http_round_trip_ms: 12,
@@ -85,6 +91,7 @@ test("one request produces one completed record with separated boundaries", () =
       plotly_update_ms: 4,
       total_interaction_ms: 12,
       returned_points: 42,
+      resolved_cell_count: 3,
       trace_count: 3,
     },
   ]);
@@ -105,7 +112,10 @@ test("placeholder visibility is recorded but cannot finish a request", () => {
   profiler.plotlyComplete("request-1");
   assert.deepEqual(profiler.records(), []);
   timer.advance(2);
-  profiler.frontendPrepared("request-1", 1);
+  profiler.frontendPrepared("request-1", {
+    resolvedCellCount: 1,
+    plotlyTraceCount: 1,
+  });
   profiler.plotlyComplete("request-1");
   assert.equal(profiler.records()[0]?.placeholder_was_visible, true);
 });
@@ -122,10 +132,109 @@ test("superseded and aborted requests cannot finish or overwrite the current req
     raw_access: "legacy",
   }, 20);
   profiler.begin("new", { ...context, cycle_end: 150 });
-  profiler.frontendPrepared("old", 1);
+  profiler.frontendPrepared("old", { resolvedCellCount: 1, plotlyTraceCount: 1 });
   profiler.plotlyComplete("old");
   profiler.cancel("new");
   assert.deepEqual(profiler.records(), []);
+});
+
+test("a real backend digest does not invalidate the current frontend query identity", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  profiler.enable();
+  const frontendQuerySignature = JSON.stringify({ selection: ["replicate:4"], points: 4000 });
+  const backendDataSignature = "analysis-cache-sha256:distinct-identity";
+
+  assert.equal(
+    timeCapacityProfileResultIsCurrent(
+      frontendQuerySignature,
+      frontendQuerySignature,
+      { data_signature: backendDataSignature },
+      false,
+    ),
+    true,
+  );
+  profiler.begin("real-http", context);
+  profiler.response(
+    "real-http",
+    {
+      profile_version: 1,
+      request_id: "real-http",
+      result_cache: "miss",
+      raw_access: "indexed",
+    },
+    8,
+  );
+  profiler.frontendPrepared("real-http", { resolvedCellCount: 1, plotlyTraceCount: 2 });
+  profiler.plotlyComplete("real-http");
+  assert.equal(profiler.records().length, 1);
+});
+
+test("React Query memory hits do not inherit prior HTTP profiling facts", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  profiler.enable();
+
+  profiler.begin("server-miss", context);
+  profiler.response(
+    "server-miss",
+    {
+      profile_version: 1,
+      request_id: "server-miss",
+      result_cache: "miss",
+      raw_access: "indexed",
+      backend_compute_ms: 25,
+      response_bytes: 900,
+      resolved_cell_count: 2,
+    },
+    40,
+  );
+  profiler.frontendPrepared("server-miss", { resolvedCellCount: 2, plotlyTraceCount: 4 });
+  profiler.plotlyComplete("server-miss");
+
+  profiler.begin("memory-hit", context);
+  profiler.memoryCacheHit("memory-hit");
+  profiler.frontendPrepared("memory-hit", { resolvedCellCount: 2, plotlyTraceCount: 4 });
+  profiler.plotlyComplete("memory-hit");
+
+  const record = profiler.records()[1];
+  assert.equal(record?.response_source, "react_query_memory");
+  assert.equal(record?.result_cache, "unknown");
+  assert.equal(record?.raw_access, "not_applicable");
+  assert.equal(record?.http_round_trip_ms, 0);
+  assert.equal(record?.backend_compute_ms, undefined);
+  assert.equal(record?.response_bytes, undefined);
+  assert.equal(record?.resolved_cell_count, 2);
+});
+
+test("resolved Cells and Plotly traces remain separate from selection entries", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  profiler.enable();
+  assert.equal(
+    timeCapacityResolvedCellCount([
+      { cell_id: 11 },
+      { cell_id: 11 },
+      { cell_id: 12 },
+    ]),
+    2,
+  );
+  profiler.begin("multi-cell", { ...context, selection_count: 1 });
+  profiler.response("multi-cell", {
+    profile_version: 1,
+    request_id: "multi-cell",
+    result_cache: "hit",
+    raw_access: "not_applicable",
+  }, 0);
+  profiler.frontendPrepared("multi-cell", {
+    resolvedCellCount: 2,
+    plotlyTraceCount: 6,
+  });
+  profiler.plotlyComplete("multi-cell");
+  const record = profiler.records()[0];
+  assert.equal(record?.selection_count, 1);
+  assert.equal(record?.resolved_cell_count, 2);
+  assert.equal(record?.trace_count, 6);
 });
 
 test("completion is identity-bound and retention/reset/export are bounded and deterministic", () => {

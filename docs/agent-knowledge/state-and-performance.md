@@ -423,7 +423,12 @@ accepts the profiling flag without adding it to the scientific cache key and ret
 unchanged. The block aggregates the existing 050.3 stage, row-group, selected-row, and returned-
 point diagnostics without source paths, hashes, raw rows, or full specs. This boundary separates
 backend compute/serialization and HTTP time from browser preparation and Plotly completion; it is
-an instrumentation contract, not evidence that another optimization child is needed.
+an instrumentation contract, not evidence that another optimization child is needed. The exported
+record keeps `selection_count` as selection-entry count, `resolved_cell_count` as the unique
+resolved Cell/unit count, and `trace_count` as the separate Plotly trace count. A result served from
+the current React Query memory cache is marked `response_source: "react_query_memory"`, has zero
+HTTP time, and does not inherit backend cache/access/timing facts from the older response; only a
+real server response is marked `response_source: "http"`.
 
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,

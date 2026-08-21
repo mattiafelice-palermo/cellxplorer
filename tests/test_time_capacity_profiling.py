@@ -27,6 +27,7 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                         "stages": {"index_stitch_plan": 0.0015},
                     },
                     {
+                        "cell_id": 2,
                         "path": "legacy",
                         "row_groups_read": "full",
                         "row_groups_total": "full",
@@ -38,7 +39,11 @@ class TimeCapacityProfilingTests(unittest.TestCase):
             },
             backend_compute_ms=12.5,
             result={
-                "cell_traces": [{"cell_id": 1}],
+                "cell_traces": [
+                    {"cell_id": 1},
+                    {"cell_id": 1},
+                    {"cell_id": 2},
+                ],
                 "rendering": {"total_points": 24},
             },
         )
@@ -49,7 +54,8 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(profile["raw_rows_materialized"], 140)
         self.assertEqual(profile["selected_rows_before_transforms"], 116)
         self.assertEqual(profile["returned_points"], 24)
-        self.assertEqual(profile["trace_count"], 1)
+        self.assertEqual(profile["resolved_cell_count"], 2)
+        self.assertNotIn("trace_count", profile)
         self.assertAlmostEqual(profile["backend_stages_ms"]["index_stitch_plan"], 1.5)
         self.assertAlmostEqual(profile["backend_stages_ms"]["legacy_full_raw_read"], 2.0)
         self.assertNotIn("cell_id", profile)

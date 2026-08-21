@@ -1686,7 +1686,8 @@ export interface TimeCapacityBackendProfile {
   raw_rows_materialized?: number;
   selected_rows_before_transforms?: number;
   returned_points?: number;
-  trace_count?: number;
+  /** Unique resolved Cell/unit count; distinct from Plotly trace count. */
+  resolved_cell_count?: number;
 }
 
 export interface TimeCapacityResult {

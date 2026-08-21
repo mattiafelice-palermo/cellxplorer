@@ -106,6 +106,8 @@ import {
   newTimeCapacityProfileRequestId,
   timeCapacityPerformanceNow,
   timeCapacityPerformanceProfiler,
+  timeCapacityProfileResultIsCurrent,
+  timeCapacityResolvedCellCount,
   type TimeCapacityPerformanceContext,
 } from "../../performance/timeCapacityPerformanceProfile";
 
@@ -1321,11 +1323,14 @@ function TimeCapacityPlotCardView({
     );
     // React Query can satisfy a newly selected key from its in-memory cache,
     // so no queryFn/HTTP callback runs. Treat that path as a zero-HTTP
-    // completion while retaining the server cache fact when it is present.
+    // interaction, without reusing the prior result's server profiling facts.
     const data = timeResult.data;
-    const dataIsCurrent =
-      Boolean(data) &&
-      (data?.data_signature === undefined || data.data_signature === dataSignature);
+    const dataIsCurrent = timeCapacityProfileResultIsCurrent(
+      dataSignature,
+      profileRequest.dataSignature,
+      data,
+      Boolean(timeResult.isPlaceholderData),
+    );
     if (
       dataIsCurrent &&
       data &&
@@ -1333,15 +1338,7 @@ function TimeCapacityPlotCardView({
       !timeResult.isPlaceholderData &&
       data.profiling?.request_id !== profileRequest.requestId
     ) {
-      const backend: NonNullable<TimeCapacityResult["profiling"]> = data.profiling
-        ? { ...data.profiling, request_id: profileRequest.requestId }
-        : {
-            profile_version: 1 as const,
-            request_id: profileRequest.requestId,
-            result_cache: data.cache_status ?? ("unknown" as const),
-            raw_access: "unknown" as const,
-          };
-      timeCapacityPerformanceProfiler.response(profileRequest.requestId, backend, 0);
+      timeCapacityPerformanceProfiler.memoryCacheHit(profileRequest.requestId);
     }
   }, [
     dataSignature,
@@ -1441,17 +1438,25 @@ function TimeCapacityPlotCardView({
     [currentResult, viewSignature, exportTraces]
   );
   const profileResultIsCurrent = Boolean(
-    currentResult &&
-      !timeResult.isPlaceholderData &&
-      (currentResult.data_signature === undefined || currentResult.data_signature === dataSignature),
+    timeCapacityProfileResultIsCurrent(
+      dataSignature,
+      profileRequest?.dataSignature ?? null,
+      currentResult,
+      Boolean(timeResult.isPlaceholderData),
+    ),
   );
   useLayoutEffect(() => {
     if (!profileRequest || !profileResultIsCurrent) return;
     timeCapacityPerformanceProfiler.frontendPrepared(
       profileRequest.requestId,
-      traces.length,
+      {
+        resolvedCellCount: currentResult
+          ? timeCapacityResolvedCellCount(currentResult.cell_traces)
+          : undefined,
+        plotlyTraceCount: traces.length,
+      },
     );
-  }, [profileRequest, profileResultIsCurrent, traces.length]);
+  }, [currentResult, profileRequest, profileResultIsCurrent, traces.length]);
   const style = currentPlotStyle(spec, "time_capacity");
   const explainer = getTimeCapacityExplainer(
     cfg.x_axis,

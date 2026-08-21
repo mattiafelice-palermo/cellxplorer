@@ -975,6 +975,8 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(miss_profile["raw_rows_materialized"], 40)
         self.assertEqual(miss_profile["selected_rows_before_transforms"], 36)
         self.assertEqual(miss_profile["returned_points"], 24)
+        self.assertEqual(miss_profile["resolved_cell_count"], 1)
+        self.assertNotIn("trace_count", miss_profile)
         self.assertEqual(hit_profile["request_id"], "profile-hit")
         self.assertEqual(hit_profile["result_cache"], "hit")
         self.assertEqual(hit_profile["raw_access"], "not_applicable")
@@ -1018,6 +1020,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn(profile["raw_access"], {"indexed", "legacy"})
         self.assertGreaterEqual(profile["returned_points"], 0)
         self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
+        self.assertEqual(profile["resolved_cell_count"], 1)
 
     def test_time_capacity_profile_route_real_interactive_request_exposes_diagnostics(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
@@ -1052,6 +1055,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn(profile["raw_access"], {"indexed", "legacy"})
         self.assertGreaterEqual(profile["returned_points"], 0)
         self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
+        self.assertEqual(profile["resolved_cell_count"], 1)
         self.assertGreaterEqual(profile["backend_compute_ms"], 0)
         self.assertGreaterEqual(profile["backend_serialize_ms"], 0)
         self.assertGreater(profile["response_bytes"], 0)
