@@ -447,6 +447,55 @@ def _profile_request_id(req: ComputeRequest) -> str:
     return req.profile_request_id or f"server-{uuid4().hex}"
 
 
+def _append_json_object_field(body: bytes, name: str, value: object) -> bytes:
+    """Append one small JSON field without re-encoding the scientific body."""
+
+    rest = body.rstrip()
+    if not rest.startswith(b"{") or not rest.endswith(b"}"):
+        raise ValueError("result body is not a JSON object")
+    field = fast_json({name: value}).body.strip()
+    if not field.startswith(b"{") or not field.endswith(b"}"):
+        raise ValueError("profiling field is not a JSON object")
+    prefix = rest[:-1]
+    separator = b"" if prefix.rstrip().endswith(b"{") else b","
+    return prefix + separator + field[1:-1] + b"}"
+
+
+def _replace_json_number(body: bytes, field: str, value: int | float) -> bytes:
+    """Patch a numeric profiling field in-place without another JSON render."""
+
+    profile_start = body.find(b'"profiling":')
+    marker = b'"' + field.encode("utf-8") + b'":'
+    start = body.find(marker, profile_start)
+    if profile_start < 0 or start < 0:
+        raise ValueError(f"profiling field {field!r} is missing")
+    value_start = start + len(marker)
+    comma = body.find(b",", value_start)
+    closing = body.find(b"}", value_start)
+    ends = [position for position in (comma, closing) if position >= 0]
+    if not ends:
+        raise ValueError(f"profiling field {field!r} has no JSON terminator")
+    value_end = min(ends)
+    if isinstance(value, int):
+        replacement = str(max(0, value)).encode("ascii")
+    else:
+        replacement = format(max(0.0, float(value)), ".6f").rstrip("0").rstrip(".").encode("ascii")
+        if replacement == b"":
+            replacement = b"0"
+    return body[:value_start] + replacement + body[value_end:]
+
+
+def _settle_profile_response_bytes(content: bytes) -> bytes:
+    """Converge the self-reported byte count using byte patches only."""
+
+    for _ in range(4):
+        next_content = _replace_json_number(content, "response_bytes", len(content))
+        if next_content == content:
+            return content
+        content = next_content
+    return content
+
+
 def _profiled_time_capacity_response(
     *,
     request_started: float,
@@ -461,9 +510,10 @@ def _profiled_time_capacity_response(
 ) -> Response:
     """Return a normal result plus a profiling-only diagnostic namespace.
 
-    The first serialization establishes the response-size and serialization
-    measurements. The later passes add those measurements to the diagnostic
-    block; the scientific payload itself is never parsed or changed.
+    A miss serializes the scientific result once through the normal fast JSON
+    path, then appends and patches only the small profiling object. A persisted
+    hit uses the existing body-splice path. The scientific payload is never
+    parsed or re-encoded to converge self-referential timing/byte fields.
     """
 
     profile = time_capacity_profiling.build_time_capacity_profile(
@@ -474,34 +524,44 @@ def _profiled_time_capacity_response(
         result=result,
     )
 
-    def render() -> bytes:
-        if stored_body is not None:
-            return analysis_cache.splice_result_body(
-                stored_body,
-                badges or [],
-                "hit",
-                {
-                    **(cache_extra_fields or {}),
-                    "profiling": profile,
-                },
-            )
+    # These placeholders are patched in the final bytes after the one normal
+    # body preparation. This avoids serializing the large scientific payload a
+    # second time merely because the profile contains self-referential values.
+    profile["backend_serialize_ms"] = 0.0
+    profile["backend_total_ms"] = 0.0
+    profile["response_bytes"] = 0
+    serialize_started = perf_counter()
+    if stored_body is not None:
+        content = analysis_cache.splice_result_body(
+            stored_body,
+            badges or [],
+            "hit",
+            {
+                **(cache_extra_fields or {}),
+                "profiling": profile,
+            },
+        )
+    else:
         if result is None:
             raise ValueError("A profiled Time/Capacity response needs a result or stored body")
-        payload = dict(result)
-        payload["profiling"] = profile
-        return fast_json(payload).body
-
-    serialize_started = perf_counter()
-    content = render()
-    profile["backend_serialize_ms"] = (perf_counter() - serialize_started) * 1000.0
-    profile["backend_total_ms"] = (perf_counter() - request_started) * 1000.0
-    content = render()
-    for _ in range(3):
-        profile["response_bytes"] = len(content)
-        next_content = render()
-        content = next_content
-        if profile["response_bytes"] == len(content):
-            break
+        scientific_body = fast_json(result).body
+        content = _append_json_object_field(scientific_body, "profiling", profile)
+    serialize_ms = (perf_counter() - serialize_started) * 1000.0
+    content = _replace_json_number(content, "backend_serialize_ms", serialize_ms)
+    content = _replace_json_number(
+        content,
+        "backend_total_ms",
+        (perf_counter() - request_started) * 1000.0,
+    )
+    content = _settle_profile_response_bytes(content)
+    # Include the final small byte-patch preparation in the total boundary;
+    # this is still byte surgery, not another scientific JSON serialization.
+    content = _replace_json_number(
+        content,
+        "backend_total_ms",
+        (perf_counter() - request_started) * 1000.0,
+    )
+    content = _settle_profile_response_bytes(content)
     return Response(content=content, media_type="application/json")
 
 

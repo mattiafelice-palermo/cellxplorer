@@ -429,6 +429,10 @@ resolved Cell/unit count, and `trace_count` as the separate Plotly trace count. 
 the current React Query memory cache is marked `response_source: "react_query_memory"`, has zero
 HTTP time, and does not inherit backend cache/access/timing facts from the older response; only a
 real server response is marked `response_source: "http"`.
+The profiling response path serializes a miss's scientific body once, appends the small profiling
+object, and patches self-referential timing/byte numbers in the final bytes; a persisted hit uses
+the existing body-splice path. Profiling therefore does not repeatedly encode a large result and
+misclassify that extra work as HTTP or frontend time.
 
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,

@@ -950,16 +950,32 @@ class AnalysisEngineTests(unittest.TestCase):
             analysis_cache, "store_result", side_effect=fake_store
         ), patch.object(
             analyses_router.engine, "availability_badges", return_value=[]
-        ):
+        ), patch.object(
+            analyses_router, "fast_json", wraps=analyses_router.fast_json
+        ) as json_serializer:
+            def scientific_serializations() -> list:
+                return [
+                    call
+                    for call in json_serializer.call_args_list
+                    if call.args
+                    and isinstance(call.args[0], dict)
+                    and "cell_traces" in call.args[0]
+                ]
+
             profiled_miss = analyses_router.compute_time_capacity_analysis(
                 analysis.id, profiled_request, self.db
             )
+            self.assertEqual(len(scientific_serializations()), 1)
+            json_serializer.reset_mock()
             ordinary_miss = analyses_router.compute_time_capacity_analysis(
                 analysis.id, ordinary_request, self.db
             )
+            self.assertEqual(len(scientific_serializations()), 1)
+            json_serializer.reset_mock()
             profiled_hit = analyses_router.compute_time_capacity_analysis(
                 analysis.id, profiled_hit_request, self.db
             )
+            self.assertEqual(len(scientific_serializations()), 0)
 
         profiled_miss_body = json.loads(profiled_miss.body)
         ordinary_miss_body = json.loads(ordinary_miss.body)
@@ -1059,6 +1075,8 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertGreaterEqual(profile["backend_compute_ms"], 0)
         self.assertGreaterEqual(profile["backend_serialize_ms"], 0)
         self.assertGreater(profile["response_bytes"], 0)
+        self.assertEqual(profile["response_bytes"], len(response.body))
+        self.assertGreaterEqual(profile["backend_total_ms"], profile["backend_compute_ms"])
 
     def test_time_capacity_two_electrode_fixture_exposes_only_voltage_channel(self):
         # Spec 040.4 case 8: an ordinary two-electrode source must not gain
