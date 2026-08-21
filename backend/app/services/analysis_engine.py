@@ -2898,7 +2898,7 @@ def compute_time_capacity(
             and plan.path == "indexed"
             and requested_cycles
             and calc_version == CALC_VERSION
-            and transform_needs.phase
+            and transform_needs.phase_capacity
         ):
             with time_capacity_path.timed_stage(
                 profile_diagnostics,
@@ -3006,7 +3006,9 @@ def compute_time_capacity(
                 capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
                 cell_diagnostics["derived_access"] = "prepared"
             else:
-                cell_diagnostics["derived_access"] = "fallback"
+                cell_diagnostics["derived_access"] = (
+                    "fallback" if transform_needs.phase_capacity else "not_needed"
+                )
                 with time_capacity_path.timed_stage(
                     profile_diagnostics, "transform_phase_classification"
                 ):

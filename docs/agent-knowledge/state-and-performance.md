@@ -447,18 +447,22 @@ cleanup boundary, and is also reachable through the existing scientific-preparat
 offline current raw caches. A deliberately cleaned raw cache is not recreated only for this
 optimization.
 
-The indexed Time/Capacity path selects the same source-local cycle groups for raw and derived
-reads. It accepts prepared values only after all contributing sources pass metadata and row
-identity/order validation; a missing, stale, corrupt, busy, or partially available sidecar
-returns immediately to the exact request-side phase/capacity helpers for the whole Cell/unit.
-Prepared reads use a non-waiting raw-layout boundary, touch both payload and index on success, and
-add no ordinary response fields. `TimeCapacityTransformNeeds` is the dependency contract: compact
-Time-axis Voltage/Current skips phase-capacity, specific, and areal arrays; compact capacity and
-derivative requests read only the exact prepared vectors they consume; full/non-compact responses
-retain all existing arrays. The shared phase/capacity owner is important: cache preparation and
-fallback cannot drift scientifically. Focused parity and golden tests are the evidence boundary;
-profiler output must keep raw/prepared group counts and phase/capacity source facts separate from
-wall-clock claims.
+The indexed Time/Capacity path selects the same source-local cycle groups for raw and, when the
+request consumes prepared values, derived reads. It accepts prepared values only after all
+contributing sources pass metadata and row identity/order validation; a missing, stale, corrupt,
+busy, or partially available sidecar returns immediately to the exact request-side phase/capacity
+helpers for the whole Cell/unit. Prepared reads use a non-waiting raw-layout boundary, touch both
+payload and index on success, and add no ordinary response fields. `TimeCapacityTransformNeeds`
+is the dependency contract: compact Time-axis Voltage/Current skips phase-capacity, specific, and
+areal arrays and intentionally does not open the phase-only sidecar; it computes phase from the
+already-selected raw rows and reports `derived_access: not_needed`. Compact capacity and derivative
+requests read only the exact prepared vectors they consume; full/non-compact responses retain all
+existing arrays. The shared phase/capacity owner is important: cache preparation and fallback cannot
+drift scientifically. During a write-behind publication, the owner skips only its own pending-thread
+join so it can publish the in-memory sidecar; external readers still wait for the complete raw,
+cycle, index and derived publication boundary. Focused parity and golden tests are the evidence
+boundary; profiler output must keep raw/prepared group counts and phase/capacity source facts
+separate from wall-clock claims.
 
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,

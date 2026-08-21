@@ -319,6 +319,23 @@ class WriteBehindTests(unittest.TestCase):
         leftovers = list(cache.raw_path(self.HASH, self.PARSER_IDENTITY).parent.glob("*.tmp-*"))
         self.assertEqual(leftovers, [])
 
+    def test_write_behind_publishes_prepared_cache_without_self_join(self):
+        with patch.object(cache.logger, "exception") as log_exception:
+            cache.build_write_behind(self.HASH, "unused.ndax")
+            cache.wait_for_pending(self.HASH)
+
+        log_exception.assert_not_called()
+        self.assertTrue(cache.raw_path(self.HASH, self.PARSER_IDENTITY).exists())
+        self.assertTrue(cache.cycles_path(self.HASH, self.PARSER_IDENTITY).exists())
+        self.assertTrue(cache.raw_index_path(self.HASH, self.PARSER_IDENTITY).exists())
+        self.assertTrue(
+            cache.time_capacity_derived_path(self.HASH, self.PARSER_IDENTITY).exists()
+        )
+        self.assertTrue(
+            cache.time_capacity_derived_index_path(self.HASH, self.PARSER_IDENTITY).exists()
+        )
+        self.assertEqual(self.calls, 1)
+
     def test_second_call_uses_existing_cache(self):
         cache.build_write_behind(self.HASH, "unused.ndax")
         cache.wait_for_pending(self.HASH)

@@ -181,7 +181,11 @@ CACHE_WAIT_TIMEOUT_SECONDS = 300.0
 def _wait_for_pending(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
     with _pending_lock:
         thread = _pending.get(file_hash)
-    if thread is not None:
+    # The write-behind owner may publish optional derived data from its own
+    # in-memory frame before clearing the pending marker.  It must not join
+    # itself, while external readers/builders still wait for the complete
+    # raw/cycle/derived publication boundary.
+    if thread is not None and thread is not threading.current_thread():
         thread.join(timeout)
         if thread.is_alive():
             logger.warning(

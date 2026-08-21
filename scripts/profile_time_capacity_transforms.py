@@ -4,7 +4,10 @@ This is an isolated, diagnostic-only harness.  It uses the committed golden
 source in a temporary CellXplorer database, creates disposable Cell records
 for the multi-Cell matrix, and never touches the user's application data.
 It compares forced request-side fallback, exact prepared sidecar hits and the
-dependency-aware compact Time-axis path.
+dependency-aware compact Time-axis path.  For compact Time-axis requests the
+sidecar-present execution is the real production path and its diagnostics
+must report ``derived_access=not_needed``; phase is computed from the selected
+raw rows because phase-only sidecar I/O is slower than that exact fallback.
 """
 from __future__ import annotations
 

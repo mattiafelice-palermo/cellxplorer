@@ -503,4 +503,21 @@ R1 resolved: bounded segment scan, segment preparation, and post-gradient cleanu
 
 R1 removes the measured phase-only prepared-sidecar regression: compact Voltage/Current Time-axis requests already skip phase-capacity/specific/areal work, and must use the faster computed phase from selected raw rows instead of opening the sidecar solely for `phase_code`. Preserve prepared phase/capacity for capacity-axis/derivative/full requests and rerun the profiler against the actual production path. R2 fixes the write-behind self-join: the background writer is registered in `_pending` and currently calls `prepare_time_capacity_derived()`, whose `_wait_for_pending()` tries to join that same current thread; publish the sidecar from the in-memory raw frame without weakening external pending/wait semantics. Fix only R1/R2 and hand back for 050.6 review; do not start derivative optimization, 050.7+, or proto-child 050.P1.
 
+### 2026-08-21T22:20:04+02:00 — IMPLEMENTER → REVIEWER — 050.6
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1/R2 focused regression suite: PASS (168 tests; compact Time-axis sidecar-skip and write-behind prepared-publication tests included)
+- R1 profiler rerun: PASS (30 scenarios, 5 repetitions; actual compact Time-axis path reports derived_access=not_needed and phase_source=computed; one-cycle 23.2 ms actual vs 23.8 ms forced fallback; capacity-axis reductions 36.8%-44.2%)
+- Prepared/fallback scientific parity and golden analysis: PASS (30 golden tests; all eight committed expected digests SAME)
+- Python compile and git diff --check: PASS
+- Canonical preflight: PASS (4/4 stages; all 77 backend modules; frontend type check and production bundle skipped unchanged)
+- Browser/manual: NOT REQUIRED for backend/cache-only 050.6
+
+**Message**
+
+R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axis Voltage/Current computes phase from selected raw rows, reports derived_access=not_needed, and retains exact fallback parity; the profiler now records the actual production path without claiming a phase-sidecar win. R2 fixed by preventing only the write-behind owner from joining itself; external readers still wait for the complete publication boundary. Added focused coverage and updated the 050.6 implementation record and durable performance knowledge. No 050.P1 or derivative optimization was implemented.
+
 ---

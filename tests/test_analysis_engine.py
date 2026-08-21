@@ -1352,6 +1352,37 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertEqual(trace["capacity_mah_cm2"], [])
         self.assertTrue(trace["phase"])
 
+    def test_compact_time_axis_does_not_read_phase_only_prepared_sidecar(self):
+        source = self.cells["c1"].tests[0].file_links[0].file
+        parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
+        self._restore_prepared_sidecar(source.hash, parser_version)
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        diagnostics: dict = {}
+        with patch(
+            "app.services.time_capacity_path.load_indexed_time_capacity_derived",
+            side_effect=AssertionError("phase-only Time requests must not read the sidecar"),
+        ), patch.object(
+            engine,
+            "_phase_capacity",
+            side_effect=AssertionError("phase capacity is not consumed by time-axis compact view"),
+        ):
+            result = engine.compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                precision="standard",
+                compact=True,
+                access_diagnostics=diagnostics,
+            )
+
+        cell_diagnostics = diagnostics["cells"][0]
+        self.assertEqual(cell_diagnostics["derived_access"], "not_needed")
+        self.assertEqual(cell_diagnostics["phase_source"], "computed")
+        self.assertEqual(cell_diagnostics["phase_capacity_source"], "not_needed")
+        self.assertNotIn("prepared_derived_read", cell_diagnostics.get("stages", {}))
+        self.assertTrue(result["cell_traces"][0]["phase"])
+
     def test_compact_capacity_axis_skips_unconsumed_continuous_time(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
         spec["computation"]["time_capacity"] = {
