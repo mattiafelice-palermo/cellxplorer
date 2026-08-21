@@ -417,7 +417,7 @@ not a universal threshold):
 
 | request | path | groups | raw rows materialized | selected rows into transforms | returned points | peak traced memory |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 cycle | legacy | full read | 71,190 | 71,190 | 2,590 | 8.05 MB |
+| 1 cycle | legacy | full read | 71,190 | 2,590 | 2,590 | 8.05 MB |
 | 1 cycle | indexed | 1/18 | 4,096 | 2,590 | 2,590 | 2.06 MB |
 | 20 cycles | legacy | full read | 71,190 | 10,611 | 10,611 | 8.79 MB |
 | 20 cycles | indexed | 3/18 | 12,288 | 10,611 | 10,611 | 8.80 MB |
