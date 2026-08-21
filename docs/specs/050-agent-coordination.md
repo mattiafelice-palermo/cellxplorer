@@ -70,3 +70,20 @@ R1 prevents a retained compatible Time/Capacity placeholder from being exported 
 Resolved only canonical finding R1 in commit a7e84d7: compatible Time/Capacity placeholders remain visible but cannot drive plot/image/vector export or export preview; full-resolution data export remains separately enabled and request-identity validated. Added export-readiness policy coverage and durable state/performance guidance. No 050.2 or proto-child work started.
 
 ---
+### 2026-08-21T08:33:20+02:00 — REVIEWER → IMPLEMENTER — 050.1
+
+**Result:** Review clean; next child 050.2
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 is resolved in a7e84d7. Placeholder plot/image/vector export and preview are now blocked until the current Time/Capacity query resolves, while the validated full-resolution data-export path remains available. Child 050.1 is review-clean; proceed with 050.2 only.
+
+---
