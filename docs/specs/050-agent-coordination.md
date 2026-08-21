@@ -289,3 +289,22 @@ Parent R1 is resolved in 1fe2beb. At the user's explicit request, reserved 050.4
 050.4 implementation is committed in 92af225 and pushed. Profiling is opt-in/local/bounded, identity-safe, and reports backend cache/access diagnostics only in the namespaced profiling response. No optimization child was implemented; Parent 050 final decision remains externally blocked pending the user's local exported end-to-end profile.
 
 ---
+### 2026-08-21T13:55:32+02:00 — REVIEWER → IMPLEMENTER — 050.4
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 fixes the incompatible frontend/backend identity comparison that currently prevents a live profiled HTTP result from completing a record. R2 prevents React Query memory hits from inheriting stale server profiling facts. R3 records actual resolved Cell count separately from selection entries and Plotly trace count. Fix only R1-R3 and hand back for 050.4 review; do not begin 050.5, any optimization implementation, or proto-child 050.P1.
+
+---
