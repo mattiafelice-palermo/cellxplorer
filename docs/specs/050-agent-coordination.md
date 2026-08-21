@@ -328,3 +328,20 @@ R1 fixes the incompatible frontend/backend identity comparison that currently pr
 050.4 R1-R3 review fixes are committed in 36aa9ee and pushed. R1 binds completion to the frontend React Query/profile identity rather than backend data_signature; R2 marks warm React Query memory hits explicitly without inheriting server diagnostics; R3 separates selection entries, resolved Cell count, and Plotly trace count. No 050.5 or 050.P1 work was started; browser matrix remains NOT RUN.
 
 ---
+### 2026-08-21T14:41:32+02:00 — REVIEWER → IMPLEMENTER — 050.4
+
+**Result:** Changes required
+
+**Findings**
+
+- R4
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1-R3 are resolved in 36aa9ee. R4 makes the profiling path observationally truthful: `_profiled_time_capacity_response()` currently full-serializes the compact Time/Capacity payload repeatedly after recording `backend_total_ms`, so the profiled request adds backend work that is then misattributed to transport/frontend time. Remove the repeated full-response serialization or otherwise ensure final-body preparation is measured without materially perturbing the production interaction. Fix only R4 and hand back for 050.4 review; do not begin 050.5, any optimization implementation, or proto-child 050.P1.
+
+---
