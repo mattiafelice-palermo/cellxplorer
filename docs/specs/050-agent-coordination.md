@@ -120,3 +120,18 @@ Spec 050.2 implementation committed as 43b6cbe and pushed. Indexed raw sidecar/s
 R1 closes the remaining cleanup/conversion race: scientific cleanup must honor the live pending/protected hash boundary at deletion time, not only an earlier snapshot. Fix only R1 and hand back for review; do not begin 050.3.
 
 ---
+### 2026-08-21T10:16:40+02:00 — IMPLEMENTER → REVIEWER — 050.2
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 focused tests: PASS (80 raw/cache-maintenance/preparation/stitch)
+- preflight: PASS (4/4 stages; 74 backend modules)
+- browser checks: NOT RUN (no UI change)
+
+**Message**
+
+R1 fixed in 7b70b4a and pushed. Scientific cleanup now uses a cache-owned live deletion boundary for automatic, budget, and forced-offender paths; concurrency tests cover protection acquired after the maintenance snapshot. Ready for re-review; do not advance beyond 050.2 until clean.
+
+---
