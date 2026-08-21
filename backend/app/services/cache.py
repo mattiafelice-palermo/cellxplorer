@@ -160,22 +160,32 @@ def _wait_for_pending(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECOND
             )
 
 
-def _wait_for_cleanup_safe(file_hash: str, timeout: float = CACHE_WAIT_TIMEOUT_SECONDS) -> None:
-    """Wait until no in-process writer or protected build owns this hash."""
+@contextmanager
+def _cleanup_delete_boundary(
+    file_hash: str,
+    timeout: float = CACHE_WAIT_TIMEOUT_SECONDS,
+):
+    """Serialize one checksum-directory deletion with live cache protection.
+
+    The pending/protected set is only a snapshot when read by maintenance
+    callers.  Holding the same lock through the final directory deletion
+    closes the gap between that snapshot and a converter acquiring
+    ``protect_hash_from_cleanup``.
+    """
     deadline = time.monotonic() + timeout
     while True:
         _wait_for_pending(file_hash, timeout=max(0.0, deadline - time.monotonic()))
         with _pending_lock:
-            protected = file_hash in _protected_hashes
-        if not protected:
-            return
+            active = file_hash in _pending or file_hash in _protected_hashes
+            if not active:
+                # A converter that starts after this point waits for the lock
+                # and therefore cannot observe a half-deleted directory.
+                yield
+                return
         if time.monotonic() >= deadline:
-            logger.warning(
-                "timed out waiting %.0fs for the protected build of %s; continuing",
-                timeout,
-                file_hash[:12],
+            raise TimeoutError(
+                f"Timed out waiting for cache protection to release {file_hash[:12]}"
             )
-            return
         time.sleep(0.05)
 
 
@@ -271,19 +281,20 @@ def protect_hash_from_cleanup(file_hash: str):
             _protected_hashes.discard(file_hash)
 
 
-def remove_hash_cache(file_hash: str) -> int:
+def remove_hash_cache(file_hash: str, *, cache_dir: Path | None = None) -> int:
     """Remove one obsolete content-addressed cache after its replacement is durable."""
     if re.fullmatch(r"[0-9a-fA-F]{64}", file_hash) is None:
         raise ValueError("Invalid source checksum")
-    _wait_for_cleanup_safe(file_hash)
-    directory = _dir(file_hash)
-    if not directory.exists():
-        return 0
-    removed = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
-    shutil.rmtree(directory)
-    if directory.exists():
-        raise OSError(f"Cache directory could not be removed: {directory}")
-    return removed
+    root = CACHE_DIR if cache_dir is None else Path(cache_dir)
+    directory = root / file_hash[:2] / file_hash
+    with _cleanup_delete_boundary(file_hash):
+        if not directory.exists():
+            return 0
+        removed = sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+        shutil.rmtree(directory)
+        if directory.exists():
+            raise OSError(f"Cache directory could not be removed: {directory}")
+        return removed
 
 
 def _touch(path: Path) -> None:

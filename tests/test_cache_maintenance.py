@@ -7,7 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -254,6 +254,74 @@ class CacheMaintenanceTests(unittest.TestCase):
             owner.join(timeout=1)
             remover.join(timeout=1)
             self.assertFalse(scientific.exists())
+
+    def test_scientific_cleanup_paths_wait_for_live_protection(self):
+        source_hash = "d" * 64
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache_root = root / "cache"
+            fake_db = MagicMock()
+            fake_db.query.return_value.filter.return_value.one_or_none.return_value = None
+
+            def run_while_protected(cleanup):
+                scientific = cache_root / source_hash[:2] / source_hash
+                scientific.mkdir(parents=True, exist_ok=True)
+                (scientific / "raw.parquet").write_bytes(b"active")
+                entered = threading.Event()
+                release = threading.Event()
+                finished = threading.Event()
+                result: list[object] = []
+
+                def owner():
+                    with cache.protect_hash_from_cleanup(source_hash):
+                        entered.set()
+                        release.wait(timeout=2)
+
+                def cleaner():
+                    result.append(cleanup())
+                    finished.set()
+
+                owner_thread = threading.Thread(target=owner)
+                cleaner_thread = threading.Thread(target=cleaner)
+                owner_thread.start()
+                self.assertTrue(entered.wait(timeout=1))
+                cleaner_thread.start()
+                self.assertFalse(finished.wait(timeout=0.15))
+                self.assertTrue(scientific.exists())
+                release.set()
+                self.assertTrue(finished.wait(timeout=2))
+                owner_thread.join(timeout=1)
+                cleaner_thread.join(timeout=1)
+                self.assertFalse(scientific.exists())
+                return result[0]
+
+            with (
+                patch.object(cache_maintenance, "CACHE_DIR", cache_root),
+                patch.object(cache_maintenance, "_source_labels", return_value={}),
+                # Simulate protection being acquired after maintenance's
+                # candidate snapshot; the shared deletion boundary must still
+                # observe the live protected set.
+                patch.object(cache_maintenance.cache, "pending_hashes", return_value=set()),
+            ):
+                automatic = run_while_protected(
+                    lambda: cache_maintenance.cleanup_eligible_scientific(fake_db)
+                )
+                self.assertEqual(automatic["items_removed"], 1)
+
+                budget = run_while_protected(
+                    lambda: cache_maintenance.enforce_scientific_limit(fake_db, 1)
+                )
+                self.assertGreater(budget, 0)
+
+                explicit = run_while_protected(
+                    lambda: cache_maintenance.cleanup_offender(
+                        fake_db,
+                        "scientific",
+                        source_hash,
+                        force=True,
+                    )
+                )
+                self.assertGreater(explicit, 0)
 
     def test_orphaned_source_cache_is_eligible_for_lru_cleanup(self):
         db = self.make_session()

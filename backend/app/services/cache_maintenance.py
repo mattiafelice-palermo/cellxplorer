@@ -293,7 +293,7 @@ def cleanup_eligible_scientific(db: Session) -> dict[str, int]:
             protected += 1
             protected_bytes += size
             continue
-        removed += _remove_directory(directory)
+        removed += cache.remove_hash_cache(directory.name, cache_dir=CACHE_DIR)
         cleaned += 1
     return {
         "bytes_removed": removed,
@@ -310,7 +310,7 @@ def cleanup_offender(db: Session, kind: str, identifier: str, *, force: bool = F
             raise PermissionError(
                 "The original source is unavailable. Confirm forced cleanup before removing its only local cache."
             )
-        return _remove_directory(CACHE_DIR / identifier[:2] / identifier)
+        return cache.remove_hash_cache(identifier, cache_dir=CACHE_DIR)
     if kind == "analysis_artifacts" and identifier.isdigit():
         removed = _remove_directory(CACHE_DIR / "analysis" / "artifacts" / identifier)
         analysis_cache.clear_prepared_markers(int(identifier))
@@ -345,9 +345,9 @@ def enforce_scientific_limit(db: Session, limit_bytes: int | None) -> int:
     for _, size, directory in sorted(candidates):
         if total <= target:
             break
-        shutil.rmtree(directory, ignore_errors=True)
-        total -= size
-        removed += size
+        actual_removed = cache.remove_hash_cache(directory.name, cache_dir=CACHE_DIR)
+        total -= actual_removed
+        removed += actual_removed
     return removed
 
 
