@@ -187,3 +187,21 @@ Spec 050.3 implementation committed as 483ca2b and pushed. Indexed Time/Capacity
 R1 keeps background raw-layout conversion off the Time/Capacity request critical path instead of making the request wait for the conversion lock. R2 bounds range planning to known global cycles so extreme stale/out-of-range endpoints cannot allocate an enormous tuple. Fix only R1/R2 and hand back for review; do not start 050.4 or parent final review.
 
 ---
+### 2026-08-21T11:15:17+02:00 — IMPLEMENTER → REVIEWER — 050.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- python -m unittest tests.test_time_capacity_path tests.test_raw_cache_layout: PASS (20 tests; R1 conversion concurrency and R2 extreme range regressions)
+- python -m unittest tests.test_time_capacity_path tests.test_analysis_cache tests.test_analysis_engine tests.test_stitch tests.test_mixed_parser_integration tests.test_neware_excel tests.test_canonical_cycling: PASS (254 tests)
+- python -m unittest tests.test_golden_analysis: PASS (30 tests; all committed expected digests SAME)
+- python scripts\\profile_time_capacity_path.py: PASS; corrected legacy/indexed matrix, full legacy rows versus indexed 1/18, 3/18, 14/18, 18/18 groups with equal selected rows and payloads
+- python scripts\\preflight.py: PASS (4/4 stages; all 75 backend modules; frontend policy/build skipped as unchanged)
+- Browser/manual profile: NOT RUN (backend-only child; no UI change)
+
+**Message**
+
+R1 and R2 review findings are fixed in 836ee0d and pushed. Layout conversion now has a non-waiting request boundary with safe legacy fallback and non-waiting selective-read fallback; range endpoints clamp to known dense cycles before tuple materialization. No 050.4 work started.
+
+---
