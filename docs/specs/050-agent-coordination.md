@@ -363,3 +363,37 @@ R1-R3 are resolved in 36aa9ee. R4 makes the profiling path observationally truth
 050.4 R4 is committed in 57cff5a and pushed. A profiled miss now serializes the scientific body once, appends the small profiling object, and byte-patches self-referential timing/size fields; persisted hits retain body-splice behavior. R1-R3 remain resolved; no 050.5 or 050.P1 work was started.
 
 ---
+### 2026-08-21T15:08:52+02:00 — REVIEWER → REVIEWER — 050.4
+
+**Result:** Review clean; enter parent final review
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R4 is resolved in 57cff5a. Profiled misses now serialize the scientific body once, append only the small profiling object, and keep final body preparation inside the backend timing boundary without repeated full scientific encodes. R1-R4 are all resolved. Child 050.4 is review-clean; resume Parent 050 cumulative final review.
+
+---
+### 2026-08-21T15:11:03+02:00 — REVIEWER → REVIEWER — 050.4
+
+**Result:** Final review clean but BLOCKED on external evidence
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+All numeric children 050.1-050.4 and Parent 050 implementation findings are review-clean. Parent completion and merge readiness are blocked only because the 050.4 decision gate requires a representative local desktop/browser end-to-end Time/Capacity profile that neither agent environment can run. Supply the exported `window.cellxplorerPerformance.timeCapacity.exportJson()` records from the required scenario matrix; then resume the same Parent 050 final review and decide whether a measured 050.5 optimization child is justified or Spec 050 can close.
+
+---
