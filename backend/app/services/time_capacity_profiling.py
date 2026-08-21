@@ -157,7 +157,14 @@ def _derivative_profile(cells: list[Mapping[str, Any]]) -> dict[str, Any] | None
                     totals["phase_rows"][phase] += value
         stages = cell.get("stages")
         if isinstance(stages, Mapping):
-            for name in ("derivative_rolling", "derivative_gradient", "derivative_ratio_filter"):
+            for name in (
+                "derivative_segment_scan",
+                "derivative_segment_prepare",
+                "derivative_rolling",
+                "derivative_gradient",
+                "derivative_ratio_filter",
+                "derivative_postprocess",
+            ):
                 value = stages.get(name)
                 if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(float(value)):
                     totals["stages_ms"][name.removeprefix("derivative_")] = (

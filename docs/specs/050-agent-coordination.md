@@ -449,3 +449,21 @@ Implemented R5 installed-app profiling controls in Diagnostics Performance. Star
 Spec 050.5 profiling/design implementation is complete. Fine-grained transform and dQ/dV diagnostics are opt-in; the matrix, dependency/reuse audit, persisted cache hit proof, controlled five-Cell gap probe, and separate next-child recommendations are recorded in the child spec. No optimization, 050.P1, scientific/cache-version, migration, or production telemetry work was implemented. Ready for review.
 
 ---
+### 2026-08-21T20:42:34+02:00 — IMPLEMENTER → REVIEWER — 050.5
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 derivative profiling tests: PASS (79 tests)
+- golden analysis: PASS (30 tests; all committed digests SAME)
+- R1 dQ/dV profiling matrix: PASS (1-3, 1-20, All; five repetitions)
+- frontend policy tests: PASS (652 tests; unchanged frontend contract)
+- canonical preflight: PASS (4/4; all 147 backend/frontend modules, type check, production bundle)
+- browser/manual timing: NOT REQUIRED for 050.5
+
+**Message**
+
+R1 resolved: bounded segment scan, segment preparation, and post-gradient cleanup/statistics/output-assignment timers localize the derivative cost; postprocess is dominant and residual is no longer the dominant unidentified bucket; no optimization or P1 work implemented.
+
+---

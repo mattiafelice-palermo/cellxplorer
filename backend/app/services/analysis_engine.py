@@ -1560,25 +1560,31 @@ def _derivative_curve(
 
     start = 0
     while start < n:
-        key = (cycles[start], segments[start], phase_arr[start])
-        end = start + 1
-        while end < n and (cycles[end], segments[end], phase_arr[end]) == key:
-            end += 1
-        phase = phase_arr[start]
-        if derivative_profile is not None:
-            derivative_profile["segments_processed"] += 1
-            phase_rows = derivative_profile["phase_rows"]
-            phase_rows[phase] = phase_rows.get(phase, 0) + end - start
-        if phase in {"charge", "discharge"} and (selected_phase == "both" or selected_phase == phase):
+        with time_capacity_path.timed_stage(diagnostics, "derivative_segment_scan"):
+            key = (cycles[start], segments[start], phase_arr[start])
+            end = start + 1
+            while end < n and (cycles[end], segments[end], phase_arr[end]) == key:
+                end += 1
+            phase = phase_arr[start]
+            if derivative_profile is not None:
+                derivative_profile["segments_processed"] += 1
+                phase_rows = derivative_profile["phase_rows"]
+                phase_rows[phase] = phase_rows.get(phase, 0) + end - start
+            eligible = phase in {"charge", "discharge"} and (
+                selected_phase == "both" or selected_phase == phase
+            )
+        if eligible:
             if derivative_profile is not None:
                 derivative_profile["eligible_segments"] += 1
-            q = capacity[start:end]
-            v = voltage[start:end]
-            finite = np.isfinite(q) & np.isfinite(v)
-            if finite.sum() >= 2:
+            with time_capacity_path.timed_stage(diagnostics, "derivative_segment_prepare"):
+                q = capacity[start:end]
+                v = voltage[start:end]
+                finite = np.isfinite(q) & np.isfinite(v)
+                finite_count = int(finite.sum())
+            if finite_count >= 2:
                 if derivative_profile is not None:
-                    derivative_profile["finite_input_rows"] += int(finite.sum())
-                min_periods = min(window, 3, int(finite.sum()))
+                    derivative_profile["finite_input_rows"] += finite_count
+                min_periods = min(window, 3, finite_count)
                 with time_capacity_path.timed_stage(diagnostics, "derivative_rolling"):
                     q_s = pd.Series(q).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
                     v_s = pd.Series(v).rolling(window, center=True, min_periods=min_periods).mean().to_numpy()
@@ -1591,33 +1597,34 @@ def _derivative_curve(
                     denominator = dv if mode == "dqdv" else dq
                     derivative[np.abs(denominator) < 1e-10] = np.nan
                     derivative[~np.isfinite(derivative)] = np.nan
-                # Explicit CV-only steps have dV ~= 0 by design and therefore
-                # no finite ICA/DVA interpretation. Combined CCCV steps cannot
-                # be split from status alone, so reject values far beyond the
-                # local Q/V scale rather than allowing a near-zero denominator
-                # to dominate the plot axis.
-                if "status" in frame.columns:
-                    step_status = frame["status"].iloc[start:end].astype(str).str.lower()
-                    explicit_cv = step_status.str.contains("cv") & ~step_status.str.contains("cccv")
-                    derivative[explicit_cv.to_numpy()] = np.nan
-                q_finite = q_s[np.isfinite(q_s)]
-                v_finite = v_s[np.isfinite(v_s)]
-                if len(q_finite) >= 2 and len(v_finite) >= 2:
-                    q_span = float(np.nanpercentile(q_finite, 95) - np.nanpercentile(q_finite, 5))
-                    v_span = float(np.nanpercentile(v_finite, 95) - np.nanpercentile(v_finite, 5))
-                    scale = q_span / max(v_span, 1e-9) if mode == "dqdv" else v_span / max(q_span, 1e-9)
-                    if scale > 0 and np.isfinite(scale):
-                        derivative[np.abs(derivative) > scale * 50.0] = np.nan
-                if phase == "discharge" and settings.get("derivative_absolute_discharge", True):
-                    derivative = np.abs(derivative)
-                x_values = v_s if mode == "dqdv" else q_s
-                x_out[start:end] = x_values
-                y_out[start:end] = derivative
-                if derivative_profile is not None:
-                    output_finite = int(np.isfinite(derivative).sum())
-                    derivative_profile["output_finite_rows"] += output_finite
-                    if output_finite:
-                        derivative_profile["output_segments"] += 1
+                with time_capacity_path.timed_stage(diagnostics, "derivative_postprocess"):
+                    # Explicit CV-only steps have dV ~= 0 by design and therefore
+                    # no finite ICA/DVA interpretation. Combined CCCV steps cannot
+                    # be split from status alone, so reject values far beyond the
+                    # local Q/V scale rather than allowing a near-zero denominator
+                    # to dominate the plot axis.
+                    if "status" in frame.columns:
+                        step_status = frame["status"].iloc[start:end].astype(str).str.lower()
+                        explicit_cv = step_status.str.contains("cv") & ~step_status.str.contains("cccv")
+                        derivative[explicit_cv.to_numpy()] = np.nan
+                    q_finite = q_s[np.isfinite(q_s)]
+                    v_finite = v_s[np.isfinite(v_s)]
+                    if len(q_finite) >= 2 and len(v_finite) >= 2:
+                        q_span = float(np.nanpercentile(q_finite, 95) - np.nanpercentile(q_finite, 5))
+                        v_span = float(np.nanpercentile(v_finite, 95) - np.nanpercentile(v_finite, 5))
+                        scale = q_span / max(v_span, 1e-9) if mode == "dqdv" else v_span / max(q_span, 1e-9)
+                        if scale > 0 and np.isfinite(scale):
+                            derivative[np.abs(derivative) > scale * 50.0] = np.nan
+                    if phase == "discharge" and settings.get("derivative_absolute_discharge", True):
+                        derivative = np.abs(derivative)
+                    x_values = v_s if mode == "dqdv" else q_s
+                    x_out[start:end] = x_values
+                    y_out[start:end] = derivative
+                    if derivative_profile is not None:
+                        output_finite = int(np.isfinite(derivative).sum())
+                        derivative_profile["output_finite_rows"] += output_finite
+                        if output_finite:
+                            derivative_profile["output_segments"] += 1
         start = end
     return x_out, y_out
 

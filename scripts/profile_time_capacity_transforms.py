@@ -138,9 +138,12 @@ def summarize_sample(
             "transform_areal_capacity": transforms.get("areal_capacity", {}).get("elapsed_ms"),
             "transform_materialization": transforms.get("plot_array_materialization", {}).get("elapsed_ms"),
             "derivative": stages.get("derivative"),
+            "derivative_segment_scan": derivative.get("stages_ms", {}).get("segment_scan"),
+            "derivative_segment_prepare": derivative.get("stages_ms", {}).get("segment_prepare"),
             "derivative_rolling": derivative.get("stages_ms", {}).get("rolling"),
             "derivative_gradient": derivative.get("stages_ms", {}).get("gradient"),
             "derivative_ratio_filter": derivative.get("stages_ms", {}).get("ratio_filter"),
+            "derivative_postprocess": derivative.get("stages_ms", {}).get("postprocess"),
         },
         "transform_consumers": {
             name: details.get("consumed_by", [])

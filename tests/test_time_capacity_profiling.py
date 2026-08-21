@@ -102,11 +102,14 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                     {
                         "path": "indexed",
                         "stages": {
+                            "derivative_segment_scan": 0.004,
+                            "derivative_segment_prepare": 0.001,
                             "transform_continuous_time": 0.004,
                             "transform_phase_capacity": 0.012,
                             "derivative_rolling": 0.003,
                             "derivative_gradient": 0.002,
                             "derivative_ratio_filter": 0.001,
+                            "derivative_postprocess": 0.006,
                         },
                         "transform_profile": {
                             "continuous_time": {
@@ -141,7 +144,10 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(derivative["cells"], 1)
         self.assertEqual(derivative["segments_processed"], 4)
         self.assertEqual(derivative["phase_rows"]["discharge"], 40)
+        self.assertAlmostEqual(derivative["stages_ms"]["segment_scan"], 4.0)
+        self.assertAlmostEqual(derivative["stages_ms"]["segment_prepare"], 1.0)
         self.assertAlmostEqual(derivative["stages_ms"]["rolling"], 3.0)
+        self.assertAlmostEqual(derivative["stages_ms"]["postprocess"], 6.0)
         self.assertNotIn("path", profile)
         self.assertNotIn("transform_profile", str(profile))
 

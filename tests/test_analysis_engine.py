@@ -1093,6 +1093,9 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("derivative_rolling", derivative_diagnostics["cells"][0]["stages"])
         self.assertIn("derivative_gradient", derivative_diagnostics["cells"][0]["stages"])
         self.assertIn("derivative_ratio_filter", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_segment_scan", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_segment_prepare", derivative_diagnostics["cells"][0]["stages"])
+        self.assertIn("derivative_postprocess", derivative_diagnostics["cells"][0]["stages"])
 
     def test_time_capacity_profile_route_real_interactive_request_exposes_diagnostics(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
