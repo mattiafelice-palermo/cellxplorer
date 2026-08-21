@@ -239,3 +239,19 @@ R1 and R2 are resolved in 836ee0d. Time/Capacity no longer waits on an in-progre
 Parent 050 final-review R1 is documentation closure only: correct the durable profiling table so the one-cycle legacy path reports 71,190 raw rows materialized but 2,590 exact rows entering transforms, verify the complete table against the profiler/050.3 implementation record, and hand back for FINAL_REVIEW.
 
 ---
+### 2026-08-21T12:03:50+02:00 — IMPLEMENTER → REVIEWER — 050.3
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- git diff --check: PASS (documentation-only R1 correction)
+- python scripts\\preflight.py: PASS (4/4 stages; all 75 backend modules; frontend policy/build skipped as unchanged)
+- Runtime/scientific tests: not rerun for documentation-only change; prior accepted 050.3 R1/R2 verification remains unchanged
+- Browser/manual profile: NOT RUN (no UI/runtime change)
+
+**Message**
+
+Parent R1 is fixed in 1fe2beb and pushed. Corrected the durable performance table so the one-cycle legacy path records 71,190 raw rows materialized but 2,590 rows entering transforms, matching the accepted profiler and 050.3 record. No runtime/scientific behavior changed; no 050.4 work started.
+
+---
