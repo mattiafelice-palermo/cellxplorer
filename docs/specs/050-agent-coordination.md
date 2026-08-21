@@ -36,3 +36,20 @@ None.
 Implemented ACTIVE_CHILD 050.1 only: scoped persisted-analysis refresh, compatible Time/Capacity placeholder policy with full data identity preserved, React Query abort propagation for live and saved preview POSTs, explicit per-family scientific cache projections with ANALYSIS_CACHE_VERSION 7, focused tests, and state/performance documentation. No 050.2 or proto-child work started.
 
 ---
+### 2026-08-21T07:04:34+02:00 — REVIEWER → IMPLEMENTER — 050.1
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 prevents a retained compatible Time/Capacity placeholder from being exported as if it were the resolved current request. Fix only R1 and hand back for review.
+
+---
