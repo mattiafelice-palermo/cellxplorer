@@ -26,6 +26,7 @@ from app.routers.library import get_cell_protocol
 from app.services import analysis_cache
 from app.services import analysis_engine as engine
 from app.services import cache, calc, canonical_cycling, parsing, protocol, scanner
+from app.services import time_capacity_profiling
 
 
 def analysis_protocol_header() -> dict[str, str]:
@@ -876,6 +877,184 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertNotEqual(
             standard_hit_body["rendering"], full_hit_body["rendering"]
         )
+
+    def test_time_capacity_profiling_is_opt_in_and_distinguishes_miss_and_hit(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="Time profiling", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+
+        stored_bodies: dict[str, bytes] = {}
+        compute_options: list[dict] = []
+
+        def fake_compute(_db, _spec, _provenance, **options):
+            compute_options.append(options)
+            diagnostics = options.get("access_diagnostics")
+            if diagnostics is not None:
+                diagnostics["cells"] = [
+                    {
+                        "path": "indexed",
+                        "row_groups_read": 2,
+                        "row_groups_total": 8,
+                        "raw_rows_materialized": 40,
+                        "selected_rows_before_transforms": 36,
+                        "stages": {"index_stitch_plan": 0.001},
+                    }
+                ]
+            return {
+                "computed_at": "2026-08-21T00:00:00+00:00",
+                "type": "cycling",
+                "cell_traces": [{"cell_id": self.cells["c1"].id}],
+                "badges": [],
+                "rendering": {
+                    "precision": options["precision"],
+                    "compact": options["compact"],
+                    "total_points": 24,
+                },
+            }
+
+        def fake_load_body(_kind, key):
+            body = stored_bodies.get(key)
+            return (body, []) if body is not None else None
+
+        def fake_store(_kind, key, result):
+            value = dict(result)
+            value.pop("cache_status", None)
+            value.pop("badges", None)
+            stored_bodies[key] = json.dumps(value, separators=(",", ":")).encode()
+
+        profiled_request = analyses_router.ComputeRequest(
+            precision="standard",
+            compact=True,
+            profile=True,
+            profile_request_id="profile-miss",
+        )
+        ordinary_request = analyses_router.ComputeRequest(
+            precision="full", compact=False
+        )
+        profiled_hit_request = analyses_router.ComputeRequest(
+            precision="standard",
+            compact=True,
+            profile=True,
+            profile_request_id="profile-hit",
+        )
+        with patch.object(
+            analyses_router.engine,
+            "compute_time_capacity",
+            side_effect=fake_compute,
+        ), patch.object(
+            analysis_cache, "load_result_body", side_effect=fake_load_body
+        ), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(
+            analysis_cache, "store_result", side_effect=fake_store
+        ), patch.object(
+            analyses_router.engine, "availability_badges", return_value=[]
+        ):
+            profiled_miss = analyses_router.compute_time_capacity_analysis(
+                analysis.id, profiled_request, self.db
+            )
+            ordinary_miss = analyses_router.compute_time_capacity_analysis(
+                analysis.id, ordinary_request, self.db
+            )
+            profiled_hit = analyses_router.compute_time_capacity_analysis(
+                analysis.id, profiled_hit_request, self.db
+            )
+
+        profiled_miss_body = json.loads(profiled_miss.body)
+        ordinary_miss_body = json.loads(ordinary_miss.body)
+        profiled_hit_body = json.loads(profiled_hit.body)
+        miss_profile = profiled_miss_body["profiling"]
+        hit_profile = profiled_hit_body["profiling"]
+        self.assertEqual(miss_profile["profile_version"], 1)
+        self.assertEqual(miss_profile["request_id"], "profile-miss")
+        self.assertEqual(miss_profile["result_cache"], "miss")
+        self.assertEqual(miss_profile["raw_access"], "indexed")
+        self.assertEqual(miss_profile["row_groups_read"], 2)
+        self.assertEqual(miss_profile["row_groups_total"], 8)
+        self.assertEqual(miss_profile["raw_rows_materialized"], 40)
+        self.assertEqual(miss_profile["selected_rows_before_transforms"], 36)
+        self.assertEqual(miss_profile["returned_points"], 24)
+        self.assertEqual(hit_profile["request_id"], "profile-hit")
+        self.assertEqual(hit_profile["result_cache"], "hit")
+        self.assertEqual(hit_profile["raw_access"], "not_applicable")
+        self.assertNotIn("profiling", ordinary_miss_body)
+        self.assertEqual(
+            profiled_miss_body["cell_traces"], ordinary_miss_body["cell_traces"]
+        )
+        self.assertEqual(
+            profiled_hit_body["cell_traces"], ordinary_miss_body["cell_traces"]
+        )
+        self.assertEqual(
+            profiled_hit_body["rendering"], profiled_miss_body["rendering"]
+        )
+        self.assertTrue(compute_options)
+        self.assertIsNotNone(compute_options[0]["access_diagnostics"])
+        self.assertNotIn("access_diagnostics", compute_options[1])
+
+    def test_time_capacity_profiling_uses_the_interactive_standard_compact_contract(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        settings = spec["computation"].setdefault("time_capacity", {})
+        settings["cycle_end"] = 20
+        diagnostics: dict = {}
+        result = engine.compute_time_capacity(
+            self.db,
+            spec,
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+            access_diagnostics=diagnostics,
+        )
+        profile = time_capacity_profiling.build_time_capacity_profile(
+            request_id="interactive-contract",
+            result_cache="miss",
+            diagnostics=diagnostics,
+            result=result,
+        )
+        self.assertEqual(result["rendering"]["precision"], "standard")
+        self.assertTrue(result["rendering"]["compact"])
+        self.assertEqual(result["rendering"]["configured_max_points_per_cell"], 4000)
+        self.assertIn(profile["raw_access"], {"indexed", "legacy"})
+        self.assertGreaterEqual(profile["returned_points"], 0)
+        self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
+
+    def test_time_capacity_profile_route_real_interactive_request_exposes_diagnostics(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": 20,
+            "max_points_per_cell": 4000,
+        }
+        analysis = Analysis(title="Real Time profiling", spec=spec)
+        self.db.add(analysis)
+        self.db.commit()
+        request = analyses_router.ComputeRequest(
+            precision="standard",
+            compact=True,
+            profile=True,
+            profile_request_id="real-interactive-contract",
+        )
+        with patch.object(analysis_cache, "load_result_body", return_value=None), patch.object(
+            analysis_cache, "load_result", return_value=None
+        ), patch.object(analysis_cache, "store_result"):
+            response = analyses_router.compute_time_capacity_analysis(
+                analysis.id, request, self.db
+            )
+
+        body = json.loads(response.body)
+        profile = body["profiling"]
+        self.assertEqual(body["rendering"]["precision"], "standard")
+        self.assertTrue(body["rendering"]["compact"])
+        self.assertEqual(body["rendering"]["configured_max_points_per_cell"], 4000)
+        self.assertEqual(profile["request_id"], "real-interactive-contract")
+        self.assertEqual(profile["result_cache"], "miss")
+        self.assertIn(profile["raw_access"], {"indexed", "legacy"})
+        self.assertGreaterEqual(profile["returned_points"], 0)
+        self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
+        self.assertGreaterEqual(profile["backend_compute_ms"], 0)
+        self.assertGreaterEqual(profile["backend_serialize_ms"], 0)
+        self.assertGreater(profile["response_bytes"], 0)
 
     def test_time_capacity_two_electrode_fixture_exposes_only_voltage_channel(self):
         # Spec 040.4 case 8: an ordinary two-electrode source must not gain

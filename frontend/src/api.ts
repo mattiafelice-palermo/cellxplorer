@@ -1671,6 +1671,24 @@ export interface TimeCapacityTrace {
   source_boundary_indices?: number[];
 }
 
+export interface TimeCapacityBackendProfile {
+  profile_version: 1;
+  request_id: string;
+  result_cache: "hit" | "miss" | "unknown";
+  raw_access: "indexed" | "legacy" | "mixed" | "not_applicable" | "unknown";
+  backend_total_ms?: number;
+  backend_compute_ms?: number;
+  backend_serialize_ms?: number;
+  response_bytes?: number;
+  backend_stages_ms?: Record<string, number>;
+  row_groups_read?: number | "full";
+  row_groups_total?: number | "full";
+  raw_rows_materialized?: number;
+  selected_rows_before_transforms?: number;
+  returned_points?: number;
+  trace_count?: number;
+}
+
 export interface TimeCapacityResult {
   computed_at: string;
   type: string;
@@ -1705,6 +1723,8 @@ export interface TimeCapacityResult {
     precision: "standard" | "full";
     compact: boolean;
   };
+  /** Present only when the local, opt-in Time/Capacity profiler is enabled. */
+  profiling?: TimeCapacityBackendProfile;
 }
 
 export interface ScanJob {

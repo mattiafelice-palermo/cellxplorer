@@ -202,6 +202,7 @@ Cellxplorer/
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
 │           ├── cell_folder_watch.py     Per-Cell continued-import folder tracking (Spec 047.4)
+│           ├── time_capacity_profiling.py Opt-in aggregate diagnostics for Spec 050.4
 │           ├── scientific_preparation.py
 │           │                       Durable post-copy cache-preparation state
 │           └── time_capacity_path.py
@@ -232,7 +233,8 @@ Cellxplorer/
 │   │   │       │   ├── policies/   Analysis draft, plot, visibility, and multi-source policies
 │   │   │       │   ├── protocol/   Protocol selection, normalization, and read-only structure views
 │   │   │       │   ├── portable/   Portable report estimate, preflight, export, and share flow
-│   │   │       │   └── recognition/ Recognition job progress hooks and presentation
+│   │   │       │   ├── recognition/ Recognition job progress hooks and presentation
+│   │   │       │   └── performance/ Time/Capacity opt-in interaction profiling
 │   │   │       └── workspace/      Analysis tabs, mounted editors, and query-cache policy
 │   │   ├── appChannel.ts           Stable/Beta channel branding (Spec 021)
 │   │   ├── appUpdater.ts           App update state, Tauri commands, dev mock (Spec 018)
@@ -290,6 +292,7 @@ Cellxplorer/
 │   ├── test_release_workflow.py    Release/channel workflow contract tests
 │   ├── test_preflight_script.py    Preflight command unit tests
 │   ├── test_profile_test_suite.py  Exhaustive profiler regression tests (Spec 048.2)
+│   ├── test_time_capacity_profiling.py Opt-in Time/Capacity diagnostics tests (Spec 050.4)
 │   └── test_benchmark_test_runners.py Persistent-runner isolation tests (Spec 048.2)
 ├── docs/
 │   ├── biologic-mpr-format.md      Independent MPR binary-format notebook (Spec 041.1)

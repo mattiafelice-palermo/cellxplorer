@@ -411,6 +411,20 @@ Range endpoints are clamped to the known dense global-cycle bounds before a requ
 materialized, so stale extreme saved endpoints cannot create work proportional to their numeric
 distance from the Cell's actual cycles.
 
+Spec 050.4 adds a local-only observation boundary around the live Time/Capacity card. Profiling is
+disabled by default and is enabled for a session through
+`window.cellxplorerPerformance.timeCapacity.enable()`; the helper retains at most 100 completed
+records and exposes `reset()`, `records()`, and `exportJson()`. A record is closed only after the
+current non-placeholder result has produced trace/layout props and the `react-plotly.js`
+`onInitialized`/`onUpdate` callback completes. React Query data-signature changes supersede the
+previous identity, so late HTTP or Plotly callbacks cannot close a newer record. The backend
+accepts the profiling flag without adding it to the scientific cache key and returns a namespaced
+`profiling` block only for that request; ordinary responses and persisted result bodies remain
+unchanged. The block aggregates the existing 050.3 stage, row-group, selected-row, and returned-
+point diagnostics without source paths, hashes, raw rows, or full specs. This boundary separates
+backend compute/serialization and HTTP time from browser preparation and Plotly completion; it is
+an instrumentation contract, not evidence that another optimization child is needed.
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):

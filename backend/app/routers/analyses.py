@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 import re
 import tempfile
+from time import perf_counter
 from typing import Literal
 from urllib.parse import unquote, urlparse
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -28,6 +30,7 @@ from ..responses import fast_json
 from ..services import background_jobs
 from ..services.entity_ids import next_analysis_id
 from ..services.lazy_module import LazyModule
+from ..services import time_capacity_profiling
 
 
 def _load_analysis_engine():
@@ -427,6 +430,10 @@ class ComputeRequest(BaseModel):
     precision: Literal["standard", "full"] = "standard"
     compact: bool = False
     background: bool = False
+    # Time/Capacity profiling is explicitly opt-in and is not part of the
+    # scientific result/cache identity. Ordinary responses remain unchanged.
+    profile: bool = False
+    profile_request_id: str | None = Field(default=None, max_length=200)
 
 
 class DcirProtocolRequest(BaseModel):
@@ -434,6 +441,68 @@ class DcirProtocolRequest(BaseModel):
     min_rest_s: float = Field(default=600, ge=1, le=86400)
     max_pulse_s: float = Field(default=120, ge=0.1, le=3600)
     min_ratio: float = Field(default=10, ge=1, le=10000)
+
+
+def _profile_request_id(req: ComputeRequest) -> str:
+    return req.profile_request_id or f"server-{uuid4().hex}"
+
+
+def _profiled_time_capacity_response(
+    *,
+    request_started: float,
+    request_id: str,
+    result_cache: str,
+    diagnostics: dict | None,
+    result: dict | None = None,
+    stored_body: bytes | None = None,
+    badges: list[dict] | None = None,
+    cache_extra_fields: dict[str, object] | None = None,
+    backend_compute_ms: float | None = None,
+) -> Response:
+    """Return a normal result plus a profiling-only diagnostic namespace.
+
+    The first serialization establishes the response-size and serialization
+    measurements. The later passes add those measurements to the diagnostic
+    block; the scientific payload itself is never parsed or changed.
+    """
+
+    profile = time_capacity_profiling.build_time_capacity_profile(
+        request_id=request_id,
+        result_cache=result_cache,
+        diagnostics=diagnostics,
+        backend_compute_ms=backend_compute_ms,
+        result=result,
+    )
+
+    def render() -> bytes:
+        if stored_body is not None:
+            return analysis_cache.splice_result_body(
+                stored_body,
+                badges or [],
+                "hit",
+                {
+                    **(cache_extra_fields or {}),
+                    "profiling": profile,
+                },
+            )
+        if result is None:
+            raise ValueError("A profiled Time/Capacity response needs a result or stored body")
+        payload = dict(result)
+        payload["profiling"] = profile
+        return fast_json(payload).body
+
+    serialize_started = perf_counter()
+    content = render()
+    profile["backend_serialize_ms"] = (perf_counter() - serialize_started) * 1000.0
+    profile["backend_total_ms"] = (perf_counter() - request_started) * 1000.0
+    content = render()
+    for _ in range(3):
+        profile["response_bytes"] = len(content)
+        next_content = render()
+        content = next_content
+        if profile["response_bytes"] == len(content):
+            break
+    return Response(content=content, media_type="application/json")
 
 
 def _progress_callback(job_id: int | None):
@@ -990,6 +1059,7 @@ def compute_rate_capability_analysis(
 
 @router.post("/analyses/{analysis_id}/time-capacity")
 def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Session = Depends(get_db)):
+    request_started = perf_counter()
     a = db.get(Analysis, analysis_id)
     if a is None:
         raise HTTPException(404, "No such analysis")
@@ -1019,6 +1089,19 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         if stored is not None:
             body, kept = stored
             _finish_job(req.job_id, cached=True)
+            if req.profile:
+                return _profiled_time_capacity_response(
+                    request_started=request_started,
+                    request_id=_profile_request_id(req),
+                    result_cache="hit",
+                    diagnostics=None,
+                    stored_body=body,
+                    badges=kept + engine.availability_badges(db, spec),
+                    cache_extra_fields={
+                        "data_signature": key,
+                        "source_data_signature": source_data_signature,
+                    },
+                )
             return Response(
                 content=analysis_cache.splice_result_body(
                     body,
@@ -1036,23 +1119,32 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
     if cached:
         analysis_cache.upgrade_result_format("time_capacity", key, result)
     job_id = req.job_id
+    access_diagnostics = {} if req.profile else None
+    backend_compute_ms: float | None = None
     try:
         if result is None:
             from ..services.process_priority import background_thread_priority
 
             if job_id is None and req.job_token:
                 job_id = _open_compute_job(db, a, spec, "time_capacity", req.job_token)
+            compute_started = perf_counter()
+            compute_options = {
+                "use_current_versions": req.recompute,
+                "viewport_width": req.viewport_width,
+                "precision": req.precision,
+                "compact": req.compact,
+                "progress": _progress_callback(job_id),
+            }
+            if req.profile:
+                compute_options["access_diagnostics"] = access_diagnostics
             with background_thread_priority(req.background):
                 result = engine.compute_time_capacity(
                     db,
                     spec,
                     a.provenance,
-                    use_current_versions=req.recompute,
-                    viewport_width=req.viewport_width,
-                    precision=req.precision,
-                    compact=req.compact,
-                    progress=_progress_callback(job_id),
+                    **compute_options,
                 )
+            backend_compute_ms = (perf_counter() - compute_started) * 1000.0
             result["cache_status"] = "miss"
             result["data_signature"] = key
             result["source_data_signature"] = source_data_signature
@@ -1060,6 +1152,15 @@ def compute_time_capacity_analysis(analysis_id: int, req: ComputeRequest, db: Se
         result["data_signature"] = key
         result["source_data_signature"] = source_data_signature
         _finish_job(job_id, cached=cached)
+        if req.profile:
+            return _profiled_time_capacity_response(
+                request_started=request_started,
+                request_id=_profile_request_id(req),
+                result_cache="hit" if cached else "miss",
+                diagnostics=access_diagnostics,
+                result=result,
+                backend_compute_ms=backend_compute_ms,
+            )
         return fast_json(result)
     except Exception as exc:
         _finish_job(job_id, error=str(exc))

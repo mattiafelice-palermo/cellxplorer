@@ -16,7 +16,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
 import PlotlyLib from "plotly.js-dist-min";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   get,
@@ -102,6 +102,12 @@ import {
 import { sourceExportColumns } from "../../plotting/sourceChainPlot";
 import { ComputeProgress, PlotHeader } from "../../plotting/PlotHeader";
 import { PlotStylePanel } from "../../plotting/PlotStylePanel";
+import {
+  newTimeCapacityProfileRequestId,
+  timeCapacityPerformanceNow,
+  timeCapacityPerformanceProfiler,
+  type TimeCapacityPerformanceContext,
+} from "../../performance/timeCapacityPerformanceProfile";
 
 export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
@@ -1212,6 +1218,40 @@ function TimeCapacityPlotCardView({
   dataSignatureRef.current = dataSignature;
   const voltageChannelRef = useRef(cfg.voltage_channel);
   voltageChannelRef.current = cfg.voltage_channel;
+  const profileEnabled = timeCapacityPerformanceProfiler.isEnabled();
+  const profileContext = useMemo<TimeCapacityPerformanceContext>(
+    () => ({
+      analysis_id: analysisId,
+      selection_count: spec.selection.entries.length,
+      cycle_start: cfg.cycle_start,
+      cycle_end: cfg.cycle_end,
+      explicit_cycle_count: cfg.cycles.length,
+      view: cfg.view,
+      x_axis: cfg.x_axis,
+      display_mode: cfg.display_mode,
+      max_points_per_cell: cfg.max_points_per_cell,
+      compact: true,
+      precision: "standard",
+    }),
+    [
+      analysisId,
+      cfg.cycle_end,
+      cfg.cycle_start,
+      cfg.cycles.length,
+      cfg.display_mode,
+      cfg.max_points_per_cell,
+      cfg.view,
+      cfg.x_axis,
+      spec.selection.entries.length,
+    ],
+  );
+  const profileRequest = useMemo(
+    () =>
+      profileEnabled
+        ? { dataSignature, requestId: newTimeCapacityProfileRequestId() }
+        : null,
+    [dataSignature, profileEnabled],
+  );
   const timeResult = useQuery({
     queryKey: ["time-capacity", analysisId, compatibilitySignature, dataSignature],
     queryFn: async ({ signal }) => {
@@ -1220,14 +1260,37 @@ function TimeCapacityPlotCardView({
       // and leaves no spurious "Preparing..." entry behind.
       const token = newComputeToken();
       setComputeToken(token);
+      if (profileRequest) {
+        timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
+      }
+      const httpStarted = profileRequest ? timeCapacityPerformanceNow() : 0;
       try {
-        return await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
+        const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
           spec,
           job_token: token,
           viewport_width: viewportWidth,
           precision: "standard",
+          ...(profileRequest
+            ? {
+                profile: true,
+                profile_request_id: profileRequest.requestId,
+              }
+            : {}),
           compact: true,
         }, { signal });
+        if (profileRequest) {
+          timeCapacityPerformanceProfiler.response(
+            profileRequest.requestId,
+            result.profiling,
+            timeCapacityPerformanceNow() - httpStarted,
+          );
+        }
+        return result;
+      } catch (error) {
+        if (profileRequest) {
+          timeCapacityPerformanceProfiler.cancel(profileRequest.requestId);
+        }
+        throw error;
       } finally {
         window.setTimeout(
           () => setComputeToken((current) => (current === token ? null : current)),
@@ -1246,6 +1309,49 @@ function TimeCapacityPlotCardView({
     staleTime: 30 * 60_000,
     gcTime: 30 * 60_000,
   });
+  useLayoutEffect(() => {
+    if (!profileRequest || spec.selection.entries.length === 0) return;
+    // Run before the later plot-props layout effect so a React Query memory
+    // hit (which has no queryFn/HTTP callback) still has a response boundary
+    // before Plotly's own update effect can fire.
+    timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
+    timeCapacityPerformanceProfiler.placeholderVisible(
+      profileRequest.requestId,
+      Boolean(timeResult.isPlaceholderData),
+    );
+    // React Query can satisfy a newly selected key from its in-memory cache,
+    // so no queryFn/HTTP callback runs. Treat that path as a zero-HTTP
+    // completion while retaining the server cache fact when it is present.
+    const data = timeResult.data;
+    const dataIsCurrent =
+      Boolean(data) &&
+      (data?.data_signature === undefined || data.data_signature === dataSignature);
+    if (
+      dataIsCurrent &&
+      data &&
+      !timeResult.isFetching &&
+      !timeResult.isPlaceholderData &&
+      data.profiling?.request_id !== profileRequest.requestId
+    ) {
+      const backend: NonNullable<TimeCapacityResult["profiling"]> = data.profiling
+        ? { ...data.profiling, request_id: profileRequest.requestId }
+        : {
+            profile_version: 1 as const,
+            request_id: profileRequest.requestId,
+            result_cache: data.cache_status ?? ("unknown" as const),
+            raw_access: "unknown" as const,
+          };
+      timeCapacityPerformanceProfiler.response(profileRequest.requestId, backend, 0);
+    }
+  }, [
+    dataSignature,
+    profileContext,
+    profileRequest,
+    spec.selection.entries.length,
+    timeResult.data,
+    timeResult.isFetching,
+    timeResult.isPlaceholderData,
+  ]);
   const currentResult = timeCapacityResultMatchesVoltageChannel(
     timeResult.data,
     cfg.voltage_channel
@@ -1334,6 +1440,18 @@ function TimeCapacityPlotCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentResult, viewSignature, exportTraces]
   );
+  const profileResultIsCurrent = Boolean(
+    currentResult &&
+      !timeResult.isPlaceholderData &&
+      (currentResult.data_signature === undefined || currentResult.data_signature === dataSignature),
+  );
+  useLayoutEffect(() => {
+    if (!profileRequest || !profileResultIsCurrent) return;
+    timeCapacityPerformanceProfiler.frontendPrepared(
+      profileRequest.requestId,
+      traces.length,
+    );
+  }, [profileRequest, profileResultIsCurrent, traces.length]);
   const style = currentPlotStyle(spec, "time_capacity");
   const explainer = getTimeCapacityExplainer(
     cfg.x_axis,
@@ -1365,6 +1483,15 @@ function TimeCapacityPlotCardView({
       next.legend_custom_x = point.x;
       next.legend_custom_y = point.y;
     });
+  };
+
+  const completeTimeCapacityProfile = () => {
+    if (!profileRequest || !profileResultIsCurrent) return;
+    // react-plotly.js invokes onInitialized/onUpdate after the underlying
+    // newPlot/react promise completes. The callback is therefore the Plotly
+    // boundary; the identity guard prevents an obsolete callback from closing
+    // a newer range request.
+    timeCapacityPerformanceProfiler.plotlyComplete(profileRequest.requestId);
   };
 
   const currentViewSize = () => {
@@ -1608,10 +1735,12 @@ function TimeCapacityPlotCardView({
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
+                completeTimeCapacityProfile();
               }}
               onUpdate={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
+                completeTimeCapacityProfile();
               }}
             />
           </Box>
