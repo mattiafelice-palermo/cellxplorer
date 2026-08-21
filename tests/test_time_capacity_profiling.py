@@ -104,8 +104,9 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                         "stages": {
                             "derivative_segment_scan": 0.004,
                             "derivative_segment_prepare": 0.001,
-                            "transform_continuous_time": 0.004,
-                            "transform_phase_capacity": 0.012,
+                        "transform_continuous_time": 0.004,
+                        "transform_phase_capacity": 0.012,
+                        "prepared_derived_read": 0.002,
                             "derivative_rolling": 0.003,
                             "derivative_gradient": 0.002,
                             "derivative_ratio_filter": 0.001,
@@ -132,6 +133,11 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                             "output_segments": 3,
                             "phase_rows": {"charge": 40, "discharge": 40, "rest": 20},
                         },
+                        "derived_access": "prepared",
+                        "phase_source": "prepared",
+                        "phase_capacity_source": "prepared",
+                        "prepared_row_groups_read": 2,
+                        "prepared_rows_materialized": 40,
                     }
                 ]
             },
@@ -140,6 +146,11 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(profile["transform_stages"]["continuous_time"]["input_rows"], 100)
         self.assertEqual(profile["transform_stages"]["phase_capacity"]["consumed_by"], [])
         self.assertAlmostEqual(profile["transform_stages"]["continuous_time"]["elapsed_ms"], 4.0)
+        self.assertEqual(profile["derived_access"], "prepared")
+        self.assertEqual(profile["phase_source"], "prepared")
+        self.assertEqual(profile["phase_capacity_source"], "prepared")
+        self.assertEqual(profile["prepared_row_groups_read"], 2)
+        self.assertEqual(profile["prepared_rows_materialized"], 40)
         derivative = profile["derivative_profile"]
         self.assertEqual(derivative["cells"], 1)
         self.assertEqual(derivative["segments_processed"], 4)

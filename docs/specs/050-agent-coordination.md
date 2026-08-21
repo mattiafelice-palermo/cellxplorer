@@ -467,3 +467,22 @@ Spec 050.5 profiling/design implementation is complete. Fine-grained transform a
 R1 resolved: bounded segment scan, segment preparation, and post-gradient cleanup/statistics/output-assignment timers localize the derivative cost; postprocess is dominant and residual is no longer the dominant unidentified bucket; no optimization or P1 work implemented.
 
 ---
+### 2026-08-21T21:52:20+02:00 — IMPLEMENTER → REVIEWER — 050.6
+
+**Result:** Implementation ready
+
+**Verification**
+
+- 050.6 focused implementation/cache/path/scientific-preparation/profiling tests: PASS (126 tests; scanner worker paths covered by scientific preparation; no tests.test_scanner module exists)
+- 050.6 prepared-vs-fallback parity matrix: PASS (compact time, absolute/specific/areal capacity, dQ/dV, dV/dQ derivative-specific, protocol masking, continuation, full export)
+- Golden analysis: PASS (30 tests; all eight committed expected digests SAME)
+- 050.6 profiler: PASS structurally (30 scenarios, 5 repetitions, bounded raw/prepared groups, prepared artifact 856145 bytes plus 4155-byte index, 184.2 ms preparation); capacity-axis broad medians improved 41.5% one-Cell and 48.3% six-Cell
+- 050.6 timing acceptance: NOT MET for broad normal Time-axis cases on this machine; prepared Time-axis sidecar I/O outweighed the already dependency-pruned fallback
+- Canonical preflight: PASS (4/4 stages; all 77 backend test modules; frontend type check and production bundle skipped as unchanged)
+- Browser/manual: NOT REQUIRED for backend/cache-only 050.6
+
+**Message**
+
+050.6 implementation is ready for independent review. Added exact versioned source-local phase/capacity sidecar with cache-byte-first/offline preparation, bounded non-waiting reads, identity/alignment validation, raw replacement invalidation, existing-worker integration, dependency-aware transforms, parity/lifecycle tests, profiling evidence, and durable knowledge update. No 050.P1 or derivative optimization. The broad Time-axis timing bar is explicitly recorded as unmet; please decide whether this implementation is review-clean or blocked on that acceptance item.
+
+---

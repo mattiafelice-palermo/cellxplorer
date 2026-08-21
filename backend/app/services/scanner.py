@@ -102,6 +102,21 @@ def _needs_raw_layout_preparation(sf: SourceFile) -> bool:
     return not cache.raw_layout_is_current(sf.hash, expected)
 
 
+def _needs_time_capacity_derived_preparation(sf: SourceFile) -> bool:
+    """Return true only for an existing current raw layout without its sidecar."""
+
+    expected = parsing.current_parser_identity_for_extension(sf.ext) or parsing.PARSER_VERSION
+    if not cache.raw_path(sf.hash, expected).is_file():
+        # A deliberately cleaned raw cache must not be recreated solely for
+        # this optional optimization.
+        return False
+    if not cache.raw_layout_is_current(sf.hash, expected):
+        # The existing layout predicate owns the raw -> indexed conversion;
+        # the worker prepares the derived artifact after that boundary.
+        return False
+    return not cache.time_capacity_derived_is_current(sf.hash, expected)
+
+
 def _needs_identity_bring_forward(sf: SourceFile) -> bool:
     """True when an upgrade — not a deliberate cache clean — left this
     source's own registration behind its format's current parser identity.
@@ -341,6 +356,7 @@ def start_capacity_summary_backfill(
             or (prepare_all_missing and not _has_current_scientific_cache(sf))
             or sf.id in identity_bring_forward_ids
             or _needs_raw_layout_preparation(sf)
+            or _needs_time_capacity_derived_preparation(sf)
         ]
 
         if not sources:
@@ -377,10 +393,16 @@ def start_capacity_summary_backfill(
         layout_preparation_ids = {
             sf.id for sf in sources if _needs_raw_layout_preparation(sf)
         }
+        derived_preparation_ids = {
+            sf.id
+            for sf in sources
+            if _needs_time_capacity_derived_preparation(sf)
+        }
         prepare_effective = (
             prepare_all_missing
             or bool(identity_bring_forward_ids)
             or bool(layout_preparation_ids)
+            or bool(derived_preparation_ids)
         )
         for sf in sources:
             if sf.capacity_summary_status != "ready":
@@ -496,6 +518,9 @@ def _capacity_source_job(
         "summary_was_ready": sf.capacity_summary_status == "ready",
         "prepare_all_missing": prepare_all_missing,
         "prepare_layout": _needs_raw_layout_preparation(sf),
+        "prepare_derived": (
+            prepare_all_missing or _needs_time_capacity_derived_preparation(sf)
+        ),
     }
 
 
@@ -580,20 +605,30 @@ def _prepare_capacity_source_worker(job: dict[str, Any]) -> dict[str, Any]:
             # without changing their SourceFile lifecycle state.
             layout_only = True
             cache.prepare_raw_layout(job["hash"], expected)
-            return {
-                "ok": True,
-                "built": False,
-                "layout_prepared": True,
-                "layout_only": True,
-                "info": cache.capacity_totals(cycles),
-                "location_status": location_status,
-                "source_fingerprint": source_fingerprint,
-            }
+        derived_error: str | None = None
+        derived_prepared = False
+        if raw_ready and (job.get("prepare_derived") or layout_only):
+            try:
+                derived_result = cache.prepare_time_capacity_derived(job["hash"], expected)
+                derived_prepared = derived_result.get("status") == "ready"
+                if not derived_prepared:
+                    derived_error = str(derived_result.get("error") or derived_result.get("status"))
+            except Exception as exc:
+                # The sidecar is optional performance state.  Keep the valid
+                # raw/cycle cache and its relational lifecycle usable when
+                # preparation fails.
+                derived_error = str(exc)
+                logger.exception(
+                    "prepared Time/Capacity cache upgrade failed for %s",
+                    job["hash"][:12],
+                )
         return {
             "ok": True,
             "built": False,
-            "layout_prepared": False,
-            "layout_only": False,
+            "layout_prepared": layout_only,
+            "layout_only": layout_only and not derived_prepared,
+            "derived_prepared": derived_prepared,
+            "derived_error": derived_error,
             "info": cache.capacity_totals(cycles),
             "location_status": location_status,
             "source_fingerprint": source_fingerprint,

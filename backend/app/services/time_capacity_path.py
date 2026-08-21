@@ -414,6 +414,99 @@ def load_indexed_time_capacity_raw(
     return result
 
 
+def load_indexed_time_capacity_derived(
+    plan: TimeCapacityStitchPlan,
+    requested_cycles: Iterable[int],
+    columns: Iterable[str],
+    *,
+    diagnostics: dict[str, Any] | None = None,
+) -> pd.DataFrame | None:
+    """Read exact prepared values for every contributing source.
+
+    ``None`` is deliberately all-or-nothing: one missing, busy or invalid
+    source sidecar makes the caller use the existing request-side scientific
+    transforms for the whole resolved Cell.
+    """
+
+    if plan.path != "indexed":
+        return None
+
+    requested = set(int(value) for value in requested_cycles)
+    requested_columns = list(dict.fromkeys(columns))
+    frames: list[pd.DataFrame] = []
+    source_reads: list[dict[str, Any]] = []
+    row_groups_read = 0
+    rows_materialized = 0
+
+    for source in plan.sources:
+        local_cycles = tuple(
+            local_cycle
+            for local_cycle in source.observed_source_cycles
+            if source.cycle_map.get(local_cycle) in requested
+        )
+        if not local_cycles:
+            continue
+        read_diagnostics = cache.TimeCapacityDerivedReadDiagnostics()
+        loaded = cache.load_time_capacity_derived(
+            source.ref.file_hash,
+            source.ref.parser_version,
+            local_cycles,
+            requested_columns,
+            diagnostics=read_diagnostics,
+            wait_for_layout=False,
+        )
+        source_reads.append(
+            {
+                "segment": source.segment,
+                "requested_source_cycles": list(local_cycles),
+                "row_groups_read": list(read_diagnostics.row_groups_read),
+                "row_groups_total": read_diagnostics.row_groups_total,
+                "rows_materialized": read_diagnostics.rows_read,
+                "rows_selected": read_diagnostics.rows_returned,
+                "columns_read": list(read_diagnostics.columns_read),
+                "status": read_diagnostics.status,
+            }
+        )
+        if loaded is None:
+            _set_diagnostic(
+                diagnostics,
+                derived_access="fallback",
+                derived_source_reads=source_reads,
+                prepared_row_groups_read=row_groups_read,
+                prepared_rows_materialized=rows_materialized,
+            )
+            return None
+        with timed_stage(diagnostics, "prepared_derived_mapping"):
+            if "record_index" in loaded.columns:
+                loaded = loaded.sort_values("record_index", kind="stable").reset_index(drop=True)
+            mapped = stitch.apply_cycle_mapping(
+                loaded,
+                segment=source.segment,
+                source_hash=source.ref.file_hash,
+                local_labels=list(source.observed_source_cycles),
+                cycle_map=source.cycle_map,
+            )
+        frames.append(mapped)
+        row_groups_read += len(set(read_diagnostics.row_groups_read))
+        rows_materialized += int(read_diagnostics.rows_read)
+
+    if frames:
+        with timed_stage(diagnostics, "prepared_derived_mapping"):
+            result = pd.concat(frames, ignore_index=True)
+    else:
+        result = pd.DataFrame(
+            columns=["record_index", "cycle", *requested_columns, "source_cycle", "segment", "source_hash"]
+        )
+    _set_diagnostic(
+        diagnostics,
+        derived_access="prepared",
+        prepared_row_groups_read=row_groups_read,
+        prepared_rows_materialized=rows_materialized,
+        derived_source_reads=source_reads,
+    )
+    return result
+
+
 @contextmanager
 def timed_stage(diagnostics: dict[str, Any] | None, name: str):
     """Accumulate optional per-Cell stage timings without production logging."""

@@ -55,6 +55,17 @@ def _raw_access(cells: list[Mapping[str, Any]], result_cache: str) -> str:
     return "unknown"
 
 
+def _categorical_value(cells: list[Mapping[str, Any]], key: str) -> str | None:
+    values = {
+        str(cell.get(key))
+        for cell in cells
+        if isinstance(cell.get(key), str) and cell.get(key)
+    }
+    if not values:
+        return None
+    return next(iter(values)) if len(values) == 1 else "mixed"
+
+
 def _stage_totals_ms(cells: list[Mapping[str, Any]]) -> dict[str, float] | None:
     totals: dict[str, float] = {}
     for cell in cells:
@@ -243,6 +254,18 @@ def build_time_capacity_profile(
             profile["derivative_profile"] = derivative_profile
         for key in ("row_groups_read", "row_groups_total"):
             value = _row_group_total(cells, key)
+            if value is not None:
+                profile[key] = value
+        for key in ("prepared_row_groups_read", "prepared_rows_materialized"):
+            value = _numeric_sum(cells, key)
+            if value is not None:
+                profile[key] = value
+        for key in (
+            "derived_access",
+            "phase_source",
+            "phase_capacity_source",
+        ):
+            value = _categorical_value(cells, key)
             if value is not None:
                 profile[key] = value
         for key in ("raw_rows_materialized", "selected_rows_before_transforms"):

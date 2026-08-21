@@ -157,6 +157,7 @@ production migrations. See `docs/database-migrations.md`.
 - `backend/app/services/biologic_gcpl.py`: direct GCPL-to-canonical cycling adapter (Spec 041.2)
 - `backend/app/services/neware_excel.py`: bounded structured Neware Excel metadata/raw mapping
 - `backend/app/services/cache.py` and `calc.py`: cache and per-cycle derivations
+- `backend/app/services/time_capacity_derived.py`: shared exact phase/capacity transforms and prepared-row contract (Spec 050.6)
 - `backend/app/services/cache_maintenance.py`: cache budgets, inventory, cleanup, and warmup queue
 - `backend/app/services/analysis_engine.py`: analysis computation
 - `backend/app/services/continuations.py`: continuation compatibility inspection (Spec 034.2) and lifecycle submit validation helpers (Spec 034.3)
@@ -194,6 +195,7 @@ Cellxplorer/
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
 │           ├── canonical_cycling.py Canonical raw cycling-data contract/validation (Spec 040.1)
+│           ├── time_capacity_derived.py Shared exact Time/Capacity transforms/prepared-row contract (Spec 050.6)
 │           ├── source_format_errors.py Format-neutral source-rejection error taxonomy (Spec 040.2)
 │           ├── biologic_mpr.py    Independent BioLogic MPR container/data reader (Spec 041.1)
 │           ├── biologic_gcpl.py   Direct BioLogic GCPL canonical mapper (Spec 041.2)

@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.db import Base
 from app.models import SourceFile
-from app.services import background_jobs, cache, parsing, scanner, scientific_preparation
+from app.services import background_jobs, cache, calc, parsing, scanner, scientific_preparation
 
 
 class ScientificPreparationTests(unittest.TestCase):
@@ -239,12 +239,84 @@ class ScientificPreparationTests(unittest.TestCase):
                     )
                 thread.return_value.start.assert_called_once_with()
                 self.assertTrue(cache.raw_index_path(source.hash, current_identity).exists())
+                self.assertTrue(
+                    cache.time_capacity_derived_path(source.hash, current_identity).exists()
+                )
 
             verify = self.factory()
             refreshed = verify.get(SourceFile, source.id)
             self.assertEqual(refreshed.location_status, original_location)
             self.assertEqual(refreshed.parser_version, original_parser)
             self.assertEqual(refreshed.capacity_summary_status, original_summary)
+            self.assertIsNone(refreshed.parse_error)
+            self.assertEqual(
+                background_jobs.get_job(result["id"])["counters"]["ready"],
+                1,
+            )
+            verify.close()
+
+    def test_offline_current_raw_cache_gets_derived_prepared_without_source_io(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "offline-current.ndax"
+            source_path.write_bytes(b"offline current source bytes")
+            db = self.factory()
+            current_identity = (
+                parsing.current_parser_identity_for_extension("ndax")
+                or parsing.PARSER_VERSION
+            )
+            source = self._source(
+                db,
+                source_path,
+                summary_status="ready",
+                parser_version=current_identity,
+                location_status="offline",
+            )
+            db.close()
+            source_path.unlink()
+
+            frame = pd.DataFrame(
+                {
+                    "record_index": [0, 1, 2, 3],
+                    "cycle": [1, 1, 2, 2],
+                    "step_index": [1, 1, 1, 1],
+                    "step": [1, 1, 1, 1],
+                    "status": ["CC_Chg", "CC_Chg", "CC_DChg", "CC_DChg"],
+                    "time_s": [0.0, 1.0, 0.0, 1.0],
+                    "voltage_v": [3.0, 3.1, 3.2, 3.3],
+                    "current_ma": [1.0, 1.0, -1.0, -1.0],
+                    "charge_capacity_mah": [0.0, 1.0, 0.0, 0.0],
+                    "discharge_capacity_mah": [0.0, 0.0, 0.0, 1.0],
+                }
+            )
+            cache_root = Path(folder) / "cache"
+            with patch.object(cache, "CACHE_DIR", cache_root):
+                raw_target = cache.raw_path(source.hash, current_identity)
+                cache._publish_optimized_raw(frame, raw_target, current_identity)
+                cache._write_atomic(
+                    calc.per_cycle(frame),
+                    cache.cycles_path(source.hash, current_identity, cache.CALC_VERSION),
+                )
+                with (
+                    patch.object(scanner, "SessionLocal", self.factory),
+                    patch.object(scanner.threading, "Thread") as thread,
+                ):
+                    result = scanner.start_capacity_summary_backfill()
+                    self.assertEqual(result["total"], 1)
+                    scanner._run_capacity_summary_backfill(
+                        [source.id],
+                        result["id"],
+                        False,
+                        False,
+                    )
+                thread.return_value.start.assert_called_once_with()
+                self.assertTrue(
+                    cache.time_capacity_derived_path(source.hash, current_identity).exists()
+                )
+
+            verify = self.factory()
+            refreshed = verify.get(SourceFile, source.id)
+            self.assertEqual(refreshed.location_status, "offline")
+            self.assertEqual(refreshed.capacity_summary_status, "ready")
             self.assertIsNone(refreshed.parse_error)
             self.assertEqual(
                 background_jobs.get_job(result["id"])["counters"]["ready"],

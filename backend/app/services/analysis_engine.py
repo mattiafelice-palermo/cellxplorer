@@ -28,7 +28,16 @@ from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinl
 
 from ..config import CALC_VERSION
 from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
-from . import cache, calc, canonical_cycling, parsing, protocol, stitch, time_capacity_path
+from . import (
+    cache,
+    calc,
+    canonical_cycling,
+    parsing,
+    protocol,
+    stitch,
+    time_capacity_derived,
+    time_capacity_path,
+)
 
 SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
@@ -1366,25 +1375,9 @@ def _textsafe(series: pd.Series) -> list[str | None]:
 
 
 def _phase_from_raw(frame: pd.DataFrame) -> list[str]:
-    """Charge/discharge/rest per row, vectorized (runs on full raw frames)."""
-    n = len(frame)
-    if "status" in frame.columns:
-        # Over the handful of distinct status values, not every row: these run on
-        # full raw frames, where four full-column str.contains passes dominate.
-        status = frame["status"]
-        has_dchg = pd.Series(calc.status_matches(status, "dchg", "discharge"), index=frame.index)
-        has_chg = pd.Series(calc.status_matches(status, "chg", "charge"), index=frame.index)
-    else:
-        has_dchg = pd.Series(False, index=frame.index)
-        has_chg = pd.Series(False, index=frame.index)
-    if "current_ma" in frame.columns:
-        cur = frame["current_ma"].to_numpy(dtype="float64")
-    else:
-        cur = np.full(n, np.nan)
-    with np.errstate(invalid="ignore"):
-        is_dchg = has_dchg.to_numpy() | (cur < 0)
-        is_chg = ~is_dchg & (has_chg.to_numpy() | (cur > 0))
-    return np.select([is_dchg, is_chg], ["discharge", "charge"], default="rest").tolist()
+    """Compatibility wrapper for the shared exact phase transform."""
+
+    return time_capacity_derived.phase_from_raw(frame)
 
 
 def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
@@ -1410,17 +1403,17 @@ def _continuous_time(frame: pd.DataFrame) -> pd.DataFrame:
 def _time_capacity_display_x(
     raw: pd.DataFrame,
     phases: list[str],
-    capacity: np.ndarray,
-    capacity_g: np.ndarray,
-    capacity_area: np.ndarray,
+    capacity: np.ndarray | None,
+    capacity_g: np.ndarray | None,
+    capacity_area: np.ndarray | None,
     settings: dict,
 ) -> np.ndarray:
     if settings["x_axis"] == "capacity_mah_g":
-        values = capacity_g.copy()
+        values = capacity_g.copy() if capacity_g is not None else np.full(len(raw), np.nan)
     elif settings["x_axis"] == "capacity_mah_cm2":
-        values = capacity_area.copy()
+        values = capacity_area.copy() if capacity_area is not None else np.full(len(raw), np.nan)
     elif settings["x_axis"] == "capacity_mah":
-        values = capacity.copy()
+        values = capacity.copy() if capacity is not None else np.full(len(raw), np.nan)
     else:
         factor = 3600.0 if settings["time_unit"] == "h" else 60.0 if settings["time_unit"] == "min" else 1.0
         values = (
@@ -1448,58 +1441,9 @@ def _time_capacity_display_x(
 
 
 def _phase_capacity(frame: pd.DataFrame, phases: list[str]) -> np.ndarray:
-    """Half-cycle capacity per row, continuous across Neware step resets.
+    """Compatibility wrapper for the shared exact capacity transform."""
 
-    Neware's capacity counters restart at each step boundary — e.g. at the
-    CC→CV transition the charge capacity drops from ~2.6 mAh back to 0 and
-    re-accumulates during the CV hold. Plotted against capacity that drew a
-    flat line at the cutoff voltage starting from x=0. Within each
-    contiguous (cycle, phase) run we therefore accumulate an offset at every
-    reset so capacity is cumulative for the whole half-cycle."""
-    n = len(frame)
-    charge = (
-        frame["charge_capacity_mah"].to_numpy(dtype="float64")
-        if "charge_capacity_mah" in frame.columns
-        else np.full(n, np.nan)
-    )
-    discharge = (
-        frame["discharge_capacity_mah"].to_numpy(dtype="float64")
-        if "discharge_capacity_mah" in frame.columns
-        else np.full(n, np.nan)
-    )
-    phase_arr = np.asarray(phases)
-    with np.errstate(invalid="ignore"):
-        best = np.where(
-            np.isnan(charge), discharge, np.where(np.isnan(discharge), charge, np.maximum(charge, discharge))
-        )
-    raw_cap = np.where(
-        (phase_arr == "discharge") & ~np.isnan(discharge),
-        discharge,
-        np.where((phase_arr == "charge") & ~np.isnan(charge), charge, best),
-    )
-
-    cycles = (
-        frame["cycle"].to_numpy() if "cycle" in frame.columns else np.zeros(n, dtype="int64")
-    )
-    out = raw_cap.copy()
-    carry = 0.0
-    prev_val = np.nan
-    prev_key: tuple | None = None
-    for i in range(n):
-        key = (cycles[i], phase_arr[i])
-        val = raw_cap[i]
-        if key != prev_key:
-            carry = 0.0
-            prev_val = np.nan
-            prev_key = key
-        if not np.isnan(val):
-            # a step reset drops the counter to (near) zero; small noisy
-            # decreases are left alone
-            if not np.isnan(prev_val) and val < prev_val and val < prev_val * 0.5:
-                carry += prev_val
-            prev_val = val
-            out[i] = val + carry
-    return out
+    return time_capacity_derived.phase_capacity(frame, phases)
 
 
 def _record_transform_profile(
@@ -1519,6 +1463,61 @@ def _record_transform_profile(
         "output_rows": int(output_rows),
         "consumed_by": list(consumed_by),
     }
+
+
+def _aligned_prepared_transform_values(
+    raw: pd.DataFrame,
+    prepared: pd.DataFrame,
+    *,
+    need_capacity: bool,
+) -> tuple[list[str], np.ndarray | None] | None:
+    """Validate prepared identity/order and return exact phase/capacity values."""
+
+    identity_columns = (
+        "source_hash",
+        "segment",
+        "source_cycle",
+        "record_index",
+        "cycle",
+    )
+    if len(raw) != len(prepared) or any(
+        column not in raw.columns or column not in prepared.columns
+        for column in identity_columns
+    ):
+        return None
+    sort_columns = [
+        column
+        for column in ("cycle", "segment", "record_index")
+        if column in raw.columns and column in prepared.columns
+    ]
+    if not sort_columns:
+        return None
+    left = raw.sort_values(sort_columns, kind="stable").reset_index(drop=True)
+    right = prepared.sort_values(sort_columns, kind="stable").reset_index(drop=True)
+    for column in identity_columns:
+        left_values = left[column]
+        right_values = right[column]
+        if column in {"source_hash"}:
+            if left_values.astype(str).tolist() != right_values.astype(str).tolist():
+                return None
+            continue
+        left_numeric = pd.to_numeric(left_values, errors="coerce").to_numpy(dtype="float64")
+        right_numeric = pd.to_numeric(right_values, errors="coerce").to_numpy(dtype="float64")
+        if not np.array_equal(left_numeric, right_numeric, equal_nan=True):
+            return None
+
+    phases = time_capacity_derived.decode_phases(right["phase_code"].to_numpy())
+    if phases is None:
+        return None
+    capacity: np.ndarray | None = None
+    if need_capacity:
+        if "phase_capacity_mah" not in right.columns:
+            return None
+        try:
+            capacity = right["phase_capacity_mah"].to_numpy(dtype="float64")
+        except (TypeError, ValueError):
+            return None
+    return phases, capacity
 
 
 def _derivative_curve(
@@ -2729,6 +2728,7 @@ def compute_time_capacity(
 
         source_facts: dict[str, dict] | None = None
         indexed_path = plan.path in {"indexed", "missing"}
+        requested_cycles: tuple[int, ...] = ()
         if indexed_path:
             requested_cycles = time_capacity_path.requested_global_cycles(
                 plan,
@@ -2887,6 +2887,33 @@ def compute_time_capacity(
             )
             continue
 
+        transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
+            settings,
+            precision=precision,
+            compact=compact,
+        )
+        prepared_derived: pd.DataFrame | None = None
+        if (
+            indexed_path
+            and plan.path == "indexed"
+            and requested_cycles
+            and calc_version == CALC_VERSION
+            and transform_needs.phase
+        ):
+            with time_capacity_path.timed_stage(
+                profile_diagnostics,
+                "prepared_derived_read",
+            ):
+                prepared_derived = time_capacity_path.load_indexed_time_capacity_derived(
+                    plan,
+                    requested_cycles,
+                    [
+                        "phase_code",
+                        *(["phase_capacity_mah"] if transform_needs.phase_capacity else []),
+                    ],
+                    diagnostics=cell_diagnostics,
+                )
+
         with time_capacity_path.timed_stage(
             cell_diagnostics, "exact_cycle_filter_and_sort"
         ):
@@ -2909,15 +2936,16 @@ def compute_time_capacity(
             cell_diagnostics, "continuous_time_phase_capacity"
         ):
             transform_rows = len(raw)
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_continuous_time"
-            ):
-                raw = _continuous_time(raw)
+            if transform_needs.continuous_time:
+                with time_capacity_path.timed_stage(
+                    profile_diagnostics, "transform_continuous_time"
+                ):
+                    raw = _continuous_time(raw)
             _record_transform_profile(
                 profile_diagnostics,
                 "continuous_time",
                 input_rows=transform_rows,
-                output_rows=len(raw),
+                output_rows=len(raw) if transform_needs.continuous_time else 0,
                 consumed_by=tuple(
                     [
                         *(
@@ -2963,10 +2991,29 @@ def compute_time_capacity(
                 consumed_by=("provenance_output", "display_downsampling"),
             )
 
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_phase_classification"
-            ):
-                phases = _phase_from_raw(raw)
+            aligned_prepared = (
+                _aligned_prepared_transform_values(
+                    raw,
+                    prepared_derived,
+                    need_capacity=transform_needs.phase_capacity,
+                )
+                if prepared_derived is not None
+                else None
+            )
+            if aligned_prepared is not None:
+                phases, prepared_capacity = aligned_prepared
+                phase_source = "prepared"
+                capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
+                cell_diagnostics["derived_access"] = "prepared"
+            else:
+                cell_diagnostics["derived_access"] = "fallback"
+                with time_capacity_path.timed_stage(
+                    profile_diagnostics, "transform_phase_classification"
+                ):
+                    phases = _phase_from_raw(raw)
+                phase_source = "computed"
+                prepared_capacity = None
+                capacity_source = "computed" if transform_needs.phase_capacity else "not_needed"
             _record_transform_profile(
                 profile_diagnostics,
                 "phase_classification",
@@ -2975,27 +3022,38 @@ def compute_time_capacity(
                 consumed_by=("phase_output", "display_coordinate", "derivative"),
             )
 
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_phase_capacity"
-            ):
-                capacity = _phase_capacity(raw, phases)
-            capacity_consumers = [
-                *(["derivative"] if settings["view"] != "voltage_current" else []),
-                *(
-                    ["capacity_axis"]
-                    if settings["view"] == "voltage_current"
-                    and settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}
-                    else []
-                ),
-                *(["full_export"] if precision == "full" or not compact else []),
-            ]
+            if transform_needs.phase_capacity:
+                if prepared_capacity is not None:
+                    capacity = prepared_capacity
+                else:
+                    with time_capacity_path.timed_stage(
+                        profile_diagnostics, "transform_phase_capacity"
+                    ):
+                        capacity = _phase_capacity(raw, phases)
+            else:
+                capacity = None
+            capacity_consumers: list[str] = []
+            if transform_needs.phase_capacity:
+                if settings["view"] != "voltage_current":
+                    capacity_consumers.append("derivative")
+                elif settings["x_axis"] in {
+                    "capacity_mah",
+                    "capacity_mah_g",
+                    "capacity_mah_cm2",
+                }:
+                    capacity_consumers.append("capacity_axis")
+                if precision == "full" or not compact:
+                    capacity_consumers.append("full_export")
             _record_transform_profile(
                 profile_diagnostics,
                 "phase_capacity",
                 input_rows=len(raw),
-                output_rows=len(capacity),
+                output_rows=len(capacity) if capacity is not None else 0,
                 consumed_by=tuple(capacity_consumers),
             )
+            if profile_diagnostics is not None:
+                profile_diagnostics["phase_source"] = phase_source
+                profile_diagnostics["phase_capacity_source"] = capacity_source
 
             with time_capacity_path.timed_stage(
                 profile_diagnostics, "transform_capacity_metadata"
@@ -3012,19 +3070,22 @@ def compute_time_capacity(
             )
 
             active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_specific_capacity"
-            ):
-                capacity_g = (
-                    capacity / active_mass_g
-                    if active_mass_g and active_mass_g > 0
-                    else np.full(len(raw), np.nan)
-                )
+            if transform_needs.specific_capacity:
+                with time_capacity_path.timed_stage(
+                    profile_diagnostics, "transform_specific_capacity"
+                ):
+                    capacity_g = (
+                        capacity / active_mass_g
+                        if capacity is not None and active_mass_g and active_mass_g > 0
+                        else np.full(len(raw), np.nan)
+                    )
+            else:
+                capacity_g = None
             _record_transform_profile(
                 profile_diagnostics,
                 "specific_capacity",
                 input_rows=len(raw),
-                output_rows=len(capacity_g),
+                output_rows=len(capacity_g) if capacity_g is not None else 0,
                 consumed_by=tuple(
                     [
                         *(["derivative"] if settings["view"] != "voltage_current" and settings["derivative_specific"] else []),
@@ -3041,19 +3102,22 @@ def compute_time_capacity(
             # A user-supplied area overrides the metadata; areal capacity is
             # area-normalised here so switching to it needs no client-side area.
             area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_areal_capacity"
-            ):
-                capacity_area = (
-                    capacity / area_cm2
-                    if area_cm2 and area_cm2 > 0
-                    else np.full(len(raw), np.nan)
-                )
+            if transform_needs.areal_capacity:
+                with time_capacity_path.timed_stage(
+                    profile_diagnostics, "transform_areal_capacity"
+                ):
+                    capacity_area = (
+                        capacity / area_cm2
+                        if capacity is not None and area_cm2 and area_cm2 > 0
+                        else np.full(len(raw), np.nan)
+                    )
+            else:
+                capacity_area = None
             _record_transform_profile(
                 profile_diagnostics,
                 "areal_capacity",
                 input_rows=len(raw),
-                output_rows=len(capacity_area),
+                output_rows=len(capacity_area) if capacity_area is not None else 0,
                 consumed_by=tuple(
                     [
                         *(
@@ -3108,14 +3172,22 @@ def compute_time_capacity(
         with time_capacity_path.timed_stage(
             profile_diagnostics, "transform_plot_array_materialization"
         ):
-            capacity = capacity.copy()
-            capacity_g = capacity_g.copy()
+            capacity = capacity.copy() if capacity is not None else None
+            capacity_g = capacity_g.copy() if capacity_g is not None else None
+            capacity_area = capacity_area.copy() if capacity_area is not None else None
             derivative_x = derivative_x.copy()
             derivative_y = derivative_y.copy()
-            for values in (voltage, current, capacity, capacity_g, derivative_x, derivative_y):
-                values[plot_mask] = np.nan
-
-            for values in (capacity_area,):
+            for values in (
+                voltage,
+                current,
+                capacity,
+                capacity_g,
+                capacity_area,
+                derivative_x,
+                derivative_y,
+            ):
+                if values is None:
+                    continue
                 values[plot_mask] = np.nan
         _record_transform_profile(
             profile_diagnostics,
@@ -3149,9 +3221,9 @@ def compute_time_capacity(
             phases = np.asarray(phases)[take].tolist()
             voltage = voltage[take]
             current = current[take]
-            capacity = capacity[take]
-            capacity_g = capacity_g[take]
-            capacity_area = capacity_area[take]
+            capacity = capacity[take] if capacity is not None else None
+            capacity_g = capacity_g[take] if capacity_g is not None else None
+            capacity_area = capacity_area[take] if capacity_area is not None else None
             derivative_x = derivative_x[take]
             derivative_y = derivative_y[take]
             source_values = {

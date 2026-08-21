@@ -1,9 +1,10 @@
-"""Profile the 050.5 Time/Capacity transform and cache boundaries.
+"""Profile the 050.6 Time/Capacity transform and prepared-cache boundaries.
 
 This is an isolated, diagnostic-only harness.  It uses the committed golden
 source in a temporary CellXplorer database, creates disposable Cell records
 for the multi-Cell matrix, and never touches the user's application data.
-It does not implement or enable a derived-data cache.
+It compares forced request-side fallback, exact prepared sidecar hits and the
+dependency-aware compact Time-axis path.
 """
 from __future__ import annotations
 
@@ -109,6 +110,7 @@ def summarize_sample(
     scenario: str,
     x_axis: str,
     view: str,
+    prepared_state: str,
 ) -> dict:
     stages = profile.get("backend_stages_ms") or {}
     transforms = profile.get("transform_stages") or {}
@@ -118,6 +120,7 @@ def summarize_sample(
         "cells": cells,
         "x_axis": x_axis,
         "view": view,
+        "prepared_state": prepared_state,
         "result_cache": "miss",
         "raw_access": profile.get("raw_access"),
         "selected_rows": profile.get("selected_rows_before_transforms"),
@@ -128,6 +131,8 @@ def summarize_sample(
         "backend_total_ms": elapsed_ms,
         "stages_ms": {
             "indexed_io": stages.get("indexed_raw_access"),
+            "prepared_derived_read": stages.get("prepared_derived_read"),
+            "prepared_derived_mapping": stages.get("prepared_derived_mapping"),
             "continuous_time_phase_capacity": stages.get("continuous_time_phase_capacity"),
             "display_coordinate": stages.get("display_coordinate"),
             "display_downsampling": stages.get("display_downsampling"),
@@ -149,6 +154,11 @@ def summarize_sample(
             name: details.get("consumed_by", [])
             for name, details in transforms.items()
         },
+        "derived_access": profile.get("derived_access"),
+        "phase_source": profile.get("phase_source"),
+        "phase_capacity_source": profile.get("phase_capacity_source"),
+        "prepared_row_groups_read": profile.get("prepared_row_groups_read"),
+        "prepared_rows_materialized": profile.get("prepared_rows_materialized"),
         "derivative_counts": {
             key: derivative.get(key)
             for key in (
@@ -168,23 +178,39 @@ def summarize_sample(
     }
 
 
-def run_engine_sample(engine, env, spec: dict, *, scenario: str, x_axis: str, view: str, cells: int) -> dict:
+def run_engine_sample(
+    engine,
+    env,
+    spec: dict,
+    *,
+    scenario: str,
+    x_axis: str,
+    view: str,
+    cells: int,
+    prepared_state: str,
+) -> dict:
+    from unittest.mock import patch
+
+    from app.services import cache
+
     diagnostics: dict = {}
     started = time.perf_counter()
-    result = engine.compute_time_capacity(
-        env.db,
-        spec,
-        None,
+    call = dict(
         viewport_width=1200,
         precision="standard",
         compact=True,
         access_diagnostics=diagnostics,
     )
+    if prepared_state == "fallback":
+        with patch.object(cache, "load_time_capacity_derived", return_value=None):
+            result = engine.compute_time_capacity(env.db, spec, None, **call)
+    else:
+        result = engine.compute_time_capacity(env.db, spec, None, **call)
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     from app.services.time_capacity_profiling import build_time_capacity_profile
 
     profile = build_time_capacity_profile(
-        request_id=f"050.5-{scenario}",
+        request_id=f"050.6-{prepared_state}-{scenario}",
         result_cache="miss",
         diagnostics=diagnostics,
         result=result,
@@ -198,10 +224,23 @@ def run_engine_sample(engine, env, spec: dict, *, scenario: str, x_axis: str, vi
         scenario=scenario,
         x_axis=x_axis,
         view=view,
+        prepared_state=prepared_state,
     )
 
 
-def run_repetitions(engine, env, base: dict, cell_ids: list[int], cycles: list[int], cycle_end: int | None, *, x_axis: str, view: str, label: str) -> dict:
+def run_repetitions(
+    engine,
+    env,
+    base: dict,
+    cell_ids: list[int],
+    cycles: list[int],
+    cycle_end: int | None,
+    *,
+    x_axis: str,
+    view: str,
+    label: str,
+    prepared_state: str,
+) -> dict:
     samples = [
         run_engine_sample(
             engine,
@@ -211,6 +250,7 @@ def run_repetitions(engine, env, base: dict, cell_ids: list[int], cycles: list[i
             x_axis=x_axis,
             view=view,
             cells=len(cell_ids),
+            prepared_state=prepared_state,
         )
         for _ in range(REPETITIONS)
     ]
@@ -236,6 +276,13 @@ def run_repetitions(engine, env, base: dict, cell_ids: list[int], cycles: list[i
     }
     median["transform_consumers"] = samples[0]["transform_consumers"]
     median["derivative_counts"] = samples[0]["derivative_counts"]
+    for key in (
+        "derived_access",
+        "phase_source",
+        "phase_capacity_source",
+    ):
+        values = {sample.get(key) for sample in samples}
+        median[key] = next(iter(values)) if len(values) == 1 else "mixed"
     median["result_cache"] = "miss"
     median["raw_access"] = samples[0]["raw_access"]
     return {
@@ -243,6 +290,7 @@ def run_repetitions(engine, env, base: dict, cell_ids: list[int], cycles: list[i
         "cells": len(cell_ids),
         "x_axis": x_axis,
         "view": view,
+        "prepared_state": prepared_state,
         "repetitions": REPETITIONS,
         "median": median,
         "min_backend_total_ms": min(sample["backend_total_ms"] for sample in samples),
@@ -253,16 +301,23 @@ def run_repetitions(engine, env, base: dict, cell_ids: list[int], cycles: list[i
 
 def clone_golden_source_cells(env, count: int) -> list[int]:
     from app.models import Cell, CellMetadata, SourceFile, Test, TestFile
-    from app.services import cache
+    from app.services import cache, parsing
 
     source = env.db.query(SourceFile).filter(SourceFile.hash == env.manifest["sources"][0]["sha256"]).one()
-    parser_version = source.parser_version
+    current_parser_version = parsing.current_parser_identity_for_extension(source.ext)
+    parser_version = (
+        current_parser_version
+        if current_parser_version and cache.raw_path(source.hash, current_parser_version).is_file()
+        else source.parser_version
+    )
+    if not parser_version:
+        raise RuntimeError("Golden source parser identity was not available")
     raw = cache.load_raw(source.hash, parser_version)
     if raw is None:
         raise RuntimeError("Golden source raw cache was not available for clone profiling")
     clone_ids: list[int] = []
     for index in range(count):
-        cell = Cell(name=f"050.5-disposable-cell-{index + 1}")
+        cell = Cell(name=f"050.6-disposable-cell-{index + 1}")
         env.db.add(cell)
         env.db.flush()
         env.db.add(CellMetadata(cell_id=cell.id, key="active_mass_mg", value="328.62"))
@@ -270,7 +325,7 @@ def clone_golden_source_cells(env, count: int) -> list[int]:
         clone_source = SourceFile(
             hash=clone_hash,
             path=clone_hash,
-            filename=f"050.5-disposable-{index + 1}.ndax",
+            filename=f"050.6-disposable-{index + 1}.ndax",
             size=source.size,
             ext="ndax",
             parse_status="parsed",
@@ -282,14 +337,59 @@ def clone_golden_source_cells(env, count: int) -> list[int]:
         )
         env.db.add(clone_source)
         env.db.flush()
-        cache._publish_optimized_raw(raw.copy(deep=True), cache.raw_path(clone_hash, parser_version), parser_version)
-        test = Test(cell_id=cell.id, name=f"050.5-disposable-test-{index + 1}")
+        cache._publish_optimized_raw(
+            raw.copy(deep=True),
+            cache.raw_path(clone_hash, parser_version),
+            parser_version,
+        )
+        prepared = cache.prepare_time_capacity_derived(clone_hash, parser_version)
+        if prepared.get("status") != "ready":
+            raise RuntimeError(f"Could not prepare disposable clone: {prepared}")
+        test = Test(cell_id=cell.id, name=f"050.6-disposable-test-{index + 1}")
         env.db.add(test)
         env.db.flush()
         env.db.add(TestFile(test_id=test.id, file_id=clone_source.id, position=0))
         clone_ids.append(cell.id)
     env.db.commit()
     return clone_ids
+
+
+def measure_preparation(env) -> dict:
+    from app.services import cache, parsing
+    from app.models import SourceFile
+
+    source = (
+        env.db.query(SourceFile)
+        .filter(SourceFile.hash == env.manifest["sources"][0]["sha256"])
+        .one()
+    )
+    current_parser_version = parsing.current_parser_identity_for_extension(source.ext)
+    parser_version = (
+        current_parser_version
+        if current_parser_version and cache.raw_path(source.hash, current_parser_version).is_file()
+        else source.parser_version
+    )
+    if not parser_version:
+        raise RuntimeError("Golden source parser identity was not available")
+    payload = cache.time_capacity_derived_path(source.hash, parser_version)
+    index = cache.time_capacity_derived_index_path(source.hash, parser_version)
+    payload.unlink(missing_ok=True)
+    index.unlink(missing_ok=True)
+    started = time.perf_counter()
+    result = cache.prepare_time_capacity_derived(source.hash, parser_version)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    if result.get("status") != "ready":
+        raise RuntimeError(f"Could not prepare approved golden source: {result}")
+    raw_path = cache.raw_path(source.hash, parser_version)
+    return {
+        "status": result["status"],
+        "rows": result.get("rows"),
+        "row_groups": result.get("row_groups"),
+        "preparation_ms": elapsed_ms,
+        "raw_bytes": raw_path.stat().st_size,
+        "derived_bytes": payload.stat().st_size,
+        "derived_index_bytes": index.stat().st_size,
+    }
 
 
 def run_cache_probe(env, base: dict, cell_id: int) -> dict:
@@ -416,76 +516,104 @@ def main() -> int:
         from app.services import analysis_engine
 
         clone_ids = clone_golden_source_cells(env, 6)
+        preparation = measure_preparation(env)
         matrix: list[dict] = []
-        for label, cycles, cycle_end in MATRIX_RANGES:
-            print(f"profiling 1-cell {label}", flush=True)
-            matrix.append(
-                run_repetitions(
-                    analysis_engine,
-                    env,
-                    base,
-                    [GOLDEN_CELL_ID],
-                    cycles,
-                    cycle_end,
-                    x_axis="time",
-                    view="voltage_current",
-                    label=f"one-cell/{label}",
+        for prepared_state in ("fallback", "prepared"):
+            for label, cycles, cycle_end in MATRIX_RANGES:
+                print(f"profiling 1-cell {label} state={prepared_state}", flush=True)
+                matrix.append(
+                    run_repetitions(
+                        analysis_engine,
+                        env,
+                        base,
+                        [GOLDEN_CELL_ID],
+                        cycles,
+                        cycle_end,
+                        x_axis="time",
+                        view="voltage_current",
+                        label=f"one-cell/{label}/time",
+                        prepared_state=prepared_state,
+                    )
                 )
-            )
-        for x_axis in ("time", "capacity_mah"):
-            print(f"profiling 1-cell all x={x_axis}", flush=True)
-            matrix.append(
-                run_repetitions(
-                    analysis_engine,
-                    env,
-                    base,
-                    [GOLDEN_CELL_ID],
-                    [],
-                    None,
-                    x_axis=x_axis,
-                    view="voltage_current",
-                    label=f"one-cell/all/{x_axis}",
+            for label, cycles, cycle_end in (MATRIX_RANGES[2], MATRIX_RANGES[3]):
+                print(f"profiling 1-cell {label} x=capacity_mah state={prepared_state}", flush=True)
+                matrix.append(
+                    run_repetitions(
+                        analysis_engine,
+                        env,
+                        base,
+                        [GOLDEN_CELL_ID],
+                        cycles,
+                        cycle_end,
+                        x_axis="capacity_mah",
+                        view="voltage_current",
+                        label=f"one-cell/{label}/capacity_mah",
+                        prepared_state=prepared_state,
+                    )
                 )
-            )
-        for clone_count in (3, 6):
-            for label, cycles, cycle_end in MATRIX_RANGES[1:]:
-                print(f"profiling {clone_count}-cell {label}", flush=True)
+            for clone_count in (3, 6):
+                for label, cycles, cycle_end in MATRIX_RANGES[2:]:
+                    print(f"profiling {clone_count}-cell {label} state={prepared_state}", flush=True)
+                    matrix.append(
+                        run_repetitions(
+                            analysis_engine,
+                            env,
+                            base,
+                            clone_ids[:clone_count],
+                            cycles,
+                            cycle_end,
+                            x_axis="time",
+                            view="voltage_current",
+                            label=f"{clone_count}-cell/{label}/time",
+                            prepared_state=prepared_state,
+                        )
+                    )
+            for clone_count in (3, 6):
+                print(f"profiling {clone_count}-cell all x=capacity_mah state={prepared_state}", flush=True)
                 matrix.append(
                     run_repetitions(
                         analysis_engine,
                         env,
                         base,
                         clone_ids[:clone_count],
-                        cycles,
-                        cycle_end,
-                        x_axis="time",
+                        [],
+                        None,
+                        x_axis="capacity_mah",
                         view="voltage_current",
-                        label=f"{clone_count}-cell/{label}",
+                        label=f"{clone_count}-cell/all/capacity_mah",
+                        prepared_state=prepared_state,
                     )
                 )
-        for label, cycles, cycle_end in (("1-3", list(range(1, 4)), 3), ("1-20", list(range(1, 21)), 20), ("all", [], None)):
-            print(f"profiling dqdv {label}", flush=True)
-            matrix.append(
-                run_repetitions(
-                    analysis_engine,
-                    env,
-                    base,
-                    [GOLDEN_CELL_ID],
-                    cycles,
-                    cycle_end,
-                    x_axis="capacity_mah",
-                    view="dqdv",
-                    label=f"dqdv/{label}",
+        for label, cycles, cycle_end in (
+            ("1-3", list(range(1, 4)), 3),
+            ("1-20", list(range(1, 21)), 20),
+            ("all", [], None),
+        ):
+            for prepared_state in ("fallback", "prepared"):
+                print(f"profiling dqdv {label} state={prepared_state}", flush=True)
+                matrix.append(
+                    run_repetitions(
+                        analysis_engine,
+                        env,
+                        base,
+                        [GOLDEN_CELL_ID],
+                        cycles,
+                        cycle_end,
+                        x_axis="capacity_mah",
+                        view="dqdv",
+                        label=f"dqdv/{label}",
+                        prepared_state=prepared_state,
+                    )
                 )
-            )
         print("profiling persisted result-cache miss/hit", flush=True)
         cache_probe = run_cache_probe(env, base, GOLDEN_CELL_ID)
         print("profiling controlled five-cell route gap", flush=True)
         route_gap_probe = run_route_gap_probe(env, base, clone_ids[:5])
     evidence = {
-        "spec": "050.5",
+        "spec": "050.6",
         "fixture": "golden cycles_time_steps.ndax (71,190 rows, 193 cycles)",
         "multi_cell_note": "3- and 6-Cell matrices use disposable Cell/source clones of the committed golden raw cache; they are not the user's six-cell dataset.",
+        "prepared_artifact": preparation,
         "request_contract": {
             "precision": "standard",
             "compact": True,

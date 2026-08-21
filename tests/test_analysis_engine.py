@@ -1071,7 +1071,8 @@ class AnalysisEngineTests(unittest.TestCase):
             cell["selected_rows_before_transforms"],
         )
         self.assertEqual(cell["transform_profile"]["phase_capacity"]["consumed_by"], [])
-        self.assertGreaterEqual(cell["stages"]["transform_phase_capacity"], 0)
+        self.assertEqual(cell["transform_profile"]["phase_capacity"]["output_rows"], 0)
+        self.assertNotIn("transform_phase_capacity", cell["stages"])
 
         derivative_spec = deepcopy(spec)
         derivative_spec["computation"]["time_capacity"].update({
@@ -1313,6 +1314,174 @@ class AnalysisEngineTests(unittest.TestCase):
         })
         cap = engine._phase_capacity(frame, engine._phase_from_raw(frame))
         np.testing.assert_allclose(cap, [1.0, 0.999, 1.4])
+
+    def _remove_prepared_sidecar(self, source_hash: str, parser_version: str) -> None:
+        cache.time_capacity_derived_path(source_hash, parser_version).unlink(missing_ok=True)
+        cache.time_capacity_derived_index_path(source_hash, parser_version).unlink(missing_ok=True)
+
+    def _restore_prepared_sidecar(self, source_hash: str, parser_version: str) -> None:
+        result = cache.prepare_time_capacity_derived(source_hash, parser_version)
+        self.assertEqual(result["status"], "ready")
+
+    def test_compact_time_axis_skips_unconsumed_capacity_transforms(self):
+        source = self.cells["c1"].tests[0].file_links[0].file
+        parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
+        self._remove_prepared_sidecar(source.hash, parser_version)
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        try:
+            with patch.object(
+                engine,
+                "_phase_capacity",
+                side_effect=AssertionError(
+                    "phase capacity is not consumed by time-axis compact view"
+                ),
+            ):
+                result = engine.compute_time_capacity(
+                    self.db,
+                    spec,
+                    None,
+                    precision="standard",
+                    compact=True,
+                )
+        finally:
+            self._restore_prepared_sidecar(source.hash, parser_version)
+        trace = result["cell_traces"][0]
+        self.assertEqual(trace["capacity_mah"], [])
+        self.assertEqual(trace["capacity_mah_g"], [])
+        self.assertEqual(trace["capacity_mah_cm2"], [])
+        self.assertTrue(trace["phase"])
+
+    def test_compact_capacity_axis_skips_unconsumed_continuous_time(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 5,
+            "x_axis": "capacity_mah",
+        }
+        with patch.object(
+            engine,
+            "_continuous_time",
+            side_effect=AssertionError(
+                "continuous time is not consumed by capacity-axis compact view"
+            ),
+        ):
+            result = engine.compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                precision="standard",
+                compact=True,
+            )
+        self.assertTrue(result["cell_traces"][0]["capacity_mah"])
+        self.assertEqual(result["cell_traces"][0]["time_s"], [])
+
+    def test_prepared_and_forced_fallback_time_capacity_payloads_match(self):
+        source = self.cells["c1"].tests[0].file_links[0].file
+        parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "cycle_end": 12,
+            "x_axis": "capacity_mah",
+        }
+        prepared = engine.compute_time_capacity(
+            self.db,
+            deepcopy(spec),
+            None,
+            precision="standard",
+            compact=True,
+        )
+        self._remove_prepared_sidecar(source.hash, parser_version)
+        try:
+            fallback = engine.compute_time_capacity(
+                self.db,
+                deepcopy(spec),
+                None,
+                precision="standard",
+                compact=True,
+            )
+        finally:
+            self._restore_prepared_sidecar(source.hash, parser_version)
+        self.assertEqual(prepared["cell_traces"], fallback["cell_traces"])
+
+    def test_prepared_and_fallback_cover_time_capacity_consumer_matrix(self):
+        cell = self.cells["c1"]
+        source = cell.tests[0].file_links[0].file
+        parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
+        self.db.add(CellMetadata(cell_id=cell.id, key="active_mass_mg", value="10"))
+        self.db.add(CellMetadata(cell_id=cell.id, key="electrode_area_cm2", value="2"))
+        self.db.flush()
+
+        settings_matrix = [
+            {"cycle_end": 12, "x_axis": "time"},
+            {"cycle_end": 12, "x_axis": "capacity_mah"},
+            {"cycle_end": 12, "x_axis": "capacity_mah_g"},
+            {"cycle_end": 12, "x_axis": "capacity_mah_cm2"},
+            {
+                "cycle_end": 12,
+                "view": "dqdv",
+                "x_axis": "capacity_mah",
+                "smoothing_window": 3,
+                "derivative_phase": "both",
+                "derivative_specific": False,
+            },
+            {
+                "cycle_end": 12,
+                "view": "dvdq",
+                "x_axis": "capacity_mah_g",
+                "smoothing_window": 3,
+                "derivative_phase": "both",
+                "derivative_specific": True,
+            },
+        ]
+        for settings in settings_matrix:
+            with self.subTest(settings=settings):
+                spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+                spec["computation"]["time_capacity"] = settings
+                prepared = engine.compute_time_capacity(
+                    self.db, deepcopy(spec), None, precision="standard", compact=True
+                )
+                self._remove_prepared_sidecar(source.hash, parser_version)
+                try:
+                    fallback = engine.compute_time_capacity(
+                        self.db, deepcopy(spec), None, precision="standard", compact=True
+                    )
+                finally:
+                    self._restore_prepared_sidecar(source.hash, parser_version)
+                self.assertEqual(prepared["cell_traces"], fallback["cell_traces"])
+
+        for mode in ("excluded", "only", "hidden"):
+            with self.subTest(protocol_mode=mode):
+                spec = self.spec_with_protocol_mode(mode)
+                prepared = engine.compute_time_capacity(
+                    self.db, deepcopy(spec), None, precision="standard", compact=True
+                )
+                self._remove_prepared_sidecar(source.hash, parser_version)
+                try:
+                    fallback = engine.compute_time_capacity(
+                        self.db, deepcopy(spec), None, precision="standard", compact=True
+                    )
+                finally:
+                    self._restore_prepared_sidecar(source.hash, parser_version)
+                self.assertEqual(prepared["cell_traces"], fallback["cell_traces"])
+
+        full_spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        full_spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": None,
+            "x_axis": "capacity_mah",
+            "max_points_per_cell": 100,
+        }
+        prepared_full = engine.compute_time_capacity(
+            self.db, deepcopy(full_spec), None, precision="full", compact=False
+        )
+        self._remove_prepared_sidecar(source.hash, parser_version)
+        try:
+            fallback_full = engine.compute_time_capacity(
+                self.db, deepcopy(full_spec), None, precision="full", compact=False
+            )
+        finally:
+            self._restore_prepared_sidecar(source.hash, parser_version)
+        self.assertEqual(prepared_full["cell_traces"], fallback_full["cell_traces"])
 
     def test_exclusion_and_group_metrics(self):
         spec = self.spec_with([{"kind": "replicate_group", "ref_id": self.group.id}])
@@ -1782,6 +1951,37 @@ class AnalysisEngineTests(unittest.TestCase):
         )
         self.assertEqual(series["source_descriptors"][1]["global_cycle_start"], 4)
         self.assertTrue(series["source_descriptors"][1]["tracked_tail"])
+
+        time_spec = self.spec_with([{"kind": "cell", "ref_id": cell.id}])
+        time_spec["computation"]["time_capacity"] = {
+            "cycle_start": 1,
+            "cycle_end": None,
+            "x_axis": "capacity_mah",
+            "max_points_per_cell": 500,
+        }
+        prepared_time = engine.compute_time_capacity(
+            self.db, deepcopy(time_spec), None, precision="standard", compact=True
+        )
+        parser_versions = {
+            h: parsing.current_parser_identity_for_extension("ndax") or parsing.PARSER_VERSION
+            for h in (hash_a, hash_b)
+        }
+        for h, parser_version in parser_versions.items():
+            self._remove_prepared_sidecar(h, parser_version)
+        try:
+            fallback_time = engine.compute_time_capacity(
+                self.db, deepcopy(time_spec), None, precision="standard", compact=True
+            )
+        finally:
+            for h, parser_version in parser_versions.items():
+                self.assertEqual(
+                    cache.prepare_time_capacity_derived(h, parser_version)["status"],
+                    "ready",
+                )
+        self.assertEqual(
+            prepared_time["cell_traces"],
+            fallback_time["cell_traces"],
+        )
 
     def test_incomplete_multi_source_cycle_result_fails_closed(self):
         hash_a = "f1" * 32

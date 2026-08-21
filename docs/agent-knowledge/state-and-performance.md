@@ -434,6 +434,32 @@ object, and patches self-referential timing/byte numbers in the final bytes; a p
 the existing body-splice path. Profiling therefore does not repeatedly encode a large result and
 misclassify that extra work as HTTP or frontend time.
 
+Spec 050.6 adds an optional, regenerable Time/Capacity derived sidecar owned by
+`backend/app/services/cache.py` and the dependency-free
+`backend/app/services/time_capacity_derived.py`. Each source-local row stores only
+`record_index`, `cycle`, a stable `phase_code` (`0` rest, `1` charge, `2` discharge), and the exact
+`phase_capacity_mah` vector. Its versioned index binds the payload to the source parser identity,
+current `CALC_VERSION`, `CANONICAL_RAW_VERSION`, `RAW_CACHE_LAYOUT_VERSION`, raw shape fingerprint,
+row/group counts, and physical schema/fingerprint; raw replacement invalidates every matching
+prepared generation before publishing new raw bytes. Preparation uses the already validated raw
+Parquet (or the in-memory frame at a normal cache build), is protected by the existing checksum
+cleanup boundary, and is also reachable through the existing scientific-preparation worker for
+offline current raw caches. A deliberately cleaned raw cache is not recreated only for this
+optimization.
+
+The indexed Time/Capacity path selects the same source-local cycle groups for raw and derived
+reads. It accepts prepared values only after all contributing sources pass metadata and row
+identity/order validation; a missing, stale, corrupt, busy, or partially available sidecar
+returns immediately to the exact request-side phase/capacity helpers for the whole Cell/unit.
+Prepared reads use a non-waiting raw-layout boundary, touch both payload and index on success, and
+add no ordinary response fields. `TimeCapacityTransformNeeds` is the dependency contract: compact
+Time-axis Voltage/Current skips phase-capacity, specific, and areal arrays; compact capacity and
+derivative requests read only the exact prepared vectors they consume; full/non-compact responses
+retain all existing arrays. The shared phase/capacity owner is important: cache preparation and
+fallback cannot drift scientifically. Focused parity and golden tests are the evidence boundary;
+profiler output must keep raw/prepared group counts and phase/capacity source facts separate from
+wall-clock claims.
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):
