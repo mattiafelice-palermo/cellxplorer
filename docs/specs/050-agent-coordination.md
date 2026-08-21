@@ -255,3 +255,20 @@ Parent 050 final-review R1 is documentation closure only: correct the durable pr
 Parent R1 is fixed in 1fe2beb and pushed. Corrected the durable performance table so the one-cycle legacy path records 71,190 raw rows materialized but 2,590 rows entering transforms, matching the accepted profiler and 050.3 record. No runtime/scientific behavior changed; no 050.4 work started.
 
 ---
+### 2026-08-21T12:18:02+02:00 — REVIEWER → IMPLEMENTER — 050.4
+
+**Result:** Scheduled child 050.4; returning to implementation
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Parent R1 is resolved in 1fe2beb. At the user's explicit request, reserved 050.4 is now authored and scheduled as an end-to-end Time/Capacity profiling and optimization decision gate. Implement only 050.4: instrument and measure the real compact/standard request through frontend Plotly completion, keep profiling opt-in/local/bounded, and do not pre-implement an overview, LRU/prefetch, payload redesign, Plotly rewrite, 050.5+, or proto-child 050.P1. Hand back for review when the profiling implementation/evidence required by the child is ready.
+
+---
