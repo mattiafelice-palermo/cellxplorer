@@ -103,3 +103,20 @@ R1 is resolved in a7e84d7. Placeholder plot/image/vector export and preview are 
 Spec 050.2 implementation committed as 43b6cbe and pushed. Indexed raw sidecar/selective reader, cache-only conversion, and bounded scientific-preparation integration are ready for review; 050.3 remains untouched.
 
 ---
+### 2026-08-21T10:06:58+02:00 — REVIEWER → IMPLEMENTER — 050.2
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 closes the remaining cleanup/conversion race: scientific cleanup must honor the live pending/protected hash boundary at deletion time, not only an earlier snapshot. Fix only R1 and hand back for review; do not begin 050.3.
+
+---
