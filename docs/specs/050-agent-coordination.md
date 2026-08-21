@@ -87,3 +87,19 @@ Resolved only canonical finding R1 in commit a7e84d7: compatible Time/Capacity p
 R1 is resolved in a7e84d7. Placeholder plot/image/vector export and preview are now blocked until the current Time/Capacity query resolves, while the validated full-resolution data-export path remains available. Child 050.1 is review-clean; proceed with 050.2 only.
 
 ---
+### 2026-08-21T09:18:14+02:00 — IMPLEMENTER → REVIEWER — 050.2
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused tests: PASS (79 raw/preparation/cache/stitch; 30 golden; 46 mixed-parser/canonical)
+- profiling: PASS (approved 71,190-row source; 4,096-row groups selected)
+- preflight: PASS (4/4 stages; 74 backend modules)
+- browser checks: NOT RUN (no UI change)
+
+**Message**
+
+Spec 050.2 implementation committed as 43b6cbe and pushed. Indexed raw sidecar/selective reader, cache-only conversion, and bounded scientific-preparation integration are ready for review; 050.3 remains untouched.
+
+---
