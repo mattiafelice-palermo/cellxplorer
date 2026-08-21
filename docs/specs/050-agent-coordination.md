@@ -397,3 +397,20 @@ R4 is resolved in 57cff5a. Profiled misses now serialize the scientific body onc
 All numeric children 050.1-050.4 and Parent 050 implementation findings are review-clean. Parent completion and merge readiness are blocked only because the 050.4 decision gate requires a representative local desktop/browser end-to-end Time/Capacity profile that neither agent environment can run. Supply the exported `window.cellxplorerPerformance.timeCapacity.exportJson()` records from the required scenario matrix; then resume the same Parent 050 final review and decide whether a measured 050.5 optimization child is justified or Spec 050 can close.
 
 ---
+### 2026-08-21T15:25:14+02:00 — REVIEWER → IMPLEMENTER — 050.4
+
+**Result:** User-directed amendment; changes required
+
+**Findings**
+
+- R5
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+The user explicitly replaced the DevTools-only evidence-collection path with installed-app controls inside the existing Debug/Diagnostics surface. The normative amendment is `docs/specs/amendments/050.4-installed-app-profiling-controls.md`. Implement only R5: add a compact Time/Capacity profiling surface under Debug (prefer a Performance tab), with Start recording = reset + enable, recording preserved while Debug is closed, and Stop recording = disable + immediate timestamped JSON export through `saveDownload`. Show recording state and completed-record count; handle zero-record and repeated sessions deterministically. Preserve all existing 050.4 scientific/cache/timing/privacy constraints. Do not begin 050.5, any optimization implementation, or proto-child 050.P1. Hand back for review with focused frontend tests and canonical preflight; the actual timing matrix may remain NOT RUN until the user collects it from the installed app.
+
+---
