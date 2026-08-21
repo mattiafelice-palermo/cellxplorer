@@ -169,3 +169,21 @@ R1 is resolved in 7b70b4a. Scientific cleanup now serializes deletion against li
 Spec 050.3 implementation committed as 483ca2b and pushed. Indexed Time/Capacity planning now uses validated 050.2 source indexes for dense global cycle mapping, exact source-local selective reads, full-source voltage/descriptor facts, and selected-row provenance while preserving existing scientific transforms and legacy fallback. No 050.4 work started.
 
 ---
+### 2026-08-21T10:57:48+02:00 — REVIEWER → IMPLEMENTER — 050.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 keeps background raw-layout conversion off the Time/Capacity request critical path instead of making the request wait for the conversion lock. R2 bounds range planning to known global cycles so extreme stale/out-of-range endpoints cannot allocate an enormous tuple. Fix only R1/R2 and hand back for review; do not start 050.4 or parent final review.
+
+---
