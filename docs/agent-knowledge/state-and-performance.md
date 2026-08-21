@@ -395,6 +395,39 @@ may be converted without their original path, while layout-only failures do not 
 compact raw-layout candidates for the already existing bounded background preparation worker; it
 does not rewrite Parquet on a list/request path.
 
+Spec 050.3 consumes that sidecar through `time_capacity_path.py`. Time/Capacity first builds the
+dense global continuation map from each ordered source's observed-cycle list, then resolves the
+requested global cycles before reading raw records. The indexed path calls `cache.load_raw_cycles`
+only for contributing sources, projects the canonical fields used by the existing scientific
+helpers, removes row-group spillover before transforms, and obtains full-source voltage
+availability and descriptor timestamp bounds from index facts. It retains `stitch_raw()` as a
+whole-Cell fallback for valid legacy/unusable layouts; a missing raw cache remains fail-closed and
+never becomes a legacy fallback. The optional `compute_time_capacity(...,
+access_diagnostics=...)` hook is test/profiler-only and is not part of the response payload.
+
+The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
+source recorded the following medians under the pinned local runtime (wall time is descriptive,
+not a universal threshold):
+
+| request | path | groups | raw rows materialized | selected rows into transforms | returned points | peak traced memory |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 cycle | legacy | full read | 71,190 | 71,190 | 2,590 | 8.05 MB |
+| 1 cycle | indexed | 1/18 | 4,096 | 2,590 | 2,590 | 2.06 MB |
+| 20 cycles | legacy | full read | 71,190 | 10,611 | 10,611 | 8.79 MB |
+| 20 cycles | indexed | 3/18 | 12,288 | 10,611 | 10,611 | 8.80 MB |
+| 150 cycles | legacy | full read | 71,190 | 56,044 | 56,044 | 45.84 MB |
+| 150 cycles | indexed | 14/18 | 57,344 | 56,044 | 56,044 | 45.85 MB |
+| all cycles | legacy | full read | 71,190 | 71,190 | 71,190 | 61.96 MB |
+| all cycles | indexed | 18/18 | 71,190 | 71,190 | 71,190 | 61.97 MB |
+
+Indexed and legacy payload sizes and scientific projections were equal for the matrix. The
+one-cycle request also bypassed `load_raw()` entirely and reduced the measured backend median from
+0.145 s to 0.115 s; broader requests are dominated by the unchanged scientific transforms and
+JSON serialization, so their physical row/group reduction is the durable performance boundary.
+The reserved 050.4 child is not justified by this backend evidence: no overview cache, RAM LRU,
+prefetch, or frontend rendering optimization belongs in 050.3, and the profiler records that a
+browser/Plotly manual profile was not run.
+
 A Stable-to-Beta database snapshot deliberately excludes `cache/`. Staging writes the durable
 `beta.scientific_preparation` setting into the copied database. After activation, the normal
 background backfill uses that marker to prepare every missing current-version scientific cache,

@@ -52,7 +52,7 @@ def build_dense_cycle_map(local_labels: list[int], global_start: int) -> dict[in
     return {local: global_start + index for index, local in enumerate(local_labels)}
 
 
-def _apply_cycle_mapping(
+def apply_cycle_mapping(
     df: pd.DataFrame,
     *,
     segment: int,
@@ -71,7 +71,7 @@ def _apply_cycle_mapping(
     return out
 
 
-def _segment_metadata(
+def segment_metadata(
     *,
     file_hash: str,
     segment: int,
@@ -136,7 +136,7 @@ def _stitch_ordered(
             continue
 
         cycle_map = build_dense_cycle_map(local_labels, global_next)
-        mapped = _apply_cycle_mapping(
+        mapped = apply_cycle_mapping(
             loaded,
             segment=segment,
             source_hash=file_hash,
@@ -146,7 +146,7 @@ def _stitch_ordered(
         if not sort_output and "record_index" in mapped.columns:
             mapped = mapped.sort_values("record_index", kind="stable").reset_index(drop=True)
         segments.append(
-            _segment_metadata(
+            segment_metadata(
                 file_hash=file_hash,
                 segment=segment,
                 local_labels=local_labels,

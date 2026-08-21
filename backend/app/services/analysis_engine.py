@@ -19,7 +19,7 @@ import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, defer, joinedload, object_session, selectinl
 
 from ..config import CALC_VERSION
 from ..models import Cell, CellMetadata, ReplicateGroup, SourceFile, Test, TestFile
-from . import cache, calc, canonical_cycling, parsing, protocol, stitch
+from . import cache, calc, canonical_cycling, parsing, protocol, stitch, time_capacity_path
 
 SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
@@ -535,6 +535,7 @@ def source_descriptors(
     missing: list[str],
     frame: pd.DataFrame | None = None,
     parser_versions: dict[str, str] | None = None,
+    source_facts: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Describe the one ordered Cell source chain without exposing paths.
 
@@ -555,7 +556,11 @@ def source_descriptors(
         segment = by_segment.get(position - 1) or {}
         start_timestamp = None
         end_timestamp = None
-        if timestamp_column and not frame.empty and "segment" in frame.columns:
+        indexed_facts = source_facts.get(source_file.hash) if source_facts else None
+        if indexed_facts is not None:
+            start_timestamp = indexed_facts.get("timestamp_start")
+            end_timestamp = indexed_facts.get("timestamp_end")
+        elif timestamp_column and frame is not None and not frame.empty and "segment" in frame.columns:
             values = pd.to_datetime(
                 frame.loc[frame["segment"] == position - 1, timestamp_column],
                 errors="coerce",
@@ -617,18 +622,13 @@ def _persisted_voltage_capabilities(source_file: SourceFile) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _time_capacity_voltage_context(
-    raw: pd.DataFrame,
+def _resolve_time_capacity_voltage_context(
     files: list[SourceFile],
+    matched_files_by_quantity: dict[str, list[SourceFile]],
+    *,
+    unknown_sources_by_quantity: set[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str | None]]:
-    """Resolve truthful role/reference context for the selected raw channels.
-
-    Availability is still data-driven from the stitched frame. Reference text
-    is appended only when every source contributing finite values for a given
-    auxiliary channel declares the same short, explicit reference. Mixed or
-    missing source metadata therefore falls back to the generic ``vs ref``
-    label instead of guessing from the experiment or filename.
-    """
+    """Resolve roles/references from source-level finite-data facts."""
 
     default_roles = {
         "voltage": "cell",
@@ -641,33 +641,12 @@ def _time_capacity_voltage_context(
     reference_candidates: dict[str, set[str | None]] = {
         quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
     }
-    files_by_hash = {source_file.hash: source_file for source_file in files}
-
+    unknown_sources_by_quantity = unknown_sources_by_quantity or set()
     for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
-        if column not in raw.columns:
-            continue
-        values = pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
-        finite = np.isfinite(values)
-        if not finite.any():
-            continue
-
-        matched_files: list[SourceFile] = []
-        if "source_hash" in raw.columns:
-            hashes = raw.loc[finite, "source_hash"].dropna().unique().tolist()
-            matched_files = [
-                files_by_hash[value]
-                for value in hashes
-                if value in files_by_hash
-            ]
-            if len(matched_files) != len(hashes):
-                reference_candidates[quantity].add(None)
-        elif len(files) == 1:
-            matched_files = list(files)
-        else:
+        matched_files = matched_files_by_quantity.get(quantity, [])
+        if quantity in unknown_sources_by_quantity:
             reference_candidates[quantity].add(None)
-
         if not matched_files:
-            reference_candidates[quantity].add(None)
             continue
         for source_file in matched_files:
             capability = _persisted_voltage_capabilities(source_file)
@@ -684,10 +663,7 @@ def _time_capacity_voltage_context(
             reference = canonical_cycling.normalized_voltage_reference(
                 capability.get("reference_electrode")
             )
-            if reference is None:
-                reference_candidates[quantity].add(None)
-            else:
-                reference_candidates[quantity].add(reference)
+            reference_candidates[quantity].add(reference)
 
     resolved_roles: dict[str, str] = {}
     for quantity, candidates in role_candidates.items():
@@ -700,11 +676,60 @@ def _time_capacity_voltage_context(
     resolved_references: dict[str, str | None] = {}
     for quantity, candidates in reference_candidates.items():
         if len(candidates) == 1:
-            candidate = next(iter(candidates))
-            resolved_references[quantity] = candidate
+            resolved_references[quantity] = next(iter(candidates))
         else:
             resolved_references[quantity] = None
     return resolved_roles, resolved_references
+
+
+def _time_capacity_voltage_context(
+    raw: pd.DataFrame,
+    files: list[SourceFile],
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Resolve truthful role/reference context for the selected raw channels.
+
+    Availability is still data-driven from the stitched frame. Reference text
+    is appended only when every source contributing finite values for a given
+    auxiliary channel declares the same short, explicit reference. Mixed or
+    missing source metadata therefore falls back to the generic ``vs ref``
+    label instead of guessing from the experiment or filename.
+    """
+
+    files_by_hash = {source_file.hash: source_file for source_file in files}
+    matched_files_by_quantity: dict[str, list[SourceFile]] = {}
+    unknown_sources_by_quantity: set[str] = set()
+
+    for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+        if column not in raw.columns:
+            continue
+        values = pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
+        finite = np.isfinite(values)
+        if not finite.any():
+            continue
+
+        matched_files: list[SourceFile] = []
+        if "source_hash" in raw.columns:
+            hashes = raw.loc[finite, "source_hash"].dropna().unique().tolist()
+            matched_files_by_quantity[quantity] = [
+                files_by_hash[value]
+                for value in hashes
+                if value in files_by_hash
+            ]
+            if (
+                not matched_files_by_quantity[quantity]
+                or len(matched_files_by_quantity[quantity]) != len(hashes)
+            ):
+                unknown_sources_by_quantity.add(quantity)
+        elif len(files) == 1:
+            matched_files_by_quantity[quantity] = list(files)
+        else:
+            unknown_sources_by_quantity.add(quantity)
+
+    return _resolve_time_capacity_voltage_context(
+        files,
+        matched_files_by_quantity,
+        unknown_sources_by_quantity=unknown_sources_by_quantity,
+    )
 
 
 PROTOCOL_SEGMENT_MODES = ("excluded", "only", "hidden")
@@ -2560,6 +2585,7 @@ def compute_time_capacity(
     precision: str = "standard",
     compact: bool = False,
     progress: ProgressCallback | None = None,
+    access_diagnostics: dict[str, Any] | None = None,
 ) -> dict:
     ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
@@ -2585,14 +2611,17 @@ def compute_time_capacity(
     width = max(320, min(6000, int(viewport_width or 1200)))
     total_units = len(units)
     total_returned_points = 0
+    if access_diagnostics is not None:
+        access_diagnostics.setdefault("cells", [])
     # Spec 040.4: which voltage quantities have real (non-fabricated) data
     # anywhere in the current selection, independent of the currently chosen
     # `voltage_channel` — this is what lets the frontend offer working/counter
     # potential as options at all without advertising a channel no selected
     # source actually has. True two-electrode sources never populate the
     # aux columns, while the BioLogic GCPL adapter populates them only for its
-    # verified Ewe/Ece layout. Checked against the full stitched raw frame (before cycle-range
-    # filtering) so the offered options do not flicker as filters change.
+    # verified Ewe/Ece layout. Indexed caches use their full-source facts;
+    # legacy caches retain the full stitched-frame check before cycle-range
+    # filtering so the offered options do not flicker as filters change.
     channel_availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
     channel_role_candidates: dict[str, set[str]] = {
         quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
@@ -2603,13 +2632,22 @@ def compute_time_capacity(
 
     for unit_index, unit in enumerate(units, start=1):
         cell: Cell = unit["cell"]
+        cell_diagnostics: dict[str, Any] = {
+            "cell_id": cell.id,
+            "cell_name": cell.name,
+        }
+        if access_diagnostics is not None:
+            access_diagnostics["cells"].append(cell_diagnostics)
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading raw cache")
-        hashes, files = cell_ordered_hashes(db, cell)
-        source_versions = resolve_source_parser_versions(
-            files, provenance, cell.id, use_current_versions
-        )
-        refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
+        with time_capacity_path.timed_stage(
+            cell_diagnostics, "relational_selection_source_resolution"
+        ):
+            hashes, files = cell_ordered_hashes(db, cell)
+            source_versions = resolve_source_parser_versions(
+                files, provenance, cell.id, use_current_versions
+            )
+            refs = [stitch.CachedSourceRef(f.hash, source_versions[f.hash]) for f in files]
         all_pinned_versions.extend(source_versions[f.hash] for f in files)
         all_current_versions.extend(current_parser_identity(f) for f in files)
         reparsed = False
@@ -2622,27 +2660,113 @@ def compute_time_capacity(
                 scanner.parse_file(db, f)
                 reparsed = True
 
-        step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
-        raw, segments, missing = stitch.stitch_raw(refs)
+        with time_capacity_path.timed_stage(
+            cell_diagnostics, "protocol_target_resolution"
+        ):
+            step_targets = _protocol_step_targets(files, protocol_context, badges, cell)
+
+        with time_capacity_path.timed_stage(cell_diagnostics, "index_stitch_plan"):
+            plan = time_capacity_path.build_time_capacity_stitch_plan(
+                refs,
+                diagnostics=cell_diagnostics,
+            )
+
+        source_facts: dict[str, dict] | None = None
+        indexed_path = plan.path in {"indexed", "missing"}
+        if indexed_path:
+            requested_cycles = time_capacity_path.requested_global_cycles(
+                plan,
+                explicit_cycles=settings["cycles"],
+                cycle_start=settings["cycle_start"],
+                cycle_end=settings["cycle_end"],
+            )
+            with time_capacity_path.timed_stage(cell_diagnostics, "indexed_raw_access"):
+                raw = time_capacity_path.load_indexed_time_capacity_raw(
+                    plan,
+                    requested_cycles,
+                    diagnostics=cell_diagnostics,
+                )
+            if raw is None:
+                indexed_path = False
+                cell_diagnostics["path"] = "legacy"
+                cell_diagnostics["fallback_reason"] = "indexed_read_unavailable"
+                with time_capacity_path.timed_stage(cell_diagnostics, "legacy_full_raw_read"):
+                    raw, segments, missing = stitch.stitch_raw(refs)
+            else:
+                segments = plan.segments
+                missing = plan.missing
+                source_facts = plan.source_facts
+        else:
+            with time_capacity_path.timed_stage(cell_diagnostics, "legacy_full_raw_read"):
+                raw, segments, missing = stitch.stitch_raw(refs)
+
+        cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)
+        if not indexed_path:
+            # The compatibility reader has no row-group selection boundary;
+            # record its full-frame materialization explicitly for the profiler.
+            cell_diagnostics["raw_rows_materialized"] = len(raw)
+            cell_diagnostics["row_groups_read"] = "full"
+            cell_diagnostics["row_groups_total"] = "full"
+        if indexed_path:
+            matched_files_by_quantity = {
+                quantity: [] for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+            }
+            source_by_hash = {source_file.hash: source_file for source_file in files}
+            for source in plan.sources:
+                availability = source.voltage_data_availability
+                for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+                    if availability.get(column) is True:
+                        channel_availability[quantity] = True
+                        source_file = source_by_hash.get(source.ref.file_hash)
+                        if source_file is not None:
+                            matched_files_by_quantity[quantity].append(source_file)
+            local_roles, local_references = time_capacity_path.timed_call(
+                cell_diagnostics,
+                "voltage_capability_context",
+                _resolve_time_capacity_voltage_context,
+                files,
+                matched_files_by_quantity,
+            )
+        else:
+            for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
+                if channel_availability[quantity] or column not in raw.columns:
+                    continue
+                if np.isfinite(
+                    pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
+                ).any():
+                    channel_availability[quantity] = True
+            local_roles, local_references = time_capacity_path.timed_call(
+                cell_diagnostics,
+                "voltage_capability_context",
+                _time_capacity_voltage_context,
+                raw,
+                files,
+            )
         for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
-            if channel_availability[quantity] or column not in raw.columns:
-                continue
-            if np.isfinite(pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")).any():
-                channel_availability[quantity] = True
-        local_roles, local_references = _time_capacity_voltage_context(raw, files)
-        for quantity, column in canonical_cycling.VOLTAGE_QUANTITIES.items():
-            if column not in raw.columns:
-                continue
-            values = pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
-            if np.isfinite(values).any():
+            has_data = (
+                any(
+                    source.voltage_data_availability.get(column) is True
+                    for source in plan.sources
+                )
+                if indexed_path
+                else column in raw.columns
+                and np.isfinite(
+                    pd.to_numeric(raw[column], errors="coerce").to_numpy(dtype="float64")
+                ).any()
+            )
+            if has_data:
                 channel_role_candidates[quantity].add(local_roles[quantity])
                 channel_reference_candidates[quantity].add(local_references[quantity])
-        descriptors = source_descriptors(
+        descriptors = time_capacity_path.timed_call(
+            cell_diagnostics,
+            "source_descriptors",
+            source_descriptors,
             files,
             segments,
             missing,
             raw,
             parser_versions=source_versions,
+            source_facts=source_facts,
         )
         for h in missing:
             missing_identity = source_versions.get(h, "unknown")
@@ -2707,60 +2831,85 @@ def compute_time_capacity(
             )
             continue
 
-        if settings["cycles"]:
-            raw = raw[raw["cycle"].isin(settings["cycles"])]
-        else:
-            if settings["cycle_start"] is not None:
-                raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
-            if settings["cycle_end"] is not None:
-                raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+        with time_capacity_path.timed_stage(
+            cell_diagnostics, "exact_cycle_filter_and_sort"
+        ):
+            if settings["cycles"]:
+                raw = raw[raw["cycle"].isin(settings["cycles"])]
+            else:
+                if settings["cycle_start"] is not None:
+                    raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+                if settings["cycle_end"] is not None:
+                    raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
 
-        raw = raw.sort_values(["cycle", "segment", "record_index"] if "record_index" in raw.columns else ["cycle", "segment"])
-        raw = _continuous_time(raw)
-        source_values = source_columns(raw, files)
-        source_boundary_indices = (
-            np.flatnonzero(raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]) + 1
-            if "segment" in raw.columns and len(raw) > 1
-            else np.array([], dtype="int64")
-        )
-        phases = _phase_from_raw(raw)
-        capacity = _phase_capacity(raw, phases)
-        active_mass_mg = cell_active_mass_mg(cell)
-        nominal_capacity_mah = cell_nominal_capacity_mah(cell)
-        electrode_area_cm2 = cell_electrode_area_cm2(cell)
-        active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
-        capacity_g = capacity / active_mass_g if active_mass_g and active_mass_g > 0 else np.full(len(raw), np.nan)
-        # A user-supplied area overrides the metadata; areal capacity is
-        # area-normalised here so switching to it needs no client-side area.
-        area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
-        capacity_area = (
-            capacity / area_cm2 if area_cm2 and area_cm2 > 0 else np.full(len(raw), np.nan)
-        )
-        derivative_x, derivative_y = _derivative_curve(
-            raw, phases, capacity, capacity_g, settings
-        )
+            raw = raw.sort_values(
+                ["cycle", "segment", "record_index"]
+                if "record_index" in raw.columns
+                else ["cycle", "segment"]
+            )
+            cell_diagnostics["selected_rows_before_transforms"] = len(raw)
 
-        if protocol_context["active"]:
-            has_step_column = "step_index" in raw.columns or "Step_Index" in raw.columns
-            if not has_step_column and any(
-                step_indices
-                for modes in step_targets.values()
-                for step_indices in modes.values()
-            ):
-                _add_protocol_badge(
-                    protocol_context,
-                    badges,
-                    "protocol_mapping_unavailable",
-                    "Raw step-index data is unavailable; protocol-segment row masking could not be applied.",
-                    cell=cell,
+        with time_capacity_path.timed_stage(
+            cell_diagnostics, "continuous_time_phase_capacity"
+        ):
+            raw = _continuous_time(raw)
+            source_values = source_columns(raw, files)
+            source_boundary_indices = (
+                np.flatnonzero(
+                    raw["segment"].to_numpy()[1:]
+                    != raw["segment"].to_numpy()[:-1]
                 )
-            only_match = _protocol_row_mask(raw, step_targets, "only")
-            plot_mask = _protocol_row_mask(raw, step_targets, "excluded")
-            plot_mask |= _protocol_row_mask(raw, step_targets, "hidden")
-            if protocol_context["only_active"]:
-                plot_mask |= ~only_match
-        else:
-            plot_mask = np.zeros(len(raw), dtype=bool)
+                + 1
+                if "segment" in raw.columns and len(raw) > 1
+                else np.array([], dtype="int64")
+            )
+            phases = _phase_from_raw(raw)
+            capacity = _phase_capacity(raw, phases)
+            active_mass_mg = cell_active_mass_mg(cell)
+            nominal_capacity_mah = cell_nominal_capacity_mah(cell)
+            electrode_area_cm2 = cell_electrode_area_cm2(cell)
+            active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
+            capacity_g = (
+                capacity / active_mass_g
+                if active_mass_g and active_mass_g > 0
+                else np.full(len(raw), np.nan)
+            )
+            # A user-supplied area overrides the metadata; areal capacity is
+            # area-normalised here so switching to it needs no client-side area.
+            area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
+            capacity_area = (
+                capacity / area_cm2
+                if area_cm2 and area_cm2 > 0
+                else np.full(len(raw), np.nan)
+            )
+
+        with time_capacity_path.timed_stage(cell_diagnostics, "derivative"):
+            derivative_x, derivative_y = _derivative_curve(
+                raw, phases, capacity, capacity_g, settings
+            )
+
+        with time_capacity_path.timed_stage(cell_diagnostics, "protocol_masking"):
+            if protocol_context["active"]:
+                has_step_column = "step_index" in raw.columns or "Step_Index" in raw.columns
+                if not has_step_column and any(
+                    step_indices
+                    for modes in step_targets.values()
+                    for step_indices in modes.values()
+                ):
+                    _add_protocol_badge(
+                        protocol_context,
+                        badges,
+                        "protocol_mapping_unavailable",
+                        "Raw step-index data is unavailable; protocol-segment row masking could not be applied.",
+                        cell=cell,
+                    )
+                only_match = _protocol_row_mask(raw, step_targets, "only")
+                plot_mask = _protocol_row_mask(raw, step_targets, "excluded")
+                plot_mask |= _protocol_row_mask(raw, step_targets, "hidden")
+                if protocol_context["only_active"]:
+                    plot_mask |= ~only_match
+            else:
+                plot_mask = np.zeros(len(raw), dtype=bool)
 
         voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
         voltage = (
@@ -2782,9 +2931,10 @@ def compute_time_capacity(
 
         for values in (capacity_area,):
             values[plot_mask] = np.nan
-        display_x = _time_capacity_display_x(
-            raw, phases, capacity, capacity_g, capacity_area, settings
-        )
+        with time_capacity_path.timed_stage(cell_diagnostics, "display_coordinate"):
+            display_x = _time_capacity_display_x(
+                raw, phases, capacity, capacity_g, capacity_area, settings
+            )
         # A full, non-compact request is used by scientific data export. It
         # must retain every selected-channel row even when the interactive
         # setting intentionally limits the on-screen point count.
@@ -2796,9 +2946,10 @@ def compute_time_capacity(
             )
             primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
             visible_values = ~plot_mask & np.isfinite(primary_values)
-            take = _downsample_indices(
-                len(raw), configured_max, visible_values, envelope_series
-            )
+            with time_capacity_path.timed_stage(cell_diagnostics, "display_downsampling"):
+                take = _downsample_indices(
+                    len(raw), configured_max, visible_values, envelope_series
+                )
             take = np.unique(np.concatenate((take, source_boundary_indices)))
             raw = raw.iloc[take]
             display_x = display_x[take]

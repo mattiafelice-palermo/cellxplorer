@@ -202,8 +202,10 @@ Cellxplorer/
 │           ├── windows_known_folders.py  Windows Known Folder API with per-folder fallbacks (Spec 035.3)
 │           ├── continuation_preview.py  Display-only stitched cycle inference for Spec 047 previews
 │           ├── cell_folder_watch.py     Per-Cell continued-import folder tracking (Spec 047.4)
-│           └── scientific_preparation.py
-│                                  Durable post-copy cache-preparation state
+│           ├── scientific_preparation.py
+│           │                       Durable post-copy cache-preparation state
+│           └── time_capacity_path.py
+│                                   Indexed Time/Capacity raw planning and selective access (Spec 050.3)
 ├── frontend/
 │   ├── package.json, vite.config.ts, tsconfig.json, index.html
 │   ├── public/                     Static application assets
@@ -274,6 +276,7 @@ Cellxplorer/
 │   │                                analysis_engine/Parent-034-guard/cache-key resolution (Spec 040.5)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_raw_cache_layout.py    Versioned raw row-group/index and selective-read tests (Spec 050.2)
+│   ├── test_time_capacity_path.py  Indexed Time/Capacity planning and selective-read tests (Spec 050.3)
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
 │   ├── test_stitch.py              Dense multi-source cycle/raw stitching (Spec 034.1)
@@ -305,6 +308,7 @@ Cellxplorer/
 │   ├── preflight.py                Canonical local verification command
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
+│   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)
 │   ├── release_tag.py              Exact Stable/Beta SemVer tag validation
 │   ├── release_channel_policy.py   Future-Stable Beta release gate (Spec 023)
