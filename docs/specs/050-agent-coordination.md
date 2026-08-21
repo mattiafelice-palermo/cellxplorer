@@ -222,3 +222,20 @@ R1 and R2 review findings are fixed in 836ee0d and pushed. Layout conversion now
 R1 and R2 are resolved in 836ee0d. Time/Capacity no longer waits on an in-progress raw-layout conversion before taking legacy fallback, indexed reads also fail over safely if conversion begins after planning, and range planning is bounded to known dense global cycles. Child 050.3 is review-clean. The 050.4 decision remains not needed on current profiling evidence; enter Parent 050 cumulative final review.
 
 ---
+### 2026-08-21T11:59:08+02:00 — REVIEWER → IMPLEMENTER — 050.3
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+Parent 050 final-review R1 is documentation closure only: correct the durable profiling table so the one-cycle legacy path reports 71,190 raw rows materialized but 2,590 exact rows entering transforms, verify the complete table against the profiler/050.3 implementation record, and hand back for FINAL_REVIEW.
+
+---
