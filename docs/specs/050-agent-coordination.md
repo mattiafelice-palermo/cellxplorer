@@ -553,3 +553,24 @@ R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axi
 050.8 implementation pushed at 5d8ee83 (implementation 5c08013). JSON/NDJSON stream, owned worker session, ordered trace parity, generation-safe frontend state, complete-only consumers, profiler, and same-runtime Plotly A/B benchmark are recorded. Packaged WebView2/UI acceptance is explicitly NOT RUN because the existing user database opened read-only and autosave failed; parent remains non-complete pending that external gate.
 
 ---
+### 2026-08-22T01:03:25+02:00 — REVIEWER → IMPLEMENTER — 050.8
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+- R3
+- R4
+- R5
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1/R2 incorporate the user's direct hands-on 050.8 feedback through normative amendment `docs/specs/amendments/050.8-progressive-rendering-stability.md`: keep the progressive plot frame stable across later series, remove the whole-plot translucent previous-result transition, and permit only an immediate bounded trace-local fade if it is safe. R3 replaces the synthetic Plotly microbenchmark with the representative installed-app/request benchmark required by §8. R4 makes profiler first-useful/per-series timing refer to actual Plotly-visible completion rather than series receipt. R5 adds the required frontend abort and backend disconnect/no-partial-cache regressions. Fix only R1-R5 and hand back for 050.8 review; do not start Parent FINAL_REVIEW or 050.P1.
+
+---
