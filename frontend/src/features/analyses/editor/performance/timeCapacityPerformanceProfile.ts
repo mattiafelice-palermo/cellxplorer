@@ -82,6 +82,8 @@ export interface TimeCapacityPerformanceProfiler {
   enable(): void;
   disable(): void;
   isEnabled(): boolean;
+  getSnapshot(): TimeCapacityPerformanceSnapshot;
+  subscribe(listener: () => void): () => void;
   begin(requestId: string, context: TimeCapacityPerformanceContext): void;
   placeholderVisible(requestId: string, visible: boolean): void;
   response(
@@ -98,6 +100,11 @@ export interface TimeCapacityPerformanceProfiler {
   records(): TimeCapacityInteractionProfile[];
   reset(): void;
   exportJson(): string;
+}
+
+export interface TimeCapacityPerformanceSnapshot {
+  enabled: boolean;
+  completedRecords: number;
 }
 
 type Clock = () => number;
@@ -215,17 +222,35 @@ export function createTimeCapacityPerformanceProfiler(
   let enabled = false;
   let completed: TimeCapacityInteractionProfile[] = [];
   const active = new Map<string, ActiveProfile>();
+  const listeners = new Set<() => void>();
+  let snapshot: TimeCapacityPerformanceSnapshot = { enabled: false, completedRecords: 0 };
+
+  const publish = () => {
+    snapshot = { enabled, completedRecords: completed.length };
+    for (const listener of listeners) listener();
+  };
 
   const profiler: TimeCapacityPerformanceProfiler = {
     enable() {
+      if (enabled) return;
       enabled = true;
+      publish();
     },
     disable() {
+      const changed = enabled || active.size > 0;
       enabled = false;
       active.clear();
+      if (changed) publish();
     },
     isEnabled() {
       return enabled;
+    },
+    getSnapshot() {
+      return snapshot;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
     begin(requestId, context) {
       if (!enabled) return;
@@ -305,6 +330,7 @@ export function createTimeCapacityPerformanceProfiler(
       );
       completed = [...completed, copyRecord(current.record)].slice(-retention);
       active.delete(requestId);
+      publish();
     },
     cancel(requestId) {
       active.delete(requestId);
@@ -315,6 +341,7 @@ export function createTimeCapacityPerformanceProfiler(
     reset() {
       completed = [];
       active.clear();
+      publish();
     },
     exportJson() {
       return JSON.stringify(completed.map(copyRecord), null, 2);
@@ -331,6 +358,55 @@ export function newTimeCapacityProfileRequestId(): string {
 }
 
 export const timeCapacityPerformanceProfiler = createTimeCapacityPerformanceProfiler();
+
+type TimeCapacityRecordingController = Pick<
+  TimeCapacityPerformanceProfiler,
+  "enable" | "disable" | "isEnabled" | "records" | "reset" | "exportJson"
+>;
+
+export interface TimeCapacityRecordingExport {
+  filename: string;
+  payload: string;
+  recordCount: number;
+}
+
+function padTimePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+export function timeCapacityProfileFilename(now = new Date()): string {
+  const date = [
+    now.getFullYear(),
+    padTimePart(now.getMonth() + 1),
+    padTimePart(now.getDate()),
+  ].join("");
+  const time = [
+    padTimePart(now.getHours()),
+    padTimePart(now.getMinutes()),
+    padTimePart(now.getSeconds()),
+  ].join("");
+  return `cellxplorer-time-capacity-profile-${date}-${time}.json`;
+}
+
+export function startTimeCapacityRecording(
+  profiler: TimeCapacityRecordingController = timeCapacityPerformanceProfiler,
+): void {
+  profiler.reset();
+  profiler.enable();
+}
+
+export function stopTimeCapacityRecording(
+  profiler: TimeCapacityRecordingController = timeCapacityPerformanceProfiler,
+  now = new Date(),
+): TimeCapacityRecordingExport {
+  profiler.disable();
+  const records = profiler.records();
+  return {
+    filename: timeCapacityProfileFilename(now),
+    payload: profiler.exportJson(),
+    recordCount: records.length,
+  };
+}
 
 export interface TimeCapacityPerformanceWindowApi {
   enable(): void;

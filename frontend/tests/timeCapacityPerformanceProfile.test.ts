@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   createTimeCapacityPerformanceProfiler,
+  startTimeCapacityRecording,
+  stopTimeCapacityRecording,
   timeCapacityProfileResultIsCurrent,
   timeCapacityResolvedCellCount,
   type TimeCapacityPerformanceContext,
@@ -263,4 +265,66 @@ test("completion is identity-bound and retention/reset/export are bounded and de
   profiler.reset();
   assert.deepEqual(profiler.records(), []);
   assert.equal(profiler.exportJson(), "[]");
+});
+
+test("in-app start resets an older capture and enables a fresh recording", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  profiler.enable();
+  finish(profiler, timer, "old");
+  assert.equal(profiler.records().length, 1);
+
+  startTimeCapacityRecording(profiler);
+
+  assert.equal(profiler.isEnabled(), true);
+  assert.deepEqual(profiler.records(), []);
+  finish(profiler, timer, "fresh");
+  assert.deepEqual(profiler.records().map((record) => record.request_id), ["fresh"]);
+});
+
+test("stop disables recording while preserving the exact bounded export", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  startTimeCapacityRecording(profiler);
+  finish(profiler, timer, "completed");
+  const recordsBeforeStop = profiler.records();
+
+  const exported = stopTimeCapacityRecording(profiler, new Date(2026, 7, 21, 15, 4, 5));
+
+  assert.equal(profiler.isEnabled(), false);
+  assert.deepEqual(profiler.records(), recordsBeforeStop);
+  assert.equal(exported.recordCount, recordsBeforeStop.length);
+  assert.equal(exported.filename, "cellxplorer-time-capacity-profile-20260821-150405.json");
+  assert.equal(exported.payload, JSON.stringify(recordsBeforeStop, null, 2));
+  assert.deepEqual(JSON.parse(exported.payload), recordsBeforeStop);
+});
+
+test("zero-record stop is deterministic and non-throwing", () => {
+  const profiler = createTimeCapacityPerformanceProfiler();
+  startTimeCapacityRecording(profiler);
+
+  const exported = stopTimeCapacityRecording(profiler, new Date(2026, 0, 2, 3, 4, 5));
+
+  assert.equal(profiler.isEnabled(), false);
+  assert.equal(exported.recordCount, 0);
+  assert.equal(exported.payload, "[]");
+  assert.equal(exported.filename, "cellxplorer-time-capacity-profile-20260102-030405.json");
+});
+
+test("profiler snapshots notify the Debug surface without stopping when it is not mounted", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  const snapshots: Array<{ enabled: boolean; completedRecords: number }> = [];
+  const unsubscribe = profiler.subscribe(() => snapshots.push(profiler.getSnapshot()));
+
+  profiler.enable();
+  finish(profiler, timer, "while-closed");
+  assert.deepEqual(profiler.getSnapshot(), { enabled: true, completedRecords: 1 });
+  assert.deepEqual(snapshots, [
+    { enabled: true, completedRecords: 0 },
+    { enabled: true, completedRecords: 1 },
+  ]);
+
+  unsubscribe();
+  profiler.disable();
 });

@@ -17,14 +17,18 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
+import { useState, useSyncExternalStore } from "react";
 import {
   IconClipboard,
   IconCpu,
   IconDatabase,
   IconFileExport,
   IconFolderOpen,
+  IconGauge,
   IconHeartbeat,
   IconLogs,
+  IconPlayerRecord,
+  IconPlayerStop,
 } from "@tabler/icons-react";
 
 import {
@@ -34,6 +38,11 @@ import {
   type DiagnosticsResources,
 } from "../api";
 import { saveDownload } from "../downloads";
+import {
+  startTimeCapacityRecording,
+  stopTimeCapacityRecording,
+  timeCapacityPerformanceProfiler,
+} from "../features/analyses/editor/performance/timeCapacityPerformanceProfile";
 
 interface DiagnosticsModalProps {
   opened: boolean;
@@ -61,6 +70,12 @@ function HealthBadge({ ok, label }: { ok: boolean | undefined; label: string }) 
 }
 
 export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsModalProps) {
+  const performanceSnapshot = useSyncExternalStore(
+    timeCapacityPerformanceProfiler.subscribe,
+    timeCapacityPerformanceProfiler.getSnapshot,
+    timeCapacityPerformanceProfiler.getSnapshot,
+  );
+  const [exportingPerformanceProfile, setExportingPerformanceProfile] = useState(false);
   const health = useQuery({
     queryKey: ["diagnostics-health"],
     queryFn: () => get<DiagnosticsHealth>("/api/diagnostics/health"),
@@ -114,6 +129,36 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
     await saveDownload(new Blob([text], { type: "text/plain;charset=utf-8" }), "cellxplorer-diagnostics.log");
   };
 
+  const startPerformanceRecording = () => {
+    startTimeCapacityRecording();
+    notifications.show({ message: "Time/Capacity recording started.", color: "teal" });
+  };
+
+  const stopPerformanceRecording = async () => {
+    setExportingPerformanceProfile(true);
+    try {
+      const exported = stopTimeCapacityRecording();
+      const saved = await saveDownload(
+        new Blob([exported.payload], { type: "application/json;charset=utf-8" }),
+        exported.filename,
+      );
+      const countLabel = `${exported.recordCount} completed interaction${exported.recordCount === 1 ? "" : "s"}`;
+      notifications.show({
+        message: saved.cancelled
+          ? `Recording stopped; export cancelled (${countLabel}).`
+          : `Saved Time/Capacity profile (${countLabel}).`,
+        color: saved.cancelled ? "orange" : "teal",
+      });
+    } catch (error) {
+      notifications.show({
+        message: error instanceof Error ? error.message : "Could not export the Time/Capacity profile.",
+        color: "red",
+      });
+    } finally {
+      setExportingPerformanceProfile(false);
+    }
+  };
+
   const openFolder = async (kind: "data" | "logs") => {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -133,6 +178,7 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
           <Tabs.Tab value="health" leftSection={<IconHeartbeat size={15} />}>Health</Tabs.Tab>
           <Tabs.Tab value="resources" leftSection={<IconCpu size={15} />}>Resources</Tabs.Tab>
           <Tabs.Tab value="logs" leftSection={<IconLogs size={15} />}>Logs</Tabs.Tab>
+          <Tabs.Tab value="performance" leftSection={<IconGauge size={15} />}>Performance</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="health" pt="md">
@@ -246,6 +292,45 @@ export function DiagnosticsModal({ opened, onClose, debugContext }: DiagnosticsM
               {(logs.data?.crash ?? []).length ? <div><Text fw={700} mb={6}>Crash log</Text><Code block>{logs.data?.crash.join("\n")}</Code></div> : null}
             </Stack>
           </ScrollArea>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="performance" pt="md">
+          <Paper withBorder p="md">
+            <Group justify="space-between" mb="sm">
+              <div>
+                <Title order={5}>Time/Capacity profiling</Title>
+                <Text size="sm" c="dimmed" mt={4}>
+                  Record local end-to-end interaction timings for the current analysis workflow. Nothing is uploaded or persisted.
+                </Text>
+              </div>
+              <Badge variant="light" color={performanceSnapshot.enabled ? "teal" : "gray"}>
+                {performanceSnapshot.enabled ? "Recording" : "Stopped"}
+              </Badge>
+            </Group>
+            <Group gap="xs" mb="sm">
+              <Text size="sm">
+                {performanceSnapshot.enabled ? "Recording" : "Stopped"} · {performanceSnapshot.completedRecords} completed interaction{performanceSnapshot.completedRecords === 1 ? "" : "s"}
+              </Text>
+            </Group>
+            <Group>
+              <Button
+                leftSection={<IconPlayerRecord size={16} />}
+                onClick={startPerformanceRecording}
+                disabled={performanceSnapshot.enabled || exportingPerformanceProfile}
+              >
+                Start recording
+              </Button>
+              <Button
+                variant="default"
+                leftSection={<IconPlayerStop size={16} />}
+                onClick={stopPerformanceRecording}
+                disabled={!performanceSnapshot.enabled || exportingPerformanceProfile}
+                loading={exportingPerformanceProfile}
+              >
+                Stop recording
+              </Button>
+            </Group>
+          </Paper>
         </Tabs.Panel>
       </Tabs>
     </Modal>

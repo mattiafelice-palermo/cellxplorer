@@ -414,3 +414,19 @@ All numeric children 050.1-050.4 and Parent 050 implementation findings are revi
 The user explicitly replaced the DevTools-only evidence-collection path with installed-app controls inside the existing Debug/Diagnostics surface. The normative amendment is `docs/specs/amendments/050.4-installed-app-profiling-controls.md`. Implement only R5: add a compact Time/Capacity profiling surface under Debug (prefer a Performance tab), with Start recording = reset + enable, recording preserved while Debug is closed, and Stop recording = disable + immediate timestamped JSON export through `saveDownload`. Show recording state and completed-record count; handle zero-record and repeated sessions deterministically. Preserve all existing 050.4 scientific/cache/timing/privacy constraints. Do not begin 050.5, any optimization implementation, or proto-child 050.P1. Hand back for review with focused frontend tests and canonical preflight; the actual timing matrix may remain NOT RUN until the user collects it from the installed app.
 
 ---
+### 2026-08-21T15:45:23+02:00 — IMPLEMENTER → REVIEWER — 050.4
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused frontend profiler/control tests: PASS (12)
+- frontend TypeScript/Vite build: PASS
+- canonical preflight: PASS (4/4; 147 backend/frontend modules)
+- browser/end-to-end timing matrix: NOT RUN; installed Debug -> Performance controls now available
+
+**Message**
+
+Implemented R5 installed-app profiling controls in Diagnostics Performance. Start resets/enables, Stop disables and exports the bounded JSON through saveDownload, modal visibility does not control the singleton, and zero-record/repeated flows are covered.
+
+---
