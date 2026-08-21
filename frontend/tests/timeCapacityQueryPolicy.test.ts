@@ -187,7 +187,9 @@ test("live and saved-preview Time/Capacity queries forward React Query cancellat
   );
 
   assert.match(liveSource, /queryFn: async \(\{ signal \}\) =>/);
-  assert.match(liveSource, /compact: true,\s*\n\s*\}, \{ signal \}\);/);
+  assert.match(liveSource, /postJsonOrNdjson/);
+  assert.match(liveSource, /time-capacity\/stream/);
+  assert.match(liveSource, /signal,/);
   assert.match(liveSource, /timeCapacityPlotExportReady/);
   assert.match(liveSource, /canPlotExport=\{plotExportReady && !dataExporting\}/);
   assert.match(liveSource, /if \(!plotExportReady \|\| !plotDivRef\.current/);

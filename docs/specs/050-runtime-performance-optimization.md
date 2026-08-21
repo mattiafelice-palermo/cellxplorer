@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Plan — extensible parent; Children 050.1-050.6 authored; 050.6 active**  
+Status: **Plan — extensible parent; Children 050.1-050.7 review-clean; 050.8 active**
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -485,7 +485,23 @@ Measured optimization child. It must:
 
 Derivative postprocessing/Plotly optimization is explicitly out of scope for 050.6.
 
-### 050.7+ — additional measured runtime issues
+### 050.7 — derivative postprocessing optimization
+
+File: [`050.7-derivative-postprocessing-optimization.md`](050.7-derivative-postprocessing-optimization.md)
+
+Implemented and review-clean. It removes repeat status classification and contiguous derivative
+boundary scans while preserving the exact derivative contract and reports the measured prepared
+request improvement.
+
+### 050.8 — progressive Time/Capacity series streaming
+
+File: [`050.8-progressive-time-capacity-series-streaming.md`](050.8-progressive-time-capacity-series-streaming.md)
+
+Promoted from the planning follow-up after the 050.7 review. Active implementation adds a
+cache-miss-only NDJSON path that shares the ordinary scientific per-unit loop, keeps exact cache
+hits one-shot, and promotes only a terminal complete result to React Query and persistent cache.
+
+### 050.9+ — additional measured runtime issues
 
 Future children may address other slow application boundaries discovered during normal use or
 profiling. Before adding one:

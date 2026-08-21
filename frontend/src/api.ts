@@ -1,5 +1,5 @@
 // Typed API client for the CellXplorer backend.
-import { addDebugEvent, describeRequestBody } from "./debug";
+import { addDebugEvent, describeRequestBody } from "./debug.ts";
 
 export class ApiError extends Error {
   status: number;
@@ -95,6 +95,119 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
   addDebugEvent("api:response", { method, url: targetUrl, status: res.status });
   return res.json();
+}
+
+export interface JsonOrNdjsonResponse<T> {
+  mode: "json" | "ndjson";
+  value?: T;
+}
+
+export interface JsonOrNdjsonOptions<TEvent> {
+  signal?: AbortSignal;
+  onEvent?: (event: TEvent, bytes: number) => void;
+  parseEvent?: (value: unknown) => TEvent;
+}
+
+/**
+ * POST a response that may be one complete JSON document or a validated
+ * newline-delimited event stream. The parser consumes arbitrary fetch chunks,
+ * including UTF-8 code points split across chunks, and never exposes a line
+ * until its JSON and event contract have both been validated.
+ */
+export async function postJsonOrNdjson<TJson, TEvent = never>(
+  url: string,
+  body: unknown,
+  options: JsonOrNdjsonOptions<TEvent> = {},
+): Promise<JsonOrNdjsonResponse<TJson>> {
+  const targetUrl = await apiUrl(url);
+  addDebugEvent("api:request", {
+    method: "POST",
+    url: targetUrl,
+    body: describeRequestBody(JSON.stringify(body)),
+  });
+  const res = await fetch(targetUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: options.signal,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    let responseBody: unknown = null;
+    try {
+      responseBody = await res.json();
+      const responseDetail =
+        responseBody && typeof responseBody === "object" && "detail" in responseBody
+          ? (responseBody as { detail: unknown }).detail
+          : undefined;
+      detail = errorMessage(responseDetail, detail);
+    } catch {
+      /* ignore */
+    }
+    addDebugEvent("api:error", {
+      method: "POST",
+      url: targetUrl,
+      status: res.status,
+      detail,
+      body: responseBody,
+    });
+    throw new ApiError(res.status, detail, responseBody);
+  }
+  addDebugEvent("api:response", { method: "POST", url: targetUrl, status: res.status });
+  const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/x-ndjson")) {
+    return { mode: "json", value: (await res.json()) as TJson };
+  }
+  if (!res.body) throw new Error("The progressive response has no readable body.");
+  if (!options.parseEvent) throw new Error("The progressive response has no event parser.");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let sawEvent = false;
+  const consumeLines = (text: string, final: boolean): void => {
+    buffer += text;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const rawLine of lines) {
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        throw new Error("The progressive response contained malformed JSON.");
+      }
+      const event = options.parseEvent!(parsed);
+      sawEvent = true;
+      options.onEvent?.(event, encoder.encode(line).byteLength + 1);
+    }
+    if (final && buffer.trim()) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(buffer);
+      } catch {
+        throw new Error("The progressive response ended with malformed JSON.");
+      }
+      const event = options.parseEvent!(parsed);
+      sawEvent = true;
+      options.onEvent?.(event, encoder.encode(buffer).byteLength);
+      buffer = "";
+    }
+  };
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      consumeLines(decoder.decode(next.value, { stream: true }), false);
+    }
+    consumeLines(decoder.decode(), true);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  if (!sawEvent) throw new Error("The progressive response contained no events.");
+  return { mode: "ndjson" };
 }
 
 async function requestBlob(url: string, options?: RequestInit): Promise<Blob> {

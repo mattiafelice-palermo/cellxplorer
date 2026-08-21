@@ -473,6 +473,25 @@ postprocess. Any later derivative optimization must preserve the status mask's r
 the exact run counters, committed golden digests, and the existing frontend trace-count evidence;
 the derivative arrays are not a persisted cache or a new scientific version boundary.
 
+Spec 050.8 keeps the ordinary synchronous Time/Capacity calculation as the single scientific owner
+and exposes an optional per-unit completion callback. The cache-miss stream route performs request
+preflight with the dependency session, then computes in a bounded producer queue whose worker opens
+its own `SessionLocal`; it never carries the request-owned SQLAlchemy session across the response
+boundary. The worker emits `start`, one complete `series` event per canonical resolved unit, and a
+terminal `complete` or typed `error`. It stores the ordinary result before publishing `complete`,
+while disconnect cancellation is checked at progress and trace boundaries so partial work cannot be
+published to the persistent result cache. Exact persisted result-body hits remain ordinary JSON and
+never enter the stream path.
+
+The frontend parser uses the existing API URL/debug conventions, a streaming `TextDecoder`, and a
+pure request-generation-bound reducer. React Query receives only the assembled terminal result;
+partial traces remain ephemeral render state, selection-wide voltage capability remains complete-only,
+and export/save/artifact/portable actions remain complete-only. The selected Plotly strategy is
+declarative `react-plotly.js`/`Plotly.react()` with a stable stacked/flat key; one-series requests
+hold their intermediate event so they do not render a partial-then-final duplicate. The opt-in
+profiler records stream identity, per-series bytes/timestamps, first-useful and terminal boundaries,
+partial Plotly completions, remounts, and the selected strategy without raw data or source identity.
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):

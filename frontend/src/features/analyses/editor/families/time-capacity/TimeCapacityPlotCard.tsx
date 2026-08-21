@@ -20,6 +20,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 
 import {
   get,
+  postJsonOrNdjson,
   post,
   type AnalysisSpec,
   type BackgroundJob,
@@ -110,6 +111,13 @@ import {
   timeCapacityResolvedCellCount,
   type TimeCapacityPerformanceContext,
 } from "../../performance/timeCapacityPerformanceProfile";
+import {
+  applyTimeCapacityProgress,
+  parseTimeCapacityStreamEvent,
+  timeCapacityProgressCue,
+  type TimeCapacityProgressState,
+  type TimeCapacityStreamEvent,
+} from "./timeCapacityStreaming";
 
 export type TimeCapacityConfig = NonNullable<AnalysisSpec["computation"]["time_capacity"]>;
 type TimeCapacityCurrentQuantity = TimeCapacityConfig["current_left"];
@@ -1107,6 +1115,33 @@ export function TimeCapacitySettings({
 
 
 
+function timeCapacityPartialRenderResult(
+  cfg: TimeCapacityConfig,
+  traces: TimeCapacityTrace[],
+  previous: TimeCapacityResult | undefined,
+): TimeCapacityResult {
+  if (previous) return { ...previous, cell_traces: traces };
+  return {
+    computed_at: "",
+    type: "time_capacity",
+    parser_version: "",
+    calc_version: "",
+    current_parser_version: "",
+    current_calc_version: "",
+    settings: cfg,
+    cell_traces: traces,
+    badges: [],
+    rendering: {
+      viewport_width: 1200,
+      configured_max_points_per_cell: cfg.max_points_per_cell,
+      max_points_per_cell: cfg.max_points_per_cell,
+      total_points: traces.reduce((sum, trace) => sum + trace.cycle.length, 0),
+      precision: "standard",
+      compact: true,
+    },
+  };
+}
+
 function TimeCapacityPlotCardView({
   analysisId,
   analysisTitle,
@@ -1145,9 +1180,12 @@ function TimeCapacityPlotCardView({
   const [plotSize, setPlotSize] = useState<{ width: number; height: number } | null>(null);
   const [computeToken, setComputeToken] = useState<string | null>(null);
   const [dataExporting, setDataExporting] = useState(false);
+  const [progressive, setProgressive] = useState<TimeCapacityProgressState | null>(null);
+  const progressiveRequestRef = useRef<{ generation: string; requestId: string } | null>(null);
   const plotDivRef = useRef<HTMLElement | null>(null);
   const { containerRef, sync: syncPlotSize } = usePlotSizeSync(plotDivRef);
   const cfg = timeCapacityConfig(spec);
+  const plotlyStackedRef = useRef(cfg.stacked);
   // Keep cache identity stable across restarts, window sizes and style-panel
   // changes. Point density is controlled solely by max_points_per_cell.
   const viewportWidth = 1200;
@@ -1262,24 +1300,81 @@ function TimeCapacityPlotCardView({
       // and leaves no spurious "Preparing..." entry behind.
       const token = newComputeToken();
       setComputeToken(token);
+      const streamRequestId = newTimeCapacityProfileRequestId();
+      progressiveRequestRef.current = { generation: dataSignature, requestId: streamRequestId };
+      setProgressive(null);
       if (profileRequest) {
         timeCapacityPerformanceProfiler.begin(profileRequest.requestId, profileContext);
       }
       const httpStarted = profileRequest ? timeCapacityPerformanceNow() : 0;
+      let streamState: TimeCapacityProgressState | null = null;
+      let streamedResult: TimeCapacityResult | undefined;
       try {
-        const result = await post<TimeCapacityResult>(`/api/analyses/${analysisId}/time-capacity`, {
-          spec,
-          job_token: token,
-          viewport_width: viewportWidth,
-          precision: "standard",
-          ...(profileRequest
-            ? {
-                profile: true,
-                profile_request_id: profileRequest.requestId,
+        const response = await postJsonOrNdjson<TimeCapacityResult, TimeCapacityStreamEvent>(
+          `/api/analyses/${analysisId}/time-capacity/stream`,
+          {
+            spec,
+            job_token: token,
+            stream_request_id: streamRequestId,
+            viewport_width: viewportWidth,
+            precision: "standard",
+            ...(profileRequest
+              ? {
+                  profile: true,
+                  profile_request_id: profileRequest.requestId,
+                }
+              : {}),
+            compact: true,
+          },
+          {
+            signal,
+            parseEvent: parseTimeCapacityStreamEvent,
+            onEvent: (event, bytes) => {
+              if (
+                dataSignatureRef.current !== dataSignature ||
+                progressiveRequestRef.current?.requestId !== streamRequestId
+              ) {
+                return;
               }
-            : {}),
-          compact: true,
-        }, { signal });
+              if (event.type === "error") {
+                setProgressive(null);
+                throw new Error(event.error.message);
+              }
+              const next = applyTimeCapacityProgress(streamState, dataSignature, event);
+              if (!next) throw new Error("Progressive response arrived before its start event.");
+              streamState = next;
+              if (event.type === "start") {
+                if (event.total_series > 1) setProgressive(next);
+                if (profileRequest) {
+                  timeCapacityPerformanceProfiler.streamStart(profileRequest.requestId, {
+                    streamRequestId,
+                    totalSeries: event.total_series,
+                  });
+                }
+              } else if (event.type === "series") {
+                // A one-series request has no useful progressive interval;
+                // keep its render to the ordinary terminal promotion.
+                if (event.total_series > 1) setProgressive(next);
+                if (profileRequest) {
+                  timeCapacityPerformanceProfiler.streamSeries(profileRequest.requestId, {
+                    index: event.index,
+                    totalSeries: event.total_series,
+                    bytes,
+                  });
+                }
+              } else if (event.type === "complete") {
+                if (!next.result) throw new Error("Progressive complete response was incomplete.");
+                streamedResult = next.result;
+                setProgressive(null);
+                if (profileRequest) {
+                  timeCapacityPerformanceProfiler.streamComplete(profileRequest.requestId);
+                }
+              }
+            },
+          },
+        );
+        const result = response.mode === "json" ? response.value : streamedResult;
+        if (!result) throw new Error("Progressive response did not contain a complete result.");
         if (profileRequest) {
           timeCapacityPerformanceProfiler.response(
             profileRequest.requestId,
@@ -1289,6 +1384,12 @@ function TimeCapacityPlotCardView({
         }
         return result;
       } catch (error) {
+        if (
+          dataSignatureRef.current === dataSignature &&
+          progressiveRequestRef.current?.requestId === streamRequestId
+        ) {
+          setProgressive(null);
+        }
         if (profileRequest) {
           timeCapacityPerformanceProfiler.cancel(profileRequest.requestId);
         }
@@ -1355,6 +1456,19 @@ function TimeCapacityPlotCardView({
   )
     ? timeResult.data
     : undefined;
+  const progressiveIsCurrent = Boolean(
+    progressive &&
+      progressive.generation === dataSignature &&
+      progressiveRequestRef.current?.generation === dataSignature &&
+      progressiveRequestRef.current?.requestId === progressive.requestId &&
+      (progressive.status === "starting" || progressive.status === "partial"),
+  );
+  const partialRenderResult =
+    progressiveIsCurrent && progressive && progressive.traces.length > 0
+      ? timeCapacityPartialRenderResult(cfg, progressive.traces, currentResult)
+      : undefined;
+  const renderResult = partialRenderResult ?? currentResult;
+  const progressCue = progressiveIsCurrent ? timeCapacityProgressCue(progressive) : null;
   const selectedVoltageUnavailable = voltageChannelUnavailable(
     cfg.voltage_channel,
     currentResult?.voltage_channels
@@ -1399,12 +1513,15 @@ function TimeCapacityPlotCardView({
       query.state.data === null || query.state.data?.status === "running" ? 300 : false,
   });
   const showComputeProgress = useDelayedFlag(
-    timeResult.isLoading || (timeResult.isFetching && !currentResult)
+    (!partialRenderResult && timeResult.isLoading) ||
+      (timeResult.isFetching && !currentResult && !progressiveIsCurrent)
   );
-  const loadingWithoutResult = timeResult.isLoading || (timeResult.isFetching && !currentResult);
+  const loadingWithoutResult =
+    (!partialRenderResult && timeResult.isLoading) ||
+    (timeResult.isFetching && !currentResult && !progressiveIsCurrent);
   useEffect(() => {
-    onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching);
-  }, [onReadyChange, timeResult.isFetching, timeResult.isLoading]);
+    onReadyChange?.(!timeResult.isLoading && !timeResult.isFetching && !progressiveIsCurrent);
+  }, [onReadyChange, progressiveIsCurrent, timeResult.isFetching, timeResult.isLoading]);
   // Rebuild traces/layout only for fields they actually read (see cycles card).
   const viewSignature = useMemo(
     () =>
@@ -1417,15 +1534,15 @@ function TimeCapacityPlotCardView({
   );
   const exportTraces = useMemo(
     () =>
-      currentResult && !selectedVoltageUnavailable
-        ? timeCapacityTracesForResult(currentResult, spec)
+      renderResult && !selectedVoltageUnavailable
+        ? timeCapacityTracesForResult(renderResult, spec)
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, selectedVoltageUnavailable, viewSignature]
+    [renderResult, selectedVoltageUnavailable, viewSignature]
   );
   const plotExportReady = timeCapacityPlotExportReady(
     timeResult.isPlaceholderData,
-    Boolean(currentResult),
+    Boolean(currentResult) && !progressiveIsCurrent,
     selectedVoltageUnavailable,
     exportTraces.length > 0,
   );
@@ -1433,9 +1550,9 @@ function TimeCapacityPlotCardView({
   const zoomSignature = `${analysisId}|${cfg.view}|${cfg.x_axis}|${cfg.time_unit}|${cfg.display_mode}`;
   const zoom = useZoomMemory(zoomSignature, cfg.view !== "voltage_current" || !cfg.stacked);
   const layout = useMemo(
-    () => zoom.apply(timeCapacityLayout(currentResult, spec, exportTraces)),
+    () => zoom.apply(timeCapacityLayout(renderResult, spec, exportTraces)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentResult, viewSignature, exportTraces]
+    [renderResult, viewSignature, exportTraces]
   );
   const profileResultIsCurrent = Boolean(
     timeCapacityProfileResultIsCurrent(
@@ -1491,7 +1608,12 @@ function TimeCapacityPlotCardView({
   };
 
   const completeTimeCapacityProfile = () => {
-    if (!profileRequest || !profileResultIsCurrent) return;
+    if (!profileRequest) return;
+    if (progressiveIsCurrent) {
+      timeCapacityPerformanceProfiler.partialPlotlyComplete(profileRequest.requestId);
+      return;
+    }
+    if (!profileResultIsCurrent) return;
     // react-plotly.js invokes onInitialized/onUpdate after the underlying
     // newPlot/react promise completes. The callback is therefore the Plotly
     // boundary; the identity guard prevents an obsolete callback from closing
@@ -1522,7 +1644,13 @@ function TimeCapacityPlotCardView({
   };
 
   const handleDataExport = async (baseName: string) => {
-    if (!currentResult || selectedVoltageUnavailable || exportTraces.length === 0 || dataExporting) return;
+    if (
+      progressiveIsCurrent ||
+      !currentResult ||
+      selectedVoltageUnavailable ||
+      exportTraces.length === 0 ||
+      dataExporting
+    ) return;
     const requestedSignature = dataSignature;
     const requestedVoltageChannel = cfg.voltage_channel;
     const requestedSourceDataIdentity = voltageChannelDataIdentity(currentResult);
@@ -1650,7 +1778,12 @@ function TimeCapacityPlotCardView({
         {/* spinner only when there is nothing to show yet — background
             refetches of cached data keep the subtle opacity dim instead */}
         <LoadingOverlay
-          visible={timeResult.isFetching && traces.length === 0 && !timeResult.isLoading}
+          visible={
+            timeResult.isFetching &&
+            traces.length === 0 &&
+            !timeResult.isLoading &&
+            !progressiveIsCurrent
+          }
           overlayProps={{ blur: 1.5, backgroundOpacity: 0.18 }}
           loaderProps={{ size: "sm" }}
         />
@@ -1661,7 +1794,7 @@ function TimeCapacityPlotCardView({
           subtitle={subtitle}
            quantityName={
              cfg.view === "voltage_current"
-               ? `${voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)} and current`
+               ? `${voltageChannelLabel(cfg.voltage_channel, renderResult?.voltage_channels)} and current`
               : cfg.view === "dqdv"
                 ? "dQ/dV"
                 : "dV/dQ"
@@ -1686,15 +1819,24 @@ function TimeCapacityPlotCardView({
           updateStyle={updatePlotStyle}
           viewSize={plotSize}
           layout={layout}
-          canExport={Boolean(currentResult) && !selectedVoltageUnavailable && !dataExporting && exportTraces.length > 0}
+          canExport={
+            Boolean(currentResult) &&
+            !progressiveIsCurrent &&
+            !selectedVoltageUnavailable &&
+            !dataExporting &&
+            exportTraces.length > 0
+          }
           canPlotExport={plotExportReady && !dataExporting}
           edited={edited}
           onNewPlot={onNewPlot}
-          newPlotEnabled={newPlotEnabled}
+          newPlotEnabled={newPlotEnabled && !progressiveIsCurrent}
           onUpdatePlot={onUpdatePlot}
-          updatePlotEnabled={updatePlotEnabled}
+          updatePlotEnabled={updatePlotEnabled && !progressiveIsCurrent}
           updatePlotLabel={updatePlotLabel}
         />
+        <Box h={24}>
+          {progressCue ? <Text size="xs" c="dimmed">{progressCue}</Text> : null}
+        </Box>
         {timeResult.isError && (
           <Alert color="red">{(timeResult.error as Error).message || "Time/capacity compute failed"}</Alert>
         )}
@@ -1720,7 +1862,7 @@ function TimeCapacityPlotCardView({
             style={{
               width: "100%",
               minWidth: 0,
-              opacity: timeResult.isFetching ? 0.42 : 1,
+              opacity: timeResult.isFetching && !progressiveIsCurrent ? 0.42 : 1,
               transition: "opacity 160ms ease",
             }}
           >
@@ -1740,6 +1882,12 @@ function TimeCapacityPlotCardView({
               onInitialized={(_, graphDiv) => {
                 rememberPlotDiv(graphDiv);
                 syncPlotSize();
+                if (profileRequest) {
+                  timeCapacityPerformanceProfiler.plotlyInitialized(profileRequest.requestId, {
+                    remounted: plotlyStackedRef.current !== cfg.stacked,
+                  });
+                }
+                plotlyStackedRef.current = cfg.stacked;
                 completeTimeCapacityProfile();
               }}
               onUpdate={(_, graphDiv) => {
@@ -1760,7 +1908,7 @@ function TimeCapacityPlotCardView({
         axisScope="time_capacity"
         buildSeriesPreview={buildSeriesPreview}
         timeCapacityStacked={cfg.stacked}
-         yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, currentResult?.voltage_channels)}
+         yTitlePlaceholder={voltageChannelLabel(cfg.voltage_channel, renderResult?.voltage_channels)}
       />
     </Group>
   );

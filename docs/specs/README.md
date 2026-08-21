@@ -1,5 +1,13 @@
 # Feature specs
 
+- [`050-runtime-performance-optimization.md`](050-runtime-performance-optimization.md)
+  is the extensible runtime-performance parent. Children 050.1-050.7 are implemented and
+  review-clean on `feature/runtime-performance-optimization`; promoted Child 050.8 is the active
+  progressive Time/Capacity series-streaming implementation. Planning-only 050.P1 remains
+  unimplemented.
+  - [`050.8-progressive-time-capacity-series-streaming.md`](050.8-progressive-time-capacity-series-streaming.md)
+    — cache-miss-only NDJSON delivery of complete Time/Capacity series with exact terminal-result
+    parity and complete-only saved/export/portable consumers. **Active implementation.**
 - [`049-protocol-family-comparability.md`](049-protocol-family-comparability.md)
   adds a protocol-family comparison modal beside the protocol selector, distinguishing strict
   semantic identity from workflow and custom comparability without silently merging source-local

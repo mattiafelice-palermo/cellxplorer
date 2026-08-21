@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import json
 import os
 import shutil
@@ -716,6 +717,209 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn("current_ma", trace)
         self.assertAlmostEqual(trace["capacity_mah_g"][0], trace["capacity_mah"][0] / 0.01, places=6)
         self.assertEqual(res["settings"]["cycle_start"], 2)
+
+    def test_time_capacity_trace_callback_matches_ordinary_result(self):
+        spec = self.spec_with([
+            {"kind": "cell", "ref_id": self.cells["c1"].id},
+            {"kind": "cell", "ref_id": self.cells["c2"].id},
+        ])
+        ordinary = engine.compute_time_capacity(self.db, spec, None, compact=True)
+        received: list[tuple[int, int, dict]] = []
+        streamed = engine.compute_time_capacity(
+            self.db,
+            spec,
+            None,
+            compact=True,
+            trace_callback=lambda index, total, trace: received.append((index, total, trace)),
+        )
+
+        self.assertEqual([index for index, _, _ in received], [1, 2])
+        self.assertEqual({total for _, total, _ in received}, {2})
+        self.assertEqual([trace for _, _, trace in received], ordinary["cell_traces"])
+        self.assertEqual(streamed["cell_traces"], ordinary["cell_traces"])
+
+    def test_time_capacity_stream_emits_complete_units_and_publishes_before_complete(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+            ]
+        )
+        analysis = Analysis(title="stream", spec=spec, provenance=None)
+        self.db.add(analysis)
+        self.db.commit()
+        trace = {
+            "cell_id": self.cells["c1"].id,
+            "cell_name": "c1",
+            "label": "c1",
+            "group_id": None,
+            "group_name": None,
+            "excluded": False,
+            "cycle": [1],
+            "time_s": [0],
+            "capacity_mah": [0],
+            "capacity_mah_g": [0],
+            "capacity_mah_cm2": [0],
+            "voltage_v": [3.5],
+            "current_ma": [1],
+            "phase": ["charge"],
+            "status": ["CC_Chg"],
+            "derivative_x": [],
+            "derivative_y": [],
+        }
+        trace_2 = {
+            **trace,
+            "cell_id": self.cells["c2"].id,
+            "cell_name": "c2",
+            "label": "c2",
+        }
+        complete_result = {
+            "computed_at": "now",
+            "type": "time_capacity",
+            "parser_version": "p",
+            "calc_version": "c",
+            "current_parser_version": "p",
+            "current_calc_version": "c",
+            "settings": engine.time_capacity_settings(spec["computation"]),
+            "cell_traces": [trace, trace_2],
+            "badges": [],
+        }
+        stored_order: list[str] = []
+
+        async def read_response(response):
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+        def fake_compute(_db, _spec, _provenance, *, trace_callback=None, **_options):
+            if trace_callback:
+                trace_callback(1, 2, trace)
+                trace_callback(2, 2, trace_2)
+            return dict(complete_result)
+
+        worker_session = sessionmaker(
+            bind=self.db.get_bind(), autoflush=False, expire_on_commit=False
+        )
+        with (
+            patch.object(analyses_router.engine, "canonical_cycling_capability", return_value=None),
+            patch.object(analyses_router.engine, "compute_time_capacity", side_effect=fake_compute),
+            patch.object(analyses_router.analysis_cache, "time_capacity_data_signature", return_value="source"),
+            patch.object(analyses_router.analysis_cache, "result_key", return_value="result"),
+            patch.object(analyses_router.analysis_cache, "load_result_body", return_value=None),
+            patch.object(analyses_router.analysis_cache, "load_result", return_value=None),
+            patch.object(
+                analyses_router.analysis_cache,
+                "store_result",
+                side_effect=lambda *_args, **_kwargs: stored_order.append("store"),
+            ),
+            patch.object(analyses_router, "SessionLocal", side_effect=worker_session),
+        ):
+            response = analyses_router.stream_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(
+                    spec=spec,
+                    compact=True,
+                    stream_request_id="stream-test",
+                ),
+                self.db,
+            )
+            payload = asyncio.run(read_response(response))
+
+        events = [json.loads(line) for line in payload.splitlines()]
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["start", "series", "series", "complete"],
+        )
+        self.assertEqual(events[0]["total_series"], 2)
+        self.assertEqual([events[1]["index"], events[2]["index"]], [1, 2])
+        self.assertNotIn("cell_traces", events[3]["metadata"])
+        self.assertEqual(
+            {**events[3]["metadata"], "cell_traces": [events[1]["trace"], events[2]["trace"]]},
+            {**complete_result, "cache_status": "miss", "data_signature": "result", "source_data_signature": "source"},
+        )
+        self.assertEqual(stored_order, ["store"])
+
+    def test_time_capacity_stream_error_after_partial_does_not_store(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="stream-error", spec=spec, provenance=None)
+        self.db.add(analysis)
+        self.db.commit()
+        trace = {"cell_id": self.cells["c1"].id, "cycle": [1]}
+        stored = []
+
+        async def read_response(response):
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+        def failing_compute(_db, _spec, _provenance, *, trace_callback=None, **_options):
+            if trace_callback:
+                trace_callback(1, 1, trace)
+            raise RuntimeError("fixture failure")
+
+        worker_session = sessionmaker(
+            bind=self.db.get_bind(), autoflush=False, expire_on_commit=False
+        )
+        with (
+            patch.object(analyses_router.engine, "canonical_cycling_capability", return_value=None),
+            patch.object(analyses_router.engine, "compute_time_capacity", side_effect=failing_compute),
+            patch.object(analyses_router.analysis_cache, "time_capacity_data_signature", return_value="source-error"),
+            patch.object(analyses_router.analysis_cache, "result_key", return_value="result-error"),
+            patch.object(analyses_router.analysis_cache, "load_result_body", return_value=None),
+            patch.object(analyses_router.analysis_cache, "load_result", return_value=None),
+            patch.object(analyses_router.analysis_cache, "store_result", side_effect=lambda *_args, **_kwargs: stored.append(True)),
+            patch.object(analyses_router, "SessionLocal", side_effect=worker_session),
+        ):
+            response = analyses_router.stream_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(spec=spec, compact=True, stream_request_id="stream-error"),
+                self.db,
+            )
+            payload = asyncio.run(read_response(response))
+
+        events = [json.loads(line) for line in payload.splitlines()]
+        self.assertEqual([event["type"] for event in events], ["start", "series", "error"])
+        self.assertEqual(events[-1]["error"]["code"], "compute_failed")
+        self.assertEqual(stored, [])
+
+    def test_time_capacity_stream_exact_hit_returns_complete_json_without_recompute(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        analysis = Analysis(title="stream-hit", spec=spec, provenance=None)
+        self.db.add(analysis)
+        self.db.commit()
+        cached_trace = {"cell_id": self.cells["c1"].id, "cycle": [1]}
+        cached_body = json.dumps(
+            {
+                "type": "time_capacity",
+                "cell_traces": [cached_trace],
+                "rendering": {"precision": "standard", "compact": True},
+            },
+            separators=(",", ":"),
+        ).encode()
+
+        with (
+            patch.object(analyses_router.engine, "canonical_cycling_capability", return_value=None),
+            patch.object(analyses_router.engine, "availability_badges", return_value=[]),
+            patch.object(analyses_router.engine, "compute_time_capacity", side_effect=AssertionError("cache hit recomputed")),
+            patch.object(analyses_router.analysis_cache, "time_capacity_data_signature", return_value="source-hit"),
+            patch.object(analyses_router.analysis_cache, "result_key", return_value="result-hit"),
+            patch.object(analyses_router.analysis_cache, "load_result_body", return_value=(cached_body, [])),
+            patch.object(analyses_router.analysis_cache, "load_result", side_effect=AssertionError("legacy cache path used")),
+        ):
+            response = analyses_router.stream_time_capacity_analysis(
+                analysis.id,
+                analyses_router.ComputeRequest(spec=spec, compact=True, stream_request_id="stream-hit"),
+                self.db,
+            )
+
+        self.assertEqual(response.media_type, "application/json")
+        payload = json.loads(response.body)
+        self.assertEqual(payload["cache_status"], "hit")
+        self.assertEqual(payload["data_signature"], "result-hit")
+        self.assertEqual(payload["source_data_signature"], "source-hit")
+        self.assertEqual(payload["cell_traces"], [cached_trace])
 
     def test_full_time_capacity_export_request_keeps_all_points_and_precision(self):
         spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])

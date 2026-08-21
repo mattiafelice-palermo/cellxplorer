@@ -99,6 +99,38 @@ test("one request produces one completed record with separated boundaries", () =
   ]);
 });
 
+test("progressive profiling records bounded stream and Plotly boundaries", () => {
+  const timer = clock();
+  const profiler = createTimeCapacityPerformanceProfiler(timer.now);
+  profiler.enable();
+  profiler.begin("stream", context);
+  profiler.streamStart("stream", { streamRequestId: "wire-1", totalSeries: 2 });
+  timer.advance(2);
+  profiler.streamSeries("stream", { index: 1, totalSeries: 2, bytes: 128 });
+  profiler.partialPlotlyComplete("stream");
+  profiler.plotlyInitialized("stream", { remounted: true });
+  timer.advance(3);
+  profiler.streamSeries("stream", { index: 2, totalSeries: 2, bytes: 256 });
+  profiler.streamComplete("stream");
+  profiler.response("stream", {
+    profile_version: 1,
+    request_id: "stream",
+    result_cache: "miss",
+    raw_access: "indexed",
+  }, 10);
+  profiler.frontendPrepared("stream", { resolvedCellCount: 2, plotlyTraceCount: 2 });
+  profiler.plotlyComplete("stream");
+  const record = profiler.records()[0];
+  assert.equal(record?.mode, "ndjson");
+  assert.equal(record?.stream_request_id, "wire-1");
+  assert.equal(record?.stream_total_series, 2);
+  assert.deepEqual(record?.stream_series?.map((series) => series.index), [1, 2]);
+  assert.equal(record?.partial_plotly_completions, 1);
+  assert.equal(record?.partial_update_count, 1);
+  assert.equal(record?.plotly_remount_count, 1);
+  assert.equal(record?.selected_plot_strategy, "react_plotly_react");
+});
+
 test("placeholder visibility is recorded but cannot finish a request", () => {
   const timer = clock();
   const profiler = createTimeCapacityPerformanceProfiler(timer.now);

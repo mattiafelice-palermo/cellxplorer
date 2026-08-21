@@ -10,21 +10,23 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+import queue
 import re
 import tempfile
+import threading
 from time import perf_counter
 from typing import Literal
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..models import Analysis, Cell, Folder, ReplicateGroup, ReplicateGroupCell
 from ..responses import fast_json
 from ..services import background_jobs
@@ -434,6 +436,9 @@ class ComputeRequest(BaseModel):
     # scientific result/cache identity. Ordinary responses remain unchanged.
     profile: bool = False
     profile_request_id: str | None = Field(default=None, max_length=200)
+    # Transport-only correlation for the progressive Time/Capacity stream;
+    # this is deliberately excluded from the scientific/cache identity.
+    stream_request_id: str | None = Field(default=None, max_length=200)
 
 
 class DcirProtocolRequest(BaseModel):
@@ -1115,6 +1120,306 @@ def compute_rate_capability_analysis(
     except Exception as exc:
         _finish_job(job_id, error=str(exc))
         raise
+
+
+class _TimeCapacityStreamDisconnected(Exception):
+    """Internal cancellation signal for a client that left the stream."""
+
+
+def _time_capacity_stream_error(
+    request_id: str,
+    code: str,
+    message: str,
+) -> dict:
+    return {
+        "type": "error",
+        "stream_version": 1,
+        "request_id": request_id,
+        "error": {"code": code, "message": message},
+    }
+
+
+@router.post("/analyses/{analysis_id}/time-capacity/stream")
+def stream_time_capacity_analysis(
+    analysis_id: int,
+    req: ComputeRequest,
+    db: Session = Depends(get_db),
+):
+    """Progressively deliver complete Time/Capacity traces on cache misses."""
+
+    request_started = perf_counter()
+    analysis = db.get(Analysis, analysis_id)
+    if analysis is None:
+        raise HTTPException(404, "No such analysis")
+    spec = req.spec or analysis.spec
+    _guard_canonical_cycling(db, spec)
+    options = {
+        "viewport_width": req.viewport_width or 1200,
+        "precision": req.precision,
+        "compact": req.compact,
+    }
+    source_data_signature = analysis_cache.time_capacity_data_signature(
+        db,
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+    )
+    key = analysis_cache.result_key(
+        db,
+        "time_capacity",
+        spec,
+        analysis.provenance,
+        use_current_versions=req.recompute,
+        request_options=options,
+    )
+
+    # A persisted body hit is deliberately indistinguishable from the
+    # ordinary endpoint: no stream negotiation, recomputation, or partial
+    # frontend state is involved.
+    if not req.recompute:
+        stored = analysis_cache.load_result_body("time_capacity", key)
+        if stored is not None:
+            body, kept = stored
+            _finish_job(req.job_id, cached=True)
+            if req.profile:
+                return _profiled_time_capacity_response(
+                    request_started=request_started,
+                    request_id=_profile_request_id(req),
+                    result_cache="hit",
+                    diagnostics=None,
+                    stored_body=body,
+                    badges=kept + engine.availability_badges(db, spec),
+                    cache_extra_fields={
+                        "data_signature": key,
+                        "source_data_signature": source_data_signature,
+                    },
+                )
+            return Response(
+                content=analysis_cache.splice_result_body(
+                    body,
+                    kept + engine.availability_badges(db, spec),
+                    "hit",
+                    {
+                        "data_signature": key,
+                        "source_data_signature": source_data_signature,
+                    },
+                ),
+                media_type="application/json",
+            )
+
+    # Older object-form cache entries are still complete results. Upgrade and
+    # return them as JSON rather than inventing a miss stream for legacy data.
+    result = None if req.recompute else analysis_cache.load_result("time_capacity", key)
+    if result is not None:
+        analysis_cache.upgrade_result_format("time_capacity", key, result)
+        result["cache_status"] = "hit"
+        result["data_signature"] = key
+        result["source_data_signature"] = source_data_signature
+        _finish_job(req.job_id, cached=True)
+        if req.profile:
+            return _profiled_time_capacity_response(
+                request_started=request_started,
+                request_id=_profile_request_id(req),
+                result_cache="hit",
+                diagnostics=None,
+                result=result,
+            )
+        return fast_json(result)
+
+    units, _ = engine.resolve_selection(db, spec)
+    total_series = len(units)
+    job_id = req.job_id
+    if job_id is None and req.job_token:
+        job_id = _open_compute_job(db, analysis, spec, "time_capacity", req.job_token)
+    stream_request_id = req.stream_request_id or f"stream-{uuid4().hex}"
+
+    def body():
+        events: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=1)
+        disconnected = threading.Event()
+
+        def enqueue(kind: str, payload: object) -> None:
+            while not disconnected.is_set():
+                try:
+                    events.put((kind, payload), timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
+            raise _TimeCapacityStreamDisconnected()
+
+        def worker() -> None:
+            worker_db: Session | None = None
+            try:
+                worker_db = SessionLocal()
+                worker_analysis = worker_db.get(Analysis, analysis_id)
+                if worker_analysis is None:
+                    raise RuntimeError("Analysis was removed while the stream was starting")
+                worker_spec = req.spec or worker_analysis.spec
+                _guard_canonical_cycling(worker_db, worker_spec)
+                worker_source_signature = analysis_cache.time_capacity_data_signature(
+                    worker_db,
+                    worker_spec,
+                    worker_analysis.provenance,
+                    use_current_versions=req.recompute,
+                )
+                worker_key = analysis_cache.result_key(
+                    worker_db,
+                    "time_capacity",
+                    worker_spec,
+                    worker_analysis.provenance,
+                    use_current_versions=req.recompute,
+                    request_options=options,
+                )
+                worker_units, _ = engine.resolve_selection(worker_db, worker_spec)
+                if (
+                    worker_key != key
+                    or worker_source_signature != source_data_signature
+                    or len(worker_units) != total_series
+                ):
+                    raise RuntimeError("Time/capacity request identity changed while the stream was starting")
+
+                enqueue(
+                    "event",
+                    {
+                        "type": "start",
+                        "stream_version": 1,
+                        "request_id": stream_request_id,
+                        "total_series": total_series,
+                        "data_signature": key,
+                        "source_data_signature": source_data_signature,
+                        "cache_status": "miss",
+                    },
+                )
+                access_diagnostics = {} if req.profile else None
+                progress_callback = _progress_callback(job_id)
+
+                def progress(completed: int, total: int, label: str, detail: str) -> None:
+                    if disconnected.is_set():
+                        raise _TimeCapacityStreamDisconnected()
+                    if progress_callback:
+                        progress_callback(completed, total, label, detail)
+                    if disconnected.is_set():
+                        raise _TimeCapacityStreamDisconnected()
+
+                def trace_callback(index: int, total: int, trace: dict) -> None:
+                    if disconnected.is_set():
+                        raise _TimeCapacityStreamDisconnected()
+                    if index < 1 or index > total_series or total != total_series:
+                        raise RuntimeError("Time/capacity stream produced an invalid series order")
+                    enqueue(
+                        "event",
+                        {
+                            "type": "series",
+                            "stream_version": 1,
+                            "request_id": stream_request_id,
+                            "index": index,
+                            "total_series": total,
+                            "trace": trace,
+                        },
+                    )
+
+                from ..services.process_priority import background_thread_priority
+
+                compute_started = perf_counter()
+                compute_options = {
+                    "use_current_versions": req.recompute,
+                    "viewport_width": req.viewport_width,
+                    "precision": req.precision,
+                    "compact": req.compact,
+                    "progress": progress,
+                    "trace_callback": trace_callback,
+                }
+                if access_diagnostics is not None:
+                    compute_options["access_diagnostics"] = access_diagnostics
+                with background_thread_priority(req.background):
+                    result = engine.compute_time_capacity(
+                        worker_db,
+                        worker_spec,
+                        worker_analysis.provenance,
+                        **compute_options,
+                    )
+                backend_compute_ms = (perf_counter() - compute_started) * 1000.0
+                if disconnected.is_set():
+                    raise _TimeCapacityStreamDisconnected()
+                result["cache_status"] = "miss"
+                result["data_signature"] = key
+                result["source_data_signature"] = source_data_signature
+                # Store the complete ordinary result before exposing complete.
+                analysis_cache.store_result("time_capacity", key, result)
+
+                metadata = dict(result)
+                metadata.pop("cell_traces", None)
+                if req.profile:
+                    profile = time_capacity_profiling.build_time_capacity_profile(
+                        request_id=_profile_request_id(req),
+                        result_cache="miss",
+                        diagnostics=access_diagnostics,
+                        backend_compute_ms=backend_compute_ms,
+                        result=result,
+                    )
+                    profile.update(
+                        {
+                            "mode": "ndjson",
+                            "stream_request_id": stream_request_id,
+                            "total_series": total_series,
+                            "series_received": total_series,
+                        }
+                    )
+                    metadata["profiling"] = profile
+                _finish_job(job_id, cached=False)
+                enqueue(
+                    "event",
+                    {
+                        "type": "complete",
+                        "stream_version": 1,
+                        "request_id": stream_request_id,
+                        "total_series": total_series,
+                        "metadata": metadata,
+                    },
+                )
+                enqueue("done", None)
+            except _TimeCapacityStreamDisconnected:
+                _finish_job(job_id, error="Time/capacity stream disconnected")
+            except Exception as exc:
+                _finish_job(job_id, error="Time/capacity compute failed")
+                if not disconnected.is_set():
+                    message = (
+                        exc.detail
+                        if isinstance(exc, HTTPException) and isinstance(exc.detail, str)
+                        else "Time/capacity compute failed"
+                    )
+                    try:
+                        enqueue(
+                            "event",
+                            _time_capacity_stream_error(
+                                stream_request_id,
+                                "compute_failed",
+                                message,
+                            ),
+                        )
+                        enqueue("done", None)
+                    except _TimeCapacityStreamDisconnected:
+                        pass
+            finally:
+                if worker_db is not None:
+                    worker_db.close()
+
+        producer = threading.Thread(
+            target=worker,
+            name=f"time-capacity-stream-{analysis_id}",
+            daemon=True,
+        )
+        producer.start()
+        try:
+            while True:
+                kind, payload = events.get()
+                if kind == "done":
+                    return
+                yield fast_json(payload).body + b"\n"
+        finally:
+            disconnected.set()
+            producer.join(timeout=2.0)
+
+    return StreamingResponse(body(), media_type="application/x-ndjson")
 
 
 @router.post("/analyses/{analysis_id}/time-capacity")

@@ -41,6 +41,7 @@ from . import (
 
 SPEC_VERSION = 9
 ProgressCallback = Callable[[int, int, str, str], None]
+TimeCapacityTraceCallback = Callable[[int, int, dict], None]
 
 # quantities served to the client: every cached per-cycle column plus
 # derived ones computed here at render time
@@ -2651,6 +2652,7 @@ def compute_time_capacity(
     compact: bool = False,
     progress: ProgressCallback | None = None,
     access_diagnostics: dict[str, Any] | None = None,
+    trace_callback: TimeCapacityTraceCallback | None = None,
 ) -> dict:
     ensure_canonical_cycling_available(db, spec)
     calc_version = CALC_VERSION
@@ -2896,6 +2898,8 @@ def compute_time_capacity(
                     "source_boundary_indices": [],
                 }
             )
+            if trace_callback:
+                trace_callback(unit_index, total_units, traces[-1])
             continue
 
         transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
@@ -3303,6 +3307,8 @@ def compute_time_capacity(
                 "source_boundary_indices": [int(index) for index in source_boundary_indices],
             }
         )
+        if trace_callback:
+            trace_callback(unit_index, total_units, traces[-1])
         if progress:
             progress(
                 unit_index,

@@ -1,3 +1,10 @@
+import {
+  benchmarkTimeCapacityPlotStrategies,
+  SELECTED_TIME_CAPACITY_PLOT_STRATEGY,
+} from "./timeCapacityPlotStrategyBenchmark.ts";
+
+export { SELECTED_TIME_CAPACITY_PLOT_STRATEGY } from "./timeCapacityPlotStrategyBenchmark.ts";
+
 export type TimeCapacityResultCache = "hit" | "miss" | "unknown";
 export type TimeCapacityRawAccess =
   | "indexed"
@@ -85,11 +92,37 @@ export interface TimeCapacityInteractionProfile extends TimeCapacityPerformanceC
   returned_points?: number;
   resolved_cell_count?: number;
   trace_count?: number;
+  mode?: "json" | "ndjson";
+  stream_request_id?: string;
+  stream_total_series?: number;
+  stream_series?: Array<{
+    index: number;
+    total_series: number;
+    received_at_ms: number;
+    bytes: number;
+  }>;
+  stream_first_useful_ms?: number;
+  stream_final_received_ms?: number;
+  partial_plotly_completions?: number;
+  partial_update_count?: number;
+  plotly_remount_count?: number;
+  selected_plot_strategy?: "react_plotly_react" | "plotly_add_traces";
 }
 
 export interface TimeCapacityFrontendPreparedDetails {
   resolvedCellCount?: number;
   plotlyTraceCount?: number;
+}
+
+export interface TimeCapacityStreamStartDetails {
+  streamRequestId: string;
+  totalSeries: number;
+}
+
+export interface TimeCapacityStreamSeriesDetails {
+  index: number;
+  totalSeries: number;
+  bytes: number;
 }
 
 interface ActiveProfile {
@@ -116,6 +149,11 @@ export interface TimeCapacityPerformanceProfiler {
   frontendPrepared(requestId: string, details?: TimeCapacityFrontendPreparedDetails): void;
   /** Mark a result satisfied from React Query memory without reusing server facts. */
   memoryCacheHit(requestId: string): void;
+  streamStart(requestId: string, details: TimeCapacityStreamStartDetails): void;
+  streamSeries(requestId: string, details: TimeCapacityStreamSeriesDetails): void;
+  streamComplete(requestId: string): void;
+  partialPlotlyComplete(requestId: string): void;
+  plotlyInitialized(requestId: string, details?: { remounted?: boolean }): void;
   plotlyComplete(requestId: string): void;
   cancel(requestId: string): void;
   records(): TimeCapacityInteractionProfile[];
@@ -320,6 +358,57 @@ export function createTimeCapacityPerformanceProfiler(
       current.record.http_round_trip_ms = 0;
       current.response_received_at_ms = clock();
     },
+    streamStart(requestId, details) {
+      const current = active.get(requestId);
+      if (!current) return;
+      current.record.mode = "ndjson";
+      current.record.stream_request_id = details.streamRequestId;
+      current.record.stream_total_series = details.totalSeries;
+      current.record.selected_plot_strategy = SELECTED_TIME_CAPACITY_PLOT_STRATEGY;
+      current.record.stream_series = [];
+      current.record.stream_first_useful_ms = undefined;
+      current.record.stream_final_received_ms = undefined;
+    },
+    streamSeries(requestId, details) {
+      const current = active.get(requestId);
+      if (!current) return;
+      current.record.mode = "ndjson";
+      const receivedAt = clock();
+      const series = current.record.stream_series ?? [];
+      // The profiler is opt-in and bounded just like the retained records;
+      // retain the first 200 unit boundaries rather than raw trace data.
+      if (series.length < 200) {
+        series.push({
+          index: details.index,
+          total_series: details.totalSeries,
+          received_at_ms: receivedAt,
+          bytes: Math.max(0, Math.floor(details.bytes)),
+        });
+      }
+      current.record.stream_series = series;
+      current.record.stream_total_series = details.totalSeries;
+      if (current.record.stream_first_useful_ms === undefined) {
+        current.record.stream_first_useful_ms = nonNegative(receivedAt - current.record.started_at_ms);
+      }
+    },
+    streamComplete(requestId) {
+      const current = active.get(requestId);
+      if (!current) return;
+      current.record.mode = "ndjson";
+      current.record.stream_final_received_ms = nonNegative(clock() - current.record.started_at_ms);
+    },
+    partialPlotlyComplete(requestId) {
+      const current = active.get(requestId);
+      if (!current) return;
+      current.record.partial_plotly_completions =
+        (current.record.partial_plotly_completions ?? 0) + 1;
+      current.record.partial_update_count = (current.record.partial_update_count ?? 0) + 1;
+    },
+    plotlyInitialized(requestId, details) {
+      const current = active.get(requestId);
+      if (!current || !details?.remounted) return;
+      current.record.plotly_remount_count = (current.record.plotly_remount_count ?? 0) + 1;
+    },
     frontendPrepared(requestId, details) {
       const current = active.get(requestId);
       if (!current || current.response_received_at_ms === null) return;
@@ -435,6 +524,7 @@ export interface TimeCapacityPerformanceWindowApi {
   reset(): void;
   records(): TimeCapacityInteractionProfile[];
   exportJson(): string;
+  benchmarkStrategies(): Promise<import("./timeCapacityPlotStrategyBenchmark").TimeCapacityPlotStrategyBenchmarkResult>;
 }
 
 declare global {
@@ -453,5 +543,6 @@ if (typeof window !== "undefined") {
     reset: () => timeCapacityPerformanceProfiler.reset(),
     records: () => timeCapacityPerformanceProfiler.records(),
     exportJson: () => timeCapacityPerformanceProfiler.exportJson(),
+    benchmarkStrategies: () => benchmarkTimeCapacityPlotStrategies(),
   };
 }
