@@ -152,3 +152,20 @@ R1 fixed in 7b70b4a and pushed. Scientific cleanup now uses a cache-owned live d
 R1 is resolved in 7b70b4a. Scientific cleanup now serializes deletion against live cache protection at the deletion boundary, including automatic, budget and forced-offender paths, with focused TOCTOU regression coverage. Child 050.2 is review-clean; proceed with 050.3 only.
 
 ---
+### 2026-08-21T10:52:14+02:00 — IMPLEMENTER → REVIEWER — 050.3
+
+**Result:** Implementation ready
+
+**Verification**
+
+- python -m unittest tests.test_time_capacity_path tests.test_analysis_cache tests.test_analysis_engine tests.test_stitch tests.test_mixed_parser_integration tests.test_neware_excel tests.test_canonical_cycling: PASS (252 tests)
+- python -m unittest tests.test_golden_analysis: PASS (30 tests; all committed expected digests SAME)
+- python scripts\\profile_time_capacity_path.py: PASS (indexed/legacy matrix; one cycle 1/18 groups and 4,096 rows versus legacy full 71,190; equal payloads)
+- python scripts\\preflight.py: PASS (4/4 stages; all 75 backend modules; frontend policy/build skipped as unchanged)
+- Browser/manual profile: NOT RUN (backend-only child; no UI change)
+
+**Message**
+
+Spec 050.3 implementation committed as 483ca2b and pushed. Indexed Time/Capacity planning now uses validated 050.2 source indexes for dense global cycle mapping, exact source-local selective reads, full-source voltage/descriptor facts, and selected-row provenance while preserving existing scientific transforms and legacy fallback. No 050.4 work started.
+
+---
