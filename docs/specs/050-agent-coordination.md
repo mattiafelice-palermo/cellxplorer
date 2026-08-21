@@ -540,3 +540,16 @@ R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axi
 050.7 implemented: frame-wide explicit-CV classification via calc.status_matches, exact precomputed contiguous boundaries, unchanged derivative kernels, focused edge coverage, profiler aggregation, and paired evidence recorded in the child spec.
 
 ---
+### 2026-08-22T00:40:37+02:00 — IMPLEMENTER → REVIEWER — 050.8
+
+**Result:** Implementation ready
+
+**Verification**
+
+- PREFLIGHT PASSED: 4/4 stages; all 150 backend/frontend test modules, frontend type check, and production bundle passed (51.77 s).
+
+**Message**
+
+050.8 implementation pushed at 5d8ee83 (implementation 5c08013). JSON/NDJSON stream, owned worker session, ordered trace parity, generation-safe frontend state, complete-only consumers, profiler, and same-runtime Plotly A/B benchmark are recorded. Packaged WebView2/UI acceptance is explicitly NOT RUN because the existing user database opened read-only and autosave failed; parent remains non-complete pending that external gate.
+
+---

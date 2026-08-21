@@ -13,11 +13,11 @@
     "050.7",
     "050.8"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "IMPLEMENT",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [],
   "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-21T23:30:59+02:00"
+  "updated_at": "2026-08-22T00:40:37+02:00"
 }
