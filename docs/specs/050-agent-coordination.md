@@ -53,3 +53,20 @@ Implemented ACTIVE_CHILD 050.1 only: scoped persisted-analysis refresh, compatib
 R1 prevents a retained compatible Time/Capacity placeholder from being exported as if it were the resolved current request. Fix only R1 and hand back for review.
 
 ---
+### 2026-08-21T08:29:59+02:00 — IMPLEMENTER → REVIEWER — 050.1
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- node --test frontend\tests\analysisQueryCache.test.ts frontend\tests\timeCapacityQueryPolicy.test.ts frontend\tests\voltageChannelPolicy.test.ts: PASS (30 tests)
+- npx.cmd tsc --noEmit: PASS
+- git diff --check: PASS
+- python scripts\preflight.py: PASS (4/4; all 143 backend/frontend modules passed; type-check and bundle stages skipped as unchanged after successful R1-cycle checks)
+- Browser/manual placeholder-export and autosave request-count checklist: NOT RUN
+
+**Message**
+
+Resolved only canonical finding R1 in commit a7e84d7: compatible Time/Capacity placeholders remain visible but cannot drive plot/image/vector export or export preview; full-resolution data export remains separately enabled and request-identity validated. Added export-readiness policy coverage and durable state/performance guidance. No 050.2 or proto-child work started.
+
+---
