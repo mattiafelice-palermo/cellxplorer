@@ -34,6 +34,7 @@ _internal/
 build/
 dist/
 src-tauri/target/
+scripts/rust_derivative_kernel/target/
 
 # Local assistant/tooling state
 .claude/

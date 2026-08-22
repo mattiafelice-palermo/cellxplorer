@@ -1,0 +1,8 @@
+[package]
+name = "cellxplorer-05010-rust-derivative-kernel"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rayon = "1.10"

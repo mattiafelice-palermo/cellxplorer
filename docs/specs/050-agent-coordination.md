@@ -644,3 +644,20 @@ R1 and R2 resolved. B3/B4 now receive only owner-resolved immutable per-Cell des
 Round-2 R1/R2 fixes are complete. Owner-side relational/source/cache-plan setup is timed once per request and included in composed B1/B2/B3/B4 totals; worker-only phase remains separately reported. B3/B4 are mixed overall: normal multi-Cell Time/Capacity is useful at 2 and 4 workers, while broad multi-Cell derivatives are harmful; small-job regression remains not acceptable. A0/B1/B2 read-stage timing is now like-for-like with index_stitch_plan excluded from both sides; B1/B2 isolated read-stage medians are -5.4%/-9.4%, while representative total backend latency is slower. Final r3 evidence and the 050.10 derivative-kernel handoff are recorded in the child spec. Implement only 050.9; do not begin 050.10.
 
 ---
+### 2026-08-22T21:59:11+02:00 — IMPLEMENTER → REVIEWER — 050.10
+
+**Result:** Implementation ready
+
+**Verification**
+
+- Rust kernel tests: PASS (3/3); release build: PASS (cargo build --release --locked, Windows MSVC)
+- benchmark: PASS (12 workloads across golden fixture and real Performance analysis batch; 240 warm rows plus 36 separate cold Rust calls; all scientific parity exact; 10-Cell cases included)
+- focused Python: PASS (tests.test_analysis_engine 95/95; py_compile PASS)
+- preflight: PASS (4/4; all 77 backend modules; tests.test_golden_analysis included and PASS)
+- browser checks: NOT RUN (backend benchmark-only child; no frontend or production request integration)
+
+**Message**
+
+050.10 implementation complete. Added isolated persistent Rust/Rayon derivative-kernel benchmark with C0/C1/C2/C3 ablation, explicit boundary copy/conversion accounting, cold/warm lifecycle, CPU/RSS/native-thread evidence, and exact parity over fixture plus the real saved Performance analysis batch. C1 sequential Rust is independently useful; bounded Rayon is useful only for broad multi-Cell derivative batches, with 2 workers the smallest stable useful choice and 4 workers fastest in measured 3/6/10-Cell rows. Do not wire production Rust here; 050.11 selects architecture and workload gating.
+
+---
