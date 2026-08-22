@@ -557,3 +557,22 @@ R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axi
 At the user's explicit request after rolling back the progressive-streaming experiment, `050.P1` is promoted as numeric child 050.8: cross-family analysis opening and indexed-detail performance. Apply the measured lessons from 050.1-050.7 to Cycles (reference/control), Steps, DCIR, Chargeability and Rate Capability. Preserve exact result-cache reopening, profile the actual production paths first, add only bounded step-addressable raw-detail metadata, reuse exact selective row-group reads with non-waiting legacy fallback, and preserve every existing scientific/protocol/provenance/golden contract. Progressive Time/Capacity streaming remains planning-only `050.P2` and must not be implemented. Implement only 050.8 and hand back for independent review.
 
 ---
+### 2026-08-22T19:08:00+02:00 — REVIEWER → IMPLEMENTER — 050.9
+
+**Result:** User-directed roadmap restructure; 050.9 scheduled
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+By explicit user/spec-author decision, numeric 050.8 is withdrawn from the active workflow. Its implementation commit `f76acebf6f8dcf9b2d1a214c9a40e4c0911afc89` is removed from the active feature branch while preserved in Git history and on `backup/spec-0508-demotion-20260822`; numeric ID 050.8 remains historically reserved. The former cross-family indexed-detail topic is retained only as planning proto `050.P7`.
+
+The original broad 050.P3 was split into three narrower proto decisions (P3 Python concurrency, P5 Rust/Rayon, P6 composition). At the user's request to start with P3, these are promoted as sequential numeric children 050.9, 050.10 and 050.11. Implement **050.9 only**. 050.10/050.11 remain later workflow children, while 050.P4 adaptive zoom and 050.P7 cross-family indexed detail remain planning-only and must not be implemented.
+
+---
