@@ -680,3 +680,20 @@ Round-2 R1/R2 fixes are complete. Owner-side relational/source/cache-plan setup 
 Round-1 R1/R2/R3 fixes are complete. C0 now runs the same prepared segment-buffer derivative kernel boundary as C1/C2/C3, while owner buffer preparation is separately recorded. The Rust worker sends a ready handshake so spawn-to-ready, first request/pool initialization, and warm calls are distinct. Removed the invalid Rayon queue-overhead subtraction and retained parallel-region plus per-Cell timing. Corrected r3 evidence preserves exact parity and the broad multi-Cell Rayon signal; do not wire production Rust here and do not begin 050.11.
 
 ---
+### 2026-08-22T22:56:58+02:00 — IMPLEMENTER → REVIEWER — 050.10
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- focused checks: PASS (Rust 3/3; analysis_engine 95/95; py_compile; diff --check)
+- 050.10 full benchmark: PASS (32 workloads, fixture plus saved real-cell batch; 0 parity failures)
+- persistent warm R5 session: PASS (70 mixed warm rows; zero spawn and pool init on measured requests)
+- preflight: PASS (4/4; all 77 backend modules)
+- browser checks: NOT RUN (benchmark-only child; no frontend/production request change)
+
+**Message**
+
+R4 and R5 are implemented. N0-N3 measure the owner-resolved ordinary Time/Capacity projection boundary; broad Time benefits from native/Rayon, capacity remains boundary-dominated. P4 records one resident four-worker process/pool across mixed derivative and ordinary requests, including small controls.
+
+---

@@ -27,6 +27,16 @@ struct Segment {
 #[derive(Clone, Debug)]
 struct CellInput {
     segments: Vec<Segment>,
+    normal: Option<NormalInput>,
+}
+
+#[derive(Clone, Debug)]
+struct NormalInput {
+    cycles: Vec<i64>,
+    phases: Vec<u8>,
+    time_s: Vec<f64>,
+    capacity: Vec<f64>,
+    voltage: Vec<f64>,
 }
 
 #[derive(Debug)]
@@ -79,6 +89,17 @@ impl<'a> Cursor<'a> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 
+    fn i64_vec(&mut self, count: usize) -> io::Result<Vec<i64>> {
+        let bytes = self.take(count.checked_mul(8).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "integer buffer size overflow")
+        })?)?;
+        let mut values = Vec::with_capacity(count);
+        for chunk in bytes.chunks_exact(8) {
+            values.push(i64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        Ok(values)
+    }
+
     fn f64_vec(&mut self, count: usize) -> io::Result<Vec<f64>> {
         let bytes = self.take(count.checked_mul(8).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "float buffer size overflow")
@@ -93,12 +114,19 @@ impl<'a> Cursor<'a> {
     fn bool_vec(&mut self, count: usize) -> io::Result<Vec<bool>> {
         Ok(self.take(count)?.iter().map(|value| *value != 0).collect())
     }
+
+    fn u8_vec(&mut self, count: usize) -> io::Result<Vec<u8>> {
+        Ok(self.take(count)?.to_vec())
+    }
 }
 
 struct Request {
+    kernel_kind: u8,
     mode: u8,
     selected_phase: u8,
     absolute_discharge: bool,
+    display_mode: u8,
+    time_unit: u8,
     window: usize,
     cells: Vec<CellInput>,
 }
@@ -111,13 +139,22 @@ fn parse_request(bytes: &[u8]) -> io::Result<Request> {
             "unsupported derivative benchmark frame",
         ));
     }
+    let kernel_kind = cursor.u8()?;
     let mode = cursor.u8()?;
     let selected_phase = cursor.u8()?;
     let absolute_discharge = cursor.u8()? != 0;
-    let _reserved = cursor.u8()?;
+    let display_mode = cursor.u8()?;
+    let time_unit = cursor.u8()?;
     let window = cursor.u32()? as usize;
     let cell_count = cursor.u32()? as usize;
-    if !matches!(mode, 0 | 1) || window == 0 || cell_count == 0 {
+    if !matches!(kernel_kind, 0 | 1)
+        || !matches!(mode, 0 | 1)
+        || !matches!(selected_phase, 0 | 1 | 2)
+        || !matches!(display_mode, 0 | 1 | 2)
+        || !matches!(time_unit, 0 | 1 | 2)
+        || window == 0
+        || cell_count == 0
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid derivative benchmark settings",
@@ -126,29 +163,61 @@ fn parse_request(bytes: &[u8]) -> io::Result<Request> {
 
     let mut cells = Vec::with_capacity(cell_count);
     for _ in 0..cell_count {
-        let segment_count = cursor.u32()? as usize;
-        let mut segments = Vec::with_capacity(segment_count);
-        for _ in 0..segment_count {
+        if kernel_kind == 0 {
+            let segment_count = cursor.u32()? as usize;
+            let mut segments = Vec::with_capacity(segment_count);
+            for _ in 0..segment_count {
+                let count = cursor.u32()? as usize;
+                let phase = cursor.u8()?;
+                let _segment_reserved = cursor.take(3)?;
+                let capacity = cursor.f64_vec(count)?;
+                let voltage = cursor.f64_vec(count)?;
+                let explicit_cv = cursor.bool_vec(count)?;
+                if capacity.len() != voltage.len() || capacity.len() != explicit_cv.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "derivative segment buffers have different lengths",
+                    ));
+                }
+                segments.push(Segment {
+                    phase,
+                    capacity,
+                    voltage,
+                    explicit_cv,
+                });
+            }
+            cells.push(CellInput {
+                segments,
+                normal: None,
+            });
+        } else {
             let count = cursor.u32()? as usize;
-            let phase = cursor.u8()?;
-            let _segment_reserved = cursor.take(3)?;
+            let cycles = cursor.i64_vec(count)?;
+            let time_s = cursor.f64_vec(count)?;
             let capacity = cursor.f64_vec(count)?;
             let voltage = cursor.f64_vec(count)?;
-            let explicit_cv = cursor.bool_vec(count)?;
-            if capacity.len() != voltage.len() || capacity.len() != explicit_cv.len() {
+            let phases = cursor.u8_vec(count)?;
+            if cycles.len() != time_s.len()
+                || cycles.len() != capacity.len()
+                || cycles.len() != voltage.len()
+                || cycles.len() != phases.len()
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "derivative segment buffers have different lengths",
+                    "normal projection buffers have different lengths",
                 ));
             }
-            segments.push(Segment {
-                phase,
-                capacity,
-                voltage,
-                explicit_cv,
+            cells.push(CellInput {
+                segments: Vec::new(),
+                normal: Some(NormalInput {
+                    cycles,
+                    phases,
+                    time_s,
+                    capacity,
+                    voltage,
+                }),
             });
         }
-        cells.push(CellInput { segments });
     }
     if cursor.offset != bytes.len() {
         return Err(io::Error::new(
@@ -157,9 +226,12 @@ fn parse_request(bytes: &[u8]) -> io::Result<Request> {
         ));
     }
     Ok(Request {
+        kernel_kind,
         mode,
         selected_phase,
         absolute_discharge,
+        display_mode,
+        time_unit,
         window,
         cells,
     })
@@ -311,14 +383,117 @@ fn process_segment(
     SegmentOutput { x, y }
 }
 
+fn continuous_time(values: &[f64]) -> Vec<f64> {
+    let mut output = values.to_vec();
+    if values.len() < 2 {
+        return output;
+    }
+    let mut offset = 0.0f64;
+    for index in 1..values.len() {
+        let difference = values[index] - values[index - 1];
+        if difference.is_finite() && difference < 0.0 {
+            offset += values[index - 1];
+        }
+        output[index] = values[index] + offset;
+    }
+    output
+}
+
+fn display_projection(
+    input: &NormalInput,
+    capacity: &[f64],
+    x_axis: u8,
+    display_mode: u8,
+    time_unit: u8,
+) -> Vec<f64> {
+    let mut values = if x_axis == 0 {
+        let factor = match time_unit {
+            2 => 3600.0,
+            1 => 60.0,
+            _ => 1.0,
+        };
+        continuous_time(&input.time_s)
+            .into_iter()
+            .map(|value| value / factor)
+            .collect::<Vec<_>>()
+    } else {
+        capacity.to_vec()
+    };
+    if display_mode == 0 {
+        if let Some(first) = values.iter().position(|value| value.is_finite()) {
+            let origin = values[first];
+            for value in &mut values {
+                *value -= origin;
+            }
+        }
+        return values;
+    }
+
+    let mut output = vec![f64::NAN; values.len()];
+    let mut cycles = input.cycles.clone();
+    cycles.sort_unstable();
+    cycles.dedup();
+    for cycle in cycles {
+        for phase in [1u8, 2u8] {
+            let indices: Vec<usize> = (0..values.len())
+                .filter(|index| {
+                    input.cycles[*index] == cycle
+                        && input.phases[*index] == phase
+                        && values[*index].is_finite()
+                })
+                .collect();
+            if indices.is_empty() {
+                continue;
+            }
+            let first = values[indices[0]];
+            let mut maximum = f64::NEG_INFINITY;
+            for index in &indices {
+                maximum = maximum.max(values[*index] - first);
+            }
+            for index in indices {
+                let reset = values[index] - first;
+                output[index] = if display_mode == 2 && phase == 2 {
+                    maximum - reset
+                } else {
+                    reset
+                };
+            }
+        }
+    }
+    output
+}
+
+fn process_normal_cell(
+    input: &NormalInput,
+    x_axis: u8,
+    display_mode: u8,
+    time_unit: u8,
+) -> CellOutput {
+    let started = Instant::now();
+    let display = display_projection(input, &input.capacity, x_axis, display_mode, time_unit);
+    CellOutput {
+        segments: vec![SegmentOutput {
+            x: display,
+            y: input.voltage.clone(),
+        }],
+        kernel_ns: started.elapsed().as_nanos() as u64,
+    }
+}
+
 fn process_cell(
     cell: &CellInput,
+    kernel_kind: u8,
     mode: u8,
     selected_phase: u8,
     absolute_discharge: bool,
+    display_mode: u8,
+    time_unit: u8,
     window: usize,
 ) -> CellOutput {
     let started = Instant::now();
+    if kernel_kind == 1 {
+        return process_normal_cell(cell.normal.as_ref().unwrap(), mode, display_mode, time_unit);
+    }
     let segments = cell
         .segments
         .iter()
@@ -446,9 +621,12 @@ fn main() -> io::Result<()> {
                 .map(|cell| {
                     process_cell(
                         cell,
+                        request.kernel_kind,
                         request.mode,
                         request.selected_phase,
                         request.absolute_discharge,
+                        request.display_mode,
+                        request.time_unit,
                         request.window,
                     )
                 })

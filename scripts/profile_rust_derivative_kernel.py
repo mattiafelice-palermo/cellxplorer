@@ -81,7 +81,17 @@ class PythonCellInput:
 
 
 @dataclass
+class NormalCellInput:
+    cycles: np.ndarray
+    phases: np.ndarray
+    time_s: np.ndarray
+    capacity: np.ndarray
+    voltage: np.ndarray
+
+
+@dataclass
 class KernelDataset:
+    kernel_kind: str
     scenario: str
     suite: str
     cell_count: int
@@ -91,8 +101,10 @@ class KernelDataset:
     absolute_discharge: bool
     settings: dict[str, Any]
     cells: list[PythonCellInput]
+    normal_cells: list[NormalCellInput] | None
     reference_outputs: list[tuple[np.ndarray, np.ndarray]]
     owner_buffer_prepare_ms: float
+    input_rows: int
     backend_context_ms: list[float]
 
 
@@ -273,6 +285,7 @@ def _build_dataset(
     if window % 2 == 0:
         window += 1
     return KernelDataset(
+        kernel_kind="derivative",
         scenario=str(workload["scenario"]),
         suite=suite,
         cell_count=len(captured),
@@ -282,43 +295,259 @@ def _build_dataset(
         absolute_discharge=bool(settings.get("derivative_absolute_discharge", True)),
         settings=settings,
         cells=captured,
+        normal_cells=None,
         reference_outputs=reference_outputs,
         owner_buffer_prepare_ms=owner_prepare_ms,
+        input_rows=sum(len(cell.capacity) for cell in captured),
+        backend_context_ms=backend_context_ms,
+    )
+
+
+def _build_normal_dataset(
+    env: Any,
+    base: dict[str, Any],
+    workload: dict[str, Any],
+    suite: str,
+    repetitions: int,
+) -> KernelDataset:
+    """Resolve the compact ordinary Time/Capacity projection boundary.
+
+    Python retains request/source/cache ownership and prepares phase/capacity
+    values exactly as the current engine does.  The native candidate receives
+    only per-Cell numeric arrays and owns continuous-time/display projection;
+    the resolved voltage array is the paired ordinary plot output.
+    """
+
+    from app.services import analysis_engine, time_capacity_derived
+
+    spec = make_spec(
+        base,
+        workload["cell_ids"],
+        workload["cycles"],
+        workload["cycle_end"],
+        x_axis=workload["x_axis"],
+        view="voltage_current",
+    )
+    jobs, request, _owner_setup = prepare_resolved_jobs(env, spec, workload["cell_ids"])
+    payloads = [_materialize_read(job, time.perf_counter()) for job in jobs]
+    settings = deepcopy(request.settings)
+    transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
+        settings,
+        precision="standard",
+        compact=True,
+    )
+    captured: list[NormalCellInput] = []
+    reference_outputs: list[tuple[np.ndarray, np.ndarray]] = []
+    owner_prepare_ms = 0.0
+
+    for job, payload in zip(jobs, payloads):
+        prepare_started = time.perf_counter()
+        raw = payload.raw.copy()
+        if settings["cycles"]:
+            raw = raw[raw["cycle"].isin(settings["cycles"])]
+        else:
+            if settings["cycle_start"] is not None:
+                raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+            if settings["cycle_end"] is not None:
+                raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+        sort_columns = [
+            column
+            for column in ("cycle", "segment", "record_index")
+            if column in raw.columns
+        ]
+        if sort_columns:
+            raw = raw.sort_values(sort_columns, kind="stable")
+        raw = raw.reset_index(drop=True)
+        if "cycle" not in raw.columns:
+            raise RuntimeError(f"normal projection input for Cell {job.cell_id} has no cycle column")
+
+        aligned_prepared = (
+            analysis_engine._aligned_prepared_transform_values(
+                raw,
+                payload.prepared,
+                need_capacity=transform_needs.phase_capacity,
+            )
+            if payload.prepared is not None
+            else None
+        )
+        if aligned_prepared is not None:
+            phases, prepared_capacity = aligned_prepared
+        else:
+            phases = analysis_engine._phase_from_raw(raw)
+            prepared_capacity = None
+        if transform_needs.phase_capacity:
+            capacity = (
+                prepared_capacity
+                if prepared_capacity is not None
+                else analysis_engine._phase_capacity(raw, phases)
+            )
+        else:
+            capacity = np.full(len(raw), np.nan, dtype="float64")
+
+        voltage_column = analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[
+            settings["voltage_channel"]
+        ]
+        voltage = (
+            raw[voltage_column].to_numpy(dtype="float64", copy=True)
+            if voltage_column in raw.columns
+            else np.full(len(raw), np.nan, dtype="float64")
+        )
+        cycles = pd.to_numeric(raw["cycle"], errors="coerce").to_numpy(dtype="float64")
+        if not np.isfinite(cycles).all():
+            raise RuntimeError(f"normal projection input for Cell {job.cell_id} has invalid cycles")
+        phase_codes = np.asarray(
+            [
+                {"rest": 0, "charge": 1, "discharge": 2}.get(str(phase), 0)
+                for phase in phases
+            ],
+            dtype="uint8",
+        )
+        cell = NormalCellInput(
+            cycles=np.ascontiguousarray(cycles.astype("int64"), dtype="<i8"),
+            phases=np.ascontiguousarray(phase_codes, dtype="u1"),
+            time_s=np.ascontiguousarray(
+                raw["time_s"].to_numpy(dtype="float64", copy=True)
+                if "time_s" in raw.columns
+                else np.full(len(raw), np.nan, dtype="float64"),
+                dtype="<f8",
+            ),
+            capacity=np.ascontiguousarray(np.asarray(capacity, dtype="float64"), dtype="<f8"),
+            voltage=np.ascontiguousarray(voltage, dtype="<f8"),
+        )
+        captured.append(cell)
+
+        projection_raw = analysis_engine._continuous_time(raw)
+        display_x = analysis_engine._time_capacity_display_x(
+            projection_raw,
+            phases,
+            cell.capacity if transform_needs.phase_capacity else None,
+            None,
+            None,
+            settings,
+        )
+        reference_outputs.append((display_x.copy(), cell.voltage.copy()))
+        owner_prepare_ms += (time.perf_counter() - prepare_started) * 1000.0
+
+    if len(captured) != len(jobs):
+        raise RuntimeError(
+            f"normal projection capture expected {len(jobs)} cells, captured {len(captured)}"
+        )
+
+    backend_context_ms: list[float] = []
+    analysis_engine.compute_time_capacity(
+        env.db,
+        spec,
+        None,
+        viewport_width=1200,
+        precision="standard",
+        compact=True,
+    )
+    for _ in range(repetitions):
+        started = time.perf_counter()
+        analysis_engine.compute_time_capacity(
+            env.db,
+            spec,
+            None,
+            viewport_width=1200,
+            precision="standard",
+            compact=True,
+        )
+        backend_context_ms.append((time.perf_counter() - started) * 1000.0)
+
+    return KernelDataset(
+        kernel_kind="normal",
+        scenario=str(workload["scenario"]),
+        suite=suite,
+        cell_count=len(captured),
+        mode=str(settings["x_axis"]),
+        selected_phase="both",
+        smoothing_window=1,
+        absolute_discharge=False,
+        settings=settings,
+        cells=[],
+        normal_cells=captured,
+        reference_outputs=reference_outputs,
+        owner_buffer_prepare_ms=owner_prepare_ms,
+        input_rows=sum(len(cell.time_s) for cell in captured),
         backend_context_ms=backend_context_ms,
     )
 
 
 def _encode_request(dataset: KernelDataset) -> tuple[bytes, int, int, float]:
     started = time.perf_counter()
-    mode = 0 if dataset.mode == "dqdv" else 1
-    selected_phase = _selected_phase_code(dataset.selected_phase)
+    normal = dataset.kernel_kind == "normal"
+    mode = (
+        (0 if dataset.mode == "time" else 1)
+        if normal
+        else (0 if dataset.mode == "dqdv" else 1)
+    )
+    selected_phase = 2 if normal else _selected_phase_code(dataset.selected_phase)
+    display_mode = {"consecutive": 0, "per_cycle": 1, "overlap_mirror": 2}.get(
+        str(dataset.settings.get("display_mode") or "consecutive"),
+        0,
+    )
+    time_unit = {"s": 0, "min": 1, "h": 2}.get(
+        str(dataset.settings.get("time_unit") or "min"),
+        1,
+    )
+    cell_count = dataset.cell_count
     frame = bytearray(
         struct.pack(
-            "<IHBBBBII",
+            "<IHBBBBBBII",
             MAGIC,
             VERSION,
+            1 if normal else 0,
             mode,
             selected_phase,
             int(dataset.absolute_discharge),
-            0,
+            display_mode,
+            time_unit,
             dataset.smoothing_window,
-            len(dataset.cells),
+            cell_count,
         )
     )
     numeric_bytes = 0
-    for cell in dataset.cells:
-        frame.extend(struct.pack("<I", len(cell.segments)))
-        for segment in cell.segments:
-            capacity = np.ascontiguousarray(segment.capacity, dtype="<f8")
-            voltage = np.ascontiguousarray(segment.voltage, dtype="<f8")
-            explicit = np.ascontiguousarray(segment.explicit_cv, dtype=np.uint8)
-            if not (len(capacity) == len(voltage) == len(explicit)):
-                raise RuntimeError("derivative segment buffers are not aligned")
-            frame.extend(struct.pack("<IB3x", len(capacity), _phase_code(segment.phase)))
+    if normal:
+        if dataset.normal_cells is None:
+            raise RuntimeError("normal dataset is missing normal numeric inputs")
+        for cell in dataset.normal_cells:
+            cycles = np.ascontiguousarray(cell.cycles, dtype="<i8")
+            time_s = np.ascontiguousarray(cell.time_s, dtype="<f8")
+            capacity = np.ascontiguousarray(cell.capacity, dtype="<f8")
+            voltage = np.ascontiguousarray(cell.voltage, dtype="<f8")
+            phases = np.ascontiguousarray(cell.phases, dtype=np.uint8)
+            count = len(cycles)
+            if not (
+                len(time_s) == len(capacity) == len(voltage) == len(phases) == count
+            ):
+                raise RuntimeError("normal projection buffers are not aligned")
+            frame.extend(struct.pack("<I", count))
+            frame.extend(cycles.tobytes(order="C"))
+            frame.extend(time_s.tobytes(order="C"))
             frame.extend(capacity.tobytes(order="C"))
             frame.extend(voltage.tobytes(order="C"))
-            frame.extend(explicit.tobytes(order="C"))
-            numeric_bytes += capacity.nbytes + voltage.nbytes + explicit.nbytes
+            frame.extend(phases.tobytes(order="C"))
+            numeric_bytes += (
+                cycles.nbytes
+                + time_s.nbytes
+                + capacity.nbytes
+                + voltage.nbytes
+                + phases.nbytes
+            )
+    else:
+        for cell in dataset.cells:
+            frame.extend(struct.pack("<I", len(cell.segments)))
+            for segment in cell.segments:
+                capacity = np.ascontiguousarray(segment.capacity, dtype="<f8")
+                voltage = np.ascontiguousarray(segment.voltage, dtype="<f8")
+                explicit = np.ascontiguousarray(segment.explicit_cv, dtype=np.uint8)
+                if not (len(capacity) == len(voltage) == len(explicit)):
+                    raise RuntimeError("derivative segment buffers are not aligned")
+                frame.extend(struct.pack("<IB3x", len(capacity), _phase_code(segment.phase)))
+                frame.extend(capacity.tobytes(order="C"))
+                frame.extend(voltage.tobytes(order="C"))
+                frame.extend(explicit.tobytes(order="C"))
+                numeric_bytes += capacity.nbytes + voltage.nbytes + explicit.nbytes
     return bytes(frame), numeric_bytes, len(frame), (time.perf_counter() - started) * 1000.0
 
 
@@ -656,6 +885,67 @@ def _run_python_segment_kernel(dataset: KernelDataset) -> list[tuple[np.ndarray,
     return outputs
 
 
+def _normal_continuous_time(values: np.ndarray) -> np.ndarray:
+    raw = np.asarray(values, dtype="float64")
+    output = raw.copy()
+    if len(raw) < 2:
+        return output
+    offset = 0.0
+    for index in range(1, len(raw)):
+        difference = raw[index] - raw[index - 1]
+        if np.isfinite(difference) and difference < 0:
+            offset += raw[index - 1]
+        output[index] = raw[index] + offset
+    return output
+
+
+def _normal_display_projection(
+    cell: NormalCellInput,
+    *,
+    x_axis: str,
+    display_mode: str,
+    time_unit: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    if x_axis == "time":
+        factor = 3600.0 if time_unit == "h" else 60.0 if time_unit == "min" else 1.0
+        values = _normal_continuous_time(cell.time_s) / factor
+    else:
+        values = cell.capacity.copy()
+    if display_mode == "consecutive":
+        finite = np.flatnonzero(np.isfinite(values))
+        display = values - values[finite[0]] if len(finite) else values
+    else:
+        display = np.full(len(values), np.nan, dtype="float64")
+        for cycle in np.unique(cell.cycles):
+            for phase in (1, 2):
+                indices = np.flatnonzero(
+                    (cell.cycles == cycle)
+                    & (cell.phases == phase)
+                    & np.isfinite(values)
+                )
+                if len(indices) == 0:
+                    continue
+                reset = values[indices] - values[indices[0]]
+                if display_mode == "overlap_mirror" and phase == 2:
+                    reset = np.nanmax(reset) - reset
+                display[indices] = reset
+    return display, cell.voltage.copy()
+
+
+def _run_python_normal_kernel(dataset: KernelDataset) -> list[tuple[np.ndarray, np.ndarray]]:
+    if dataset.normal_cells is None:
+        raise RuntimeError("normal dataset is missing normal numeric inputs")
+    return [
+        _normal_display_projection(
+            cell,
+            x_axis=dataset.mode,
+            display_mode=str(dataset.settings.get("display_mode") or "consecutive"),
+            time_unit=str(dataset.settings.get("time_unit") or "min"),
+        )
+        for cell in dataset.normal_cells
+    ]
+
+
 def _flatten_rust_output(response: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, list[int]]:
     x_values: list[np.ndarray] = []
     y_values: list[np.ndarray] = []
@@ -735,13 +1025,16 @@ def _parity(
 
 
 def _run_python_reference(dataset: KernelDataset, repetitions: int) -> dict[str, Any]:
-    # Warm the same segment-boundary adapter separately from reported C0 medians.
-    _run_python_segment_kernel(dataset)
+    normal = dataset.kernel_kind == "normal"
+    run_kernel = _run_python_normal_kernel if normal else _run_python_segment_kernel
+    candidate_label = "N0" if normal else "C0"
+    # Warm the same numeric adapter separately from reported C0/N0 medians.
+    run_kernel(dataset)
     samples: list[dict[str, Any]] = []
     for _ in range(repetitions):
         started_cpu = time.process_time()
         started = time.perf_counter()
-        outputs = _run_python_segment_kernel(dataset)
+        outputs = run_kernel(dataset)
         wall_ms = (time.perf_counter() - started) * 1000.0
         cpu_seconds = time.process_time() - started_cpu
         parity_result = _parity(
@@ -750,7 +1043,7 @@ def _run_python_reference(dataset: KernelDataset, repetitions: int) -> dict[str,
         )
         samples.append(
             {
-                "candidate": "C0",
+                "candidate": candidate_label,
                 "workers": 0,
                 "isolated_kernel_wall_ms": wall_ms,
                 "complete_boundary_wall_ms": wall_ms,
@@ -777,7 +1070,9 @@ def _run_rust_candidate(
     repetitions: int,
     workers: int,
 ) -> dict[str, Any]:
-    candidate_label = {1: "C1", 2: "C2", 4: "C3"}[workers]
+    candidate_prefix = "N" if dataset.kernel_kind == "normal" else "C"
+    candidate_index = {1: 1, 2: 2, 4: 3}[workers]
+    candidate_label = f"{candidate_prefix}{candidate_index}"
     warm_samples: list[dict[str, Any]] = []
     cold_sample: dict[str, Any] | None = None
     with RustWorker(executable, workers) as worker:
@@ -833,6 +1128,141 @@ def _run_rust_candidate(
     return {"cold": cold_sample, "samples": warm_samples}
 
 
+def _run_persistent_warm_session(
+    executable: Path,
+    datasets: dict[str, KernelDataset],
+    repetitions: int,
+) -> dict[str, Any]:
+    """Measure one resident four-thread worker across mixed warm requests."""
+
+    preferred = (
+        "derivative-small-1-3-dqdv",
+        "derivative-1-all-dqdv",
+        "derivative-6-all-dqdv",
+        "normal-small-1-3-time",
+        "normal-1-all-time",
+        "normal-6-all-time",
+        "normal-6-all-capacity",
+    )
+    sequence = [datasets[name] for name in preferred if name in datasets]
+    if not sequence:
+        return {
+            "status": "NOT_RUN",
+            "reason": "no mixed derivative/ordinary datasets were available",
+            "worker_count": 4,
+        }
+
+    worker_count = 4
+    measured_rows: list[dict[str, Any]] = []
+    with RustWorker(executable, worker_count) as worker:
+        idle_memory = _windows_memory_snapshot(worker.process.pid)
+        # The first request creates the bounded Rayon pool and is deliberately
+        # outside the measured steady-state sequence.
+        pool_warmup = worker.request(sequence[0])
+        steady_memory = pool_warmup["memory_after"]
+        for dataset in sequence:
+            for repetition in range(repetitions):
+                response = worker.request(dataset)
+                rust_x, rust_y, ordering = _flatten_rust_output(response)
+                reference_x, reference_y = _flatten_python_output(dataset.reference_outputs)
+                parity_result = _parity(
+                    (reference_x, reference_y),
+                    (rust_x, rust_y),
+                    ordering_equal=ordering == list(range(dataset.cell_count)),
+                )
+                measured_rows.append(
+                    {
+                        "candidate": "P4",
+                        "suite": dataset.suite,
+                        "scenario": dataset.scenario,
+                        "kernel_kind": dataset.kernel_kind,
+                        "mode": dataset.mode,
+                        "cell_count": dataset.cell_count,
+                        "input_rows": dataset.input_rows,
+                        "repetition": repetition + 1,
+                        "worker_count": worker_count,
+                        "isolated_kernel_wall_ms": response["parallel_region_ms"],
+                        "complete_boundary_wall_ms": response["boundary_wall_ms"],
+                        "python_to_native_ms": response["python_to_native_ms"],
+                        "native_to_python_ms": response["native_to_python_ms"],
+                        "rust_kernel_ms": response["kernel_sum_ms"],
+                        "rayon_parallel_region_ms": response["parallel_region_ms"],
+                        "per_cell_kernel_ms": response["cell_kernel_ms"],
+                        "rayon_pool_init_ms": response["pool_init_ms"],
+                        "spawn_api_ms": 0.0,
+                        "spawn_to_ready_ms": 0.0,
+                        "ready_handshake_ms": 0.0,
+                        "copied_bytes": response["copied_bytes"],
+                        "output_bytes": response["output_bytes"],
+                        "effective_cores": (
+                            response["kernel_sum_ms"] / response["parallel_region_ms"]
+                            if response["parallel_region_ms"] > 0
+                            else None
+                        ),
+                        "cpu_seconds": response["cpu_seconds"],
+                        "memory_before": response["memory_before"],
+                        "memory_after": response["memory_after"],
+                        "scientific_parity": parity_result,
+                        "status": "PASS" if parity_result["equal"] else "REJECTED",
+                        "lifecycle": "persistent_warm",
+                    }
+                )
+        final_memory = (
+            measured_rows[-1].get("memory_after")
+            if measured_rows
+            else steady_memory
+        )
+
+    return {
+        "status": "PASS" if all(row["status"] == "PASS" for row in measured_rows) else "REJECTED",
+        "model": "one long-lived Rust process with one bounded Rayon pool",
+        "worker_count": worker_count,
+        "thread_bound": "Rayon pool configured with exactly four workers; no all-CPU setting",
+        "sequence": [dataset.scenario for dataset in sequence],
+        "sequence_kernel_kinds": [dataset.kernel_kind for dataset in sequence],
+        "warm_repetitions_per_request": repetitions,
+        "warm_rows": measured_rows,
+        "warm_spawn_api_ms": _range(row["spawn_api_ms"] for row in measured_rows),
+        "warm_spawn_to_ready_ms": _range(row["spawn_to_ready_ms"] for row in measured_rows),
+        "warm_pool_init_ms": _range(row["rayon_pool_init_ms"] for row in measured_rows),
+        "warm_spawn_zero": all(row["spawn_api_ms"] == 0.0 for row in measured_rows),
+        "warm_pool_init_zero": all(row["rayon_pool_init_ms"] == 0.0 for row in measured_rows),
+        "cold_lifecycle": {
+            "spawn_api_ms": worker.spawn_api_ms,
+            "spawn_to_ready_ms": worker.spawn_to_ready_ms,
+            "ready_handshake_ms": worker.ready_handshake_ms,
+            "pool_init_ms": pool_warmup["pool_init_ms"],
+        },
+        "idle_memory": idle_memory,
+        "steady_memory_after_pool_warmup": steady_memory,
+        "steady_memory_after_sequence": final_memory,
+        "small_request_summary": {
+            scenario: {
+                "median_boundary_ms": _median(
+                    row["complete_boundary_wall_ms"]
+                    for row in measured_rows
+                    if row["scenario"] == scenario
+                ),
+                "median_kernel_ms": _median(
+                    row["isolated_kernel_wall_ms"]
+                    for row in measured_rows
+                    if row["scenario"] == scenario
+                ),
+            }
+            for scenario in {
+                row["scenario"]
+                for row in measured_rows
+                if "small" in row["scenario"]
+            }
+        },
+        "small_request_rows": [
+            row
+            for row in measured_rows
+            if "small" in row["scenario"] or row["cell_count"] == 1
+        ],
+    }
+
+
 def _select_workloads(cell_ids: list[int], requested: set[str]) -> list[dict[str, Any]]:
     workloads: list[dict[str, Any]] = []
     for count in (1, 3, 6, 10):
@@ -846,6 +1276,30 @@ def _select_workloads(cell_ids: list[int], requested: set[str]) -> list[dict[str
                 "cycle_end": None,
                 "x_axis": "capacity_mah",
                 "view": "dqdv",
+                "derivative_specific": False,
+            }
+        )
+        workloads.append(
+            {
+                "scenario": f"normal-{count}-all-time",
+                "kernel_kind": "normal",
+                "cell_ids": cell_ids[:count],
+                "cycles": [],
+                "cycle_end": None,
+                "x_axis": "time",
+                "view": "voltage_current",
+                "derivative_specific": False,
+            }
+        )
+        workloads.append(
+            {
+                "scenario": f"normal-{count}-all-capacity",
+                "kernel_kind": "normal",
+                "cell_ids": cell_ids[:count],
+                "cycles": [],
+                "cycle_end": None,
+                "x_axis": "capacity_mah",
+                "view": "voltage_current",
                 "derivative_specific": False,
             }
         )
@@ -870,12 +1324,55 @@ def _select_workloads(cell_ids: list[int], requested: set[str]) -> list[dict[str
                     "view": "dqdv",
                     "derivative_specific": False,
                 },
+                {
+                    "scenario": "normal-small-1-3-time",
+                    "kernel_kind": "normal",
+                    "cell_ids": cell_ids[:1],
+                    "cycles": list(range(1, 4)),
+                    "cycle_end": 3,
+                    "x_axis": "time",
+                    "view": "voltage_current",
+                    "derivative_specific": False,
+                },
+            ]
+        )
+    if len(cell_ids) >= 11:
+        workloads.extend(
+            [
+                {
+                    "scenario": "normal-11-all-time",
+                    "kernel_kind": "normal",
+                    "cell_ids": cell_ids[:11],
+                    "cycles": [],
+                    "cycle_end": None,
+                    "x_axis": "time",
+                    "view": "voltage_current",
+                    "derivative_specific": False,
+                },
+                {
+                    "scenario": "normal-11-all-capacity",
+                    "kernel_kind": "normal",
+                    "cell_ids": cell_ids[:11],
+                    "cycles": [],
+                    "cycle_end": None,
+                    "x_axis": "capacity_mah",
+                    "view": "voltage_current",
+                    "derivative_specific": False,
+                },
             ]
         )
     if requested:
-        unknown = requested - {str(item["scenario"]) for item in workloads}
+        known = {
+            *(f"derivative-{count}-all-dqdv" for count in (1, 3, 6, 10)),
+            *(f"normal-{count}-all-time" for count in (1, 3, 6, 10, 11)),
+            *(f"normal-{count}-all-capacity" for count in (1, 3, 6, 10, 11)),
+            "derivative-1-all-dvdq",
+            "derivative-small-1-3-dqdv",
+            "normal-small-1-3-time",
+        }
+        unknown = requested - known
         if unknown:
-            raise ValueError(f"unknown derivative workload(s): {', '.join(sorted(unknown))}")
+            raise ValueError(f"unknown workload(s): {', '.join(sorted(unknown))}")
         return [item for item in workloads if item["scenario"] in requested]
     return workloads
 
@@ -925,13 +1422,15 @@ def _relative_change(reference: float | None, candidate: float | None) -> float 
 
 def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
     rows = item["rows"]
+    candidate_prefix = "N" if item.get("kernel_kind") == "normal" else "C"
+    candidates = tuple(f"{candidate_prefix}{index}" for index in range(4))
     medians = {
         candidate: _median(
             row.get("isolated_kernel_wall_ms")
             for row in rows
             if row.get("candidate") == candidate
         )
-        for candidate in ("C0", "C1", "C2", "C3")
+        for candidate in candidates
     }
     boundary_medians = {
         candidate: _median(
@@ -939,7 +1438,7 @@ def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
             for row in rows
             if row.get("candidate") == candidate
         )
-        for candidate in ("C0", "C1", "C2", "C3")
+        for candidate in candidates
     }
     return {
         "candidate_kernel_medians_ms": medians,
@@ -949,16 +1448,28 @@ def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
                 for row in rows
                 if row.get("candidate") == candidate
             )
-            for candidate in ("C0", "C1", "C2", "C3")
+            for candidate in candidates
         },
         "candidate_boundary_medians_ms": boundary_medians,
-        "sequential_native_change_pct": _relative_change(medians["C0"], medians["C1"]),
-        "rayon_2_change_vs_c1_pct": _relative_change(medians["C1"], medians["C2"]),
-        "rayon_4_change_vs_c1_pct": _relative_change(medians["C1"], medians["C3"]),
+        "sequential_native_change_pct": _relative_change(
+            medians[f"{candidate_prefix}0"], medians[f"{candidate_prefix}1"]
+        ),
+        "rayon_2_change_vs_n1_pct": _relative_change(
+            medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}2"]
+        ),
+        "rayon_4_change_vs_n1_pct": _relative_change(
+            medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}3"]
+        ),
         "decisions": {
-            "sequential_native": _decision(medians["C0"], medians["C1"]),
-            "rayon_2": _decision(medians["C1"], medians["C2"]),
-            "rayon_4": _decision(medians["C1"], medians["C3"]),
+            "sequential_native": _decision(
+                medians[f"{candidate_prefix}0"], medians[f"{candidate_prefix}1"]
+            ),
+            "rayon_2": _decision(
+                medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}2"]
+            ),
+            "rayon_4": _decision(
+                medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}3"]
+            ),
         },
         "backend_context_median_ms": item.get("backend_context_median_ms"),
         "scientific_status": "PASS" if all(row["status"] == "PASS" for row in rows) else "REJECTED",
@@ -973,12 +1484,19 @@ def _profile_suite(
     executable: Path,
     repetitions: int,
     requested: set[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     workloads = _select_workloads(cell_ids, requested)
     results: list[dict[str, Any]] = []
+    datasets: dict[str, KernelDataset] = {}
     for workload in workloads:
         print(f"profiling {suite}/{workload['scenario']}", flush=True)
-        dataset = _build_dataset(env, base, workload, suite, repetitions)
+        dataset_builder = (
+            _build_normal_dataset
+            if workload.get("kernel_kind") == "normal"
+            else _build_dataset
+        )
+        dataset = dataset_builder(env, base, workload, suite, repetitions)
+        datasets[dataset.scenario] = dataset
         python_reference = _run_python_reference(dataset, repetitions)
         rows = python_reference["samples"]
         lifecycle: dict[str, Any] = {}
@@ -991,15 +1509,22 @@ def _profile_suite(
                 workers,
             )
             rows.extend(candidate["samples"])
-            lifecycle[{1: "C1", 2: "C2", 4: "C3"}[workers]] = candidate["cold"]
+            prefix = "N" if dataset.kernel_kind == "normal" else "C"
+            candidate_index = {1: 1, 2: 2, 4: 3}[workers]
+            lifecycle[f"{prefix}{candidate_index}"] = candidate["cold"]
         item = {
             "suite": suite,
             "scenario": dataset.scenario,
+            "kernel_kind": dataset.kernel_kind,
             "cell_count": dataset.cell_count,
-            "segment_count": sum(len(cell.segments) for cell in dataset.cells),
-            "input_rows": sum(len(cell.capacity) for cell in dataset.cells),
+            "segment_count": (
+                sum(len(cell.segments) for cell in dataset.cells)
+                if dataset.kernel_kind == "derivative"
+                else dataset.cell_count
+            ),
+            "input_rows": dataset.input_rows,
             "owner_buffer_prepare_ms": dataset.owner_buffer_prepare_ms,
-            "owner_buffer_prepare_note": "status classification, contiguous segment scan, finite flags and numeric buffer materialization; measured once outside C0-C3 kernel timers",
+            "owner_buffer_prepare_note": "owner-side filtering, phase/capacity resolution, contiguous numeric buffer materialization and voltage selection; measured once outside the C0-C3 or N0-N3 kernel timers",
             "mode": dataset.mode,
             "selected_phase": dataset.selected_phase,
             "smoothing_window": dataset.smoothing_window,
@@ -1012,7 +1537,7 @@ def _profile_suite(
         }
         item.update(_summarize_workload(item))
         results.append(item)
-    return results
+    return results, _run_persistent_warm_session(executable, datasets, repetitions)
 
 
 def main() -> int:
@@ -1052,13 +1577,13 @@ def main() -> int:
     requested = set(args.scenario or [])
     saved_data_root = os.environ.get("CELLXPLORER_DATA")
     suites: list[dict[str, Any]] = []
+    persistent_sessions: list[dict[str, Any]] = []
     skipped: dict[str, str] = {}
     try:
         with GoldenFixtureEnvironment.create() as env:
             clone_ids = clone_golden_source_cells(env, 10)
             selected = [101, *clone_ids[:9]]
-            suites.extend(
-                _profile_suite(
+            fixture_items, fixture_persistent = _profile_suite(
                     env,
                     fixture_base,
                     selected,
@@ -1067,7 +1592,9 @@ def main() -> int:
                     args.repetitions,
                     requested,
                 )
-            )
+            fixture_persistent["suite"] = "golden_fixture"
+            suites.extend(fixture_items)
+            persistent_sessions.append(fixture_persistent)
         if not args.fixture_only:
             app_root = args.app_data_root.resolve()
             if not (app_root / "cellxplorer.db").is_file():
@@ -1076,7 +1603,7 @@ def main() -> int:
                 try:
                     with create_application_environment(app_root) as env:
                         app_base, app_cells, metadata = discover_application_dataset(env)
-                        app_items = _profile_suite(
+                        app_items, app_persistent = _profile_suite(
                             env,
                             app_base,
                             app_cells,
@@ -1092,6 +1619,8 @@ def main() -> int:
                                 "benchmark_cell_count": metadata.get("benchmark_cell_count"),
                             }
                         suites.extend(app_items)
+                        app_persistent["suite"] = "application_performance_batch"
+                        persistent_sessions.append(app_persistent)
                 except (FileNotFoundError, RuntimeError, OSError) as exc:
                     skipped["application"] = f"NOT RUN: {type(exc).__name__}: {exc}"
     finally:
@@ -1099,29 +1628,44 @@ def main() -> int:
 
     if not suites:
         raise RuntimeError("050.10 produced no workload evidence")
+    scientific_status = all(item["scientific_status"] == "PASS" for item in suites)
+    persistent_status = all(
+        session.get("status") == "PASS" for session in persistent_sessions
+    )
     report = {
         "spec": "050.10",
-        "status": "PASS" if all(item["scientific_status"] == "PASS" for item in suites) else "REJECTED",
+        "status": "PASS" if scientific_status and persistent_status else "REJECTED",
         "kernel": {
-            "name": "derivative rolling + gradient + ratio/filter + postprocess",
-            "source_evidence": "050.9 derivative stage and its recorded substages",
-            "algorithm": "same centered rolling, NumPy-gradient-equivalent finite differences, ratio thresholds, percentile scale filter, CV mask and discharge sign rule",
-            "python_reference_boundary": "C0 consumes the same already-segmented numeric buffers as C1/C2/C3; the current engine output is the parity oracle",
+            "derivative": {
+                "name": "rolling + gradient + ratio/filter + postprocess",
+                "source_evidence": "050.9 derivative stage and its recorded substages",
+                "algorithm": "same centered rolling, NumPy-gradient-equivalent finite differences, ratio thresholds, percentile scale filter, CV mask and discharge sign rule",
+                "python_reference_boundary": "C0 consumes the same already-segmented numeric buffers as C1/C2/C3; the current engine output is the parity oracle",
+            },
+            "normal": {
+                "name": "continuous-time and ordinary display-coordinate projection",
+                "source_evidence": "050.9 continuous_time_phase_capacity and display_coordinate stages",
+                "algorithm": "same cumulative Time reset handling, time-unit conversion, capacity-axis selection, consecutive/per-cycle/overlap-mirror display reset and resolved voltage output",
+                "python_reference_boundary": "N0 consumes the same owner-resolved per-Cell cycles/phases/time/capacity/voltage arrays as N1/N2/N3; the current display-coordinate helper is the parity oracle",
+                "scope_note": "downsampling, current sibling output, provenance and response assembly remain Python-owned and are outside this smallest numeric projection subset",
+            },
             "production_integration": "NOT RUN / prohibited by child scope",
         },
         "binding": build,
         "workloads": suites,
+        "persistent_warm_sessions": persistent_sessions,
         "skipped_suites": skipped,
         "native_settings": native_thread_settings(),
         "boundary_contract": {
             "python_owner": "request/ORM/session lifecycle, source/protocol/provenance resolution, cache identity and result assembly",
-            "rust_owner": "numeric derivative kernel over contiguous per-segment float64/u8 buffers",
+            "rust_owner": "numeric derivative kernel over contiguous per-segment buffers and ordinary Time/Capacity projection over contiguous per-Cell buffers",
             "input_copy_status": "copied into a length-prefixed subprocess frame; borrowed zero-copy input is not claimed",
             "output_conversion": "NumPy views over response bytes; output conversion is recorded separately",
-            "owner_preparation": "status classification, contiguous segment scan, finite flags and buffer materialization measured once outside C0-C3 kernel timers",
+            "owner_preparation": "request/source/cache ownership, filtering, phase/capacity preparation, voltage selection and compact numeric buffer materialization measured once outside candidate kernel timers",
             "workers": [1, 2, 4],
             "rayon_scheduling": "not separately measured; per-Cell elapsed times, aggregate kernel work and parallel_region_ms are retained",
             "nested_native_threading": "Rayon only in the isolated worker; Python/native settings are recorded above",
+            "persistent_warm_model": "one long-lived Rust process with one bounded four-worker Rayon pool; see persistent_warm_sessions",
         },
         "scientific_gate": {
             "relative_tolerance": RELATIVE_TOLERANCE,
@@ -1131,10 +1675,10 @@ def main() -> int:
             "provenance": "not part of numeric kernel output; Python ownership retained",
         },
         "decision_summary": {
-            "sequential_native": "see per-workload C1 vs C0; choose only if boundary and build costs remain acceptable",
-            "rayon": "see per-workload C2/C3 vs C1; small-work crossing cost is intentionally included",
-            "cold_warm": "cold first call and warm medians are separate; Rayon pool initialization is reported only on the first call",
-            "050.11_handoff": "select at most the smallest independently useful native mechanism after reviewing C1/C2/C3, boundary, lifecycle and parity evidence",
+            "sequential_native": "see derivative C1 vs C0 and ordinary N1 vs N0; choose only if boundary and build costs remain acceptable",
+            "rayon": "see derivative C2/C3 vs C1 and ordinary N2/N3 vs N1; small-work crossing cost is intentionally included",
+            "cold_warm": "cold first call and warm medians are separate; persistent_warm_sessions proves later mixed requests pay zero spawn and pool initialization",
+            "050.11_handoff": "select at most the smallest independently useful native mechanism after reviewing C/N candidates, boundary, lifecycle and parity evidence",
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
