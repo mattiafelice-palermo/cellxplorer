@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 import threading
@@ -87,6 +88,93 @@ class RawCacheLayoutTests(unittest.TestCase):
         self.assertEqual(index["timestamp_start"], "2026-01-01T00:00:00")
         self.assertEqual(index["timestamp_end"], "2026-01-01T00:00:11")
         self.assertEqual(cache.raw_layout_status(self.FILE_HASH, self.PARSER), "ready")
+        self.assertTrue(cache.raw_detail_index_path(self.FILE_HASH, self.PARSER).exists())
+        self.assertEqual(cache.raw_detail_status(self.FILE_HASH, self.PARSER), "ready")
+
+    def test_detail_index_maps_steps_to_union_of_row_groups_and_filters_exactly(self) -> None:
+        frame = canonical_frame()
+        frame["step_index"] = [1, 1, 2, 2, 2, 3, 3, 1, 4, 4, 4, 4]
+        self._indexed(frame)
+
+        detail = cache.load_raw_detail(
+            self.FILE_HASH,
+            self.PARSER,
+            step_indices=[2],
+            columns=["record_index", "cycle", "step_index", "voltage_v"],
+        )
+        expected = frame.loc[frame["step_index"] == 2, [
+            "record_index", "cycle", "step_index", "voltage_v"
+        ]].reset_index(drop=True)
+        pd.testing.assert_frame_equal(detail, expected, check_dtype=False)
+
+        diagnostics = cache.RawDetailReadDiagnostics()
+        filtered = cache.load_raw_detail(
+            self.FILE_HASH,
+            self.PARSER,
+            step_indices=[1, 4],
+            source_cycles=[4],
+            columns=["record_index", "cycle", "step_index"],
+            diagnostics=diagnostics,
+        )
+        expected_filtered = frame.loc[
+            frame["step_index"].isin([1, 4]) & frame["cycle"].eq(4),
+            ["record_index", "cycle", "step_index"],
+        ].reset_index(drop=True)
+        pd.testing.assert_frame_equal(filtered, expected_filtered, check_dtype=False)
+        self.assertEqual(diagnostics.status, "ready")
+        self.assertEqual(diagnostics.row_groups_read, (1, 2))
+        self.assertEqual(diagnostics.rows_read, 8)
+        self.assertEqual(diagnostics.rows_returned, len(expected_filtered))
+
+    def test_detail_index_rejects_malformed_mapping_and_uses_safe_fallback(self) -> None:
+        self._indexed()
+        detail_path = cache.raw_detail_index_path(self.FILE_HASH, self.PARSER)
+        detail = json.loads(detail_path.read_text(encoding="utf-8"))
+        detail["step_index_to_row_groups"]["1"] = [99]
+        detail_path.write_text(json.dumps(detail), encoding="utf-8")
+
+        diagnostics = cache.RawDetailReadDiagnostics()
+        self.assertIsNone(
+            cache.load_raw_detail(
+                self.FILE_HASH,
+                self.PARSER,
+                step_indices=[1],
+                columns=["record_index"],
+                diagnostics=diagnostics,
+            )
+        )
+        self.assertEqual(diagnostics.status, "invalid_index")
+
+    def test_existing_layout_prepares_detail_index_from_cache_bytes_only(self) -> None:
+        frame = canonical_frame()
+        self._indexed(frame)
+        detail_path = cache.raw_detail_index_path(self.FILE_HASH, self.PARSER)
+        detail_path.unlink()
+        with patch.object(parsing, "parse_timeseries", side_effect=AssertionError("source opened")):
+            result = cache.prepare_raw_detail_index(self.FILE_HASH, self.PARSER)
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["prepared"])
+        self.assertTrue(detail_path.exists())
+        selected = cache.load_raw_detail(
+            self.FILE_HASH,
+            self.PARSER,
+            step_indices=[1],
+            columns=["record_index"],
+        )
+        self.assertEqual(len(selected), len(frame))
+
+    def test_optional_detail_publication_does_not_block_valid_legacy_raw(self) -> None:
+        frame = canonical_frame().drop(columns=["step_index"])
+        index = self._indexed(frame)
+
+        self.assertEqual(index["raw_row_count"], len(frame))
+        self.assertTrue(cache.raw_layout_is_current(self.FILE_HASH, self.PARSER))
+        self.assertEqual(cache.raw_detail_status(self.FILE_HASH, self.PARSER), "detail_unavailable")
+        pd.testing.assert_frame_equal(
+            cache.load_raw(self.FILE_HASH, self.PARSER),
+            frame,
+            check_dtype=False,
+        )
 
     def test_new_cache_build_writes_indexed_raw_without_changing_calc_content(self) -> None:
         frame = canonical_frame()
@@ -313,7 +401,7 @@ class RawCacheLayoutTests(unittest.TestCase):
         ):
             inventory = cache_maintenance.inventory(fake_db)
         scientific_dir = inventory["categories"]["scientific"]
-        self.assertEqual(scientific_dir["files"], 2)
+        self.assertEqual(scientific_dir["files"], 3)
         self.assertEqual(
             scientific_dir["bytes"],
             sum(path.stat().st_size for path in cache.raw_path(self.FILE_HASH, self.PARSER).parent.iterdir()),

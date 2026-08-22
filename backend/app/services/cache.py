@@ -46,6 +46,11 @@ RAW_CACHE_LAYOUT_VERSION = 1
 # not a scientific constant and not part of any analysis cache key.
 RAW_CACHE_ROW_GROUP_SIZE = 4096
 
+# Step-addressable access metadata is deliberately versioned separately from
+# the canonical raw layout.  It adds no scientific meaning and therefore must
+# not invalidate the existing raw or prepared Time/Capacity generations.
+RAW_DETAIL_INDEX_VERSION = 1
+
 # This is a regenerable prepared-derived representation generation, not a
 # scientific calculation version.  Its identity is validated against the
 # parser, CALC_VERSION, canonical raw contract and active raw physical layout.
@@ -61,6 +66,21 @@ class RawCycleReadDiagnostics:
     """Optional deterministic evidence for one selective raw read."""
 
     status: str = "uninitialized"
+    requested_cycles: tuple[int, ...] = ()
+    row_groups_read: tuple[int, ...] = ()
+    row_groups_total: int = 0
+    rows_read: int = 0
+    rows_returned: int = 0
+    columns_read: tuple[str, ...] = ()
+    columns_returned: tuple[str, ...] = ()
+
+
+@dataclass
+class RawDetailReadDiagnostics:
+    """Optional deterministic evidence for one selective step read."""
+
+    status: str = "uninitialized"
+    requested_steps: tuple[int, ...] = ()
     requested_cycles: tuple[int, ...] = ()
     row_groups_read: tuple[int, ...] = ()
     row_groups_total: int = 0
@@ -394,6 +414,17 @@ def raw_index_path(
 ) -> Path:
     return _dir(file_hash) / (
         f"raw_index__p{_safe(parser_version)}__l{int(layout_version)}.json"
+    )
+
+
+def raw_detail_index_path(
+    file_hash: str,
+    parser_version: str = parsing.PARSER_VERSION,
+    detail_version: int = RAW_DETAIL_INDEX_VERSION,
+) -> Path:
+    """Return the optional step-to-row-group access sidecar path."""
+    return _dir(file_hash) / (
+        f"raw_detail_index__p{_safe(parser_version)}__d{int(detail_version)}.json"
     )
 
 
@@ -778,6 +809,260 @@ def _validate_raw_layout_index(
     normalized["observed_source_cycles"] = observed_cycles
     normalized["cycle_to_row_groups"] = cycle_mapping
     return normalized
+
+
+def _coerce_index_step(value: object, name: str) -> int:
+    if isinstance(value, bool):
+        raise RawLayoutError(f"raw detail index {name} contains a boolean step index")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    raise RawLayoutError(f"raw detail index {name} contains a non-integer step index")
+
+
+def _build_raw_detail_index(
+    frame: pd.DataFrame,
+    parquet_path: Path,
+    parser_version: str,
+    raw_layout: dict[str, Any],
+) -> dict[str, Any]:
+    """Build exact step-to-row-group metadata from a validated raw boundary.
+
+    ``frame`` may contain only ``step_index`` when an existing raw cache is
+    upgraded.  The footer and the already validated raw-layout sidecar remain
+    the source of physical identity; no original source file is consulted.
+    """
+    if "step_index" not in frame.columns:
+        raise RawLayoutError("raw cache cannot be detail-indexed without step_index")
+    if not parquet_path.is_file():
+        raise RawLayoutError("cannot detail-index a raw cache that is not present")
+
+    row_group_counts = [
+        int(item["row_count"])
+        for item in raw_layout.get("row_groups", [])
+    ]
+    if len(row_group_counts) != int(raw_layout.get("raw_row_group_count", -1)):
+        raise RawLayoutError("raw layout does not describe every row group")
+    if len(frame) != int(raw_layout.get("raw_row_count", -1)):
+        raise RawLayoutError("step-index metadata does not cover the raw row count")
+
+    numeric = pd.to_numeric(frame["step_index"], errors="coerce")
+    present = frame["step_index"].notna().to_numpy()
+    malformed = present & numeric.isna().to_numpy()
+    if malformed.any():
+        raise RawLayoutError("raw step_index metadata contains non-numeric values")
+    values = numeric.to_numpy(dtype="float64")
+    finite = present & np.isfinite(np.where(present, values, 0.0))
+    if not np.array_equal(finite, present):
+        raise RawLayoutError("raw step_index metadata contains non-finite values")
+    rounded = np.round(values)
+    if bool((present & (np.abs(values - rounded) > 1e-6)).any()):
+        raise RawLayoutError("raw step_index metadata contains non-integer values")
+
+    mapping: dict[str, list[int]] = {}
+    cursor = 0
+    for group, row_count in enumerate(row_group_counts):
+        group_values = rounded[cursor : cursor + row_count]
+        group_present = present[cursor : cursor + row_count]
+        labels = sorted({int(value) for value in group_values[group_present]})
+        for step_index in labels:
+            mapping.setdefault(str(step_index), []).append(group)
+        cursor += row_count
+    if cursor != len(frame):
+        raise RawLayoutError("raw detail row groups do not cover the source frame")
+
+    column_names = list(raw_layout.get("raw_column_names") or [])
+    raw_file_size = parquet_path.stat().st_size
+    return {
+        "detail_index_version": RAW_DETAIL_INDEX_VERSION,
+        "parser_version": parser_version,
+        "canonical_raw_version": canonical_cycling.CANONICAL_RAW_VERSION,
+        "raw_layout_version": RAW_CACHE_LAYOUT_VERSION,
+        "raw_shape_fingerprint": _raw_shape_fingerprint(
+            raw_row_count=len(frame),
+            raw_column_names=column_names,
+            row_group_counts=row_group_counts,
+            raw_file_size=raw_file_size,
+        ),
+        "raw_row_count": len(frame),
+        "raw_row_group_count": len(row_group_counts),
+        "step_index_to_row_groups": mapping,
+    }
+
+
+def _validate_raw_detail_index(
+    index: object,
+    parquet_path: Path,
+    parser_version: str,
+    raw_layout: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate detail metadata against the already validated raw layout."""
+    if not isinstance(index, dict):
+        raise RawLayoutError("raw detail index is not a JSON object")
+    if index.get("detail_index_version") != RAW_DETAIL_INDEX_VERSION:
+        raise RawLayoutError("raw detail index version is not current")
+    if index.get("parser_version") != parser_version:
+        raise RawLayoutError("raw detail index parser identity does not match")
+    if index.get("canonical_raw_version") != canonical_cycling.CANONICAL_RAW_VERSION:
+        raise RawLayoutError("raw detail index canonical version does not match")
+    if index.get("raw_layout_version") != RAW_CACHE_LAYOUT_VERSION:
+        raise RawLayoutError("raw detail index layout version does not match")
+    try:
+        raw_row_count = int(index["raw_row_count"])
+        raw_row_group_count = int(index["raw_row_group_count"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RawLayoutError("raw detail index has invalid raw metadata") from exc
+    if (
+        raw_row_count != int(raw_layout["raw_row_count"])
+        or raw_row_group_count != int(raw_layout["raw_row_group_count"])
+        or index.get("raw_shape_fingerprint") != raw_layout.get("raw_shape_fingerprint")
+    ):
+        raise RawLayoutError("raw detail index does not describe the active raw layout")
+
+    mapping_value = index.get("step_index_to_row_groups")
+    if not isinstance(mapping_value, dict):
+        raise RawLayoutError("raw detail index has invalid step mapping")
+    mapping: dict[int, list[int]] = {}
+    for raw_step, raw_groups in mapping_value.items():
+        if not isinstance(raw_step, str):
+            raise RawLayoutError("raw detail index step mapping has a non-string key")
+        try:
+            step_index = int(raw_step)
+        except (TypeError, ValueError) as exc:
+            raise RawLayoutError("raw detail index step mapping has an invalid key") from exc
+        if str(step_index) != raw_step or not isinstance(raw_groups, list):
+            raise RawLayoutError("raw detail index step mapping is malformed")
+        groups = [_coerce_index_cycle(group, f"step_index_to_row_groups[{raw_step}]") for group in raw_groups]
+        if groups != sorted(set(groups)):
+            raise RawLayoutError("raw detail index step groups are not sorted")
+        if any(group < 0 or group >= raw_row_group_count for group in groups):
+            raise RawLayoutError("raw detail index references an unknown row group")
+        mapping[step_index] = groups
+    if not parquet_path.is_file():
+        raise RawLayoutError("raw cache disappeared while loading its detail index")
+    normalized = dict(index)
+    normalized["raw_row_count"] = raw_row_count
+    normalized["raw_row_group_count"] = raw_row_group_count
+    normalized["step_index_to_row_groups"] = mapping
+    return normalized
+
+
+def _load_raw_detail_index_unlocked(
+    file_hash: str,
+    parser_version: str,
+) -> dict[str, Any]:
+    parquet_path = raw_path(file_hash, parser_version)
+    detail_path = raw_detail_index_path(file_hash, parser_version)
+    if not parquet_path.is_file():
+        raise RawLayoutError("raw cache is missing")
+    raw_layout = _load_raw_layout_index_unlocked(file_hash, parser_version)
+    if not detail_path.is_file():
+        raise RawLayoutError("raw cache has no current detail index")
+    try:
+        with detail_path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RawLayoutError("raw detail index is not readable JSON") from exc
+    return _validate_raw_detail_index(value, parquet_path, parser_version, raw_layout)
+
+
+def raw_detail_status(file_hash: str, parser_version: str) -> str:
+    """Return ``ready``, ``missing``, ``layout_unavailable`` or ``invalid``."""
+    _wait_for_pending(file_hash)
+    with _raw_layout_io_lock:
+        if not raw_path(file_hash, parser_version).is_file():
+            return "missing"
+        if not raw_index_path(file_hash, parser_version).is_file():
+            return "layout_unavailable"
+        if not raw_detail_index_path(file_hash, parser_version).is_file():
+            return "detail_unavailable"
+        try:
+            _load_raw_detail_index_unlocked(file_hash, parser_version)
+        except RawLayoutError:
+            return "invalid"
+        return "ready"
+
+
+def raw_detail_is_current(file_hash: str, parser_version: str) -> bool:
+    return raw_detail_status(file_hash, parser_version) == "ready"
+
+
+def try_load_raw_detail_index(
+    file_hash: str,
+    parser_version: str,
+) -> dict[str, Any] | None:
+    """Load detail metadata without waiting for a background conversion."""
+    _wait_for_pending(file_hash)
+    with _raw_layout_access(wait=False) as acquired:
+        if not acquired:
+            return None
+        try:
+            return _load_raw_detail_index_unlocked(file_hash, parser_version)
+        except RawLayoutError:
+            return None
+
+
+def load_raw_detail_index(
+    file_hash: str,
+    parser_version: str,
+) -> dict[str, Any] | None:
+    """Load and validate the optional step-addressable sidecar."""
+    _wait_for_pending(file_hash)
+    with _raw_layout_io_lock:
+        try:
+            return _load_raw_detail_index_unlocked(file_hash, parser_version)
+        except RawLayoutError:
+            return None
+
+
+def prepare_raw_detail_index(file_hash: str, parser_version: str) -> dict[str, Any]:
+    """Prepare step metadata from existing raw/layout cache bytes only."""
+    _wait_for_pending(file_hash)
+    with protect_hash_from_cleanup(file_hash):
+        with _raw_layout_io_lock:
+            raw_target = raw_path(file_hash, parser_version)
+            if not raw_target.is_file():
+                return {"status": "missing", "prepared": False}
+            try:
+                raw_layout = _load_raw_layout_index_unlocked(file_hash, parser_version)
+            except RawLayoutError:
+                return {"status": "layout_unavailable", "prepared": False}
+            detail_target = raw_detail_index_path(file_hash, parser_version)
+            try:
+                current = _load_raw_detail_index_unlocked(file_hash, parser_version)
+            except RawLayoutError:
+                current = None
+            if current is not None:
+                return {
+                    "status": "ready",
+                    "prepared": False,
+                    "rows": raw_layout["raw_row_count"],
+                    "row_groups": raw_layout["raw_row_group_count"],
+                }
+            import pyarrow.parquet as pq
+
+            schema = pq.read_schema(raw_target)
+            if "step_index" not in schema.names:
+                return {"status": "unavailable", "prepared": False}
+            steps = pq.ParquetFile(raw_target).read(columns=["step_index"]).to_pandas()
+            index = _build_raw_detail_index(
+                steps,
+                raw_target,
+                parser_version,
+                raw_layout,
+            )
+            detail_tmp = _write_index_temp(index, detail_target)
+            try:
+                os.replace(detail_tmp, detail_target)
+            finally:
+                detail_tmp.unlink(missing_ok=True)
+            return {
+                "status": "ready",
+                "prepared": True,
+                "rows": raw_layout["raw_row_count"],
+                "row_groups": raw_layout["raw_row_group_count"],
+            }
 
 
 def _load_raw_layout_index_unlocked(
@@ -1407,6 +1692,157 @@ def load_raw_cycles(
         return result
 
 
+def _normalize_requested_steps(step_indices: Iterable[object]) -> tuple[int, ...]:
+    values: list[int] = []
+    seen: set[int] = set()
+    for value in step_indices:
+        if isinstance(value, bool):
+            raise ValueError("step indices must be finite integer-like values")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("step indices must be finite integer-like values") from exc
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError("step indices must be finite integer-like values")
+        step_index = int(numeric)
+        if step_index not in seen:
+            values.append(step_index)
+            seen.add(step_index)
+    return tuple(values)
+
+
+def load_raw_detail(
+    file_hash: str,
+    parser_version: str,
+    *,
+    step_indices: Iterable[object],
+    columns: Iterable[str],
+    source_cycles: Iterable[object] | None = None,
+    diagnostics: RawDetailReadDiagnostics | None = None,
+    wait_for_index: bool = False,
+) -> pd.DataFrame | None:
+    """Load exact raw executions for selected canonical step indices.
+
+    The detail index chooses a union of Parquet row groups; the loaded rows
+    are filtered again by exact step/cycle identity.  A missing, stale, busy
+    or malformed sidecar returns ``None`` so callers can use the complete
+    legacy raw path without waiting for metadata preparation.
+    """
+    try:
+        requested_steps = _normalize_requested_steps(step_indices)
+        requested_cycles = (
+            _normalize_requested_cycles(source_cycles)
+            if source_cycles is not None
+            else None
+        )
+    except ValueError:
+        if diagnostics is not None:
+            diagnostics.status = "invalid_request"
+        raise
+    requested_columns = list(dict.fromkeys(columns))
+    if not all(isinstance(column, str) for column in requested_columns):
+        if diagnostics is not None:
+            diagnostics.status = "invalid_request"
+        raise ValueError("raw detail columns must be strings")
+    if diagnostics is not None:
+        diagnostics.requested_steps = requested_steps
+        diagnostics.requested_cycles = requested_cycles or ()
+        diagnostics.columns_returned = tuple(requested_columns)
+
+    _wait_for_pending(file_hash)
+    parquet_path = raw_path(file_hash, parser_version)
+    with _raw_layout_access(wait=wait_for_index) as acquired:
+        if not acquired:
+            if diagnostics is not None:
+                diagnostics.status = "layout_preparing"
+            return None
+        if not parquet_path.is_file():
+            if diagnostics is not None:
+                diagnostics.status = "missing"
+            return None
+        try:
+            index = _load_raw_detail_index_unlocked(file_hash, parser_version)
+        except RawLayoutError:
+            if diagnostics is not None:
+                status = raw_detail_status(file_hash, parser_version)
+                diagnostics.status = (
+                    "layout_unavailable"
+                    if status in {"layout_unavailable", "detail_unavailable"}
+                    else "invalid_index"
+                )
+            return None
+
+        available_columns = set(index["raw_column_names"] if "raw_column_names" in index else [])
+        if not available_columns:
+            raw_layout = _load_raw_layout_index_unlocked(file_hash, parser_version)
+            available_columns = set(raw_layout["raw_column_names"])
+        if any(column not in available_columns for column in requested_columns):
+            if diagnostics is not None:
+                diagnostics.status = "columns_unavailable"
+            return None
+        read_columns = list(requested_columns)
+        if "step_index" not in read_columns:
+            read_columns.append("step_index")
+        if requested_cycles is not None and "cycle" not in read_columns:
+            read_columns.append("cycle")
+        mapping: dict[int, list[int]] = index["step_index_to_row_groups"]
+        row_groups = sorted(
+            {group for step in requested_steps for group in mapping.get(step, [])}
+        )
+        if requested_cycles is not None:
+            raw_layout = _load_raw_layout_index_unlocked(file_hash, parser_version)
+            cycle_groups = raw_layout["cycle_to_row_groups"]
+            cycle_row_groups = {
+                group
+                for cycle in requested_cycles
+                for group in cycle_groups.get(cycle, [])
+            }
+            row_groups = [group for group in row_groups if group in cycle_row_groups]
+        row_group_counts = {
+            item["row_group"]: item["row_count"]
+            for item in _load_raw_layout_index_unlocked(file_hash, parser_version)["row_groups"]
+        }
+        if diagnostics is not None:
+            diagnostics.status = "ready"
+            diagnostics.row_groups_total = index["raw_row_group_count"]
+            diagnostics.row_groups_read = tuple(row_groups)
+            diagnostics.rows_read = sum(row_group_counts[group] for group in row_groups)
+            diagnostics.columns_read = tuple(read_columns)
+        _touch(parquet_path)
+        _touch(raw_detail_index_path(file_hash, parser_version))
+        if not row_groups:
+            result = pd.DataFrame(columns=requested_columns)
+            if diagnostics is not None:
+                diagnostics.rows_returned = 0
+            return result
+        try:
+            import pyarrow.parquet as pq
+
+            loaded = pq.ParquetFile(parquet_path).read_row_groups(
+                row_groups,
+                columns=read_columns,
+            ).to_pandas()
+        except Exception:
+            logger.warning(
+                "Could not read indexed raw detail groups for %s",
+                file_hash[:12],
+                exc_info=True,
+            )
+            if diagnostics is not None:
+                diagnostics.status = "invalid_raw"
+            return None
+
+        numeric_steps = pd.to_numeric(loaded["step_index"], errors="coerce")
+        mask = numeric_steps.isin(requested_steps)
+        if requested_cycles is not None:
+            numeric_cycles = pd.to_numeric(loaded["cycle"], errors="coerce")
+            mask &= numeric_cycles.isin(requested_cycles)
+        result = loaded.loc[mask, requested_columns].reset_index(drop=True)
+        if diagnostics is not None:
+            diagnostics.rows_returned = len(result)
+        return result
+
+
 def _write_index_temp(index: dict[str, Any], index_path: Path) -> Path:
     # Versioned index names are long enough that appending a UUID can cross
     # Windows' legacy path limit.  The directory is already the identity
@@ -1435,6 +1871,10 @@ def _publish_optimized_raw(
         raw_target.parent.name,
         parser_version,
     )
+    detail_target = raw_detail_index_path(
+        raw_target.parent.name,
+        parser_version,
+    )
     # The cache directory is `<prefix>/<hash>`, so deriving the hash from the
     # target path is safe here and keeps callers from accidentally publishing
     # an index for a different checksum.
@@ -1445,8 +1885,10 @@ def _publish_optimized_raw(
         f"{raw_target.name}.candidate-{uuid.uuid4().hex}"
     )
     index_tmp: Path | None = None
+    detail_tmp: Path | None = None
     raw_replaced = False
     index_published = False
+    detail_published = False
     with _raw_layout_io_lock:
         try:
             _write_atomic(frame, candidate)
@@ -1460,6 +1902,25 @@ def _publish_optimized_raw(
                 )
             index = _build_raw_layout_index(frame, candidate, parser_version)
             index_tmp = _write_index_temp(index, index_target)
+            try:
+                detail_index = _build_raw_detail_index(
+                    frame,
+                    candidate,
+                    parser_version,
+                    index,
+                )
+                detail_tmp = _write_index_temp(detail_index, detail_target)
+            except Exception as exc:
+                # Step-addressable access is optional performance metadata.
+                # A valid canonical raw/layout pair must still publish and
+                # remain available to the exact legacy readers when the
+                # optional sidecar cannot be generated.
+                logger.warning(
+                    "Raw detail-index publication skipped for %s: %s",
+                    raw_target.parent.name[:12],
+                    exc,
+                )
+                detail_tmp = None
 
             # An old sidecar must not survive while the new raw file is active:
             # if publication stops after os.replace, the safe state is raw with
@@ -1469,18 +1930,27 @@ def _publish_optimized_raw(
                 parser_version,
             )
             index_target.unlink(missing_ok=True)
+            detail_target.unlink(missing_ok=True)
             os.replace(candidate, raw_target)
             raw_replaced = True
             os.replace(index_tmp, index_target)
             index_published = True
             index_tmp = None
+            if detail_tmp is not None:
+                os.replace(detail_tmp, detail_target)
+                detail_published = True
+                detail_tmp = None
             return index
         finally:
             candidate.unlink(missing_ok=True)
             if index_tmp is not None:
                 index_tmp.unlink(missing_ok=True)
+            if detail_tmp is not None:
+                detail_tmp.unlink(missing_ok=True)
             if raw_replaced and not index_published:
                 index_target.unlink(missing_ok=True)
+            if raw_replaced and not detail_published:
+                detail_target.unlink(missing_ok=True)
 
 
 def prepare_raw_layout(file_hash: str, parser_version: str) -> dict[str, Any]:
@@ -1660,6 +2130,7 @@ def build(
         if not raw_was_present:
             rp.unlink(missing_ok=True)
             raw_index_path(file_hash, parser_identity).unlink(missing_ok=True)
+            raw_detail_index_path(file_hash, parser_identity).unlink(missing_ok=True)
         if not cycles_was_present:
             cp.unlink(missing_ok=True)
         raise
@@ -1736,6 +2207,7 @@ def build_write_behind(
             if not raw_was_present:
                 raw_target.unlink(missing_ok=True)
                 raw_index_path(file_hash, parser_identity).unlink(missing_ok=True)
+                raw_detail_index_path(file_hash, parser_identity).unlink(missing_ok=True)
             if not cycles_was_present:
                 cycles_target.unlink(missing_ok=True)
             logger.exception("background cache write failed for %s", file_hash)

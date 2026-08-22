@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION
 from ..models import Cell, SourceFile
-from . import cache, protocol
+from . import analysis_detail, cache, protocol, stitch
 
 ProgressCallback = Callable[[int, int, str, str], None]
 
@@ -462,6 +462,19 @@ def _matches(candidate: dict, filters: dict) -> bool:
     )
 
 
+_CHARGEABILITY_DETAIL_REQUIRED_COLUMNS = (
+    "record_index",
+    "cycle",
+    "step_index",
+    "step",
+    "time_s",
+    "current_ma",
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+)
+_CHARGEABILITY_DETAIL_OPTIONAL_COLUMNS = ("timestamp",)
+
+
 def compute(
     db: Session,
     spec: dict,
@@ -520,10 +533,10 @@ def compute(
                 and Path(source.path).exists()
             ):
                 scanner.parse_file(db, source)
-            raw = cache.load_raw(source.hash, parser_version)
             reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
             signature = str(reconstructed.get("signature") or "")
             detected = detect_candidates(reconstructed)
+            source_candidates: list[dict] = []
             for candidate in detected:
                 candidate = {
                     **candidate,
@@ -536,19 +549,42 @@ def compute(
                 }
                 cell_candidates.append(candidate)
                 all_candidates.append(candidate)
-                if candidate["matches_filters"] and raw is not None:
-                    measured = _occurrence_rows(
-                        raw,
-                        candidate,
-                        cell=cell,
-                        source=source,
-                        label=labels.get(cell.id, cell.name),
-                        nominal_capacity_mah=nominal,
-                        active_mass_mg=active_mass,
-                        electrode_area_cm2=area,
+                if candidate["matches_filters"]:
+                    source_candidates.append(candidate)
+            if source_candidates:
+                selected_steps = {
+                    int(step)
+                    for candidate in source_candidates
+                    for step in (
+                        candidate.get("step_index"),
+                        candidate.get("reference_step_index"),
                     )
-                    cell_matches.extend(measured)
-                    matches.extend(measured)
+                    if step is not None
+                }
+                ref = stitch.CachedSourceRef(source.hash, parser_version)
+                indexed = analysis_detail.load_indexed_source_raw(
+                    ref,
+                    selected_steps,
+                    required_columns=_CHARGEABILITY_DETAIL_REQUIRED_COLUMNS,
+                    optional_columns=_CHARGEABILITY_DETAIL_OPTIONAL_COLUMNS,
+                )
+                raw = indexed[0] if indexed is not None else cache.load_raw(
+                    source.hash, parser_version
+                )
+                if raw is not None:
+                    for candidate in source_candidates:
+                        measured = _occurrence_rows(
+                            raw,
+                            candidate,
+                            cell=cell,
+                            source=source,
+                            label=labels.get(cell.id, cell.name),
+                            nominal_capacity_mah=nominal,
+                            active_mass_mg=active_mass,
+                            electrode_area_cm2=area,
+                        )
+                        cell_matches.extend(measured)
+                        matches.extend(measured)
         if progress:
             progress(base + 2, total_units, cell.name, "Extracting charge curves")
         if not cell_candidates:

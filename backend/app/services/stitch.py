@@ -107,6 +107,7 @@ def _stitch_ordered(
     load_fn: Callable[[CachedSourceRef], pd.DataFrame | None],
     *,
     sort_output: bool,
+    source_cycles: dict[str, list[int]] | None = None,
 ) -> tuple[pd.DataFrame, list[dict], list[str]]:
     frames: list[pd.DataFrame] = []
     segments: list[dict] = []
@@ -128,7 +129,14 @@ def _stitch_ordered(
             skipped_segments.append(segment)
             continue
 
-        local_labels, errors = observed_local_cycles(loaded["cycle"]) if "cycle" in loaded.columns else ([], [])
+        if source_cycles is not None and file_hash in source_cycles:
+            local_labels, errors = list(source_cycles[file_hash]), []
+        else:
+            local_labels, errors = (
+                observed_local_cycles(loaded["cycle"])
+                if "cycle" in loaded.columns
+                else ([], [])
+            )
         if errors or (len(loaded) > 0 and not local_labels):
             missing.append(file_hash)
             missing_positions.append(segment)
@@ -191,4 +199,24 @@ def stitch_raw(
         ordered_sources,
         lambda ref: cache.load_raw(ref.file_hash, ref.parser_version),
         sort_output=False,
+    )
+
+
+def stitch_raw_with_loader(
+    ordered_sources: list[CachedSourceRef],
+    load_fn: Callable[[CachedSourceRef], pd.DataFrame | None],
+    *,
+    source_cycles: dict[str, list[int]] | None = None,
+) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """Stitch exact reduced source frames with full source cycle metadata.
+
+    Indexed family readers may load only selected step executions.  The raw
+    layout still knows every observed source cycle, so global continuation
+    numbering must use that metadata rather than the reduced frame's subset.
+    """
+    return _stitch_ordered(
+        ordered_sources,
+        load_fn,
+        sort_output=False,
+        source_cycles=source_cycles,
     )

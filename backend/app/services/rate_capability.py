@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..config import CALC_VERSION
 from ..models import Cell, SourceFile
-from . import cache, protocol
+from . import analysis_detail, cache, protocol, stitch
 
 ProgressCallback = Callable[[int, int, str, str], None]
 
@@ -266,6 +266,20 @@ def _phase_rows(raw: pd.DataFrame, phase: dict, cycle: int | None) -> pd.DataFra
             pd.to_numeric(selected["cycle"], errors="coerce") == cycle
         ]
     return _ordered(selected)
+
+
+_RATE_CAPABILITY_DETAIL_REQUIRED_COLUMNS = (
+    "record_index",
+    "cycle",
+    "step_index",
+    "step",
+    "time_s",
+    "voltage_v",
+    "current_ma",
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+)
+_RATE_CAPABILITY_DETAIL_OPTIONAL_COLUMNS = ("timestamp",)
 
 
 def _reached_voltage(
@@ -903,10 +917,27 @@ def compute(
                 and Path(source.path).exists()
             ):
                 scanner.parse_file(db, source)
-            raw = cache.load_raw(source.hash, parser_version)
             reconstructed = protocol.reconstruct_protocol(source.header_meta, nominal)
             pairs = build_rate_pairs(reconstructed)
             executions: list[dict] = []
+            if pairs:
+                selected_steps = {
+                    int(step_index)
+                    for pair in pairs
+                    for phase in (pair["charge"], pair["discharge"])
+                    for step_index in phase["step_indices"]
+                }
+                indexed = analysis_detail.load_indexed_source_raw(
+                    stitch.CachedSourceRef(source.hash, parser_version),
+                    selected_steps,
+                    required_columns=_RATE_CAPABILITY_DETAIL_REQUIRED_COLUMNS,
+                    optional_columns=_RATE_CAPABILITY_DETAIL_OPTIONAL_COLUMNS,
+                )
+                raw = indexed[0] if indexed is not None else cache.load_raw(
+                    source.hash, parser_version
+                )
+            else:
+                raw = None
             if raw is not None:
                 for pair in pairs:
                     executions.extend(

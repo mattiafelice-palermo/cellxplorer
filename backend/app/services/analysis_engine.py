@@ -32,6 +32,7 @@ from . import (
     cache,
     calc,
     canonical_cycling,
+    analysis_detail,
     parsing,
     protocol,
     stitch,
@@ -2184,6 +2185,21 @@ def _step_series_config(spec: dict, cells: dict[int, Cell]) -> list[dict]:
     ]
 
 
+_STEP_DETAIL_REQUIRED_COLUMNS = (
+    "record_index",
+    "cycle",
+    "step_index",
+    "step",
+    "status",
+    "time_s",
+    "voltage_v",
+    "current_ma",
+    "charge_capacity_mah",
+    "discharge_capacity_mah",
+)
+_STEP_DETAIL_OPTIONAL_COLUMNS = ("timestamp", "total_time_s")
+
+
 def compute_steps(
     db: Session,
     spec: dict,
@@ -2271,34 +2287,56 @@ def compute_steps(
             if target.get("protocol_signature")
         }
 
+        selected_by_hash: dict[str, set[int]] = {}
+        for source_file in files:
+            reconstructed = protocol_service.reconstruct_protocol(
+                source_file.header_meta, nominal
+            )
+            selected_by_hash[source_file.hash] = protocol_service.protocol_steps_for_protocol(
+                targets,
+                reconstructed,
+            )
+        steps_by_hash = {
+            file_hash: selected_by_hash.get(file_hash, set())
+            for file_hash in (source_file.hash for source_file in files)
+        }
+
         x_occurrence: list[int] = []
         x_cycle: list[int | None] = []
         x_time: list[float | None] = []
         quantities: dict[str, list] = {c: [] for c in quantity_cols}
         block_meta: list[dict] = []
-        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+        indexed_bundle = analysis_detail.load_indexed_stitched_raw(
+            refs,
+            steps_by_hash,
+            required_columns=_STEP_DETAIL_REQUIRED_COLUMNS,
+            optional_columns=_STEP_DETAIL_OPTIONAL_COLUMNS,
+        )
+        if indexed_bundle is not None:
+            raw = indexed_bundle.frame
+            _raw_segments = indexed_bundle.segments
+            _missing = indexed_bundle.missing
+            raw_start = analysis_detail.source_timestamp_origin(indexed_bundle)
+        else:
+            raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            raw_start = None
         block_frames: list[pd.DataFrame] = []
         if segment and not raw.empty:
-            raw_timestamps = (
-                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
-                if "timestamp" in raw.columns
-                else pd.Series(dtype="datetime64[ns]")
-            )
-            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+            if raw_start is None:
+                raw_timestamps = (
+                    pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                    if "timestamp" in raw.columns
+                    else pd.Series(dtype="datetime64[ns]")
+                )
+                raw_start = raw_timestamps.min() if len(raw_timestamps) else None
             for source_index, source_file in enumerate(files):
-                reconstructed = protocol_service.reconstruct_protocol(
-                    source_file.header_meta, nominal
-                )
-                selected = protocol_service.protocol_steps_for_protocol(
-                    targets, reconstructed
-                )
+                selected = selected_by_hash.get(source_file.hash, set())
                 if not selected:
                     continue
                 source_raw = raw.loc[raw["segment"] == source_index].copy()
                 if source_raw.empty:
                     continue
                 source_raw = source_raw.reset_index(drop=True)
-                source_raw["record_index"] = np.arange(len(source_raw))
                 source_blocks = step_blocks.per_block(
                     source_raw,
                     selected,
@@ -2429,6 +2467,16 @@ def _dcir_series_config(spec: dict, cells: dict[int, Cell]) -> list[dict]:
     return series
 
 
+_DCIR_DETAIL_REQUIRED_COLUMNS = (
+    "cycle",
+    "step_index",
+    "time_s",
+    "voltage_v",
+    "current_ma",
+)
+_DCIR_DETAIL_OPTIONAL_COLUMNS = ("timestamp",)
+
+
 def compute_dcir(
     db: Session,
     spec: dict,
@@ -2489,20 +2537,47 @@ def compute_dcir(
             for target in ((segment or {}).get("targets") or [])
             if isinstance(target, dict) and target.get("protocol_signature")
         }
-        raw, _raw_segments, _missing = stitch.stitch_raw(refs)
-        raw_timestamps = (
-            pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
-            if not raw.empty and "timestamp" in raw.columns
-            else pd.Series(dtype="datetime64[ns]")
-        )
-        raw_start = raw_timestamps.min() if len(raw_timestamps) else None
-        occurrence_frames: list[pd.DataFrame] = []
-        matched_target: dict | None = None
-        for source_index, source_file in enumerate(files):
+        target_by_hash: dict[str, dict | None] = {}
+        steps_by_hash: dict[str, set[int]] = {}
+        for source_file in files:
             reconstructed = protocol_service.reconstruct_protocol(
                 source_file.header_meta, nominal
             )
             target = protocol_service.protocol_target_for_protocol(targets, reconstructed)
+            target_by_hash[source_file.hash] = target
+            selected_steps: set[int] = set()
+            if target:
+                try:
+                    selected_steps = {
+                        int(target["rest_step_index"]),
+                        int(target["pulse_step_index"]),
+                    }
+                except (KeyError, TypeError, ValueError):
+                    selected_steps = set()
+            steps_by_hash[source_file.hash] = selected_steps
+        indexed_bundle = analysis_detail.load_indexed_stitched_raw(
+            refs,
+            steps_by_hash,
+            required_columns=_DCIR_DETAIL_REQUIRED_COLUMNS,
+            optional_columns=_DCIR_DETAIL_OPTIONAL_COLUMNS,
+        )
+        if indexed_bundle is not None:
+            raw = indexed_bundle.frame
+            _raw_segments = indexed_bundle.segments
+            _missing = indexed_bundle.missing
+            raw_start = analysis_detail.source_timestamp_origin(indexed_bundle)
+        else:
+            raw, _raw_segments, _missing = stitch.stitch_raw(refs)
+            raw_timestamps = (
+                pd.to_datetime(raw["timestamp"], errors="coerce").dropna()
+                if not raw.empty and "timestamp" in raw.columns
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            raw_start = raw_timestamps.min() if len(raw_timestamps) else None
+        occurrence_frames: list[pd.DataFrame] = []
+        matched_target: dict | None = None
+        for source_index, source_file in enumerate(files):
+            target = target_by_hash.get(source_file.hash)
             if not target or raw.empty:
                 continue
             try:

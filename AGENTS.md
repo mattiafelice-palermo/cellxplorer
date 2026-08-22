@@ -191,6 +191,7 @@ Cellxplorer/
 │       │   └── automation.py       Pause/resume for background automation
 │       └── services/               Parsing, caches, calculations, analysis, imports, jobs
 │           ├── analysis_usage.py   Destructive-removal impact preview for analyses/plots
+│           ├── analysis_detail.py  Shared exact indexed raw-detail access for analysis families
 │           ├── automation.py       Durable automation_paused_until helpers
 │           ├── chargeability.py    Semantic chargeability matching and curve extraction
 │           ├── rate_capability.py  Rate-sweep recognition and CC capacity extraction
@@ -280,6 +281,7 @@ Cellxplorer/
 │   │                                analysis_engine/Parent-034-guard/cache-key resolution (Spec 040.5)
 │   ├── test_rate_capability_corpus.py  End-to-end synthetic detector corpus
 │   ├── test_raw_cache_layout.py    Versioned raw row-group/index and selective-read tests (Spec 050.2)
+│   ├── test_analysis_detail.py     Indexed/fallback parity across protocol analysis families (Spec 050.8)
 │   ├── test_time_capacity_path.py  Indexed Time/Capacity planning and selective-read tests (Spec 050.3)
 │   ├── test_scientific_preparation.py Post-copy and manual cache-preparation tests
 │   ├── test_windows_known_folders.py Known Folder resolver and quick-access fallback tests (Spec 035.3)
@@ -312,6 +314,7 @@ Cellxplorer/
 │   ├── bump_version.py             Synchronized SemVer bump + CHANGELOG prepend
 │   ├── preflight.py                Canonical local verification command
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
+│   ├── profile_cross_family_analysis.py Cross-family exact-hit and indexed-detail profiler (Spec 050.8)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
 │   ├── release_notes.py            Extract exact-version notes from CHANGELOG.md (Spec 019)

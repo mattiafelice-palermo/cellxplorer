@@ -93,7 +93,19 @@ def assign_blocks(
     prev_pos = np.empty_like(positions)
     prev_pos[0] = positions[0] - 10
     prev_pos[1:] = positions[:-1]
-    gap = (positions - prev_pos) > 1
+    if "record_index" in work:
+        record_values = pd.to_numeric(work["record_index"], errors="coerce").to_numpy()
+        selected_records = record_values[positions]
+        previous_records = np.empty_like(selected_records)
+        previous_records[0] = selected_records[0] - 10
+        previous_records[1:] = selected_records[:-1]
+        gap = (
+            ~np.isfinite(selected_records)
+            | ~np.isfinite(previous_records)
+            | ((selected_records - previous_records) > 1)
+        )
+    else:
+        gap = (positions - prev_pos) > 1
 
     # A new occurrence begins when the lowest selected step is re-entered. Using
     # the minimum rather than any decrease is what survives nested repeats: an

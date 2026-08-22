@@ -473,6 +473,37 @@ postprocess. Any later derivative optimization must preserve the status mask's r
 the exact run counters, committed golden digests, and the existing frontend trace-count evidence;
 the derivative arrays are not a persisted cache or a new scientific version boundary.
 
+Spec 050.8 adds a separate, regenerable `raw_detail_index__p<parser>__d<detail>.json` beside
+the canonical raw Parquet and the existing cycle-addressable raw-layout index. It maps canonical
+integer-like `step_index` values to the physical row groups that contain them and is validated
+against the active parser, canonical-raw/layout generations, raw shape fingerprint, and footer
+counts. The sidecar contains access metadata only: it does not change raw bytes, scientific
+meaning, `RAW_CACHE_LAYOUT_VERSION`, result identities, or prepared Time/Capacity generations.
+Fresh raw publication creates it from the validated in-memory frame; existing raw caches prepare
+it from Parquet `step_index` bytes only through the background scientific-preparation worker, so
+offline/cache-only preparation never reparses the original source. Raw replacement removes the
+detail sidecar before the new raw/index boundary is published, and a missing, stale, corrupt, or
+busy sidecar is an immediate safe fallback rather than a request-side wait.
+
+`cache.load_raw_detail()` is the one bounded exact reader for this metadata. It unions implicated
+row groups, optionally intersects exact source-cycle groups, reads only caller columns plus the
+identity columns needed for filtering, filters exact `step_index`/cycle values after the read, and
+preserves physical record order while exposing deterministic diagnostics. `analysis_detail.py`
+keeps this mechanical boundary separate from scientific planners. Steps and DCIR use full source
+cycle metadata when stitching reduced frames so continuation/global-cycle numbering cannot be
+inferred from a selected-step subset. Chargeability unions each matching measurement and recorded
+reference step; Rate Capability unions every phase step, including CC+CV companions. Their existing
+extractors and formulas remain the scientific owners. Cycles remains the prepared per-cycle cache
+control and does not route through raw detail. Exact persisted result hits remain above all of
+these readers and must not open either raw reader.
+
+The repeatable `scripts/profile_cross_family_analysis.py` harness uses disposable result/cache
+state and the committed golden corpus to compare exact hits, forced full-raw misses, and indexed
+detail misses five times per family. The child spec records the final structural counters and
+production-path decisions; structural row/group reduction and complete-output equality are the
+durable evidence, while same-process wall time is descriptive. No frontend or progressive
+Time/Capacity streaming behavior belongs to this boundary; `050.P2` remains planning-only.
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):
