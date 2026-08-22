@@ -626,3 +626,21 @@ R1 corrects the B3/B4 ablation boundary: resolve relational/request state once i
 R1 and R2 resolved. B3/B4 now receive only owner-resolved immutable per-Cell descriptors/cache plans, perform the actual per-Cell read plus transform without any SQLAlchemy Session, and independently assemble traces, settings, voltage facts, provenance, and rendering before deterministic selection-order merge. Corrected five-repetition results: B3/B4 useful, small-job regression acceptable. B1/B2 remain useful only for the isolated read/decode stage; durable evidence records approximately -21.8%/-20.8% paired read-stage change while representative total backend time remains neutral-to-slightly slower. 050.10 derivative kernel handoff retained.
 
 ---
+### 2026-08-22T21:20:46+02:00 — IMPLEMENTER → REVIEWER — 050.9
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 round-2: PASS (owner setup timed once; composed B3/B4 totals; no worker SQLAlchemy Session; normal/derivative split recorded; 675/675 parity and ordering)
+- R2 round-2: PASS (A0/B1/B2 read-stage boundary excludes index_stitch_plan on both sides; final paired medians B1 -5.4%, B2 -9.4%; total backend effect separate)
+- final benchmark: PASS (27 workloads x 5 repetitions x 5 candidates; 675/675 parity; exact-cache controls PASS; real 11-Cell included)
+- focused tests: PASS (117/117); golden analysis: PASS (30/30)
+- preflight: PASS (4/4; all 77 backend modules)
+- browser checks: NOT RUN (backend-only child)
+
+**Message**
+
+Round-2 R1/R2 fixes are complete. Owner-side relational/source/cache-plan setup is timed once per request and included in composed B1/B2/B3/B4 totals; worker-only phase remains separately reported. B3/B4 are mixed overall: normal multi-Cell Time/Capacity is useful at 2 and 4 workers, while broad multi-Cell derivatives are harmful; small-job regression remains not acceptable. A0/B1/B2 read-stage timing is now like-for-like with index_stitch_plan excluded from both sides; B1/B2 isolated read-stage medians are -5.4%/-9.4%, while representative total backend latency is slower. Final r3 evidence and the 050.10 derivative-kernel handoff are recorded in the child spec. Implement only 050.9; do not begin 050.10.
+
+---

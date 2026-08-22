@@ -4,8 +4,9 @@ This script deliberately keeps concurrency out of the production request path.
 It runs the current engine against a disposable golden-fixture database and
 compares two isolated boundaries:
 
-* B1/B2 prefetch indexed Parquet in 2/4 threads, then run the current engine
-  sequentially with those prefetched frames;
+* B1/B2 resolve owner state before the candidate timer, prefetch indexed
+  Parquet in 2/4 threads, then run the current engine sequentially with those
+  prefetched frames;
 * B3/B4 resolve the relational/request boundary once, then run each existing
   per-Cell read plus transform from immutable descriptors in 2/4 threads and
   merge results in selection order.
@@ -480,10 +481,10 @@ def _stage_summary(profile: dict[str, Any], diagnostics: dict[str, Any]) -> dict
     derivative_profile = profile.get("derivative_profile") or {}
     return {
         "relational_setup_ms": stages.get("relational_selection_source_resolution"),
+        "read_plan_ms": stages.get("index_stitch_plan"),
         "raw_read_decode_ms": _sum_stage(
             stages,
             (
-                "index_stitch_plan",
                 "indexed_raw_access",
                 "legacy_full_raw_read",
                 "prepared_derived_read",
@@ -787,6 +788,27 @@ def build_read_jobs(
             )
         )
     return jobs
+
+
+def prepare_resolved_jobs(
+    env: GoldenFixtureEnvironment,
+    spec: dict,
+    cell_ids: list[int],
+) -> tuple[list[ReadJob], ResolvedRequest, dict[str, Any]]:
+    """Resolve the once-per-request owner boundary and measure it separately."""
+
+    from app.services import analysis_engine
+
+    started_cpu = time.process_time()
+    started = time.perf_counter()
+    analysis_engine.ensure_canonical_cycling_available(env.db, spec)
+    request = resolved_request(spec)
+    jobs = build_read_jobs(env, spec, cell_ids)
+    return jobs, request, {
+        "wall_ms": (time.perf_counter() - started) * 1000.0,
+        "cpu_seconds": time.process_time() - started_cpu,
+        "resolved_cell_count": len(jobs),
+    }
 
 
 def _materialize_read(job: ReadJob, submitted_at: float) -> ReadPayload:
@@ -1428,6 +1450,7 @@ def run_read_candidate(
     reference: dict,
     *,
     scenario: str,
+    owner_setup: dict[str, Any],
 ) -> tuple[dict[str, Any], dict]:
     from app.services import analysis_engine
 
@@ -1450,8 +1473,9 @@ def run_read_candidate(
             access_diagnostics=transform_diagnostics,
         )
     transform_wall_ms = (time.perf_counter() - transform_started) * 1000.0
-    backend_wall_ms = (time.perf_counter() - started) * 1000.0
-    cpu_seconds = time.process_time() - started_cpu
+    worker_phase_wall_ms = (time.perf_counter() - started) * 1000.0
+    backend_wall_ms = float(owner_setup["wall_ms"]) + worker_phase_wall_ms
+    cpu_seconds = float(owner_setup["cpu_seconds"]) + (time.process_time() - started_cpu)
     serialization_ms = _serialize_result(result)
     rss_after = current_rss()
     read_diagnostics = _merge_read_diagnostics(payloads)
@@ -1473,6 +1497,10 @@ def run_read_candidate(
         native_settings=native_thread_settings(),
         extra={
             "ablation": "read_decode_only",
+            "owner_setup_ms": owner_setup["wall_ms"],
+            "owner_setup_cpu_seconds": owner_setup["cpu_seconds"],
+            "worker_phase_wall_ms": worker_phase_wall_ms,
+            "composed_backend_wall_ms": backend_wall_ms,
             "read_wall_ms": read_wall_ms,
             "read_decode_ms": sum(dispatch["per_cell_wall_ms"]),
             "read_per_cell_job_wall_ms": _min_max(dispatch["per_cell_wall_ms"]),
@@ -1612,6 +1640,7 @@ def run_whole_cell_candidate(
     workers: int,
     reference: dict,
     scenario: str,
+    owner_setup: dict[str, Any],
 ) -> tuple[dict[str, Any], dict]:
     specs = [
         job for job in jobs
@@ -1638,8 +1667,9 @@ def run_whole_cell_candidate(
     payloads.sort(key=lambda item: item.index)
     merged, merge_ms = _merge_whole_cell_results(request, payloads)
     serialization_ms = _serialize_result(merged)
-    backend_wall_ms = (time.perf_counter() - started) * 1000.0
-    cpu_seconds = time.process_time() - started_cpu
+    worker_phase_wall_ms = (time.perf_counter() - started) * 1000.0
+    backend_wall_ms = float(owner_setup["wall_ms"]) + worker_phase_wall_ms
+    cpu_seconds = float(owner_setup["cpu_seconds"]) + (time.process_time() - started_cpu)
     rss_after = current_rss()
     diagnostics = {"cells": [item.diagnostics["cells"][0] for item in payloads]}
     row = _measurement_row(
@@ -1660,6 +1690,10 @@ def run_whole_cell_candidate(
         native_settings=native_thread_settings(),
         extra={
             "ablation": "resolved_per_cell_read_transform",
+            "owner_setup_ms": owner_setup["wall_ms"],
+            "owner_setup_cpu_seconds": owner_setup["cpu_seconds"],
+            "worker_phase_wall_ms": worker_phase_wall_ms,
+            "composed_backend_wall_ms": backend_wall_ms,
             "merge_ms": merge_ms,
             "per_cell_job_wall_ms": _min_max(item.worker_wall_ms for item in payloads),
             "per_cell_job_wall_ms_sum": sum(item.worker_wall_ms for item in payloads),
@@ -1710,9 +1744,16 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
         "B3": {},
         "B4": {},
     }
+    workload_class_by_key: dict[tuple[str, str], str] = {}
     for workload in workloads:
         suite = str(workload.get("suite") or "unknown")
         key = (suite, workload["scenario"])
+        if workload["scenario"].startswith("derivative-") and workload.get("cell_count", 0) >= 3:
+            workload_class_by_key[key] = "derivative_multi_cell"
+        elif workload.get("cell_count", 0) >= 3:
+            workload_class_by_key[key] = "normal_multi_cell"
+        else:
+            workload_class_by_key[key] = "small_or_single_cell"
         rows = workload["samples"]
         baseline = [row for row in rows if row["candidate"] == "A0"]
         baseline_rows.extend(baseline)
@@ -1774,6 +1815,34 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
         )
         whole_decisions[candidate] = _decision_label(candidates, baselines)
 
+    whole_decisions_by_class: dict[str, dict[str, str]] = {}
+    for class_name in ("normal_multi_cell", "derivative_multi_cell"):
+        class_decisions: dict[str, str] = {}
+        class_keys = {
+            key for key, value in workload_class_by_key.items() if value == class_name
+        }
+        for candidate in whole_rows:
+            class_map = {
+                key: rows
+                for key, rows in whole_by_key[candidate].items()
+                if key in class_keys
+            }
+            candidates, baselines = paired_values(
+                class_map,
+                "backend_wall_ms",
+                "backend_wall_ms",
+            )
+            class_decisions[candidate] = _decision_label(candidates, baselines)
+        whole_decisions_by_class[class_name] = class_decisions
+    for candidate in whole_decisions:
+        class_labels = {
+            class_decisions[candidate]
+            for class_decisions in whole_decisions_by_class.values()
+            if candidate in class_decisions
+        }
+        if len(class_labels) > 1:
+            whole_decisions[candidate] = "mixed"
+
     baseline_stage_values: dict[str, list[float]] = {}
     for row in baseline_rows:
         for key in (
@@ -1812,7 +1881,6 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
     )
     read_stage_evidence: dict[str, Any] = {}
     for candidate in read_rows:
-        ratios: list[float] = []
         representatives: dict[str, Any] = {}
         for suite, scenario in representative_keys:
             key = (suite, scenario)
@@ -1846,8 +1914,6 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
                 if _finite(total_candidate) and _finite(total_baseline) and total_baseline > 0
                 else None
             )
-            if ratio is not None:
-                ratios.append(ratio)
             representatives[f"{suite}/{scenario}"] = {
                 "a0_read_decode_median_ms": baseline_value,
                 "candidate_read_stage_median_ms": candidate_value,
@@ -1860,7 +1926,17 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
                     (total_ratio - 1.0) * 100.0 if total_ratio is not None else None
                 ),
             }
-        paired_ratio = statistics.median(ratios) if ratios else None
+        all_candidates, all_baselines = paired_values(
+            read_by_key[candidate],
+            "read_wall_ms",
+            "stages.raw_read_decode_ms",
+        )
+        all_ratios = [
+            candidate_value / baseline_value
+            for candidate_value, baseline_value in zip(all_candidates, all_baselines)
+            if baseline_value > 0
+        ]
+        paired_ratio = statistics.median(all_ratios) if all_ratios else None
         read_stage_evidence[candidate] = {
             "paired_median_ratio": paired_ratio,
             "paired_median_change_pct": (
@@ -1871,10 +1947,46 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
                 "isolated read/decode stage only; total backend wall time is reported separately"
             ),
         }
+    owner_setup_evidence: dict[str, Any] = {}
+    for candidate in ("B3", "B4"):
+        representatives: dict[str, Any] = {}
+        for suite, scenario in (
+            ("golden_fixture", "normal-6-all-capacity"),
+            ("application_performance_batch", "normal-11-all-time"),
+            ("golden_fixture", "derivative-6-all-dqdv"),
+            ("application_performance_batch", "derivative-6-all-dqdv"),
+        ):
+            key = (suite, scenario)
+            candidate_rows = [
+                row
+                for row in whole_by_key[candidate].get(key, [])
+                if row.get("status") == "PASS"
+            ]
+            baseline_values = [
+                row.get("backend_wall_ms")
+                for row in baseline_by_key.get(key, [])
+                if row.get("status") == "PASS"
+            ]
+            representatives[f"{suite}/{scenario}"] = {
+                "owner_setup_median_ms": _median(row.get("owner_setup_ms") for row in candidate_rows),
+                "worker_phase_median_ms": _median(row.get("worker_phase_wall_ms") for row in candidate_rows),
+                "composed_candidate_total_median_ms": _median(
+                    row.get("composed_backend_wall_ms") for row in candidate_rows
+                ),
+                "a0_total_backend_median_ms": _median(baseline_values),
+            }
+        owner_setup_evidence[candidate] = {
+            "representative_scenarios": representatives,
+            "interpretation": (
+                "owner setup is paid once per request; worker phase remains separately reported"
+            ),
+        }
     return {
         "threshold": f"{IMPROVEMENT_THRESHOLD:.0%} median paired change",
         "read_concurrency": read_decisions,
         "whole_cell_python_threads": whole_decisions,
+        "whole_cell_python_threads_by_workload": whole_decisions_by_class,
+        "owner_setup_evidence": owner_setup_evidence,
         "small_job_regression": "not_acceptable" if small_regression else "acceptable",
         "dominant_residual_backend_stage": dominant,
         "dominant_stage_medians_ms": stage_medians,
@@ -1882,7 +1994,7 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
         "rust_050_10_handoff": (
             "Benchmark derivative rolling, gradient, ratio/filter and postprocess "
             "kernels separately in 050.10; derivative requests still spend "
-            "approximately 150-1,300 ms in that stage across the measured one- to "
+            "approximately 140-1,252 ms in that stage across the measured one- to "
             "six-Cell suites, even though normal requests are transform-dominated."
         ),
     }
@@ -2060,7 +2172,6 @@ def profile_workload(
     )
     # Warm the same current path once, outside the reported repetitions.
     _, reference = run_production_sample(env, spec, None, scenario=f"{scenario}-warmup")
-    request = resolved_request(spec)
     samples: list[dict[str, Any]] = []
     for repetition in range(repetitions):
         baseline, baseline_result = run_production_sample(
@@ -2070,7 +2181,11 @@ def profile_workload(
             scenario=scenario,
         )
         samples.append(baseline)
-        jobs = build_read_jobs(env, spec, workload["cell_ids"])
+        jobs, request, owner_setup = prepare_resolved_jobs(
+            env,
+            spec,
+            workload["cell_ids"],
+        )
         candidate_order = (2, 4) if repetition % 2 == 0 else (4, 2)
         for workers in candidate_order:
             read_row, _ = run_read_candidate(
@@ -2080,6 +2195,7 @@ def profile_workload(
                 workers,
                 reference,
                 scenario=scenario,
+                owner_setup=owner_setup,
             )
             samples.append(read_row)
             whole_row, _ = run_whole_cell_candidate(
@@ -2088,6 +2204,7 @@ def profile_workload(
                 workers=workers,
                 reference=reference,
                 scenario=scenario,
+                owner_setup=owner_setup,
             )
             samples.append(whole_row)
         if any(row["status"] != "PASS" for row in samples[-4:]):
