@@ -303,6 +303,7 @@ def load_indexed_time_capacity_raw(
     requested_cycles: Iterable[int],
     *,
     diagnostics: dict[str, Any] | None = None,
+    wait_for_layout: bool = False,
 ) -> pd.DataFrame | None:
     """Read and stitch only indexed source-local cycles for a request.
 
@@ -350,7 +351,7 @@ def load_indexed_time_capacity_raw(
                 local_cycles,
                 columns,
                 diagnostics=read_diagnostics,
-                wait_for_layout=False,
+                wait_for_layout=wait_for_layout,
             )
         if loaded is None:
             _set_diagnostic(
@@ -420,6 +421,7 @@ def load_indexed_time_capacity_derived(
     columns: Iterable[str],
     *,
     diagnostics: dict[str, Any] | None = None,
+    wait_for_layout: bool = False,
 ) -> pd.DataFrame | None:
     """Read exact prepared values for every contributing source.
 
@@ -453,7 +455,7 @@ def load_indexed_time_capacity_derived(
             local_cycles,
             requested_columns,
             diagnostics=read_diagnostics,
-            wait_for_layout=False,
+            wait_for_layout=wait_for_layout,
         )
         source_reads.append(
             {

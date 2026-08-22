@@ -226,6 +226,22 @@ class TimeCapacityDerivedCacheTests(unittest.TestCase):
         self.assertEqual(diagnostics["prepared_row_groups_read"], 1)
         self.assertEqual(diagnostics["prepared_rows_materialized"], 4)
 
+    def test_stitched_prepared_read_can_wait_for_the_layout_boundary(self) -> None:
+        self._prepare()
+        ref = stitch.CachedSourceRef(self.FILE_HASH, self.PARSER)
+        plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+
+        with patch.object(cache, "load_time_capacity_derived", wraps=cache.load_time_capacity_derived) as reader:
+            selected = time_capacity_path.load_indexed_time_capacity_derived(
+                plan,
+                [2],
+                ["phase_code"],
+                wait_for_layout=True,
+            )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(reader.call_args.kwargs["wait_for_layout"], True)
+
 
 if __name__ == "__main__":
     unittest.main()

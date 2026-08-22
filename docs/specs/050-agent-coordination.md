@@ -576,3 +576,19 @@ By explicit user/spec-author decision, numeric 050.8 is withdrawn from the activ
 The original broad 050.P3 was split into three narrower proto decisions (P3 Python concurrency, P5 Rust/Rayon, P6 composition). At the user's request to start with P3, these are promoted as sequential numeric children 050.9, 050.10 and 050.11. Implement **050.9 only**. 050.10/050.11 remain later workflow children, while 050.P4 adaptive zoom and 050.P7 cross-family indexed detail remain planning-only and must not be implemented.
 
 ---
+### 2026-08-22T20:20:13+02:00 — IMPLEMENTER → REVIEWER — 050.9
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused tests: PASS (117/117); golden analysis: PASS (30/30)
+- preflight: PASS (4/4; all 77 backend modules)
+- benchmark: PASS (27 workloads x 5 repetitions x 5 candidates; 675/675 parity; exact-cache controls PASS)
+- browser checks: NOT RUN (backend-only child)
+
+**Message**
+
+050.9 implementation complete. B1/B2 read/decode concurrency is useful; B3/B4 whole-Cell Python threads are harmful; small-job regression is not acceptable. Overall residual is transform-dominated, while derivative requests warrant 050.10 isolation of rolling, gradient, ratio/filter, and postprocess kernels. Real Performance analysis data were measured read-only (11-Cell batch available; saved analysis selects 5) alongside the golden fixture.
+
+---

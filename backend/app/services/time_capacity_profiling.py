@@ -24,6 +24,17 @@ def _numeric_sum(cells: list[Mapping[str, Any]], key: str) -> int | None:
     return sum(values) if values else None
 
 
+def _finite_sum(cells: list[Mapping[str, Any]], key: str) -> float | None:
+    values = [
+        float(cell[key])
+        for cell in cells
+        if isinstance(cell.get(key), (int, float))
+        and not isinstance(cell.get(key), bool)
+        and isfinite(float(cell[key]))
+    ]
+    return sum(values) if values else None
+
+
 def _row_group_total(cells: list[Mapping[str, Any]], key: str) -> int | str | None:
     values = [cell.get(key) for cell in cells]
     if any(value == "full" for value in values):
@@ -273,6 +284,9 @@ def build_time_capacity_profile(
             value = _numeric_sum(cells, key)
             if value is not None:
                 profile[key] = value
+        cell_job_wall_ms = _finite_sum(cells, "cell_job_wall_ms")
+        if cell_job_wall_ms is not None:
+            profile["cell_job_wall_ms"] = cell_job_wall_ms
 
     if result is not None:
         rendering = result.get("rendering")

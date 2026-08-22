@@ -1036,6 +1036,7 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertIn(profile["raw_access"], {"indexed", "legacy"})
         self.assertGreaterEqual(profile["returned_points"], 0)
         self.assertGreaterEqual(profile["raw_rows_materialized"], 0)
+        self.assertGreater(profile["cell_job_wall_ms"], 0)
         self.assertEqual(profile["resolved_cell_count"], 1)
 
     def test_time_capacity_fine_transform_profile_is_opt_in_and_scientific_projection_is_unchanged(self):

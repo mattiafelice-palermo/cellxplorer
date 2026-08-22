@@ -19,6 +19,7 @@ import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+from time import perf_counter
 from typing import Any, Callable
 
 import numpy as np
@@ -2678,6 +2679,8 @@ def compute_time_capacity(
     total_returned_points = 0
     if access_diagnostics is not None:
         access_diagnostics.setdefault("cells", [])
+    previous_cell_diagnostics: dict[str, Any] | None = None
+    previous_cell_started: float | None = None
     # Spec 040.4: which voltage quantities have real (non-fabricated) data
     # anywhere in the current selection, independent of the currently chosen
     # `voltage_channel` — this is what lets the frontend offer working/counter
@@ -2696,7 +2699,12 @@ def compute_time_capacity(
     }
 
     for unit_index, unit in enumerate(units, start=1):
+        if previous_cell_diagnostics is not None and previous_cell_started is not None:
+            previous_cell_diagnostics["cell_job_wall_ms"] = (
+                perf_counter() - previous_cell_started
+            ) * 1000.0
         cell: Cell = unit["cell"]
+        cell_started = perf_counter() if access_diagnostics is not None else None
         cell_diagnostics: dict[str, Any] = {
             "cell_id": cell.id,
             "cell_name": cell.name,
@@ -2704,6 +2712,8 @@ def compute_time_capacity(
         profile_diagnostics = cell_diagnostics if access_diagnostics is not None else None
         if access_diagnostics is not None:
             access_diagnostics["cells"].append(cell_diagnostics)
+            previous_cell_diagnostics = cell_diagnostics
+            previous_cell_started = cell_started
         if progress:
             progress(unit_index - 1, total_units, cell.name, "Reading raw cache")
         with time_capacity_path.timed_stage(
@@ -3310,6 +3320,11 @@ def compute_time_capacity(
                 cell.name,
                 "Re-parsed from source" if reparsed else "Read from cache",
             )
+
+    if previous_cell_diagnostics is not None and previous_cell_started is not None:
+        previous_cell_diagnostics["cell_job_wall_ms"] = (
+            perf_counter() - previous_cell_started
+        ) * 1000.0
 
     _append_unmatched_protocol_badges(protocol_context, badges)
 

@@ -23,6 +23,7 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                         "row_groups_total": 8,
                         "raw_rows_materialized": 40,
                         "selected_rows_before_transforms": 36,
+                        "cell_job_wall_ms": 3.5,
                         "source_reads": [{"source_hash": "private hash"}],
                         "stages": {"index_stitch_plan": 0.0015},
                     },
@@ -33,6 +34,7 @@ class TimeCapacityProfilingTests(unittest.TestCase):
                         "row_groups_total": "full",
                         "raw_rows_materialized": 100,
                         "selected_rows_before_transforms": 80,
+                        "cell_job_wall_ms": 4.5,
                         "stages": {"legacy_full_raw_read": 0.002},
                     },
                 ]
@@ -53,6 +55,7 @@ class TimeCapacityProfilingTests(unittest.TestCase):
         self.assertEqual(profile["row_groups_total"], "full")
         self.assertEqual(profile["raw_rows_materialized"], 140)
         self.assertEqual(profile["selected_rows_before_transforms"], 116)
+        self.assertAlmostEqual(profile["cell_job_wall_ms"], 8.0)
         self.assertEqual(profile["returned_points"], 24)
         self.assertEqual(profile["resolved_cell_count"], 2)
         self.assertNotIn("trace_count", profile)

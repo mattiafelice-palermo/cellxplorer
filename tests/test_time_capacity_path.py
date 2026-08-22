@@ -120,6 +120,20 @@ class TimeCapacityPathTests(unittest.TestCase):
         self.assertEqual(reader.call_args.args[0], second.file_hash)
         self.assertEqual(reader.call_args.args[2], (7,))
 
+    def test_benchmark_can_wait_for_the_layout_boundary_without_changing_default(self) -> None:
+        ref = self._publish("7" * 64, "parser-a", [1, 2])
+        plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+
+        with patch.object(cache, "load_raw_cycles", wraps=cache.load_raw_cycles) as reader:
+            selected = time_capacity_path.load_indexed_time_capacity_raw(
+                plan,
+                [1],
+                wait_for_layout=True,
+            )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(reader.call_args.kwargs["wait_for_layout"], True)
+
     def test_range_crossing_boundary_reads_only_contributing_sources(self) -> None:
         first = self._publish("d" * 64, "parser-a", [1, 2])
         second = self._publish("e" * 64, "parser-b", [7, 9])
