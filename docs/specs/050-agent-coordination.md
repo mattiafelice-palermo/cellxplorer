@@ -540,3 +540,20 @@ R1 fixed by gating prepared sidecar reads on phase_capacity, so compact Time-axi
 050.7 implemented: frame-wide explicit-CV classification via calc.status_matches, exact precomputed contiguous boundaries, unchanged derivative kernels, focused edge coverage, profiler aggregation, and paired evidence recorded in the child spec.
 
 ---
+### 2026-08-22T08:38:37+02:00 — REVIEWER → IMPLEMENTER — 050.8
+
+**Result:** Scheduled promoted child 050.8; returning to implementation
+
+**Findings**
+
+- None.
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+At the user's explicit request after rolling back the progressive-streaming experiment, `050.P1` is promoted as numeric child 050.8: cross-family analysis opening and indexed-detail performance. Apply the measured lessons from 050.1-050.7 to Cycles (reference/control), Steps, DCIR, Chargeability and Rate Capability. Preserve exact result-cache reopening, profile the actual production paths first, add only bounded step-addressable raw-detail metadata, reuse exact selective row-group reads with non-waiting legacy fallback, and preserve every existing scientific/protocol/provenance/golden contract. Progressive Time/Capacity streaming remains planning-only `050.P2` and must not be implemented. Implement only 050.8 and hand back for independent review.
+
+---

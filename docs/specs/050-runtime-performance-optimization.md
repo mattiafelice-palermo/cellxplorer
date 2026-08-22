@@ -1,6 +1,6 @@
 # Spec 050: runtime performance optimization
 
-Status: **Plan — extensible parent; Children 050.1-050.6 authored; 050.6 active**  
+Status: **Plan — extensible parent; Children 050.1-050.7 review-clean; 050.8 active**  
 Type: **runtime performance / analysis responsiveness**  
 Branch: `feature/runtime-performance-optimization`  
 Repository baseline: `main` at `1dc3525ec42571504ed6d9bdb9a0668d35df309b`  
@@ -172,7 +172,12 @@ The work is split deliberately:
 - **050.5** owns the follow-up transform/dependency profiling that localizes the remaining backend
   cost without implementing the optimization;
 - **050.6** owns the first measured post-profile optimization: skip demonstrably unused compact-view
-  transforms and prepare/reuse exact source-local phase/capacity derived rows.
+  transforms and prepare/reuse exact source-local phase/capacity derived rows;
+- **050.7** owns the measured derivative backend postprocessing optimization while preserving the
+  numerical derivative kernels;
+- **050.8** applies the proven access/cache/profiling principles to Cycles, Steps, DCIR,
+  Chargeability and Rate Capability, using a small step-addressable raw-detail index and
+  family-specific planners rather than full-source raw materialization where measured beneficial.
 
 050.3 demonstrated that narrow indexed requests no longer materialize complete raw sources, but its
 profiler intentionally exercised a full-detail backend contract and recorded `frontend_profile: not
@@ -187,7 +192,12 @@ roughly 20-50 ms. Review-clean 050.5 localized the normal backend hotspot to rep
 `_phase_capacity()` reconstruction and proved that compact Time-axis Voltage/Current requests also
 compute capacity-derived arrays they do not consume. 050.6 therefore implements exact reuse/skip
 at that measured boundary before any overview, extra RAM cache or derivative-specific redesign is
-considered.
+considered. Review-clean 050.7 then removes repeated derivative status/run classification while
+leaving the existing numerical kernels and scientific contract unchanged.
+
+After 050.7, the user explicitly chose to promote the former `050.P1` cross-family performance plan
+instead of continuing the rolled-back progressive Time/Capacity streaming experiment. 050.8 is
+therefore the active child; `050.P2` remains planning-only and is not implementation scope.
 
 ## Target interaction model
 
@@ -209,6 +219,11 @@ The key product rule is:
 
 > Selecting cycles should behave like selecting a view into prepared scientific records, not like
 > rereading and recomputing the complete experiment first.
+
+050.8 extends the same principle to protocol-derived families:
+
+> When the protocol already identifies the scientifically relevant steps or executions, a cache
+> miss should read those exact raw details rather than materializing unrelated source rows first.
 
 ## Current source anchors
 
@@ -244,10 +259,14 @@ frontend/src/api.ts
 backend/app/services/cache.py
     _write_atomic()
     raw_path()
-    build()
-    build_write_behind()
+    raw_index_path()
+    RAW_CACHE_LAYOUT_VERSION
+    RAW_CACHE_ROW_GROUP_SIZE
     load_raw()
     load_raw_columns()
+    load_raw_layout_index()
+    try_load_raw_layout_index()
+    load_raw_cycles()
 
 backend/app/services/cache_maintenance.py
 backend/app/services/scientific_preparation.py
@@ -260,6 +279,8 @@ backend/app/services/stitch.py
     stitch_raw()
 
 backend/app/services/analysis_engine.py
+    compute_steps()
+    compute_dcir()
     time_capacity_settings()
     _continuous_time()
     _phase_from_raw()
@@ -269,6 +290,19 @@ backend/app/services/analysis_engine.py
     _protocol_row_mask()
     source_descriptors()
     compute_time_capacity()
+
+backend/app/services/chargeability.py
+    detect_candidates()
+    _reference_capacity()
+    _occurrence_rows()
+    compute()
+
+backend/app/services/rate_capability.py
+    build_rate_pairs()
+    _phase_rows()
+    extract_pair_executions()
+    detect_sweep_blocks()
+    compute()
 
 backend/app/services/time_capacity_path.py
     build_time_capacity_stitch_plan()
@@ -294,7 +328,7 @@ tests/test_analysis_engine.py
 tests/test_calc_and_cache.py
 tests/test_stitch.py
 tests/test_cache_maintenance.py
-tests/test_scanner.py
+tests/test_protocol_analysis_safety.py
 tests/test_golden_analysis.py
 tests/test_raw_cache_layout.py
 tests/test_time_capacity_path.py
@@ -366,7 +400,11 @@ tests/test_time_capacity_profiling.py
 26. **Derivative-specific optimization remains separate from normal prepared-row optimization.**
     050.6 may feed the unchanged derivative algorithm exact prepared phase/capacity, but it must not
     change derivative postprocessing or Plotly trace construction.
-27. Never modify, reset, or discard unrelated branch work.
+27. **Cross-family raw-detail metadata is access metadata only.** 050.8 may add a small versioned
+    step-index-to-row-group sidecar validated against the existing raw fingerprint, but it must not
+    change canonical raw bytes, `RAW_CACHE_LAYOUT_VERSION`, scientific calculation identity or
+    Time/Capacity prepared-derived generation solely to make protocol analyses selective.
+28. Never modify, reset, or discard unrelated branch work.
 
 ## Child sequence
 
@@ -485,7 +523,45 @@ Measured optimization child. It must:
 
 Derivative postprocessing/Plotly optimization is explicitly out of scope for 050.6.
 
-### 050.7+ — additional measured runtime issues
+### 050.7 — Derivative backend postprocessing optimization
+
+File: [`050.7-derivative-backend-postprocessing-optimization.md`](050.7-derivative-backend-postprocessing-optimization.md)
+
+Review-clean measured optimization child. It:
+
+- classifies explicit-CV-only rows once across the full selected frame with the existing
+  `calc.status_matches()` semantics;
+- precomputes contiguous `(cycle, segment, phase)` run boundaries once instead of repeating pandas
+  string/control work per derivative segment;
+- preserves the rolling mean, gradient/division, numerical thresholds, outlier rejection,
+  discharge-sign rule and output assignment order exactly;
+- reports paired five-run evidence of roughly 61-64% derivative-stage reduction on the reviewed
+  broad scenarios while golden outputs remain unchanged.
+
+No frontend or scientific/cache-version behavior changes in 050.7.
+
+### 050.8 — Cross-family analysis opening and indexed-detail performance
+
+File: [`050.8-cross-family-analysis-opening-and-indexed-detail-performance.md`](050.8-cross-family-analysis-opening-and-indexed-detail-performance.md)  
+Promoted from: **050.P1**
+
+Active child. It applies the measured lessons of 050.1-050.7 to the remaining analysis families:
+
+- keep exact persisted result-cache hits as the primary fast reopening path;
+- use Cycles as the cache-native reference/control rather than forcing it through raw detail reads;
+- add a small regenerable step-index-to-row-group detail sidecar without changing canonical raw
+  bytes or the existing raw-layout generation;
+- provide a bounded exact step/detail reader with non-waiting legacy fallback;
+- add family-specific planners for Steps, DCIR, Chargeability and Rate Capability so protocol-known
+  steps/executions can be selected before raw materialization;
+- preserve every current formula, protocol match, execution-completeness rule, provenance field,
+  result payload and golden digest;
+- profile forced legacy versus indexed paths and enable the indexed production path per family only
+  where structural and timing evidence support it.
+
+Progressive Time/Capacity streaming remains `050.P2`, planning-only and outside active workflow scope.
+
+### 050.9+ — additional measured runtime issues
 
 Future children may address other slow application boundaries discovered during normal use or
 profiling. Before adding one:
@@ -496,13 +572,9 @@ profiling. Before adding one:
 4. decide whether it belongs to this parent rather than an unrelated feature;
 5. update this parent and add a self-contained child spec.
 
-The currently identified derivative-specific follow-up is not automatically scheduled. After 050.6
-is review-clean, use the 050.5 derivative evidence plus any fresh end-to-end measurements to decide
-whether a separate numeric derivative/Plotly child is worth implementing.
-
-For a follow-up arising directly from 050.4/050.5, its implementation scope must match the measured
-bottleneck. Do not combine backend prepared data, multiresolution overview, payload transport and
-Plotly changes by default.
+For a follow-up arising directly from earlier profiling, its implementation scope must match the
+measured bottleneck. Do not combine backend prepared data, multiresolution overview, payload
+transport and Plotly changes by default.
 
 ## Parent-level cache, migration, and version policy
 
@@ -513,6 +585,9 @@ Plotly changes by default.
 - 050.6 introduces only a dedicated prepared-derived cache representation generation. That
   artifact includes the active parser/scientific identity and validates against the canonical raw
   layout/fingerprint; it does not change scientific result identity or payload schema.
+- 050.8 may introduce a dedicated raw-detail-index generation validated against the current raw
+  layout/fingerprint. It must not force a `RAW_CACHE_LAYOUT_VERSION` bump or invalidate 050.6
+  Time/Capacity prepared data merely to add step-addressable access metadata.
 - A child that changes analysis cache-key computation must follow the explicit generation/version
   convention in `backend/app/services/analysis_cache.py` and test warm/cold identity behavior.
 - A child that changes only data access while returning identical scientific results should not bump
@@ -556,6 +631,16 @@ same-machine forced-fallback versus prepared timings with structural counters. D
 visible end-to-end improvement solely from those backend timings; request a short installed-app
 re-profile later only if the parent decision needs it.
 
+For 050.7, verification must preserve the complete derivative numerical contract and structural run
+counters while paired profiling proves the repeated control/postprocessing work was actually
+reduced.
+
+For 050.8, verification must include exact-result-hit no-raw-read regressions for all in-scope
+families, detail-index lifecycle/race/offline safety, forced legacy-versus-indexed complete payload
+parity, unchanged golden digests, row-group/row/column structural counters, and same-machine paired
+profiling. An indexed family path is not accepted merely because it exists; production selection is
+per-family and evidence-driven.
+
 The final Parent 050 review, when the user declares the performance workstream ready to close, must:
 
 - compare the complete branch against its correct `main` merge base;
@@ -571,7 +656,8 @@ The final Parent 050 review, when the user declares the performance workstream r
 Planning these children does not itself change a durable merged architecture or workflow fact. Do
 not rewrite uploaded Project context merely because this plan exists.
 
-When implemented children establish cycle-addressable raw cache layout, indexed Time/Capacity or a
-prepared derived-cache contract as a durable cross-cutting invariant, update the relevant repository
-knowledge document and assess the Project context mirrors under `CELLXPLORER_CONTEXT_MAINTENANCE.md`
-using the live repository as source of truth.
+When implemented children establish cycle-addressable raw cache layout, indexed Time/Capacity,
+prepared derived-cache behavior, or a cross-family step-addressable detail-index contract as a
+durable cross-cutting invariant, update the relevant repository knowledge document and assess the
+Project context mirrors under `CELLXPLORER_CONTEXT_MAINTENANCE.md` using the live repository as
+source of truth.
