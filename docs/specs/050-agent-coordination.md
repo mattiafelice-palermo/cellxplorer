@@ -661,3 +661,22 @@ Round-2 R1/R2 fixes are complete. Owner-side relational/source/cache-plan setup 
 050.10 implementation complete. Added isolated persistent Rust/Rayon derivative-kernel benchmark with C0/C1/C2/C3 ablation, explicit boundary copy/conversion accounting, cold/warm lifecycle, CPU/RSS/native-thread evidence, and exact parity over fixture plus the real saved Performance analysis batch. C1 sequential Rust is independently useful; bounded Rayon is useful only for broad multi-Cell derivative batches, with 2 workers the smallest stable useful choice and 4 workers fastest in measured 3/6/10-Cell rows. Do not wire production Rust here; 050.11 selects architecture and workload gating.
 
 ---
+### 2026-08-22T22:18:17+02:00 — IMPLEMENTER → REVIEWER — 050.10
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 round-1: PASS (C0 segment-buffer Python adapter and C1/C2/C3 start from identical prepared numeric boundary; owner status/segment/finite-buffer preparation timed separately; final 12-workload matrix exact parity)
+- R2 round-1: PASS (Rust ready handshake measures spawn-to-ready separately from first request and lazy Rayon initialization; cold and warm lifecycle labels corrected)
+- R3 round-1: PASS (invalid concurrent-work subtraction removed; parallel_region_ms and per-Cell kernel elapsed times retained; queue timing explicitly not separately measured)
+- final benchmark: PASS (12 workloads x 5 warm repetitions; 240 warm rows plus 36 separate cold Rust calls; golden fixture and real Performance analysis batch; 10-Cell included; exact parity)
+- focused tests/build: PASS (Rust 3/3; cargo release build; Python py_compile; tests.test_analysis_engine 95/95)
+- preflight: PASS (4/4; all 77 backend modules; golden analysis included and PASS)
+- browser checks: NOT RUN (backend benchmark-only child; no frontend or production request integration)
+
+**Message**
+
+Round-1 R1/R2/R3 fixes are complete. C0 now runs the same prepared segment-buffer derivative kernel boundary as C1/C2/C3, while owner buffer preparation is separately recorded. The Rust worker sends a ready handshake so spawn-to-ready, first request/pool initialization, and warm calls are distinct. Removed the invalid Rayon queue-overhead subtraction and retained parallel-region plus per-Cell timing. Corrected r3 evidence preserves exact parity and the broad multi-Cell Rayon signal; do not wire production Rust here and do not begin 050.11.
+
+---

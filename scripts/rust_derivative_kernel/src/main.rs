@@ -14,6 +14,7 @@ use std::time::Instant;
 
 const MAGIC: u32 = 0x4358_0501;
 const VERSION: u16 = 1;
+const READY_MARKER: u32 = 0x5245_4144;
 
 #[derive(Clone, Debug)]
 struct Segment {
@@ -345,6 +346,7 @@ fn response_bytes(
     bytes.extend_from_slice(&(kernel_sum_ns).to_le_bytes());
     bytes.extend_from_slice(&(outputs.len() as u32).to_le_bytes());
     for cell in outputs {
+        bytes.extend_from_slice(&cell.kernel_ns.to_le_bytes());
         bytes.extend_from_slice(&(cell.segments.len() as u32).to_le_bytes());
         for segment in &cell.segments {
             bytes.extend_from_slice(&(segment.x.len() as u32).to_le_bytes());
@@ -356,6 +358,15 @@ fn response_bytes(
             }
         }
     }
+    bytes
+}
+
+fn ready_bytes(worker_count: usize) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(12);
+    bytes.extend_from_slice(&MAGIC.to_le_bytes());
+    bytes.extend_from_slice(&VERSION.to_le_bytes());
+    bytes.extend_from_slice(&(worker_count as u16).to_le_bytes());
+    bytes.extend_from_slice(&READY_MARKER.to_le_bytes());
     bytes
 }
 
@@ -407,6 +418,11 @@ fn main() -> io::Result<()> {
     let mut input = stdin.lock();
     let mut output = stdout.lock();
     let mut pool: Option<ThreadPool> = None;
+
+    let ready = ready_bytes(worker_count);
+    output.write_all(&(ready.len() as u32).to_le_bytes())?;
+    output.write_all(&ready)?;
+    output.flush()?;
 
     while let Some(frame) = read_frame(&mut input)? {
         let request = parse_request(&frame)?;

@@ -56,6 +56,7 @@ from profile_time_capacity_transforms import clone_golden_source_cells  # noqa: 
 
 MAGIC = 0x4358_0501
 VERSION = 1
+READY_MARKER = 0x5245_4144
 DEFAULT_REPETITIONS = 5
 RELATIVE_TOLERANCE = 1e-7
 ABSOLUTE_TOLERANCE = 1e-9
@@ -90,6 +91,8 @@ class KernelDataset:
     absolute_discharge: bool
     settings: dict[str, Any]
     cells: list[PythonCellInput]
+    reference_outputs: list[tuple[np.ndarray, np.ndarray]]
+    owner_buffer_prepare_ms: float
     backend_context_ms: list[float]
 
 
@@ -210,6 +213,8 @@ def _build_dataset(
         for job in jobs
     ]
     captured: list[PythonCellInput] = []
+    reference_outputs: list[tuple[np.ndarray, np.ndarray]] = []
+    owner_prepare_ms = 0.0
     original = analysis_engine._derivative_curve
 
     def capture_wrapper(
@@ -220,8 +225,13 @@ def _build_dataset(
         settings: dict[str, Any],
         diagnostics: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        nonlocal owner_prepare_ms
+        prepare_started = time.perf_counter()
         captured.append(_capture_python_input(frame, phases, capacity, capacity_specific))
-        return original(frame, phases, capacity, capacity_specific, settings, diagnostics)
+        owner_prepare_ms += (time.perf_counter() - prepare_started) * 1000.0
+        output = original(frame, phases, capacity, capacity_specific, settings, diagnostics)
+        reference_outputs.append((output[0].copy(), output[1].copy()))
+        return output
 
     with patch.object(analysis_engine, "_derivative_curve", capture_wrapper):
         for job, payload in zip(jobs, payloads):
@@ -229,6 +239,10 @@ def _build_dataset(
     if len(captured) != len(jobs):
         raise RuntimeError(
             f"derivative capture expected {len(jobs)} cells, captured {len(captured)}"
+        )
+    if len(reference_outputs) != len(jobs):
+        raise RuntimeError(
+            f"derivative reference expected {len(jobs)} cells, captured {len(reference_outputs)}"
         )
 
     # The full current request is context evidence only.  Rust is not wired into
@@ -268,6 +282,8 @@ def _build_dataset(
         absolute_discharge=bool(settings.get("derivative_absolute_discharge", True)),
         settings=settings,
         cells=captured,
+        reference_outputs=reference_outputs,
+        owner_buffer_prepare_ms=owner_prepare_ms,
         backend_context_ms=backend_context_ms,
     )
 
@@ -342,8 +358,11 @@ def _decode_response(body: bytes) -> dict[str, Any]:
     if magic != MAGIC or version != VERSION:
         raise RuntimeError("Rust derivative worker returned an unsupported response")
     cells: list[list[tuple[np.ndarray, np.ndarray]]] = []
+    cell_kernel_ms: list[float] = []
     output_numeric_bytes = 0
     for _ in range(cell_count):
+        cell_kernel_ns, offset = _u64(body, offset)
+        cell_kernel_ms.append(cell_kernel_ns / 1_000_000.0)
         segment_count, offset = _u32(body, offset)
         cell_segments: list[tuple[np.ndarray, np.ndarray]] = []
         for _ in range(segment_count):
@@ -366,6 +385,7 @@ def _decode_response(body: bytes) -> dict[str, Any]:
         "parallel_region_ms": parallel_region_ns / 1_000_000.0,
         "kernel_sum_ms": kernel_sum_ns / 1_000_000.0,
         "cells": cells,
+        "cell_kernel_ms": cell_kernel_ms,
         "output_numeric_bytes": output_numeric_bytes,
         "response_payload_bytes": len(body),
         "_body": body,
@@ -453,7 +473,25 @@ class RustWorker:
             stderr=subprocess.PIPE,
             bufsize=0,
         )
-        self.start_ms = (time.perf_counter() - started) * 1000.0
+        self.spawn_api_ms = (time.perf_counter() - started) * 1000.0
+        if self.process.stdout is None:
+            raise RuntimeError("Rust derivative worker ready pipe is unavailable")
+        ready_length = struct.unpack("<I", _read_exact(self.process.stdout, 4))[0]
+        ready_body = _read_exact(self.process.stdout, ready_length)
+        if len(ready_body) != 12:
+            raise RuntimeError("Rust derivative worker ready handshake is malformed")
+        ready_magic, ready_version, ready_workers, ready_marker = struct.unpack(
+            "<IHHI", ready_body
+        )
+        if (
+            ready_magic != MAGIC
+            or ready_version != VERSION
+            or ready_workers != workers
+            or ready_marker != READY_MARKER
+        ):
+            raise RuntimeError("Rust derivative worker ready handshake is invalid")
+        self.spawn_to_ready_ms = (time.perf_counter() - started) * 1000.0
+        self.ready_handshake_ms = self.spawn_to_ready_ms - self.spawn_api_ms
         self.workers = workers
         self.first = True
 
@@ -538,6 +576,86 @@ def _flatten_python_output(outputs: list[tuple[np.ndarray, np.ndarray]]) -> tupl
     return np.concatenate([item[0] for item in outputs]), np.concatenate([item[1] for item in outputs])
 
 
+def _python_segment_kernel(
+    segment: SegmentInput,
+    *,
+    mode: str,
+    selected_phase: str,
+    smoothing_window: int,
+    absolute_discharge: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run only the selected numeric kernel on the Rust input boundary."""
+
+    count = len(segment.capacity)
+    x = np.full(count, np.nan, dtype="float64")
+    y = np.full(count, np.nan, dtype="float64")
+    if segment.phase not in {"charge", "discharge"} or (
+        selected_phase != "both" and selected_phase != segment.phase
+    ):
+        return x, y
+    finite_count = int((np.isfinite(segment.capacity) & np.isfinite(segment.voltage)).sum())
+    if finite_count < 2:
+        return x, y
+    min_periods = min(smoothing_window, 3, finite_count)
+    q_s = pd.Series(segment.capacity).rolling(
+        smoothing_window,
+        center=True,
+        min_periods=min_periods,
+    ).mean().to_numpy()
+    v_s = pd.Series(segment.voltage).rolling(
+        smoothing_window,
+        center=True,
+        min_periods=min_periods,
+    ).mean().to_numpy()
+    dq = np.gradient(q_s)
+    dv = np.gradient(v_s)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        derivative = np.divide(dq, dv) if mode == "dqdv" else np.divide(dv, dq)
+    denominator = dv if mode == "dqdv" else dq
+    derivative[np.abs(denominator) < 1e-10] = np.nan
+    derivative[~np.isfinite(derivative)] = np.nan
+    derivative[np.asarray(segment.explicit_cv, dtype=bool)] = np.nan
+    q_finite = q_s[np.isfinite(q_s)]
+    v_finite = v_s[np.isfinite(v_s)]
+    if len(q_finite) >= 2 and len(v_finite) >= 2:
+        q_span = float(np.nanpercentile(q_finite, 95) - np.nanpercentile(q_finite, 5))
+        v_span = float(np.nanpercentile(v_finite, 95) - np.nanpercentile(v_finite, 5))
+        scale = q_span / max(v_span, 1e-9) if mode == "dqdv" else v_span / max(q_span, 1e-9)
+        if scale > 0 and np.isfinite(scale):
+            derivative[np.abs(derivative) > scale * 50.0] = np.nan
+    if segment.phase == "discharge" and absolute_discharge:
+        derivative = np.abs(derivative)
+    x[:] = v_s if mode == "dqdv" else q_s
+    y[:] = derivative
+    return x, y
+
+
+def _run_python_segment_kernel(dataset: KernelDataset) -> list[tuple[np.ndarray, np.ndarray]]:
+    outputs: list[tuple[np.ndarray, np.ndarray]] = []
+    for cell in dataset.cells:
+        segments = [
+            _python_segment_kernel(
+                segment,
+                mode=dataset.mode,
+                selected_phase=dataset.selected_phase,
+                smoothing_window=dataset.smoothing_window,
+                absolute_discharge=dataset.absolute_discharge,
+            )
+            for segment in cell.segments
+        ]
+        if segments:
+            outputs.append(
+                (
+                    np.concatenate([item[0] for item in segments]),
+                    np.concatenate([item[1] for item in segments]),
+                )
+            )
+        else:
+            empty = np.empty(0, dtype="float64")
+            outputs.append((empty, empty))
+    return outputs
+
+
 def _flatten_rust_output(response: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, list[int]]:
     x_values: list[np.ndarray] = []
     y_values: list[np.ndarray] = []
@@ -617,40 +735,19 @@ def _parity(
 
 
 def _run_python_reference(dataset: KernelDataset, repetitions: int) -> dict[str, Any]:
-    from app.services import analysis_engine
-
-    # Warm import/function state separately from reported C0 medians.
-    for cell in dataset.cells:
-        analysis_engine._derivative_curve(
-            cell.frame,
-            cell.phases,
-            cell.capacity,
-            cell.capacity_specific,
-            dataset.settings,
-            None,
-        )
+    # Warm the same segment-boundary adapter separately from reported C0 medians.
+    _run_python_segment_kernel(dataset)
     samples: list[dict[str, Any]] = []
-    reference_outputs: list[tuple[np.ndarray, np.ndarray]] = []
     for _ in range(repetitions):
         started_cpu = time.process_time()
         started = time.perf_counter()
-        outputs: list[tuple[np.ndarray, np.ndarray]] = []
-        for cell in dataset.cells:
-            outputs.append(
-                analysis_engine._derivative_curve(
-                    cell.frame,
-                    cell.phases,
-                    cell.capacity,
-                    cell.capacity_specific,
-                    dataset.settings,
-                    None,
-                )
-            )
+        outputs = _run_python_segment_kernel(dataset)
         wall_ms = (time.perf_counter() - started) * 1000.0
         cpu_seconds = time.process_time() - started_cpu
-        if not reference_outputs:
-            reference_outputs = outputs
-        parity_result = _parity(_flatten_python_output(reference_outputs), _flatten_python_output(outputs))
+        parity_result = _parity(
+            _flatten_python_output(dataset.reference_outputs),
+            _flatten_python_output(outputs),
+        )
         samples.append(
             {
                 "candidate": "C0",
@@ -661,7 +758,6 @@ def _run_python_reference(dataset: KernelDataset, repetitions: int) -> dict[str,
                 "native_to_python_ms": 0.0,
                 "rust_kernel_ms": None,
                 "rayon_parallel_region_ms": None,
-                "rayon_queue_parallel_ms": None,
                 "cpu_seconds": cpu_seconds,
                 "effective_cores": cpu_seconds / (wall_ms / 1000.0) if wall_ms > 0 else None,
                 "copied_bytes": 0,
@@ -671,7 +767,7 @@ def _run_python_reference(dataset: KernelDataset, repetitions: int) -> dict[str,
                 "status": "PASS" if parity_result["equal"] else "REJECTED",
             }
         )
-    return {"samples": samples, "reference_outputs": reference_outputs}
+    return {"samples": samples, "reference_outputs": dataset.reference_outputs}
 
 
 def _run_rust_candidate(
@@ -685,7 +781,9 @@ def _run_rust_candidate(
     warm_samples: list[dict[str, Any]] = []
     cold_sample: dict[str, Any] | None = None
     with RustWorker(executable, workers) as worker:
-        process_start_ms = worker.start_ms
+        spawn_api_ms = worker.spawn_api_ms
+        spawn_to_ready_ms = worker.spawn_to_ready_ms
+        ready_handshake_ms = worker.ready_handshake_ms
         for repetition in range(repetitions + 1):
             response = worker.request(dataset)
             rust_x, rust_y, ordering = _flatten_rust_output(response)
@@ -704,9 +802,7 @@ def _run_rust_candidate(
                 "native_to_python_ms": response["native_to_python_ms"],
                 "rust_kernel_ms": response["kernel_sum_ms"],
                 "rayon_parallel_region_ms": response["parallel_region_ms"],
-                "rayon_queue_parallel_ms": max(
-                    0.0, response["parallel_region_ms"] - response["kernel_sum_ms"]
-                ),
+                "per_cell_kernel_ms": response["cell_kernel_ms"],
                 "rayon_pool_init_ms": response["pool_init_ms"],
                 "cpu_seconds": response["cpu_seconds"],
                 "kernel_work_seconds": response["kernel_work_seconds"],
@@ -715,7 +811,9 @@ def _run_rust_candidate(
                     if response["parallel_region_ms"] > 0
                     else None
                 ),
-                "process_start_ms": process_start_ms if repetition == 0 else None,
+                "spawn_api_ms": spawn_api_ms if repetition == 0 else None,
+                "spawn_to_ready_ms": spawn_to_ready_ms if repetition == 0 else None,
+                "ready_handshake_ms": ready_handshake_ms if repetition == 0 else None,
                 "copied_bytes": response["copied_bytes"],
                 "input_numeric_bytes": response["input_numeric_bytes"],
                 "output_bytes": response["output_bytes"],
@@ -900,6 +998,8 @@ def _profile_suite(
             "cell_count": dataset.cell_count,
             "segment_count": sum(len(cell.segments) for cell in dataset.cells),
             "input_rows": sum(len(cell.capacity) for cell in dataset.cells),
+            "owner_buffer_prepare_ms": dataset.owner_buffer_prepare_ms,
+            "owner_buffer_prepare_note": "status classification, contiguous segment scan, finite flags and numeric buffer materialization; measured once outside C0-C3 kernel timers",
             "mode": dataset.mode,
             "selected_phase": dataset.selected_phase,
             "smoothing_window": dataset.smoothing_window,
@@ -1006,6 +1106,7 @@ def main() -> int:
             "name": "derivative rolling + gradient + ratio/filter + postprocess",
             "source_evidence": "050.9 derivative stage and its recorded substages",
             "algorithm": "same centered rolling, NumPy-gradient-equivalent finite differences, ratio thresholds, percentile scale filter, CV mask and discharge sign rule",
+            "python_reference_boundary": "C0 consumes the same already-segmented numeric buffers as C1/C2/C3; the current engine output is the parity oracle",
             "production_integration": "NOT RUN / prohibited by child scope",
         },
         "binding": build,
@@ -1017,7 +1118,9 @@ def main() -> int:
             "rust_owner": "numeric derivative kernel over contiguous per-segment float64/u8 buffers",
             "input_copy_status": "copied into a length-prefixed subprocess frame; borrowed zero-copy input is not claimed",
             "output_conversion": "NumPy views over response bytes; output conversion is recorded separately",
+            "owner_preparation": "status classification, contiguous segment scan, finite flags and buffer materialization measured once outside C0-C3 kernel timers",
             "workers": [1, 2, 4],
+            "rayon_scheduling": "not separately measured; per-Cell elapsed times, aggregate kernel work and parallel_region_ms are retained",
             "nested_native_threading": "Rayon only in the isolated worker; Python/native settings are recorded above",
         },
         "scientific_gate": {
