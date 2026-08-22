@@ -732,3 +732,21 @@ R6 fixed by replacing the scalar N0 continuous-time adapter with the production-
 R7 is implemented and benchmarked. The host exposed 16 logical CPUs, so exact 8-worker C8/N8 candidates ran on derivative 6/10-Cell and ordinary Time 6/10/11-Cell cases where available, with separate isolated-kernel and complete-boundary comparisons, CPU/effective-core evidence, memory, ordering, and exact parity. Persistent P4/P8 sessions included small and one-Cell controls with startup/pool initialization outside warm measurements. Eight workers consistently improved isolated broad derivative work but complete-boundary gains were only 1-3%, ordinary Time was mixed, and real application small controls regressed; retain P4 as the largest justified persistent bound. No production integration was added; implement only R7 findings.
 
 ---
+### 2026-08-23T00:12:18+02:00 — IMPLEMENTER → REVIEWER — 050.11
+
+**Result:** Implementation ready
+
+**Verification**
+
+- 050.11 full composition benchmark: PASS (20 workloads; 500 candidate runs across golden fixture and real Performance analysis data; 0 parity failures)
+- architecture decision: PASS (C — sequential Rust kernel; derivative R1 vs A0 -34.9% representative; D0 vs R1 -2.05%; D2 vs D0 -0.79%; normal Rust remains slower)
+- cache controls: PASS (golden and application miss-then-hit payload equality; hit bypasses raw path)
+- focused checks: PASS (composition py_compile; Rust 3/3; release build; decision check; diff --check)
+- preflight: PASS (4/4; all 77 backend modules)
+- browser checks: NOT RUN (backend benchmark/decision child; no frontend or production request change)
+
+**Message**
+
+050.11 implementation complete. Added the benchmark-only composition profiler with A0/R1/D0/D1/D2 candidates: current Python, sequential reads plus Rust1/Rust4, and two-thread reads plus Rust1/Rust4. It preserves the existing Python response assembly, uses resident Rust workers with startup/pool initialization outside measured warm interactions, records read/buffer/native/remaining-backend stages, CPU/effective cores, memory, expected-versus-actual interaction, exact parity and deterministic order. Full fixture plus real saved Performance analysis matrix passed 20 workloads and 500 candidate runs. The explicit architecture outcome is C — sequential Rust kernel: later 050.12+ may evaluate a narrowly gated resident sequential native derivative path with Python fallback; keep normal Time/Capacity on Python/NumPy and do not promote read threads, whole-Cell threads, multi-worker Rayon, processes, cache changes or frontend work. D3 and optional process control were not run for the documented architectural reasons.
+
+---

@@ -473,6 +473,21 @@ postprocess. Any later derivative optimization must preserve the status mask's r
 the exact run counters, committed golden digests, and the existing frontend trace-count evidence;
 the derivative arrays are not a persisted cache or a new scientific version boundary.
 
+Spec 050.11 composition evidence keeps the production path unchanged and selects **C — sequential
+Rust kernel** as the only later architecture candidate. On the verified fixture plus real saved
+Performance-analysis batch, a resident one-worker Rust boundary reduced broad dQ/dV complete
+backend time versus the current Python derivative path by roughly 35% across representative
+rows. Moving that same composition to four Rayon workers added only about 2% at the complete
+boundary, while a two-thread indexed-read pool added less than 2%; buffer preparation, remaining
+Python assembly and serialization dominated. Normal Time/Capacity remained faster on the current
+Python/NumPy path, and small controls did not justify unconditional dispatch. Any 050.12+
+implementation must therefore gate a resident sequential native derivative path narrowly, retain
+the Python fallback and exact output/order parity, and must not infer a production benefit for
+read threads, whole-Cell Python threads, multi-worker Rayon, persistent Python processes, cache
+layout, or frontend/Plotly behavior from the benchmark. The reproducible composition harness is
+[`scripts/profile_time_capacity_composition.py`](../../scripts/profile_time_capacity_composition.py)
+and its decision record is [`050.11-execution-strategy-composition-and-decision.md`](../specs/050.11-execution-strategy-composition-and-decision.md).
+
 The repeatable `scripts/profile_time_capacity_path.py` matrix on the approved 71,190-row golden
 source recorded the following medians under the pinned local runtime (wall time is descriptive,
 not a universal threshold):
