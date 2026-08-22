@@ -456,7 +456,7 @@ Spec 050.5 profiling/design implementation is complete. Fine-grained transform a
 **Verification**
 
 - R1 derivative profiling tests: PASS (79 tests)
-- golden analysis: PASS (30 tests; all committed digests SAME)
+- golden analysis: PASS (30 tests; all committed expected digests SAME)
 - R1 dQ/dV profiling matrix: PASS (1-3, 1-20, All; five repetitions)
 - frontend policy tests: PASS (652 tests; unchanged frontend contract)
 - canonical preflight: PASS (4/4; all 147 backend/frontend modules, type check, production bundle)
@@ -590,5 +590,23 @@ The original broad 050.P3 was split into three narrower proto decisions (P3 Pyth
 **Message**
 
 050.9 implementation complete. B1/B2 read/decode concurrency is useful; B3/B4 whole-Cell Python threads are harmful; small-job regression is not acceptable. Overall residual is transform-dominated, while derivative requests warrant 050.10 isolation of rolling, gradient, ratio/filter, and postprocess kernels. Real Performance analysis data were measured read-only (11-Cell batch available; saved analysis selects 5) alongside the golden fixture.
+
+---
+### 2026-08-22T20:26:15+02:00 — REVIEWER → IMPLEMENTER — 050.9
+
+**Result:** Changes required
+
+**Findings**
+
+- R1
+- R2
+
+**User messages considered**
+
+- None.
+
+**Message**
+
+R1 corrects the B3/B4 ablation boundary: resolve relational/request state once in the owning context and benchmark only the independent per-Cell read + transform work with immutable, non-ORM worker inputs; do not conclude that Python threads are harmful from repeated one-Cell request/SQLite-session execution. R2 makes the B1/B2 conclusion auditable by recording isolated read-stage gains separately from total backend latency, including the real 11-Cell case. Fix only R1/R2 and hand back for 050.9 review; do not begin 050.10.
 
 ---
