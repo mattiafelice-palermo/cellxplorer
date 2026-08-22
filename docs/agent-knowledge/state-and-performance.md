@@ -475,16 +475,20 @@ the derivative arrays are not a persisted cache or a new scientific version boun
 
 Spec 050.11 composition evidence keeps the production path unchanged and selects **C — sequential
 Rust kernel** as the only later architecture candidate. On the verified fixture plus real saved
-Performance-analysis batch, a resident one-worker Rust boundary reduced broad dQ/dV complete
-backend time versus the current Python derivative path by roughly 35% across representative
-rows. Moving that same composition to four Rayon workers added only about 2% at the complete
-boundary, while a two-thread indexed-read pool added less than 2%; buffer preparation, remaining
-Python assembly and serialization dominated. Normal Time/Capacity remained faster on the current
-Python/NumPy path, and small controls did not justify unconditional dispatch. Any 050.12+
-implementation must therefore gate a resident sequential native derivative path narrowly, retain
-the Python fallback and exact output/order parity, and must not infer a production benefit for
-read threads, whole-Cell Python threads, multi-worker Rayon, persistent Python processes, cache
-layout, or frontend/Plotly behavior from the benchmark. The reproducible composition harness is
+Performance-analysis batch, a resident one-worker Rust boundary reduced broad 1/6/10-Cell dQ/dV
+complete-backend time versus the current Python derivative path by 55.61%. Moving that same
+composition to four Rayon workers added only 0.46% at the complete boundary, while a two-thread
+indexed-read pool added 0.56% and the combined read/Rayon candidate improved over Rayon-only by
+1.74%; pre-native transformation, native-buffer materialization and remaining Python assembly
+dominated. Serialization was measured separately and excluded from every backend-wall comparison.
+Normal Time/Capacity remained faster on the current Python/NumPy path by 3.49%, and small controls
+did not justify unconditional dispatch. The corrected composition path performs one scientific
+pre-native preparation pass, one native-buffer materialization pass and one coarse Rust request
+per candidate while preserving exact output/order parity. Any 050.12+ implementation must
+therefore gate a resident sequential native derivative path narrowly, retain the Python fallback
+and exact output/order parity, and must not infer a production benefit for read threads, whole-Cell
+Python threads, multi-worker Rayon, persistent Python processes, cache layout, or frontend/Plotly
+behavior from the benchmark. The reproducible composition harness is
 [`scripts/profile_time_capacity_composition.py`](../../scripts/profile_time_capacity_composition.py)
 and its decision record is [`050.11-execution-strategy-composition-and-decision.md`](../specs/050.11-execution-strategy-composition-and-decision.md).
 

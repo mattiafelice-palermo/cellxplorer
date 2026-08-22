@@ -750,3 +750,22 @@ R7 is implemented and benchmarked. The host exposed 16 logical CPUs, so exact 8-
 050.11 implementation complete. Added the benchmark-only composition profiler with A0/R1/D0/D1/D2 candidates: current Python, sequential reads plus Rust1/Rust4, and two-thread reads plus Rust1/Rust4. It preserves the existing Python response assembly, uses resident Rust workers with startup/pool initialization outside measured warm interactions, records read/buffer/native/remaining-backend stages, CPU/effective cores, memory, expected-versus-actual interaction, exact parity and deterministic order. Full fixture plus real saved Performance analysis matrix passed 20 workloads and 500 candidate runs. The explicit architecture outcome is C — sequential Rust kernel: later 050.12+ may evaluate a narrowly gated resident sequential native derivative path with Python fallback; keep normal Time/Capacity on Python/NumPy and do not promote read threads, whole-Cell threads, multi-worker Rayon, processes, cache changes or frontend work. D3 and optional process control were not run for the documented architectural reasons.
 
 ---
+### 2026-08-23T01:00:21+02:00 — IMPLEMENTER → REVIEWER — 050.11
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 fixed: A0 and composed candidates stop backend wall timing before JSON serialization; serialization remains separately recorded.
+- R2 fixed: composed candidates perform one production pre-native transform pass, one native-buffer materialization pass, one coarse Rust request, then downstream Python assembly without upstream re-execution; all candidates retain exact parity and ordering.
+- R3 fixed: added local derivative-10-all-dqdv workload when ten Cells are available, ran it in fixture and application suites, and included it in the C-vs-D architecture decision.
+- Full mains-power benchmark PASS: 22 workloads, 550 candidate runs, five warm repetitions, fixture plus saved Performance analysis data, 0 parity failures, cache controls PASS; outcome C — sequential Rust kernel.
+- Focused checks PASS: py_compile; tests.test_analysis_engine 95/95; Rust tests 3/3; Rust release build; git diff --check.
+- Canonical preflight PASS: 4/4 stages, all 77 backend modules; frontend unchanged and skipped by cache.
+- Browser/manual checks: NOT RUN; benchmark-only child with no frontend or production request change.
+
+**Message**
+
+R1-R3 fixes are complete. The corrected mains-power matrix uses the same A0/candidate wall boundary, a single prepared pre-native pass plus one coarse Rust request, and includes the 10-Cell derivative workload in both suites and the architecture decision. Results remain C — sequential Rust kernel; no production integration is added.
+
+---

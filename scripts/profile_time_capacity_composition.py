@@ -2,10 +2,10 @@
 
 This is a benchmark-only adapter. It resolves the same immutable per-Cell jobs
 as the 050.9 profiler, reads them sequentially or with a bounded read pool, and
-sends the resulting compact numeric buffers to the persistent 050.10 Rust
-worker. The current Python response assembly remains the scientific boundary;
-only the measured derivative/display numeric function is replaced by the Rust
-response inside the candidate request.
+runs the production pre-native transforms once before capturing compact numeric
+buffers for the persistent 050.10 Rust worker. The downstream Python response
+assembly remains the scientific boundary; only the measured derivative/display
+numeric function is replaced by the Rust response inside the candidate request.
 
 No production executor, native integration, cache layout or frontend behavior
 is changed. The JSON output is disposable evidence and contains no raw rows,
@@ -14,9 +14,9 @@ source paths, hashes or Cell names.
 from __future__ import annotations
 
 import argparse
-from collections import deque
 from contextlib import ExitStack
 from copy import deepcopy
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -24,7 +24,6 @@ import statistics
 import sys
 import time
 from typing import Any, Iterable
-from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -87,196 +86,635 @@ def _make_spec(base: dict[str, Any], workload: dict[str, Any]) -> dict[str, Any]
     )
 
 
-def _filtered_raw(payload: Any, settings: dict[str, Any]) -> pd.DataFrame:
-    raw = payload.raw.copy()
-    if settings["cycles"]:
-        raw = raw[raw["cycle"].isin(settings["cycles"])]
-    else:
-        if settings["cycle_start"] is not None:
-            raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
-        if settings["cycle_end"] is not None:
-            raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
-    sort_columns = [
-        column
-        for column in ("cycle", "segment", "record_index")
-        if column in raw.columns
-    ]
-    if sort_columns:
-        raw = raw.sort_values(sort_columns, kind="stable")
-    return raw.reset_index(drop=True)
+@dataclass
+class PreparedCell:
+    """One-pass production state split at the measured native boundary."""
+
+    index: int
+    job: Any
+    raw: pd.DataFrame
+    phases: list[str]
+    capacity: np.ndarray | None
+    capacity_g: np.ndarray | None
+    capacity_area: np.ndarray | None
+    source_values: dict[str, list[Any]]
+    source_boundary_indices: np.ndarray
+    descriptor: Any
+    segments: tuple[dict[str, Any], ...]
+    badges: list[dict[str, Any]]
+    diagnostics: dict[str, Any]
+    active: bool
+    active_mass_mg: float | None
+    nominal_capacity_mah: float | None
+    electrode_area_cm2: float | None
 
 
-def _phase_and_capacity(
-    raw: pd.DataFrame,
-    payload: Any,
-    settings: dict[str, Any],
-    request: Any,
-) -> tuple[list[str], np.ndarray]:
-    from app.services import analysis_engine, time_capacity_derived
-
-    needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
-        settings,
-        precision=request.precision,
-        compact=request.compact,
-    )
-    if needs.continuous_time:
-        raw = analysis_engine._continuous_time(raw)
-    aligned = (
-        analysis_engine._aligned_prepared_transform_values(
-            raw,
-            payload.prepared,
-            need_capacity=needs.phase_capacity,
-        )
-        if payload.prepared is not None
-        else None
-    )
-    if aligned is not None:
-        phases, prepared_capacity = aligned
-    else:
-        phases = analysis_engine._phase_from_raw(raw)
-        prepared_capacity = None
-    if needs.phase_capacity:
-        capacity = (
-            prepared_capacity
-            if prepared_capacity is not None
-            else analysis_engine._phase_capacity(raw, phases)
-        )
-    else:
-        capacity = np.full(len(raw), np.nan, dtype="float64")
-    return list(phases), np.asarray(capacity, dtype="float64")
-
-
-def _build_derivative_dataset(
+def _prepare_composed_inputs(
     payloads: list[Any],
     request: Any,
     workload: dict[str, Any],
     suite: str,
-) -> tuple[rust.KernelDataset, float]:
-    from app.services import analysis_engine
+) -> tuple[list[PreparedCell], rust.KernelDataset, float, float]:
+    """Run the production pre-native transforms once and capture their boundary.
 
-    started = time.perf_counter()
-    settings = deepcopy(request.settings)
-    cells: list[rust.PythonCellInput] = []
-    for payload in payloads:
-        raw = _filtered_raw(payload, settings)
-        phases, capacity = _phase_and_capacity(raw, payload, settings, request)
-        descriptor = payload.job.descriptor
-        active_mass_g = (
-            descriptor.active_mass_mg / 1000.0
-            if descriptor.active_mass_mg
-            else None
-        )
-        capacity_specific = (
-            capacity / active_mass_g
-            if settings.get("derivative_specific") and active_mass_g and active_mass_g > 0
-            else None
-        )
-        if settings.get("derivative_specific") and capacity_specific is None:
-            capacity_specific = np.full(len(raw), np.nan, dtype="float64")
-        cells.append(
-            rust._capture_python_input(
-                raw,
-                phases,
-                capacity,
-                capacity_specific,
-            )
-        )
-    prepare_ms = (time.perf_counter() - started) * 1000.0
-    window = int(settings.get("smoothing_window") or 1)
-    if window % 2 == 0:
-        window += 1
-    return (
-        rust.KernelDataset(
-            kernel_kind="derivative",
-            scenario=str(workload["scenario"]),
-            suite=suite,
-            cell_count=len(cells),
-            mode=str(settings["view"]),
-            selected_phase=str(settings.get("derivative_phase") or "both"),
-            smoothing_window=window,
-            absolute_discharge=bool(settings.get("derivative_absolute_discharge", True)),
-            settings=settings,
-            cells=cells,
-            normal_cells=None,
-            reference_outputs=[],
-            owner_buffer_prepare_ms=prepare_ms,
-            input_rows=sum(len(cell.capacity) for cell in cells),
-            backend_context_ms=[],
-        ),
-        prepare_ms,
-    )
+    The older isolated Rust profiler intentionally prepares an independent
+    numeric dataset. Composition must not do that and then call the production
+    transform path again. This helper mirrors the existing 050.9 per-Cell
+    preparation, retains its downstream-ready state, and only then materializes
+    the compact native inputs.
+    """
 
+    import app.services.analysis_engine as analysis_engine
+    from app.services import stitch, time_capacity_derived, time_capacity_path
 
-def _build_normal_dataset(
-    payloads: list[Any],
-    request: Any,
-    workload: dict[str, Any],
-    suite: str,
-) -> tuple[rust.KernelDataset, float]:
-    from app.services import analysis_engine, canonical_cycling, time_capacity_derived
-
-    started = time.perf_counter()
-    settings = deepcopy(request.settings)
+    settings = request.settings
     transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
         settings,
         precision=request.precision,
         compact=request.compact,
     )
-    cells: list[rust.NormalCellInput] = []
-    for payload in payloads:
-        raw = _filtered_raw(payload, settings)
-        phases, capacity = _phase_and_capacity(raw, payload, settings, request)
-        voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
-        voltage = (
-            raw[voltage_column].to_numpy(dtype="float64", copy=True)
-            if voltage_column in raw.columns
-            else np.full(len(raw), np.nan, dtype="float64")
-        )
-        cycles = pd.to_numeric(raw["cycle"], errors="coerce").to_numpy(dtype="float64")
-        if not np.isfinite(cycles).all():
-            raise RuntimeError("normal composition input contains invalid cycles")
-        phase_codes = np.asarray(
-            [{"rest": 0, "charge": 1, "discharge": 2}.get(str(phase), 0) for phase in phases],
-            dtype="uint8",
-        )
-        cells.append(
-            rust.NormalCellInput(
-                cycles=np.ascontiguousarray(cycles.astype("int64"), dtype="<i8"),
-                phases=np.ascontiguousarray(phase_codes, dtype="u1"),
-                time_s=np.ascontiguousarray(
-                    raw["time_s"].to_numpy(dtype="float64", copy=True)
-                    if "time_s" in raw.columns
-                    else np.full(len(raw), np.nan, dtype="float64"),
-                    dtype="<f8",
+    transform_started = time.perf_counter()
+    states: list[PreparedCell] = []
+    for index, payload in enumerate(payloads):
+        job = payload.job
+        descriptor = job.descriptor
+        raw = payload.raw.copy()
+        segments = tuple(deepcopy(descriptor.segments))
+        cell_diagnostics: dict[str, Any] = {
+            "cell_id": descriptor.cell_id,
+            "cell_name": descriptor.cell_name,
+            **deepcopy(payload.diagnostics),
+        }
+        cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)
+        if payload.plan.path not in {"indexed", "missing"}:
+            cell_diagnostics["raw_rows_materialized"] = len(raw)
+            cell_diagnostics["row_groups_read"] = "full"
+            cell_diagnostics["row_groups_total"] = "full"
+
+        badges: list[dict[str, Any]] = []
+        versions = dict(descriptor.source_versions)
+        for file_hash in descriptor.missing:
+            badges.append(
+                {
+                    "kind": "cache_missing",
+                    "cell_id": descriptor.cell_id,
+                    "cell_name": descriptor.cell_name,
+                    "detail": (
+                        f"No raw cache at parser {versions.get(file_hash, 'unknown')} "
+                        f"for file {file_hash[:12]}..."
+                    ),
+                }
+            )
+        complete = stitch.stitch_metadata(raw)["complete"]
+        if not complete:
+            badges.append(
+                {
+                    "kind": "continuation_source_missing",
+                    "cell_id": descriptor.cell_id,
+                    "cell_name": descriptor.cell_name,
+                    "missing_source_hashes": list(descriptor.missing),
+                    "missing_source_positions": list(descriptor.missing_positions),
+                    "detail": (
+                        "The ordered Cell source chain is incomplete; the scientific "
+                        "time/capacity trace was withheld until every source cache is available."
+                    ),
+                }
+            )
+        if raw.empty or "cycle" not in raw.columns or not complete:
+            states.append(
+                PreparedCell(
+                    index=index,
+                    job=job,
+                    raw=raw.iloc[0:0].copy(),
+                    phases=[],
+                    capacity=None,
+                    capacity_g=None,
+                    capacity_area=None,
+                    source_values={
+                        "source_cycle": [],
+                        "source_position": [],
+                        "source_filename": [],
+                        "source_hash": [],
+                    },
+                    source_boundary_indices=np.array([], dtype="int64"),
+                    descriptor=descriptor,
+                    segments=segments,
+                    badges=badges,
+                    diagnostics=cell_diagnostics,
+                    active=False,
+                    active_mass_mg=descriptor.active_mass_mg,
+                    nominal_capacity_mah=descriptor.nominal_capacity_mah,
+                    electrode_area_cm2=descriptor.electrode_area_cm2,
+                )
+            )
+            continue
+
+        with time_capacity_path.timed_stage(cell_diagnostics, "exact_cycle_filter_and_sort"):
+            if settings["cycles"]:
+                raw = raw[raw["cycle"].isin(settings["cycles"])]
+            else:
+                if settings["cycle_start"] is not None:
+                    raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+                if settings["cycle_end"] is not None:
+                    raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+            sort_columns = (
+                ["cycle", "segment", "record_index"]
+                if "record_index" in raw.columns
+                else ["cycle", "segment"]
+            )
+            raw = raw.sort_values(sort_columns, kind="stable").reset_index(drop=True)
+            cell_diagnostics["selected_rows_before_transforms"] = len(raw)
+
+        with time_capacity_path.timed_stage(cell_diagnostics, "continuous_time_phase_capacity"):
+            transform_rows = len(raw)
+            if transform_needs.continuous_time:
+                with time_capacity_path.timed_stage(cell_diagnostics, "transform_continuous_time"):
+                    raw = analysis_engine._continuous_time(raw)
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "continuous_time",
+                input_rows=transform_rows,
+                output_rows=len(raw) if transform_needs.continuous_time else 0,
+                consumed_by=(
+                    ("time_axis",)
+                    if settings["view"] == "voltage_current" and settings["x_axis"] == "time"
+                    else ()
                 ),
-                capacity=np.ascontiguousarray(
-                    capacity if transform_needs.phase_capacity else np.full(len(raw), np.nan),
-                    dtype="<f8",
+            )
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_source_provenance"):
+                source_values = concurrency._resolved_source_columns(raw, descriptor)
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "source_provenance",
+                input_rows=len(raw),
+                output_rows=len(raw),
+                consumed_by=("provenance_output",),
+            )
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_source_boundaries"):
+                source_boundary_indices = (
+                    np.flatnonzero(
+                        raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+                    )
+                    + 1
+                    if "segment" in raw.columns and len(raw) > 1
+                    else np.array([], dtype="int64")
+                )
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "source_boundaries",
+                input_rows=len(raw),
+                output_rows=len(source_boundary_indices),
+                consumed_by=("provenance_output", "display_downsampling"),
+            )
+            aligned = (
+                analysis_engine._aligned_prepared_transform_values(
+                    raw,
+                    payload.prepared,
+                    need_capacity=transform_needs.phase_capacity,
+                )
+                if payload.prepared is not None
+                else None
+            )
+            if aligned is not None:
+                phases, prepared_capacity = aligned
+                cell_diagnostics["derived_access"] = "prepared"
+                phase_source = "prepared"
+                capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
+            else:
+                cell_diagnostics["derived_access"] = (
+                    "fallback" if transform_needs.phase_capacity else "not_needed"
+                )
+                with time_capacity_path.timed_stage(cell_diagnostics, "transform_phase_classification"):
+                    phases = analysis_engine._phase_from_raw(raw)
+                phase_source = "computed"
+                prepared_capacity = None
+                capacity_source = "computed" if transform_needs.phase_capacity else "not_needed"
+            phases = list(phases)
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "phase_classification",
+                input_rows=len(raw),
+                output_rows=len(phases),
+                consumed_by=("phase_output", "display_coordinate", "derivative"),
+            )
+            if transform_needs.phase_capacity:
+                if prepared_capacity is not None:
+                    capacity = np.asarray(prepared_capacity, dtype="float64")
+                else:
+                    with time_capacity_path.timed_stage(cell_diagnostics, "transform_phase_capacity"):
+                        capacity = np.asarray(
+                            analysis_engine._phase_capacity(raw, phases),
+                            dtype="float64",
+                        )
+            else:
+                capacity = None
+            capacity_consumers: list[str] = []
+            if transform_needs.phase_capacity:
+                if settings["view"] != "voltage_current":
+                    capacity_consumers.append("derivative")
+                elif settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}:
+                    capacity_consumers.append("capacity_axis")
+                if request.precision == "full" or not request.compact:
+                    capacity_consumers.append("full_export")
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "phase_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity) if capacity is not None else 0,
+                consumed_by=tuple(capacity_consumers),
+            )
+            cell_diagnostics["phase_source"] = phase_source
+            cell_diagnostics["phase_capacity_source"] = capacity_source
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_capacity_metadata"):
+                active_mass_mg = descriptor.active_mass_mg
+                nominal_capacity_mah = descriptor.nominal_capacity_mah
+                electrode_area_cm2 = descriptor.electrode_area_cm2
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "capacity_metadata",
+                input_rows=len(raw),
+                output_rows=1,
+                consumed_by=("capacity_normalization", "trace_metadata"),
+            )
+            active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
+            if transform_needs.specific_capacity:
+                with time_capacity_path.timed_stage(cell_diagnostics, "transform_specific_capacity"):
+                    capacity_g = (
+                        capacity / active_mass_g
+                        if capacity is not None and active_mass_g and active_mass_g > 0
+                        else np.full(len(raw), np.nan)
+                    )
+            else:
+                capacity_g = None
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "specific_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity_g) if capacity_g is not None else 0,
+                consumed_by=(
+                    ("derivative",)
+                    if settings["view"] != "voltage_current" and settings["derivative_specific"]
+                    else ()
                 ),
-                voltage=np.ascontiguousarray(voltage, dtype="<f8"),
+            )
+            area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
+            if transform_needs.areal_capacity:
+                with time_capacity_path.timed_stage(cell_diagnostics, "transform_areal_capacity"):
+                    capacity_area = (
+                        capacity / area_cm2
+                        if capacity is not None and area_cm2 and area_cm2 > 0
+                        else np.full(len(raw), np.nan)
+                    )
+            else:
+                capacity_area = None
+            analysis_engine._record_transform_profile(
+                cell_diagnostics,
+                "areal_capacity",
+                input_rows=len(raw),
+                output_rows=len(capacity_area) if capacity_area is not None else 0,
+                consumed_by=(
+                    ("capacity_axis",)
+                    if settings["view"] == "voltage_current"
+                    and settings["x_axis"] == "capacity_mah_cm2"
+                    else ()
+                ),
+            )
+
+        states.append(
+            PreparedCell(
+                index=index,
+                job=job,
+                raw=raw,
+                phases=phases,
+                capacity=capacity,
+                capacity_g=capacity_g,
+                capacity_area=capacity_area,
+                source_values=source_values,
+                source_boundary_indices=source_boundary_indices,
+                descriptor=descriptor,
+                segments=segments,
+                badges=badges,
+                diagnostics=cell_diagnostics,
+                active=True,
+                active_mass_mg=active_mass_mg,
+                nominal_capacity_mah=nominal_capacity_mah,
+                electrode_area_cm2=electrode_area_cm2,
             )
         )
-    prepare_ms = (time.perf_counter() - started) * 1000.0
-    return (
-        rust.KernelDataset(
-            kernel_kind="normal",
-            scenario=str(workload["scenario"]),
-            suite=suite,
-            cell_count=len(cells),
-            mode=str(settings["x_axis"]),
-            selected_phase="both",
-            smoothing_window=1,
-            absolute_discharge=False,
-            settings=settings,
-            cells=[],
-            normal_cells=cells,
-            reference_outputs=[],
-            owner_buffer_prepare_ms=prepare_ms,
-            input_rows=sum(len(cell.time_s) for cell in cells),
-            backend_context_ms=[],
-        ),
-        prepare_ms,
+
+    transform_ms = (time.perf_counter() - transform_started) * 1000.0
+    native_started = time.perf_counter()
+    settings_copy = deepcopy(settings)
+    if request.settings["view"] != "voltage_current":
+        native_cells = [
+            rust._capture_python_input(
+                state.raw,
+                state.phases,
+                state.capacity if state.capacity is not None else np.full(len(state.raw), np.nan),
+                state.capacity_g,
+            )
+            if state.active
+            else rust.PythonCellInput(
+                frame=pd.DataFrame(),
+                phases=[],
+                capacity=np.empty(0, dtype="float64"),
+                capacity_specific=None,
+                segments=[],
+            )
+            for state in states
+        ]
+        native_cells_value: list[Any] = native_cells
+        native_cells_normal = None
+        kernel_kind = "derivative"
+        mode = str(settings["view"])
+        selected_phase = str(settings.get("derivative_phase") or "both")
+        window = int(settings.get("smoothing_window") or 1)
+        if window % 2 == 0:
+            window += 1
+        absolute_discharge = bool(settings.get("derivative_absolute_discharge", True))
+    else:
+        from app.services import canonical_cycling
+
+        native_cells_normal = []
+        for state in states:
+            if not state.active:
+                native_cells_normal.append(
+                    rust.NormalCellInput(
+                        cycles=np.empty(0, dtype="<i8"),
+                        phases=np.empty(0, dtype="u1"),
+                        time_s=np.empty(0, dtype="<f8"),
+                        capacity=np.empty(0, dtype="<f8"),
+                        voltage=np.empty(0, dtype="<f8"),
+                    )
+                )
+                continue
+            raw = state.raw
+            voltage_column = canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
+            voltage = (
+                raw[voltage_column].to_numpy(dtype="float64", copy=True)
+                if voltage_column in raw.columns
+                else np.full(len(raw), np.nan, dtype="float64")
+            )
+            cycles = pd.to_numeric(raw["cycle"], errors="coerce").to_numpy(dtype="float64")
+            phase_codes = np.asarray(
+                [{"rest": 0, "charge": 1, "discharge": 2}.get(str(phase), 0) for phase in state.phases],
+                dtype="uint8",
+            )
+            native_cells_normal.append(
+                rust.NormalCellInput(
+                    cycles=np.ascontiguousarray(cycles.astype("int64"), dtype="<i8"),
+                    phases=np.ascontiguousarray(phase_codes, dtype="u1"),
+                    time_s=np.ascontiguousarray(
+                        raw["time_s"].to_numpy(dtype="float64", copy=True)
+                        if "time_s" in raw.columns
+                        else np.full(len(raw), np.nan, dtype="float64"),
+                        dtype="<f8",
+                    ),
+                    capacity=np.ascontiguousarray(
+                        state.capacity
+                        if state.capacity is not None
+                        else np.full(len(raw), np.nan),
+                        dtype="<f8",
+                    ),
+                    voltage=np.ascontiguousarray(voltage, dtype="<f8"),
+                )
+            )
+        native_cells_value = []
+        kernel_kind = "normal"
+        mode = str(settings["x_axis"])
+        selected_phase = "both"
+        window = 1
+        absolute_discharge = False
+    native_buffer_ms = (time.perf_counter() - native_started) * 1000.0
+    dataset = rust.KernelDataset(
+        kernel_kind=kernel_kind,
+        scenario=str(workload["scenario"]),
+        suite=suite,
+        cell_count=len(states),
+        mode=mode,
+        selected_phase=selected_phase,
+        smoothing_window=window,
+        absolute_discharge=absolute_discharge,
+        settings=settings_copy,
+        cells=native_cells_value,
+        normal_cells=native_cells_normal,
+        reference_outputs=[],
+        owner_buffer_prepare_ms=native_buffer_ms,
+        input_rows=sum(len(state.raw) for state in states),
+        backend_context_ms=[],
     )
+    return states, dataset, transform_ms, native_buffer_ms
+
+
+def _assemble_prepared_cell(
+    state: PreparedCell,
+    request: Any,
+    native_output: tuple[np.ndarray, np.ndarray],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Assemble downstream response data from the one-pass prepared state."""
+
+    import app.services.analysis_engine as analysis_engine
+    from app.services import time_capacity_path
+
+    descriptor = state.descriptor
+    if not state.active:
+        return (
+            {
+                "trace": concurrency._empty_resolved_trace(descriptor, state.segments),
+                "badges": state.badges,
+                "voltage_facts": list(descriptor.voltage_facts),
+                "source_versions": list(descriptor.source_versions),
+                "current_parser_versions": list(descriptor.current_parser_versions),
+            },
+            {"cells": [state.diagnostics]},
+        )
+
+    settings = request.settings
+    raw = state.raw
+    phases = list(state.phases)
+    capacity = state.capacity.copy() if state.capacity is not None else None
+    capacity_g = state.capacity_g.copy() if state.capacity_g is not None else None
+    capacity_area = state.capacity_area.copy() if state.capacity_area is not None else None
+    native_x, native_y = native_output
+    derivative_x = native_x
+    derivative_y = native_y
+    with time_capacity_path.timed_stage(state.diagnostics, "protocol_masking"):
+        plot_mask = np.zeros(len(raw), dtype=bool)
+    voltage_column = analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
+    voltage = (
+        raw[voltage_column].to_numpy(dtype="float64").copy()
+        if voltage_column in raw.columns
+        else np.full(len(raw), np.nan)
+    )
+    current = (
+        raw["current_ma"].to_numpy(dtype="float64").copy()
+        if "current_ma" in raw.columns
+        else np.full(len(raw), np.nan)
+    )
+    with time_capacity_path.timed_stage(state.diagnostics, "transform_plot_array_materialization"):
+        derivative_x = derivative_x.copy()
+        derivative_y = derivative_y.copy()
+        for values in (voltage, current, capacity, capacity_g, capacity_area, derivative_x, derivative_y):
+            if values is not None:
+                values[plot_mask] = np.nan
+    analysis_engine._record_transform_profile(
+        state.diagnostics,
+        "plot_array_materialization",
+        input_rows=len(raw),
+        output_rows=len(raw),
+        consumed_by=("response_projection",),
+    )
+    with time_capacity_path.timed_stage(state.diagnostics, "display_coordinate"):
+        if settings["view"] == "voltage_current":
+            display_x = native_x.copy()
+            derivative_x = np.empty(0, dtype="float64")
+            derivative_y = np.empty(0, dtype="float64")
+        else:
+            display_x = analysis_engine._time_capacity_display_x(
+                raw,
+                phases,
+                capacity,
+                capacity_g,
+                capacity_area,
+                settings,
+            )
+    source_values = {key: list(values) for key, values in state.source_values.items()}
+    source_boundary_indices = state.source_boundary_indices.copy()
+    configured_max = max(100, settings["max_points_per_cell"])
+    if len(raw) > configured_max and not (request.precision == "full" and not request.compact):
+        envelope_series = (
+            [derivative_x, derivative_y]
+            if settings["view"] != "voltage_current"
+            else [voltage]
+        )
+        primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
+        visible_values = ~plot_mask & np.isfinite(primary_values)
+        with time_capacity_path.timed_stage(state.diagnostics, "display_downsampling"):
+            take = analysis_engine._downsample_indices(
+                len(raw), configured_max, visible_values, envelope_series
+            )
+        take = np.unique(np.concatenate((take, source_boundary_indices)))
+        raw = raw.iloc[take]
+        display_x = display_x[take]
+        phases = np.asarray(phases)[take].tolist()
+        voltage = voltage[take]
+        current = current[take]
+        capacity = capacity[take] if capacity is not None else None
+        capacity_g = capacity_g[take] if capacity_g is not None else None
+        capacity_area = capacity_area[take] if capacity_area is not None else None
+        if derivative_x.size:
+            derivative_x = derivative_x[take]
+        if derivative_y.size:
+            derivative_y = derivative_y[take]
+        source_values = {
+            key: [values[int(index)] for index in take]
+            for key, values in source_values.items()
+        }
+        source_boundary_indices = (
+            np.flatnonzero(raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1])
+            + 1
+        )
+    full_precision = request.precision == "full" or not request.compact
+    is_derivative = settings["view"] != "voltage_current"
+    trace = {
+        "cell_id": descriptor.cell_id,
+        "cell_name": descriptor.cell_name,
+        "label": descriptor.label,
+        "group_id": descriptor.group_id,
+        "group_name": descriptor.group_name,
+        "excluded": descriptor.excluded,
+        "active_mass_mg": state.active_mass_mg,
+        "nominal_capacity_mah": state.nominal_capacity_mah,
+        "electrode_area_cm2": state.electrode_area_cm2,
+        "cycle": analysis_engine._jsonsafe_int(raw["cycle"].to_numpy()),
+        "display_x": analysis_engine._jsonsafe_plot(display_x, None if full_precision else 6),
+        "time_s": (
+            analysis_engine._jsonsafe_plot(
+                raw["time_s"].to_numpy(), None if full_precision else 3
+            )
+            if (not request.compact or (not is_derivative and settings["x_axis"] == "time"))
+            and "time_s" in raw.columns
+            else []
+        ),
+        "capacity_mah": (
+            analysis_engine._jsonsafe_plot(capacity, None if full_precision else 6)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah")
+            else []
+        ),
+        "capacity_mah_g": (
+            analysis_engine._jsonsafe_plot(capacity_g, None if full_precision else 5)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah_g")
+            else []
+        ),
+        "capacity_mah_cm2": (
+            analysis_engine._jsonsafe_plot(capacity_area, None if full_precision else 5)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah_cm2")
+            else []
+        ),
+        "voltage_v": (
+            analysis_engine._jsonsafe_plot(voltage, None if full_precision else 5)
+            if not request.compact or not is_derivative
+            else []
+        ),
+        "current_ma": (
+            analysis_engine._jsonsafe_plot(current, None if full_precision else 5)
+            if not request.compact or not is_derivative
+            else []
+        ),
+        "phase": phases,
+        "status": (
+            analysis_engine._textsafe(raw["status"])
+            if not request.compact and "status" in raw.columns
+            else []
+        ),
+        "derivative_x": (
+            analysis_engine._jsonsafe_plot(derivative_x, None if full_precision else 7)
+            if not request.compact or is_derivative
+            else []
+        ),
+        "derivative_y": (
+            analysis_engine._jsonsafe_plot(derivative_y, None if full_precision else 7)
+            if not request.compact or is_derivative
+            else []
+        ),
+        "segments": list(deepcopy(state.segments)),
+        "source_descriptors": list(deepcopy(descriptor.source_descriptors)),
+        **source_values,
+        "source_boundary_indices": [int(index) for index in source_boundary_indices],
+    }
+    return (
+        {
+            "trace": trace,
+            "badges": state.badges,
+            "voltage_facts": list(descriptor.voltage_facts),
+            "source_versions": list(descriptor.source_versions),
+            "current_parser_versions": list(descriptor.current_parser_versions),
+        },
+        {"cells": [state.diagnostics]},
+    )
+
+
+def _assemble_single_pass(
+    states: list[PreparedCell],
+    request: Any,
+    outputs: list[tuple[np.ndarray, np.ndarray]],
+) -> tuple[dict[str, Any], dict[str, Any], float]:
+    started = time.perf_counter()
+    payloads = []
+    for state, output in zip(states, outputs):
+        result, diagnostics = _assemble_prepared_cell(state, request, output)
+        payloads.append(
+            concurrency.WholeCellPayload(
+                index=state.index,
+                cell_id=state.job.cell_id,
+                result=result,
+                diagnostics=diagnostics,
+                queue_ms=0.0,
+                worker_wall_ms=0.0,
+            )
+        )
+    merged, merge_ms = concurrency._merge_whole_cell_results(request, payloads)
+    return merged, {"cells": [item.diagnostics["cells"][0] for item in payloads]}, (time.perf_counter() - started) * 1000.0
 
 
 def _build_dataset(
@@ -284,10 +722,8 @@ def _build_dataset(
     request: Any,
     workload: dict[str, Any],
     suite: str,
-) -> tuple[rust.KernelDataset, float]:
-    if request.settings["view"] != "voltage_current":
-        return _build_derivative_dataset(payloads, request, workload, suite)
-    return _build_normal_dataset(payloads, request, workload, suite)
+) -> tuple[list[PreparedCell], rust.KernelDataset, float, float]:
+    return _prepare_composed_inputs(payloads, request, workload, suite)
 
 
 def _split_response(response: dict[str, Any]) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -326,54 +762,6 @@ def _read_payloads(
     return payloads, dispatch, (time.perf_counter() - started) * 1000.0
 
 
-def _run_patched_backend(
-    env: Any,
-    spec: dict[str, Any],
-    payloads: list[Any],
-    request: Any,
-    outputs: list[tuple[np.ndarray, np.ndarray]],
-    reference: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], float]:
-    from app.services import analysis_engine
-
-    diagnostics: dict[str, Any] = {}
-    output_queue = deque(outputs)
-
-    def derivative_wrapper(*_args: Any, **_kwargs: Any) -> tuple[np.ndarray, np.ndarray]:
-        if not output_queue:
-            raise RuntimeError("Rust derivative output was consumed more than once")
-        return output_queue.popleft()
-
-    def display_wrapper(*_args: Any, **_kwargs: Any) -> np.ndarray:
-        if not output_queue:
-            raise RuntimeError("Rust display output was consumed more than once")
-        return output_queue.popleft()[0]
-
-    contexts = concurrency._prefetched_engine_context(payloads)
-    started = time.perf_counter()
-    with ExitStack() as stack:
-        for context in contexts:
-            stack.enter_context(context)
-        if request.settings["view"] != "voltage_current":
-            stack.enter_context(patch.object(analysis_engine, "_derivative_curve", derivative_wrapper))
-        else:
-            stack.enter_context(
-                patch.object(analysis_engine, "_time_capacity_display_x", display_wrapper)
-            )
-        result = analysis_engine.compute_time_capacity(
-            env.db,
-            spec,
-            None,
-            viewport_width=1200,
-            precision="standard",
-            compact=True,
-            access_diagnostics=diagnostics,
-        )
-    if output_queue:
-        raise RuntimeError(f"Rust output left unused: {len(output_queue)} cell outputs")
-    return result, diagnostics, (time.perf_counter() - started) * 1000.0
-
-
 def _warm_worker(
     env: Any,
     spec: dict[str, Any],
@@ -388,13 +776,19 @@ def _warm_worker(
         workload["cell_ids"],
     )
     payloads, dispatch, read_wall_ms = _read_payloads(jobs, read_workers)
-    dataset, prepare_ms = _build_dataset(payloads, request, workload, suite)
+    _states, dataset, transform_ms, native_buffer_ms = _build_dataset(
+        payloads,
+        request,
+        workload,
+        suite,
+    )
     response = worker.request(dataset)
     return {
         "owner_setup_ms": owner_setup["wall_ms"],
         "read_wall_ms": read_wall_ms,
         "read_dispatch_ms": dispatch["dispatch_ms"],
-        "buffer_prepare_ms": prepare_ms,
+        "production_transform_ms": transform_ms,
+        "native_buffer_materialization_ms": native_buffer_ms,
         "rust_boundary_ms": response["boundary_wall_ms"],
         "rust_pool_init_ms": response["pool_init_ms"],
         "rust_memory_after": response["memory_after"],
@@ -424,19 +818,21 @@ def _run_composed_candidate(
     phase_started = time.perf_counter()
     phase_cpu_started = time.process_time()
     payloads, dispatch, read_wall_ms = _read_payloads(jobs, read_workers)
-    dataset, buffer_prepare_ms = _build_dataset(payloads, request, workload, suite)
-    rust_response = worker.request(dataset)
-    outputs = _split_response(rust_response)
-    result, diagnostics, remaining_python_backend_ms = _run_patched_backend(
-        env,
-        spec,
+    states, dataset, transform_prepare_ms, native_buffer_ms = _build_dataset(
         payloads,
         request,
-        outputs,
-        reference,
+        workload,
+        suite,
     )
-    serialization_ms = concurrency._serialize_result(result)
+    rust_response = worker.request(dataset)
+    outputs = _split_response(rust_response)
+    result, diagnostics, remaining_python_backend_ms = _assemble_single_pass(
+        states,
+        request,
+        outputs,
+    )
     phase_wall_ms = (time.perf_counter() - phase_started) * 1000.0
+    serialization_ms = concurrency._serialize_result(result)
     backend_wall_ms = float(owner_setup["wall_ms"]) + phase_wall_ms
     process_cpu_seconds = time.process_time() - phase_cpu_started
     native_cpu_seconds = float(rust_response.get("cpu_seconds") or 0.0)
@@ -470,7 +866,8 @@ def _run_composed_candidate(
             "read_wall_ms": read_wall_ms,
             "read_decode_ms": sum(dispatch["per_cell_wall_ms"]),
             "read_per_cell_job_wall_ms": concurrency._min_max(dispatch["per_cell_wall_ms"]),
-            "buffer_prepare_ms": buffer_prepare_ms,
+            "production_transform_ms": transform_prepare_ms,
+            "native_buffer_materialization_ms": native_buffer_ms,
             "rust_boundary_ms": rust_response["boundary_wall_ms"],
             "rust_isolated_kernel_ms": rust_response["parallel_region_ms"],
             "rust_kernel_work_ms": rust_response["kernel_sum_ms"],
@@ -662,11 +1059,26 @@ def _selected_workloads(cell_ids: list[int]) -> list[dict[str, Any]]:
         "derivative-10-all-dqdv",
         "derivative-small-1-3-dqdv",
     }
-    return [
+    selected = [
         workload
         for workload in concurrency.workload_matrix(cell_ids)
         if workload["scenario"] in wanted
     ]
+    if len(cell_ids) >= 10 and not any(
+        workload["scenario"] == "derivative-10-all-dqdv" for workload in selected
+    ):
+        selected.append(
+            {
+                "scenario": "derivative-10-all-dqdv",
+                "cell_ids": cell_ids[:10],
+                "cycles": [],
+                "cycle_end": None,
+                "x_axis": "capacity_mah",
+                "view": "dqdv",
+                "derivative_specific": False,
+            }
+        )
+    return selected
 
 
 def _suite_summary(workloads: list[dict[str, Any]]) -> dict[str, Any]:
@@ -707,7 +1119,11 @@ def _architecture_decision(workloads: list[dict[str, Any]]) -> dict[str, Any]:
     derivative = [
         item
         for item in workloads
-        if item["scenario"] in {"derivative-6-all-dqdv", "derivative-1-all-dqdv"}
+        if item["scenario"] in {
+            "derivative-1-all-dqdv",
+            "derivative-6-all-dqdv",
+            "derivative-10-all-dqdv",
+        }
     ]
     normal = [
         item
