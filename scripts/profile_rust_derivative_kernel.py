@@ -886,17 +886,18 @@ def _run_python_segment_kernel(dataset: KernelDataset) -> list[tuple[np.ndarray,
 
 
 def _normal_continuous_time(values: np.ndarray) -> np.ndarray:
+    """Match analysis_engine._continuous_time's vectorized operation shape."""
+
     raw = np.asarray(values, dtype="float64")
-    output = raw.copy()
     if len(raw) < 2:
-        return output
-    offset = 0.0
-    for index in range(1, len(raw)):
-        difference = raw[index] - raw[index - 1]
-        if np.isfinite(difference) and difference < 0:
-            offset += raw[index - 1]
-        output[index] = raw[index] + offset
-    return output
+        return raw.copy()
+    differences = np.diff(raw)
+    resets = np.flatnonzero(~np.isnan(differences) & (differences < 0))
+    if len(resets) == 0:
+        return raw.copy()
+    offsets = np.zeros(len(raw), dtype="float64")
+    offsets[resets + 1] = raw[resets]
+    return raw + np.cumsum(offsets)
 
 
 def _normal_display_projection(

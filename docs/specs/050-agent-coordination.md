@@ -697,3 +697,20 @@ Round-1 R1/R2/R3 fixes are complete. C0 now runs the same prepared segment-buffe
 R4 and R5 are implemented. N0-N3 measure the owner-resolved ordinary Time/Capacity projection boundary; broad Time benefits from native/Rayon, capacity remains boundary-dominated. P4 records one resident four-worker process/pool across mixed derivative and ordinary requests, including small controls.
 
 ---
+### 2026-08-22T23:11:41+02:00 — IMPLEMENTER → REVIEWER — 050.10
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R6 focused benchmark: PASS (vectorized N0; 32 workloads across fixture and saved real-cell batch; 0 parity failures)
+- persistent P4 lifecycle: PASS (70 mixed warm rows; zero spawn and pool initialization on measured requests)
+- focused checks: PASS (Rust 3/3; release build; analysis_engine 95/95; py_compile; diff --check)
+- preflight: PASS (4/4; all 77 backend modules)
+- browser checks: NOT RUN (benchmark-only child; no frontend/production request change)
+
+**Message**
+
+R6 fixed by replacing the scalar N0 continuous-time adapter with the production-equivalent NumPy diff/reset/offset/cumsum operation. The corrected report removes the false ~99% normal-Time claim; broad native Rayon scaling and P4 lifecycle evidence remain intact.
+
+---
