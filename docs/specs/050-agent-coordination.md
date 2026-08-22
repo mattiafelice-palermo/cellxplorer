@@ -714,3 +714,21 @@ R4 and R5 are implemented. N0-N3 measure the owner-resolved ordinary Time/Capaci
 R6 fixed by replacing the scalar N0 continuous-time adapter with the production-equivalent NumPy diff/reset/offset/cumsum operation. The corrected report removes the false ~99% normal-Time claim; broad native Rayon scaling and P4 lifecycle evidence remain intact.
 
 ---
+### 2026-08-22T23:36:20+02:00 — IMPLEMENTER → REVIEWER — 050.10
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R7 full benchmark: PASS (32 workloads; 685 C0-C3/N0-N3/C8/N8 reference and native rows, 105 cold Rust calls, 140 persistent P4/P8 warm rows; 0 parity failures)
+- R7 host eligibility: PASS (16 logical CPUs; exact 8-worker candidates ran on all required available broad cases)
+- persistent lifecycle: PASS (P4/P8; 140 warm rows; zero spawn and pool initialization on measured requests)
+- focused checks: PASS (Rust 3/3; release build; analysis_engine 95/95; py_compile; diff --check)
+- preflight: PASS (4/4; all 77 backend modules)
+- browser checks: NOT RUN (benchmark-only child; no frontend or production request change)
+
+**Message**
+
+R7 is implemented and benchmarked. The host exposed 16 logical CPUs, so exact 8-worker C8/N8 candidates ran on derivative 6/10-Cell and ordinary Time 6/10/11-Cell cases where available, with separate isolated-kernel and complete-boundary comparisons, CPU/effective-core evidence, memory, ordering, and exact parity. Persistent P4/P8 sessions included small and one-Cell controls with startup/pool initialization outside warm measurements. Eight workers consistently improved isolated broad derivative work but complete-boundary gains were only 1-3%, ordinary Time was mixed, and real application small controls regressed; retain P4 as the largest justified persistent bound. No production integration was added; implement only R7 findings.
+
+---

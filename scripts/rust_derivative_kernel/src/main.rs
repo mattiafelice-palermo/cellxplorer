@@ -577,10 +577,10 @@ fn parse_workers() -> io::Result<usize> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing worker count"))?
         .parse::<usize>()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid worker count"))?;
-    if !matches!(workers, 1 | 2 | 4) {
+    if !matches!(workers, 1 | 2 | 4 | 8) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "worker count must be 1, 2 or 4",
+            "worker count must be 1, 2, 4 or 8",
         ));
     }
     Ok(workers)

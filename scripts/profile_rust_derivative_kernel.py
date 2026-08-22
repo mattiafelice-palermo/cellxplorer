@@ -61,6 +61,10 @@ DEFAULT_REPETITIONS = 5
 RELATIVE_TOLERANCE = 1e-7
 ABSOLUTE_TOLERANCE = 1e-9
 RAYON_WORKERS = (1, 2, 4)
+HOST_LOGICAL_CPUS = os.cpu_count() or 1
+EIGHT_WORKER_ELIGIBLE = HOST_LOGICAL_CPUS >= 8
+if EIGHT_WORKER_ELIGIBLE:
+    RAYON_WORKERS = (*RAYON_WORKERS, 8)
 
 
 @dataclass
@@ -1072,8 +1076,12 @@ def _run_rust_candidate(
     workers: int,
 ) -> dict[str, Any]:
     candidate_prefix = "N" if dataset.kernel_kind == "normal" else "C"
-    candidate_index = {1: 1, 2: 2, 4: 3}[workers]
-    candidate_label = f"{candidate_prefix}{candidate_index}"
+    candidate_label = {
+        1: f"{candidate_prefix}1",
+        2: f"{candidate_prefix}2",
+        4: f"{candidate_prefix}3",
+        8: f"{candidate_prefix}8",
+    }[workers]
     warm_samples: list[dict[str, Any]] = []
     cold_sample: dict[str, Any] | None = None
     with RustWorker(executable, workers) as worker:
@@ -1133,8 +1141,9 @@ def _run_persistent_warm_session(
     executable: Path,
     datasets: dict[str, KernelDataset],
     repetitions: int,
+    worker_count: int,
 ) -> dict[str, Any]:
-    """Measure one resident four-thread worker across mixed warm requests."""
+    """Measure one resident bounded worker across mixed warm requests."""
 
     preferred = (
         "derivative-small-1-3-dqdv",
@@ -1150,10 +1159,9 @@ def _run_persistent_warm_session(
         return {
             "status": "NOT_RUN",
             "reason": "no mixed derivative/ordinary datasets were available",
-            "worker_count": 4,
+            "worker_count": worker_count,
         }
 
-    worker_count = 4
     measured_rows: list[dict[str, Any]] = []
     with RustWorker(executable, worker_count) as worker:
         idle_memory = _windows_memory_snapshot(worker.process.pid)
@@ -1173,7 +1181,7 @@ def _run_persistent_warm_session(
                 )
                 measured_rows.append(
                     {
-                        "candidate": "P4",
+                        "candidate": f"P{worker_count}",
                         "suite": dataset.suite,
                         "scenario": dataset.scenario,
                         "kernel_kind": dataset.kernel_kind,
@@ -1218,7 +1226,7 @@ def _run_persistent_warm_session(
         "status": "PASS" if all(row["status"] == "PASS" for row in measured_rows) else "REJECTED",
         "model": "one long-lived Rust process with one bounded Rayon pool",
         "worker_count": worker_count,
-        "thread_bound": "Rayon pool configured with exactly four workers; no all-CPU setting",
+        "thread_bound": f"Rayon pool configured with exactly {worker_count} workers; no all-CPU setting",
         "sequence": [dataset.scenario for dataset in sequence],
         "sequence_kernel_kinds": [dataset.kernel_kind for dataset in sequence],
         "warm_repetitions_per_request": repetitions,
@@ -1378,6 +1386,18 @@ def _select_workloads(cell_ids: list[int], requested: set[str]) -> list[dict[str
     return workloads
 
 
+def _run_eight_worker_candidate(dataset: KernelDataset) -> bool:
+    """Restrict the extra 8-worker ablation to R7's broad discriminating cases."""
+
+    return dataset.scenario in {
+        "derivative-6-all-dqdv",
+        "derivative-10-all-dqdv",
+        "normal-6-all-time",
+        "normal-10-all-time",
+        "normal-11-all-time",
+    }
+
+
 def _rust_build(executable: Path, skip_build: bool) -> dict[str, Any]:
     manifest = ROOT / "scripts" / "rust_derivative_kernel" / "Cargo.toml"
     started = time.perf_counter()
@@ -1424,7 +1444,11 @@ def _relative_change(reference: float | None, candidate: float | None) -> float 
 def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
     rows = item["rows"]
     candidate_prefix = "N" if item.get("kernel_kind") == "normal" else "C"
-    candidates = tuple(f"{candidate_prefix}{index}" for index in range(4))
+    candidates = tuple(f"{candidate_prefix}{index}" for index in range(4)) + (
+        (f"{candidate_prefix}8",)
+        if any(row.get("candidate") == f"{candidate_prefix}8" for row in rows)
+        else ()
+    )
     medians = {
         candidate: _median(
             row.get("isolated_kernel_wall_ms")
@@ -1461,6 +1485,11 @@ def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
         "rayon_4_change_vs_n1_pct": _relative_change(
             medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}3"]
         ),
+        "rayon_8_change_vs_4_pct": (
+            _relative_change(medians[f"{candidate_prefix}3"], medians[f"{candidate_prefix}8"])
+            if f"{candidate_prefix}8" in medians
+            else None
+        ),
         "decisions": {
             "sequential_native": _decision(
                 medians[f"{candidate_prefix}0"], medians[f"{candidate_prefix}1"]
@@ -1470,6 +1499,11 @@ def _summarize_workload(item: dict[str, Any]) -> dict[str, Any]:
             ),
             "rayon_4": _decision(
                 medians[f"{candidate_prefix}1"], medians[f"{candidate_prefix}3"]
+            ),
+            "rayon_8_vs_4": (
+                _decision(medians[f"{candidate_prefix}3"], medians[f"{candidate_prefix}8"])
+                if f"{candidate_prefix}8" in medians
+                else "not_run"
             ),
         },
         "backend_context_median_ms": item.get("backend_context_median_ms"),
@@ -1502,6 +1536,8 @@ def _profile_suite(
         rows = python_reference["samples"]
         lifecycle: dict[str, Any] = {}
         for workers in RAYON_WORKERS:
+            if workers == 8 and not _run_eight_worker_candidate(dataset):
+                continue
             candidate = _run_rust_candidate(
                 executable,
                 dataset,
@@ -1511,8 +1547,13 @@ def _profile_suite(
             )
             rows.extend(candidate["samples"])
             prefix = "N" if dataset.kernel_kind == "normal" else "C"
-            candidate_index = {1: 1, 2: 2, 4: 3}[workers]
-            lifecycle[f"{prefix}{candidate_index}"] = candidate["cold"]
+            candidate_label = {
+                1: f"{prefix}1",
+                2: f"{prefix}2",
+                4: f"{prefix}3",
+                8: f"{prefix}8",
+            }[workers]
+            lifecycle[candidate_label] = candidate["cold"]
         item = {
             "suite": suite,
             "scenario": dataset.scenario,
@@ -1538,7 +1579,10 @@ def _profile_suite(
         }
         item.update(_summarize_workload(item))
         results.append(item)
-    return results, _run_persistent_warm_session(executable, datasets, repetitions)
+    persistent = [_run_persistent_warm_session(executable, datasets, repetitions, 4)]
+    if EIGHT_WORKER_ELIGIBLE:
+        persistent.append(_run_persistent_warm_session(executable, datasets, repetitions, 8))
+    return results, persistent
 
 
 def main() -> int:
@@ -1593,9 +1637,10 @@ def main() -> int:
                     args.repetitions,
                     requested,
                 )
-            fixture_persistent["suite"] = "golden_fixture"
             suites.extend(fixture_items)
-            persistent_sessions.append(fixture_persistent)
+            for session in fixture_persistent:
+                session["suite"] = "golden_fixture"
+                persistent_sessions.append(session)
         if not args.fixture_only:
             app_root = args.app_data_root.resolve()
             if not (app_root / "cellxplorer.db").is_file():
@@ -1620,8 +1665,9 @@ def main() -> int:
                                 "benchmark_cell_count": metadata.get("benchmark_cell_count"),
                             }
                         suites.extend(app_items)
-                        app_persistent["suite"] = "application_performance_batch"
-                        persistent_sessions.append(app_persistent)
+                        for session in app_persistent:
+                            session["suite"] = "application_performance_batch"
+                            persistent_sessions.append(session)
                 except (FileNotFoundError, RuntimeError, OSError) as exc:
                     skipped["application"] = f"NOT RUN: {type(exc).__name__}: {exc}"
     finally:
@@ -1663,10 +1709,19 @@ def main() -> int:
             "input_copy_status": "copied into a length-prefixed subprocess frame; borrowed zero-copy input is not claimed",
             "output_conversion": "NumPy views over response bytes; output conversion is recorded separately",
             "owner_preparation": "request/source/cache ownership, filtering, phase/capacity preparation, voltage selection and compact numeric buffer materialization measured once outside candidate kernel timers",
-            "workers": [1, 2, 4],
+            "workers": list(RAYON_WORKERS),
             "rayon_scheduling": "not separately measured; per-Cell elapsed times, aggregate kernel work and parallel_region_ms are retained",
             "nested_native_threading": "Rayon only in the isolated worker; Python/native settings are recorded above",
-            "persistent_warm_model": "one long-lived Rust process with one bounded four-worker Rayon pool; see persistent_warm_sessions",
+            "persistent_warm_model": "one long-lived Rust process with one bounded Rayon pool; P4 is the accepted comparison and P8 is measured when host capacity permits",
+            "host_worker_eligibility": {
+                "logical_cpu_count": HOST_LOGICAL_CPUS,
+                "eight_worker_candidate": "RUN" if EIGHT_WORKER_ELIGIBLE else "NOT RUN",
+                "reason": (
+                    "host exposes at least eight usable logical CPUs"
+                    if EIGHT_WORKER_ELIGIBLE
+                    else "host exposes fewer than eight usable logical CPUs"
+                ),
+            },
         },
         "scientific_gate": {
             "relative_tolerance": RELATIVE_TOLERANCE,
@@ -1677,8 +1732,8 @@ def main() -> int:
         },
         "decision_summary": {
             "sequential_native": "see derivative C1 vs C0 and ordinary N1 vs N0; choose only if boundary and build costs remain acceptable",
-            "rayon": "see derivative C2/C3 vs C1 and ordinary N2/N3 vs N1; small-work crossing cost is intentionally included",
-            "cold_warm": "cold first call and warm medians are separate; persistent_warm_sessions proves later mixed requests pay zero spawn and pool initialization",
+            "rayon": "see derivative C2/C3 vs C1 and ordinary N2/N3 vs N1; R7 C8/N8 compares eight workers against four on broad discriminating cases",
+            "cold_warm": "cold first call and warm medians are separate; persistent P4/P8 sessions prove later mixed requests pay zero spawn and pool initialization",
             "050.11_handoff": "select at most the smallest independently useful native mechanism after reviewing C/N candidates, boundary, lifecycle and parity evidence",
         },
     }
