@@ -605,20 +605,38 @@ def source_descriptors(
 def source_columns(frame: pd.DataFrame, files: list[SourceFile]) -> dict[str, list]:
     """Return source provenance columns aligned to a stitched frame."""
     by_hash = {source_file.hash: source_file for source_file in files}
-    hashes = frame.get("source_hash", pd.Series(dtype=object)).tolist()
     positions = {source_file.hash: index for index, source_file in enumerate(files, start=1)}
-    source_cycles = frame.get("source_cycle", pd.Series(dtype=object)).tolist()
+    hashes = (
+        frame["source_hash"].tolist()
+        if "source_hash" in frame.columns
+        else [None] * len(frame)
+    )
+    source_cycles = (
+        frame["source_cycle"].tolist()
+        if "source_cycle" in frame.columns
+        else [None] * len(frame)
+    )
 
     def safe_int(value):
         if value is None or pd.isna(value):
             return None
         return int(value)
 
+    source_cycle: list[int | None] = []
+    source_position: list[int | None] = []
+    source_filename: list[str | None] = []
+    source_hash: list[str | None] = []
+    for value, cycle in zip(hashes, source_cycles):
+        source_file = by_hash.get(value)
+        source_cycle.append(safe_int(cycle))
+        source_position.append(positions.get(value))
+        source_filename.append(source_file.filename if source_file is not None else None)
+        source_hash.append(value if source_file is not None else None)
     return {
-        "source_cycle": [safe_int(value) for value in source_cycles],
-        "source_position": [positions.get(value) for value in hashes],
-        "source_filename": [by_hash.get(value).filename if value in by_hash else None for value in hashes],
-        "source_hash": [value if value in by_hash else None for value in hashes],
+        "source_cycle": source_cycle,
+        "source_position": source_position,
+        "source_filename": source_filename,
+        "source_hash": source_hash,
     }
 
 
@@ -2757,10 +2775,23 @@ def compute_time_capacity(
                 cycle_start=settings["cycle_start"],
                 cycle_end=settings["cycle_end"],
             )
+            indexed_available_columns = {
+                column
+                for source in plan.sources
+                for column in source.index.get("raw_column_names", ())
+            }
+            requested_raw_columns = time_capacity_path.time_capacity_request_columns(
+                indexed_available_columns,
+                settings,
+                precision=precision,
+                compact=compact,
+                protocol_active=protocol_context["active"],
+            )
             with time_capacity_path.timed_stage(cell_diagnostics, "indexed_raw_access"):
                 raw = time_capacity_path.load_indexed_time_capacity_raw(
                     plan,
                     requested_cycles,
+                    requested_columns=requested_raw_columns,
                     diagnostics=cell_diagnostics,
                 )
             if raw is None:
@@ -2978,18 +3009,6 @@ def compute_time_capacity(
                         *(["full_export"] if precision == "full" or not compact else []),
                     ]
                 ),
-            )
-
-            with time_capacity_path.timed_stage(
-                profile_diagnostics, "transform_source_provenance"
-            ):
-                source_values = source_columns(raw, files)
-            _record_transform_profile(
-                profile_diagnostics,
-                "source_provenance",
-                input_rows=len(raw),
-                output_rows=len(raw),
-                consumed_by=("provenance_output",),
             )
 
             with time_capacity_path.timed_stage(
@@ -3249,10 +3268,6 @@ def compute_time_capacity(
             capacity_area = capacity_area[take] if capacity_area is not None else None
             derivative_x = derivative_x[take]
             derivative_y = derivative_y[take]
-            source_values = {
-                key: [values[int(index)] for index in take]
-                for key, values in source_values.items()
-            }
             source_boundary_indices = np.flatnonzero(
                 raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
             ) + 1
@@ -3260,6 +3275,21 @@ def compute_time_capacity(
             source_boundary_indices = np.flatnonzero(
                 raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
             ) + 1 if "segment" in raw.columns and len(raw) > 1 else np.array([], dtype="int64")
+
+        # Compact interactive responses only return the bounded display frame.
+        # Build row-aligned provenance after downsampling so discarded raw rows
+        # do not pay for list construction that cannot reach the client.
+        with time_capacity_path.timed_stage(
+            profile_diagnostics, "transform_source_provenance"
+        ):
+            source_values = source_columns(raw, files)
+        _record_transform_profile(
+            profile_diagnostics,
+            "source_provenance",
+            input_rows=len(raw),
+            output_rows=len(raw),
+            consumed_by=("provenance_output",),
+        )
 
         full_precision = precision == "full" or not compact
         is_derivative = settings["view"] != "voltage_current"

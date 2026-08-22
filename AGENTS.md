@@ -314,6 +314,7 @@ Cellxplorer/
 │   ├── profile_raw_cache_layout.py Diagnostic raw Parquet row-group benchmark (Spec 050.2)
 │   ├── profile_test_suite.py       Exhaustive backend/frontend timing profiler (Spec 048.2)
 │   ├── profile_time_capacity_path.py Indexed versus legacy Time/Capacity path profiler (Spec 050.3)
+│   ├── profile_time_capacity_ordinary_latency.py Ordinary warm Time/Capacity latency profiler (Spec 050.12)
 │   ├── profile_time_capacity_composition.py Spec 050.11 execution-strategy composition benchmark
 │   ├── profile_rust_derivative_kernel.py Rust/Rayon derivative-kernel benchmark (Spec 050.10)
 │   ├── rust_derivative_kernel/ Isolated Cargo/Rayon benchmark target (Spec 050.10)

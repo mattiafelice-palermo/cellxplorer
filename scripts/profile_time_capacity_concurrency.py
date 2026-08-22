@@ -101,6 +101,7 @@ class ReadJob:
     explicit_cycles: tuple[int, ...]
     cycle_start: int | None
     cycle_end: int | None
+    requested_columns: tuple[str, ...]
     derived_columns: tuple[str, ...]
     plan: Any
     requested_cycles: tuple[int, ...]
@@ -566,6 +567,8 @@ def _measurement_row(
         "peak_rss_scope": "process lifetime (Windows PeakWorkingSetSize)",
         "native_thread_settings": native_settings,
         "stages": stage,
+        "backend_stages_ms": profile.get("backend_stages_ms"),
+        "transform_stages": profile.get("transform_stages"),
         "scientific_parity": parity_result,
         "status": "PASS" if parity_result["equal"] and parity_result["ordering_equal"] else "REJECTED",
     }
@@ -695,6 +698,17 @@ def build_read_jobs(
             cycle_start=settings["cycle_start"],
             cycle_end=settings["cycle_end"],
         )
+        available_columns = {
+            column
+            for source in plan.sources
+            for column in source.index.get("raw_column_names", ())
+        }
+        requested_columns = time_capacity_path.time_capacity_request_columns(
+            available_columns,
+            settings,
+            precision="standard",
+            compact=True,
+        )
         matched_files_by_quantity = {
             quantity: []
             for quantity in analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES
@@ -780,6 +794,7 @@ def build_read_jobs(
                 explicit_cycles=tuple(settings["cycles"]),
                 cycle_start=settings["cycle_start"],
                 cycle_end=settings["cycle_end"],
+                requested_columns=tuple(requested_columns),
                 derived_columns=derived_columns,
                 plan=plan,
                 requested_cycles=tuple(requested_cycles),
@@ -822,6 +837,7 @@ def _materialize_read(job: ReadJob, submitted_at: float) -> ReadPayload:
         raw = time_capacity_path.load_indexed_time_capacity_raw(
             plan,
             requested,
+            requested_columns=job.requested_columns,
             diagnostics=diagnostics,
             wait_for_layout=True,
         )
@@ -1396,7 +1412,13 @@ def _prefetched_engine_context(payloads: list[ReadPayload]):
             )
         return item.plan
 
-    def load_raw(plan: Any, requested_cycles: Iterable[int], *, diagnostics: dict[str, Any] | None = None):
+    def load_raw(
+        plan: Any,
+        requested_cycles: Iterable[int],
+        *,
+        requested_columns: Iterable[str] | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ):
         item = find(plan.refs)
         if diagnostics is not None:
             diagnostics.update(

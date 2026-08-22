@@ -769,3 +769,16 @@ R7 is implemented and benchmarked. The host exposed 16 logical CPUs, so exact 8-
 R1-R3 fixes are complete. The corrected mains-power matrix uses the same A0/candidate wall boundary, a single prepared pre-native pass plus one coarse Rust request, and includes the 10-Cell derivative workload in both suites and the architecture decision. Results remain C — sequential Rust kernel; no production integration is added.
 
 ---
+### 2026-08-23T01:30:31+02:00 — IMPLEMENTER → REVIEWER — 050.12
+
+**Result:** Implementation ready
+
+**Verification**
+
+- focused Time/Capacity/path tests PASS; golden analysis PASS with unchanged digests; ordinary 050.12 matrix PASS (26 workloads, 5 warm repetitions, fixture plus real Performance analysis); exact cache controls PASS; preflight PASS 4/4
+
+**Message**
+
+050.12 implemented: request-aware compact indexed projection and bounded post-downsample provenance; 050.12 mains benchmark records real Time medians 323/554/591 ms for 6/10/11 Cells and capacity-6 median 514 ms, with no browser timing claimed.
+
+---

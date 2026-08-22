@@ -94,6 +94,66 @@ def time_capacity_raw_columns(available_columns: Iterable[str]) -> list[str]:
     return columns
 
 
+def time_capacity_request_columns(
+    available_columns: Iterable[str],
+    settings: dict[str, Any],
+    *,
+    precision: str,
+    compact: bool,
+    protocol_active: bool = False,
+) -> list[str]:
+    """Return the raw projection consumed by one interactive request.
+
+    The historical projection is intentionally retained for full-detail and
+    non-compact responses.  Standard compact requests use a smaller explicit
+    projection: ordinary Time/Voltage/Current does not consume either raw
+    capacity column, and capacity-axis/derivative requests add those columns
+    only when their scientific/display transform needs them.  Protocol masks
+    add the step-index column.  Source capability facts and descriptors come
+    from the indexed source metadata, so auxiliary electrode-potential columns
+    are not needed unless the selected voltage channel uses one.
+    """
+
+    available = set(available_columns)
+    if precision == "full" or not compact:
+        return time_capacity_raw_columns(available)
+
+    requested = [
+        "record_index",
+        "cycle",
+        "status",
+        "time_s",
+        "current_ma",
+    ]
+    if protocol_active:
+        requested.append("step_index" if "step_index" in available else "Step_Index")
+
+    normal_view = settings.get("view") == "voltage_current"
+    x_axis = settings.get("x_axis")
+    if normal_view:
+        voltage_quantity = settings.get("voltage_channel") or canonical_cycling.DEFAULT_VOLTAGE_QUANTITY
+        requested.append(
+            canonical_cycling.VOLTAGE_QUANTITIES.get(
+                voltage_quantity,
+                canonical_cycling.VOLTAGE_QUANTITIES[canonical_cycling.DEFAULT_VOLTAGE_QUANTITY],
+            )
+        )
+        needs_capacity = x_axis in {
+            "capacity_mah",
+            "capacity_mah_g",
+            "capacity_mah_cm2",
+        }
+    else:
+        requested.append("voltage_v")
+        needs_capacity = True
+
+    if needs_capacity:
+        requested.extend(("charge_capacity_mah", "discharge_capacity_mah"))
+    return [
+        column for column in time_capacity_raw_columns(available) if column in requested
+    ]
+
+
 def _set_diagnostic(diagnostics: dict[str, Any] | None, **values: Any) -> None:
     if diagnostics is not None:
         diagnostics.update(values)
@@ -281,10 +341,20 @@ def requested_global_cycles(
     return tuple(range(lower, upper + 1))
 
 
-def _empty_raw_frame(plan: TimeCapacityStitchPlan) -> pd.DataFrame:
+def _empty_raw_frame(
+    plan: TimeCapacityStitchPlan,
+    requested_columns: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    projected_columns = tuple(requested_columns) if requested_columns is not None else None
     columns: list[str] = []
     for source in plan.sources:
-        for column in time_capacity_raw_columns(source.index.get("raw_column_names", ())):
+        available = source.index.get("raw_column_names", ())
+        projected = (
+            time_capacity_raw_columns(available)
+            if projected_columns is None
+            else [column for column in projected_columns if column in set(available)]
+        )
+        for column in projected:
             if column not in columns:
                 columns.append(column)
     for column in ("source_cycle", "segment", "source_hash"):
@@ -302,6 +372,7 @@ def load_indexed_time_capacity_raw(
     plan: TimeCapacityStitchPlan,
     requested_cycles: Iterable[int],
     *,
+    requested_columns: Iterable[str] | None = None,
     diagnostics: dict[str, Any] | None = None,
     wait_for_layout: bool = False,
 ) -> pd.DataFrame | None:
@@ -311,14 +382,15 @@ def load_indexed_time_capacity_raw(
     the caller must use the existing full-read fallback to preserve safety.
     """
 
+    projected_columns = tuple(requested_columns) if requested_columns is not None else None
     if plan.path != "indexed":
         if plan.path == "missing":
-            return _empty_raw_frame(plan)
+            return _empty_raw_frame(plan, projected_columns)
         return None
 
     requested = set(int(value) for value in requested_cycles)
     if not requested:
-        result = _empty_raw_frame(plan)
+        result = _empty_raw_frame(plan, projected_columns)
         result.attrs["stitch_complete"] = True
         _set_diagnostic(diagnostics, selected_rows=0, raw_rows_materialized=0)
         return result
@@ -336,7 +408,12 @@ def load_indexed_time_capacity_raw(
             for local_cycle in source.observed_source_cycles
             if source.cycle_map.get(local_cycle) in requested
         )
-        columns = time_capacity_raw_columns(source.index.get("raw_column_names", ()))
+        available = source.index.get("raw_column_names", ())
+        columns = (
+            time_capacity_raw_columns(available)
+            if projected_columns is None
+            else [column for column in projected_columns if column in set(available)]
+        )
         for column in columns:
             if column not in projection_union:
                 projection_union.append(column)

@@ -81,6 +81,110 @@ class TimeCapacityPathTests(unittest.TestCase):
             ],
         )
 
+    def test_compact_request_projection_only_reads_consumed_columns(self) -> None:
+        available = [
+            *canonical_cycling.REQUIRED_CYCLING_COLUMNS,
+            "working_potential_v",
+            "counter_potential_v",
+            "timestamp",
+        ]
+        expected_time = [
+            "record_index",
+            "cycle",
+            "status",
+            "time_s",
+            "voltage_v",
+            "current_ma",
+        ]
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
+                {"view": "voltage_current", "x_axis": "time"},
+                precision="standard",
+                compact=True,
+            ),
+            expected_time,
+        )
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
+                {"view": "voltage_current", "x_axis": "capacity_mah"},
+                precision="standard",
+                compact=True,
+            ),
+            [
+                *expected_time,
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+            ],
+        )
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
+                {"view": "dqdv", "x_axis": "capacity_mah"},
+                precision="standard",
+                compact=True,
+            ),
+            [
+                *expected_time,
+                "charge_capacity_mah",
+                "discharge_capacity_mah",
+            ],
+        )
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
+                {"view": "voltage_current", "x_axis": "time"},
+                precision="standard",
+                compact=True,
+                protocol_active=True,
+            ),
+            [
+                "record_index",
+                "cycle",
+                "step_index",
+                "status",
+                "time_s",
+                "voltage_v",
+                "current_ma",
+            ],
+        )
+        self.assertEqual(
+            time_capacity_path.time_capacity_request_columns(
+                available,
+                {"view": "voltage_current", "x_axis": "time"},
+                precision="full",
+                compact=False,
+            ),
+            time_capacity_path.time_capacity_raw_columns(available),
+        )
+
+    def test_indexed_reader_honors_request_projection(self) -> None:
+        ref = self._publish("a" * 64, "parser-a", [1, 2])
+        plan = time_capacity_path.build_time_capacity_stitch_plan([ref])
+        requested = time_capacity_path.time_capacity_request_columns(
+            plan.sources[0].index["raw_column_names"],
+            {"view": "voltage_current", "x_axis": "time"},
+            precision="standard",
+            compact=True,
+        )
+
+        with patch.object(cache, "load_raw_cycles", wraps=cache.load_raw_cycles) as reader:
+            selected = time_capacity_path.load_indexed_time_capacity_raw(
+                plan,
+                [1],
+                requested_columns=requested,
+            )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(reader.call_args.args[3], requested)
+        self.assertEqual(list(selected.columns), [
+            *requested,
+            "source_cycle",
+            "segment",
+            "source_hash",
+        ])
+
     def test_sparse_local_labels_remain_dense_global_labels(self) -> None:
         ref = self._publish("a" * 64, "parser-a", [1, 2, 4])
         diagnostics: dict = {}

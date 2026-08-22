@@ -16,11 +16,11 @@
     "050.11",
     "050.12"
   ],
-  "turn": "IMPLEMENTER",
-  "action": "IMPLEMENT",
+  "turn": "REVIEWER",
+  "action": "REVIEW",
   "findings": [],
   "resume_review": null,
   "user_message_seq": 0,
   "pending_user_messages": [],
-  "updated_at": "2026-08-23T01:04:18+02:00"
+  "updated_at": "2026-08-23T01:30:31+02:00"
 }

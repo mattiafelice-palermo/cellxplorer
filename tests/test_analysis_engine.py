@@ -1408,6 +1408,28 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertTrue(result["cell_traces"][0]["capacity_mah"])
         self.assertEqual(result["cell_traces"][0]["time_s"], [])
 
+    def test_compact_provenance_is_built_for_display_rows_only(self):
+        spec = self.spec_with([{"kind": "cell", "ref_id": self.cells["c1"].id}])
+        spec["computation"]["time_capacity"] = {
+            "x_axis": "time",
+            "max_points_per_cell": 100,
+        }
+        with patch.object(engine, "source_columns", wraps=engine.source_columns) as provenance:
+            result = engine.compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                precision="standard",
+                compact=True,
+            )
+
+        trace = result["cell_traces"][0]
+        self.assertEqual(provenance.call_count, 1)
+        self.assertEqual(len(provenance.call_args.args[0]), len(trace["cycle"]))
+        for key in ("source_cycle", "source_position", "source_filename", "source_hash"):
+            self.assertEqual(len(trace[key]), len(trace["cycle"]))
+        self.assertTrue(all(index < len(trace["cycle"]) for index in trace["source_boundary_indices"]))
+
     def test_prepared_and_forced_fallback_time_capacity_payloads_match(self):
         source = self.cells["c1"].tests[0].file_links[0].file
         parser_version = parsing.current_parser_identity_for_extension(source.ext) or source.parser_version
