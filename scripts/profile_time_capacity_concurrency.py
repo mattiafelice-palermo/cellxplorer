@@ -6,8 +6,9 @@ compares two isolated boundaries:
 
 * B1/B2 prefetch indexed Parquet in 2/4 threads, then run the current engine
   sequentially with those prefetched frames;
-* B3/B4 run the current one-Cell engine call in 2/4 threads, with one private
-  SQLite session per worker, then merge results in selection order.
+* B3/B4 resolve the relational/request boundary once, then run each existing
+  per-Cell read plus transform from immutable descriptors in 2/4 threads and
+  merge results in selection order.
 
 The JSON output is disposable evidence.  It contains no source paths, hashes,
 raw rows, or user data and never touches the user's application data root.
@@ -30,7 +31,7 @@ import statistics
 import sys
 import tempfile
 import time
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable
 from unittest.mock import patch
 
 try:
@@ -53,6 +54,43 @@ IMPROVEMENT_THRESHOLD = 0.05
 
 
 @dataclass(frozen=True)
+class ResolvedCellDescriptor:
+    """Immutable per-Cell context resolved before a worker is submitted."""
+
+    cell_id: int
+    cell_name: str
+    label: str
+    group_id: int | None
+    group_name: str | None
+    active_mass_mg: float | None
+    nominal_capacity_mah: float | None
+    electrode_area_cm2: float | None
+    source_names: tuple[tuple[str, str], ...]
+    source_descriptors: tuple[dict[str, Any], ...]
+    segments: tuple[dict[str, Any], ...]
+    missing: tuple[str, ...]
+    missing_positions: tuple[int, ...]
+    source_versions: tuple[tuple[str, str], ...]
+    current_parser_versions: tuple[str, ...]
+    voltage_facts: tuple[tuple[str, bool, str, str | None], ...]
+    excluded: bool
+
+
+@dataclass(frozen=True)
+class ResolvedRequest:
+    """Request state that is safe to pass to the benchmark worker."""
+
+    type: str
+    settings: dict[str, Any]
+    calc_version: str
+    current_calc_version: str
+    protocol_badges: tuple[dict[str, Any], ...]
+    viewport_width: int
+    precision: str
+    compact: bool
+
+
+@dataclass(frozen=True)
 class ReadJob:
     """Immutable worker input resolved by the owning relational context."""
 
@@ -66,6 +104,7 @@ class ReadJob:
     plan: Any
     requested_cycles: tuple[int, ...]
     plan_diagnostics: dict[str, Any]
+    descriptor: ResolvedCellDescriptor
 
 
 @dataclass
@@ -84,7 +123,7 @@ class ReadPayload:
 class WholeCellPayload:
     index: int
     cell_id: int
-    result: dict
+    result: dict[str, Any]
     diagnostics: dict[str, Any]
     queue_ms: float
     worker_wall_ms: float
@@ -589,6 +628,25 @@ def run_production_sample(
     return row, result
 
 
+def resolved_request(spec: dict) -> ResolvedRequest:
+    from app.services import analysis_engine
+
+    protocol_context, protocol_badges = analysis_engine._protocol_filter_context(spec)
+    if protocol_context.get("active"):
+        raise RuntimeError("050.9 resolved-worker benchmark does not cover active protocol filters")
+    settings = analysis_engine.time_capacity_settings(spec.get("computation", {}))
+    return ResolvedRequest(
+        type=spec.get("type", "cycling"),
+        settings=deepcopy(settings),
+        calc_version=analysis_engine.CALC_VERSION,
+        current_calc_version=analysis_engine.CALC_VERSION,
+        protocol_badges=tuple(deepcopy(protocol_badges)),
+        viewport_width=1200,
+        precision="standard",
+        compact=True,
+    )
+
+
 def build_read_jobs(
     env: GoldenFixtureEnvironment,
     spec: dict,
@@ -604,11 +662,19 @@ def build_read_jobs(
         compact=True,
     )
     derived_columns = ("phase_code", "phase_capacity_mah") if needs.phase_capacity else ()
-    jobs: list[ReadJob] = []
-    for index, cell_id in enumerate(cell_ids):
+    cells = []
+    for cell_id in cell_ids:
         cell = env.db.get(analysis_engine.Cell, cell_id)
         if cell is None:
             raise RuntimeError(f"Fixture cell {cell_id} was not found")
+        cells.append(cell)
+    analysis_engine.preload_cell_sources(env.db, cells)
+    scalar_metadata = analysis_engine.load_scalar_metadata(env.db, cells)
+    selection = spec.get("selection", {})
+    exclusions = selection.get("exclusions", [])
+    hidden_group_ids = set(selection.get("hidden_replicate_group_ids", []))
+    jobs: list[ReadJob] = []
+    for index, (cell_id, cell) in enumerate(zip(cell_ids, cells)):
         _hashes, files = analysis_engine.cell_ordered_hashes(env.db, cell)
         versions = analysis_engine.resolve_source_parser_versions(
             files,
@@ -628,6 +694,83 @@ def build_read_jobs(
             cycle_start=settings["cycle_start"],
             cycle_end=settings["cycle_end"],
         )
+        matched_files_by_quantity = {
+            quantity: []
+            for quantity in analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES
+        }
+        if plan.path in {"indexed", "missing"}:
+            source_by_hash = {source_file.hash: source_file for source_file in files}
+            for source in plan.sources:
+                for quantity, column in analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES.items():
+                    if source.voltage_data_availability.get(column) is True:
+                        source_file = source_by_hash.get(source.ref.file_hash)
+                        if source_file is not None:
+                            matched_files_by_quantity[quantity].append(source_file)
+        local_roles, local_references = analysis_engine._resolve_time_capacity_voltage_context(
+            files,
+            matched_files_by_quantity,
+        )
+        voltage_facts = tuple(
+            (
+                quantity,
+                bool(matched_files_by_quantity[quantity]),
+                local_roles[quantity],
+                local_references[quantity],
+            )
+            for quantity in analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES
+        )
+        unit = {
+            "cell": cell,
+            "group_id": None,
+            "group_name": None,
+            "label": cell.name,
+            "entry_kind": "cell",
+            "entry_ref_id": cell.id,
+        }
+        descriptor = ResolvedCellDescriptor(
+            cell_id=int(cell.id),
+            cell_name=str(cell.name),
+            label=str(unit["label"]),
+            group_id=None,
+            group_name=None,
+            active_mass_mg=analysis_engine.cell_active_mass_mg(
+                cell,
+                scalar_metadata.get(cell.id),
+            ),
+            nominal_capacity_mah=analysis_engine.cell_nominal_capacity_mah(
+                cell,
+                scalar_metadata.get(cell.id),
+            ),
+            electrode_area_cm2=analysis_engine.cell_electrode_area_cm2(
+                cell,
+                scalar_metadata.get(cell.id),
+            ),
+            source_names=tuple((str(file.hash), str(file.filename)) for file in files),
+            source_descriptors=tuple(
+                deepcopy(
+                    analysis_engine.source_descriptors(
+                        files,
+                        list(plan.segments),
+                        list(plan.missing),
+                        None,
+                        parser_versions=versions,
+                        source_facts=plan.source_facts,
+                    )
+                )
+            ),
+            segments=tuple(deepcopy(plan.segments)),
+            missing=tuple(str(value) for value in plan.missing),
+            missing_positions=tuple(int(value) for value in plan.missing_positions),
+            source_versions=tuple((str(file.hash), str(versions[file.hash])) for file in files),
+            current_parser_versions=tuple(
+                str(analysis_engine.current_parser_identity(file)) for file in files
+            ),
+            voltage_facts=voltage_facts,
+            excluded=(
+                analysis_engine.exclusion_for_unit(exclusions, unit) is not None
+                or unit["group_id"] in hidden_group_ids
+            ),
+        )
         jobs.append(
             ReadJob(
                 index=index,
@@ -640,6 +783,7 @@ def build_read_jobs(
                 plan=plan,
                 requested_cycles=tuple(requested_cycles),
                 plan_diagnostics=deepcopy(plan_diagnostics),
+                descriptor=descriptor,
             )
         )
     return jobs
@@ -688,6 +832,499 @@ def _materialize_read(job: ReadJob, submitted_at: float) -> ReadPayload:
         diagnostics=diagnostics,
         queue_ms=(started - submitted_at) * 1000.0,
         worker_wall_ms=(time.perf_counter() - started) * 1000.0,
+    )
+
+
+def _resolved_source_columns(frame: Any, descriptor: ResolvedCellDescriptor) -> dict[str, list]:
+    """Build provenance columns from the immutable source descriptor."""
+
+    from pandas import isna
+
+    by_hash = {file_hash: filename for file_hash, filename in descriptor.source_names}
+    positions = {
+        file_hash: index
+        for index, (file_hash, _filename) in enumerate(descriptor.source_names, start=1)
+    }
+    hashes = frame.get("source_hash", []).tolist()
+    source_cycles = frame.get("source_cycle", []).tolist()
+
+    def safe_int(value: object) -> int | None:
+        if value is None or isna(value):
+            return None
+        return int(value)
+
+    return {
+        "source_cycle": [safe_int(value) for value in source_cycles],
+        "source_position": [positions.get(value) for value in hashes],
+        "source_filename": [by_hash.get(value) for value in hashes],
+        "source_hash": [value if value in by_hash else None for value in hashes],
+    }
+
+
+def _empty_resolved_trace(
+    descriptor: ResolvedCellDescriptor,
+    segments: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    return {
+        "cell_id": descriptor.cell_id,
+        "cell_name": descriptor.cell_name,
+        "label": descriptor.label,
+        "group_id": descriptor.group_id,
+        "group_name": descriptor.group_name,
+        "excluded": descriptor.excluded,
+        "active_mass_mg": descriptor.active_mass_mg,
+        "nominal_capacity_mah": descriptor.nominal_capacity_mah,
+        "electrode_area_cm2": descriptor.electrode_area_cm2,
+        "cycle": [],
+        "display_x": [],
+        "time_s": [],
+        "capacity_mah": [],
+        "capacity_mah_g": [],
+        "capacity_mah_cm2": [],
+        "voltage_v": [],
+        "current_ma": [],
+        "phase": [],
+        "status": [],
+        "derivative_x": [],
+        "derivative_y": [],
+        "segments": list(deepcopy(segments)),
+        "source_descriptors": list(deepcopy(descriptor.source_descriptors)),
+        "source_cycle": [],
+        "source_position": [],
+        "source_filename": [],
+        "source_hash": [],
+        "source_boundary_indices": [],
+    }
+
+
+def _resolved_cell_result(
+    job: ReadJob,
+    payload: ReadPayload,
+    request: ResolvedRequest,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the existing single-Cell scientific transform without a Session.
+
+    All relational state is represented by ``job.descriptor`` and all physical
+    input rows are loaded from the already-resolved cache plan. This is the
+    worker boundary for B3/B4; it intentionally mirrors the current
+    ``compute_time_capacity`` per-Cell transform and does not assemble a result
+    from A0.
+    """
+
+    import numpy as np
+
+    from app.services import analysis_engine, stitch, time_capacity_derived, time_capacity_path
+
+    descriptor = job.descriptor
+    plan = payload.plan
+    cell_diagnostics: dict[str, Any] = {
+        "cell_id": descriptor.cell_id,
+        "cell_name": descriptor.cell_name,
+        **deepcopy(payload.diagnostics),
+    }
+    raw = payload.raw.copy()
+    segments = tuple(deepcopy(descriptor.segments))
+    missing = list(descriptor.missing)
+    cell_diagnostics["raw_rows_loaded_before_filter"] = len(raw)
+    if plan.path not in {"indexed", "missing"}:
+        cell_diagnostics["raw_rows_materialized"] = len(raw)
+        cell_diagnostics["row_groups_read"] = "full"
+        cell_diagnostics["row_groups_total"] = "full"
+
+    badges: list[dict[str, Any]] = []
+    versions = dict(descriptor.source_versions)
+    for file_hash in missing:
+        missing_identity = versions.get(file_hash, "unknown")
+        badges.append(
+            {
+                "kind": "cache_missing",
+                "cell_id": descriptor.cell_id,
+                "cell_name": descriptor.cell_name,
+                "detail": f"No raw cache at parser {missing_identity} for file {file_hash[:12]}...",
+            }
+        )
+
+    complete = stitch.stitch_metadata(raw)["complete"]
+    if not complete:
+        badges.append(
+            {
+                "kind": "continuation_source_missing",
+                "cell_id": descriptor.cell_id,
+                "cell_name": descriptor.cell_name,
+                "missing_source_hashes": missing,
+                "missing_source_positions": list(descriptor.missing_positions),
+                "detail": (
+                    "The ordered Cell source chain is incomplete; the scientific "
+                    "time/capacity trace was withheld until every source cache is available."
+                ),
+            }
+        )
+    if raw.empty or "cycle" not in raw.columns or not complete:
+        return (
+            {
+                "trace": _empty_resolved_trace(descriptor, segments),
+                "badges": badges,
+                "voltage_facts": list(descriptor.voltage_facts),
+                "source_versions": list(descriptor.source_versions),
+                "current_parser_versions": list(descriptor.current_parser_versions),
+            },
+            {"cells": [cell_diagnostics]},
+        )
+
+    settings = request.settings
+    transform_needs = time_capacity_derived.TimeCapacityTransformNeeds.for_request(
+        settings,
+        precision=request.precision,
+        compact=request.compact,
+    )
+    prepared_derived = payload.prepared
+    with time_capacity_path.timed_stage(cell_diagnostics, "exact_cycle_filter_and_sort"):
+        if settings["cycles"]:
+            raw = raw[raw["cycle"].isin(settings["cycles"])]
+        else:
+            if settings["cycle_start"] is not None:
+                raw = raw[raw["cycle"] >= int(settings["cycle_start"])]
+            if settings["cycle_end"] is not None:
+                raw = raw[raw["cycle"] <= int(settings["cycle_end"])]
+        raw = raw.sort_values(
+            ["cycle", "segment", "record_index"]
+            if "record_index" in raw.columns
+            else ["cycle", "segment"]
+        )
+        cell_diagnostics["selected_rows_before_transforms"] = len(raw)
+
+    with time_capacity_path.timed_stage(cell_diagnostics, "continuous_time_phase_capacity"):
+        transform_rows = len(raw)
+        if transform_needs.continuous_time:
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_continuous_time"):
+                raw = analysis_engine._continuous_time(raw)
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "continuous_time",
+            input_rows=transform_rows,
+            output_rows=len(raw) if transform_needs.continuous_time else 0,
+            consumed_by=tuple(
+                [
+                    *(
+                        ["time_axis"]
+                        if settings["view"] == "voltage_current" and settings["x_axis"] == "time"
+                        else []
+                    ),
+                    *( ["full_export"] if request.precision == "full" or not request.compact else []),
+                ]
+            ),
+        )
+        with time_capacity_path.timed_stage(cell_diagnostics, "transform_source_provenance"):
+            source_values = _resolved_source_columns(raw, descriptor)
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "source_provenance",
+            input_rows=len(raw),
+            output_rows=len(raw),
+            consumed_by=("provenance_output",),
+        )
+        with time_capacity_path.timed_stage(cell_diagnostics, "transform_source_boundaries"):
+            source_boundary_indices = (
+                np.flatnonzero(
+                    raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+                )
+                + 1
+                if "segment" in raw.columns and len(raw) > 1
+                else np.array([], dtype="int64")
+            )
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "source_boundaries",
+            input_rows=len(raw),
+            output_rows=len(source_boundary_indices),
+            consumed_by=("provenance_output", "display_downsampling"),
+        )
+        aligned_prepared = (
+            analysis_engine._aligned_prepared_transform_values(
+                raw,
+                prepared_derived,
+                need_capacity=transform_needs.phase_capacity,
+            )
+            if prepared_derived is not None
+            else None
+        )
+        if aligned_prepared is not None:
+            phases, prepared_capacity = aligned_prepared
+            cell_diagnostics["derived_access"] = "prepared"
+            phase_source = "prepared"
+            capacity_source = "prepared" if transform_needs.phase_capacity else "not_needed"
+        else:
+            cell_diagnostics["derived_access"] = (
+                "fallback" if transform_needs.phase_capacity else "not_needed"
+            )
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_phase_classification"):
+                phases = analysis_engine._phase_from_raw(raw)
+            phase_source = "computed"
+            prepared_capacity = None
+            capacity_source = "computed" if transform_needs.phase_capacity else "not_needed"
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "phase_classification",
+            input_rows=len(raw),
+            output_rows=len(phases),
+            consumed_by=("phase_output", "display_coordinate", "derivative"),
+        )
+        if transform_needs.phase_capacity:
+            if prepared_capacity is not None:
+                capacity = prepared_capacity
+            else:
+                with time_capacity_path.timed_stage(cell_diagnostics, "transform_phase_capacity"):
+                    capacity = analysis_engine._phase_capacity(raw, phases)
+        else:
+            capacity = None
+        capacity_consumers: list[str] = []
+        if transform_needs.phase_capacity:
+            if settings["view"] != "voltage_current":
+                capacity_consumers.append("derivative")
+            elif settings["x_axis"] in {"capacity_mah", "capacity_mah_g", "capacity_mah_cm2"}:
+                capacity_consumers.append("capacity_axis")
+            if request.precision == "full" or not request.compact:
+                capacity_consumers.append("full_export")
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "phase_capacity",
+            input_rows=len(raw),
+            output_rows=len(capacity) if capacity is not None else 0,
+            consumed_by=tuple(capacity_consumers),
+        )
+        cell_diagnostics["phase_source"] = phase_source
+        cell_diagnostics["phase_capacity_source"] = capacity_source
+        with time_capacity_path.timed_stage(cell_diagnostics, "transform_capacity_metadata"):
+            active_mass_mg = descriptor.active_mass_mg
+            nominal_capacity_mah = descriptor.nominal_capacity_mah
+            electrode_area_cm2 = descriptor.electrode_area_cm2
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "capacity_metadata",
+            input_rows=len(raw),
+            output_rows=1,
+            consumed_by=("capacity_normalization", "trace_metadata"),
+        )
+        active_mass_g = active_mass_mg / 1000.0 if active_mass_mg else None
+        if transform_needs.specific_capacity:
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_specific_capacity"):
+                capacity_g = (
+                    capacity / active_mass_g
+                    if capacity is not None and active_mass_g and active_mass_g > 0
+                    else np.full(len(raw), np.nan)
+                )
+        else:
+            capacity_g = None
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "specific_capacity",
+            input_rows=len(raw),
+            output_rows=len(capacity_g) if capacity_g is not None else 0,
+            consumed_by=tuple(
+                [
+                    *(
+                        ["derivative"]
+                        if settings["view"] != "voltage_current" and settings["derivative_specific"]
+                        else []
+                    ),
+                    *(
+                        ["capacity_axis"]
+                        if settings["view"] == "voltage_current" and settings["x_axis"] == "capacity_mah_g"
+                        else []
+                    ),
+                    *( ["full_export"] if request.precision == "full" or not request.compact else []),
+                ]
+            ),
+        )
+        area_cm2 = settings["electrode_area_cm2"] or electrode_area_cm2
+        if transform_needs.areal_capacity:
+            with time_capacity_path.timed_stage(cell_diagnostics, "transform_areal_capacity"):
+                capacity_area = (
+                    capacity / area_cm2
+                    if capacity is not None and area_cm2 and area_cm2 > 0
+                    else np.full(len(raw), np.nan)
+                )
+        else:
+            capacity_area = None
+        analysis_engine._record_transform_profile(
+            cell_diagnostics,
+            "areal_capacity",
+            input_rows=len(raw),
+            output_rows=len(capacity_area) if capacity_area is not None else 0,
+            consumed_by=tuple(
+                [
+                    *(
+                        ["capacity_axis"]
+                        if settings["view"] == "voltage_current" and settings["x_axis"] == "capacity_mah_cm2"
+                        else []
+                    ),
+                    *( ["full_export"] if request.precision == "full" or not request.compact else []),
+                ]
+            ),
+        )
+
+    with time_capacity_path.timed_stage(cell_diagnostics, "derivative"):
+        derivative_x, derivative_y = analysis_engine._derivative_curve(
+            raw,
+            phases,
+            capacity,
+            capacity_g,
+            settings,
+            cell_diagnostics,
+        )
+    with time_capacity_path.timed_stage(cell_diagnostics, "protocol_masking"):
+        plot_mask = np.zeros(len(raw), dtype=bool)
+    voltage_column = analysis_engine.canonical_cycling.VOLTAGE_QUANTITIES[settings["voltage_channel"]]
+    voltage = (
+        raw[voltage_column].to_numpy(dtype="float64").copy()
+        if voltage_column in raw.columns
+        else np.full(len(raw), np.nan)
+    )
+    current = (
+        raw["current_ma"].to_numpy(dtype="float64").copy()
+        if "current_ma" in raw.columns
+        else np.full(len(raw), np.nan)
+    )
+    with time_capacity_path.timed_stage(cell_diagnostics, "transform_plot_array_materialization"):
+        capacity = capacity.copy() if capacity is not None else None
+        capacity_g = capacity_g.copy() if capacity_g is not None else None
+        capacity_area = capacity_area.copy() if capacity_area is not None else None
+        derivative_x = derivative_x.copy()
+        derivative_y = derivative_y.copy()
+        for values in (voltage, current, capacity, capacity_g, capacity_area, derivative_x, derivative_y):
+            if values is not None:
+                values[plot_mask] = np.nan
+    analysis_engine._record_transform_profile(
+        cell_diagnostics,
+        "plot_array_materialization",
+        input_rows=len(raw),
+        output_rows=len(raw),
+        consumed_by=("response_projection",),
+    )
+    with time_capacity_path.timed_stage(cell_diagnostics, "display_coordinate"):
+        display_x = analysis_engine._time_capacity_display_x(
+            raw,
+            phases,
+            capacity,
+            capacity_g,
+            capacity_area,
+            settings,
+        )
+    configured_max = max(100, settings["max_points_per_cell"])
+    if len(raw) > configured_max and not (request.precision == "full" and not request.compact):
+        envelope_series = (
+            [derivative_x, derivative_y]
+            if settings["view"] != "voltage_current"
+            else [voltage]
+        )
+        primary_values = derivative_y if settings["view"] != "voltage_current" else voltage
+        visible_values = ~plot_mask & np.isfinite(primary_values)
+        with time_capacity_path.timed_stage(cell_diagnostics, "display_downsampling"):
+            take = analysis_engine._downsample_indices(
+                len(raw), configured_max, visible_values, envelope_series
+            )
+        take = np.unique(np.concatenate((take, source_boundary_indices)))
+        raw = raw.iloc[take]
+        display_x = display_x[take]
+        phases = np.asarray(phases)[take].tolist()
+        voltage = voltage[take]
+        current = current[take]
+        capacity = capacity[take] if capacity is not None else None
+        capacity_g = capacity_g[take] if capacity_g is not None else None
+        capacity_area = capacity_area[take] if capacity_area is not None else None
+        derivative_x = derivative_x[take]
+        derivative_y = derivative_y[take]
+        source_values = {
+            key: [values[int(index)] for index in take]
+            for key, values in source_values.items()
+        }
+        source_boundary_indices = np.flatnonzero(
+            raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]
+        ) + 1
+    else:
+        source_boundary_indices = (
+            np.flatnonzero(raw["segment"].to_numpy()[1:] != raw["segment"].to_numpy()[:-1]) + 1
+            if "segment" in raw.columns and len(raw) > 1
+            else np.array([], dtype="int64")
+        )
+
+    full_precision = request.precision == "full" or not request.compact
+    is_derivative = settings["view"] != "voltage_current"
+    trace = {
+        "cell_id": descriptor.cell_id,
+        "cell_name": descriptor.cell_name,
+        "label": descriptor.label,
+        "group_id": descriptor.group_id,
+        "group_name": descriptor.group_name,
+        "excluded": descriptor.excluded,
+        "active_mass_mg": active_mass_mg,
+        "nominal_capacity_mah": nominal_capacity_mah,
+        "electrode_area_cm2": electrode_area_cm2,
+        "cycle": analysis_engine._jsonsafe_int(raw["cycle"].to_numpy()),
+        "display_x": analysis_engine._jsonsafe_plot(display_x, None if full_precision else 6),
+        "time_s": (
+            analysis_engine._jsonsafe_plot(
+                raw["time_s"].to_numpy(), None if full_precision else 3
+            )
+            if (not request.compact or (not is_derivative and settings["x_axis"] == "time"))
+            and "time_s" in raw.columns
+            else []
+        ),
+        "capacity_mah": (
+            analysis_engine._jsonsafe_plot(capacity, None if full_precision else 6)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah")
+            else []
+        ),
+        "capacity_mah_g": (
+            analysis_engine._jsonsafe_plot(capacity_g, None if full_precision else 5)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah_g")
+            else []
+        ),
+        "capacity_mah_cm2": (
+            analysis_engine._jsonsafe_plot(capacity_area, None if full_precision else 5)
+            if not request.compact or (not is_derivative and settings["x_axis"] == "capacity_mah_cm2")
+            else []
+        ),
+        "voltage_v": (
+            analysis_engine._jsonsafe_plot(voltage, None if full_precision else 5)
+            if not request.compact or not is_derivative
+            else []
+        ),
+        "current_ma": (
+            analysis_engine._jsonsafe_plot(current, None if full_precision else 5)
+            if not request.compact or not is_derivative
+            else []
+        ),
+        "phase": phases,
+        "status": (
+            analysis_engine._textsafe(raw["status"])
+            if not request.compact and "status" in raw.columns
+            else []
+        ),
+        "derivative_x": (
+            analysis_engine._jsonsafe_plot(derivative_x, None if full_precision else 7)
+            if not request.compact or is_derivative
+            else []
+        ),
+        "derivative_y": (
+            analysis_engine._jsonsafe_plot(derivative_y, None if full_precision else 7)
+            if not request.compact or is_derivative
+            else []
+        ),
+        "segments": list(deepcopy(segments)),
+        "source_descriptors": list(deepcopy(descriptor.source_descriptors)),
+        **source_values,
+        "source_boundary_indices": [int(index) for index in source_boundary_indices],
+    }
+    return (
+        {
+            "trace": trace,
+            "badges": badges,
+            "voltage_facts": list(descriptor.voltage_facts),
+            "source_versions": list(descriptor.source_versions),
+            "current_parser_versions": list(descriptor.current_parser_versions),
+        },
+        {"cells": [cell_diagnostics]},
     )
 
 
@@ -852,32 +1489,17 @@ def run_read_candidate(
 
 
 def _whole_cell_task(
-    session_factory: Callable[[], Any],
+    job: ReadJob,
+    request: ResolvedRequest,
     index: int,
-    cell_id: int,
-    spec: dict,
     submitted_at: float,
 ) -> WholeCellPayload:
-    from app.services import analysis_engine
-
     started = time.perf_counter()
-    session = session_factory()
-    try:
-        diagnostics: dict[str, Any] = {}
-        result = analysis_engine.compute_time_capacity(
-            session,
-            spec,
-            None,
-            viewport_width=1200,
-            precision="standard",
-            compact=True,
-            access_diagnostics=diagnostics,
-        )
-    finally:
-        session.close()
+    read_payload = _materialize_read(job, submitted_at)
+    result, diagnostics = _resolved_cell_result(job, read_payload, request)
     return WholeCellPayload(
         index=index,
-        cell_id=cell_id,
+        cell_id=job.cell_id,
         result=result,
         diagnostics=diagnostics,
         queue_ms=(started - submitted_at) * 1000.0,
@@ -885,50 +1507,114 @@ def _whole_cell_task(
     )
 
 
-def _merge_whole_cell_results(reference: dict, payloads: list[WholeCellPayload]) -> tuple[dict, float]:
+def _resolved_voltage_channels(payloads: list[WholeCellPayload]) -> dict[str, dict[str, Any]]:
+    from app.services import canonical_cycling
+
+    default_roles = {
+        "voltage": "cell",
+        "working_potential": "working_vs_reference",
+        "counter_potential": "counter_vs_reference",
+    }
+    availability = {quantity: False for quantity in canonical_cycling.VOLTAGE_QUANTITIES}
+    role_candidates: dict[str, set[str]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+    reference_candidates: dict[str, set[str | None]] = {
+        quantity: set() for quantity in canonical_cycling.VOLTAGE_QUANTITIES
+    }
+    for payload in payloads:
+        for quantity, has_data, role, reference in payload.result.get("voltage_facts", []):
+            if not has_data:
+                continue
+            availability[quantity] = True
+            role_candidates[quantity].add(role)
+            reference_candidates[quantity].add(reference)
+    channels: dict[str, dict[str, Any]] = {}
+    for quantity in canonical_cycling.VOLTAGE_QUANTITIES:
+        candidates = role_candidates[quantity]
+        role = (
+            default_roles[quantity]
+            if not candidates
+            else next(iter(candidates))
+            if len(candidates) == 1
+            else canonical_cycling.MIXED_VOLTAGE_ROLE
+        )
+        references = reference_candidates[quantity]
+        reference = (
+            next(iter(references))
+            if len(references) == 1 and next(iter(references)) is not None
+            else None
+        )
+        item: dict[str, Any] = {
+            "available": availability[quantity],
+            "label": canonical_cycling.voltage_quantity_label(
+                quantity,
+                role=role,
+                reference_electrode=reference,
+            ),
+            "role": role,
+        }
+        if reference is not None and role != canonical_cycling.MIXED_VOLTAGE_ROLE:
+            item["reference_electrode"] = reference
+        channels[quantity] = item
+    return channels
+
+
+def _merge_whole_cell_results(
+    request: ResolvedRequest,
+    payloads: list[WholeCellPayload],
+) -> tuple[dict, float]:
+    from app.services import analysis_engine
+
     started = time.perf_counter()
     ordered = sorted(payloads, key=lambda item: item.index)
-    result = deepcopy(reference)
-    result["cell_traces"] = [
-        trace
+    traces = [item.result["trace"] for item in ordered]
+    badges = list(deepcopy(request.protocol_badges))
+    for item in ordered:
+        badges.extend(deepcopy(item.result.get("badges") or []))
+    pinned_versions = [
+        version
         for item in ordered
-        for trace in item.result.get("cell_traces", [])
+        for _file_hash, version in item.result.get("source_versions", [])
     ]
-    result["rendering"] = dict(reference.get("rendering") or {})
-    result["rendering"]["total_points"] = sum(
-        int(item.result.get("rendering", {}).get("total_points") or 0)
+    current_versions = [
+        version
         for item in ordered
-    )
+        for version in item.result.get("current_parser_versions", [])
+    ]
+    configured_max = max(100, request.settings["max_points_per_cell"])
+    result = {
+        "computed_at": analysis_engine.now_iso(),
+        "type": request.type,
+        "parser_version": analysis_engine.display_parser_version(pinned_versions),
+        "calc_version": request.calc_version,
+        "current_parser_version": analysis_engine.display_parser_version(current_versions),
+        "current_calc_version": request.current_calc_version,
+        "settings": deepcopy(request.settings),
+        "cell_traces": traces,
+        "badges": badges,
+        "voltage_channels": _resolved_voltage_channels(ordered),
+        "rendering": {
+            "viewport_width": request.viewport_width,
+            "configured_max_points_per_cell": configured_max,
+            "max_points_per_cell": configured_max,
+            "total_points": sum(len(trace.get("cycle") or []) for trace in traces),
+            "precision": request.precision,
+            "compact": request.compact,
+        },
+    }
     return result, (time.perf_counter() - started) * 1000.0
 
 
 def run_whole_cell_candidate(
-    fixture_db: FileBackedFixtureDatabase,
-    base: dict,
-    cell_ids: list[int],
-    cycles: list[int],
-    cycle_end: int | None,
-    *,
-    x_axis: str,
-    view: str,
-    derivative_specific: bool,
+    jobs: list[ReadJob],
+    request: ResolvedRequest,
     workers: int,
     reference: dict,
     scenario: str,
 ) -> tuple[dict[str, Any], dict]:
-    from app.services import analysis_engine
-
     specs = [
-        make_spec(
-            base,
-            [cell_id],
-            cycles,
-            cycle_end,
-            x_axis=x_axis,
-            view=view,
-            derivative_specific=derivative_specific,
-        )
-        for cell_id in cell_ids
+        job for job in jobs
     ]
     rss_before = current_rss()
     started_cpu = time.process_time()
@@ -936,22 +1622,21 @@ def run_whole_cell_candidate(
     submitted: dict[int, float] = {}
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"spec0509-cell-{workers}") as pool:
         futures = []
-        for index, (cell_id, spec) in enumerate(zip(cell_ids, specs)):
+        for index, job in enumerate(specs):
             submitted[index] = time.perf_counter()
             futures.append(
                 pool.submit(
                     _whole_cell_task,
-                    fixture_db.session_factory,
+                    job,
+                    request,
                     index,
-                    cell_id,
-                    spec,
                     submitted[index],
                 )
             )
         dispatch_ms = (time.perf_counter() - started) * 1000.0
         payloads = [future.result() for future in futures]
     payloads.sort(key=lambda item: item.index)
-    merged, merge_ms = _merge_whole_cell_results(reference, payloads)
+    merged, merge_ms = _merge_whole_cell_results(request, payloads)
     serialization_ms = _serialize_result(merged)
     backend_wall_ms = (time.perf_counter() - started) * 1000.0
     cpu_seconds = time.process_time() - started_cpu
@@ -961,7 +1646,7 @@ def run_whole_cell_candidate(
         candidate=f"B{workers // 2 + 2}",
         workers=workers,
         scenario=scenario,
-        cells=cell_ids,
+        cells=[job.cell_id for job in jobs],
         result=merged,
         diagnostics=diagnostics,
         reference=reference,
@@ -974,10 +1659,14 @@ def run_whole_cell_candidate(
         rss_after=rss_after,
         native_settings=native_thread_settings(),
         extra={
-            "ablation": "whole_existing_per_cell_job",
+            "ablation": "resolved_per_cell_read_transform",
             "merge_ms": merge_ms,
             "per_cell_job_wall_ms": _min_max(item.worker_wall_ms for item in payloads),
             "per_cell_job_wall_ms_sum": sum(item.worker_wall_ms for item in payloads),
+            "per_cell_read_wall_ms": _min_max(
+                item.diagnostics["cells"][0].get("stages", {}).get("indexed_raw_access")
+                for item in payloads
+            ),
             "worker_order": [item.index for item in payloads],
         },
     )
@@ -1010,15 +1699,32 @@ def _decision_label(candidate_values: list[float], baseline_values: list[float])
 
 def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
     baseline_rows: list[dict[str, Any]] = []
+    baseline_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
     read_rows: dict[str, list[dict[str, Any]]] = {"B1": [], "B2": []}
+    read_by_key: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {
+        "B1": {},
+        "B2": {},
+    }
     whole_rows: dict[str, list[dict[str, Any]]] = {"B3": [], "B4": []}
+    whole_by_key: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {
+        "B3": {},
+        "B4": {},
+    }
     for workload in workloads:
+        suite = str(workload.get("suite") or "unknown")
+        key = (suite, workload["scenario"])
         rows = workload["samples"]
-        baseline_rows.extend(row for row in rows if row["candidate"] == "A0")
+        baseline = [row for row in rows if row["candidate"] == "A0"]
+        baseline_rows.extend(baseline)
+        baseline_by_key.setdefault(key, []).extend(baseline)
         for candidate in read_rows:
-            read_rows[candidate].extend(row for row in rows if row["candidate"] == candidate)
+            candidate_rows = [row for row in rows if row["candidate"] == candidate]
+            read_rows[candidate].extend(candidate_rows)
+            read_by_key[candidate].setdefault(key, []).extend(candidate_rows)
         for candidate in whole_rows:
-            whole_rows[candidate].extend(row for row in rows if row["candidate"] == candidate)
+            candidate_rows = [row for row in rows if row["candidate"] == candidate]
+            whole_rows[candidate].extend(candidate_rows)
+            whole_by_key[candidate].setdefault(key, []).extend(candidate_rows)
 
     def row_value(row: dict[str, Any], key: str) -> object:
         value: object = row
@@ -1029,16 +1735,13 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
         return value
 
     def paired_values(
-        rows: list[dict[str, Any]],
+        candidate_map: dict[tuple[str, str], list[dict[str, Any]]],
         candidate_key: str,
         baseline_key: str,
     ) -> tuple[list[float], list[float]]:
         candidates: list[float] = []
         baselines: list[float] = []
-        by_scenario: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            by_scenario.setdefault(row["scenario"], []).append(row)
-        for scenario, scenario_rows in by_scenario.items():
+        for key, scenario_rows in candidate_map.items():
             candidate_value = _median(
                 row_value(row, candidate_key)
                 for row in scenario_rows
@@ -1046,8 +1749,8 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
             )
             baseline_value = _median(
                 row_value(row, baseline_key)
-                for row in baseline_rows
-                if row["scenario"] == scenario and row.get("status") == "PASS"
+                for row in baseline_by_key.get(key, [])
+                if row.get("status") == "PASS"
             )
             if _finite(candidate_value) and _finite(baseline_value):
                 candidates.append(float(candidate_value))
@@ -1056,16 +1759,16 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
 
     read_decisions: dict[str, str] = {}
     whole_decisions: dict[str, str] = {}
-    for candidate, rows in read_rows.items():
+    for candidate in read_rows:
         candidates, baselines = paired_values(
-            rows,
+            read_by_key[candidate],
             "read_wall_ms",
             "stages.raw_read_decode_ms",
         )
         read_decisions[candidate] = _decision_label(candidates, baselines)
-    for candidate, rows in whole_rows.items():
+    for candidate in whole_rows:
         candidates, baselines = paired_values(
-            rows,
+            whole_by_key[candidate],
             "backend_wall_ms",
             "backend_wall_ms",
         )
@@ -1102,6 +1805,72 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
             value = _median_candidate(workload["samples"], candidate, "backend_wall_ms")
             if _finite(value) and value > float(base) * 1.10:
                 small_regression = True
+
+    representative_keys = (
+        ("golden_fixture", "normal-6-all-capacity"),
+        ("application_performance_batch", "normal-11-all-time"),
+    )
+    read_stage_evidence: dict[str, Any] = {}
+    for candidate in read_rows:
+        ratios: list[float] = []
+        representatives: dict[str, Any] = {}
+        for suite, scenario in representative_keys:
+            key = (suite, scenario)
+            candidate_value = _median(
+                row.get("read_wall_ms")
+                for row in read_by_key[candidate].get(key, [])
+                if row.get("status") == "PASS"
+            )
+            baseline_value = _median(
+                row.get("stages", {}).get("raw_read_decode_ms")
+                for row in baseline_by_key.get(key, [])
+                if row.get("status") == "PASS"
+            )
+            total_candidate = _median(
+                row.get("backend_wall_ms")
+                for row in read_by_key[candidate].get(key, [])
+                if row.get("status") == "PASS"
+            )
+            total_baseline = _median(
+                row.get("backend_wall_ms")
+                for row in baseline_by_key.get(key, [])
+                if row.get("status") == "PASS"
+            )
+            ratio = (
+                float(candidate_value) / float(baseline_value)
+                if _finite(candidate_value) and _finite(baseline_value) and baseline_value > 0
+                else None
+            )
+            total_ratio = (
+                float(total_candidate) / float(total_baseline)
+                if _finite(total_candidate) and _finite(total_baseline) and total_baseline > 0
+                else None
+            )
+            if ratio is not None:
+                ratios.append(ratio)
+            representatives[f"{suite}/{scenario}"] = {
+                "a0_read_decode_median_ms": baseline_value,
+                "candidate_read_stage_median_ms": candidate_value,
+                "read_stage_ratio": ratio,
+                "read_stage_change_pct": (ratio - 1.0) * 100.0 if ratio is not None else None,
+                "a0_total_backend_median_ms": total_baseline,
+                "candidate_total_backend_median_ms": total_candidate,
+                "total_backend_ratio": total_ratio,
+                "total_backend_change_pct": (
+                    (total_ratio - 1.0) * 100.0 if total_ratio is not None else None
+                ),
+            }
+        paired_ratio = statistics.median(ratios) if ratios else None
+        read_stage_evidence[candidate] = {
+            "paired_median_ratio": paired_ratio,
+            "paired_median_change_pct": (
+                (paired_ratio - 1.0) * 100.0 if paired_ratio is not None else None
+            ),
+            "representative_scenarios": representatives,
+            "interpretation": (
+                "isolated read/decode stage only; total backend wall time is reported separately"
+            ),
+        }
     return {
         "threshold": f"{IMPROVEMENT_THRESHOLD:.0%} median paired change",
         "read_concurrency": read_decisions,
@@ -1109,10 +1878,11 @@ def summarize_decisions(workloads: list[dict[str, Any]]) -> dict[str, Any]:
         "small_job_regression": "not_acceptable" if small_regression else "acceptable",
         "dominant_residual_backend_stage": dominant,
         "dominant_stage_medians_ms": stage_medians,
+        "read_stage_evidence": read_stage_evidence,
         "rust_050_10_handoff": (
             "Benchmark derivative rolling, gradient, ratio/filter and postprocess "
             "kernels separately in 050.10; derivative requests still spend "
-            "approximately 136-1,263 ms in that stage across the measured one- to "
+            "approximately 150-1,300 ms in that stage across the measured one- to "
             "six-Cell suites, even though normal requests are transform-dominated."
         ),
     }
@@ -1273,7 +2043,6 @@ def workload_matrix(cell_ids: list[int]) -> list[dict[str, Any]]:
 
 def profile_workload(
     env: GoldenFixtureEnvironment,
-    fixture_db: FileBackedFixtureDatabase,
     base: dict,
     workload: dict[str, Any],
     *,
@@ -1291,6 +2060,7 @@ def profile_workload(
     )
     # Warm the same current path once, outside the reported repetitions.
     _, reference = run_production_sample(env, spec, None, scenario=f"{scenario}-warmup")
+    request = resolved_request(spec)
     samples: list[dict[str, Any]] = []
     for repetition in range(repetitions):
         baseline, baseline_result = run_production_sample(
@@ -1313,14 +2083,8 @@ def profile_workload(
             )
             samples.append(read_row)
             whole_row, _ = run_whole_cell_candidate(
-                fixture_db,
-                base,
-                workload["cell_ids"],
-                workload["cycles"],
-                workload["cycle_end"],
-                x_axis=workload["x_axis"],
-                view=workload["view"],
-                derivative_specific=workload["derivative_specific"],
+                jobs,
+                request,
                 workers=workers,
                 reference=reference,
                 scenario=scenario,
@@ -1399,19 +2163,17 @@ def main() -> int:
                     for workload in workloads
                     if workload["scenario"] in requested_scenarios
                 ]
-            with FileBackedFixtureDatabase(env.db) as fixture_db:
-                profiled = []
-                for workload in workloads:
-                    print(f"profiling fixture/{workload['scenario']}", flush=True)
-                    item = profile_workload(
-                        env,
-                        fixture_db,
-                        fixture_base,
-                        workload,
-                        repetitions=args.repetitions,
-                    )
-                    item["suite"] = "golden_fixture"
-                    profiled.append(item)
+            profiled = []
+            for workload in workloads:
+                print(f"profiling fixture/{workload['scenario']}", flush=True)
+                item = profile_workload(
+                    env,
+                    fixture_base,
+                    workload,
+                    repetitions=args.repetitions,
+                )
+                item["suite"] = "golden_fixture"
+                profiled.append(item)
             suites.extend(profiled)
             cache_controls["golden_fixture"] = run_cache_hit_control(
                 env,
@@ -1434,19 +2196,17 @@ def main() -> int:
                                 for workload in app_workloads
                                 if workload["scenario"] in requested_scenarios
                             ]
-                        with FileBackedFixtureDatabase(app_env.db) as app_fixture_db:
-                            for workload in app_workloads:
-                                print(f"profiling application/{workload['scenario']}", flush=True)
-                                item = profile_workload(
-                                    app_env,
-                                    app_fixture_db,
-                                    app_base,
-                                    workload,
-                                    repetitions=args.repetitions,
-                                )
-                                item["suite"] = "application_performance_batch"
-                                item["dataset"] = app_metadata
-                                suites.append(item)
+                        for workload in app_workloads:
+                            print(f"profiling application/{workload['scenario']}", flush=True)
+                            item = profile_workload(
+                                app_env,
+                                app_base,
+                                workload,
+                                repetitions=args.repetitions,
+                            )
+                            item["suite"] = "application_performance_batch"
+                            item["dataset"] = app_metadata
+                            suites.append(item)
                         cache_controls["application_performance_batch"] = run_cache_hit_control(
                             app_env,
                             app_base,
@@ -1496,7 +2256,7 @@ def main() -> int:
             "rust": "not used; reserved for 050.10",
             "adaptive_zoom_or_plotly": "not used",
             "whole_cell_ram_cache": "not used; prefetched frames are released per candidate",
-            "worker_session_policy": "B3/B4 create one independent SQLite session per worker; no Session is shared",
+            "worker_session_policy": "B3/B4 create or use no SQLAlchemy Session in workers; owner context resolves immutable per-Cell descriptors once",
             "merge_policy": "selection index, never completion order",
         },
     }

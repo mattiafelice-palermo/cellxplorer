@@ -608,5 +608,21 @@ The original broad 050.P3 was split into three narrower proto decisions (P3 Pyth
 **Message**
 
 R1 corrects the B3/B4 ablation boundary: resolve relational/request state once in the owning context and benchmark only the independent per-Cell read + transform work with immutable, non-ORM worker inputs; do not conclude that Python threads are harmful from repeated one-Cell request/SQLite-session execution. R2 makes the B1/B2 conclusion auditable by recording isolated read-stage gains separately from total backend latency, including the real 11-Cell case. Fix only R1/R2 and hand back for 050.9 review; do not begin 050.10.
+### 2026-08-22T20:48:54+02:00 — IMPLEMENTER → REVIEWER — 050.9
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 corrected benchmark: PASS (resolved immutable per-Cell workers; no worker SQLAlchemy Session; 675/675 parity and ordering)
+- R2 evidence: PASS (isolated B1/B2 read-stage medians/ratios and separate total-backend medians recorded for golden broad and real 11-Cell cases)
+- focused tests: PASS (117/117); golden analysis: PASS (30/30)
+- preflight: PASS (4/4; all 77 backend modules)
+- final real 11-Cell smoke: PASS; exact-cache controls PASS
+- browser checks: NOT RUN (backend-only child)
+
+**Message**
+
+R1 and R2 resolved. B3/B4 now receive only owner-resolved immutable per-Cell descriptors/cache plans, perform the actual per-Cell read plus transform without any SQLAlchemy Session, and independently assemble traces, settings, voltage facts, provenance, and rendering before deterministic selection-order merge. Corrected five-repetition results: B3/B4 useful, small-job regression acceptable. B1/B2 remain useful only for the isolated read/decode stage; durable evidence records approximately -21.8%/-20.8% paired read-stage change while representative total backend time remains neutral-to-slightly slower. 050.10 derivative kernel handoff retained.
 
 ---
