@@ -1,7 +1,9 @@
 import sys
+import time
 import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -11,6 +13,14 @@ from app.services import analysis_engine
 
 
 class TimeCapacityWorkerTests(unittest.TestCase):
+    def _wait_for_pool_state(self, state: str, timeout: float = 35.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if workers._POOL_STATE == state:
+                return
+            time.sleep(0.05)
+        self.fail(f"worker pool did not reach {state!r}; state={workers._POOL_STATE!r}")
+
     def test_adaptive_budget_uses_width_and_visible_cell_count(self):
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 600, 6), 1200)
         self.assertEqual(analysis_engine.time_capacity_display_budget(4000, 1200, 6), 2400)
@@ -85,6 +95,71 @@ class TimeCapacityWorkerTests(unittest.TestCase):
         )
         self.assertEqual((decision.mode, decision.workers), ("serial", 1))
         self.assertIsNone(workers._POOL)
+        self.assertEqual(workers._POOL_STATE, "stopped")
+
+    def test_warm_pool_requires_distinct_worker_pids(self):
+        for worker_count in (2, 4):
+            workers.shutdown_time_capacity_worker_pool()
+            pool = workers._new_pool(worker_count)
+            try:
+                pids = workers._warm_pool(pool, worker_count)
+                self.assertGreaterEqual(len(pids), worker_count)
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_startup_publishes_only_a_ready_reusable_pool(self):
+        workers.shutdown_time_capacity_worker_pool()
+        decision = workers.ExecutionDecision(
+            "process",
+            2,
+            "focused_warmup",
+            logical_cpus=16,
+            total_memory_bytes=32 * 1024 * 1024 * 1024,
+            available_memory_bytes=16 * 1024 * 1024 * 1024,
+        )
+        try:
+            with patch.object(workers, "choose_execution", return_value=decision):
+                workers.start_time_capacity_worker_pool()
+                self._wait_for_pool_state("ready")
+            pool = workers._POOL
+            self.assertIsNotNone(pool)
+            self.assertEqual(workers._POOL_WORKERS, 2)
+            with patch.object(
+                workers,
+                "_new_pool",
+                side_effect=AssertionError("ready dispatch must not create a pool"),
+            ):
+                self.assertIs(workers._ready_pool(2), pool)
+        finally:
+            workers.shutdown_time_capacity_worker_pool()
+        self.assertEqual(workers._POOL_STATE, "stopped")
+        self.assertIsNone(workers._POOL)
+        self.assertIsNone(workers._WARMUP_THREAD)
+
+    def test_warmup_failure_selects_serial_until_shutdown(self):
+        workers.shutdown_time_capacity_worker_pool()
+        decision = workers.ExecutionDecision(
+            "process",
+            2,
+            "focused_warmup",
+            logical_cpus=16,
+            total_memory_bytes=32 * 1024 * 1024 * 1024,
+            available_memory_bytes=16 * 1024 * 1024 * 1024,
+        )
+        try:
+            with patch.object(workers, "choose_execution", return_value=decision), patch.object(
+                workers,
+                "_warm_pool",
+                side_effect=RuntimeError("focused warmup failure"),
+            ):
+                workers.start_time_capacity_worker_pool()
+                self._wait_for_pool_state("failed")
+            self.assertIsNone(workers._POOL)
+            with self.assertRaises(workers.PoolNotReadyError) as raised:
+                workers._ready_pool(2)
+            self.assertEqual(raised.exception.reason, "pool_failed_serial")
+        finally:
+            workers.shutdown_time_capacity_worker_pool()
 
 
 if __name__ == "__main__":

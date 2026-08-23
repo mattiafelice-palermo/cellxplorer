@@ -39,6 +39,7 @@ _MEGABYTE = 1024 * 1024
 _POOL_LOCK = threading.RLock()
 _POOL: ProcessPoolExecutor | None = None
 _POOL_WORKERS: int | None = None
+_POOL_STATE: Literal["stopped", "warming", "ready", "failed"] = "stopped"
 _WARMUP_THREAD: threading.Thread | None = None
 _POOL_FAILURE_LOGGED = False
 
@@ -58,6 +59,14 @@ class ExecutionDecision:
     logical_cpus: int | None
     total_memory_bytes: int | None
     available_memory_bytes: int | None
+
+
+class PoolNotReadyError(RuntimeError):
+    """The persistent pool is not ready for interactive dispatch."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -291,8 +300,10 @@ def choose_execution(
     return ExecutionDecision("serial", 1, "host_resource_gate", **common)
 
 
-def _worker_ping() -> bool:
-    return True
+def _worker_ping() -> int:
+    """Return the acknowledging worker PID after importing this module."""
+
+    return os.getpid()
 
 
 def _new_pool(workers: int) -> ProcessPoolExecutor:
@@ -306,52 +317,108 @@ def _new_pool(workers: int) -> ProcessPoolExecutor:
     )
 
 
-def _ensure_pool(workers: int) -> ProcessPoolExecutor:
-    global _POOL, _POOL_WORKERS
-    with _POOL_LOCK:
-        if _POOL is not None and _POOL_WORKERS == workers:
-            return _POOL
-        if _POOL is not None:
-            _POOL.shutdown(wait=False, cancel_futures=True)
-        _POOL = _new_pool(workers)
-        _POOL_WORKERS = workers
-        return _POOL
+def _warm_pool(
+    pool: ProcessPoolExecutor,
+    workers: int,
+    *,
+    timeout_seconds: float = 30.0,
+) -> set[int]:
+    """Prove that every selected worker bound has started and imported us."""
+
+    # ProcessPoolExecutor starts processes lazily. Submit a bounded surplus of
+    # tiny acknowledgements so a fast first process cannot make a one-ping
+    # warmup look like a fully resident pool. Read every result and require the
+    # selected number of distinct worker PIDs.
+    futures = [pool.submit(_worker_ping) for _ in range(max(1, workers * 4))]
+    deadline = perf_counter() + timeout_seconds
+    pids: set[int] = set()
+    try:
+        for future in futures:
+            remaining = deadline - perf_counter()
+            if remaining <= 0:
+                raise TimeoutError("Time/Capacity worker warmup timed out")
+            pids.add(int(future.result(timeout=remaining)))
+        if len(pids) < workers:
+            raise RuntimeError(
+                f"Time/Capacity worker warmup acknowledged {len(pids)} of {workers} workers"
+            )
+        return pids
+    except Exception:
+        for future in futures:
+            future.cancel()
+        raise
 
 
-def _mark_pool_failed() -> None:
-    global _POOL, _POOL_WORKERS, _POOL_FAILURE_LOGGED
+def _mark_pool_failed(pool: ProcessPoolExecutor | None = None) -> None:
+    global _POOL, _POOL_WORKERS, _POOL_STATE, _POOL_FAILURE_LOGGED
     with _POOL_LOCK:
-        pool = _POOL
+        current = _POOL
+        if pool is not None and current is not pool:
+            return
+        failed_pool = current if current is not None else pool
         _POOL = None
         _POOL_WORKERS = None
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
-        if not _POOL_FAILURE_LOGGED:
-            logger.warning("Time/Capacity worker pool unavailable; using serial fallback", exc_info=True)
-            _POOL_FAILURE_LOGGED = True
+        _POOL_STATE = "failed"
+    if failed_pool is not None:
+        failed_pool.shutdown(wait=False, cancel_futures=True)
+    if not _POOL_FAILURE_LOGGED:
+        logger.warning("Time/Capacity worker pool unavailable; using serial fallback", exc_info=True)
+        _POOL_FAILURE_LOGGED = True
+
+
+def _ready_pool(workers: int) -> ProcessPoolExecutor:
+    with _POOL_LOCK:
+        if _POOL_STATE == "ready" and _POOL is not None and _POOL_WORKERS == workers:
+            return _POOL
+        reason = (
+            "pool_warmup_pending_serial"
+            if _POOL_STATE == "warming"
+            else "pool_failed_serial"
+            if _POOL_STATE == "failed"
+            else "pool_not_ready_serial"
+        )
+    raise PoolNotReadyError(reason)
 
 
 def start_time_capacity_worker_pool() -> None:
     """Warm the bounded pool asynchronously after backend startup."""
 
-    global _WARMUP_THREAD
+    global _POOL, _POOL_STATE, _POOL_WORKERS, _WARMUP_THREAD
     with _POOL_LOCK:
-        if _WARMUP_THREAD is not None and _WARMUP_THREAD.is_alive():
+        if _POOL_STATE in {"warming", "ready", "failed"}:
             return
+        _POOL_STATE = "warming"
 
-        def warm() -> None:
+    def warm() -> None:
+        global _POOL, _POOL_STATE, _POOL_WORKERS
+        pool: ProcessPoolExecutor | None = None
+        try:
             resources = host_resources()
             warmup_decision = choose_execution(6, 120_000, resources=resources)
             if warmup_decision.mode != "process":
+                with _POOL_LOCK:
+                    if _POOL_STATE == "warming":
+                        _POOL_STATE = "stopped"
                 return
             workers = warmup_decision.workers
-            try:
-                pool = _ensure_pool(workers)
-                pool.submit(_worker_ping).result(timeout=30)
-            except Exception:
-                _mark_pool_failed()
-                logger.info("Time/Capacity worker warmup did not complete", exc_info=True)
+            pool = _new_pool(workers)
+            with _POOL_LOCK:
+                if _POOL_STATE != "warming":
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    return
+                _POOL = pool
+                _POOL_WORKERS = workers
+            _warm_pool(pool, workers)
+            with _POOL_LOCK:
+                if _POOL is pool and _POOL_STATE == "warming":
+                    _POOL_STATE = "ready"
+                    return
+            pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            _mark_pool_failed(pool)
+            logger.info("Time/Capacity worker warmup did not complete", exc_info=True)
 
+    with _POOL_LOCK:
         _WARMUP_THREAD = threading.Thread(
             target=warm,
             name="time-capacity-worker-warmup",
@@ -361,12 +428,17 @@ def start_time_capacity_worker_pool() -> None:
 
 
 def shutdown_time_capacity_worker_pool() -> None:
-    global _POOL, _POOL_WORKERS, _WARMUP_THREAD
+    global _POOL, _POOL_WORKERS, _POOL_STATE, _WARMUP_THREAD, _POOL_FAILURE_LOGGED
     with _POOL_LOCK:
         pool = _POOL
+        warmup_thread = _WARMUP_THREAD
         _POOL = None
         _POOL_WORKERS = None
+        _POOL_STATE = "stopped"
         _WARMUP_THREAD = None
+        _POOL_FAILURE_LOGGED = False
+    if warmup_thread is not None and warmup_thread is not threading.current_thread():
+        warmup_thread.join(timeout=35)
     if pool is not None:
         pool.shutdown(wait=True, cancel_futures=True)
 
@@ -1043,7 +1115,7 @@ def _run_serial(jobs: list[ReadJob], request: ResolvedRequest) -> list[CellResul
 
 
 def _run_process(jobs: list[ReadJob], request: ResolvedRequest, workers: int) -> tuple[list[CellResult], int, int]:
-    pool = _ensure_pool(workers)
+    pool = _ready_pool(workers)
     futures = []
     input_bytes = 0
     for job in jobs:
@@ -1115,6 +1187,16 @@ def try_compute_time_capacity(
         if decision.mode == "process":
             try:
                 results, ipc_input, ipc_output = _run_process(jobs, request, decision.workers)
+            except PoolNotReadyError as exc:
+                decision = ExecutionDecision(
+                    "serial",
+                    1,
+                    exc.reason,
+                    decision.logical_cpus,
+                    decision.total_memory_bytes,
+                    decision.available_memory_bytes,
+                )
+                results = _run_serial(jobs, request)
             except Exception:
                 decision = ExecutionDecision(
                     "serial",

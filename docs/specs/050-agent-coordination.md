@@ -852,3 +852,19 @@ R1/R2 fixed: T1 narrow phase-free path, invariant-gated T6/T7, source-native T12
 050.14 implementation is ready for review. Production ordinary compact Time/Capacity now uses owner-resolved immutable jobs and an asynchronous persistent spawn-safe bounded pool for eligible indexed voltage_current requests, with deterministic serial fallback. Shared scientific/render fingerprint work, adaptive viewport plus visible-Cell density, compact consecutive display_x/time_s/phase handling, RSS/IPC diagnostics, cache-hit bypass and selection-order parity are covered. No Rust dependency or CALC_VERSION bump.
 
 ---
+### 2026-08-23T05:52:30+02:00 — IMPLEMENTER → REVIEWER — 050.14
+
+**Result:** Review fixes ready
+
+**Verification**
+
+- R1 lifecycle focused tests: PASS (106 tests, 6.5 s)
+- py_compile and git diff --check: PASS
+- canonical preflight: PASS (4/4, 32.39 s)
+- browser/manual checks: NOT RUN
+
+**Message**
+
+R1 fixed: worker pool now has explicit stopped/warming/ready/failed states; background warmup requires distinct PID acknowledgements for all selected workers; requests before READY or after failure use serial without creating/waiting for a cold pool; shutdown joins warmup and closes the pool. No benchmark rerun per lifecycle-only review scope.
+
+---

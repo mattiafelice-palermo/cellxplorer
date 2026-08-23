@@ -1451,7 +1451,17 @@ class AnalysisEngineTests(unittest.TestCase):
             ]
         )
         spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        pool = None
+        published = False
         try:
+            time_capacity_workers.shutdown_time_capacity_worker_pool()
+            pool = time_capacity_workers._new_pool(2)
+            time_capacity_workers._warm_pool(pool, 2)
+            with time_capacity_workers._POOL_LOCK:
+                time_capacity_workers._POOL = pool
+                time_capacity_workers._POOL_WORKERS = 2
+                time_capacity_workers._POOL_STATE = "ready"
+            published = True
             serial = time_capacity_workers.try_compute_time_capacity(
                 self.db,
                 spec,
@@ -1490,6 +1500,60 @@ class AnalysisEngineTests(unittest.TestCase):
             self.assertEqual(process["rendering"], serial["rendering"])
         finally:
             time_capacity_workers.shutdown_time_capacity_worker_pool()
+            if pool is not None and not published:
+                pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_ordinary_request_before_pool_ready_uses_serial_without_creating_pool(self):
+        spec = self.spec_with(
+            [
+                {"kind": "cell", "ref_id": self.cells["c1"].id},
+                {"kind": "cell", "ref_id": self.cells["c2"].id},
+                {"kind": "replicate_group", "ref_id": self.group.id},
+            ]
+        )
+        spec["computation"]["time_capacity"] = {"cycle_end": 5, "x_axis": "time"}
+        process_decision = time_capacity_workers.ExecutionDecision(
+            "process",
+            2,
+            "focused_test",
+            logical_cpus=16,
+            total_memory_bytes=32 * 1024 * 1024 * 1024,
+            available_memory_bytes=16 * 1024 * 1024 * 1024,
+        )
+        diagnostics: dict = {}
+        time_capacity_workers.shutdown_time_capacity_worker_pool()
+        with patch.object(
+            time_capacity_workers,
+            "choose_execution",
+            return_value=process_decision,
+        ), patch.object(
+            time_capacity_workers,
+            "_POOL_STATE",
+            "warming",
+        ), patch.object(
+            time_capacity_workers,
+            "_POOL",
+            None,
+        ), patch.object(
+            time_capacity_workers,
+            "_new_pool",
+            side_effect=AssertionError("request must not create a cold pool"),
+        ):
+            result = time_capacity_workers.try_compute_time_capacity(
+                self.db,
+                spec,
+                None,
+                viewport_width=1200,
+                precision="standard",
+                compact=True,
+                access_diagnostics=diagnostics,
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(diagnostics["execution"]["mode"], "serial")
+        self.assertEqual(
+            diagnostics["execution"]["reason"],
+            "pool_warmup_pending_serial",
+        )
 
     def test_ordinary_worker_process_failure_falls_back_to_exact_serial(self):
         spec = self.spec_with(
