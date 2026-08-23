@@ -33,3 +33,36 @@ None.
 Spec 051 registry/stride implementation is ready. Both local Downloads\\EGG* examples decode as 21-ID/93-byte layouts without rewriting; their full canonical parse reaches the existing capacity-boundary guard, outside this binary-layout child.
 
 ---
+### 2026-08-24T00:50:05+02:00 — USER → REVIEWER — 051
+
+**Result:** User input U1
+
+**Message**
+
+Manual acceptance result: the build can load the BioLogic cell, but opening Analysis and attempting to plot voltage fails with: "This analysis includes metadata-only sources. Canonical cycling rows are not available for these sources, so cache-backed analysis and recompute are disabled."
+
+---
+### 2026-08-24T00:50:06+02:00 — REVIEWER → IMPLEMENTER — 051
+
+**Result:** Changes requested
+
+**Verification**
+
+- Reviewer inspected cumulative branch diff through implementation handoff 09f584f32d095edb70efb18147b8aeb0eeb918eb against merge base/main 706dc0f14880202a8c5e22b35020502bcf3b4dc9.
+- Implementer-reported focused tests and preflight were reviewed but not independently rerun; reviewer execution environment cannot clone the repository from GitHub.
+- User manual acceptance U1 reproduces the unresolved metadata-only/canonical-cycling failure in the built application.
+
+**Findings**
+
+- R1
+- R2
+
+**User messages considered**
+
+- U1
+
+**Message**
+
+R1 is merge-blocking: the motivating real 21/93 source decodes at the binary layer but still fails canonical capacity validation, remains metadata-only, and therefore cannot be plotted in Analysis. R2 corrects the implementation-record branch name. See `reviews/051-biologic-mpr-extensible-column-registry-review.md` for Current, Target, and Acceptance criteria.
+
+---
