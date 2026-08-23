@@ -1,83 +1,72 @@
 # Review — Spec 051: BioLogic MPR extensible column registry and required-field decoding
 
-Status: **Changes requested**  
+Status: **Review clean — final cumulative review pending**  
 Spec: [`../051-biologic-mpr-extensible-column-registry.md`](../051-biologic-mpr-extensible-column-registry.md)  
 Branch: `feature/biologic-mpr-extensible-columns-051`  
 Main / merge base: `706dc0f14880202a8c5e22b35020502bcf3b4dc9`  
 Workflow initialization: `f4ebb10e2b347f62544b700d3781f96be7390704`  
 Initial implementation handoff: `09f584f32d095edb70efb18147b8aeb0eeb918eb`  
-Returned-fix handoff: `f038322082dc8e4751535fa6f53d260d35273748`
+R1/R2 returned-fix handoff: `f038322082dc8e4751535fa6f53d260d35273748`  
+R3 returned-fix handoff: `868d66c92737609a64b358ebd926bd0b114bc7a2`
 
 ## Review summary
 
-The low-level Spec 051 implementation remains aligned with the locked binary-layout design. The exact 16-column allowlist is no longer the decoder boundary; ordinary columns resolve through `encoded_id % 256` against the project-owned storage registry; observed record stride is derived from the VMP record area; required fields use explicit offsets and full-stride NumPy dtypes; packed flags retain shared-byte handling; diagnostics preserve full encoded IDs/resolved bases; and the BioLogic parser identity is `gcpl9`.
+The child review is clean. The low-level MPR reader now resolves ordinary encoded IDs generically through `encoded_id % 256` against the project-owned 100-entry storage registry, while the six packed flag IDs retain exact shared-byte semantics. Record stride is derived from the actual VMP record area, required fields use explicit offsets in a NumPy dtype whose itemsize is the observed stride, known optional columns may be interleaved, and unknown widths fail closed unless they form a trailing opaque suffix after all required fields are located.
 
-The returned fix resolves the previous merge-blocking R1 for the verified single-direction EGG source. The adapter now accepts only the independently observed GCPL6 per-`Ns` ID-211 counter-origin shape: a transition into an active `Ns`, a near-zero cumulative ID-211 value, and an ID-7 incremental `dQ` matching that origin interval. The existing generic non-zero boundary-transfer guard otherwise remains fail-closed. The focused synthetic regression reproduces the observed approximately `1.75e-6 mA.h` boundary pattern, and the implementer reports that the real single-direction EGG file now reaches canonical validation, temporary cache construction, and ordinary voltage analysis. The second local EGG file remains metadata-only because it is repeating/mixed-direction and therefore still outside the locked Spec 041 cycle-identity contract; that is not a Spec 051 regression.
+The previous end-to-end blocker is resolved for the motivating single-direction 21-ID/93-byte EGG source. The GCPL adapter accepts only the source-evidenced per-`Ns` ID-211 counter-origin reset shape and otherwise preserves the existing fail-closed boundary-transfer guard. The implementer reports that the real source now reaches canonical parsing, temporary cache construction, and ordinary voltage analysis. The repeating/mixed-direction EGG example remains metadata-only under the pre-existing Spec 041 cycle-identity contract and is outside Spec 051's binary-layout widening.
 
-R2 is also resolved: the implementation record now names the actual plural feature branch.
+The documentation and implementation record are now consistent with the code: R2 uses the actual feature-branch name, and R3 correctly distinguishes ID 211 as the cumulative/source-dependent charge-discharge quantity from ID 7 as incremental `dQ`.
 
-One new low-severity documentation defect remains. `docs/biologic-mpr-format.md` calls the matching incremental value an “ID-211 `dQ`”, but the checked-in registry and production mapping define ID 7 as incremental charge (`raw_dq_mAh`) and ID 211 as the cumulative/source-dependent charge-discharge quantity (`raw_q_charge_discharge_mAh`). Because the new safety rule explicitly compares these two distinct fields, the format documentation must preserve that distinction.
+## Verification evidence
 
-## Implementer-reported verification
-
-Returned-fix handoff `f0383220` reports:
+Implementer-reported evidence across the accepted executable checkpoint `f0383220`:
 
 - focused MPR/GCPL/parser/metadata/closure tests: **PASS (163)**;
 - `tests.test_analysis_engine`: **PASS (107)**;
-- canonical `python scripts\preflight.py`: **PASS (4/4; 81 backend modules and 72 frontend tests)**;
-- real EGG temporary cache and ordinary voltage analysis: **PASS**;
+- canonical `python scripts\\preflight.py`: **PASS (4/4; 81 backend modules and 72 frontend tests)**;
+- real single-direction EGG temporary cache and ordinary voltage analysis: **PASS**;
 - browser/manual checks: **NOT RUN**.
 
-The handoff further reports that both local EGG examples decode the 21-ID/93-byte registry layout without rewriting; the single-direction example reaches canonical/cache/ordinary-voltage analysis, while the repeating mixed-direction example remains metadata-only under the existing Spec 041 cycle-identity boundary.
+For documentation-only handoff `868d66c9`, the implementer reports `git diff --check` PASS, `tests.test_biologic_gcpl` PASS (47), and `tests.test_time_capacity_workers` PASS (7). A canonical preflight rerun reached 80/81 backend modules with all frontend tests, type checking, and bundle passing before a reported transient worker-warmup failure. No executable or test code changed after `f0383220`, whose canonical preflight passed.
 
-## Reviewer verification
-
-I independently inspected the returned-fix diff from reviewer checkpoint `8586c0bac728b3ca3448fea884ff1f639088a67c` to `f038322082dc8e4751535fa6f53d260d35273748`, the current GCPL mapper, the new focused regression, the stable format documentation, the registry asset, and the governing canonical-capacity rules.
-
-The returned implementation keeps the boundary exception local to `backend/app/services/biologic_gcpl.py`; it does not weaken canonical validation or generic services. The existing arbitrary boundary-transfer rejection remains present. The new positive regression reproduces the real reset shape and still runs through `canonical_cycling.validate_raw_timeseries`.
-
-I did not independently execute repository tests or the private EGG-file acceptance because this reviewer environment has no repository checkout/private source files. The implementer-reported commands and real-file checks are therefore recorded as reported evidence, not independent execution. There are no GitHub status checks on the feature-branch commit.
+Reviewer verification is code inspection only. I inspected the cumulative branch diff against merge base `706dc0f1`, the registry/stride resolver, low-level record decoder, GCPL capacity-boundary fix, parser identity/reinspection integration, regression tests, and current documentation. I did not independently execute repository tests or the private EGG files; there are no GitHub status checks on the feature-branch handoff commit.
 
 ## Findings
 
 ### R1 — High: The motivating 21/93 BioLogic source still becomes metadata-only, so Analysis cannot use it
 
-**Resolution: RESOLVED in returned fix `f0383220`.**
+**Resolution: RESOLVED in `f0383220`.**
 
 **Affected files:** `backend/app/services/biologic_gcpl.py`, `tests/test_biologic_gcpl.py`, related BioLogic/canonical documentation.
 
 **Current**
 
-The returned fix adds a narrowly bounded exception for the verified EGG GCPL6 per-`Ns` capacity-counter origin. It accepts only an actual `Ns` transition into an active row where ID 211 is near zero and ID 7 `dQ` matches that same short origin interval. Other ambiguous boundary transfer still raises `UnsupportedBiologicGcplError`.
-
-The committed regression reproduces the observed `-1.75e-6 mA.h` origin and confirms the resulting frame passes canonical raw validation. The implementer additionally reports that the real single-direction EGG file now parses canonically, builds a temporary cache, and supports ordinary voltage analysis.
+The adapter now accepts the verified GCPL6 per-`Ns` capacity-counter origin only when the boundary is an actual `Ns` transition into an active row, ID 211 is near zero, and ID 7 incremental `dQ` matches that short origin interval. Arbitrary non-zero boundary transfer still fails closed.
 
 **Target**
 
-Complete the evidence-backed canonical path for the real 21/93 single-direction GCPL source without weakening fail-closed behavior.
+Complete the evidence-backed canonical path for the real 21/93 single-direction GCPL source without weakening the generic safety boundary.
 
 **Acceptance criteria**
 
 - **Satisfied:** real single-direction EGG source reported canonical rather than metadata-only.
-- **Satisfied:** real source reported successful `parsing.parse_timeseries(...)`/canonical path.
-- **Satisfied:** real source reported successful temporary cache and ordinary voltage analysis.
-- **Satisfied:** committed synthetic regression reproduces the observed capacity-counter reset pattern.
-- **Satisfied:** original generic boundary-transfer guard remains fail-closed outside the verified reset shape.
-- **Satisfied:** focused tests and canonical preflight reported passing.
+- **Satisfied:** real source reported successful canonical parsing, temporary cache preparation, and ordinary voltage analysis.
+- **Satisfied:** synthetic regression reproduces the observed approximately `1.75e-6 mA.h` reset.
+- **Satisfied:** generic ambiguous boundary transfer remains rejected.
 
 ### R2 — Low: The Spec 051 implementation record names a non-existent feature branch
 
-**Resolution: RESOLVED in returned fix `f0383220`.**
+**Resolution: RESOLVED in `f0383220`.**
 
 **Affected file:** `docs/specs/051-biologic-mpr-extensible-column-registry.md`.
 
 **Current**
 
-The implementation record now correctly names `feature/biologic-mpr-extensible-columns-051`.
+The implementation record names `feature/biologic-mpr-extensible-columns-051`.
 
 **Target**
 
-Keep the implementation record consistent with the actual branch.
+Keep the implementation record consistent with the actual workflow branch.
 
 **Acceptance criteria**
 
@@ -85,28 +74,23 @@ Keep the implementation record consistent with the actual branch.
 
 ### R3 — Low: Capacity-reset documentation attributes `dQ` to the wrong MPR column ID
 
+**Resolution: RESOLVED in `868d66c9`.**
+
 **Affected file:** `docs/biologic-mpr-format.md`.
 
 **Current**
 
-The new GCPL canonical-mapping paragraph says the first active row has an ID-211 cumulative value near zero and an “ID-211 `dQ`” equal to the same short origin interval.
-
-That is inconsistent with the checked-in storage/production contract:
-
-- base ID **7** is the incremental charge field mapped as `raw_dq_mAh`;
-- base ID **211** is the charge/discharge quantity mapped as `raw_q_charge_discharge_mAh`.
-
-The new production guard itself correctly compares these two different arrays. The documentation currently collapses them into one ID and therefore misstates the evidence supporting the safety exception.
+The format documentation now states that the new active row has an ID-211 cumulative charge/discharge quantity near zero and an ID-7 incremental `dQ` equal to the same short origin interval. This matches the storage registry and production field mapping.
 
 **Target**
 
-Describe the observed reset using the actual field identities: the new active row's **ID-211 cumulative charge/discharge quantity** is near zero and its **ID-7 incremental `dQ`** matches that short origin interval.
+Keep the source-format documentation aligned with the actual ID 7 / ID 211 field identities used by the safety rule.
 
 **Acceptance criteria**
 
-- Replace “ID-211 `dQ`” with wording that explicitly identifies `dQ` as ID 7 while retaining ID 211 as the cumulative/source-dependent quantity.
-- Do not change implementation behavior for this documentation-only correction.
+- **Satisfied:** ID 7 is explicitly identified as incremental `dQ` and ID 211 as the cumulative/source-dependent quantity.
+- **Satisfied:** no implementation behavior changed in the R3 correction.
 
-## Review conclusion
+## Child-review conclusion
 
-**Changes requested.** R1 and R2 are resolved. R3 is a low-severity but concrete source-format documentation error and is the only remaining finding. The branch is not yet ready to merge.
+**Review clean.** All R findings are resolved. The workflow proceeds to the required fresh cumulative final review before merge readiness is declared.
